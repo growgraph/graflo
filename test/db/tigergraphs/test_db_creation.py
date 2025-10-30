@@ -68,15 +68,28 @@ def test_create_and_delete_database(conn_conf, test_graph_name):
         # The graph structure might still exist but should be empty
 
 
-@pytest.mark.skip()
-def test_schema_creation(conn_conf, schema_obj):
+def test_schema_creation(conn_conf, test_graph, schema_obj):
+    """Test creating schema using init_db (follows ArangoDB pattern).
+
+    Pattern: init_db creates graph, defines schema, then defines indexes.
+    Uses schema.general.name as the graph name (from test_graph fixture).
+    """
     schema_obj = schema_obj("review")
+    # Set graph name in schema.general.name (used by default for graph creation)
+    schema_obj.general.name = test_graph
 
     with ConnectionManager(connection_config=conn_conf) as db_client:
-        # Initialize with schema
+        # init_db will: create graph, define schema, define indexes
+        # Graph name comes from schema.general.name
         db_client.init_db(schema_obj, clean_start=True)
 
     with ConnectionManager(connection_config=conn_conf) as db_client:
+        # Verify graph exists (using name from schema.general.name)
+        assert db_client.graph_exists(test_graph)
+
+        # Use the graph to verify schema
+        db_client.conn.gsql(f"USE GRAPH {test_graph}")
+
         # Verify schema was created
         vertex_types = db_client.conn.getVertexTypes()
         edge_types = db_client.conn.getEdgeTypes()
@@ -87,3 +100,6 @@ def test_schema_creation(conn_conf, schema_obj):
 
         print(f"Created vertex types: {vertex_types}")
         print(f"Created edge types: {edge_types}")
+
+        # Cleanup: delete the graph
+        db_client.delete_database(test_graph)

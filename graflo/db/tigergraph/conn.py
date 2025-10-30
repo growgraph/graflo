@@ -28,7 +28,7 @@ from pyTigerGraph import TigerGraphConnection as PyTigerGraphConnection
 from graflo.architecture.edge import Edge
 from graflo.architecture.onto import Index
 from graflo.architecture.schema import Schema
-from graflo.architecture.vertex import VertexConfig
+from graflo.architecture.vertex import FieldType, Vertex, VertexConfig
 from graflo.db.conn import Connection
 from graflo.db.connection.onto import TigergraphConnectionConfig
 from graflo.onto import AggregationType, DBFlavor
@@ -224,14 +224,33 @@ class TigerGraphConnection(Connection):
     def init_db(self, schema: Schema, clean_start=False):
         """
         Initialize database with schema definition.
+
+        Follows the same pattern as ArangoDB:
+        1. Clean if needed
+        2. Create graph (if doesn't exist)
+        3. Define schema (vertices and edges)
+        4. Define indexes
         """
         if clean_start:
-            self.delete_database("")
+            graph_name = schema.general.name
+            self.delete_database(graph_name)
 
         try:
-            # Define schema first, then create graph
+            # Step 1: Create graph if it doesn't exist
+            graph_name = schema.general.name
+            if not self.graph_exists(graph_name):
+                logger.debug(f"Creating graph '{graph_name}' in init_db")
+                self.create_database(graph_name)
+            else:
+                logger.debug(f"Graph '{graph_name}' already exists in init_db")
+
+            # Step 2: Define schema (vertices and edges)
             self.define_schema(schema)
             logger.info("Schema definition completed")
+
+            # Step 3: Define indexes
+            self.define_indexes(schema)
+            logger.info("Index definition completed")
         except Exception as e:
             logger.error(f"Error initializing database: {e}")
             raise
@@ -239,71 +258,60 @@ class TigerGraphConnection(Connection):
     def define_schema(self, schema: Schema):
         """
         Define TigerGraph schema with proper GSQL syntax.
+
+        Assumes graph already exists (created in init_db). This method:
+        1. Uses the graph
+        2. Defines vertex types within the graph
+        3. Defines edge types within the graph
         """
         try:
-            gsql_commands = []
+            # Get graph name and use it (graph should already exist from init_db)
+            graph_name = schema.general.name
 
-            # Define vertex types
-            for vertex in schema.vertex_config.vertices:
-                field_definitions = self._format_vertex_fields(vertex)
-                vindex = (
-                    "("
-                    + ", ".join(schema.vertex_config.index(vertex.name).fields)
-                    + ")"
-                )
-                gsql_command = f"""
-                CREATE VERTEX {vertex.name} (
-                    {field_definitions}
-                    PRIMARY_ID KEY {vindex},
-                ) WITH STATS="OUTDEGREE_BY_EDGETYPE"
-                """
-                gsql_commands.append(gsql_command.strip())
+            # Use the graph (required before defining vertices/edges)
+            use_graph_cmd = f"USE GRAPH {graph_name}"
+            logger.debug(f"Executing: {use_graph_cmd}")
+            self.conn.gsql(use_graph_cmd)
 
-            # Define edge types
-            for edge in schema.edge_config.edges_list(include_aux=True):
-                edge_attrs = self._format_edge_attributes(edge)
-
-                gsql_command = f"""
-                CREATE DIRECTED EDGE {edge.relation} (
-                    FROM {edge.source},
-                    TO {edge.target}
-                    {edge_attrs}
-                )
-                """
-                gsql_commands.append(gsql_command.strip())
-
-            # Execute all schema commands
-            for cmd in gsql_commands:
-                logger.debug(f"Executing GSQL: {cmd}")
-                result = self.conn.gsql(cmd)
-                logger.debug(f"Result: {result}")
-
-            # Create the graph after schema is defined
-            self._create_graph_definition(schema)
+            # Define vertex and edge types within the graph
+            self.define_vertex_collections(schema.vertex_config)
+            self.define_edge_collections(
+                schema.edge_config.edges_list(include_aux=True)
+            )
 
         except Exception as e:
             logger.error(f"Error defining schema: {e}")
             raise
 
-    def _format_vertex_fields(self, vertex_config) -> str:
+    def _format_vertex_fields(self, vertex: Vertex) -> str:
         """
         Format vertex fields for GSQL CREATE VERTEX statement.
-        """
-        if hasattr(vertex_config, "fields") and vertex_config.fields:
-            # If fields is already a string, return it
-            if isinstance(vertex_config.fields, str):
-                return vertex_config.fields
-            # If fields is a dict, format it
-            elif isinstance(vertex_config.fields, dict):
-                field_list = []
-                for field_name, field_type in vertex_config.fields.items():
-                    tg_type = self._map_type_to_tigergraph(field_type)
-                    field_list.append(f"{field_name} {tg_type}")
-                return ",\n    ".join(field_list)
 
-        # Default fields
-        return """name STRING DEFAULT "",
-    properties MAP<STRING, STRING> DEFAULT (map())"""
+        Uses Field objects with types, applying TigerGraph defaults (STRING for None types).
+        Formats fields as: field_name TYPE
+
+        Args:
+            vertex: Vertex object with Field definitions
+
+        Returns:
+            str: Formatted field definitions for GSQL CREATE VERTEX statement
+        """
+        # Get fields with TigerGraph default types applied (None -> STRING)
+        fields = vertex.get_fields_with_defaults(DBFlavor.TIGERGRAPH, with_aux=False)
+
+        if not fields:
+            # Default fields if none specified
+            return 'name STRING DEFAULT "",\n    properties MAP<STRING, STRING> DEFAULT (map())'
+
+        field_list = []
+        for field in fields:
+            # Field type should already be set (STRING if was None)
+            field_type = field.type or FieldType.STRING.value
+            # Format as: field_name TYPE
+            # TODO: Add DEFAULT clause support if needed in the future
+            field_list.append(f"{field.name} {field_type}")
+
+        return ",\n    ".join(field_list)
 
     def _format_edge_attributes(self, edge: Edge) -> str:
         """
@@ -336,59 +344,44 @@ class TigerGraphConnection(Connection):
         }
         return type_mapping.get(field_type.lower(), "STRING")
 
-    def _create_graph_definition(self, schema: Schema):
+    # _get_graph_name removed: always use schema.general.name
+
+    def define_vertex_collections(self, vertex_config: VertexConfig):
+        """Define TigerGraph vertex types within the current graph.
+
+        Assumes the correct graph has already been selected via "USE GRAPH ...".
         """
-        Create the graph definition after vertices and edges are defined.
-        """
-        try:
-            # Get graph name from schema or use default
-            graph_name = getattr(schema, "graph_name", None)
-            if not graph_name and schema.edge_config.edges_list():
-                graph_name = getattr(
-                    schema.edge_config.edges_list()[0], "graph_name", "DefaultGraph"
-                )
-            else:
-                graph_name = "DefaultGraph"
+        for vertex in vertex_config.vertices:
+            field_definitions = self._format_vertex_fields(vertex)
+            vindex = "(" + ", ".join(vertex_config.index(vertex.name).fields) + ")"
 
-            # Collect vertex and edge names
-            vertex_list = [v.name for v in schema.vertex_config.vertices]
-            edge_list = []
-            for edge in schema.edge_config.edges_list(include_aux=True):
-                edge_name = edge.relation or edge.collection_name
-                if edge_name:
-                    edge_list.append(edge_name)
-
-            if vertex_list:
-                vertex_str = ", ".join(vertex_list)
-                edge_str = ", ".join(edge_list) if edge_list else ""
-
-                if edge_str:
-                    gsql_command = f"""
-                    CREATE GRAPH {graph_name} (
-                        {vertex_str},
-                        {edge_str}
-                    )
-                    """
-                else:
-                    gsql_command = f"""
-                    CREATE GRAPH {graph_name} ({vertex_str})
-                    """
-
-                logger.debug(f"Creating graph: {gsql_command}")
-                result = self.conn.gsql(gsql_command.strip())
-                logger.debug(f"Graph creation result: {result}")
-
-        except Exception as e:
-            logger.error(f"Error creating graph definition: {e}")
-            # This might fail if graph already exists, which is often OK
-
-    def define_vertex_collections(self, schema: Schema):
-        """Vertex types are defined in schema, not as collections."""
-        pass
+            gsql_command = (
+                f"CREATE VERTEX {vertex.name} (\n"
+                f"    {field_definitions},\n"
+                f"    PRIMARY KEY {vindex}\n"
+                f') WITH STATS="OUTDEGREE_BY_EDGETYPE"'
+            )
+            logger.debug(f"Executing GSQL: {gsql_command}")
+            result = self.conn.gsql(gsql_command)
+            logger.debug(f"Result: {result}")
 
     def define_edge_collections(self, edges: list[Edge]):
-        """Edge types are defined in schema, not as collections."""
-        pass
+        """Define TigerGraph edge types within the current graph.
+
+        Assumes the correct graph has already been selected via "USE GRAPH ...".
+        """
+        for edge in edges:
+            edge_attrs = self._format_edge_attributes(edge)
+
+            gsql_command = (
+                f"CREATE DIRECTED EDGE {edge.relation} (\n"
+                f"    FROM {edge.source},\n"
+                f"    TO {edge.target}{edge_attrs}\n"
+                f")"
+            )
+            logger.debug(f"Executing GSQL: {gsql_command}")
+            result = self.conn.gsql(gsql_command)
+            logger.debug(f"Result: {result}")
 
     def define_vertex_indices(self, vertex_config: VertexConfig):
         """
