@@ -87,6 +87,9 @@ def test_graph_name(conn_conf):
     graph_uuid = str(uuid.uuid4()).replace("-", "")[:8]
     graph_name = f"g{graph_uuid}"
 
+    # Set as default database/graph name for this test's connection
+    conn_conf.database = graph_name
+
     yield graph_name
 
     # Cleanup: Delete the graph after the test

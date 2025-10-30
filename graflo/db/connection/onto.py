@@ -181,10 +181,9 @@ class Neo4jConnectionConfig(DBConnectionConfig):
 
 @dataclasses.dataclass
 class TigergraphConnectionConfig(DBConnectionConfig):
-    """Configuration for Neo4j connections."""
+    """Configuration for TigerGraph connections."""
 
     gs_port: int | None = None
-    graphname: str = "test"
 
     def __post_init__(self):
         """Set connection type and process parent class initialization."""
