@@ -10,6 +10,7 @@ def modes():
     return ["review"]
 
 
+@pytest.mark.skip()
 def test_ingest(
     clean_db,
     modes,

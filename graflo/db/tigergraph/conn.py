@@ -53,6 +53,7 @@ class TigerGraphConnection(Connection):
 
     def __init__(self, config: TigergraphConnectionConfig):
         super().__init__()
+        self.config = config
         self.conn = PyTigerGraphConnection(
             host=config.url_without_port,
             restppPort=config.port,
@@ -70,28 +71,133 @@ class TigerGraphConnection(Connection):
             except Exception as e:
                 logger.warning(f"Failed to get authentication token: {e}")
 
+    def graph_exists(self, name: str) -> bool:
+        """
+        Check if a graph with the given name exists.
+
+        Uses the USE GRAPH command and checks the returned message.
+        If the graph doesn't exist, USE GRAPH returns an error message like
+        "Graph 'name' does not exist."
+
+        Args:
+            name: Name of the graph to check
+
+        Returns:
+            bool: True if the graph exists, False otherwise
+        """
+        try:
+            result = self.conn.gsql(f"USE GRAPH {name}")
+            result_str = str(result).lower()
+
+            # If the graph doesn't exist, USE GRAPH returns an error message
+            # Check for common error messages indicating the graph doesn't exist
+            error_patterns = [
+                "does not exist",
+                "doesn't exist",
+                "doesn't exist!",
+                f"graph '{name.lower()}' does not exist",
+            ]
+
+            # If any error pattern is found, the graph doesn't exist
+            for pattern in error_patterns:
+                if pattern in result_str:
+                    return False
+
+            # If no error pattern is found, the graph likely exists
+            # (USE GRAPH succeeded or returned success message)
+            return True
+        except Exception as e:
+            logger.debug(f"Error checking if graph '{name}' exists: {e}")
+            # If there's an exception, try to parse it
+            error_str = str(e).lower()
+            if "does not exist" in error_str or "doesn't exist" in error_str:
+                return False
+            # If exception doesn't indicate "doesn't exist", assume it exists
+            # (other errors might indicate connection issues, not missing graph)
+            return False
+
     def create_database(self, name: str):
         """
-        TigerGraph doesn't support creating graphs via API like ArangoDB.
-        Graphs must be created manually or via GraphStudio/Admin Portal.
+        Create a TigerGraph database (graph) using GSQL commands.
+
+        This method uses the pyTigerGraph gsql() method to execute GSQL commands
+        that create and use the graph. Supported in TigerGraph version 4.2.2+.
+
+        Args:
+            name: Name of the graph to create
+
+        Raises:
+            Exception: If graph creation fails
         """
-        logger.info(
-            f"TigerGraph doesn't support creating graphs via API. Graph '{name}' should be created manually."
-        )
+        try:
+            # Prepare GSQL commands to create and use the graph
+            gsql_commands = f"CREATE GRAPH {name}()\nUSE GRAPH {name}"
+
+            # Execute using pyTigerGraph's gsql method which handles authentication
+            logger.debug(f"Creating graph '{name}' via GSQL")
+            try:
+                result = self.conn.gsql(gsql_commands)
+                logger.info(f"Successfully created graph '{name}': {result}")
+                return result
+            except Exception as e:
+                error_msg = str(e).lower()
+                # Check if graph already exists (might be acceptable)
+                if "already exists" in error_msg or "duplicate" in error_msg:
+                    logger.info(f"Graph '{name}' may already exist: {e}")
+                    return str(e)
+                logger.error(f"Failed to create graph '{name}': {e}")
+                raise
+
+        except Exception as e:
+            logger.error(f"Error creating graph '{name}' via GSQL: {e}")
+            raise
 
     def delete_database(self, name: str):
         """
-        Clear all data from TigerGraph - graphs persist structurally.
+        Delete a TigerGraph database (graph).
+
+        This method attempts to drop the graph structure using GSQL DROP GRAPH command.
+        If that fails (e.g., graph doesn't exist or has dependencies), it will clear all
+        data (vertices and edges) from the graph.
+
+        Args:
+            name: Name of the graph to delete
+
+        Note:
+            In TigerGraph, deleting a graph structure requires the graph to be empty
+            or may fail if it has dependencies. This method handles both cases.
         """
         try:
-            # Clear all vertices (edges will be deleted automatically)
-            vertex_types = self.conn.getVertexTypes()
-            for v_type in vertex_types:
-                result = self.conn.delVertices(v_type)
-                logger.debug(f"Cleared vertices of type {v_type}: {result}")
+            logger.debug(f"Attempting to drop graph '{name}'")
+            try:
+                # Use the graph first to ensure we're working with the right graph
+                drop_command = f"USE GRAPH {name}\nDROP GRAPH {name}"
+                result = self.conn.gsql(drop_command)
+                logger.info(f"Successfully dropped graph '{name}': {result}")
+                return result
+            except Exception as e:
+                logger.debug(
+                    f"Could not drop graph '{name}' (may not exist or have dependencies): {e}"
+                )
+                # If drop fails, try to clear all data instead
+                logger.debug(f"Clearing all data from graph '{name}' instead")
+
+            # Fallback: Clear all vertices (edges will be deleted automatically)
+            try:
+                # Switch to the graph first
+                self.conn.gsql(f"USE GRAPH {name}")
+                vertex_types = self.conn.getVertexTypes()
+                for v_type in vertex_types:
+                    result = self.conn.delVertices(v_type)
+                    logger.debug(f"Cleared vertices of type {v_type}: {result}")
+                logger.info(f"Cleared all data from graph '{name}'")
+            except Exception as e2:
+                logger.warning(
+                    f"Could not clear data from graph '{name}': {e2}. Graph may not exist."
+                )
 
         except Exception as e:
-            logger.error(f"Could not clear database: {e}")
+            logger.error(f"Error deleting database '{name}': {e}")
 
     def execute(self, query, **kwargs):
         """
@@ -141,11 +247,15 @@ class TigerGraphConnection(Connection):
             for vertex in schema.vertex_config.vertices:
                 # Map fields to proper TigerGraph types
                 field_definitions = self._format_vertex_fields(vertex)
-
+                vindex = (
+                    "("
+                    + ", ".join(schema.vertex_config.index(vertex.name).fields)
+                    + ")"
+                )
                 gsql_command = f"""
                 CREATE VERTEX {vertex.name} (
-                    PRIMARY_ID id STRING,
                     {field_definitions}
+                    PRIMARY_ID KEY {vindex},
                 ) WITH STATS="OUTDEGREE_BY_EDGETYPE"
                 """
                 gsql_commands.append(gsql_command.strip())

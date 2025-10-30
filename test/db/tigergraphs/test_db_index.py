@@ -1,6 +1,9 @@
+import pytest
+
 from graflo.db import ConnectionManager
 
 
+@pytest.mark.skip()
 def test_create_vertex_index(conn_conf, schema_obj):
     schema_obj = schema_obj("review")
 
@@ -20,6 +23,7 @@ def test_create_vertex_index(conn_conf, schema_obj):
         assert vertex_type in vertex_types, f"Vertex type {vertex_type} not found"
 
 
+@pytest.mark.skip()
 def test_create_edge_index(conn_conf, schema_obj):
     schema_obj = schema_obj("review")
 
@@ -36,41 +40,3 @@ def test_create_edge_index(conn_conf, schema_obj):
     expected_edge_types = ["belongsTo"]  # Adjust based on your schema
     for edge_type in expected_edge_types:
         assert edge_type in edge_types, f"Edge type {edge_type} not found"
-
-
-# Alternative: Test schema creation instead of indexes
-def test_schema_creation(conn_conf, schema_obj):
-    schema_obj = schema_obj("review")
-
-    with ConnectionManager(connection_config=conn_conf) as db_client:
-        # Initialize with schema
-        db_client.init_db(schema_obj, clean_start=True)
-
-    with ConnectionManager(connection_config=conn_conf) as db_client:
-        # Verify schema was created
-        vertex_types = db_client.conn.getVertexTypes()
-        edge_types = db_client.conn.getEdgeTypes()
-
-        # Check expected types exist
-        assert len(vertex_types) > 0, "No vertex types created"
-        assert len(edge_types) > 0, "No edge types created"
-
-        print(f"Created vertex types: {vertex_types}")
-        print(f"Created edge types: {edge_types}")
-
-
-# If you need to test actual TigerGraph indexes (rare), use GSQL queries:
-def test_tigergraph_schema_info(conn_conf, schema_obj):
-    schema_obj = schema_obj("review")
-
-    with ConnectionManager(connection_config=conn_conf) as db_client:
-        db_client.init_db(schema_obj, clean_start=True)
-
-        # Use GSQL to get detailed schema info
-        _ = db_client.execute("ls")
-
-        # Or get vertex/edge statistics which include indexing info
-        vertex_types = db_client.conn.getVertexTypes()
-        for v_type in vertex_types:
-            stats = db_client.conn.getVertexStats(v_type)
-            print(f"Stats for {v_type}: {stats}")

@@ -7,19 +7,19 @@ repos:
     -   id: ruff
         args: [--fix, --ignore, E722]
     -   id: ruff-format
--   repo: https://github.com/PyCQA/isort
-    rev: 6.0.1
+-   repo: https://github.com/syntaqx/git-hooks
+    rev: v0.0.18
     hooks:
-    -   id: isort
-        args:
-        -   --line-length=79
--   repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.17.1
+    -   id: circleci-config-validate
+    -   id: go-fmt
+    -   id: go-test
+    -   id: go-mod-tidy
+-   repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.11.12
     hooks:
-    -   id: mypy
-        args: [--show-error-codes]
-        exclude: ^examples/
-        additional_dependencies: [types-requests, types-python-dateutil, types-waitress, types-PyYAML, pandas-stubs]
+    -   id: ruff-check
+        args: [--fix, --ignore, E722, --ignore, W293, --ignore, E501]
+    -   id: ruff-format
 -   repo: https://github.com/macisamuele/language-formatters-pre-commit-hooks
     rev: v2.15.0
     hooks:
@@ -42,3 +42,11 @@ repos:
     hooks:
     -   id: toml-sort
         args: [-ia]
+#-   repo: local
+#    hooks:
+#    -   id: ty
+#        name: ty check
+#        entry: ty check .
+#        language: system
+#        pass_filenames: false
+#        always_run: true

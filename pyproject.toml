@@ -5,7 +5,8 @@ requires = ["hatchling"]
 [dependency-groups]
 dev = [
   "pre-commit>=4.2.0",
-  "pytest>=8.0.0,<9"
+  "pytest>=8.0.0,<9",
+  "ty>=0.0.1a24"
 ]
 docs = [
   "mkdocs-gen-files>=0.5.0",

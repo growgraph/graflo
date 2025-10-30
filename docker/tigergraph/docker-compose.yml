@@ -14,10 +14,3 @@ services:
         -   ${STORE_FOLDER}/logs:/home/tigergraph/log
         environment:
         -   ACCEPT_LICENSE=true
-        command: >-
-            bash -c "
-            /entrypoint.sh &
-            sleep 40 &&
-            su - tigergraph -c \"gsql -g \"system\" \"ALTER PASSWORD FOR tigergraph = '${TG_WEB}'\"\" &&
-            wait
-            "
