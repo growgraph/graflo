@@ -595,7 +595,9 @@ class DescendActor(Actor):
             available_fields -= set(self.vertex_config.fields(v))
 
         for v in self.vertex_config.vertex_list:
-            intersection = available_fields & set(v.fields)
+            # Use field_names property for cleaner set operations
+            v_field_names = set(v.field_names)
+            intersection = available_fields & v_field_names
             if intersection and v.name not in present_vertices:
                 new_descendant = ActorWrapper(vertex=v.name)
                 new_descendant.finish_init(**kwargs)

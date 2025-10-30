@@ -24,11 +24,12 @@ from .edge import Edge, EdgeConfig
 from .onto import Index
 from .resource import Resource
 from .schema import Schema
-from .vertex import Vertex, VertexConfig
+from .vertex import FieldType, Vertex, VertexConfig
 
 __all__ = [
     "Edge",
     "EdgeConfig",
+    "FieldType",
     "Index",
     "Resource",
     "Schema",

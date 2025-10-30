@@ -245,7 +245,6 @@ class TigerGraphConnection(Connection):
 
             # Define vertex types
             for vertex in schema.vertex_config.vertices:
-                # Map fields to proper TigerGraph types
                 field_definitions = self._format_vertex_fields(vertex)
                 vindex = (
                     "("

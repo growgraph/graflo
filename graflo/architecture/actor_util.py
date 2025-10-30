@@ -80,7 +80,8 @@ def add_blank_collections(
     for vname in vertex_conf.blank_vertices:
         v = vertex_conf[vname]
         for item in buffer_transforms:
-            prep_doc = {f: item[f] for f in v.fields if f in item}
+            # Use field_names property for cleaner dict comprehension
+            prep_doc = {f: item[f] for f in v.field_names if f in item}
             if vname not in ctx.acc_global:
                 ctx.acc_global[vname] = [prep_doc]
     return ctx
@@ -396,7 +397,8 @@ def render_weights(
                         **{
                             w.cfield(field): doc[field]
                             for field in w.fields
-                            if field in doc
+                            if field
+                            in doc  # w.fields are strings from Weight, so this is fine
                         },
                     }
                 if w.map:
