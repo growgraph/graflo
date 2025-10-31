@@ -21,6 +21,7 @@ Example:
     >>> conn.upsert_docs_batch(docs, "User", match_keys=["email"])
 """
 
+import contextlib
 import logging
 
 from pyTigerGraph import TigerGraphConnection as PyTigerGraphConnection
@@ -73,6 +74,37 @@ class TigerGraphConnection(Connection):
             except Exception as e:
                 logger.warning(f"Failed to get authentication token: {e}")
 
+    @contextlib.contextmanager
+    def _ensure_graph_context(self, graph_name: str | None = None):
+        """
+        Context manager that ensures graph context for metadata operations.
+
+        Updates conn.graphname for PyTigerGraph metadata operations that rely on it
+        (e.g., getVertexTypes(), getEdgeTypes()).
+
+        Args:
+            graph_name: Name of the graph to use. If None, uses self.config.database.
+
+        Yields:
+            The graph name that was set.
+        """
+        graph_name = graph_name or self.config.database
+        if not graph_name:
+            raise ValueError(
+                "Graph name must be provided via graph_name parameter or config.database"
+            )
+
+        # Update connection's graphname for PyTigerGraph metadata operations
+        # (some operations like getVertexTypes() rely on conn.graphname)
+        old_graphname = self.conn.graphname
+        self.conn.graphname = graph_name
+
+        try:
+            yield graph_name
+        finally:
+            # Restore original graphname
+            self.conn.graphname = old_graphname
+
     def graph_exists(self, name: str) -> bool:
         """
         Check if a graph with the given name exists.
@@ -118,28 +150,52 @@ class TigerGraphConnection(Connection):
             # (other errors might indicate connection issues, not missing graph)
             return False
 
-    def create_database(self, name: str):
+    def create_database(
+        self,
+        name: str,
+        vertex_names: list[str] | None = None,
+        edge_names: list[str] | None = None,
+    ):
         """
         Create a TigerGraph database (graph) using GSQL commands.
+
+        This method creates a graph with explicitly attached vertices and edges.
+        Example: CREATE GRAPH researchGraph (author, paper, wrote)
 
         This method uses the pyTigerGraph gsql() method to execute GSQL commands
         that create and use the graph. Supported in TigerGraph version 4.2.2+.
 
         Args:
             name: Name of the graph to create
+            vertex_names: Optional list of vertex type names to attach to the graph
+            edge_names: Optional list of edge type names to attach to the graph
 
         Raises:
             Exception: If graph creation fails
         """
         try:
-            # Prepare GSQL commands to create and use the graph
-            gsql_commands = f"CREATE GRAPH {name}()\nUSE GRAPH {name}"
+            # Build the list of types to include in CREATE GRAPH
+            all_types = []
+            if vertex_names:
+                all_types.extend(vertex_names)
+            if edge_names:
+                all_types.extend(edge_names)
+
+            # Format the CREATE GRAPH command with types
+            if all_types:
+                types_str = ", ".join(all_types)
+                gsql_commands = f"CREATE GRAPH {name} ({types_str})\nUSE GRAPH {name}"
+            else:
+                # Fallback to empty graph if no types provided
+                gsql_commands = f"CREATE GRAPH {name}()\nUSE GRAPH {name}"
 
             # Execute using pyTigerGraph's gsql method which handles authentication
-            logger.debug(f"Creating graph '{name}' via GSQL")
+            logger.debug(f"Creating graph '{name}' via GSQL: {gsql_commands}")
             try:
                 result = self.conn.gsql(gsql_commands)
-                logger.info(f"Successfully created graph '{name}': {result}")
+                logger.info(
+                    f"Successfully created graph '{name}' with types {all_types}: {result}"
+                )
                 return result
             except Exception as e:
                 error_msg = str(e).lower()
@@ -186,52 +242,53 @@ class TigerGraphConnection(Connection):
 
             # Fallback 1: Attempt to drop edge and vertex types via ALTER GRAPH and DROP
             try:
-                # Ensure graph context and update connection graphname for schema fetches
-                self.conn.gsql(f"USE GRAPH {name}")
-                self.conn.graphname = name
+                with self._ensure_graph_context(name):
+                    # Drop edge associations and edge types
+                    try:
+                        edge_types = self.conn.getEdgeTypes(force=True)
+                    except Exception:
+                        edge_types = []
 
-                # Drop edge associations and edge types
-                try:
-                    edge_types = self.conn.getEdgeTypes(force=True)
-                except Exception:
-                    edge_types = []
+                    for e_type in edge_types:
+                        # Try disassociate from graph (safe if already disassociated)
+                        # ALTER GRAPH requires USE GRAPH context
+                        try:
+                            drop_edge_cmd = f"USE GRAPH {name}\nALTER GRAPH {name} DROP DIRECTED EDGE {e_type}"
+                            self.conn.gsql(drop_edge_cmd)
+                        except Exception:
+                            pass
+                        # Try drop edge type globally (edges are global, no USE GRAPH needed)
+                        try:
+                            drop_edge_global_cmd = f"DROP DIRECTED EDGE {e_type}"
+                            self.conn.gsql(drop_edge_global_cmd)
+                        except Exception:
+                            pass
 
-                for e_type in edge_types:
-                    # Try disassociate from graph (safe if already disassociated)
+                    # Drop vertex associations and vertex types
                     try:
-                        self.conn.gsql(
-                            f"ALTER GRAPH {name} DROP DIRECTED EDGE {e_type}"
-                        )
+                        vertex_types = self.conn.getVertexTypes(force=True)
                     except Exception:
-                        pass
-                    # Try drop edge type globally
-                    try:
-                        self.conn.gsql(f"DROP DIRECTED EDGE {e_type}")
-                    except Exception:
-                        pass
+                        vertex_types = []
 
-                # Drop vertex associations and vertex types
-                try:
-                    vertex_types = self.conn.getVertexTypes(force=True)
-                except Exception:
-                    vertex_types = []
-
-                for v_type in vertex_types:
-                    # Remove all data first to avoid dependency issues
-                    try:
-                        self.conn.delVertices(v_type)
-                    except Exception:
-                        pass
-                    # Disassociate from graph (best-effort)
-                    try:
-                        self.conn.gsql(f"ALTER GRAPH {name} DROP VERTEX {v_type}")
-                    except Exception:
-                        pass
-                    # Drop vertex type globally
-                    try:
-                        self.conn.gsql(f"DROP VERTEX {v_type}")
-                    except Exception:
-                        pass
+                    for v_type in vertex_types:
+                        # Remove all data first to avoid dependency issues
+                        try:
+                            self.conn.delVertices(v_type)
+                        except Exception:
+                            pass
+                        # Disassociate from graph (best-effort)
+                        # ALTER GRAPH requires USE GRAPH context
+                        try:
+                            drop_vertex_cmd = f"USE GRAPH {name}\nALTER GRAPH {name} DROP VERTEX {v_type}"
+                            self.conn.gsql(drop_vertex_cmd)
+                        except Exception:
+                            pass
+                        # Drop vertex type globally (vertices are global, no USE GRAPH needed)
+                        try:
+                            drop_vertex_global_cmd = f"DROP VERTEX {v_type}"
+                            self.conn.gsql(drop_vertex_global_cmd)
+                        except Exception:
+                            pass
             except Exception as e3:
                 logger.warning(
                     f"Could not drop schema types for graph '{name}': {e3}. Proceeding to data clear."
@@ -239,12 +296,12 @@ class TigerGraphConnection(Connection):
 
             # Fallback 2: Clear all data (if any remain)
             try:
-                self.conn.gsql(f"USE GRAPH {name}")
-                vertex_types = self.conn.getVertexTypes()
-                for v_type in vertex_types:
-                    result = self.conn.delVertices(v_type)
-                    logger.debug(f"Cleared vertices of type {v_type}: {result}")
-                logger.info(f"Cleared all data from graph '{name}'")
+                with self._ensure_graph_context(name):
+                    vertex_types = self.conn.getVertexTypes()
+                    for v_type in vertex_types:
+                        result = self.conn.delVertices(v_type)
+                        logger.debug(f"Cleared vertices of type {v_type}: {result}")
+                    logger.info(f"Cleared all data from graph '{name}'")
             except Exception as e2:
                 logger.warning(
                     f"Could not clear data from graph '{name}': {e2}. Graph may not exist."
@@ -281,8 +338,8 @@ class TigerGraphConnection(Connection):
 
         Follows the same pattern as ArangoDB:
         1. Clean if needed
-        2. Create graph using schema.general.name (if doesn't exist)
-        3. Define schema (vertices and edges)
+        2. Create vertex and edge types globally (required before CREATE GRAPH)
+        3. Create graph with vertices and edges explicitly attached
         4. Define indexes
 
         If any step fails, the graph will be cleaned up gracefully.
@@ -298,17 +355,30 @@ class TigerGraphConnection(Connection):
             if clean_start:
                 self.delete_database(graph_name)
 
-            # Step 1: Create graph if it doesn't exist
+            # Step 1: Create vertex and edge types globally first
+            # These must exist before they can be included in CREATE GRAPH
+            logger.debug(
+                f"Creating vertex and edge types globally for graph '{graph_name}'"
+            )
+            vertex_names = self._create_vertex_types_global(schema.vertex_config)
+            edge_names = self._create_edge_types_global(
+                schema.edge_config.edges_list(include_aux=True)
+            )
+
+            # Step 2: Create graph with vertices and edges explicitly attached
             if not self.graph_exists(graph_name):
-                logger.debug(f"Creating graph '{graph_name}' in init_db")
-                self.create_database(graph_name)
+                logger.debug(f"Creating graph '{graph_name}' with types in init_db")
+                self.create_database(
+                    graph_name, vertex_names=vertex_names, edge_names=edge_names
+                )
                 graph_created = True
             else:
                 logger.debug(f"Graph '{graph_name}' already exists in init_db")
-
-            # Step 2: Define schema (vertices and edges)
-            self.define_schema(schema)
-            logger.info("Schema definition completed")
+                # If graph already exists, associate types via ALTER GRAPH
+                self.define_vertex_collections(schema.vertex_config)
+                self.define_edge_collections(
+                    schema.edge_config.edges_list(include_aux=True)
+                )
 
             # Step 3: Define indexes
             self.define_indexes(schema)
@@ -338,12 +408,8 @@ class TigerGraphConnection(Connection):
         3. Defines edge types within the graph
         """
         try:
-            # Use the graph from config (connection context)
-            use_graph_cmd = f"USE GRAPH {self.config.database}"
-            logger.debug(f"Executing: {use_graph_cmd}")
-            self.conn.gsql(use_graph_cmd)
-
             # Define vertex and edge types within the graph
+            # Graph context is ensured by _ensure_graph_context in the called methods
             self.define_vertex_collections(schema.vertex_config)
             self.define_edge_collections(
                 schema.edge_config.edges_list(include_aux=True)
@@ -416,29 +482,25 @@ class TigerGraphConnection(Connection):
 
     # _get_graph_name removed: always use schema.general.name
 
-    def define_vertex_collections(self, vertex_config: VertexConfig):
-        """Define TigerGraph vertex types and associate them with the current graph.
+    def _create_vertex_types_global(self, vertex_config: VertexConfig) -> list[str]:
+        """Create TigerGraph vertex types globally (without graph association).
 
-        Flow per vertex type:
-        1) Try to CREATE VERTEX (idempotent: ignore "already exists" errors)
-        2) Associate the vertex with the graph via ALTER GRAPH <graph> ADD VERTEX <vertex>
+        Vertices are global in TigerGraph and must be created before they can be
+        included in a CREATE GRAPH statement.
 
         Args:
             vertex_config: Vertex configuration containing vertices to create
+
+        Returns:
+            list[str]: List of vertex type names that were created (or already existed)
         """
-        graph_name = self.config.database
-
-        # Ensure graph context is set (for any graph-scoped operations)
-        if graph_name:
-            use_graph_cmd = f"USE GRAPH {graph_name}"
-            logger.debug(f"Executing: {use_graph_cmd}")
-            self.conn.gsql(use_graph_cmd)
-
+        vertex_names = []
         for vertex in vertex_config.vertices:
             field_definitions = self._format_vertex_fields(vertex)
             vindex = "(" + ", ".join(vertex_config.index(vertex.name).fields) + ")"
 
-            # Step 1: Try to create the vertex type globally (ignore if exists)
+            # Create the vertex type globally (ignore if exists)
+            # Vertices are global in TigerGraph, so no USE GRAPH needed
             create_vertex_cmd = (
                 f"CREATE VERTEX {vertex.name} (\n"
                 f"    {field_definitions},\n"
@@ -449,18 +511,36 @@ class TigerGraphConnection(Connection):
             try:
                 result = self.conn.gsql(create_vertex_cmd)
                 logger.debug(f"Result: {result}")
+                vertex_names.append(vertex.name)
             except Exception as e:
                 err = str(e).lower()
                 if "used by another object" in err or "duplicate" in err:
                     logger.debug(
-                        f"Vertex type '{vertex.name}' already exists; continuing to association"
+                        f"Vertex type '{vertex.name}' already exists; will include in graph"
                     )
+                    vertex_names.append(vertex.name)
                 else:
                     raise
+        return vertex_names
 
-            # Step 2: Associate the vertex with the target graph
-            if graph_name:
-                alter_graph_cmd = f"ALTER GRAPH {graph_name} ADD VERTEX {vertex.name}"
+    def define_vertex_collections(self, vertex_config: VertexConfig):
+        """Define TigerGraph vertex types and associate them with the current graph.
+
+        Flow per vertex type:
+        1) Try to CREATE VERTEX (idempotent: ignore "already exists" errors)
+        2) Associate the vertex with the graph via ALTER GRAPH <graph> ADD VERTEX <vertex>
+
+        Args:
+            vertex_config: Vertex configuration containing vertices to create
+        """
+        # First create all vertex types globally
+        vertex_names = self._create_vertex_types_global(vertex_config)
+
+        # Then associate them with the graph (if graph already exists)
+        graph_name = self.config.database
+        if graph_name:
+            for vertex_name in vertex_names:
+                alter_graph_cmd = f"USE GRAPH {graph_name}\nALTER GRAPH {graph_name} ADD VERTEX {vertex_name}"
                 logger.debug(f"Executing GSQL: {alter_graph_cmd}")
                 try:
                     result = self.conn.gsql(alter_graph_cmd)
@@ -470,10 +550,55 @@ class TigerGraphConnection(Connection):
                     # If already associated, ignore
                     if "already" in err and ("added" in err or "exists" in err):
                         logger.debug(
-                            f"Vertex '{vertex.name}' already associated with graph '{graph_name}'"
+                            f"Vertex '{vertex_name}' already associated with graph '{graph_name}'"
                         )
                     else:
                         raise
+
+    def _create_edge_types_global(self, edges: list[Edge]) -> list[str]:
+        """Create TigerGraph edge types globally (without graph association).
+
+        Edges are global in TigerGraph and must be created before they can be
+        included in a CREATE GRAPH statement.
+
+        Args:
+            edges: List of edges to create
+
+        Returns:
+            list[str]: List of edge type names (relation names) that were created (or already existed)
+        """
+        edge_names = []
+        for edge in edges:
+            edge_attrs = self._format_edge_attributes(edge)
+
+            # Create the edge type globally (ignore if exists/used elsewhere)
+            # Edges are global in TigerGraph, so no USE GRAPH needed
+            create_edge_cmd = (
+                f"CREATE DIRECTED EDGE {edge.relation} (\n"
+                f"    FROM {edge.source},\n"
+                f"    TO {edge.target}{edge_attrs}\n"
+                f")"
+            )
+            logger.debug(f"Executing GSQL: {create_edge_cmd}")
+            try:
+                result = self.conn.gsql(create_edge_cmd)
+                logger.debug(f"Result: {result}")
+                edge_names.append(edge.relation)
+            except Exception as e:
+                err = str(e).lower()
+                # If the edge name is already used by another object or duplicates exist, continue
+                if (
+                    "used by another object" in err
+                    or "duplicate" in err
+                    or "already exists" in err
+                ):
+                    logger.debug(
+                        f"Edge type '{edge.relation}' already defined; will include in graph"
+                    )
+                    edge_names.append(edge.relation)
+                else:
+                    raise
+        return edge_names
 
     def define_edge_collections(self, edges: list[Edge]):
         """Define TigerGraph edge types and associate them with the current graph.
@@ -485,46 +610,16 @@ class TigerGraphConnection(Connection):
         Args:
             edges: List of edges to create
         """
+        # First create all edge types globally
+        edge_names = self._create_edge_types_global(edges)
+
+        # Then associate them with the graph (if graph already exists)
         graph_name = self.config.database
-
-        # Ensure graph context is set (for any graph-scoped operations)
         if graph_name:
-            use_graph_cmd = f"USE GRAPH {graph_name}"
-            logger.debug(f"Executing: {use_graph_cmd}")
-            self.conn.gsql(use_graph_cmd)
-
-        for edge in edges:
-            edge_attrs = self._format_edge_attributes(edge)
-
-            # Step 1: Try to create the edge type globally (ignore if exists/used elsewhere)
-            create_edge_cmd = (
-                f"CREATE DIRECTED EDGE {edge.relation} (\n"
-                f"    FROM {edge.source},\n"
-                f"    TO {edge.target}{edge_attrs}\n"
-                f")"
-            )
-            logger.debug(f"Executing GSQL: {create_edge_cmd}")
-            try:
-                result = self.conn.gsql(create_edge_cmd)
-                logger.debug(f"Result: {result}")
-            except Exception as e:
-                err = str(e).lower()
-                # If the edge name is already used by another object or duplicates exist, continue to association
-                if (
-                    "used by another object" in err
-                    or "duplicate" in err
-                    or "already exists" in err
-                ):
-                    logger.debug(
-                        f"Edge type '{edge.relation}' already defined elsewhere; continuing to association"
-                    )
-                else:
-                    raise
-
-            # Step 2: Associate the edge with the target graph
-            if graph_name:
+            for edge_name in edge_names:
                 alter_graph_cmd = (
-                    f"ALTER GRAPH {graph_name} ADD DIRECTED EDGE {edge.relation}"
+                    f"USE GRAPH {graph_name}\n"
+                    f"ALTER GRAPH {graph_name} ADD DIRECTED EDGE {edge_name}"
                 )
                 logger.debug(f"Executing GSQL: {alter_graph_cmd}")
                 try:
@@ -535,7 +630,7 @@ class TigerGraphConnection(Connection):
                     # If already associated, ignore
                     if "already" in err and ("added" in err or "exists" in err):
                         logger.debug(
-                            f"Edge '{edge.relation}' already associated with graph '{graph_name}'"
+                            f"Edge '{edge_name}' already associated with graph '{graph_name}'"
                         )
                     else:
                         raise
@@ -573,15 +668,16 @@ class TigerGraphConnection(Connection):
     def delete_collections(self, cnames=(), gnames=(), delete_all=False):
         """Delete vertex data (collections in TigerGraph terms)."""
         try:
-            if cnames:
-                for class_name in cnames:
-                    result = self.conn.delVertices(class_name)
-                    logger.debug(f"Deleted vertices from {class_name}: {result}")
-            elif delete_all:
-                vertex_types = self.conn.getVertexTypes()
-                for v_type in vertex_types:
-                    result = self.conn.delVertices(v_type)
-                    logger.debug(f"Deleted all vertices from {v_type}: {result}")
+            with self._ensure_graph_context():
+                if cnames:
+                    for class_name in cnames:
+                        result = self.conn.delVertices(class_name)
+                        logger.debug(f"Deleted vertices from {class_name}: {result}")
+                elif delete_all:
+                    vertex_types = self.conn.getVertexTypes()
+                    for v_type in vertex_types:
+                        result = self.conn.delVertices(v_type)
+                        logger.debug(f"Deleted all vertices from {v_type}: {result}")
         except Exception as e:
             logger.error(f"Error deleting collections: {e}")
 

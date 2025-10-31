@@ -73,6 +73,9 @@ def test_schema_creation(conn_conf, test_graph_name, schema_obj):
 
     Pattern: init_db creates graph, defines schema, then defines indexes.
     Uses schema.general.name as the graph name (from test_graph fixture).
+
+    Note: In TigerGraph, vertex and edge types are global and shared between graphs.
+    The test verifies that types are created and associated with the test graph.
     """
     schema_obj = schema_obj("review")
     # Set graph name in schema.general.name; conn_conf.database is set by fixture
