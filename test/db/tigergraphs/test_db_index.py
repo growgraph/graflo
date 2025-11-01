@@ -3,40 +3,99 @@ import pytest
 from graflo.db import ConnectionManager
 
 
-@pytest.mark.skip()
-def test_create_vertex_index(conn_conf, schema_obj):
+def test_create_vertex_index(conn_conf, schema_obj, test_graph_name):
+    """Test creating vertex indexes using GSQL CREATE INDEX."""
     schema_obj = schema_obj("review")
 
     with ConnectionManager(connection_config=conn_conf) as db_client:
+        # Initialize database with schema
+        db_client.init_db(schema_obj, clean_start=True)
+
+        # Define vertex indexes (indexes should be created in init_db, but call explicitly)
         db_client.define_vertex_indices(schema_obj.vertex_config)
 
+    # Verify indexes were created by attempting to create them again
+    # If they already exist, we'll get an "already exists" error which confirms creation
+    # Note: TigerGraph only supports indexes on a single field, so multi-field indexes are skipped
+    # Expected indexes:
+    # - author: skipped (multi-field index on id, full_name - not supported)
+    # - researchField: "researchField_id_index" on (id) - single field, will be created
     with ConnectionManager(connection_config=conn_conf) as db_client:
-        # TigerGraph doesn't use SHOW INDEX - check vertex types instead
-        vertex_types = db_client.conn.getVertexTypes()
-        # Or check schema info
-        _ = db_client.conn.gsql("ls")
+        # Verify vertex types exist
+        vertex_types = db_client.conn.getVertexTypes(force=True)
+        assert "author" in vertex_types, "Vertex type 'author' not found"
+        assert "researchField" in vertex_types, "Vertex type 'researchField' not found"
 
-    # TigerGraph automatically indexes PRIMARY_ID, secondary indexes are rare
-    # Verify vertex types exist instead of specific index names
-    expected_vertex_types = ["researchField", "author"]  # Adjust based on your schema
-    for vertex_type in expected_vertex_types:
-        assert vertex_type in vertex_types, f"Vertex type {vertex_type} not found"
+        try:
+            # Try creating researchField index job again (with graph context)
+            # This is a single-field index, so it should have been created
+            create_research_job = (
+                "USE GLOBAL\n"
+                "CREATE GLOBAL SCHEMA_CHANGE job add_researchField_id_index "
+                "{ALTER VERTEX researchField ADD INDEX researchField_id_index ON (id);}"
+            )
+            result = db_client.conn.gsql(create_research_job)
+            result_str = str(result).lower()
+            assert (
+                "already exists" in result_str
+                or "duplicate" in result_str
+                or "used by another object" in result_str
+            ), f"ResearchField index job should already exist, got: {result}"
+
+        except Exception as e:
+            # If we get an exception, check if it's an "already exists" error
+            error_str = str(e).lower()
+            if "already exists" in error_str or "duplicate" in error_str:
+                # This is actually good - it means the index exists
+                pass
+            else:
+                pytest.fail(f"Failed to verify vertex indexes: {e}")
 
 
-@pytest.mark.skip()
-def test_create_edge_index(conn_conf, schema_obj):
+def test_create_edge_index(conn_conf, schema_obj, test_graph_name):
+    """Test creating edge indexes using GSQL CREATE INDEX."""
     schema_obj = schema_obj("review")
+    schema_obj.general.name = test_graph_name
 
     with ConnectionManager(connection_config=conn_conf) as db_client:
+        # Initialize database with schema
+        db_client.init_db(schema_obj, clean_start=True)
+
+        # Define edge indexes
         db_client.define_edge_indices(
             schema_obj.edge_config.edges_list(include_aux=True)
         )
 
+    # Verify indexes were created by attempting to create them again
+    # Expected index: belongsTo with field t_obs -> "belongsTo_t_obs_index"
     with ConnectionManager(connection_config=conn_conf) as db_client:
-        # Check edge types instead of indexes
-        edge_types = db_client.conn.getEdgeTypes()
+        # Verify edge types exist
+        edge_types = db_client.conn.getEdgeTypes(force=True)
+        expected_edge_types = ["belongsTo"]
+        for edge_type in expected_edge_types:
+            assert edge_type in edge_types, f"Edge type {edge_type} not found"
 
-    # Verify expected edge types exist
-    expected_edge_types = ["belongsTo"]  # Adjust based on your schema
-    for edge_type in expected_edge_types:
-        assert edge_type in edge_types, f"Edge type {edge_type} not found"
+        # Try to create the index again using schema change job - if it exists, we should get "already exists"
+        try:
+            # Try creating belongsTo index job again (with graph context)
+            create_edge_job = (
+                "USE GLOBAL\n"
+                "CREATE GLOBAL SCHEMA_CHANGE job add_belongsTo_t_obs_index "
+                "{ALTER EDGE belongsTo ADD INDEX belongsTo_t_obs_index ON (t_obs);}"
+            )
+            result = db_client.conn.gsql(create_edge_job)
+            result_str = str(result).lower()
+            assert (
+                "already exists" in result_str
+                or "duplicate" in result_str
+                or "used by another object" in result_str
+            ), f"belongsTo index job should already exist, got: {result}"
+
+        except Exception as e:
+            # If we get an exception, check if it's an "already exists" error
+            error_str = str(e).lower()
+            if "already exists" in error_str or "duplicate" in error_str:
+                # This is actually good - it means the index exists
+                pass
+            else:
+                pytest.fail(f"Failed to verify edge indexes: {e}")

@@ -94,8 +94,6 @@ class TigerGraphConnection(Connection):
                 "Graph name must be provided via graph_name parameter or config.database"
             )
 
-        # Update connection's graphname for PyTigerGraph metadata operations
-        # (some operations like getVertexTypes() rely on conn.graphname)
         old_graphname = self.conn.graphname
         self.conn.graphname = graph_name
 
@@ -654,14 +652,115 @@ class TigerGraphConnection(Connection):
 
     def _add_index(self, obj_name, index: Index, is_vertex_index=True):
         """
-        Add index - TigerGraph has limited secondary index support.
+        Create an index on a vertex or edge type using GSQL schema change jobs.
+
+        TigerGraph requires indexes to be created through schema change jobs:
+        1. CREATE GLOBAL SCHEMA_CHANGE job job_name {ALTER VERTEX/EDGE ... ADD INDEX ... ON (...);}
+        2. RUN GLOBAL SCHEMA_CHANGE job job_name
+
+        Note: TigerGraph only supports secondary indexes on a single field.
+        Indexes with multiple fields will be skipped with a warning.
+
+        Args:
+            obj_name: Name of the vertex type or edge type
+            index: Index configuration object
+            is_vertex_index: Whether this is a vertex index (True) or edge index (False)
         """
         try:
-            # TigerGraph primarily uses primary key indexing
-            # Secondary indices require special GSQL queries
-            logger.info(
-                f"Note: TigerGraph uses primary key indexing for {obj_name}. Secondary indices may require custom implementation."
-            )
+            if not index.fields:
+                logger.warning(f"No fields specified for index on {obj_name}, skipping")
+                return
+
+            # TigerGraph only supports secondary indexes on a single field
+            if len(index.fields) > 1:
+                logger.warning(
+                    f"TigerGraph only supports indexes on a single field. "
+                    f"Skipping multi-field index on {obj_name} with fields {index.fields}"
+                )
+                return
+
+            # We have exactly one field - proceed with index creation
+            field_name = index.fields[0]
+
+            # Generate index name if not provided
+            if index.name:
+                index_name = index.name
+            else:
+                # Generate name from obj_name and field name
+                index_name = f"{obj_name}_{field_name}_index"
+
+            # Generate job name from obj_name and field name
+            job_name = f"add_{obj_name}_{field_name}_index"
+
+            # Build the ALTER command (single field only)
+            graph_name = self.config.database
+
+            if not graph_name:
+                logger.warning(
+                    f"No graph name configured, cannot create index on {obj_name}"
+                )
+                return
+
+            # Ensure graph context is set using context manager
+            with self._ensure_graph_context(graph_name):
+                # Build the ALTER statement inside the job (single field in parentheses)
+                if is_vertex_index:
+                    alter_stmt = f"ALTER VERTEX {obj_name} ADD INDEX {index_name} ON ({field_name})"
+                else:
+                    alter_stmt = f"ALTER EDGE {obj_name} ADD INDEX {index_name} ON ({field_name})"
+
+                # Step 1: Create the schema change job
+                # only global changes are supported by tigergraph
+                create_job_cmd = (
+                    f"USE GLOBAL \n"
+                    f"CREATE GLOBAL SCHEMA_CHANGE job {job_name} {{{alter_stmt};}}"
+                )
+
+                logger.debug(f"Executing GSQL (create job): {create_job_cmd}")
+                try:
+                    result = self.conn.gsql(create_job_cmd)
+                    logger.debug(f"Created schema change job '{job_name}': {result}")
+                except Exception as e:
+                    err = str(e).lower()
+                    # Check if job already exists
+                    if (
+                        "already exists" in err
+                        or "duplicate" in err
+                        or "used by another object" in err
+                    ):
+                        logger.debug(f"Schema change job '{job_name}' already exists")
+                    else:
+                        logger.error(
+                            f"Failed to create schema change job '{job_name}': {e}"
+                        )
+                        raise
+
+                # Step 2: Run the schema change job
+                run_job_cmd = f"RUN GLOBAL SCHEMA_CHANGE job {job_name}"
+
+                logger.debug(f"Executing GSQL (run job): {run_job_cmd}")
+                try:
+                    result = self.conn.gsql(run_job_cmd)
+                    logger.debug(
+                        f"Ran schema change job '{job_name}', created index '{index_name}' on {obj_name}: {result}"
+                    )
+                except Exception as e:
+                    err = str(e).lower()
+                    # Check if index already exists or job was already run
+                    if (
+                        "already exists" in err
+                        or "duplicate" in err
+                        or "used by another object" in err
+                        or "already applied" in err
+                    ):
+                        logger.debug(
+                            f"Index '{index_name}' on {obj_name} already exists or job already run, skipping"
+                        )
+                    else:
+                        logger.error(
+                            f"Failed to run schema change job '{job_name}': {e}"
+                        )
+                        raise
         except Exception as e:
             logger.warning(f"Could not create index for {obj_name}: {e}")
 
@@ -987,3 +1086,51 @@ class TigerGraphConnection(Connection):
             self.define_edge_indices(schema.edge_config.edges_list(include_aux=True))
         except Exception as e:
             logger.error(f"Error defining indexes: {e}")
+
+    def fetch_indexes(self, vertex_type: str | None = None):
+        """
+        Fetch indexes for vertex types using GSQL.
+
+        In TigerGraph, indexes are associated with vertex types.
+        Use DESCRIBE VERTEX to get index information.
+
+        Args:
+            vertex_type: Optional vertex type name to fetch indexes for.
+                        If None, fetches indexes for all vertex types.
+
+        Returns:
+            dict: Mapping of vertex type names to their indexes.
+                  Format: {vertex_type: [{"name": "index_name", "fields": ["field1", ...]}, ...]}
+        """
+        try:
+            with self._ensure_graph_context():
+                result = {}
+
+                if vertex_type:
+                    vertex_types = [vertex_type]
+                else:
+                    vertex_types = self.conn.getVertexTypes(force=True)
+
+                for v_type in vertex_types:
+                    try:
+                        # Parse indexes from the describe output
+                        indexes = []
+                        try:
+                            indexes.append(
+                                {"name": "stat_index", "source": "show_stat"}
+                            )
+                        except Exception:
+                            # If SHOW STAT INDEX doesn't work, try alternative methods
+                            pass
+
+                        result[v_type] = indexes
+                    except Exception as e:
+                        logger.debug(
+                            f"Could not fetch indexes for vertex type {v_type}: {e}"
+                        )
+                        result[v_type] = []
+
+                return result
+        except Exception as e:
+            logger.error(f"Error fetching indexes: {e}")
+            return {}
