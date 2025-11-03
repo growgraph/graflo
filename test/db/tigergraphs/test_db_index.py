@@ -18,21 +18,23 @@ def test_create_vertex_index(conn_conf, schema_obj, test_graph_name):
     # If they already exist, we'll get an "already exists" error which confirms creation
     # Note: TigerGraph only supports indexes on a single field, so multi-field indexes are skipped
     # Expected indexes:
-    # - author: skipped (multi-field index on id, full_name - not supported)
-    # - researchField: "researchField_id_index" on (id) - single field, will be created
+    # - Author: skipped (multi-field index on id, full_name - not supported)
+    # - ResearchField: "ResearchField_id_index" on (id) - single field, will be created
+    # Note: We use dbnames (Author, ResearchField) not vertex names (author, researchField)
     with ConnectionManager(connection_config=conn_conf) as db_client:
-        # Verify vertex types exist
+        # Verify vertex types exist (using dbnames)
         vertex_types = db_client.conn.getVertexTypes(force=True)
-        assert "author" in vertex_types, "Vertex type 'author' not found"
-        assert "researchField" in vertex_types, "Vertex type 'researchField' not found"
+        assert "Author" in vertex_types, "Vertex type 'Author' not found"
+        assert "ResearchField" in vertex_types, "Vertex type 'ResearchField' not found"
 
         try:
-            # Try creating researchField index job again (with graph context)
+            # Try creating ResearchField index job again (with graph context)
             # This is a single-field index, so it should have been created
+            # Using dbname "ResearchField" instead of vertex name "researchField"
             create_research_job = (
                 "USE GLOBAL\n"
-                "CREATE GLOBAL SCHEMA_CHANGE job add_researchField_id_index "
-                "{ALTER VERTEX researchField ADD INDEX researchField_id_index ON (id);}"
+                "CREATE GLOBAL SCHEMA_CHANGE job add_ResearchField_id_index "
+                "{ALTER VERTEX ResearchField ADD INDEX ResearchField_id_index ON (id);}"
             )
             result = db_client.conn.gsql(create_research_job)
             result_str = str(result).lower()

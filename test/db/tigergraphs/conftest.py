@@ -51,8 +51,9 @@ def conn_conf(test_db_port, test_gs_port, creds):
 
 @pytest.fixture()
 def clean_db(conn_conf):
+    """Fixture to clean all graphs, edges, and vertices before a test."""
     with ConnectionManager(connection_config=conn_conf) as db_client:
-        db_client.delete_collections()
+        db_client.delete_collections([], [], delete_all=True)
 
 
 @pytest.fixture(scope="function")
@@ -78,7 +79,7 @@ def test_graph_name(conn_conf):
     """Fixture providing a test graph name for TigerGraph tests with automatic cleanup.
 
     The graph name is generated with a UUID suffix to make it less conspicuous.
-    After the test completes, the graph will be automatically deleted.
+    After the test completes, the graph and all global vertex/edge types will be deleted.
 
     Note: For schema-based tests, use test_graph fixture instead and set
     schema.general.name = test_graph.
@@ -92,10 +93,11 @@ def test_graph_name(conn_conf):
 
     yield graph_name
 
-    # Cleanup: Delete the graph after the test
+    # Cleanup: Delete the graph and all global vertex/edge types after the test
     try:
         with ConnectionManager(connection_config=conn_conf) as db_client:
-            db_client.delete_database(graph_name)
+            # Delete all graphs, edges, and vertices to ensure clean state
+            db_client.delete_collections([], [], delete_all=True)
     except Exception:
         # Silently ignore cleanup errors
         pass

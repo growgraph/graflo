@@ -351,7 +351,8 @@ class TigerGraphConnection(Connection):
 
         try:
             if clean_start:
-                self.delete_database(graph_name)
+                # Delete all graphs, edges, and vertices (full teardown)
+                self.delete_collections([], [], delete_all=True)
 
             # Step 1: Create vertex and edge types globally first
             # These must exist before they can be included in CREATE GRAPH
@@ -495,12 +496,13 @@ class TigerGraphConnection(Connection):
         vertex_names = []
         for vertex in vertex_config.vertices:
             field_definitions = self._format_vertex_fields(vertex)
+            vertex_dbname = vertex_config.vertex_dbname(vertex.name)
             vindex = "(" + ", ".join(vertex_config.index(vertex.name).fields) + ")"
 
             # Create the vertex type globally (ignore if exists)
             # Vertices are global in TigerGraph, so no USE GRAPH needed
             create_vertex_cmd = (
-                f"CREATE VERTEX {vertex.name} (\n"
+                f"CREATE VERTEX {vertex_dbname} (\n"
                 f"    {field_definitions},\n"
                 f"    PRIMARY KEY {vindex}\n"
                 f') WITH STATS="OUTDEGREE_BY_EDGETYPE"'
@@ -509,14 +511,14 @@ class TigerGraphConnection(Connection):
             try:
                 result = self.conn.gsql(create_vertex_cmd)
                 logger.debug(f"Result: {result}")
-                vertex_names.append(vertex.name)
+                vertex_names.append(vertex_dbname)
             except Exception as e:
                 err = str(e).lower()
                 if "used by another object" in err or "duplicate" in err:
                     logger.debug(
-                        f"Vertex type '{vertex.name}' already exists; will include in graph"
+                        f"Vertex type '{vertex_dbname}' already exists; will include in graph"
                     )
-                    vertex_names.append(vertex.name)
+                    vertex_names.append(vertex_dbname)
                 else:
                     raise
         return vertex_names
@@ -560,7 +562,7 @@ class TigerGraphConnection(Connection):
         included in a CREATE GRAPH statement.
 
         Args:
-            edges: List of edges to create
+            edges: List of edges to create (should have _source_collection and _target_collection populated)
 
         Returns:
             list[str]: List of edge type names (relation names) that were created (or already existed)
@@ -573,8 +575,8 @@ class TigerGraphConnection(Connection):
             # Edges are global in TigerGraph, so no USE GRAPH needed
             create_edge_cmd = (
                 f"CREATE DIRECTED EDGE {edge.relation} (\n"
-                f"    FROM {edge.source},\n"
-                f"    TO {edge.target}{edge_attrs}\n"
+                f"    FROM {edge._source_collection},\n"
+                f"    TO {edge._target_collection}{edge_attrs}\n"
                 f")"
             )
             logger.debug(f"Executing GSQL: {create_edge_cmd}")
@@ -606,7 +608,7 @@ class TigerGraphConnection(Connection):
         2) Associate the edge with the graph via ALTER GRAPH <graph> ADD DIRECTED EDGE <edge>
 
         Args:
-            edges: List of edges to create
+            edges: List of edges to create (should have _source_collection and _target_collection populated)
         """
         # First create all edge types globally
         edge_names = self._create_edge_types_global(edges)
@@ -639,8 +641,9 @@ class TigerGraphConnection(Connection):
         Secondary indices are less common but can be created.
         """
         for vertex_class in vertex_config.vertex_set:
-            for index_obj in vertex_config.indexes(vertex_class):
-                self._add_index(vertex_class, index_obj)
+            vertex_dbname = vertex_config.vertex_dbname(vertex_class)
+            for index_obj in vertex_config.indexes(vertex_class)[1:]:
+                self._add_index(vertex_dbname, index_obj)
 
     def define_edge_indices(self, edges: list[Edge]):
         """Define indices for edges if specified."""
@@ -764,21 +767,305 @@ class TigerGraphConnection(Connection):
         except Exception as e:
             logger.warning(f"Could not create index for {obj_name}: {e}")
 
+    def _parse_show_edge_output(self, result_str: str) -> list[tuple[str, bool]]:
+        """
+        Parse SHOW EDGE * output to extract edge type names and direction.
+
+        Format: "- DIRECTED EDGE belongsTo(FROM Author, TO ResearchField, ...)"
+                or "- UNDIRECTED EDGE edgeName(...)"
+
+        Args:
+            result_str: String output from SHOW EDGE * GSQL command
+
+        Returns:
+            List of tuples (edge_name, is_directed)
+        """
+        edge_types = []
+        lines = result_str.split("\n")
+
+        for line in lines:
+            line = line.strip()
+            # Skip empty lines and headers
+            if not line or line.startswith("*"):
+                continue
+
+            # Remove leading "- " if present
+            if line.startswith("- "):
+                line = line[2:].strip()
+
+            # Look for "DIRECTED EDGE" or "UNDIRECTED EDGE" pattern
+            is_directed = None
+            prefix = None
+            if "DIRECTED EDGE" in line.upper():
+                prefix = "DIRECTED EDGE "
+                is_directed = True
+            elif "UNDIRECTED EDGE" in line.upper():
+                prefix = "UNDIRECTED EDGE "
+                is_directed = False
+
+            if prefix:
+                idx = line.upper().find(prefix)
+                if idx >= 0:
+                    after_prefix = line[idx + len(prefix) :].strip()
+                    # Extract name before opening parenthesis
+                    if "(" in after_prefix:
+                        edge_name = after_prefix.split("(")[0].strip()
+                        if edge_name:
+                            edge_types.append((edge_name, is_directed))
+
+        return edge_types
+
+    def _parse_show_vertex_output(self, result_str: str) -> list[str]:
+        """
+        Parse SHOW VERTEX * output to extract vertex type names.
+
+        Format: "- VERTEX Author(id STRING, full_name STRING, ..., primary key (...)) WITH STATS=..."
+
+        Args:
+            result_str: String output from SHOW VERTEX * GSQL command
+
+        Returns:
+            List of vertex type names
+        """
+        vertex_types = []
+        lines = result_str.split("\n")
+
+        for line in lines:
+            line = line.strip()
+            # Skip empty lines and headers
+            if not line or line.startswith("*"):
+                continue
+
+            # Remove leading "- " if present
+            if line.startswith("- "):
+                line = line[2:].strip()
+
+            # Look for "VERTEX" pattern
+            if line.upper().startswith("VERTEX "):
+                # Extract vertex type name (after "VERTEX" and before opening parenthesis)
+                after_vertex = line[7:].strip()  # "VERTEX " is 7 chars
+                if "(" in after_vertex:
+                    vertex_name = after_vertex.split("(")[0].strip()
+                    if vertex_name:
+                        vertex_types.append(vertex_name)
+
+        return vertex_types
+
+    def _parse_show_graph_output(self, result_str: str) -> list[str]:
+        """
+        Parse SHOW GRAPH * output to extract graph names.
+
+        Format: "- GRAPH graphName(...)" or similar
+
+        Args:
+            result_str: String output from SHOW GRAPH * GSQL command
+
+        Returns:
+            List of graph names
+        """
+        graph_names = []
+        lines = result_str.split("\n")
+
+        for line in lines:
+            line = line.strip()
+            # Skip empty lines and headers
+            if not line or line.startswith("*"):
+                continue
+
+            # Remove leading "- " if present
+            if line.startswith("- "):
+                line = line[2:].strip()
+
+            # Look for "GRAPH" pattern
+            if line.upper().startswith("GRAPH "):
+                # Extract graph name (after "GRAPH" and before opening parenthesis or whitespace)
+                after_graph = line[6:].strip()  # "GRAPH " is 6 chars
+                # Graph name is the first word (before space or parenthesis)
+                if "(" in after_graph:
+                    graph_name = after_graph.split("(")[0].strip()
+                else:
+                    # No parenthesis, take the first word
+                    graph_name = (
+                        after_graph.split()[0].strip() if after_graph.split() else None
+                    )
+
+                if graph_name:
+                    graph_names.append(graph_name)
+
+        return graph_names
+
     def delete_collections(self, cnames=(), gnames=(), delete_all=False):
-        """Delete vertex data (collections in TigerGraph terms)."""
+        """
+        Delete collections and graphs with proper teardown sequence.
+
+        Teardown order:
+        1. Drop all graphs
+        2. Drop all edge types globally
+        3. Drop all vertex types globally
+
+        Args:
+            cnames: Vertex type names to delete (not used in TigerGraph teardown)
+            gnames: Graph names to delete (if empty and delete_all=True, deletes all)
+            delete_all: If True, perform full teardown of all graphs, edges, and vertices
+        """
         try:
-            with self._ensure_graph_context():
-                if cnames:
-                    for class_name in cnames:
-                        result = self.conn.delVertices(class_name)
-                        logger.debug(f"Deleted vertices from {class_name}: {result}")
-                elif delete_all:
-                    vertex_types = self.conn.getVertexTypes()
+            if delete_all:
+                # Step 1: Drop all graphs
+                graphs_to_drop = list(gnames) if gnames else []
+
+                # If no specific graphs provided, try to discover and drop all graphs
+                if not graphs_to_drop:
+                    try:
+                        # Use GSQL to list all graphs
+                        show_graphs_cmd = "SHOW GRAPH *"
+                        result = self.conn.gsql(show_graphs_cmd)
+                        result_str = str(result)
+
+                        # Parse graph names using helper method
+                        graphs_to_drop = self._parse_show_graph_output(result_str)
+                    except Exception as e:
+                        logger.debug(f"Could not list graphs: {e}")
+                        graphs_to_drop = []
+
+                # Drop each graph
+                logger.info(
+                    f"Found {len(graphs_to_drop)} graphs to drop: {graphs_to_drop}"
+                )
+                for graph_name in graphs_to_drop:
+                    try:
+                        self.delete_database(graph_name)
+                        logger.info(f"Successfully dropped graph '{graph_name}'")
+                    except Exception as e:
+                        err_str = str(e).lower()
+                        # Check if graph doesn't exist (already dropped)
+                        if "does not exist" in err_str or "not found" in err_str:
+                            logger.debug(
+                                f"Graph '{graph_name}' already dropped or doesn't exist"
+                            )
+                        else:
+                            logger.warning(f"Failed to drop graph '{graph_name}': {e}")
+                            logger.warning(
+                                f"Error details: {type(e).__name__}: {str(e)}"
+                            )
+
+                # Step 2: Drop all edge types globally
+                # Note: Edges must be dropped before vertices due to dependencies
+                # Edges are global, so we need to query them at global level using GSQL
+                try:
+                    # Use GSQL to list all global edge types (not graph-scoped)
+                    show_edges_cmd = "SHOW EDGE *"
+                    result = self.conn.gsql(show_edges_cmd)
+                    result_str = str(result)
+
+                    # Parse edge types using helper method
+                    edge_types = self._parse_show_edge_output(result_str)
+
+                    logger.info(
+                        f"Found {len(edge_types)} edge types to drop: {[name for name, _ in edge_types]}"
+                    )
+                    for e_type, is_directed in edge_types:
+                        try:
+                            # DROP EDGE works for both directed and undirected edges
+                            drop_edge_cmd = f"DROP EDGE {e_type}"
+                            logger.debug(f"Executing: {drop_edge_cmd}")
+                            result = self.conn.gsql(drop_edge_cmd)
+                            logger.info(
+                                f"Successfully dropped edge type '{e_type}': {result}"
+                            )
+                        except Exception as e:
+                            err_str = str(e).lower()
+                            # Check if edge doesn't exist (already dropped)
+                            if "does not exist" in err_str or "not found" in err_str:
+                                logger.debug(
+                                    f"Edge type '{e_type}' already dropped or doesn't exist"
+                                )
+                            else:
+                                logger.warning(
+                                    f"Failed to drop edge type '{e_type}': {e}"
+                                )
+                                logger.warning(
+                                    f"Error details: {type(e).__name__}: {str(e)}"
+                                )
+                except Exception as e:
+                    logger.warning(f"Could not list or drop edge types: {e}")
+                    logger.warning(f"Error details: {type(e).__name__}: {str(e)}")
+
+                # Step 3: Drop all vertex types globally
+                # Vertices are dropped after edges to avoid dependency issues
+                # Vertices are global, so we need to query them at global level using GSQL
+                try:
+                    # Use GSQL to list all global vertex types (not graph-scoped)
+                    show_vertices_cmd = "SHOW VERTEX *"
+                    result = self.conn.gsql(show_vertices_cmd)
+                    result_str = str(result)
+
+                    # Parse vertex types using helper method
+                    vertex_types = self._parse_show_vertex_output(result_str)
+
+                    logger.info(
+                        f"Found {len(vertex_types)} vertex types to drop: {vertex_types}"
+                    )
                     for v_type in vertex_types:
-                        result = self.conn.delVertices(v_type)
-                        logger.debug(f"Deleted all vertices from {v_type}: {result}")
+                        try:
+                            # Clear data first to avoid dependency issues
+                            try:
+                                result = self.conn.delVertices(v_type)
+                                logger.debug(
+                                    f"Cleared data from vertex type '{v_type}': {result}"
+                                )
+                            except Exception as clear_err:
+                                logger.debug(
+                                    f"Could not clear data from vertex type '{v_type}': {clear_err}"
+                                )
+
+                            # Drop vertex type
+                            drop_vertex_cmd = f"DROP VERTEX {v_type}"
+                            logger.debug(f"Executing: {drop_vertex_cmd}")
+                            result = self.conn.gsql(drop_vertex_cmd)
+                            logger.info(
+                                f"Successfully dropped vertex type '{v_type}': {result}"
+                            )
+                        except Exception as e:
+                            err_str = str(e).lower()
+                            # Check if vertex doesn't exist (already dropped)
+                            if "does not exist" in err_str or "not found" in err_str:
+                                logger.debug(
+                                    f"Vertex type '{v_type}' already dropped or doesn't exist"
+                                )
+                            else:
+                                logger.warning(
+                                    f"Failed to drop vertex type '{v_type}': {e}"
+                                )
+                                logger.warning(
+                                    f"Error details: {type(e).__name__}: {str(e)}"
+                                )
+                except Exception as e:
+                    logger.warning(f"Could not list or drop vertex types: {e}")
+                    logger.warning(f"Error details: {type(e).__name__}: {str(e)}")
+
+            elif gnames:
+                # Drop specific graphs
+                for graph_name in gnames:
+                    try:
+                        self.delete_database(graph_name)
+                    except Exception as e:
+                        logger.error(f"Error deleting graph '{graph_name}': {e}")
+            elif cnames:
+                # Delete vertices from specific vertex types (data only, not schema)
+                with self._ensure_graph_context():
+                    for class_name in cnames:
+                        try:
+                            result = self.conn.delVertices(class_name)
+                            logger.debug(
+                                f"Deleted vertices from {class_name}: {result}"
+                            )
+                        except Exception as e:
+                            logger.error(
+                                f"Error deleting vertices from {class_name}: {e}"
+                            )
+
         except Exception as e:
-            logger.error(f"Error deleting collections: {e}")
+            logger.error(f"Error in delete_collections: {e}")
 
     def upsert_docs_batch(self, docs, class_name, match_keys, **kwargs):
         """

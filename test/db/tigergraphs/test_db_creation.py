@@ -64,9 +64,6 @@ def test_create_and_delete_database(conn_conf, test_graph_name):
         # Delete it
         db_client.delete_database(test_graph_name)
 
-        # Verify graph is gone (or cleared)
-        # The graph structure might still exist but should be empty
-
 
 def test_schema_creation(conn_conf, test_graph_name, schema_obj):
     """Test creating schema using init_db (follows ArangoDB pattern).
@@ -75,6 +72,7 @@ def test_schema_creation(conn_conf, test_graph_name, schema_obj):
     Uses schema.general.name as the graph name (from test_graph fixture).
 
     Note: In TigerGraph, vertex and edge types are global and shared between graphs.
+    The test verifies that types are created and associated with the test graph.
     The test verifies that types are created and associated with the test graph.
     """
     schema_obj = schema_obj("review")
