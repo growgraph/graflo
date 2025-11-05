@@ -1,4 +1,4 @@
-from test.conftest import ingest_atomic
+from test.conftest import ingest_atomic, fetch_schema_obj
 
 import pytest
 
@@ -20,12 +20,16 @@ def test_ingest(
 ):
     _ = clean_db
     for m in modes:
+        schema_o = fetch_schema_obj(m)
+
         ingest_atomic(
             conn_conf,
             current_path,
             test_graph_name,
+            schema_o=schema_o,
             mode=m,
         )
+
         if m == "review":
             with ConnectionManager(connection_config=conn_conf) as db_client:
                 r = db_client.fetch_docs("Author")

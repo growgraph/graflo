@@ -152,9 +152,14 @@ class TigerGraphConnection(Connection):
             logger.error(f"HTTP Error: {errh}")
             error_response = {"error": True, "message": str(errh)}
             try:
-                error_response["details"] = response.text
+                # Try to parse error response for more details
+                error_json = response.json()
+                if isinstance(error_json, dict):
+                    error_response.update(error_json)
+                else:
+                    error_response["details"] = response.text
             except Exception:
-                pass
+                error_response["details"] = response.text
             return error_response
         except requests.exceptions.ConnectionError as errc:
             logger.error(f"Error Connecting: {errc}")
@@ -1660,15 +1665,20 @@ class TigerGraphConnection(Connection):
             "insert_return_batch not supported in TigerGraph - use upsert_docs_batch instead"
         )
 
-    def _render_rest_filter(self, filters: list | dict | Clause | None) -> str:
+    def _render_rest_filter(
+        self,
+        filters: list | dict | Clause | None,
+        field_types: dict[str, FieldType] | None = None,
+    ) -> str:
         """Convert filter expressions to REST++ filter format.
 
-        REST++ filter format: "field==value" or "field>value" etc.
-        Format: field==value (no spaces, no quotes for numeric values)
-        Example: "hindex==10" or "hindex>20" (not "hindex == \"10\"")
+        REST++ filter format: "field=value" or "field>value" etc.
+        Format: fieldoperatorvalue (no spaces, quotes for string values)
+        Example: "hindex=10" or "hindex>20" or 'name="John"'
 
         Args:
             filters: Filter expression to convert
+            field_types: Optional mapping of field names to FieldType enum values
 
         Returns:
             str: REST++ filter string (empty if no filters)
@@ -1680,11 +1690,49 @@ class TigerGraphConnection(Connection):
                 ff = filters
 
             # Use ExpressionFlavor.TIGERGRAPH with empty doc_name to trigger REST++ format
-            # The onto.py filter system handles REST++ formatting when doc_name is ""
-            filter_str = ff(doc_name="", kind=ExpressionFlavor.TIGERGRAPH)
+            # Pass field_types to help with proper value quoting
+            filter_str = ff(
+                doc_name="",
+                kind=ExpressionFlavor.TIGERGRAPH,
+                field_types=field_types,
+            )
             return filter_str
         else:
             return ""
+
+    def _get_field_types_for_vertex(
+        self, vertex_name: str, vertex_config: None | VertexConfig = None
+    ) -> dict[str, FieldType] | None:
+        """Get field types for a vertex from vertex config.
+
+        Args:
+            vertex_name: Name of the vertex type (or dbname)
+            vertex_config: Vertex configuration to use for lookup
+
+        Returns:
+            dict[str, FieldType]: Mapping of field names to their FieldType enum values, or None if not available
+        """
+        if vertex_config is None:
+            return None
+
+        try:
+            # Get fields with TigerGraph defaults applied
+            fields = vertex_config.fields(
+                vertex_name,
+                with_aux=False,
+                as_names=False,
+                db_flavor=DBFlavor.TIGERGRAPH,
+            )
+            # Build field_types dict: {field_name: FieldType}
+            field_types = {}
+            for field in fields:
+                if field.type:
+                    # Convert string type to FieldType enum
+                    field_types[field.name] = FieldType(field.type)
+            return field_types if field_types else None
+        except (KeyError, ValueError):
+            # Vertex not found in config
+            return None
 
     def fetch_docs(
         self,
@@ -1693,16 +1741,22 @@ class TigerGraphConnection(Connection):
         limit: int | None = None,
         return_keys: list | None = None,
         unset_keys: list | None = None,
+        **kwargs,
     ):
         """
         Fetch documents (vertices) with filtering and projection using REST++ API.
 
         Args:
-            class_name: Vertex type name
+            class_name: Vertex type name (or dbname)
             filters: Filter expression (list, dict, or Clause)
             limit: Maximum number of documents to return
             return_keys: Keys to return (projection)
             unset_keys: Keys to exclude (projection)
+            **kwargs: Additional parameters
+                field_types: Optional mapping of field names to FieldType enum values
+                           Used to properly quote string values in filters
+                           If not provided and vertex_config is provided, will be auto-detected
+                vertex_config: Optional VertexConfig object to use for field type lookup
 
         Returns:
             list: List of fetched documents
@@ -1712,47 +1766,48 @@ class TigerGraphConnection(Connection):
             if not graph_name:
                 raise ValueError("Graph name (database) must be configured")
 
-            # Build REST++ filter string
-            filter_str = self._render_rest_filter(filters)
+            # Get field_types from kwargs or auto-detect from vertex_config
+            field_types = kwargs.get("field_types")
+            if field_types is None:
+                vertex_config = kwargs.get("vertex_config")
+                field_types = self._get_field_types_for_vertex(
+                    class_name, vertex_config
+                )
 
-            # Build REST++ API endpoint
+            # Build REST++ filter string with field type information
+            filter_str = self._render_rest_filter(filters, field_types=field_types)
+
+            # Build REST++ API endpoint with query parameters manually
             # Format: /graph/{graph_name}/vertices/{vertex_type}?filter=...&limit=...
+            # Example: /graph/g22c97325/vertices/Author?filter=hindex>20&limit=10
+            from urllib.parse import quote
+
             endpoint = f"/graph/{graph_name}/vertices/{class_name}"
-            params = {}
+            query_parts = []
 
             if filter_str:
-                params["filter"] = filter_str
+                # URL-encode the filter string to handle special characters
+                encoded_filter = quote(filter_str, safe="=<>!&|")
+                query_parts.append(f"filter={encoded_filter}")
             if limit is not None:
-                params["limit"] = str(limit)
+                query_parts.append(f"limit={limit}")
+
+            if query_parts:
+                endpoint = f"{endpoint}?{'&'.join(query_parts)}"
 
             logger.debug(f"Calling REST++ API: {endpoint}")
 
-            # Call REST++ API directly
-            response = self._call_restpp_api(endpoint, params=params)
+            # Call REST++ API directly (no params dict, we built the URL ourselves)
+            response = self._call_restpp_api(endpoint)
 
             # Parse REST++ response
-            # REST++ returns: {"version": {...}, "results": [{"v_id": "...", "attributes": {...}}, ...]}
-            result = []
-            if isinstance(response, dict):
-                if "results" in response:
-                    for vertex_data in response["results"]:
-                        # Extract vertex ID and attributes
-                        vertex_id = vertex_data.get("v_id", vertex_data.get("id"))
-                        attributes = vertex_data.get("attributes", {})
-                        doc = {**attributes, "id": vertex_id}
-                        result.append(doc)
-                elif "error" in response:
-                    raise Exception(
-                        f"REST++ API error: {response.get('message', response)}"
-                    )
-            elif isinstance(response, list):
-                # Direct list response
-                for vertex_data in response:
-                    if isinstance(vertex_data, dict):
-                        vertex_id = vertex_data.get("v_id", vertex_data.get("id"))
-                        attributes = vertex_data.get("attributes", vertex_data)
-                        doc = {**attributes, "id": vertex_id}
-                        result.append(doc)
+            result = self._parse_restpp_response(response)
+
+            # Check for errors
+            if isinstance(response, dict) and response.get("error"):
+                raise Exception(
+                    f"REST++ API error: {response.get('message', response)}"
+                )
 
             # Apply projection (client-side projection is acceptable for result formatting)
             if return_keys is not None:
@@ -1770,6 +1825,34 @@ class TigerGraphConnection(Connection):
         except Exception as e:
             logger.error(f"Error fetching documents from {class_name} via REST++: {e}")
             raise
+
+    def _parse_restpp_response(self, response: dict | list) -> list[dict]:
+        """Parse REST++ API response into list of documents.
+
+        Args:
+            response: REST++ API response (dict or list)
+
+        Returns:
+            list: List of parsed documents
+        """
+        result = []
+        if isinstance(response, dict):
+            if "results" in response:
+                for vertex_data in response["results"]:
+                    # Extract vertex ID and attributes
+                    vertex_id = vertex_data.get("v_id", vertex_data.get("id"))
+                    attributes = vertex_data.get("attributes", {})
+                    doc = {**attributes, "id": vertex_id}
+                    result.append(doc)
+        elif isinstance(response, list):
+            # Direct list response
+            for vertex_data in response:
+                if isinstance(vertex_data, dict):
+                    vertex_id = vertex_data.get("v_id", vertex_data.get("id"))
+                    attributes = vertex_data.get("attributes", vertex_data)
+                    doc = {**attributes, "id": vertex_id}
+                    result.append(doc)
+        return result
 
     def fetch_present_documents(
         self,

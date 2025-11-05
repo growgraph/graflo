@@ -17,7 +17,7 @@ import logging
 
 from graflo.architecture.edge import Edge
 from graflo.filter.onto import Clause, Expression
-from graflo.onto import DBFlavor
+from graflo.onto import ExpressionFlavor
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +80,7 @@ def render_filters(filters: None | list | dict | Clause = None, doc_name="d") ->
             ff = Expression.from_dict(filters)
         else:
             ff = filters
-        literal_condition = ff(doc_name=doc_name, kind=DBFlavor.ARANGO)
+        literal_condition = ff(doc_name=doc_name, kind=ExpressionFlavor.ARANGO)
         filter_clause = f"FILTER {literal_condition}"
     else:
         filter_clause = ""

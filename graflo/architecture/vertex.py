@@ -380,6 +380,36 @@ class VertexConfig(BaseDataclass):
         """
         return list(self._vertices_map.values())
 
+    def _get_vertex_by_name_or_dbname(self, identifier: str) -> Vertex:
+        """Get vertex by name or dbname.
+
+        Args:
+            identifier: Vertex name or dbname
+
+        Returns:
+            Vertex: The vertex object
+
+        Raises:
+            KeyError: If vertex is not found by name or dbname
+        """
+        # First try by name (most common case)
+        if identifier in self._vertices_map:
+            return self._vertices_map[identifier]
+
+        # Try by dbname
+        for vertex in self._vertices_map.values():
+            if vertex.dbname == identifier:
+                return vertex
+
+        # Not found
+        available_names = list(self._vertices_map.keys())
+        available_dbnames = [v.dbname for v in self._vertices_map.values()]
+        raise KeyError(
+            f"Vertex '{identifier}' not found by name or dbname. "
+            f"Available names: {available_names}, "
+            f"Available dbnames: {available_dbnames}"
+        )
+
     def vertex_dbname(self, vertex_name):
         """Get database name for a vertex.
 
@@ -435,7 +465,7 @@ class VertexConfig(BaseDataclass):
         """Get fields for a vertex.
 
         Args:
-            vertex_name: Name of the vertex
+            vertex_name: Name of the vertex or dbname
             with_aux: Whether to include auxiliary fields
             as_names: If True (default), return field names as strings for backward compatibility.
                      If False, return Field objects.
@@ -445,15 +475,16 @@ class VertexConfig(BaseDataclass):
         Returns:
             list[str] | list[Field]: List of field names or Field objects
         """
+        # Get vertex by name or dbname
+        vertex = self._get_vertex_by_name_or_dbname(vertex_name)
+
         # Get fields with defaults applied if db_flavor is provided
         if db_flavor is not None:
-            fields = self._vertices_map[vertex_name].get_fields_with_defaults(
-                db_flavor, with_aux=with_aux
-            )
+            fields = vertex.get_fields_with_defaults(db_flavor, with_aux=with_aux)
         elif with_aux:
-            fields = self._vertices_map[vertex_name].fields_all
+            fields = vertex.fields_all
         else:
-            fields = self._vertices_map[vertex_name].fields
+            fields = vertex.fields
 
         if as_names:
             # Return as strings for backward compatibility

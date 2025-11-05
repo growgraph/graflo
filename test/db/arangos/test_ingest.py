@@ -1,5 +1,4 @@
 from test.db.arangos.conftest import ingest_files
-
 import pytest
 
 

@@ -7,6 +7,7 @@ from suthing import ConfigFactory, FileHandle
 from graflo.db import ConnectionManager
 from graflo.filter.onto import ComparisonOperator
 from graflo.onto import AggregationType
+from test.conftest import fetch_schema_obj
 
 
 @pytest.fixture(scope="function")
@@ -99,7 +100,10 @@ def ingest_files(
 ):
     _ = create_db
     for m in modes:
-        ingest_atomic(conn_conf, current_path, test_db_name, mode=m, n_cores=n_cores)
+        schema_o = fetch_schema_obj(m)
+        ingest_atomic(
+            conn_conf, current_path, test_db_name, schema_o, mode=m, n_cores=n_cores
+        )
         verify_from_db(
             conn_conf,
             current_path,

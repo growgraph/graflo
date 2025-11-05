@@ -187,7 +187,15 @@ class Connection(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def fetch_docs(self, class_name, filters, limit, return_keys, unset_keys):
+    def fetch_docs(
+        self,
+        class_name,
+        filters,
+        limit,
+        return_keys,
+        unset_keys,
+        **kwargs,
+    ):
         """Fetch documents from a collection.
 
         Args:
@@ -196,6 +204,7 @@ class Connection(abc.ABC):
             limit: Maximum number of documents to return
             return_keys: Keys to return
             unset_keys: Keys to unset
+            **kwargs: Additional database-specific parameters (e.g., field_types for TigerGraph)
 
         Returns:
             list: Fetched documents

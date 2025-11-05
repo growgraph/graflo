@@ -579,6 +579,7 @@ class ArangoConnection(Connection):
         limit: int | None = None,
         return_keys: list | None = None,
         unset_keys: list | None = None,
+        **kwargs,
     ):
         """Fetch documents from a collection.
 

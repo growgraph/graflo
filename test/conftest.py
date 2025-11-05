@@ -51,8 +51,7 @@ def schema_obj():
     return fetch_schema_obj
 
 
-def ingest_atomic(conn_conf, current_path, test_db_name, mode, n_cores=1):
-    schema_o = fetch_schema_obj(mode)
+def ingest_atomic(conn_conf, current_path, test_db_name, schema_o, mode, n_cores=1):
     path = Path(current_path) / f"data/{mode}"
 
     conn_conf.database = test_db_name

@@ -26,6 +26,7 @@ import dataclasses
 import logging
 from abc import ABCMeta, abstractmethod
 from types import MappingProxyType
+from typing import Any
 
 from graflo.onto import BaseDataclass, BaseEnum, ExpressionFlavor
 
@@ -155,7 +156,7 @@ class LeafClause(AbsClause):
         Args:
             doc_name: Name of the document variable
             kind: Target expression flavor
-            **kwargs: Additional arguments
+            **kwargs: Additional arguments (may include field_types for REST++)
 
         Returns:
             str: Rendered clause
@@ -175,7 +176,8 @@ class LeafClause(AbsClause):
             assert self.cmp_operator is not None
             # Check if this is for REST++ API (no doc_name prefix)
             if doc_name == "":
-                return self._cast_restpp()
+                field_types = kwargs.get("field_types")
+                return self._cast_restpp(field_types=field_types)
             else:
                 return self._cast_tigergraph(doc_name)
         elif kind == ExpressionFlavor.PYTHON:
@@ -263,12 +265,15 @@ class LeafClause(AbsClause):
             lemma = f"{doc_name}.{self.field} {lemma}"
         return lemma
 
-    def _cast_restpp(self):
+    def _cast_restpp(self, field_types: dict[str, Any] | None = None):
         """Render the clause in REST++ filter format.
 
-        REST++ filter format: "field==value" or "field>value" etc.
-        Format: fieldoperatorvalue (no spaces, no quotes for numeric values)
-        Example: "hindex==10" or "hindex>20"
+        REST++ filter format: "field=value" or "field>value" etc.
+        Format: fieldoperatorvalue (no spaces, quotes for string values)
+        Example: "hindex=10" or "hindex>20" or 'name="John"'
+
+        Args:
+            field_types: Optional mapping of field names to FieldType enum values or type strings
 
         Returns:
             str: REST++ filter clause
@@ -292,24 +297,48 @@ class LeafClause(AbsClause):
         else:
             op_str = str(self.cmp_operator)
 
-        # Format value - don't quote numeric values
+        # Format value for REST++ API
+        # Use field_types to determine if value should be quoted
+        # Default: if no explicit type information, treat as string (quote it)
         value = self.value[0] if self.value else None
         if value is None:
             value_str = "null"
         elif isinstance(value, (int, float)):
+            # Numeric values: pass as string without quotes
             value_str = str(value)
         elif isinstance(value, str):
-            # Check if it's a numeric string that should be unquoted
-            try:
-                float(value)
-                value_str = value  # Use as-is without quotes (e.g., "10" -> 10)
-            except (ValueError, TypeError):
-                # It's a real string, quote it
+            # Check field type to determine if it's a string field
+            is_string_field = True  # Default: treat as string unless explicitly numeric
+            if field_types and self.field in field_types:
+                field_type = field_types[self.field]
+                # Handle FieldType enum or string type
+                if hasattr(field_type, "value"):
+                    # It's a FieldType enum
+                    field_type_str = field_type.value
+                else:
+                    # It's a string
+                    field_type_str = str(field_type).upper()
+                # Check if it's explicitly a numeric type
+                numeric_types = ("INT", "UINT", "FLOAT", "DOUBLE")
+                if field_type_str in numeric_types:
+                    # Explicitly numeric type, don't quote
+                    is_string_field = False
+                else:
+                    # Explicitly string type or other (STRING, VARCHAR, TEXT, DATETIME, BOOL, etc.)
+                    # Quote it
+                    is_string_field = True
+            # If no field_types info, default to treating as string (quote it)
+
+            if is_string_field:
                 value_str = f'"{value}"'
+            else:
+                # Numeric value (explicitly numeric type)
+                value_str = value
         else:
             value_str = str(value)
 
         # REST++ format: fieldoperatorvalue (no spaces)
+        # Example: hindex=10, hindex>20, name="John"
         return f"{self.field}{op_str}{value_str}"
 
     def _cast_python(self, **kwargs):
