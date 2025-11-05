@@ -182,7 +182,7 @@ def render_edge(
     buffer_transforms = ctx.buffer_transforms
 
     source, target = edge.source, edge.target
-    relation = None
+    relation = edge.relation
 
     # get source and target edge fields
     source_index, target_index = (

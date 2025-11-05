@@ -15,7 +15,7 @@ def test_ingest(
     modes,
     conn_conf,
     current_path,
-    test_db_name,
+    test_graph_name,
     reset,
 ):
     _ = clean_db
@@ -23,7 +23,7 @@ def test_ingest(
         ingest_atomic(
             conn_conf,
             current_path,
-            test_db_name,
+            test_graph_name,
             mode=m,
         )
         if m == "review":

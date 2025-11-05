@@ -57,24 +57,6 @@ def clean_db(conn_conf):
 
 
 @pytest.fixture(scope="function")
-def test_db_name():
-    return "tigergraph"
-
-
-# @pytest.fixture(scope="function")
-# def test_graph_name():
-#     """Fixture providing a test graph name for TigerGraph tests.
-#
-#     This name should be assigned to Schema.general.name and will be used
-#     by default for create_database/graph operations.
-#     """
-#     # Generate a less conspicuous graph name with UUID suffix
-#     graph_uuid = str(uuid.uuid4()).replace("-", "")[:8]
-#     graph_name = f"g{graph_uuid}"
-#     return graph_name
-
-
-@pytest.fixture(scope="function")
 def test_graph_name(conn_conf):
     """Fixture providing a test graph name for TigerGraph tests with automatic cleanup.
 

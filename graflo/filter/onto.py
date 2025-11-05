@@ -171,6 +171,13 @@ class LeafClause(AbsClause):
         elif kind == ExpressionFlavor.NEO4J:
             assert self.cmp_operator is not None
             return self._cast_cypher(doc_name)
+        elif kind == ExpressionFlavor.TIGERGRAPH:
+            assert self.cmp_operator is not None
+            # Check if this is for REST++ API (no doc_name prefix)
+            if doc_name == "":
+                return self._cast_restpp()
+            else:
+                return self._cast_tigergraph(doc_name)
         elif kind == ExpressionFlavor.PYTHON:
             return self._cast_python(**kwargs)
         else:
@@ -233,6 +240,78 @@ class LeafClause(AbsClause):
             lemma = f"{doc_name}.{self.field} {lemma}"
         return lemma
 
+    def _cast_tigergraph(self, doc_name):
+        """Render the clause in GSQL format.
+
+        Args:
+            doc_name: Document variable name (typically "v" for vertex)
+
+        Returns:
+            str: GSQL clause
+        """
+        const = self._cast_value()
+        # GSQL supports both == and =, but == is more common
+        if self.cmp_operator == ComparisonOperator.EQ:
+            cmp_operator = "=="
+        else:
+            cmp_operator = self.cmp_operator
+        lemma = f"{cmp_operator} {const}"
+        if self.operator is not None:
+            lemma = f"{self.operator} {lemma}"
+
+        if self.field is not None:
+            lemma = f"{doc_name}.{self.field} {lemma}"
+        return lemma
+
+    def _cast_restpp(self):
+        """Render the clause in REST++ filter format.
+
+        REST++ filter format: "field==value" or "field>value" etc.
+        Format: fieldoperatorvalue (no spaces, no quotes for numeric values)
+        Example: "hindex==10" or "hindex>20"
+
+        Returns:
+            str: REST++ filter clause
+        """
+        if not self.field:
+            return ""
+
+        # Map operator
+        if self.cmp_operator == ComparisonOperator.EQ:
+            op_str = "="
+        elif self.cmp_operator == ComparisonOperator.NEQ:
+            op_str = "!="
+        elif self.cmp_operator == ComparisonOperator.GT:
+            op_str = ">"
+        elif self.cmp_operator == ComparisonOperator.LT:
+            op_str = "<"
+        elif self.cmp_operator == ComparisonOperator.GE:
+            op_str = ">="
+        elif self.cmp_operator == ComparisonOperator.LE:
+            op_str = "<="
+        else:
+            op_str = str(self.cmp_operator)
+
+        # Format value - don't quote numeric values
+        value = self.value[0] if self.value else None
+        if value is None:
+            value_str = "null"
+        elif isinstance(value, (int, float)):
+            value_str = str(value)
+        elif isinstance(value, str):
+            # Check if it's a numeric string that should be unquoted
+            try:
+                float(value)
+                value_str = value  # Use as-is without quotes (e.g., "10" -> 10)
+            except (ValueError, TypeError):
+                # It's a real string, quote it
+                value_str = f'"{value}"'
+        else:
+            value_str = str(value)
+
+        # REST++ format: fieldoperatorvalue (no spaces)
+        return f"{self.field}{op_str}{value_str}"
+
     def _cast_python(self, **kwargs):
         """Evaluate the clause in Python.
 
@@ -284,7 +363,11 @@ class Clause(AbsClause):
         Raises:
             ValueError: If operator and dependencies don't match
         """
-        if kind == ExpressionFlavor.ARANGO or kind == ExpressionFlavor.ARANGO:
+        if kind in (
+            ExpressionFlavor.ARANGO,
+            ExpressionFlavor.NEO4J,
+            ExpressionFlavor.TIGERGRAPH,
+        ):
             return self._cast_generic(doc_name=doc_name, kind=kind)
         elif kind == ExpressionFlavor.PYTHON:
             return self._cast_python(kind=kind, **kwargs)
@@ -304,16 +387,29 @@ class Clause(AbsClause):
         """
         if len(self.deps) == 1:
             if self.operator == LogicalOperator.NOT:
-                return f"{self.operator} {self.deps[0](kind=kind, doc_name=doc_name)}"
+                result = self.deps[0](kind=kind, doc_name=doc_name)
+                # REST++ format uses ! prefix, not "NOT " prefix
+                if doc_name == "" and kind == ExpressionFlavor.TIGERGRAPH:
+                    return f"!{result}"
+                else:
+                    return f"{self.operator} {result}"
             else:
                 raise ValueError(
                     f" length of deps = {len(self.deps)} but operator is not"
                     f" {LogicalOperator.NOT}"
                 )
         else:
-            return f" {self.operator} ".join(
-                [item(kind=kind, doc_name=doc_name) for item in self.deps]
-            )
+            deps_str = [item(kind=kind, doc_name=doc_name) for item in self.deps]
+            # REST++ format uses && and || instead of AND and OR
+            if doc_name == "" and kind == ExpressionFlavor.TIGERGRAPH:
+                if self.operator == LogicalOperator.AND:
+                    return " && ".join(deps_str)
+                elif self.operator == LogicalOperator.OR:
+                    return " || ".join(deps_str)
+                else:
+                    return f" {self.operator} ".join(deps_str)
+            else:
+                return f" {self.operator} ".join(deps_str)
 
     def _cast_python(self, kind, **kwargs):
         """Evaluate the clause in Python.

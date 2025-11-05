@@ -109,7 +109,7 @@ class Schema(BaseDataclass):
         for r in self.resources:
             self._resources[r.name] = r
 
-    def fetch_resource(self, name: Optional[str] = None) -> Resource:
+    def fetch_resource(self, name: str | None = None) -> Resource:
         """Fetch a resource by name or get the first available resource.
 
         Args:

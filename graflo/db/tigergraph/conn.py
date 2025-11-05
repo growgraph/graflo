@@ -22,7 +22,12 @@ Example:
 """
 
 import contextlib
+import json
 import logging
+from typing import Any
+
+
+import requests
 
 from pyTigerGraph import TigerGraphConnection as PyTigerGraphConnection
 
@@ -32,7 +37,8 @@ from graflo.architecture.schema import Schema
 from graflo.architecture.vertex import FieldType, Vertex, VertexConfig
 from graflo.db.conn import Connection
 from graflo.db.connection.onto import TigergraphConnectionConfig
-from graflo.onto import AggregationType, DBFlavor
+from graflo.filter.onto import Clause, Expression
+from graflo.onto import AggregationType, DBFlavor, ExpressionFlavor
 from graflo.util.transform import pick_unique_dict
 
 logger = logging.getLogger(__name__)
@@ -55,8 +61,11 @@ class TigerGraphConnection(Connection):
     def __init__(self, config: TigergraphConnectionConfig):
         super().__init__()
         self.config = config
-        # If database is not set, pyTigerGraph will default to "tigergraph"
-        # We'll pass None and let it default, but will set config.database when we create graphs
+        # Store base URLs for REST++ and GSQL endpoints
+        self.restpp_url = f"{config.url_without_port}:{config.port}"
+        self.gsql_url = f"{config.url_without_port}:{config.gs_port}"
+
+        # Initialize pyTigerGraph connection for most operations
         self.conn = PyTigerGraphConnection(
             host=config.url_without_port,
             restppPort=config.port,
@@ -73,6 +82,89 @@ class TigerGraphConnection(Connection):
                 self.conn.getToken(config.secret)
             except Exception as e:
                 logger.warning(f"Failed to get authentication token: {e}")
+
+    def _get_auth_headers(self) -> dict[str, str]:
+        """Get HTTP Basic Auth headers if credentials are available.
+
+        Returns:
+            Dictionary with Authorization header if credentials exist
+        """
+        headers = {}
+        if self.config.username and self.config.password:
+            import base64
+
+            credentials = f"{self.config.username}:{self.config.password}"
+            encoded_credentials = base64.b64encode(credentials.encode()).decode()
+            headers["Authorization"] = f"Basic {encoded_credentials}"
+        return headers
+
+    def _call_restpp_api(
+        self,
+        endpoint: str,
+        method: str = "GET",
+        data: dict[str, Any] | None = None,
+        params: dict[str, str] | None = None,
+    ) -> dict[str, Any] | list[dict]:
+        """Call TigerGraph REST++ API endpoint.
+
+        Args:
+            endpoint: REST++ API endpoint (e.g., "/graph/{graph_name}/vertices/{vertex_type}")
+            method: HTTP method (GET, POST, etc.)
+            data: Optional data to send in request body (for POST)
+            params: Optional query parameters
+
+        Returns:
+            Response data (dict or list)
+        """
+        url = f"{self.restpp_url}{endpoint}"
+
+        headers = {
+            "Content-Type": "application/json",
+            **self._get_auth_headers(),
+        }
+
+        logger.debug(f"REST++ API call: {method} {url}")
+
+        try:
+            if method.upper() == "GET":
+                response = requests.get(
+                    url, headers=headers, params=params, timeout=120
+                )
+            elif method.upper() == "POST":
+                response = requests.post(
+                    url,
+                    headers=headers,
+                    data=json.dumps(data) if data else None,
+                    params=params,
+                    timeout=120,
+                )
+            elif method.upper() == "DELETE":
+                response = requests.delete(
+                    url, headers=headers, params=params, timeout=120
+                )
+            else:
+                raise ValueError(f"Unsupported HTTP method: {method}")
+
+            response.raise_for_status()
+            return response.json()
+
+        except requests.exceptions.HTTPError as errh:
+            logger.error(f"HTTP Error: {errh}")
+            error_response = {"error": True, "message": str(errh)}
+            try:
+                error_response["details"] = response.text
+            except Exception:
+                pass
+            return error_response
+        except requests.exceptions.ConnectionError as errc:
+            logger.error(f"Error Connecting: {errc}")
+            return {"error": True, "message": str(errc)}
+        except requests.exceptions.Timeout as errt:
+            logger.error(f"Timeout Error: {errt}")
+            return {"error": True, "message": str(errt)}
+        except requests.exceptions.RequestException as err:
+            logger.error(f"An unexpected error occurred: {err}")
+            return {"error": True, "message": str(err)}
 
     @contextlib.contextmanager
     def _ensure_graph_context(self, graph_name: str | None = None):
@@ -487,6 +579,12 @@ class TigerGraphConnection(Connection):
         Vertices are global in TigerGraph and must be created before they can be
         included in a CREATE GRAPH statement.
 
+        Creates vertices with composite primary keys using PRIMARY KEY syntax.
+        According to TigerGraph documentation, fields used in PRIMARY KEY must be
+        defined as regular attributes first, and they remain accessible as attributes.
+
+        Reference: https://docs.tigergraph.com/gsql-ref/4.2/ddl-and-loading/defining-a-graph-schema#_composite_key_using_primary_key
+
         Args:
             vertex_config: Vertex configuration containing vertices to create
 
@@ -501,6 +599,8 @@ class TigerGraphConnection(Connection):
 
             # Create the vertex type globally (ignore if exists)
             # Vertices are global in TigerGraph, so no USE GRAPH needed
+            # Note: Fields used in PRIMARY KEY must be defined as regular attributes first.
+            # They remain accessible as attributes automatically (no primary_id_as_attribute needed).
             create_vertex_cmd = (
                 f"CREATE VERTEX {vertex_dbname} (\n"
                 f"    {field_definitions},\n"
@@ -647,22 +747,19 @@ class TigerGraphConnection(Connection):
 
     def define_edge_indices(self, edges: list[Edge]):
         """Define indices for edges if specified."""
-        for edge in edges:
-            if hasattr(edge, "indexes"):
-                for index_obj in edge.indexes:
-                    if edge.relation:
-                        self._add_index(edge.relation, index_obj, is_vertex_index=False)
+        logger.warning("TigerGraph edge indices not implemented yet [version 4.2.2]")
 
     def _add_index(self, obj_name, index: Index, is_vertex_index=True):
         """
         Create an index on a vertex or edge type using GSQL schema change jobs.
 
         TigerGraph requires indexes to be created through schema change jobs:
-        1. CREATE GLOBAL SCHEMA_CHANGE job job_name {ALTER VERTEX/EDGE ... ADD INDEX ... ON (...);}
+        1. CREATE GLOBAL SCHEMA_CHANGE job job_name {ALTER VERTEX ... ADD INDEX ... ON (...);}
         2. RUN GLOBAL SCHEMA_CHANGE job job_name
 
         Note: TigerGraph only supports secondary indexes on a single field.
         Indexes with multiple fields will be skipped with a warning.
+        Edge indexes are not supported in TigerGraph and will be skipped with a warning.
 
         Args:
             obj_name: Name of the vertex type or edge type
@@ -670,6 +767,14 @@ class TigerGraphConnection(Connection):
             is_vertex_index: Whether this is a vertex index (True) or edge index (False)
         """
         try:
+            # TigerGraph doesn't support indexes on edges
+            if not is_vertex_index:
+                logger.warning(
+                    f"Edge indexes are not supported in TigerGraph [current version 4.2.2]"
+                    f"Skipping index creation for edge '{obj_name}' on field(s) '{index.fields}'"
+                )
+                return
+
             if not index.fields:
                 logger.warning(f"No fields specified for index on {obj_name}, skipping")
                 return
@@ -704,68 +809,111 @@ class TigerGraphConnection(Connection):
                 )
                 return
 
-            # Ensure graph context is set using context manager
-            with self._ensure_graph_context(graph_name):
-                # Build the ALTER statement inside the job (single field in parentheses)
-                if is_vertex_index:
-                    alter_stmt = f"ALTER VERTEX {obj_name} ADD INDEX {index_name} ON ({field_name})"
+            # Build the ALTER statement inside the job (single field in parentheses)
+            # Note: Only vertex indexes are supported - edge indexes are handled earlier
+            alter_stmt = (
+                f"ALTER VERTEX {obj_name} ADD INDEX {index_name} ON ({field_name})"
+            )
+
+            # Step 1: Create the schema change job
+            # only global changes are supported by tigergraph
+            create_job_cmd = (
+                f"USE GLOBAL \n"
+                f"CREATE GLOBAL SCHEMA_CHANGE job {job_name} {{{alter_stmt};}}"
+            )
+
+            logger.debug(f"Executing GSQL (create job): {create_job_cmd}")
+            try:
+                result = self.conn.gsql(create_job_cmd)
+                logger.debug(f"Created schema change job '{job_name}': {result}")
+            except Exception as e:
+                err = str(e).lower()
+                # Check if job already exists
+                if (
+                    "already exists" in err
+                    or "duplicate" in err
+                    or "used by another object" in err
+                ):
+                    logger.debug(f"Schema change job '{job_name}' already exists")
                 else:
-                    alter_stmt = f"ALTER EDGE {obj_name} ADD INDEX {index_name} ON ({field_name})"
-
-                # Step 1: Create the schema change job
-                # only global changes are supported by tigergraph
-                create_job_cmd = (
-                    f"USE GLOBAL \n"
-                    f"CREATE GLOBAL SCHEMA_CHANGE job {job_name} {{{alter_stmt};}}"
-                )
-
-                logger.debug(f"Executing GSQL (create job): {create_job_cmd}")
-                try:
-                    result = self.conn.gsql(create_job_cmd)
-                    logger.debug(f"Created schema change job '{job_name}': {result}")
-                except Exception as e:
-                    err = str(e).lower()
-                    # Check if job already exists
-                    if (
-                        "already exists" in err
-                        or "duplicate" in err
-                        or "used by another object" in err
-                    ):
-                        logger.debug(f"Schema change job '{job_name}' already exists")
-                    else:
-                        logger.error(
-                            f"Failed to create schema change job '{job_name}': {e}"
-                        )
-                        raise
-
-                # Step 2: Run the schema change job
-                run_job_cmd = f"RUN GLOBAL SCHEMA_CHANGE job {job_name}"
-
-                logger.debug(f"Executing GSQL (run job): {run_job_cmd}")
-                try:
-                    result = self.conn.gsql(run_job_cmd)
-                    logger.debug(
-                        f"Ran schema change job '{job_name}', created index '{index_name}' on {obj_name}: {result}"
+                    logger.error(
+                        f"Failed to create schema change job '{job_name}': {e}"
                     )
-                except Exception as e:
-                    err = str(e).lower()
-                    # Check if index already exists or job was already run
-                    if (
-                        "already exists" in err
-                        or "duplicate" in err
-                        or "used by another object" in err
-                        or "already applied" in err
-                    ):
-                        logger.debug(
-                            f"Index '{index_name}' on {obj_name} already exists or job already run, skipping"
-                        )
-                    else:
-                        logger.error(
-                            f"Failed to run schema change job '{job_name}': {e}"
-                        )
-                        raise
+                    raise
+
+            # Step 2: Run the schema change job
+            run_job_cmd = f"RUN GLOBAL SCHEMA_CHANGE job {job_name}"
+
+            logger.debug(f"Executing GSQL (run job): {run_job_cmd}")
+            try:
+                result = self.conn.gsql(run_job_cmd)
+                logger.debug(
+                    f"Ran schema change job '{job_name}', created index '{index_name}' on {obj_name}: {result}"
+                )
+            except Exception as e:
+                err = str(e).lower()
+                # Check if index already exists or job was already run
+                if (
+                    "already exists" in err
+                    or "duplicate" in err
+                    or "used by another object" in err
+                    or "already applied" in err
+                ):
+                    logger.debug(
+                        f"Index '{index_name}' on {obj_name} already exists or job already run, skipping"
+                    )
+                else:
+                    logger.error(f"Failed to run schema change job '{job_name}': {e}")
+                    raise
         except Exception as e:
             logger.warning(f"Could not create index for {obj_name}: {e}")
+
+    def _parse_show_output(self, result_str: str, prefix: str) -> list[str]:
+        """
+        Generic parser for SHOW * output commands.
+
+        Extracts names from lines matching the pattern: "- PREFIX name(...)"
+
+        Args:
+            result_str: String output from SHOW * GSQL command
+            prefix: The prefix to look for (e.g., "VERTEX", "GRAPH", "JOB")
+
+        Returns:
+            List of extracted names
+        """
+        names = []
+        lines = result_str.split("\n")
+
+        for line in lines:
+            line = line.strip()
+            # Skip empty lines and headers
+            if not line or line.startswith("*"):
+                continue
+
+            # Remove leading "- " if present
+            if line.startswith("- "):
+                line = line[2:].strip()
+
+            # Look for prefix pattern
+            prefix_upper = prefix.upper()
+            if line.upper().startswith(f"{prefix_upper} "):
+                # Extract name (after prefix and before opening parenthesis or whitespace)
+                after_prefix = line[len(prefix_upper) + 1 :].strip()
+                # Name is the first word (before space or parenthesis)
+                if "(" in after_prefix:
+                    name = after_prefix.split("(")[0].strip()
+                else:
+                    # No parenthesis, take the first word
+                    name = (
+                        after_prefix.split()[0].strip()
+                        if after_prefix.split()
+                        else None
+                    )
+
+                if name:
+                    names.append(name)
+
+        return names
 
     def _parse_show_edge_output(self, result_str: str) -> list[tuple[str, bool]]:
         """
@@ -815,84 +963,44 @@ class TigerGraphConnection(Connection):
 
         return edge_types
 
-    def _parse_show_vertex_output(self, result_str: str) -> list[str]:
+    def _is_not_found_error(self, error: Exception | str) -> bool:
         """
-        Parse SHOW VERTEX * output to extract vertex type names.
-
-        Format: "- VERTEX Author(id STRING, full_name STRING, ..., primary key (...)) WITH STATS=..."
+        Check if an error indicates that an object doesn't exist.
 
         Args:
-            result_str: String output from SHOW VERTEX * GSQL command
+            error: Exception object or error string
 
         Returns:
-            List of vertex type names
+            True if the error indicates "not found" or "does not exist"
         """
-        vertex_types = []
-        lines = result_str.split("\n")
+        err_str = str(error).lower()
+        return "does not exist" in err_str or "not found" in err_str
 
-        for line in lines:
-            line = line.strip()
-            # Skip empty lines and headers
-            if not line or line.startswith("*"):
-                continue
+    def _clean_document(self, doc: dict[str, Any]) -> dict[str, Any]:
+        """
+        Remove internal keys that shouldn't be stored in the database.
 
-            # Remove leading "- " if present
-            if line.startswith("- "):
-                line = line[2:].strip()
+        Removes keys starting with "_" except "_key".
 
-            # Look for "VERTEX" pattern
-            if line.upper().startswith("VERTEX "):
-                # Extract vertex type name (after "VERTEX" and before opening parenthesis)
-                after_vertex = line[7:].strip()  # "VERTEX " is 7 chars
-                if "(" in after_vertex:
-                    vertex_name = after_vertex.split("(")[0].strip()
-                    if vertex_name:
-                        vertex_types.append(vertex_name)
+        Args:
+            doc: Document dictionary to clean
 
-        return vertex_types
+        Returns:
+            Cleaned document dictionary
+        """
+        return {k: v for k, v in doc.items() if not k.startswith("_") or k == "_key"}
+
+    def _parse_show_vertex_output(self, result_str: str) -> list[str]:
+        """Parse SHOW VERTEX * output to extract vertex type names."""
+        return self._parse_show_output(result_str, "VERTEX")
 
     def _parse_show_graph_output(self, result_str: str) -> list[str]:
-        """
-        Parse SHOW GRAPH * output to extract graph names.
+        """Parse SHOW GRAPH * output to extract graph names."""
+        return self._parse_show_output(result_str, "GRAPH")
 
-        Format: "- GRAPH graphName(...)" or similar
-
-        Args:
-            result_str: String output from SHOW GRAPH * GSQL command
-
-        Returns:
-            List of graph names
-        """
-        graph_names = []
-        lines = result_str.split("\n")
-
-        for line in lines:
-            line = line.strip()
-            # Skip empty lines and headers
-            if not line or line.startswith("*"):
-                continue
-
-            # Remove leading "- " if present
-            if line.startswith("- "):
-                line = line[2:].strip()
-
-            # Look for "GRAPH" pattern
-            if line.upper().startswith("GRAPH "):
-                # Extract graph name (after "GRAPH" and before opening parenthesis or whitespace)
-                after_graph = line[6:].strip()  # "GRAPH " is 6 chars
-                # Graph name is the first word (before space or parenthesis)
-                if "(" in after_graph:
-                    graph_name = after_graph.split("(")[0].strip()
-                else:
-                    # No parenthesis, take the first word
-                    graph_name = (
-                        after_graph.split()[0].strip() if after_graph.split() else None
-                    )
-
-                if graph_name:
-                    graph_names.append(graph_name)
-
-        return graph_names
+    def _parse_show_job_output(self, result_str: str) -> list[str]:
+        """Parse SHOW JOB * output to extract job names."""
+        return self._parse_show_output(result_str, "JOB")
 
     def delete_collections(self, cnames=(), gnames=(), delete_all=False):
         """
@@ -902,11 +1010,12 @@ class TigerGraphConnection(Connection):
         1. Drop all graphs
         2. Drop all edge types globally
         3. Drop all vertex types globally
+        4. Drop all jobs globally
 
         Args:
             cnames: Vertex type names to delete (not used in TigerGraph teardown)
             gnames: Graph names to delete (if empty and delete_all=True, deletes all)
-            delete_all: If True, perform full teardown of all graphs, edges, and vertices
+            delete_all: If True, perform full teardown of all graphs, edges, vertices, and jobs
         """
         try:
             if delete_all:
@@ -936,9 +1045,7 @@ class TigerGraphConnection(Connection):
                         self.delete_database(graph_name)
                         logger.info(f"Successfully dropped graph '{graph_name}'")
                     except Exception as e:
-                        err_str = str(e).lower()
-                        # Check if graph doesn't exist (already dropped)
-                        if "does not exist" in err_str or "not found" in err_str:
+                        if self._is_not_found_error(e):
                             logger.debug(
                                 f"Graph '{graph_name}' already dropped or doesn't exist"
                             )
@@ -973,9 +1080,7 @@ class TigerGraphConnection(Connection):
                                 f"Successfully dropped edge type '{e_type}': {result}"
                             )
                         except Exception as e:
-                            err_str = str(e).lower()
-                            # Check if edge doesn't exist (already dropped)
-                            if "does not exist" in err_str or "not found" in err_str:
+                            if self._is_not_found_error(e):
                                 logger.debug(
                                     f"Edge type '{e_type}' already dropped or doesn't exist"
                                 )
@@ -1026,9 +1131,7 @@ class TigerGraphConnection(Connection):
                                 f"Successfully dropped vertex type '{v_type}': {result}"
                             )
                         except Exception as e:
-                            err_str = str(e).lower()
-                            # Check if vertex doesn't exist (already dropped)
-                            if "does not exist" in err_str or "not found" in err_str:
+                            if self._is_not_found_error(e):
                                 logger.debug(
                                     f"Vertex type '{v_type}' already dropped or doesn't exist"
                                 )
@@ -1041,6 +1144,43 @@ class TigerGraphConnection(Connection):
                                 )
                 except Exception as e:
                     logger.warning(f"Could not list or drop vertex types: {e}")
+                    logger.warning(f"Error details: {type(e).__name__}: {str(e)}")
+
+                # Step 4: Drop all jobs globally
+                # Jobs are dropped last since they may reference schema objects
+                try:
+                    # Use GSQL to list all global jobs
+                    show_jobs_cmd = "SHOW JOB *"
+                    result = self.conn.gsql(show_jobs_cmd)
+                    result_str = str(result)
+
+                    # Parse job names using helper method
+                    job_names = self._parse_show_job_output(result_str)
+
+                    logger.info(f"Found {len(job_names)} jobs to drop: {job_names}")
+                    for job_name in job_names:
+                        try:
+                            # Drop job
+                            # Jobs can be of different types (SCHEMA_CHANGE, LOADING, etc.)
+                            # DROP JOB works for all job types
+                            drop_job_cmd = f"DROP JOB {job_name}"
+                            logger.debug(f"Executing: {drop_job_cmd}")
+                            result = self.conn.gsql(drop_job_cmd)
+                            logger.info(
+                                f"Successfully dropped job '{job_name}': {result}"
+                            )
+                        except Exception as e:
+                            if self._is_not_found_error(e):
+                                logger.debug(
+                                    f"Job '{job_name}' already dropped or doesn't exist"
+                                )
+                            else:
+                                logger.warning(f"Failed to drop job '{job_name}': {e}")
+                                logger.warning(
+                                    f"Error details: {type(e).__name__}: {str(e)}"
+                                )
+                except Exception as e:
+                    logger.warning(f"Could not list or drop jobs: {e}")
                     logger.warning(f"Error details: {type(e).__name__}: {str(e)}")
 
             elif gnames:
@@ -1067,9 +1207,135 @@ class TigerGraphConnection(Connection):
         except Exception as e:
             logger.error(f"Error in delete_collections: {e}")
 
+    def _generate_upsert_payload(
+        self, data: list[dict[str, Any]], vname: str, vindex: tuple[str, ...]
+    ) -> dict[str, Any]:
+        """
+        Transforms a list of dictionaries into the TigerGraph REST++ batch upsert JSON format.
+
+        The composite Primary ID is created by concatenating the values of the fields
+        specified in vindex with an underscore '_'. Index fields are included in the
+        vertex attributes since PRIMARY KEY fields are automatically accessible as
+        attributes in TigerGraph queries.
+
+        Attribute values are wrapped in {"value": ...} format as required by TigerGraph REST++ API.
+
+        Args:
+            data: List of document dictionaries to upsert
+            vname: Target vertex name
+            vindex: Tuple of index fields used to create the composite Primary ID
+
+        Returns:
+            Dictionary in TigerGraph REST++ batch upsert format:
+            {"vertices": {vname: {vertex_id: {attr_name: {"value": attr_value}, ...}}}}
+        """
+        # Initialize the required JSON structure for vertices
+        payload: dict[str, Any] = {"vertices": {vname: {}}}
+        vertex_map = payload["vertices"][vname]
+
+        for record in data:
+            try:
+                # 1. Calculate the Composite Primary ID
+                # Assumes all index keys exist in the record
+                primary_id_components = [str(record[key]) for key in vindex]
+                vertex_id = "_".join(primary_id_components)
+
+                # 2. Clean the record (remove internal keys that shouldn't be stored)
+                clean_record = self._clean_document(record)
+
+                # 3. Keep index fields in attributes
+                # When using PRIMARY KEY (composite keys), the key fields are automatically
+                # accessible as attributes in queries, so we include them in the payload
+
+                # 4. Format attributes for TigerGraph REST++ API
+                # TigerGraph requires attribute values to be wrapped in {"value": ...}
+                formatted_attributes = {
+                    k: {"value": v} for k, v in clean_record.items()
+                }
+
+                # 5. Add the record attributes to the map using the composite ID as the key
+                vertex_map[vertex_id] = formatted_attributes
+
+            except KeyError as e:
+                logger.warning(
+                    f"Record is missing a required index field: {e}. Skipping record: {record}"
+                )
+                continue
+
+        return payload
+
+    def _upsert_data(
+        self,
+        payload: dict[str, Any],
+        host: str,
+        graph_name: str,
+        username: str | None = None,
+        password: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Sends the generated JSON payload to the TigerGraph REST++ upsert endpoint.
+
+        Args:
+            payload: The JSON payload in TigerGraph REST++ format
+            host: Base host URL (e.g., "http://localhost:9000")
+            graph_name: Name of the graph
+            username: Optional username for authentication
+            password: Optional password for authentication
+
+        Returns:
+            Dictionary containing the response from TigerGraph
+        """
+        url = f"{host}/graph/{graph_name}"
+
+        headers = {
+            "Content-Type": "application/json",
+        }
+
+        logger.debug(f"Attempting batch upsert to: {url}")
+
+        try:
+            # Use HTTP Basic Auth if username and password are provided
+            auth = None
+            if username and password:
+                auth = (username, password)
+
+            response = requests.post(
+                url,
+                headers=headers,
+                data=json.dumps(payload),
+                auth=auth,
+                # Increase timeout for large batches
+                timeout=120,
+            )
+            response.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
+
+            # TigerGraph response is a JSON object
+            return response.json()
+
+        except requests.exceptions.HTTPError as errh:
+            logger.error(f"HTTP Error: {errh}")
+            error_details = ""
+            try:
+                error_details = response.text
+            except Exception:
+                pass
+            return {"error": True, "message": str(errh), "details": error_details}
+        except requests.exceptions.ConnectionError as errc:
+            logger.error(f"Error Connecting: {errc}")
+            return {"error": True, "message": str(errc)}
+        except requests.exceptions.Timeout as errt:
+            logger.error(f"Timeout Error: {errt}")
+            return {"error": True, "message": str(errt)}
+        except requests.exceptions.RequestException as err:
+            logger.error(f"An unexpected error occurred: {err}")
+            return {"error": True, "message": str(err)}
+
     def upsert_docs_batch(self, docs, class_name, match_keys, **kwargs):
         """
-        Batch upsert documents as vertices.
+        Batch upsert documents as vertices using TigerGraph REST++ API.
+
+        Creates a GSQL job and formats the payload for batch upsert operations.
+        Uses composite Primary IDs constructed from match_keys.
         """
         dry = kwargs.pop("dry", False)
         if dry:
@@ -1077,24 +1343,40 @@ class TigerGraphConnection(Connection):
             return
 
         try:
-            # Prepare vertices data for pyTigerGraph format
-            vertices_data = []
-            for doc in docs:
-                vertex_id = self._extract_id(doc, match_keys)
-                if vertex_id:
-                    # Remove internal keys that shouldn't be stored
-                    clean_doc = {
-                        k: v
-                        for k, v in doc.items()
-                        if not k.startswith("_") or k == "_key"
-                    }
-                    vertices_data.append({vertex_id: clean_doc})
+            # Convert match_keys to tuple if it's a list
+            vindex = tuple(match_keys) if isinstance(match_keys, list) else match_keys
 
-            # Batch upsert vertices
-            if vertices_data:
-                result = self.conn.upsertVertices(class_name, vertices_data)
+            # Generate the upsert payload
+            payload = self._generate_upsert_payload(docs, class_name, vindex)
+
+            # Check if payload has any vertices
+            if not payload.get("vertices", {}).get(class_name):
+                logger.warning(f"No valid vertices to upsert for {class_name}")
+                return
+
+            # Build REST++ endpoint URL
+            host = f"{self.config.url_without_port}:{self.config.port}"
+            graph_name = self.config.database
+
+            # Send the upsert request with username/password authentication
+            result = self._upsert_data(
+                payload,
+                host,
+                graph_name,
+                username=self.config.username,
+                password=self.config.password,
+            )
+
+            if result.get("error"):
+                logger.error(
+                    f"Error upserting vertices to {class_name}: {result.get('message')}"
+                )
+                # Fallback to individual operations
+                self._fallback_individual_upsert(docs, class_name, match_keys)
+            else:
+                num_vertices = len(payload["vertices"][class_name])
                 logger.debug(
-                    f"Upserted {len(vertices_data)} vertices to {class_name}: {result}"
+                    f"Upserted {num_vertices} vertices to {class_name}: {result}"
                 )
                 return result
 
@@ -1109,14 +1391,100 @@ class TigerGraphConnection(Connection):
             try:
                 vertex_id = self._extract_id(doc, match_keys)
                 if vertex_id:
-                    clean_doc = {
-                        k: v
-                        for k, v in doc.items()
-                        if not k.startswith("_") or k == "_key"
-                    }
+                    clean_doc = self._clean_document(doc)
                     self.conn.upsertVertex(class_name, vertex_id, clean_doc)
             except Exception as e:
                 logger.error(f"Error upserting individual vertex {vertex_id}: {e}")
+
+    def _generate_edge_upsert_payload(
+        self,
+        edges_data: list[tuple[dict, dict, dict]],
+        source_class: str,
+        target_class: str,
+        edge_type: str,
+        match_keys_source: tuple[str, ...],
+        match_keys_target: tuple[str, ...],
+    ) -> dict[str, Any]:
+        """
+        Transforms edge data into the TigerGraph REST++ batch upsert JSON format.
+
+        Args:
+            edges_data: List of tuples (source_doc, target_doc, edge_props)
+            source_class: Source vertex type name
+            target_class: Target vertex type name
+            edge_type: Edge type/relation name
+            match_keys_source: Tuple of index fields for source vertex
+            match_keys_target: Tuple of index fields for target vertex
+
+        Returns:
+            Dictionary in TigerGraph REST++ batch upsert format for edges
+        """
+        # Initialize the required JSON structure for edges
+        payload: dict[str, Any] = {"edges": {source_class: {}}}
+        source_map = payload["edges"][source_class]
+
+        for source_doc, target_doc, edge_props in edges_data:
+            try:
+                # Extract source ID (composite if needed)
+                if isinstance(match_keys_source, tuple) and len(match_keys_source) > 1:
+                    source_id_components = [
+                        str(source_doc[key]) for key in match_keys_source
+                    ]
+                    source_id = "_".join(source_id_components)
+                else:
+                    source_id = self._extract_id(source_doc, match_keys_source)
+
+                # Extract target ID (composite if needed)
+                if isinstance(match_keys_target, tuple) and len(match_keys_target) > 1:
+                    target_id_components = [
+                        str(target_doc[key]) for key in match_keys_target
+                    ]
+                    target_id = "_".join(target_id_components)
+                else:
+                    target_id = self._extract_id(target_doc, match_keys_target)
+
+                if not source_id or not target_id:
+                    logger.warning(
+                        f"Missing source_id ({source_id}) or target_id ({target_id}) for edge"
+                    )
+                    continue
+
+                # Initialize source vertex entry if not exists
+                if source_id not in source_map:
+                    source_map[source_id] = {edge_type: {}}
+
+                # Initialize edge type entry if not exists
+                if edge_type not in source_map[source_id]:
+                    source_map[source_id][edge_type] = {}
+
+                # Initialize target vertex type entry if not exists
+                if target_class not in source_map[source_id][edge_type]:
+                    source_map[source_id][edge_type][target_class] = {}
+
+                # Format edge attributes for TigerGraph REST++ API
+                # Clean edge properties (remove internal keys)
+                clean_edge_props = self._clean_document(edge_props)
+
+                # Format attributes with {"value": ...} wrapper
+                formatted_attributes = {
+                    k: {"value": v} for k, v in clean_edge_props.items()
+                }
+
+                # Add target vertex with edge attributes under target vertex type
+                source_map[source_id][edge_type][target_class][target_id] = (
+                    formatted_attributes
+                )
+
+            except KeyError as e:
+                logger.warning(
+                    f"Edge is missing a required field: {e}. Skipping edge: {source_doc}, {target_doc}"
+                )
+                continue
+            except Exception as e:
+                logger.error(f"Error processing edge: {e}")
+                continue
+
+        return payload
 
     def insert_edges_batch(
         self,
@@ -1135,7 +1503,26 @@ class TigerGraphConnection(Connection):
         **kwargs,
     ):
         """
-        Batch insert edges with proper error handling.
+        Batch insert/upsert edges using TigerGraph REST++ API.
+
+        Handles edge data in tuple format: [(source_doc, target_doc, edge_props), ...]
+        or dict format: [{"_source_aux": {...}, "_target_aux": {...}, "_edge_props": {...}}, ...]
+
+        Args:
+            docs_edges: List of edge documents (tuples or dicts)
+            source_class: Source vertex type name
+            target_class: Target vertex type name
+            relation_name: Edge type/relation name
+            collection_name: Alternative edge collection name (used if relation_name is None)
+            match_keys_source: Keys to match source vertices
+            match_keys_target: Keys to match target vertices
+            filter_uniques: If True, filter duplicate edges
+            uniq_weight_fields: Fields to consider for uniqueness (not used in TigerGraph)
+            uniq_weight_collections: Collections to consider for uniqueness (not used in TigerGraph)
+            upsert_option: If True, use upsert (default behavior in TigerGraph)
+            head: Optional limit on number of edges to insert
+            **kwargs: Additional options:
+                - dry: If True, don't execute the query
         """
         dry = kwargs.pop("dry", False)
         if dry:
@@ -1149,42 +1536,97 @@ class TigerGraphConnection(Connection):
             if filter_uniques:
                 docs_edges = pick_unique_dict(docs_edges)
 
-        edges_data = []
-        for edge_doc in docs_edges:
+        # Normalize edge data format - handle both tuple and dict formats
+        normalized_edges = []
+        for edge_item in docs_edges:
             try:
-                source_doc = edge_doc.get("_source_aux", {})
-                target_doc = edge_doc.get("_target_aux", {})
-                edge_props = edge_doc.get("_edge_props", {})
-
-                source_id = self._extract_id(source_doc, match_keys_source)
-                target_id = self._extract_id(target_doc, match_keys_target)
-
-                if source_id and target_id:
-                    edges_data.append((source_id, target_id, edge_props))
+                if isinstance(edge_item, tuple) and len(edge_item) == 3:
+                    # Tuple format: (source_doc, target_doc, edge_props)
+                    source_doc, target_doc, edge_props = edge_item
+                    normalized_edges.append((source_doc, target_doc, edge_props))
+                elif isinstance(edge_item, dict):
+                    # Dict format: {"_source_aux": {...}, "_target_aux": {...}, "_edge_props": {...}}
+                    source_doc = edge_item.get("_source_aux", {})
+                    target_doc = edge_item.get("_target_aux", {})
+                    edge_props = edge_item.get("_edge_props", {})
+                    normalized_edges.append((source_doc, target_doc, edge_props))
                 else:
-                    logger.warning(
-                        f"Missing source_id ({source_id}) or target_id ({target_id}) for edge"
-                    )
-
+                    logger.warning(f"Unexpected edge format: {edge_item}")
             except Exception as e:
-                logger.error(f"Error processing edge document: {e}")
+                logger.error(f"Error normalizing edge item: {e}")
+                continue
 
-        # Batch insert edges
-        if edges_data:
-            try:
-                edge_type = relation_name or collection_name
-                result = self.conn.upsertEdges(
-                    source_class,
-                    edge_type,
-                    target_class,
-                    edges_data,
+        if not normalized_edges:
+            logger.warning("No valid edges to insert")
+            return
+
+        try:
+            # Convert match_keys to tuples if they're lists
+            match_keys_src = (
+                tuple(match_keys_source)
+                if isinstance(match_keys_source, list)
+                else match_keys_source
+            )
+            match_keys_tgt = (
+                tuple(match_keys_target)
+                if isinstance(match_keys_target, list)
+                else match_keys_target
+            )
+
+            edge_type = relation_name or collection_name
+            if not edge_type:
+                logger.error(
+                    "Edge type must be specified via relation_name or collection_name"
                 )
+                return
+
+            # Generate the edge upsert payload
+            payload = self._generate_edge_upsert_payload(
+                normalized_edges,
+                source_class,
+                target_class,
+                edge_type,
+                match_keys_src,
+                match_keys_tgt,
+            )
+
+            # Check if payload has any edges
+            source_vertices = payload.get("edges", {}).get(source_class, {})
+            if not source_vertices:
+                logger.warning(f"No valid edges to upsert for edge type {edge_type}")
+                return
+
+            # Build REST++ endpoint URL
+            host = f"{self.config.url_without_port}:{self.config.port}"
+            graph_name = self.config.database
+
+            # Send the upsert request with username/password authentication
+            result = self._upsert_data(
+                payload,
+                host,
+                graph_name,
+                username=self.config.username,
+                password=self.config.password,
+            )
+
+            if result.get("error"):
+                logger.error(
+                    f"Error upserting edges of type {edge_type}: {result.get('message')}"
+                )
+            else:
+                # Count edges in payload
+                edge_count = 0
+                for source_edges in source_vertices.values():
+                    if edge_type in source_edges:
+                        if target_class in source_edges[edge_type]:
+                            edge_count += len(source_edges[edge_type][target_class])
                 logger.debug(
-                    f"Inserted {len(edges_data)} edges of type {edge_type}: {result}"
+                    f"Upserted {edge_count} edges of type {edge_type}: {result}"
                 )
                 return result
-            except Exception as e:
-                logger.error(f"Error batch inserting edges: {e}")
+
+        except Exception as e:
+            logger.error(f"Error batch inserting edges: {e}")
 
     def _extract_id(self, doc, match_keys):
         """
@@ -1218,57 +1660,116 @@ class TigerGraphConnection(Connection):
             "insert_return_batch not supported in TigerGraph - use upsert_docs_batch instead"
         )
 
+    def _render_rest_filter(self, filters: list | dict | Clause | None) -> str:
+        """Convert filter expressions to REST++ filter format.
+
+        REST++ filter format: "field==value" or "field>value" etc.
+        Format: field==value (no spaces, no quotes for numeric values)
+        Example: "hindex==10" or "hindex>20" (not "hindex == \"10\"")
+
+        Args:
+            filters: Filter expression to convert
+
+        Returns:
+            str: REST++ filter string (empty if no filters)
+        """
+        if filters is not None:
+            if not isinstance(filters, Clause):
+                ff = Expression.from_dict(filters)
+            else:
+                ff = filters
+
+            # Use ExpressionFlavor.TIGERGRAPH with empty doc_name to trigger REST++ format
+            # The onto.py filter system handles REST++ formatting when doc_name is ""
+            filter_str = ff(doc_name="", kind=ExpressionFlavor.TIGERGRAPH)
+            return filter_str
+        else:
+            return ""
+
     def fetch_docs(
         self,
         class_name,
-        filters: list | dict | None = None,
+        filters: list | dict | Clause | None = None,
         limit: int | None = None,
         return_keys: list | None = None,
         unset_keys: list | None = None,
     ):
         """
-        Fetch documents (vertices) with filtering and projection.
+        Fetch documents (vertices) with filtering and projection using REST++ API.
+
+        Args:
+            class_name: Vertex type name
+            filters: Filter expression (list, dict, or Clause)
+            limit: Maximum number of documents to return
+            return_keys: Keys to return (projection)
+            unset_keys: Keys to exclude (projection)
+
+        Returns:
+            list: List of fetched documents
         """
         try:
-            # Get vertices using pyTigerGraph
-            vertices = self.conn.getVertices(class_name, limit=limit)
+            graph_name = self.config.database
+            if not graph_name:
+                raise ValueError("Graph name (database) must be configured")
 
+            # Build REST++ filter string
+            filter_str = self._render_rest_filter(filters)
+
+            # Build REST++ API endpoint
+            # Format: /graph/{graph_name}/vertices/{vertex_type}?filter=...&limit=...
+            endpoint = f"/graph/{graph_name}/vertices/{class_name}"
+            params = {}
+
+            if filter_str:
+                params["filter"] = filter_str
+            if limit is not None:
+                params["limit"] = str(limit)
+
+            logger.debug(f"Calling REST++ API: {endpoint}")
+
+            # Call REST++ API directly
+            response = self._call_restpp_api(endpoint, params=params)
+
+            # Parse REST++ response
+            # REST++ returns: {"version": {...}, "results": [{"v_id": "...", "attributes": {...}}, ...]}
             result = []
-            for vertex_id, vertex_data in vertices.items():
-                # Extract attributes
-                attributes = vertex_data.get("attributes", {})
-                doc = {**attributes, "_key": vertex_id}
+            if isinstance(response, dict):
+                if "results" in response:
+                    for vertex_data in response["results"]:
+                        # Extract vertex ID and attributes
+                        vertex_id = vertex_data.get("v_id", vertex_data.get("id"))
+                        attributes = vertex_data.get("attributes", {})
+                        doc = {**attributes, "id": vertex_id}
+                        result.append(doc)
+                elif "error" in response:
+                    raise Exception(
+                        f"REST++ API error: {response.get('message', response)}"
+                    )
+            elif isinstance(response, list):
+                # Direct list response
+                for vertex_data in response:
+                    if isinstance(vertex_data, dict):
+                        vertex_id = vertex_data.get("v_id", vertex_data.get("id"))
+                        attributes = vertex_data.get("attributes", vertex_data)
+                        doc = {**attributes, "id": vertex_id}
+                        result.append(doc)
 
-                # Apply filters (client-side for now)
-                if filters and not self._matches_filters(doc, filters):
-                    continue
-
-                # Apply projection
-                if return_keys is not None:
-                    doc = {k: doc.get(k) for k in return_keys if k in doc}
-                elif unset_keys is not None:
-                    doc = {k: v for k, v in doc.items() if k not in unset_keys}
-
-                result.append(doc)
-
-                # Apply limit after filtering
-                if limit and len(result) >= limit:
-                    break
+            # Apply projection (client-side projection is acceptable for result formatting)
+            if return_keys is not None:
+                result = [
+                    {k: doc.get(k) for k in return_keys if k in doc} for doc in result
+                ]
+            elif unset_keys is not None:
+                result = [
+                    {k: v for k, v in doc.items() if k not in unset_keys}
+                    for doc in result
+                ]
 
             return result
 
         except Exception as e:
-            logger.error(f"Error fetching documents from {class_name}: {e}")
-            return []
-
-    def _matches_filters(self, doc, filters):
-        """Simple client-side filtering."""
-        if isinstance(filters, dict):
-            for key, value in filters.items():
-                if doc.get(key) != value:
-                    return False
-        # For list filters, would need more complex logic
-        return True
+            logger.error(f"Error fetching documents from {class_name} via REST++: {e}")
+            raise
 
     def fetch_present_documents(
         self,
@@ -1298,7 +1799,7 @@ class TigerGraphConnection(Connection):
                         filtered_doc = {}
 
                         for key in keep_keys:
-                            if key == "_key":
+                            if key == "id":
                                 filtered_doc[key] = vertex_id
                             elif key in vertex_attrs:
                                 filtered_doc[key] = vertex_attrs[key]
