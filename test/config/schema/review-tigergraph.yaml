@@ -1,0 +1,43 @@
+general:
+    name: review
+resources:
+-   resource_name: authors
+    apply:
+    -   vertex: author
+    -   vertex: researchField
+    -   map:
+            author_id: id
+            FullName: full_name
+            HIndex: hindex
+    -   target_vertex: researchField
+        map:
+            research_sector: id
+vertex_config:
+    db_flavor: neo4j
+    vertices:
+    -   name: author
+        dbname: Author
+        fields:
+        -   id
+        -   full_name
+        -   hindex
+        indexes:
+        -   fields:
+            -   id
+    -   name: researchField
+        dbname: ResearchField
+        fields:
+        -   id
+        -   name
+        -   level
+        indexes:
+        -   fields:
+            -   id
+edge_config:
+    edges:
+    -   source: author
+        target: researchField
+        relation: belongsTo
+        indexes:
+        -   fields:
+            -   t_obs

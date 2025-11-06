@@ -7,7 +7,7 @@ from graflo.db import ConnectionManager
 
 @pytest.fixture(scope="function")
 def modes():
-    return ["review"]
+    return ["review-tigergraph"]
 
 
 def test_ingest(
@@ -30,7 +30,7 @@ def test_ingest(
             mode=m,
         )
 
-        if m == "review":
+        if m == "review-tigergraph":
             with ConnectionManager(connection_config=conn_conf) as db_client:
                 r = db_client.fetch_docs("Author")
                 assert len(r) == 374
@@ -44,3 +44,15 @@ def test_ingest(
                     return_keys=["full_name"],
                 )
                 assert len(r[0]) == 1
+                # Test edge fetching - use vertex IDs from previous query
+                # First get a vertex ID
+                authors = db_client.fetch_docs("Author", limit=1)
+                assert len(authors) > 0
+                author_id = authors[0]["id"]
+                # Fetch edges from this vertex using pyTigerGraph
+                edges = db_client.fetch_edges(
+                    from_type="Author",
+                    from_id=author_id,
+                    edge_type="belongsTo",
+                )
+                assert len(edges) == 1

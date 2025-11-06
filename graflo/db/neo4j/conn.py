@@ -31,7 +31,7 @@ from graflo.architecture.schema import Schema
 from graflo.architecture.vertex import VertexConfig
 from graflo.db.conn import Connection
 from graflo.filter.onto import Expression
-from graflo.onto import AggregationType, DBFlavor
+from graflo.onto import AggregationType, DBFlavor, ExpressionFlavor
 
 from ..connection.onto import Neo4jConnectionConfig
 
@@ -358,6 +358,92 @@ class Neo4jConnection(Connection):
         cursor = self.execute(q)
         r = [item["n"] for item in cursor.data()]
         return r
+
+    # TODO test
+    def fetch_edges(
+        self,
+        from_type: str,
+        from_id: str,
+        edge_type: str | None = None,
+        to_type: str | None = None,
+        to_id: str | None = None,
+        filters: list | dict | None = None,
+        limit: int | None = None,
+        return_keys: list | None = None,
+        unset_keys: list | None = None,
+        **kwargs,
+    ):
+        """Fetch edges from Neo4j using Cypher.
+
+        Args:
+            from_type: Source node label
+            from_id: Source node ID (property name depends on match_keys used)
+            edge_type: Optional relationship type to filter by
+            to_type: Optional target node label to filter by
+            to_id: Optional target node ID to filter by
+            filters: Additional query filters
+            limit: Maximum number of edges to return
+            return_keys: Keys to return (projection)
+            unset_keys: Keys to exclude (projection) - not supported in Neo4j
+            **kwargs: Additional parameters
+
+        Returns:
+            list: List of fetched edges
+        """
+        # Build Cypher query to fetch edges
+        # Match source node first
+        source_match = f"(source:{from_type} {{id: '{from_id}'}})"
+
+        # Build relationship pattern
+        if edge_type:
+            rel_pattern = f"-[r:{edge_type}]->"
+        else:
+            rel_pattern = "-[r]->"
+
+        # Build target node match
+        if to_type:
+            target_match = f"(target:{to_type})"
+        else:
+            target_match = "(target)"
+
+        # Add target ID filter if provided
+        where_clauses = []
+        if to_id:
+            where_clauses.append(f"target.id = '{to_id}'")
+
+        # Add additional filters if provided
+        if filters is not None:
+            from graflo.filter.onto import Expression
+
+            ff = Expression.from_dict(filters)
+            filter_clause = ff(doc_name="r", kind=ExpressionFlavor.NEO4J)
+            where_clauses.append(filter_clause)
+
+        where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+
+        # Build return clause
+        if return_keys is not None:
+            return_clause = ", ".join([f"r.{key} as {key}" for key in return_keys])
+            return_clause = f"RETURN {return_clause}"
+        else:
+            return_clause = "RETURN r"
+
+        limit_clause = f"LIMIT {limit}" if limit else ""
+
+        query = f"""
+            MATCH {source_match}{rel_pattern}{target_match}
+            {where_clause}
+            {return_clause}
+            {limit_clause}
+        """
+
+        cursor = self.execute(query)
+        result = [item["r"] for item in cursor.data()]
+
+        # Note: unset_keys is not supported in Neo4j as we can't modify the result structure
+        # after the query
+
+        return result
 
     def fetch_present_documents(
         self,

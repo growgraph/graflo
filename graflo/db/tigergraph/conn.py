@@ -1800,8 +1800,8 @@ class TigerGraphConnection(Connection):
             # Call REST++ API directly (no params dict, we built the URL ourselves)
             response = self._call_restpp_api(endpoint)
 
-            # Parse REST++ response
-            result = self._parse_restpp_response(response)
+            # Parse REST++ response (vertices only)
+            result = self._parse_restpp_response(response, is_edge=False)
 
             # Check for errors
             if isinstance(response, dict) and response.get("error"):
@@ -1826,11 +1826,89 @@ class TigerGraphConnection(Connection):
             logger.error(f"Error fetching documents from {class_name} via REST++: {e}")
             raise
 
-    def _parse_restpp_response(self, response: dict | list) -> list[dict]:
+    def fetch_edges(
+        self,
+        from_type: str,
+        from_id: str,
+        edge_type: str | None = None,
+        to_type: str | None = None,
+        to_id: str | None = None,
+        filters: list | dict | Clause | None = None,
+        limit: int | None = None,
+        return_keys: list | None = None,
+        unset_keys: list | None = None,
+        **kwargs,
+    ):
+        """
+        Fetch edges from TigerGraph using pyTigerGraph's getEdges method.
+
+        In TigerGraph, you must know at least one vertex ID before you can fetch edges.
+        Uses pyTigerGraph's getEdges method which handles special characters in vertex IDs.
+
+        Args:
+            from_type: Source vertex type (required)
+            from_id: Source vertex ID (required)
+            edge_type: Optional edge type to filter by
+            to_type: Optional target vertex type to filter by (not used in pyTigerGraph)
+            to_id: Optional target vertex ID to filter by (not used in pyTigerGraph)
+            filters: Additional query filters (not supported by pyTigerGraph getEdges)
+            limit: Maximum number of edges to return (not supported by pyTigerGraph getEdges)
+            return_keys: Keys to return (projection)
+            unset_keys: Keys to exclude (projection)
+            **kwargs: Additional parameters
+
+        Returns:
+            list: List of fetched edges
+        """
+        try:
+            if not from_type or not from_id:
+                raise ValueError(
+                    "from_type and from_id are required for fetching edges in TigerGraph"
+                )
+
+            # Use pyTigerGraph's getEdges method
+            # Signature: getEdges(sourceVertexType, sourceVertexId, edgeType=None)
+            # Returns: list of edge dictionaries
+            logger.debug(
+                f"Fetching edges using pyTigerGraph: from_type={from_type}, from_id={from_id}, edge_type={edge_type}"
+            )
+
+            edges = self.conn.getEdges(from_type, from_id, edge_type)
+
+            # Parse pyTigerGraph response format
+            # getEdges returns list of dicts with format like:
+            # [{"e_type": "...", "from": {...}, "to": {...}, "attributes": {...}}, ...]
+            result = edges
+
+            # Apply limit if specified (client-side since pyTigerGraph doesn't support it)
+            if limit is not None and limit > 0:
+                result = result[:limit]
+
+            # Apply projection (client-side projection is acceptable for result formatting)
+            if return_keys is not None:
+                result = [
+                    {k: doc.get(k) for k in return_keys if k in doc} for doc in result
+                ]
+            elif unset_keys is not None:
+                result = [
+                    {k: v for k, v in doc.items() if k not in unset_keys}
+                    for doc in result
+                ]
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Error fetching edges via pyTigerGraph: {e}")
+            raise
+
+    def _parse_restpp_response(
+        self, response: dict | list, is_edge: bool = False
+    ) -> list[dict]:
         """Parse REST++ API response into list of documents.
 
         Args:
             response: REST++ API response (dict or list)
+            is_edge: Whether this is an edge response (default: False for vertices)
 
         Returns:
             list: List of parsed documents
@@ -1838,19 +1916,44 @@ class TigerGraphConnection(Connection):
         result = []
         if isinstance(response, dict):
             if "results" in response:
-                for vertex_data in response["results"]:
-                    # Extract vertex ID and attributes
-                    vertex_id = vertex_data.get("v_id", vertex_data.get("id"))
-                    attributes = vertex_data.get("attributes", {})
-                    doc = {**attributes, "id": vertex_id}
+                for data in response["results"]:
+                    if is_edge:
+                        # Edge response format: {"e_type": "...", "from_id": "...", "to_id": "...", "attributes": {...}}
+                        edge_type = data.get("e_type", "")
+                        from_id = data.get("from_id", data.get("from", ""))
+                        to_id = data.get("to_id", data.get("to", ""))
+                        attributes = data.get("attributes", {})
+                        doc = {
+                            **attributes,
+                            "edge_type": edge_type,
+                            "from_id": from_id,
+                            "to_id": to_id,
+                        }
+                    else:
+                        # Vertex response format: {"v_id": "...", "attributes": {...}}
+                        vertex_id = data.get("v_id", data.get("id"))
+                        attributes = data.get("attributes", {})
+                        doc = {**attributes, "id": vertex_id}
                     result.append(doc)
         elif isinstance(response, list):
             # Direct list response
-            for vertex_data in response:
-                if isinstance(vertex_data, dict):
-                    vertex_id = vertex_data.get("v_id", vertex_data.get("id"))
-                    attributes = vertex_data.get("attributes", vertex_data)
-                    doc = {**attributes, "id": vertex_id}
+            for data in response:
+                if isinstance(data, dict):
+                    if is_edge:
+                        edge_type = data.get("e_type", "")
+                        from_id = data.get("from_id", data.get("from", ""))
+                        to_id = data.get("to_id", data.get("to", ""))
+                        attributes = data.get("attributes", data)
+                        doc = {
+                            **attributes,
+                            "edge_type": edge_type,
+                            "from_id": from_id,
+                            "to_id": to_id,
+                        }
+                    else:
+                        vertex_id = data.get("v_id", data.get("id"))
+                        attributes = data.get("attributes", data)
+                        doc = {**attributes, "id": vertex_id}
                     result.append(doc)
         return result
 

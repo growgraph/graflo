@@ -212,6 +212,39 @@ class Connection(abc.ABC):
         pass
 
     @abc.abstractmethod
+    def fetch_edges(
+        self,
+        from_type: str,
+        from_id: str,
+        edge_type: str | None = None,
+        to_type: str | None = None,
+        to_id: str | None = None,
+        filters: list | dict | None = None,
+        limit: int | None = None,
+        return_keys: list | None = None,
+        unset_keys: list | None = None,
+        **kwargs,
+    ):
+        """Fetch edges from the database.
+
+        Args:
+            from_type: Source vertex type
+            from_id: Source vertex ID (required)
+            edge_type: Optional edge type to filter by
+            to_type: Optional target vertex type to filter by
+            to_id: Optional target vertex ID to filter by
+            filters: Additional query filters
+            limit: Maximum number of edges to return
+            return_keys: Keys to return (projection)
+            unset_keys: Keys to exclude (projection)
+            **kwargs: Additional database-specific parameters
+
+        Returns:
+            list: List of fetched edges
+        """
+        pass
+
+    @abc.abstractmethod
     def fetch_present_documents(
         self,
         batch,
