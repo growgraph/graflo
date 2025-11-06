@@ -26,6 +26,8 @@ Database connection and management components:
   - [Utilities](db/arango/util.md): ArangoDB-specific utility functions
 - **[Neo4j](db/neo4j/)**:
   - [Connection](db/neo4j/conn.md): Neo4j-specific connection implementation
+- **[TigerGraph](db/tigergraph/)**:
+  - [Connection](db/tigergraph/conn.md): TigerGraph-specific connection implementation with REST++ API and GSQL support
 
 ## Core Components
 

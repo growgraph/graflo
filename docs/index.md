@@ -1,6 +1,6 @@
 # GraFlo <img src="https://raw.githubusercontent.com/growgraph/graflo/main/docs/assets/favicon.ico" alt="graflo logo" style="height: 32px; width:32px;"/>
 
-graflo is a framework for transforming **tabular** data (CSV) and **hierarchical** data (JSON, XML) into property graphs and ingesting them into graph databases (ArangoDB, Neo4j).
+graflo is a framework for transforming **tabular** data (CSV) and **hierarchical** data (JSON, XML) into property graphs and ingesting them into graph databases (ArangoDB, Neo4j, TigerGraph).
 
 ![Python](https://img.shields.io/badge/python-3.11-blue.svg) 
 [![PyPI version](https://badge.fury.io/py/graflo.svg)](https://badge.fury.io/py/graflo)
@@ -46,8 +46,8 @@ Resources are your data sources that can be:
     - Specify edge constraints and properties
     - Apply advanced filtering and transformations
 - **Parallel Processing**: Efficient processing with multi-threading
-- **Database Integration**: Seamless integration with Neo4j and ArangoDB
-- **Advanced Filtering**: Powerful filtering capabilities for data transformation
+- **Database Integration**: Seamless integration with Neo4j, ArangoDB, and TigerGraph
+- **Advanced Filtering**: Powerful filtering capabilities for data transformation with server-side filtering support
 - **Blank Node Support**: Create intermediate vertices for complex relationships
 
 ## Quick Links
@@ -66,7 +66,7 @@ Resources are your data sources that can be:
 ## Requirements
 
 - Python 3.11 or higher
-- Graph database (Neo4j or ArangoDB) for storage
+- Graph database (Neo4j, ArangoDB, or TigerGraph) for storage
 - Dependencies as specified in pyproject.toml
 
 ## Contributing

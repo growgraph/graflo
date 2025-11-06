@@ -39,7 +39,7 @@ description = "A framework for transforming tabular (CSV, SQL) and hierarchical 
 name = "graflo"
 readme = "README.md"
 requires-python = "~=3.11.0"
-version = "1.1.1"
+version = "1.2.0"
 
 [project.scripts]
 ingest = "graflo.cli.ingest:ingest"

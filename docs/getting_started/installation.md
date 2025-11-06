@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - Python 3.11+
-- A graph database (Neo4j or ArangoDB) if you plan to use database features
+- A graph database (Neo4j, ArangoDB, or TigerGraph) if you plan to use database features
 
 ## Installation Methods
 
@@ -53,7 +53,7 @@ print(graflo.__version__)
 
 ## Spinning up databases
 
-Instructions on how spin up `ArangoDB` and `neo4j` as docker images using `docker compose` are provided here [github.com/growgraph/graflo/docker](https://github.com/growgraph/graflo/tree/main/docker) 
+Instructions on how to spin up `ArangoDB`, `Neo4j`, and `TigerGraph` as docker images using `docker compose` are provided here [github.com/growgraph/graflo/docker](https://github.com/growgraph/graflo/tree/main/docker) 
 
 ## Configuration
 

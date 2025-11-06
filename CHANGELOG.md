@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **TigerGraph backend support**: Full support for TigerGraph as a graph database backend
+  - Complete implementation of `TigerGraphConnection` with all core operations
+  - Support for vertex and edge creation, deletion, and querying
+  - Integration with TigerGraph REST++ API for efficient data operations
+  - Support for GSQL queries and schema management
+  - Edge fetching with support for complex vertex IDs
+  - Graph statistics and metadata operations
+  - Server-side filtering and querying using REST++ API
+  - Field type-aware filter generation for proper REST++ filter formatting
+
+### Changed
+- **API refactoring**: Renamed `delete_collections` to `delete_graph_structure` for better clarity
+  - Method now uses `vertex_types` and `graph_names` parameters instead of `cnames` and `gnames`
+  - Updated terminology across codebase to use generic "vertex type" and "edge type" instead of database-specific "collection" terminology
+  - Added comprehensive documentation about database organization terminology differences between ArangoDB, Neo4j, and TigerGraph
+
+### Documentation
+- Added comprehensive database organization terminology documentation explaining:
+  - ArangoDB: Database → Collections (vertex/edge) → Graphs
+  - Neo4j: Database → Labels (vertex types) → Relationship Types (edge types)
+  - TigerGraph: Graph (like database) → Global Vertex/Edge Types → Associated with graphs
+
 ## [1.0.1] - 2025-01
 ### Changed
 
