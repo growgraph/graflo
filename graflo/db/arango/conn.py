@@ -118,7 +118,7 @@ class ArangoConnection(Connection):
             clean_start: If True, delete all existing collections before initialization
         """
         if clean_start:
-            self.delete_collections([], [], delete_all=True)
+            self.delete_graph_structure([], [], delete_all=True)
         self.define_schema(schema)
         self.define_indexes(schema)
 
@@ -290,14 +290,20 @@ class ArangoConnection(Connection):
             else:
                 return None
 
-    def delete_collections(self, cnames=(), gnames=(), delete_all=False):
-        """Delete collections and graphs from ArangoDB.
+    def delete_graph_structure(self, vertex_types=(), graph_names=(), delete_all=False):
+        """Delete graph structure (collections and graphs) from ArangoDB.
+
+        In ArangoDB:
+        - Collections: Container for vertices (vertex collections) and edges (edge collections)
+        - Graphs: Named graphs that connect vertex and edge collections
 
         Args:
-            cnames: Collection names to delete
-            gnames: Graph names to delete
+            vertex_types: Collection names to delete (vertex or edge collections)
+            graph_names: Graph names to delete
             delete_all: If True, delete all non-system collections and graphs
         """
+        cnames = vertex_types
+        gnames = graph_names
         logger.info("collections (non system):")
         logger.info([c for c in self.conn.collections() if c["name"][0] != "_"])
 

@@ -53,7 +53,7 @@ def conn_conf(test_db_port, test_gs_port, creds):
 def clean_db(conn_conf):
     """Fixture to clean all graphs, edges, and vertices before a test."""
     with ConnectionManager(connection_config=conn_conf) as db_client:
-        db_client.delete_collections([], [], delete_all=True)
+        db_client.delete_graph_structure([], [], delete_all=True)
 
 
 @pytest.fixture(scope="function")
@@ -79,7 +79,7 @@ def test_graph_name(conn_conf):
     try:
         with ConnectionManager(connection_config=conn_conf) as db_client:
             # Delete all graphs, edges, and vertices to ensure clean state
-            db_client.delete_collections([], [], delete_all=True)
+            db_client.delete_graph_structure([], [], delete_all=True)
     except Exception:
         # Silently ignore cleanup errors
         pass

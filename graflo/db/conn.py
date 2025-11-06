@@ -2,19 +2,43 @@
 
 This module defines the abstract interface for database connections, providing
 a unified API for different graph database implementations. It includes methods
-for database management, collection operations, and data manipulation.
+for database management, graph structure operations, and data manipulation.
 
 Key Components:
     - Connection: Abstract base class for database connections
     - ConnectionType: Type variable for connection implementations
 
 The connection interface supports:
-    - Database creation and deletion
-    - Collection management
+    - Database/Graph creation and deletion
+    - Graph structure management (vertex types, edge types)
     - Index definition
     - Document operations (insert, update, fetch)
     - Edge operations
     - Aggregation queries
+
+Database Organization Terminology:
+    Different databases organize graph data differently:
+
+    - ArangoDB:
+        * Database: Top-level container (like a schema)
+        * Collections: Container for vertices (vertex collections)
+        * Edge Collections: Container for edges
+        * Graph: Named graph that connects vertex and edge collections
+
+    - Neo4j:
+        * Database: Top-level container
+        * Labels: Categories for nodes (equivalent to vertex types)
+        * Relationship Types: Types of relationships (equivalent to edge types)
+        * No explicit "graph" concept - all nodes/relationships are in the database
+
+    - TigerGraph:
+        * Graph: Top-level container (functions like a database in ArangoDB)
+        * Vertex Types: Global vertex type definitions (can be shared across graphs)
+        * Edge Types: Global edge type definitions (can be shared across graphs)
+        * Vertex and edge types are associated with graphs
+
+    When using the Connection interface, the terms "vertex type" and "edge type"
+    are used generically to refer to the appropriate concept in each database.
 
 Example:
     >>> class MyConnection(Connection):
@@ -41,8 +65,8 @@ class Connection(abc.ABC):
     """Abstract base class for database connections.
 
     This class defines the interface that all database connection implementations
-    must follow. It provides methods for database operations, collection management,
-    and data manipulation.
+    must follow. It provides methods for database/graph operations, graph structure
+    management (vertex types, edge types), and data manipulation.
 
     Note:
         All methods marked with @abc.abstractmethod must be implemented by
@@ -105,13 +129,20 @@ class Connection(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def delete_collections(self, cnames=(), gnames=(), delete_all=False):
-        """Delete collections from the database.
+    def delete_graph_structure(self, vertex_types=(), graph_names=(), delete_all=False):
+        """Delete graph structure (graphs, vertex types, edge types) from the database.
+
+        This method deletes graphs and their associated vertex/edge types.
+        The exact behavior depends on the database implementation:
+
+        - ArangoDB: Deletes graphs and collections (vertex/edge collections)
+        - Neo4j: Deletes nodes from labels (vertex types) and relationships
+        - TigerGraph: Deletes graphs, vertex types, edge types, and jobs
 
         Args:
-            cnames: Collection names to delete
-            gnames: Graph names to delete
-            delete_all: Whether to delete all collections
+            vertex_types: Vertex type names to delete (database-specific interpretation)
+            graph_names: Graph/database names to delete
+            delete_all: If True, delete all graphs and their associated structures
         """
         pass
 
@@ -131,7 +162,7 @@ class Connection(abc.ABC):
 
         Args:
             docs: Documents to upsert
-            class_name: Name of the collection
+            class_name: Name of the vertex type (or collection/label in database-specific terms)
             match_keys: Keys to match for upsert
             **kwargs: Additional upsert parameters
         """
@@ -158,15 +189,15 @@ class Connection(abc.ABC):
 
         Args:
             docs_edges: Edge documents to insert
-            source_class: Source vertex class
-            target_class: Target vertex class
-            relation_name: Name of the relation
-            collection_name: Name of the edge collection
+            source_class: Source vertex type/class
+            target_class: Target vertex type/class
+            relation_name: Name of the edge type/relation
+            collection_name: Name of the edge type (database-specific: collection/relationship type)
             match_keys_source: Keys to match source vertices
             match_keys_target: Keys to match target vertices
             filter_uniques: Whether to filter unique edges
             uniq_weight_fields: Fields to consider for uniqueness
-            uniq_weight_collections: Collections to consider for uniqueness
+            uniq_weight_collections: Vertex/edge types to consider for uniqueness (database-specific)
             upsert_option: Whether to upsert existing edges
             head: Optional head document
             **kwargs: Additional insertion parameters
@@ -179,7 +210,7 @@ class Connection(abc.ABC):
 
         Args:
             docs: Documents to insert
-            class_name: Name of the collection
+            class_name: Name of the vertex type (or collection/label in database-specific terms)
 
         Returns:
             list: Inserted documents
@@ -196,10 +227,10 @@ class Connection(abc.ABC):
         unset_keys,
         **kwargs,
     ):
-        """Fetch documents from a collection.
+        """Fetch documents from a vertex type.
 
         Args:
-            class_name: Name of the collection
+            class_name: Name of the vertex type (or collection/label in database-specific terms)
             filters: Query filters
             limit: Maximum number of documents to return
             return_keys: Keys to return

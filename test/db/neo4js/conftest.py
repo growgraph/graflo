@@ -41,7 +41,7 @@ def conn_conf(test_db_port, creds):
 @pytest.fixture()
 def clean_db(conn_conf):
     with ConnectionManager(connection_config=conn_conf) as db_client:
-        db_client.delete_collections()
+        db_client.delete_graph_structure()
 
 
 @pytest.fixture(scope="function")

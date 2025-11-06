@@ -188,14 +188,20 @@ class Neo4jConnection(Connection):
         """
         pass
 
-    def delete_collections(self, cnames=(), gnames=(), delete_all=False):
-        """Delete nodes and relationships from the database.
+    def delete_graph_structure(self, vertex_types=(), graph_names=(), delete_all=False):
+        """Delete graph structure (nodes and relationships) from Neo4j.
+
+        In Neo4j:
+        - Labels: Categories for nodes (equivalent to vertex types)
+        - Relationship Types: Types of relationships (equivalent to edge types)
+        - No explicit "graph" concept - all nodes/relationships are in the database
 
         Args:
-            cnames: Label names to delete nodes for
-            gnames: Unused in Neo4j
+            vertex_types: Label names to delete nodes for
+            graph_names: Unused in Neo4j (no explicit graph concept)
             delete_all: If True, delete all nodes and relationships
         """
+        cnames = vertex_types
         if cnames:
             for c in cnames:
                 q = f"MATCH (n:{c}) DELETE n"

@@ -44,7 +44,7 @@ def conn_conf(test_db_port):
 def create_db(conn_conf, test_db_name):
     with ConnectionManager(connection_config=conn_conf) as db_client:
         db_client.create_database(test_db_name)
-        db_client.delete_collections([], [], delete_all=True)
+        db_client.delete_graph_structure([], [], delete_all=True)
 
 
 def verify_from_db(conn_conf, current_path, test_db_name, mode, reset):

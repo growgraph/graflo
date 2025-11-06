@@ -449,7 +449,7 @@ class TigerGraphConnection(Connection):
         try:
             if clean_start:
                 # Delete all graphs, edges, and vertices (full teardown)
-                self.delete_collections([], [], delete_all=True)
+                self.delete_graph_structure([], [], delete_all=True)
 
             # Step 1: Create vertex and edge types globally first
             # These must exist before they can be included in CREATE GRAPH
@@ -1007,9 +1007,15 @@ class TigerGraphConnection(Connection):
         """Parse SHOW JOB * output to extract job names."""
         return self._parse_show_output(result_str, "JOB")
 
-    def delete_collections(self, cnames=(), gnames=(), delete_all=False):
+    def delete_graph_structure(self, vertex_types=(), graph_names=(), delete_all=False):
         """
-        Delete collections and graphs with proper teardown sequence.
+        Delete graph structure (graphs, vertex types, edge types) from TigerGraph.
+
+        In TigerGraph:
+        - Graph: Top-level container (functions like a database in ArangoDB)
+        - Vertex Types: Global vertex type definitions (can be shared across graphs)
+        - Edge Types: Global edge type definitions (can be shared across graphs)
+        - Vertex and edge types are associated with graphs
 
         Teardown order:
         1. Drop all graphs
@@ -1018,10 +1024,12 @@ class TigerGraphConnection(Connection):
         4. Drop all jobs globally
 
         Args:
-            cnames: Vertex type names to delete (not used in TigerGraph teardown)
-            gnames: Graph names to delete (if empty and delete_all=True, deletes all)
+            vertex_types: Vertex type names to delete (not used in TigerGraph teardown)
+            graph_names: Graph names to delete (if empty and delete_all=True, deletes all)
             delete_all: If True, perform full teardown of all graphs, edges, vertices, and jobs
         """
+        cnames = vertex_types
+        gnames = graph_names
         try:
             if delete_all:
                 # Step 1: Drop all graphs
@@ -1210,7 +1218,7 @@ class TigerGraphConnection(Connection):
                             )
 
         except Exception as e:
-            logger.error(f"Error in delete_collections: {e}")
+            logger.error(f"Error in delete_graph_structure: {e}")
 
     def _generate_upsert_payload(
         self, data: list[dict[str, Any]], vname: str, vindex: tuple[str, ...]
