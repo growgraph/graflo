@@ -267,7 +267,6 @@ def resource_concept():
 @pytest.fixture()
 def schema_vc_openalex():
     tc = yaml.safe_load("""
-    vertex_config:
     vertices:
     -   name: author
         dbname: authors
@@ -664,4 +663,35 @@ def vertex_key_property():
                 -   name
     """
     )
+    return VertexConfig.from_dict(tc)
+
+
+@pytest.fixture()
+def schema_vc_deb():
+    tc = yaml.safe_load("""
+    vertices:
+    -   name: package
+        fields:
+        -   name
+        -   version
+        indexes:
+        -   fields:
+            -   name
+    -   name: maintainer
+        fields:
+        -   name
+        -   email
+        indexes:
+        -   fields:
+            -   email
+    -   name: bug
+        fields:
+        -   id
+        -   subject
+        -   severity
+        -   date
+        indexes:
+        -   fields:
+            -   id
+    """)
     return VertexConfig.from_dict(tc)

@@ -1,0 +1,198 @@
+[
+    {
+        "name": "0ad",
+        "version": "0.0.26-3",
+        "dependencies": {
+            "depends": [
+                {
+                    "name": "0ad-data",
+                    "version": ">= 0.0.26"
+                },
+                {
+                    "name": "0ad-data",
+                    "version": "<= 0.0.26-3"
+                },
+                {
+                    "name": "0ad-data-common",
+                    "version": ">= 0.0.26"
+                },
+                {
+                    "name": "0ad-data-common",
+                    "version": "<= 0.0.26-3"
+                },
+                {
+                    "name": "libboost-filesystem1.74.0",
+                    "version": ">= 1.74.0"
+                },
+                {
+                    "name": "libc6",
+                    "version": ">= 2.34"
+                },
+                {
+                    "name": "libcurl3-gnutls",
+                    "version": ">= 7.32.0"
+                },
+                {
+                    "name": "libenet7"
+                },
+                {
+                    "name": "libfmt9",
+                    "version": ">= 9.1.0+ds1"
+                },
+                {
+                    "name": "libfreetype6",
+                    "version": ">= 2.2.1"
+                },
+                {
+                    "name": "libgcc-s1",
+                    "version": ">= 3.4"
+                },
+                {
+                    "name": "libgloox18",
+                    "version": ">= 1.0.24"
+                },
+                {
+                    "name": "libicu72",
+                    "version": ">= 72.1~rc-1~"
+                },
+                {
+                    "name": "libminiupnpc17",
+                    "version": ">= 1.9.20140610"
+                },
+                {
+                    "name": "libopenal1",
+                    "version": ">= 1.14"
+                },
+                {
+                    "name": "libpng16-16",
+                    "version": ">= 1.6.2-1"
+                },
+                {
+                    "name": "libsdl2-2.0-0",
+                    "version": ">= 2.0.12"
+                },
+                {
+                    "name": "libsodium23",
+                    "version": ">= 1.0.14"
+                },
+                {
+                    "name": "libstdc++6",
+                    "version": ">= 12"
+                },
+                {
+                    "name": "libvorbisfile3",
+                    "version": ">= 1.1.2"
+                },
+                {
+                    "name": "libwxbase3.2-1",
+                    "version": ">= 3.2.1+dfsg"
+                },
+                {
+                    "name": "libwxgtk-gl3.2-1",
+                    "version": ">= 3.2.1+dfsg"
+                },
+                {
+                    "name": "libwxgtk3.2-1",
+                    "version": ">= 3.2.1+dfsg-2"
+                },
+                {
+                    "name": "libx11-6"
+                },
+                {
+                    "name": "libxml2",
+                    "version": ">= 2.9.0"
+                },
+                {
+                    "name": "zlib1g",
+                    "version": ">= 1:1.2.0"
+                }
+            ],
+            "pre-depends": [
+                {
+                    "name": "dpkg",
+                    "version": ">= 1.15.6~"
+                }
+            ]
+        },
+        "description": "Real-time strategy game of ancient warfare",
+        "maintainer": {
+            "name": "Debian Games Team",
+            "email": "pkg-games-devel@lists.alioth.debian.org"
+        }
+    },
+    {
+        "name": "0ad-data",
+        "version": "0.0.26-1",
+        "dependencies": {
+            "pre-depends": [
+                {
+                    "name": "dpkg",
+                    "version": ">= 1.15.6~"
+                }
+            ],
+            "suggests": [
+                {
+                    "name": "0ad"
+                }
+            ]
+        },
+        "description": "Real-time strategy game of ancient warfare (data files)",
+        "maintainer": {
+            "name": "Debian Games Team",
+            "email": "pkg-games-devel@lists.alioth.debian.org"
+        }
+    },
+    {
+        "name": "0ad-data-common",
+        "version": "0.0.26-1",
+        "dependencies": {
+            "depends": [
+                {
+                    "name": "fonts-dejavu-core"
+                },
+                {
+                    "name": "fonts-freefont-ttf"
+                },
+                {
+                    "name": "fonts-texgyre"
+                }
+            ],
+            "depends_aliases": [
+                {
+                    "source": "fonts-dejavu-core",
+                    "target": "ttf-dejavu-core"
+                },
+                {
+                    "source": "fonts-freefont-ttf",
+                    "target": "ttf-freefont"
+                },
+                {
+                    "source": "fonts-texgyre",
+                    "target": "tex-gyre"
+                }
+            ],
+            "pre-depends": [
+                {
+                    "name": "dpkg",
+                    "version": ">= 1.15.6~"
+                }
+            ],
+            "suggests": [
+                {
+                    "name": "0ad"
+                }
+            ],
+            "breaks": [
+                {
+                    "name": "0ad-data",
+                    "version": "<< 0.0.12-1~"
+                }
+            ]
+        },
+        "description": "Real-time strategy game of ancient warfare (common data files)",
+        "maintainer": {
+            "name": "Debian Games Team",
+            "email": "pkg-games-devel@lists.alioth.debian.org"
+        }
+    }
+]

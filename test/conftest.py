@@ -270,7 +270,7 @@ def resource_with_dynamic_relations():
 
 @pytest.fixture()
 def resource_openalex_works():
-    an = yaml.safe_load("""
+    return yaml.safe_load("""
     -   vertex: work
     -   name: keep_suffix_id
         foo: split_keep_part
@@ -297,4 +297,69 @@ def resource_openalex_works():
     -   source: work
         target: work
     """)
-    return an
+
+
+@pytest.fixture()
+def resource_deb():
+    return yaml.safe_load("""
+    -   resource_name: package
+        apply:
+        -   vertex: package
+        -   key: dependencies
+            apply:
+            -   key: breaks
+                apply:
+                -   vertex: package
+            -   key: conflicts
+                apply:
+                -   vertex: package
+            -   key: depends
+                apply:
+                -   vertex: package
+            -   key: pre-depends
+                apply:
+                -   vertex: package
+            -   key: suggests
+                apply:
+                -   vertex: package
+            -   key: recommends
+                apply:
+                -   vertex: package
+        -   source: maintainer
+            target: package
+            exclude_target: dependencies
+        -   source: package
+            target: package
+            relation_from_key: true
+        -   key: maintainer
+            apply:
+            -   vertex: maintainer
+    """)
+
+
+@pytest.fixture()
+def resource_deb_compact():
+    return yaml.safe_load("""
+    -   resource_name: package
+        apply:
+        -   vertex: package
+        -   key: dependencies
+            apply:
+            -   any_key: true
+                apply:
+                -   vertex: package
+        -   source: maintainer
+            target: package
+            exclude_target: dependencies
+        -   source: package
+            target: package
+            relation_from_key: true
+        -   key: maintainer
+            apply:
+            -   vertex: maintainer
+    """)
+
+
+@pytest.fixture()
+def data_deb():
+    return FileHandle.load("test.data.deb", "package.json")

@@ -209,8 +209,18 @@ def render_edge(
     if edge.match_source is not None:
         source_lindexes = [li for li in source_lindexes if edge.match_source in li]
 
+    if edge.exclude_source is not None:
+        source_lindexes = [
+            li for li in source_lindexes if edge.exclude_source not in li
+        ]
+
     if edge.match_target is not None:
         target_lindexes = [li for li in target_lindexes if edge.match_target in li]
+
+    if edge.exclude_target is not None:
+        target_lindexes = [
+            li for li in target_lindexes if edge.exclude_target not in li
+        ]
 
     if edge.match is not None:
         source_lindexes = [li for li in source_lindexes if edge.match in li]

@@ -85,6 +85,8 @@ class Edge(BaseDataclass):
 
     match_source: str | None = None
     match_target: str | None = None
+    exclude_source: str | None = None
+    exclude_target: str | None = None
     match: str | None = None
 
     type: EdgeType = EdgeType.DIRECT
