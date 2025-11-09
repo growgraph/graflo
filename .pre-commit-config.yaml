@@ -42,11 +42,11 @@ repos:
     hooks:
     -   id: toml-sort
         args: [-ia]
-#-   repo: local
-#    hooks:
-#    -   id: ty
-#        name: ty check
-#        entry: ty check .
-#        language: system
-#        pass_filenames: false
-#        always_run: true
+-   repo: local
+    hooks:
+    -   id: ty
+        name: ty check
+        entry: ty check .
+        language: system
+        pass_filenames: false
+        always_run: true

@@ -29,7 +29,7 @@ def test_to_int():
         "input": "x",
         "output": "y",
     }
-    t = Transform(**kwargs)
+    t = Transform(**kwargs)  # type: ignore
     assert t("12345") == {"y": 12345}
 
 
@@ -41,28 +41,28 @@ def test_round():
         "output": "y",
         "params": {"ndigits": 3},
     }
-    t = Transform(**kwargs)
+    t = Transform(**kwargs)  # type: ignore
     r = t(0.1234)
     assert r == {"y": 0.123}
 
 
 def test_map():
     kwargs = {"map": {"x": "y"}}
-    t = Transform(**kwargs)
+    t = Transform(**kwargs)  # type: ignore
     r = t(0.1234)
     assert r["y"] == 0.1234
 
 
 def test_map_doc():
     kwargs = {"map": {"x": "y"}}
-    t = Transform(**kwargs)
+    t = Transform(**kwargs)  # type: ignore
     r = t({"x": 0.1234})
     assert r["y"] == 0.1234
 
 
 def test_input_output():
     kwargs = {"input": ["x"], "output": ["y"]}
-    t = Transform(**kwargs)
+    t = Transform(**kwargs)  # type: ignore
     assert t(0.1)["y"] == 0.1
 
 
@@ -79,7 +79,7 @@ def test_switch():
         "switch": {"Open": ["name", "value"]},
         "params": {"ndigits": 3},
     }
-    t = Transform(**kwargs)
+    t = Transform(**kwargs)  # type: ignore
     r = t({"Open": 0.1234})
     assert r == {"value": 0.123, "name": "Open"}
 
@@ -103,7 +103,7 @@ def test_switch_complete():
         "switch": {"Open": ["name", "value"]},
         "params": {"ndigits": 3},
     }
-    t = Transform(**kwargs)
+    t = Transform(**kwargs)  # type: ignore
     r = t(doc)
     assert r["value"] == 17.9
 
@@ -117,7 +117,7 @@ def test_split_keep_part():
         "fields": "id",
         "params": {"sep": "/", "keep": -1},
     }
-    t = Transform(**kwargs)
+    t = Transform(**kwargs)  # type: ignore
     r = t(doc)
     assert r == {"id": "A123"}
 
@@ -131,6 +131,6 @@ def test_split_keep_part_longer():
         "fields": "doi",
         "params": {"sep": "/", "keep": [-2, -1]},
     }
-    t = Transform(**kwargs)
+    t = Transform(**kwargs)  # type: ignore
     r = t(doc)
     assert r["doi"] == "10.1007/978-3-123"

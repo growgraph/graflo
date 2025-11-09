@@ -134,7 +134,7 @@ class ProtoTransform(BaseDataclass):
         return False
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(kw_only=True)
 class Transform(ProtoTransform):
     """Concrete transform implementation.
 
@@ -150,9 +150,7 @@ class Transform(ProtoTransform):
 
     fields: str | list[str] | tuple[str, ...] = dataclasses.field(default_factory=tuple)
     map: dict[str, str] = dataclasses.field(default_factory=dict)
-    switch: dict[str, list[str] | tuple[str, ...]] = dataclasses.field(
-        default_factory=dict
-    )
+    switch: dict[str, Any] = dataclasses.field(default_factory=dict)
 
     def __post_init__(self):
         """Initialize the transform after dataclass initialization.

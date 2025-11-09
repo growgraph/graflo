@@ -461,7 +461,7 @@ class VertexConfig(BaseDataclass):
         with_aux=False,
         as_names=True,
         db_flavor: DBFlavor | None = None,
-    ):
+    ) -> list[Field]:
         """Get fields for a vertex.
 
         Args:
