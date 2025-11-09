@@ -1,5 +1,6 @@
 import dataclasses
-from enum import EnumMeta, StrEnum
+from enum import EnumMeta
+from strenum import StrEnum
 from typing import Any, Dict, Optional, Type
 from urllib.parse import urlparse
 

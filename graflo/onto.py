@@ -21,8 +21,8 @@ Example:
 
 import dataclasses
 from copy import deepcopy
-from enum import EnumMeta, StrEnum
-
+from enum import EnumMeta
+from strenum import StrEnum
 from dataclass_wizard import JSONWizard, YAMLWizard
 from dataclass_wizard.enums import DateTimeTo
 

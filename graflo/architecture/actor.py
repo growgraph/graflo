@@ -27,7 +27,7 @@ from collections import defaultdict
 from functools import reduce
 from pathlib import Path
 from types import MappingProxyType
-from typing import Optional, Type
+from typing import Any, Optional, Type
 
 from graflo.architecture.actor_util import (
     add_blank_collections,
@@ -69,7 +69,9 @@ class Actor(ABC):
     """
 
     @abstractmethod
-    def __call__(self, ctx: ActionContext, lindex: LocationIndex, *nargs, **kwargs):
+    def __call__(
+        self, ctx: ActionContext, lindex: LocationIndex, *nargs, **kwargs
+    ) -> ActionContext:
         """Execute the actor's main processing logic.
 
         Args:
@@ -82,7 +84,7 @@ class Actor(ABC):
         """
         pass
 
-    def fetch_important_items(self):
+    def fetch_important_items(self) -> dict:
         """Get a dictionary of important items for string representation.
 
         Returns:
@@ -106,7 +108,7 @@ class Actor(ABC):
         """
         pass
 
-    def count(self):
+    def count(self) -> int:
         """Get the count of items processed by this actor.
 
         Returns:
@@ -114,7 +116,7 @@ class Actor(ABC):
         """
         return 1
 
-    def _filter_items(self, items):
+    def _filter_items(self, items: dict) -> dict:
         """Filter out None and empty items.
 
         Args:
@@ -125,7 +127,7 @@ class Actor(ABC):
         """
         return {k: v for k, v in items.items() if v is not None and v}
 
-    def _stringify_items(self, items):
+    def _stringify_items(self, items: dict) -> dict:
         """Convert items to string representation.
 
         Args:
@@ -138,6 +140,17 @@ class Actor(ABC):
             k: ", ".join(list(v)) if isinstance(v, (tuple, list)) else str(v)
             for k, v in items.items()
         }
+
+    def _fetch_items_from_dict(self, keys: tuple[str, ...]) -> dict:
+        """Helper method to extract items from instance dict for string representation.
+
+        Args:
+            keys: Tuple of attribute names to extract
+
+        Returns:
+            dict: Dictionary of extracted items
+        """
+        return {k: self.__dict__[k] for k in keys if k in self.__dict__}
 
     def __str__(self):
         """Get string representation of the actor.
@@ -203,8 +216,7 @@ class VertexActor(Actor):
         Returns:
             dict: Dictionary of important items
         """
-        sd = self.__dict__
-        return {k: sd[k] for k in ["name", "keep_fields"]}
+        return self._fetch_items_from_dict(("name", "keep_fields"))
 
     def finish_init(self, **kwargs):
         """Complete initialization of the vertex actor.
@@ -213,6 +225,69 @@ class VertexActor(Actor):
             **kwargs: Additional initialization parameters
         """
         self.vertex_config: VertexConfig = kwargs.pop("vertex_config")
+
+    def _process_transformed_items(
+        self, ctx: ActionContext, lindex: LocationIndex, doc: dict, vertex_keys: tuple
+    ) -> list[dict]:
+        """Process items from buffer_transforms.
+
+        Args:
+            ctx: Action context
+            lindex: Location index
+            doc: Document being processed
+            vertex_keys: Tuple of vertex field keys
+
+        Returns:
+            list[dict]: List of processed documents
+        """
+        agg = []
+        filters = self.vertex_config.filters(self.name)
+
+        for item in ctx.buffer_transforms[lindex]:
+            _doc: dict = {}
+            # Extract transformed values with special keys
+            n_value_keys = len(
+                [k for k in item if k.startswith(DRESSING_TRANSFORMED_VALUE_KEY)]
+            )
+            for j in range(n_value_keys):
+                vkey = self.vertex_config.index(self.name).fields[j]
+                v = item.pop(f"{DRESSING_TRANSFORMED_VALUE_KEY}#{j}")
+                _doc[vkey] = v
+
+            # Extract remaining vertex keys
+            for vkey in set(vertex_keys) - set(_doc):
+                v = item.pop(vkey, None)
+                if v is not None:
+                    _doc[vkey] = v
+
+            if all(cfilter(doc) for cfilter in filters):
+                agg.append(_doc)
+
+        # Clean up empty items
+        ctx.buffer_transforms[lindex] = [x for x in ctx.buffer_transforms[lindex] if x]
+        return agg
+
+    def _process_buffer_vertex(
+        self, buffer_vertex: list[dict], doc: dict, vertex_keys: tuple
+    ) -> list[dict]:
+        """Process items from buffer_vertex.
+
+        Args:
+            buffer_vertex: List of vertex items from buffer
+            doc: Document being processed
+            vertex_keys: Tuple of vertex field keys
+
+        Returns:
+            list[dict]: List of processed documents
+        """
+        agg = []
+        filters = self.vertex_config.filters(self.name)
+
+        for item in buffer_vertex:
+            _doc = {k: item[k] for k in vertex_keys if k in item}
+            if all(cfilter(doc) for cfilter in filters):
+                agg.append(_doc)
+        return agg
 
     def __call__(self, ctx: ActionContext, lindex: LocationIndex, *nargs, **kwargs):
         """Process vertex data.
@@ -230,55 +305,36 @@ class VertexActor(Actor):
         vertex_keys = self.vertex_config.fields(self.name, with_aux=True)
         buffer_vertex = ctx.buffer_vertex.pop(self.name, [])
 
-        agg = []
+        # Process transformed items
+        agg = self._process_transformed_items(ctx, lindex, doc, vertex_keys)
 
-        for item in ctx.buffer_transforms[lindex]:
-            _doc: dict = dict()
-            n_value_keys = len(
-                [k for k in item if k.startswith(DRESSING_TRANSFORMED_VALUE_KEY)]
-            )
-            for j in range(n_value_keys):
-                vkey = self.vertex_config.index(self.name).fields[j]
-                v = item.pop(f"{DRESSING_TRANSFORMED_VALUE_KEY}#{j}")
-                _doc[vkey] = v
+        # Process buffer vertex items
+        agg.extend(self._process_buffer_vertex(buffer_vertex, doc, vertex_keys))
 
-            for vkey in set(vertex_keys) - set(_doc):
-                v = item.pop(vkey, None)
-                if v is not None:
-                    _doc[vkey] = v
-
-            if all(cfilter(doc) for cfilter in self.vertex_config.filters(self.name)):
-                agg += [_doc]
-
-        ctx.buffer_transforms[lindex] = [x for x in ctx.buffer_transforms[lindex] if x]
-
-        for item in buffer_vertex:
-            _doc = {k: item[k] for k in vertex_keys if k in item}
-
-            if all(cfilter(doc) for cfilter in self.vertex_config.filters(self.name)):
-                agg += [_doc]
-
+        # Add passthrough items from doc
         remaining_keys = set(vertex_keys) - reduce(
             lambda acc, d: acc | d.keys(), agg, set()
         )
-        passthrough_doc = {}
-        for k in remaining_keys:
-            if k in doc:
-                passthrough_doc[k] = doc.pop(k)
+        passthrough_doc = {k: doc.pop(k) for k in remaining_keys if k in doc}
         if passthrough_doc:
-            agg += [passthrough_doc]
+            agg.append(passthrough_doc)
 
+        # Merge and create vertex representations
         merged = merge_doc_basis(
             agg, index_keys=tuple(self.vertex_config.index(self.name).fields)
         )
 
-        ctx.acc_vertex[self.name][lindex] += [
-            VertexRep(
-                vertex=m,
-                ctx={q: w for q, w in doc.items() if not isinstance(w, (dict, list))},
-            )
-            for m in merged
-        ]
+        ctx.acc_vertex[self.name][lindex].extend(
+            [
+                VertexRep(
+                    vertex=m,
+                    ctx={
+                        q: w for q, w in doc.items() if not isinstance(w, (dict, list))
+                    },
+                )
+                for m in merged
+            ]
+        )
         return ctx
 
 
@@ -311,8 +367,11 @@ class EdgeActor(Actor):
         Returns:
             dict: Dictionary of important items
         """
-        sd = self.edge.__dict__
-        return {k: sd[k] for k in ["source", "target", "match_source", "match_target"]}
+        return {
+            k: self.edge.__dict__[k]
+            for k in ["source", "target", "match_source", "match_target"]
+            if k in self.edge.__dict__
+        }
 
     def finish_init(self, **kwargs):
         """Complete initialization of the edge actor.
@@ -398,10 +457,9 @@ class TransformActor(Actor):
         Returns:
             dict: Dictionary of important items
         """
-        sd = self.__dict__
-        sm = {k: sd[k] for k in ["name", "vertex"]}
-        smb = {"t.input": self.t.input, "t.output": self.t.output}
-        return {**sm, **smb}
+        items = self._fetch_items_from_dict(("name", "vertex"))
+        items.update({"t.input": self.t.input, "t.output": self.t.output})
+        return items
 
     def init_transforms(self, **kwargs):
         """Initialize available transforms.
@@ -423,7 +481,8 @@ class TransformActor(Actor):
                     self.transforms[pt.name] = pt
                 elif pt.params:
                     self.transforms[pt.name] = pt
-        except Exception:
+        except (TypeError, ValueError, AttributeError) as e:
+            logger.debug(f"Failed to initialize ProtoTransform: {e}")
             pass
 
     def finish_init(self, **kwargs):
@@ -452,6 +511,45 @@ class TransformActor(Actor):
                         self.t.output = pt.output
                         self.t.__post_init__()
 
+    def _extract_doc(self, nargs: tuple, **kwargs) -> dict:
+        """Extract document from arguments.
+
+        Args:
+            nargs: Positional arguments
+            **kwargs: Keyword arguments
+
+        Returns:
+            dict: Extracted document
+
+        Raises:
+            ValueError: If no document is provided
+        """
+        if kwargs:
+            doc: Optional[dict] = kwargs.get("doc")
+        elif nargs:
+            doc = nargs[0]
+        else:
+            raise ValueError(f"{type(self).__name__}: doc should be provided")
+        return doc
+
+    def _format_transform_result(self, result: Any) -> dict:
+        """Format transformation result into update document.
+
+        Args:
+            result: Result from transform
+
+        Returns:
+            dict: Formatted update document
+        """
+        if isinstance(result, dict):
+            return result
+        elif isinstance(result, tuple):
+            return {
+                f"{DRESSING_TRANSFORMED_VALUE_KEY}#{j}": v for j, v in enumerate(result)
+            }
+        else:
+            return {f"{DRESSING_TRANSFORMED_VALUE_KEY}#0": result}
+
     def __call__(self, ctx: ActionContext, lindex: LocationIndex, *nargs, **kwargs):
         """Apply transformation to input data.
 
@@ -466,34 +564,21 @@ class TransformActor(Actor):
         Raises:
             ValueError: If no document is provided
         """
-        logging.debug(f"transforms : {id(self.transforms)} {len(self.transforms)}")
+        logger.debug(f"transforms : {id(self.transforms)} {len(self.transforms)}")
 
-        if kwargs:
-            doc: Optional[dict] = kwargs.get("doc")
-        elif nargs:
-            doc = nargs[0]
-        else:
-            raise ValueError(f"{type(self).__name__}: doc should be provided")
+        doc = self._extract_doc(nargs, **kwargs)
 
-        _update_doc: dict
         if isinstance(doc, dict):
-            _update_doc = self.t(doc)
+            transform_result = self.t(doc)
         else:
-            value = self.t(doc)
-            if isinstance(value, tuple):
-                _update_doc = {
-                    f"{DRESSING_TRANSFORMED_VALUE_KEY}#{j}": v
-                    for j, v in enumerate(value)
-                }
-            elif isinstance(value, dict):
-                _update_doc = value
-            else:
-                _update_doc = {f"{DRESSING_TRANSFORMED_VALUE_KEY}#0": value}
+            transform_result = self.t(doc)
+
+        _update_doc = self._format_transform_result(transform_result)
 
         if self.vertex is None:
-            ctx.buffer_transforms[lindex] += [_update_doc]
+            ctx.buffer_transforms[lindex].append(_update_doc)
         else:
-            ctx.buffer_vertex[self.vertex] += [_update_doc]
+            ctx.buffer_vertex[self.vertex].append(_update_doc)
         return ctx
 
 
@@ -535,11 +620,10 @@ class DescendActor(Actor):
         Returns:
             dict: Dictionary of important items
         """
-        sd = self.__dict__
-        sm = {k: sd[k] for k in ["key"]}
+        items = self._fetch_items_from_dict(("key",))
         if self.any_key:
-            sm["any_key"] = True
-        return {**sm}
+            items["any_key"] = True
+        return items
 
     def add_descendant(self, d: ActorWrapper):
         """Add a child actor wrapper.
@@ -621,6 +705,35 @@ class DescendActor(Actor):
             }"""
         )
 
+    def _expand_document(self, doc: dict | list) -> list[tuple[str | None, Any]]:
+        """Expand document into list of (key, item) tuples for processing.
+
+        Args:
+            doc: Document to expand
+
+        Returns:
+            list[tuple[str | None, Any]]: List of (key, item) tuples
+        """
+        if self.key is not None:
+            if isinstance(doc, dict) and self.key in doc:
+                items = doc[self.key]
+                aux = items if isinstance(items, list) else [items]
+                return [(self.key, item) for item in aux]
+            return []
+        elif self.any_key:
+            if isinstance(doc, dict):
+                result = []
+                for key, items in doc.items():
+                    aux = items if isinstance(items, list) else [items]
+                    result.extend([(key, item) for item in aux])
+                return result
+            return []
+        else:
+            # Process as list or single item
+            if isinstance(doc, list):
+                return [(None, item) for item in doc]
+            return [(None, doc)]
+
     def __call__(self, ctx: ActionContext, lindex: LocationIndex, **kwargs):
         """Process hierarchical data structure.
 
@@ -642,40 +755,21 @@ class DescendActor(Actor):
         if not doc:
             return ctx
 
-        doc_expanded = []
-        if self.key is not None:
-            if isinstance(doc, dict) and self.key in doc:
-                aux = (
-                    doc[self.key]
-                    if isinstance(doc[self.key], list)
-                    else [doc[self.key]]
-                )
-                doc_expanded = [(self.key, item) for item in aux]
-            else:
-                return ctx
-        elif self.any_key:
-            if isinstance(doc, dict):
-                for key, items in doc.items():
-                    aux = items if isinstance(items, list) else [items]
-                    doc_expanded += [(key, item) for item in aux]
-        else:
-            doc_expanded = (
-                [(None, item) for item in doc]
-                if isinstance(doc, list)
-                else [(None, doc)]
-            )
+        doc_expanded = self._expand_document(doc)
+        if not doc_expanded:
+            return ctx
 
-        logger.debug(f"{len(doc_expanded)}")
+        logger.debug(f"Expanding {len(doc_expanded)} items")
 
         for idoc, (key, sub_doc) in enumerate(doc_expanded):
-            logger.debug(f"docs: {idoc + 1}/{len(doc_expanded)}")
+            logger.debug(f"Processing item {idoc + 1}/{len(doc_expanded)}")
             if isinstance(sub_doc, dict):
                 nargs: tuple = tuple()
                 kwargs["doc"] = sub_doc
             else:
                 nargs = (sub_doc,)
 
-            # down the tree
+            # Extend location index for nested processing
             extra_step = (idoc,) if key is None else (key, idoc)
             for j, anw in enumerate(self.descendants):
                 logger.debug(
@@ -747,13 +841,16 @@ class ActorWrapper:
         self.actor: Actor
         self.vertex_config: VertexConfig
         self.edge_config: EdgeConfig
-        if self._try_init_descend(*args, **kwargs):
+
+        # Try initialization methods in order
+        # Make copies of kwargs for each attempt to avoid mutation issues
+        if self._try_init_descend(*args, **kwargs.copy()):
             pass
-        elif self._try_init_transform(**kwargs):
+        elif self._try_init_transform(**kwargs.copy()):
             pass
-        elif self._try_init_vertex(**kwargs):
+        elif self._try_init_vertex(**kwargs.copy()):
             pass
-        elif self._try_init_edge(**kwargs):
+        elif self._try_init_edge(**kwargs.copy()):
             pass
         else:
             raise ValueError(f"Not able to init ActionNodeWrapper with {kwargs}")
@@ -794,26 +891,38 @@ class ActorWrapper:
 
         Args:
             *args: Positional arguments
-            **kwargs: Keyword arguments
+            **kwargs: Keyword arguments (may be modified)
 
         Returns:
             bool: True if successful, False otherwise
         """
+        # Check if we have the required arguments before modifying kwargs
+        has_apply = "apply" in kwargs
+        has_args = len(args) > 0
+        if not (has_apply or has_args):
+            return False
 
+        # Now safe to pop from kwargs
         descend_key = kwargs.pop(DESCEND_KEY, None)
-
         descendants = kwargs.pop("apply", None)
+
         if descendants is not None:
-            if isinstance(descendants, list):
-                descendants = descendants
-            else:
-                descendants = [descendants]
+            descendants = (
+                descendants if isinstance(descendants, list) else [descendants]
+            )
         elif len(args) > 0:
             descendants = list(args)
         else:
             return False
-        self.actor = DescendActor(descend_key, descendants_kwargs=descendants, **kwargs)
-        return True
+
+        try:
+            self.actor = DescendActor(
+                descend_key, descendants_kwargs=descendants, **kwargs
+            )
+            return True
+        except (TypeError, ValueError, AttributeError) as e:
+            logger.debug(f"Failed to initialize DescendActor: {e}")
+            return False
 
     def _try_init_transform(self, **kwargs) -> bool:
         """Try to initialize a transform actor.
@@ -827,7 +936,8 @@ class ActorWrapper:
         try:
             self.actor = TransformActor(**kwargs)
             return True
-        except Exception:
+        except (TypeError, ValueError, AttributeError) as e:
+            logger.debug(f"Failed to initialize TransformActor: {e}")
             return False
 
     def _try_init_vertex(self, **kwargs) -> bool:
@@ -842,7 +952,8 @@ class ActorWrapper:
         try:
             self.actor = VertexActor(**kwargs)
             return True
-        except Exception:
+        except (TypeError, ValueError, AttributeError) as e:
+            logger.debug(f"Failed to initialize VertexActor: {e}")
             return False
 
     def _try_init_edge(self, **kwargs) -> bool:
@@ -857,7 +968,8 @@ class ActorWrapper:
         try:
             self.actor = EdgeActor(**kwargs)
             return True
-        except Exception:
+        except (TypeError, ValueError, AttributeError) as e:
+            logger.debug(f"Failed to initialize EdgeActor: {e}")
             return False
 
     def __call__(

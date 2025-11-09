@@ -6,7 +6,7 @@ alwaysApply: true
 ---
 
 # Python Coding Rules
-- Use python 3.12 conventions: use `type | None` instead of `Optional` etc
+- Use python 3.10 conventions: use `type | None` instead of `Optional` etc
 - Use type hints everywhere (PEP 484).
 - Use snake_case for functions and variables, PascalCase for classes.
 - Use `pydantic.BaseModel` for structured data, not dataclasses

@@ -32,7 +32,7 @@ import dataclasses
 import importlib
 import logging
 from copy import deepcopy
-from typing import Optional
+from typing import Any, Optional
 
 from graflo.onto import BaseDataclass
 
@@ -64,10 +64,10 @@ class ProtoTransform(BaseDataclass):
 
     name: Optional[str] = None
     module: Optional[str] = None
-    params: dict = dataclasses.field(default_factory=dict)
+    params: dict[str, Any] = dataclasses.field(default_factory=dict)
     foo: Optional[str] = None
-    input: tuple[str, ...] = dataclasses.field(default_factory=tuple)
-    output: tuple[str, ...] = dataclasses.field(default_factory=tuple)
+    input: str | list[str] | tuple[str, ...] = dataclasses.field(default_factory=tuple)
+    output: str | list[str] | tuple[str, ...] = dataclasses.field(default_factory=tuple)
 
     def __post_init__(self):
         """Initialize the transform after dataclass initialization.
@@ -148,9 +148,11 @@ class Transform(ProtoTransform):
         functional_transform: Whether this is a functional transform
     """
 
-    fields: tuple[str, ...] = dataclasses.field(default_factory=tuple)
+    fields: str | list[str] | tuple[str, ...] = dataclasses.field(default_factory=tuple)
     map: dict[str, str] = dataclasses.field(default_factory=dict)
-    switch: dict[str, str] = dataclasses.field(default_factory=dict)
+    switch: dict[str, list[str] | tuple[str, ...]] = dataclasses.field(
+        default_factory=dict
+    )
 
     def __post_init__(self):
         """Initialize the transform after dataclass initialization.

@@ -3,7 +3,7 @@ from pathlib import Path
 import mkdocs_gen_files
 
 nav = mkdocs_gen_files.Nav()
-pname = "graflo"
+pname = "ontocast"
 
 for path in sorted(Path(pname).rglob("*.py")):
     module_path = path.relative_to(pname).with_suffix("")
@@ -16,7 +16,8 @@ for path in sorted(Path(pname).rglob("*.py")):
         parts = parts[:-1]
     if not parts:
         continue
-    nav[parts] = str(full_doc_path)
+    parts_str: tuple[str] = tuple(parts)
+    nav[parts_str] = str(full_doc_path)
 
     with mkdocs_gen_files.open(full_doc_path, "w") as f:
         ident = ".".join([pname] + parts)

@@ -55,11 +55,11 @@ def add_blank_collections(
 ) -> ActionContext:
     """Add blank collections for vertices that require them.
 
-        This function creates blank collections for vertices marked as blank in the
-        vertex configuration. It copies relevant fields from the current document
-        to create the blank vertex documents.
-    edg
-        Args:
+    This function creates blank collections for vertices marked as blank in the
+    vertex configuration. It copies relevant fields from the current document
+    to create the blank vertex documents.
+
+    Args:
             ctx: Current action context containing document and accumulator
             vertex_conf: Vertex configuration containing blank vertex definitions
 
@@ -116,7 +116,19 @@ def select_iterator(casting_type: EdgeCastingType):
     return iterator
 
 
-def filter_nonindexed(items_tdressed, index):
+def filter_nonindexed(
+    items_tdressed: defaultdict[LocationIndex, list[tuple[VertexRep, dict]]],
+    index,
+) -> defaultdict[LocationIndex, list[tuple[VertexRep, dict]]]:
+    """Filter items to only include those with indexed fields.
+
+    Args:
+        items_tdressed: Dictionary of dressed vertex items
+        index: Index fields to check
+
+    Returns:
+        Filtered dictionary of dressed vertex items
+    """
     for va, vlist in items_tdressed.items():
         items_tdressed[va] = [
             item for item in vlist if any(k in item[0].vertex for k in index)
@@ -352,7 +364,7 @@ def render_weights(
     vertex_config: VertexConfig,
     acc_vertex: defaultdict[str, defaultdict[LocationIndex, list]],
     edges: defaultdict[str | None, list],
-):
+) -> defaultdict[str | None, list]:
     """Process and apply weights to edge documents.
 
     This function handles the complex weight management system, including:
