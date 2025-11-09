@@ -59,6 +59,9 @@ class Neo4jConnection(Connection):
             config: Neo4j connection configuration containing URL and credentials
         """
         super().__init__()
+        # Ensure url is not None - GraphDatabase.driver requires a non-None URI
+        if config.url is None:
+            raise ValueError("Neo4j connection requires a URL to be configured")
         self._driver = GraphDatabase.driver(
             uri=config.url, auth=(config.username, config.password)
         )

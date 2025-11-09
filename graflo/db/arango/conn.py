@@ -68,10 +68,12 @@ class ArangoConnection(Connection):
         super().__init__()
         client = ArangoClient(hosts=config.url, request_timeout=config.request_timeout)
 
+        # ArangoDB accepts empty string for password if None
+        password = config.password if config.password is not None else ""
         self.conn = client.db(
             config.database,
             username=config.username,
-            password=config.password,
+            password=password,
         )
 
     def create_database(self, name: str):
@@ -147,6 +149,11 @@ class ArangoConnection(Connection):
         for item in schema.edge_config.edges_list():
             u, v = item.source, item.target
             gname = item.graph_name
+            if not gname:
+                logger.warning(
+                    f"Edge {item.source} -> {item.target} has no graph_name, skipping"
+                )
+                continue
             logger.info(f"{item.source}, {item.target}, {gname}")
             if self.conn.has_graph(gname):
                 g = self.conn.graph(gname)
@@ -175,13 +182,20 @@ class ArangoConnection(Connection):
         """
         for item in edges:
             gname = item.graph_name
+            if not gname:
+                logger.warning("Edge has no graph_name, skipping")
+                continue
             if self.conn.has_graph(gname):
                 g = self.conn.graph(gname)
             else:
                 g = self.conn.create_graph(gname)  # type: ignore
-            if not g.has_edge_definition(item.collection_name):
+            collection_name = item.collection_name
+            if not collection_name:
+                logger.warning("Edge has no collection_name, skipping")
+                continue
+            if not g.has_edge_definition(collection_name):
                 _ = g.create_edge_definition(
-                    edge_collection=item.collection_name,
+                    edge_collection=collection_name,
                     from_vertex_collections=[item._source_collection],
                     to_vertex_collections=[item._target_collection],
                 )
@@ -240,7 +254,11 @@ class ArangoConnection(Connection):
             edges: List of edge configurations containing index definitions
         """
         for edge in edges:
-            general_collection = self.conn.collection(edge.collection_name)
+            collection_name = edge.collection_name
+            if not collection_name:
+                logger.warning("Edge has no collection_name, skipping index creation")
+                continue
+            general_collection = self.conn.collection(collection_name)
             for index_obj in edge.indexes:
                 self._add_index(general_collection, index_obj)
 
@@ -680,7 +698,7 @@ class ArangoConnection(Connection):
 
         if to_type:
             filter_parts.append(f"e._to LIKE '{to_type}/%'")
-        if to_id:
+        if to_id and to_type:
             if not to_id.startswith(to_type):
                 to_vertex_id = f"{to_type}/{to_id}"
             else:

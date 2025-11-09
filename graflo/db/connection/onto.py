@@ -150,6 +150,10 @@ class WSGIConfig(ProtoConnectionConfig):
         # Handle path from URL if available
         if self.url is None:
             super().__post_init__()
+            # After super().__post_init__(), self.url might still be None
+            # Initialize it to empty string if still None, then append path
+            if self.url is None:
+                self.url = ""
             self.url += f"{self.path}"
         else:
             parsed = urlparse(self.url)
