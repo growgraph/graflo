@@ -350,12 +350,12 @@ class LeafClause(AbsClause):
         Returns:
             bool: Evaluation result
         """
-        field = kwargs.pop(self.field, None)
-        if field is not None:
-            foo = getattr(field, self.operator)
-            return foo(self.value[0])
-        else:
-            return False
+        if self.field is not None:
+            field = kwargs.pop(self.field, None)
+            if field is not None and self.operator is not None:
+                foo = getattr(field, self.operator)
+                return foo(self.value[0])
+        return False
 
 
 @dataclasses.dataclass
