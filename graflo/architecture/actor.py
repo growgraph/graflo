@@ -302,7 +302,12 @@ class VertexActor(Actor):
         """
         doc: dict = kwargs.pop("doc", {})
 
-        vertex_keys = self.vertex_config.fields(self.name, with_aux=True)
+        vertex_keys_list = self.vertex_config.fields(self.name, with_aux=True)
+        # Convert to tuple of strings for type compatibility
+        vertex_keys: tuple[str, ...] = tuple(
+            field.name if hasattr(field, "name") else str(field)
+            for field in vertex_keys_list
+        )
         buffer_vertex = ctx.buffer_vertex.pop(self.name, [])
 
         # Process transformed items
@@ -530,6 +535,10 @@ class TransformActor(Actor):
             doc = nargs[0]
         else:
             raise ValueError(f"{type(self).__name__}: doc should be provided")
+
+        if doc is None:
+            raise ValueError(f"{type(self).__name__}: doc should be provided")
+
         return doc
 
     def _format_transform_result(self, result: Any) -> dict:

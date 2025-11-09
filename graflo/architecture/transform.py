@@ -108,7 +108,7 @@ class ProtoTransform(BaseDataclass):
             TypeError: If module import fails
             ValueError: If function lookup fails
         """
-        if self.module is not None:
+        if self.module is not None and self.foo is not None:
             try:
                 _module = importlib.import_module(self.module)
             except Exception as e:

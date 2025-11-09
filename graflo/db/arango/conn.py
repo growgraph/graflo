@@ -70,13 +70,15 @@ class ArangoConnection(Connection):
         if config.url is None:
             raise ValueError("ArangoDB connection requires a URL to be configured")
         if config.database is None:
-            raise ValueError("ArangoDB connection requires a database name to be configured")
-        
+            raise ValueError(
+                "ArangoDB connection requires a database name to be configured"
+            )
+
         # ArangoDB accepts empty string for password if None
         password = config.password if config.password is not None else ""
         # ArangoDB has default username "root" if None
         username = config.username if config.username is not None else "root"
-        
+
         client = ArangoClient(hosts=config.url, request_timeout=config.request_timeout)
         self.conn = client.db(
             config.database,
