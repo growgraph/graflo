@@ -108,7 +108,9 @@ A `Resource` is a set of mappings and transformations of a data source to vertic
 ### Actor
 An `Actor` describes how the current level of the document should be mapped/transformed to the property graph vertices and edges. There are four types that act on the provided document in this order:
  
-- `DescendActor`: Navigates to the next level in the hierarchy
+- `DescendActor`: Navigates to the next level in the hierarchy. Supports:
+  - `key`: Process a specific key in a dictionary
+  - `any_key`: Process all keys in a dictionary (useful when you want to handle multiple keys dynamically)
 - `TransformActor`: Applies data transformations
 - `VertexActor`: Creates vertices from the current level
 - `EdgeActor`: Creates edges between vertices

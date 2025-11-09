@@ -87,7 +87,10 @@ The resulting graph shows the following package dependency relationships:
 ## Resource (Nested Structure)
 
 ### Nested Structure Handling
-The resource configuration handles deeply nested data:
+The resource configuration handles deeply nested data. There are two approaches:
+
+#### Approach 1: Explicit Key Listing
+You can explicitly list each key you want to process:
 
 ```yaml
 resources:
@@ -123,6 +126,31 @@ resources:
         apply:
         -   vertex: maintainer
 ```
+
+#### Approach 2: Using `any_key` (Simplified)
+Alternatively, you can use `any_key: true` to process all keys in the dictionary automatically:
+
+```yaml
+resources:
+-   resource_name: package
+    apply:
+    -   vertex: package
+    -   key: dependencies
+        apply:
+        -   any_key: true
+            apply:
+            -   vertex: package
+    -   source: maintainer
+        target: package
+    -   source: package
+        target: package
+        relation_from_key: true
+    -   key: maintainer
+        apply:
+        -   vertex: maintainer
+```
+
+The `any_key: true` approach is more concise and automatically handles all keys in the `dependencies` dictionary (e.g., `breaks`, `conflicts`, `depends`, `pre-depends`, `suggests`, `recommends`, and any future keys) without needing to list them explicitly.
 
 We use `relation_from_key: true` to:
 

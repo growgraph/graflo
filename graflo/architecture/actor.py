@@ -135,7 +135,7 @@ class Actor(ABC):
             dict: Dictionary with stringified values
         """
         return {
-            k: ", ".join(list(v)) if isinstance(v, (tuple, list)) else v
+            k: ", ".join(list(v)) if isinstance(v, (tuple, list)) else str(v)
             for k, v in items.items()
         }
 
@@ -505,6 +505,7 @@ class DescendActor(Actor):
 
     Attributes:
         key: Optional key for accessing nested data
+        any_key: If True, processes all keys in a dictionary instead of a specific key
         _descendants: List of child actor wrappers
     """
 
@@ -514,8 +515,11 @@ class DescendActor(Actor):
         """Initialize the descend actor.
 
         Args:
-            key: Optional key for accessing nested data
-            any_key: Optional flag for accessing nested data (any key)
+            key: Optional key for accessing nested data. If provided, only this key
+                will be processed. Mutually exclusive with `any_key`.
+            any_key: If True, processes all keys in a dictionary instead of a specific key.
+                When enabled, iterates over all key-value pairs in the document dictionary.
+                Mutually exclusive with `key`.
             descendants_kwargs: List of child actor configurations
             **kwargs: Additional initialization parameters
         """
@@ -533,6 +537,8 @@ class DescendActor(Actor):
         """
         sd = self.__dict__
         sm = {k: sd[k] for k in ["key"]}
+        if self.any_key:
+            sm["any_key"] = True
         return {**sm}
 
     def add_descendant(self, d: ActorWrapper):

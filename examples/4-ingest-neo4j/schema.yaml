@@ -7,22 +7,7 @@ resources:
     -   vertex: package
     -   key: dependencies
         apply:
-        -   key: breaks
-            apply:
-            -   vertex: package
-        -   key: conflicts
-            apply:
-            -   vertex: package
-        -   key: depends
-            apply:
-            -   vertex: package
-        -   key: pre-depends
-            apply:
-            -   vertex: package
-        -   key: suggests
-            apply:
-            -   vertex: package
-        -   key: recommends
+        -   any_key: true
             apply:
             -   vertex: package
     -   source: maintainer
