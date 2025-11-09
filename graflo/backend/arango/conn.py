@@ -34,10 +34,10 @@ from graflo.architecture.onto import (
 )
 from graflo.architecture.schema import Schema
 from graflo.architecture.vertex import VertexConfig
-from graflo.db.arango.query import fetch_fields_query
-from graflo.db.arango.util import render_filters
-from graflo.db.conn import Connection
-from graflo.db.util import get_data_from_cursor
+from graflo.backend.arango.query import fetch_fields_query
+from graflo.backend.arango.util import render_filters
+from graflo.backend.conn import Connection
+from graflo.backend.util import get_data_from_cursor
 from graflo.filter.onto import Clause
 from graflo.onto import AggregationType, DBFlavor
 from graflo.util.transform import pick_unique_dict

@@ -36,8 +36,8 @@ from graflo.architecture.edge import Edge
 from graflo.architecture.onto import Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.vertex import FieldType, Vertex, VertexConfig
-from graflo.db.conn import Connection
-from graflo.db.connection.onto import TigergraphConnectionConfig
+from graflo.backend.conn import Connection
+from graflo.backend.connection.onto import TigergraphConnectionConfig
 from graflo.filter.onto import Clause, Expression
 from graflo.onto import AggregationType, DBFlavor, ExpressionFlavor
 from graflo.util.transform import pick_unique_dict

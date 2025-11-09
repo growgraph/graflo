@@ -13,8 +13,8 @@ Key Components:
     - Query: Query generation and execution utilities
 
 Example:
-    >>> from graflo.db import ConnectionManager
-    >>> from graflo.db.arango import ArangoConnection
+    >>> from graflo.backend import ConnectionManager
+    >>> from graflo.backend.arango import ArangoConnection
     >>> manager = ConnectionManager(
     ...     connection_config={"url": "http://localhost:8529"},
     ...     conn_class=ArangoConnection

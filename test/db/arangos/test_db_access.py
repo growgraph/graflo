@@ -2,7 +2,7 @@ import logging
 
 import pytest
 
-from graflo.db import ConnectionManager
+from graflo.backend import ConnectionManager
 
 logger = logging.getLogger(__name__)
 

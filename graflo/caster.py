@@ -22,15 +22,20 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pandas as pd
 from suthing import Timer
 
-from graflo.architecture.onto import GraphContainer
+from graflo.architecture.onto import EncodingType, GraphContainer
 from graflo.architecture.schema import Schema
-from graflo.db import ConnectionKind, ConnectionManager, DBConnectionConfig
-from graflo.util.chunker import ChunkerFactory
+from graflo.data_source import (
+    AbstractDataSource,
+    DataSourceFactory,
+    DataSourceRegistry,
+)
+from graflo.backend import ConnectionKind, ConnectionManager, DBConnectionConfig
+from graflo.util.chunker import ChunkerType
 from graflo.util.onto import FilePattern, Patterns
 
 logger = logging.getLogger(__name__)
@@ -156,28 +161,100 @@ class Caster:
         if conn_conf is not None:
             self.push_db(gc=gc, conn_conf=conn_conf, resource_name=resource_name)
 
+    def process_data_source(
+        self,
+        data_source: AbstractDataSource,
+        resource_name: str | None = None,
+        conn_conf: None | DBConnectionConfig = None,
+    ):
+        """Process a data source.
+
+        Args:
+            data_source: Data source to process
+            resource_name: Optional name of the resource (overrides data_source.resource_name)
+            conn_conf: Optional database connection configuration
+        """
+        # Use provided resource_name or fall back to data_source's resource_name
+        actual_resource_name = resource_name or data_source.resource_name
+
+        for batch in data_source.iter_batches(
+            batch_size=self.batch_size, limit=self.max_items
+        ):
+            self.process_batch(
+                batch, resource_name=actual_resource_name, conn_conf=conn_conf
+            )
+
     def process_resource(
         self,
-        resource_instance: Path,
+        resource_instance: (
+            Path | str | list[dict] | list[list] | pd.DataFrame | dict[str, Any]
+        ),
         resource_name: str | None,
         conn_conf: None | DBConnectionConfig = None,
         **kwargs,
     ):
-        """Process a resource instance.
+        """Process a resource instance from configuration or direct data.
+
+        This method accepts either:
+        1. A configuration dictionary with 'source_type' and data source parameters
+        2. A file path (Path or str) - creates FileDataSource
+        3. In-memory data (list[dict], list[list], or pd.DataFrame) - creates InMemoryDataSource
 
         Args:
-            resource_instance: Path to the resource file
+            resource_instance: Configuration dict, file path, or in-memory data.
+                Configuration dict format:
+                - {"source_type": "file", "path": "data.json"}
+                - {"source_type": "api", "config": {"url": "https://..."}}
+                - {"source_type": "sql", "config": {"connection_string": "...", "query": "..."}}
+                - {"source_type": "in_memory", "data": [...]}
             resource_name: Optional name of the resource
             conn_conf: Optional database connection configuration
+            **kwargs: Additional arguments passed to data source creation
+                (e.g., columns for list[list], encoding for files)
         """
-        chunker = ChunkerFactory.create_chunker(
-            resource=resource_instance,
-            batch_size=self.batch_size,
-            limit=self.max_items,
-            **kwargs,
+        # Handle configuration dictionary
+        if isinstance(resource_instance, dict):
+            config = resource_instance.copy()
+            # Merge with kwargs (kwargs take precedence)
+            config.update(kwargs)
+            data_source = DataSourceFactory.create_data_source_from_config(config)
+        # Handle file paths
+        elif isinstance(resource_instance, (Path, str)):
+            # File path - create FileDataSource
+            # Extract only valid file data source parameters with proper typing
+            file_type: str | ChunkerType | None = cast(
+                str | ChunkerType | None, kwargs.get("file_type", None)
+            )
+            encoding: EncodingType = cast(
+                EncodingType, kwargs.get("encoding", EncodingType.UTF_8)
+            )
+            sep: str | None = cast(str | None, kwargs.get("sep", None))
+            data_source = DataSourceFactory.create_file_data_source(
+                path=resource_instance,
+                file_type=file_type,
+                encoding=encoding,
+                sep=sep,
+            )
+        # Handle in-memory data
+        else:
+            # In-memory data - create InMemoryDataSource
+            # Extract only valid in-memory data source parameters with proper typing
+            columns: list[str] | None = cast(
+                list[str] | None, kwargs.get("columns", None)
+            )
+            data_source = DataSourceFactory.create_in_memory_data_source(
+                data=resource_instance,
+                columns=columns,
+            )
+
+        data_source.resource_name = resource_name
+
+        # Process using the data source
+        self.process_data_source(
+            data_source=data_source,
+            resource_name=resource_name,
+            conn_conf=conn_conf,
         )
-        for batch in chunker:
-            self.process_batch(batch, resource_name=resource_name, conn_conf=conn_conf)
 
     def push_db(
         self,
@@ -282,13 +359,18 @@ class Caster:
         while True:
             try:
                 task = tasks.get_nowait()
-                filepath, resource_name = task
+                # Support both (Path, str) tuples and DataSource instances
+                if isinstance(task, tuple) and len(task) == 2:
+                    filepath, resource_name = task
+                    self.process_resource(
+                        resource_instance=filepath,
+                        resource_name=resource_name,
+                        **kwargs,
+                    )
+                elif isinstance(task, AbstractDataSource):
+                    self.process_data_source(data_source=task, **kwargs)
             except queue.Empty:
                 break
-            else:
-                self.process_resource(
-                    resource_instance=filepath, resource_name=resource_name, **kwargs
-                )
 
     @staticmethod
     def normalize_resource(
@@ -318,33 +400,35 @@ class Caster:
         rows_dressed = [{k: v for k, v in zip(columns, item)} for item in _data]
         return rows_dressed
 
-    def ingest_files(self, path: Path | str, **kwargs):
-        """Ingest files from a directory.
+    def ingest_data_sources(
+        self,
+        data_source_registry: DataSourceRegistry,
+        conn_conf: None | DBConnectionConfig = None,
+        **kwargs,
+    ):
+        """Ingest data from data sources in a registry.
 
         Args:
-            path: Path to directory containing files
+            data_source_registry: Registry containing data sources mapped to resources
+            conn_conf: Database connection configuration
             **kwargs: Additional keyword arguments:
-                - conn_conf: Database connection configuration
                 - clean_start: Whether to clean the database before ingestion
                 - n_cores: Number of CPU cores to use
                 - max_items: Maximum number of items to process
                 - batch_size: Size of batches for processing
                 - dry: Whether to perform a dry run
                 - init_only: Whether to only initialize the database
-                - limit_files: Optional limit on number of files to process
-                - patterns: Optional file patterns to match
         """
-
-        path = Path(path).expanduser()
-        conn_conf = cast(DBConnectionConfig, kwargs.get("conn_conf"))
+        conn_conf = cast(DBConnectionConfig, kwargs.get("conn_conf", conn_conf))
         self.clean_start = kwargs.pop("clean_start", self.clean_start)
         self.n_cores = kwargs.pop("n_cores", self.n_cores)
         self.max_items = kwargs.pop("max_items", self.max_items)
         self.batch_size = kwargs.pop("batch_size", self.batch_size)
         self.dry = kwargs.pop("dry", self.dry)
         init_only = kwargs.pop("init_only", False)
-        limit_files = kwargs.pop("limit_files", None)
-        patterns = kwargs.pop("patterns", Patterns())
+
+        if conn_conf is None:
+            raise ValueError("conn_conf is required for ingest_data_sources")
 
         if (
             conn_conf.connection_type == ConnectionKind.ARANGO
@@ -366,18 +450,15 @@ class Caster:
             logger.info("ingest execution bound to init")
             sys.exit(0)
 
-        tasks: list[tuple[Path, str]] = []
-        for r in self.schema.resources:
-            pattern = (
-                FilePattern(regex=r.name)
-                if r.name not in patterns.patterns
-                else patterns.patterns[r.name]
-            )
-            files = Caster.discover_files(
-                path, limit_files=limit_files, pattern=pattern
-            )
-            logger.info(f"For resource name {r.name} {len(files)} were found")
-            tasks += [(f, r.name) for f in files]
+        # Collect all data sources
+        tasks: list[AbstractDataSource] = []
+        for resource_name in self.schema._resources.keys():
+            data_sources = data_source_registry.get_data_sources(resource_name)
+            if data_sources:
+                logger.info(
+                    f"For resource name {resource_name} {len(data_sources)} data sources were found"
+                )
+                tasks.extend(data_sources)
 
         with Timer() as klepsidra:
             if self.n_cores > 1:
@@ -387,6 +468,7 @@ class Caster:
 
                 func = partial(
                     self.process_with_queue,
+                    conn_conf=conn_conf,
                     **kwargs,
                 )
                 assert mp.get_start_method() == "fork", (
@@ -402,8 +484,54 @@ class Caster:
                     for p in processes:
                         p.join()
             else:
-                for f, resource_name in tasks:
-                    self.process_resource(
-                        resource_instance=f, resource_name=resource_name, **kwargs
+                for data_source in tasks:
+                    self.process_data_source(
+                        data_source=data_source, conn_conf=conn_conf
                     )
         logger.info(f"Processing took {klepsidra.elapsed:.1f} sec")
+
+    def ingest_files(self, path: Path | str, **kwargs):
+        """Ingest files from a directory.
+
+        This method is a wrapper that creates FileDataSource instances from
+        file patterns and calls ingest_data_sources(). It maintains backward
+        compatibility with the existing file-based ingestion workflow.
+
+        Args:
+            path: Path to directory containing files
+            **kwargs: Additional keyword arguments:
+                - conn_conf: Database connection configuration
+                - clean_start: Whether to clean the database before ingestion
+                - n_cores: Number of CPU cores to use
+                - max_items: Maximum number of items to process
+                - batch_size: Size of batches for processing
+                - dry: Whether to perform a dry run
+                - init_only: Whether to only initialize the database
+                - limit_files: Optional limit on number of files to process
+                - patterns: Optional file patterns to match
+        """
+        path = Path(path).expanduser()
+        patterns = kwargs.pop("patterns", Patterns())
+        limit_files = kwargs.pop("limit_files", None)
+
+        # Create DataSourceRegistry from file patterns
+        registry = DataSourceRegistry()
+
+        for r in self.schema.resources:
+            pattern = (
+                FilePattern(regex=r.name)
+                if r.name not in patterns.patterns
+                else patterns.patterns[r.name]
+            )
+            files = Caster.discover_files(
+                path, limit_files=limit_files, pattern=pattern
+            )
+            logger.info(f"For resource name {r.name} {len(files)} files were found")
+
+            # Create FileDataSource for each file using factory
+            for file_path in files:
+                file_source = DataSourceFactory.create_file_data_source(path=file_path)
+                registry.register(file_source, resource_name=r.name)
+
+        # Use the new ingest_data_sources method
+        self.ingest_data_sources(registry, **kwargs)

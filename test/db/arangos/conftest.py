@@ -4,7 +4,7 @@ from test.conftest import ingest_atomic, verify
 import pytest
 from suthing import ConfigFactory, FileHandle
 
-from graflo.db import ConnectionManager
+from graflo.backend import ConnectionManager
 from graflo.filter.onto import ComparisonOperator
 from graflo.onto import AggregationType
 from test.conftest import fetch_schema_obj

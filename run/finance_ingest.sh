@@ -11,5 +11,5 @@ ibespath="$mainpath/ibes/main/"
 yahoopath="$mainpath/yahoo/history/"
 
 
-python ./arango/ingest_csv.py --config-path ../conf/table/ibes.yaml --path "$ibespath" --db-config-path "$confpath" --clean-start --batch-size=1500000
-python ./arango/ingest_csv.py --config-path ../conf/table/ticker.yaml --path "$yahoopath" --db-config-path "$confpath" --batch-size=1500000 --n-thread 5
+python ./arango/ingest_csv.py --config-path ../conf/table/ibes.yaml --path "$ibespath" --backend-config-path "$confpath" --clean-start --batch-size=1500000
+python ./arango/ingest_csv.py --config-path ../conf/table/ticker.yaml --path "$yahoopath" --backend-config-path "$confpath" --batch-size=1500000 --n-thread 5

@@ -33,8 +33,11 @@ dependencies = [
   "pandas>=2.0.3,<3",
   "python-arango>=8.1.2,<9",
   "pytigergraph>=1.9.0",
+  "requests>=2.31.0",
+  "sqlalchemy>=2.0.0",
   "strenum>=0.4.15",
   "suthing>=0.4.1,<0.5",
+  "urllib3>=2.0.0",
   "xmltodict>=0.14.2,<0.15"
 ]
 description = "A framework for transforming tabular (CSV, SQL) and hierarchical data (JSON, XML) into property graphs and ingesting them into graph databases (ArangoDB, Neo4j)"

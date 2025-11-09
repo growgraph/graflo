@@ -7,7 +7,7 @@ Key Functions:
     - get_data_from_cursor: Retrieve data from a cursor with optional limit
 
 Example:
-    >>> cursor = db.execute("FOR doc IN collection RETURN doc")
+    >>> cursor = backend.execute("FOR doc IN collection RETURN doc")
     >>> batch = get_data_from_cursor(cursor, limit=100)
 """
 

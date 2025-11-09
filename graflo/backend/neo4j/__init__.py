@@ -9,7 +9,7 @@ Key Components:
     - Util: Neo4j-specific utility functions
 
 Example:
-    >>> from graflo.db.neo4j import Neo4jConnection
+    >>> from graflo.backend.neo4j import Neo4jConnection
     >>> conn = Neo4jConnection(config)
     >>> result = conn.execute("MATCH (n:User) RETURN n")
     >>> nodes = result.data()

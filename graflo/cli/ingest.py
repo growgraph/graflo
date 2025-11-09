@@ -13,7 +13,7 @@ Key Features:
 
 Example:
     $ uv run ingest \\
-        --db-config-path config/db.yaml \\
+        --backend-config-path config/backend.yaml \\
         --schema-path config/schema.yaml \\
         --source-path data/ \\
         --batch-size 5000 \\
@@ -28,14 +28,14 @@ import click
 from suthing import FileHandle
 
 from graflo import Caster, Patterns, Schema
-from graflo.db import ConfigFactory
+from graflo.backend import ConfigFactory
 
 logger = logging.getLogger(__name__)
 
 
 @click.command()
 @click.option(
-    "--db-config-path",
+    "--backend-config-path",
     type=click.Path(exists=True, path_type=pathlib.Path),
     required=True,
 )
@@ -64,7 +64,10 @@ logger = logging.getLogger(__name__)
 )
 @click.option("--fresh-start", type=bool, help="wipe existing database")
 @click.option(
-    "--init-only", default=False, is_flag=True, help="skip ingestion; only init the db"
+    "--init-only",
+    default=False,
+    is_flag=True,
+    help="skip ingestion; only init the backend",
 )
 def ingest(
     db_config_path,
@@ -98,7 +101,7 @@ def ingest(
 
     Example:
         $ uv run ingest \\
-            --db-config-path config/db.yaml \\
+            --backend-config-path config/backend.yaml \\
             --schema-path config/schema.yaml \\
             --source-path data/ \\
             --batch-size 5000 \\

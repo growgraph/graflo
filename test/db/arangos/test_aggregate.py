@@ -1,4 +1,4 @@
-from graflo.db import ConnectionManager
+from graflo.backend import ConnectionManager
 from graflo.onto import AggregationType
 
 

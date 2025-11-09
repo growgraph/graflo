@@ -472,7 +472,6 @@ class ChunkerFactory:
         elif isinstance(resource, Path):
             if chunker_type is None:
                 chunker_type = cls._guess_chunker_type(resource)
-
             if chunker_type == ChunkerType.JSON:
                 return JsonChunker(filename=resource, **kwargs)
             elif chunker_type == ChunkerType.JSONL:

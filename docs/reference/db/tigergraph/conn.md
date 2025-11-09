@@ -47,7 +47,7 @@ conn_conf = ConfigFactory.create_config({
 ### Usage Example
 
 ```python
-from graflo.db import ConnectionManager
+from graflo.backend import ConnectionManager
 
 with ConnectionManager(connection_config=conn_conf) as db_client:
     # Fetch vertices with server-side filtering
@@ -56,7 +56,7 @@ with ConnectionManager(connection_config=conn_conf) as db_client:
         filters=["==", "10", "hindex"],
         limit=10
     )
-    
+
     # Fetch edges
     edges = db_client.fetch_edges(
         from_type="Author",

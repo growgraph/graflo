@@ -9,7 +9,7 @@ Key Components:
     - Util: ArangoDB-specific utility functions
 
 Example:
-    >>> from graflo.db.arango import ArangoConnection
+    >>> from graflo.backend.arango import ArangoConnection
     >>> conn = ArangoConnection(config)
     >>> cursor = conn.execute("FOR doc IN users RETURN doc")
     >>> results = cursor.batch()

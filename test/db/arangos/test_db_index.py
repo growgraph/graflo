@@ -2,7 +2,7 @@ from test.conftest import verify
 
 import pytest
 
-from graflo.db import ConnectionManager
+from graflo.backend import ConnectionManager
 
 
 @pytest.fixture(scope="function")

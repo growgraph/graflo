@@ -2,7 +2,7 @@
 
 import pytest
 
-from graflo.db import ConnectionManager
+from graflo.backend import ConnectionManager
 
 
 def test_create_database(conn_conf, test_graph_name):

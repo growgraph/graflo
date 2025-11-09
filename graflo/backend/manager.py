@@ -19,10 +19,10 @@ Example:
     ...     conn.execute("FOR doc IN collection RETURN doc")
 """
 
-from graflo.db.arango.conn import ArangoConnection
-from graflo.db.connection.onto import ConnectionKind, ProtoConnectionConfig
-from graflo.db.neo4j.conn import Neo4jConnection
-from graflo.db.tigergraph.conn import TigerGraphConnection
+from graflo.backend.arango.conn import ArangoConnection
+from graflo.backend.connection.onto import ConnectionKind, ProtoConnectionConfig
+from graflo.backend.neo4j.conn import Neo4jConnection
+from graflo.backend.tigergraph.conn import TigerGraphConnection
 
 
 class ConnectionManager:

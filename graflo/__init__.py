@@ -13,7 +13,7 @@ Key Features:
     - Filter expression system
 
 Example:
-    >>> from graflo.db.manager import ConnectionManager
+    >>> from graflo.backend.manager import ConnectionManager
     >>> with ConnectionManager(config) as conn:
     ...     conn.init_db(schema, clean_start=True)
     ...     conn.upsert_docs_batch(docs, "users")
@@ -21,19 +21,47 @@ Example:
 
 from .architecture import Index, Schema
 from .caster import Caster
-from .db import ConnectionManager, ConnectionType
+from .data_source import (
+    APIConfig,
+    APIDataSource,
+    AbstractDataSource,
+    DataSourceFactory,
+    DataSourceRegistry,
+    DataSourceType,
+    FileDataSource,
+    JsonFileDataSource,
+    JsonlFileDataSource,
+    PaginationConfig,
+    SQLConfig,
+    SQLDataSource,
+    TableFileDataSource,
+)
+from .backend import ConnectionManager, ConnectionType
 from .filter.onto import ComparisonOperator, LogicalOperator
 from .onto import AggregationType
 from .util.onto import Patterns
 
 __all__ = [
-    "Caster",
+    "AbstractDataSource",
+    "APIConfig",
+    "APIDataSource",
+    "AggregationType",
+    "ComparisonOperator",
     "ConnectionManager",
     "ConnectionType",
-    "ComparisonOperator",
-    "LogicalOperator",
+    "Caster",
+    "DataSourceFactory",
+    "DataSourceRegistry",
+    "DataSourceType",
+    "FileDataSource",
     "Index",
-    "Schema",
+    "JsonFileDataSource",
+    "JsonlFileDataSource",
+    "LogicalOperator",
+    "PaginationConfig",
     "Patterns",
-    "AggregationType",
+    "Schema",
+    "SQLConfig",
+    "SQLDataSource",
+    "TableFileDataSource",
 ]

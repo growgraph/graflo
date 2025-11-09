@@ -29,7 +29,7 @@ from graflo.architecture.edge import Edge
 from graflo.architecture.onto import Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.vertex import VertexConfig
-from graflo.db.conn import Connection
+from graflo.backend.conn import Connection
 from graflo.filter.onto import Expression
 from graflo.onto import AggregationType, DBFlavor, ExpressionFlavor
 
