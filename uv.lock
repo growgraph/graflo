@@ -204,7 +204,7 @@ requires-dist = [
     { name = "requests", specifier = ">=2.31.0" },
     { name = "sqlalchemy", specifier = ">=2.0.0" },
     { name = "strenum", specifier = ">=0.4.15" },
-    { name = "suthing", specifier = ">=0.4.1,<0.5" },
+    { name = "suthing", specifier = ">=0.5.0" },
     { name = "urllib3", specifier = ">=2.0.0" },
     { name = "xmltodict", specifier = ">=0.14.2,<0.15" },
 ]
@@ -954,17 +954,19 @@ wheels = [
 
 [[package]]
 name = "suthing"
-version = "0.4.1"
+version = "0.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dataclass-wizard" },
+    { name = "mkdocs-gen-files" },
     { name = "pandas" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
+    { name = "strenum" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e9/e4/881b2ce2617adc8d0db8629e613bc529bc7efc5bd3c452a317f3ad068c84/suthing-0.4.1.tar.gz", hash = "sha256:144685d9cf9e2c4ab9c022151c52627ab2193c003b4f78b2cbb7262fff68ec54", size = 80282, upload-time = "2025-05-02T08:21:44.393Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/32/ba/13b1fdafa2b2f34ce888e637749cb85069c663ab57683c421f2c6462ecb7/suthing-0.5.0.tar.gz", hash = "sha256:d10ef14141438fdd2b4ad1f10a5d22f47df533cabe744fd11f9ae6c17d70b168", size = 88672, upload-time = "2025-11-09T22:53:25.922Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6f/42/68085b61f5f247f30b6b04548217a4a98e628c54e649d41d25fb0d5acef3/suthing-0.4.1-py3-none-any.whl", hash = "sha256:bfb3538a9ba380a967b5f555c7bfcde5c112dd7305cb90de818dd3e7ad684e6e", size = 12522, upload-time = "2025-05-02T08:21:43.153Z" },
+    { url = "https://files.pythonhosted.org/packages/ad/a4/6797de8ca92643efc01c3eee5ed97c121412355430f3da744e5630d191b5/suthing-0.5.0-py3-none-any.whl", hash = "sha256:4fc73727f3e859c726d2225d62e064d9717b4bc9e59296ee5012997227e6a9b4", size = 8376, upload-time = "2025-11-09T22:53:24.815Z" },
 ]
 
 [[package]]

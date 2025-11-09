@@ -31,11 +31,19 @@ The Schema defines how your data should be transformed into a graph and contains
 - **Resource Mapping**: describe how data sources map to vertices and edges
 - **Transforms**: Modify data during the casting process
 
-### Resources
-Resources are your data sources that can be:
+### Data Sources
+Data Sources define where data comes from:
 
-- **Table-like**: CSV files, database tables
-- **JSON-like**: JSON files, nested data structures
+- **File Sources**: JSON, JSONL, CSV/TSV files
+- **API Sources**: REST API endpoints with pagination and authentication
+- **SQL Sources**: SQL databases via SQLAlchemy
+- **In-Memory Sources**: Python objects (lists, DataFrames)
+
+### Resources
+Resources define how data is transformed into a graph (semantic mapping). They work with data from any DataSource type:
+
+- **Table-like processing**: CSV files, SQL tables, API responses
+- **JSON-like processing**: JSON files, nested data structures, hierarchical API responses
 
 ## Key Features
 
@@ -65,7 +73,7 @@ Resources are your data sources that can be:
 
 ## Requirements
 
-- Python 3.11 or higher
+- Python 3.10 or higher
 - Graph database (Neo4j, ArangoDB, or TigerGraph) for storage
 - Dependencies as specified in pyproject.toml
 

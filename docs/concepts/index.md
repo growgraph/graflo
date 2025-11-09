@@ -10,6 +10,20 @@ graflo transforms data sources into property graphs through a pipeline of compon
 
 Each component plays a specific role in this transformation process.
 
+### Data Sources vs Resources
+
+It's important to understand the distinction between **Data Sources** and **Resources**:
+
+- **Data Sources**: Define *where* data comes from (files, APIs, databases, in-memory objects)
+  - Examples: JSON file, REST API endpoint, SQL database, Python list
+  - Many data sources can map to the same resource
+  - Handled by the `DataSource` abstraction layer
+
+- **Resources**: Define *how* data is transformed into a graph (semantic mapping)
+  - Part of the Schema configuration
+  - Defines the transformation pipeline using Actors
+  - Maps data structures to vertices and edges
+
 ## Core Components
 
 ### Schema
@@ -98,12 +112,24 @@ Edges in graflo support a rich set of attributes that enable flexible relationsh
 - For scenarios where we have multiple leaves of json containing the same vertex class
 - Example: Creating edges between specific subsets of vertices
 
+### Data Source
+A `DataSource` defines where data comes from and how it's retrieved. graflo supports multiple data source types:
+
+- **File Data Sources**: JSON, JSONL, CSV/TSV files
+- **API Data Sources**: REST API endpoints with pagination, authentication, and retry logic
+- **SQL Data Sources**: SQL databases via SQLAlchemy with parameterized queries
+- **In-Memory Data Sources**: Python objects (lists, DataFrames) already in memory
+
+Data sources are separate from Resources - they handle data retrieval, while Resources handle data transformation. Many data sources can map to the same Resource, allowing data to be ingested from multiple sources.
+
 ### Resource
-A `Resource` is a set of mappings and transformations of a data source to vertices and edges, defined as a hierarchical structure of `Actors`. It supports:
+A `Resource` is a set of mappings and transformations that define how data becomes a graph, defined as a hierarchical structure of `Actors`. Resources are part of the Schema and define:
  
-- Table-like data (CSV, SQL)
-- Tree-like data (JSON, XML)
-- Complex nested structures
+- How data structures map to vertices and edges
+- What transformations to apply
+- The actor pipeline for processing documents
+
+Resources work with data from any DataSource type - the same Resource can process data from files, APIs, SQL databases, or in-memory objects.
 
 ### Actor
 An `Actor` describes how the current level of the document should be mapped/transformed to the property graph vertices and edges. There are four types that act on the provided document in this order:

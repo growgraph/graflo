@@ -1,8 +1,8 @@
 import os
 
 import pytest
-from suthing import ConfigFactory, FileHandle
-
+from suthing import FileHandle
+from graflo.backend import ConfigFactory
 from graflo.backend import ConnectionManager
 
 

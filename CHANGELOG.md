@@ -5,6 +5,74 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - Unreleased
+
+### Added
+- **Data Source Architecture**: Formalized data source types as a separate layer from Resources
+  - New `graflo.data_source` package with abstract base classes and implementations
+  - `AbstractDataSource`: Base class for all data sources with unified batch iteration interface
+  - `DataSourceType` enum: FILE, API, SQL, IN_MEMORY
+  - `DataSourceRegistry`: Maps multiple data sources to Resources
+  - `DataSourceFactory`: Factory for creating appropriate data source instances
+
+- **File Data Sources**: Refactored file handling into formal data sources
+  - `FileDataSource`: Base class for file-based data sources
+  - `JsonFileDataSource`: JSON file data source
+  - `JsonlFileDataSource`: JSONL (JSON Lines) file data source
+  - `TableFileDataSource`: CSV/TSV file data source with configurable separator
+
+- **REST API Data Source**: Full support for REST API endpoints as data sources
+  - `APIDataSource`: REST API connector with comprehensive HTTP configuration
+  - `APIConfig`: Configuration for API endpoints including:
+    - URL, HTTP method, headers
+    - Authentication (Basic, Bearer, Digest)
+    - Query parameters, timeouts, retries
+    - SSL verification
+  - `PaginationConfig`: Flexible pagination support
+    - Offset-based pagination
+    - Cursor-based pagination
+    - Page-based pagination
+    - Configurable JSON paths for data extraction
+
+- **SQL Data Source**: SQL database support using SQLAlchemy
+  - `SQLDataSource`: SQL database connector
+  - `SQLConfig`: SQLAlchemy-style configuration
+    - Connection string support
+    - Parameterized queries
+    - Pagination support
+    - Database-agnostic query execution
+
+- **In-Memory Data Source**: Support for Python objects as data sources
+  - `InMemoryDataSource`: Handles list[dict], list[list], and pd.DataFrame
+  - Automatic conversion of list[list] to list[dict] using column names
+
+- **CLI Integration**: Enhanced CLI to support data source configuration
+  - `--data-source-config-path`: Load data sources from configuration file
+  - Support for API, SQL, and file data sources via configuration
+  - Backward compatible with existing file-based ingestion
+
+- **Dependencies**: Added required packages for new features
+  - `requests>=2.31.0`: For REST API data sources
+  - `sqlalchemy>=2.0.0`: For SQL data sources
+  - `urllib3>=2.0.0`: For HTTP retry functionality
+
+### Changed
+- **Caster Refactoring**: Updated `Caster` to use data source architecture
+  - `process_resource()`: Now accepts configuration dicts, file paths, or in-memory data
+  - `ingest_files()`: Wrapper that creates FileDataSource instances internally
+  - `ingest_data_sources()`: New method for ingesting from DataSourceRegistry
+  - `process_data_source()`: New method for processing individual data sources
+  - Maintains full backward compatibility with existing code
+
+- **Resource vs DataSource Separation**: Clear separation of concerns
+  - Resources: Define semantic transformations (how data becomes a graph)
+  - DataSources: Define data retrieval (where data comes from)
+  - Many DataSources can map to the same Resource
+
+### Deprecated
+- `ChunkerFactory`: Still functional but now used internally by FileDataSource
+- Direct file path processing: Use DataSource configuration for new code
+
 ## [1.2.1]
 
 ### Added

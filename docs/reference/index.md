@@ -34,6 +34,7 @@ Database connection and management components:
 Main graflo functionality:
 
 - **[Caster](caster.md)**: Main data ingestion and transformation engine
+- **[Data Sources](data_source/index.md)**: Data source abstraction layer (files, APIs, SQL, in-memory)
 - **[Ontology](onto.md)**: Core data types and enums
 
 ## Utilities
