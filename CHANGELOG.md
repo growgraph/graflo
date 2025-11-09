@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1]
+
+### Added
+- **`any_key` parameter for `DescendActor`**: Added support for processing all keys in a dictionary dynamically
+  - When `any_key: true` is set, `DescendActor` will iterate over all key-value pairs in the document dictionary
+  - Useful for handling nested structures where you want to process all keys without explicitly listing them
+  - Simplifies configuration for cases like package dependencies where multiple relationship types exist
+  - Automatically displayed in actor tree visualizations
+
+### Changed
+- **Python version requirement**: Reduced minimum Python version requirement from 3.11 to 3.10
+  - Updated `requires-python` to `~=3.10.0` in `pyproject.toml`
+  - Maintains compatibility with Python 3.10 while using modern type hints
+
 ## [1.2.0]
 
 ### Added
