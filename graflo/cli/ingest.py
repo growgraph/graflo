@@ -27,8 +27,9 @@ from os.path import dirname, join, realpath
 import click
 from suthing import FileHandle
 
-from graflo import Caster, Patterns, Schema
+from graflo import Caster, DataSourceRegistry, Patterns, Schema
 from graflo.backend import ConfigFactory
+from graflo.data_source import DataSourceFactory
 
 logger = logging.getLogger(__name__)
 
@@ -47,12 +48,19 @@ logger = logging.getLogger(__name__)
 @click.option(
     "--source-path",
     type=click.Path(exists=True, path_type=pathlib.Path),
-    required=True,
+    required=False,
+    help="Path to source data directory (required if not using --data-source-config-path)",
 )
 @click.option(
     "--resource-pattern-config-path",
     type=click.Path(exists=True, path_type=pathlib.Path),
     default=None,
+)
+@click.option(
+    "--data-source-config-path",
+    type=click.Path(exists=True, path_type=pathlib.Path),
+    default=None,
+    help="Path to data source configuration file (supports API, SQL, file sources)",
 )
 @click.option("--limit-files", type=int, default=None)
 @click.option("--batch-size", type=int, default=5000)
@@ -80,6 +88,7 @@ def ingest(
     fresh_start,
     init_only,
     resource_pattern_config_path,
+    data_source_config_path,
 ):
     """Ingest data into a graph database.
 
@@ -133,15 +142,51 @@ def ingest(
         n_threads=n_threads,
     )
 
-    caster.ingest_files(
-        path=source_path,
-        limit_files=limit_files,
-        clean_start=fresh_start,
-        batch_size=batch_size,
-        conn_conf=conn_conf,
-        patterns=patterns,
-        init_only=init_only,
-    )
+    # Validate that either source_path or data_source_config_path is provided
+    if data_source_config_path is None and source_path is None:
+        raise click.UsageError(
+            "Either --source-path or --data-source-config-path must be provided"
+        )
+
+    # Check if data source config is provided (for API, SQL, etc.)
+    if data_source_config_path is not None:
+        # Load data source configuration
+        data_source_config = FileHandle.load(data_source_config_path)
+        registry = DataSourceRegistry()
+
+        # Register data sources from config
+        # Config format: {"data_sources": [{"source_type": "...", "resource_name": "...", ...}]}
+        if "data_sources" in data_source_config:
+            for ds_config in data_source_config["data_sources"]:
+                ds_config_copy = ds_config.copy()
+                resource_name = ds_config_copy.pop("resource_name")
+                source_type = ds_config_copy.pop("source_type", None)
+
+                # Create data source using factory
+                data_source = DataSourceFactory.create_data_source(
+                    source_type=source_type, **ds_config_copy
+                )
+                registry.register(data_source, resource_name=resource_name)
+
+        # Use data source registry for ingestion
+        caster.ingest_data_sources(
+            data_source_registry=registry,
+            conn_conf=conn_conf,
+            clean_start=fresh_start,
+            batch_size=batch_size,
+            init_only=init_only,
+        )
+    else:
+        # Fall back to file-based ingestion
+        caster.ingest_files(
+            path=source_path,
+            limit_files=limit_files,
+            clean_start=fresh_start,
+            batch_size=batch_size,
+            conn_conf=conn_conf,
+            patterns=patterns,
+            init_only=init_only,
+        )
 
 
 if __name__ == "__main__":

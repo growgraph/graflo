@@ -1,5 +1,5 @@
 from pathlib import Path
-from test.db.arangos.conftest import verify_from_db
+from test.backend.arangos.conftest import verify_from_db
 
 from suthing import FileHandle
 

@@ -1,4 +1,4 @@
-from test.db.arangos.conftest import ingest_files
+from test.backend.arangos.conftest import ingest_files
 import pytest
 
 
