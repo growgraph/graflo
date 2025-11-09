@@ -3,7 +3,7 @@ from pathlib import Path
 import mkdocs_gen_files
 
 nav = mkdocs_gen_files.Nav()
-pname = "ontocast"
+pname = "graflo"
 
 for path in sorted(Path(pname).rglob("*.py")):
     module_path = path.relative_to(pname).with_suffix("")
