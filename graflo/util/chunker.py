@@ -183,7 +183,11 @@ class FileChunker(AbstractChunker):
 
         Raises:
             StopIteration: When end of file is reached
+            RuntimeError: If file is not opened (should not happen in normal flow)
         """
+        # file_obj is guaranteed to be open after _prepare_iteration() is called
+        if self.file_obj is None:
+            raise RuntimeError("File should be opened before calling _next_item()")
         return next(self.file_obj)
 
     def _prepare_iteration(self):
@@ -213,11 +217,13 @@ class FileChunker(AbstractChunker):
 
         Raises:
             StopIteration: When end of file is reached or limit is reached
+            RuntimeError: If file is not opened (should not happen in normal flow)
         """
         batch = []
 
         if self._limit_reached():
-            self.file_obj.close()
+            if self.file_obj is not None:
+                self.file_obj.close()
             raise StopIteration
         while len(batch) < self.batch_size and not self._limit_reached():
             try:
@@ -226,7 +232,8 @@ class FileChunker(AbstractChunker):
             except StopIteration:
                 if batch:
                     return batch
-                self.file_obj.close()
+                if self.file_obj is not None:
+                    self.file_obj.close()
                 raise StopIteration
 
         return batch
@@ -251,6 +258,9 @@ class TableChunker(FileChunker):
     def _prepare_iteration(self):
         """Read the header row and prepare for iteration."""
         super()._prepare_iteration()
+        # After super()._prepare_iteration(), file_obj is guaranteed to be open
+        if self.file_obj is None:
+            raise RuntimeError("File should be opened by parent _prepare_iteration()")
         header = next(self.file_obj)
         self.header = header.rstrip("\n").split(self.sep)
 
@@ -303,6 +313,9 @@ class JsonChunker(FileChunker):
     def _prepare_iteration(self):
         """Initialize the JSON parser for streaming."""
         super()._prepare_iteration()
+        # After super()._prepare_iteration(), file_obj is guaranteed to be open
+        if self.file_obj is None:
+            raise RuntimeError("File should be opened by parent _prepare_iteration()")
         self.parser = ijson.items(self.file_obj, "item")
 
     def _next_item(self):

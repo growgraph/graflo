@@ -16,6 +16,7 @@ Example:
 
 import dataclasses
 import logging
+from typing import TYPE_CHECKING
 
 from graflo.architecture.onto import Index
 from graflo.filter.onto import Expression
@@ -49,6 +50,19 @@ class FieldType(BaseEnum):
     DATETIME = "DATETIME"
 
 
+if TYPE_CHECKING:
+    # For type checking: after __post_init__, fields is always list[Field]
+    # Using string literal to avoid forward reference issues
+    _FieldsType = list["Field"]
+    # For type checking: after __post_init__, type is always FieldType | None
+    _FieldTypeType = FieldType | None
+else:
+    # For runtime: accept flexible input types, will be normalized in __post_init__
+    _FieldsType = list[str] | list["Field"] | list[dict]
+    # For runtime: accept FieldType, str, or None (strings converted in __post_init__)
+    _FieldTypeType = FieldType | str | None
+
+
 @dataclasses.dataclass
 class Field(BaseDataclass):
     """Represents a typed field in a vertex.
@@ -59,31 +73,40 @@ class Field(BaseDataclass):
 
     Attributes:
         name: Name of the field
-        type: Optional type of the field. Must be one of the allowed types if specified.
+        type: Optional type of the field. Can be FieldType enum, str, or None at construction.
+              Strings are converted to FieldType enum in __post_init__.
+              After initialization, this is always FieldType | None (type checker sees this).
               None is allowed (most databases like ArangoDB don't require types).
               Defaults to None.
     """
 
     name: str
-    type: str | None = None
+    type: _FieldTypeType = None
 
     def __post_init__(self):
-        """Validate type if specified."""
+        """Validate and normalize type if specified."""
         if self.type is not None:
-            # Convert to uppercase if it's a string
+            # Convert string to FieldType enum if it's a string
             if isinstance(self.type, str):
-                self.type = self.type.upper()
-            # Validate type only if it's provided
-            # Check membership in FieldType enum (supports string values)
-            if self.type not in FieldType:
+                type_upper = self.type.upper()
+                # Validate and convert to FieldType enum
+                if type_upper not in FieldType:
+                    allowed_types = sorted(ft.value for ft in FieldType)
+                    raise ValueError(
+                        f"Field type '{self.type}' is not allowed. "
+                        f"Allowed types are: {', '.join(allowed_types)}"
+                    )
+                self.type = FieldType(type_upper)
+            # If it's already a FieldType, validate it's a valid enum member
+            elif isinstance(self.type, FieldType):
+                # Already a FieldType enum, no conversion needed
+                pass
+            else:
                 allowed_types = sorted(ft.value for ft in FieldType)
                 raise ValueError(
-                    f"Field type '{self.type}' is not allowed. "
+                    f"Field type must be FieldType enum, str, or None, got {type(self.type)}. "
                     f"Allowed types are: {', '.join(allowed_types)}"
                 )
-            # Normalize to FieldType enum value (string) for consistency
-            if self.type in FieldType:
-                self.type = FieldType(self.type).value
 
     def __str__(self) -> str:
         """Return field name as string for backward compatibility."""
@@ -127,7 +150,8 @@ class Vertex(BaseDataclass):
     Attributes:
         name: Name of the vertex
         fields: List of field names (str), Field objects, or dicts.
-               Will be normalized to Field objects internally.
+               Will be normalized to Field objects internally in __post_init__.
+               After initialization, this is always list[Field] (type checker sees this).
         fields_aux: List of auxiliary field names for weight passing
         indexes: List of indexes for the vertex
         filters: List of filter expressions
@@ -151,9 +175,7 @@ class Vertex(BaseDataclass):
     """
 
     name: str
-    fields: list[str] | list[Field] | list[dict] = dataclasses.field(
-        default_factory=list
-    )
+    fields: _FieldsType = dataclasses.field(default_factory=list)
     fields_aux: list[str] = dataclasses.field(
         default_factory=list
     )  # temporary field necessary to pass weights to edges

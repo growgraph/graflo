@@ -1,11 +1,17 @@
 """Tests for Vertex and Field classes with typed fields."""
 
 import logging
+from typing import cast
 
 import pytest
 
+from graflo.architecture.onto import Index
 from graflo.architecture.vertex import Field, FieldType, Vertex, VertexConfig
 from graflo.onto import DBFlavor
+
+# Type aliases for flexible input types that Vertex accepts
+_FieldsInput = list[str] | list[Field] | list[dict]
+_IndexesInput = list[Index] | list[dict]
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +87,7 @@ def test_field_dict_membership():
 
 def test_vertex_with_string_fields_backward_compatible():
     """Test Vertex creation with list of strings (backward compatible)."""
-    vertex = Vertex(name="user", fields=["id", "name", "email"])
+    vertex = Vertex(name="user", fields=cast(_FieldsInput, ["id", "name", "email"]))
 
     assert len(vertex.fields) == 3
     assert all(isinstance(f, Field) for f in vertex.fields)
@@ -100,7 +106,7 @@ def test_vertex_with_string_fields_backward_compatible():
 
 def test_vertex_with_string_fields_dict_compatibility():
     """Test that field_names property works for dict lookups (critical for backward compatibility)."""
-    vertex = Vertex(name="user", fields=["id", "name"])
+    vertex = Vertex(name="user", fields=cast(_FieldsInput, ["id", "name"]))
     test_dict = {"id": 1, "name": "John", "other": "ignored"}
 
     # This is the clean usage pattern from actor_util.py
@@ -133,7 +139,7 @@ def test_vertex_with_dict_fields():
         {"name": "name", "type": "STRING"},
         {"name": "email"},  # No type specified, defaults to None
     ]
-    vertex = Vertex(name="user", fields=fields)
+    vertex = Vertex(name="user", fields=cast(_FieldsInput, fields))
 
     assert len(vertex.fields) == 3
     assert vertex.fields[0].name == "id"
@@ -150,7 +156,7 @@ def test_vertex_mixed_field_inputs():
         Field(name="name", type="STRING"),  # Field object
         {"name": "email", "type": "STRING"},  # dict
     ]
-    vertex = Vertex(name="user", fields=fields)
+    vertex = Vertex(name="user", fields=cast(_FieldsInput, fields))
 
     assert len(vertex.fields) == 3
     assert all(isinstance(f, Field) for f in vertex.fields)
@@ -164,7 +170,11 @@ def test_vertex_mixed_field_inputs():
 
 def test_vertex_fields_all_includes_aux():
     """Test fields_all property includes auxiliary fields."""
-    vertex = Vertex(name="user", fields=["id", "name"], fields_aux=["weight", "score"])
+    vertex = Vertex(
+        name="user",
+        fields=cast(_FieldsInput, ["id", "name"]),
+        fields_aux=["weight", "score"],
+    )
 
     all_fields = vertex.fields_all
     assert len(all_fields) == 4
@@ -183,7 +193,7 @@ def test_vertex_fields_all_includes_aux():
 
 def test_vertex_config_fields_backward_compatible():
     """Test VertexConfig.fields() method returns names by default (backward compatible)."""
-    vertex = Vertex(name="user", fields=["id", "name", "email"])
+    vertex = Vertex(name="user", fields=cast(_FieldsInput, ["id", "name", "email"]))
     config = VertexConfig(vertices=[vertex])
 
     # Default behavior: returns names (strings) for backward compatibility
@@ -221,7 +231,9 @@ def test_vertex_config_fields_with_objects():
 
 def test_vertex_config_fields_with_aux():
     """Test VertexConfig.fields() with auxiliary fields."""
-    vertex = Vertex(name="user", fields=["id", "name"], fields_aux=["weight"])
+    vertex = Vertex(
+        name="user", fields=cast(_FieldsInput, ["id", "name"]), fields_aux=["weight"]
+    )
     config = VertexConfig(vertices=[vertex])
 
     fields_without_aux = config.fields("user", with_aux=False)
@@ -285,10 +297,13 @@ def test_vertex_with_custom_indexes():
     """Test vertex with custom indexes that reference fields."""
     vertex = Vertex(
         name="user",
-        fields=["id", "name", "email"],
-        indexes=[
-            {"fields": ["id", "email"]},
-        ],
+        fields=cast(_FieldsInput, ["id", "name", "email"]),
+        indexes=cast(
+            _IndexesInput,
+            [
+                {"fields": ["id", "email"]},
+            ],
+        ),
     )
 
     # Index fields should be added to vertex fields if missing
@@ -307,7 +322,7 @@ def test_field_all_types():
 
 def test_vertex_update_aux_fields():
     """Test update_aux_fields() method."""
-    vertex = Vertex(name="user", fields=["id", "name"])
+    vertex = Vertex(name="user", fields=cast(_FieldsInput, ["id", "name"]))
     vertex.update_aux_fields(["weight", "score"])
 
     assert "weight" in vertex.fields_aux
@@ -321,7 +336,10 @@ def test_vertex_update_aux_fields():
 def test_invalid_field_type_in_dict():
     """Test that invalid field types in dict raise error."""
     with pytest.raises(ValueError, match="not allowed"):
-        Vertex(name="user", fields=[{"name": "test", "type": "INVALID"}])
+        Vertex(
+            name="user",
+            fields=cast(_FieldsInput, [{"name": "test", "type": "INVALID"}]),
+        )
 
 
 def test_init(vertex_pub):
@@ -339,12 +357,15 @@ def test_get_fields_with_defaults_tigergraph():
     # Create vertex with some fields that have None type
     vertex = Vertex(
         name="user",
-        fields=[
-            Field(name="id", type="INT"),  # Already has type
-            Field(name="name"),  # None type
-            Field(name="email", type="STRING"),  # Already has type
-            "address",  # String field (will be Field with None type)
-        ],
+        fields=cast(
+            _FieldsInput,
+            [
+                Field(name="id", type="INT"),  # Already has type
+                Field(name="name"),  # None type
+                Field(name="email", type="STRING"),  # Already has type
+                "address",  # String field (will be Field with None type)
+            ],
+        ),
     )
 
     # For TigerGraph, None types should default to STRING
@@ -401,7 +422,11 @@ def test_get_fields_with_defaults_none():
 
 def test_get_fields_with_defaults_with_aux():
     """Test get_fields_with_defaults() includes auxiliary fields when requested."""
-    vertex = Vertex(name="user", fields=["id", "name"], fields_aux=["weight", "score"])
+    vertex = Vertex(
+        name="user",
+        fields=cast(_FieldsInput, ["id", "name"]),
+        fields_aux=["weight", "score"],
+    )
 
     # For TigerGraph with aux fields
     fields = vertex.get_fields_with_defaults(DBFlavor.TIGERGRAPH, with_aux=True)

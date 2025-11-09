@@ -292,7 +292,7 @@ def try_int(x):
         return x
 
 
-def clear_first_level_nones(docs, keys_keep_nones=None):
+def clear_first_level_nones(docs, keys_keep_nones: list | None = None):
     """Removes None values from dictionaries, with optional key exceptions.
 
     Args:
@@ -307,9 +307,11 @@ def clear_first_level_nones(docs, keys_keep_nones=None):
         >>> clear_first_level_nones(docs, keys_keep_nones=["a"])
         [{"a": 1}, {"a": None, "b": 2}]
     """
-    docs = [
-        {k: v for k, v in tdict.items() if v or k in keys_keep_nones} for tdict in docs
-    ]
+    if keys_keep_nones is not None:
+        docs = [
+            {k: v for k, v in tdict.items() if v or k in keys_keep_nones}
+            for tdict in docs
+        ]
     return docs
 
 
