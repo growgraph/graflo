@@ -1,6 +1,6 @@
 version = 1
-revision = 3
-requires-python = "==3.11.*"
+revision = 2
+requires-python = ">=3.11.0, <3.12"
 
 [[package]]
 name = "anyio"
@@ -139,7 +139,7 @@ wheels = [
 
 [[package]]
 name = "graflo"
-version = "1.2.0"
+version = "1.2.1"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
