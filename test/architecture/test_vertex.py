@@ -127,9 +127,9 @@ def test_vertex_with_field_objects():
 
     assert len(vertex.fields) == 4
     assert vertex.fields[0].name == "id"
-    assert vertex.fields[0].type == "INT"
-    assert vertex.fields[1].type == "STRING"
-    assert vertex.fields[3].type == "BOOL"
+    assert vertex.fields[0].type == FieldType.INT
+    assert vertex.fields[1].type == FieldType.STRING
+    assert vertex.fields[3].type == FieldType.BOOL
 
 
 def test_vertex_with_dict_fields():
@@ -143,8 +143,8 @@ def test_vertex_with_dict_fields():
 
     assert len(vertex.fields) == 3
     assert vertex.fields[0].name == "id"
-    assert vertex.fields[0].type == "INT"
-    assert vertex.fields[1].type == "STRING"
+    assert vertex.fields[0].type == FieldType.INT
+    assert vertex.fields[1].type == FieldType.STRING
     assert vertex.fields[2].name == "email"
     assert vertex.fields[2].type is None
 
@@ -163,9 +163,9 @@ def test_vertex_mixed_field_inputs():
     assert vertex.fields[0].name == "id"
     assert vertex.fields[0].type is None
     assert vertex.fields[1].name == "name"
-    assert vertex.fields[1].type == "STRING"
+    assert vertex.fields[1].type == FieldType.STRING
     assert vertex.fields[2].name == "email"
-    assert vertex.fields[2].type == "STRING"
+    assert vertex.fields[2].type == FieldType.STRING
 
 
 def test_vertex_fields_all_includes_aux():
@@ -221,8 +221,8 @@ def test_vertex_config_fields_with_objects():
     fields = config.fields("user", as_names=False)
     assert len(fields) == 2
     assert all(isinstance(f, Field) for f in fields)
-    assert fields[0].type == "INT"
-    assert fields[1].type == "STRING"
+    assert fields[0].type == FieldType.INT
+    assert fields[1].type == FieldType.STRING
 
     # Still works with as_names=True
     field_names = config.fields("user", as_names=True)
@@ -268,8 +268,8 @@ def test_vertex_from_dict_with_typed_fields():
 
     assert vertex.name == "user"
     assert len(vertex.fields) == 3
-    assert vertex.fields[0].type == "INT"
-    assert vertex.fields[1].type == "STRING"
+    assert vertex.fields[0].type == FieldType.INT
+    assert vertex.fields[1].type == FieldType.STRING
     assert vertex.fields[2].type is None
 
 
@@ -290,7 +290,7 @@ def test_vertex_indexes_work_with_field_objects():
 
     # Field objects should still be accessible
     assert len(vertex.fields) == 2
-    assert vertex.fields[0].type == "INT"
+    assert vertex.fields[0].type == FieldType.INT
 
 
 def test_vertex_with_custom_indexes():

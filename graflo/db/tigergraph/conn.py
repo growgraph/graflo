@@ -24,10 +24,11 @@ Example:
 import contextlib
 import json
 import logging
-from typing import Any
+from typing import Any, cast
 
 
 import requests
+from requests import exceptions as requests_exceptions
 
 from pyTigerGraph import TigerGraphConnection as PyTigerGraphConnection
 
@@ -148,7 +149,7 @@ class TigerGraphConnection(Connection):
             response.raise_for_status()
             return response.json()
 
-        except requests.exceptions.HTTPError as errh:
+        except requests_exceptions.HTTPError as errh:
             logger.error(f"HTTP Error: {errh}")
             error_response = {"error": True, "message": str(errh)}
             try:
@@ -161,13 +162,13 @@ class TigerGraphConnection(Connection):
             except Exception:
                 error_response["details"] = response.text
             return error_response
-        except requests.exceptions.ConnectionError as errc:
+        except requests_exceptions.ConnectionError as errc:
             logger.error(f"Error Connecting: {errc}")
             return {"error": True, "message": str(errc)}
-        except requests.exceptions.Timeout as errt:
+        except requests_exceptions.Timeout as errt:
             logger.error(f"Timeout Error: {errt}")
             return {"error": True, "message": str(errt)}
-        except requests.exceptions.RequestException as err:
+        except requests_exceptions.RequestException as err:
             logger.error(f"An unexpected error occurred: {err}")
             return {"error": True, "message": str(err)}
 
@@ -1325,7 +1326,7 @@ class TigerGraphConnection(Connection):
             # TigerGraph response is a JSON object
             return response.json()
 
-        except requests.exceptions.HTTPError as errh:
+        except requests_exceptions.HTTPError as errh:
             logger.error(f"HTTP Error: {errh}")
             error_details = ""
             try:
@@ -1333,13 +1334,13 @@ class TigerGraphConnection(Connection):
             except Exception:
                 pass
             return {"error": True, "message": str(errh), "details": error_details}
-        except requests.exceptions.ConnectionError as errc:
+        except requests_exceptions.ConnectionError as errc:
             logger.error(f"Error Connecting: {errc}")
             return {"error": True, "message": str(errc)}
-        except requests.exceptions.Timeout as errt:
+        except requests_exceptions.Timeout as errt:
             logger.error(f"Timeout Error: {errt}")
             return {"error": True, "message": str(errt)}
-        except requests.exceptions.RequestException as err:
+        except requests_exceptions.RequestException as err:
             logger.error(f"An unexpected error occurred: {err}")
             return {"error": True, "message": str(err)}
 
@@ -1370,6 +1371,8 @@ class TigerGraphConnection(Connection):
             # Build REST++ endpoint URL
             host = f"{self.config.url_without_port}:{self.config.port}"
             graph_name = self.config.database
+            if not graph_name:
+                raise ValueError("Graph name (database) must be configured")
 
             # Send the upsert request with username/password authentication
             result = self._upsert_data(
@@ -1612,6 +1615,8 @@ class TigerGraphConnection(Connection):
             # Build REST++ endpoint URL
             host = f"{self.config.url_without_port}:{self.config.port}"
             graph_name = self.config.database
+            if not graph_name:
+                raise ValueError("Graph name (database) must be configured")
 
             # Send the upsert request with username/password authentication
             result = self._upsert_data(
@@ -1809,7 +1814,9 @@ class TigerGraphConnection(Connection):
             response = self._call_restpp_api(endpoint)
 
             # Parse REST++ response (vertices only)
-            result = self._parse_restpp_response(response, is_edge=False)
+            result: list[dict[str, Any]] = self._parse_restpp_response(
+                response, is_edge=False
+            )
 
             # Check for errors
             if isinstance(response, dict) and response.get("error"):
@@ -1820,12 +1827,15 @@ class TigerGraphConnection(Connection):
             # Apply projection (client-side projection is acceptable for result formatting)
             if return_keys is not None:
                 result = [
-                    {k: doc.get(k) for k in return_keys if k in doc} for doc in result
+                    {k: doc.get(k) for k in return_keys if k in doc}
+                    for doc in result
+                    if isinstance(doc, dict)
                 ]
             elif unset_keys is not None:
                 result = [
                     {k: v for k, v in doc.items() if k not in unset_keys}
                     for doc in result
+                    if isinstance(doc, dict)
                 ]
 
             return result
@@ -1881,12 +1891,25 @@ class TigerGraphConnection(Connection):
                 f"Fetching edges using pyTigerGraph: from_type={from_type}, from_id={from_id}, edge_type={edge_type}"
             )
 
-            edges = self.conn.getEdges(from_type, from_id, edge_type)
+            # Handle None edge_type by passing empty string (default behavior)
+            edge_type_str = edge_type if edge_type is not None else ""
+            edges = self.conn.getEdges(from_type, from_id, edge_type_str, fmt="py")
 
             # Parse pyTigerGraph response format
             # getEdges returns list of dicts with format like:
             # [{"e_type": "...", "from": {...}, "to": {...}, "attributes": {...}}, ...]
-            result = edges
+            # Type annotation: result is list[dict[str, Any]]
+            # getEdges can return dict, str, or DataFrame, but with fmt="py" it returns dict
+            if isinstance(edges, list):
+                # Type narrowing: after isinstance check, we know it's a list
+                # Use cast to help type checker understand the elements are dicts
+                result = cast(list[dict[str, Any]], edges)
+            elif isinstance(edges, dict):
+                # If it's a single dict, wrap it in a list
+                result = [cast(dict[str, Any], edges)]
+            else:
+                # Fallback for unexpected types
+                result: list[dict[str, Any]] = []
 
             # Apply limit if specified (client-side since pyTigerGraph doesn't support it)
             if limit is not None and limit > 0:
@@ -1895,12 +1918,15 @@ class TigerGraphConnection(Connection):
             # Apply projection (client-side projection is acceptable for result formatting)
             if return_keys is not None:
                 result = [
-                    {k: doc.get(k) for k in return_keys if k in doc} for doc in result
+                    {k: doc.get(k) for k in return_keys if k in doc}
+                    for doc in result
+                    if isinstance(doc, dict)
                 ]
             elif unset_keys is not None:
                 result = [
                     {k: v for k, v in doc.items() if k not in unset_keys}
                     for doc in result
+                    if isinstance(doc, dict)
                 ]
 
             return result
