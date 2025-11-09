@@ -67,15 +67,30 @@ class TigerGraphConnection(Connection):
         self.gsql_url = f"{config.url_without_port}:{config.gs_port}"
 
         # Initialize pyTigerGraph connection for most operations
-        self.conn = PyTigerGraphConnection(
-            host=config.url_without_port,
-            restppPort=config.port,
-            gsPort=config.gs_port,
-            graphname=config.database,
-            username=config.username,
-            password=config.password,
-            certPath=getattr(config, "certPath", None),
+        # Use type narrowing to help type checker understand non-None values
+        # PyTigerGraphConnection has defaults for all parameters, so None values are acceptable
+        restpp_port: int | str = config.port if config.port is not None else "9000"
+        gs_port: int | str = config.gs_port if config.gs_port is not None else "14240"
+        graphname: str = (
+            config.database if config.database is not None else "DefaultGraph"
         )
+        username: str = config.username if config.username is not None else "tigergraph"
+        password: str = config.password if config.password is not None else "tigergraph"
+        cert_path: str | None = getattr(config, "certPath", None)
+
+        # Build connection kwargs, only include certPath if it's not None
+        conn_kwargs: dict[str, Any] = {
+            "host": config.url_without_port,
+            "restppPort": restpp_port,
+            "gsPort": gs_port,
+            "graphname": graphname,
+            "username": username,
+            "password": password,
+        }
+        if cert_path is not None:
+            conn_kwargs["certPath"] = cert_path
+
+        self.conn = PyTigerGraphConnection(**conn_kwargs)
 
         # Get authentication token if secret is provided
         if hasattr(config, "secret") and config.secret:
@@ -446,6 +461,8 @@ class TigerGraphConnection(Connection):
         # Ensure config.database is set to the graph name
         # This ensures subsequent operations use the correct graph
         graph_name = self.config.database
+        if not graph_name:
+            raise ValueError("Graph name (database) must be configured in config")
 
         try:
             if clean_start:
