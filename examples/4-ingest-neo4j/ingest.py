@@ -1,6 +1,7 @@
-from suthing import ConfigFactory, FileHandle
-
+from suthing import FileHandle
 from graflo import Caster, Patterns, Schema
+from graflo.backend import ConfigFactory
+
 
 schema = Schema.from_dict(FileHandle.load("schema.yaml"))
 
