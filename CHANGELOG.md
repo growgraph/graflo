@@ -69,6 +69,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - DataSources: Define data retrieval (where data comes from)
   - Many DataSources can map to the same Resource
 
+- **Backend Configuration Refactoring**: Complete refactor of database connection configuration system
+  - **Pydantic-based Configuration**: Replaced dataclass-based configs with Pydantic `BaseSettings`
+    - `DBConfig`: Abstract base class with `uri`, `username`, `password` fields
+    - `ArangoConfig`, `Neo4jConfig`, `TigergraphConfig`: Backend-specific config classes
+    - Environment variable support with prefixes (`ARANGO_`, `NEO4J_`, `TIGERGRAPH_`)
+    - Automatic default port handling when port is missing from URI
+  - **Renamed `ConnectionKind` to `BackendType`**: More accurate naming for database backend types
+  - **Removed `ConfigFactory`**: Replaced with direct config instantiation and `DBConfig.from_dict()`
+    - Use `ArangoConfig.from_docker_env()` to load from docker `.env` files
+    - Use `ArangoConfig()`, `Neo4jConfig()`, `TigergraphConfig()` for direct instantiation
+    - Use `DBConfig.from_dict()` for loading from configuration files
+  - **Separated WSGI Configuration**: Moved `WSGIConfig` to separate `wsgi.py` module
+    - WSGI is not a database backend, so it no longer inherits from `DBConfig`
+    - Removed `WSGI` from `BackendType` enum
+  - **Backward Compatibility**: `from_dict()` handles old field names (`url` → `uri`, `cred_name` → `username`, etc.)
+  - **Breaking Changes**:
+    - `ConnectionKind` → `BackendType`
+    - `ConfigFactory` removed (use `DBConfig.from_dict()` or direct config classes)
+    - `*ConnectionConfig` aliases removed (use `*Config` names directly: `ArangoConfig`, `Neo4jConfig`, `TigergraphConfig`)
+    - `connection_type` field removed (now a computed property from class type)
+
 ### Deprecated
 - `ChunkerFactory`: Still functional but now used internally by FileDataSource
 - Direct file path processing: Use DataSource configuration for new code

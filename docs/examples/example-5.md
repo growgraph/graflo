@@ -55,7 +55,7 @@ resources:
 from suthing import FileHandle
 from graflo import Caster, DataSourceRegistry, Schema
 from graflo.data_source import DataSourceFactory, APIConfig, PaginationConfig
-from graflo.backend import ConfigFactory
+from graflo.backend.connection.onto import DBConfig
 
 # Load schema
 schema = Schema.from_dict(FileHandle.load("schema.yaml"))
@@ -84,7 +84,9 @@ registry.register(api_source, resource_name="users")
 
 # Create caster and ingest
 caster = Caster(schema)
-conn_conf = ConfigFactory.create_config("backend.yaml")
+# Load config from file
+config_data = FileHandle.load("backend.yaml")
+conn_conf = DBConfig.from_dict(config_data)
 
 caster.ingest_data_sources(
     data_source_registry=registry,

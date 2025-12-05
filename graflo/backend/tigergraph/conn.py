@@ -37,7 +37,7 @@ from graflo.architecture.onto import Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.vertex import FieldType, Vertex, VertexConfig
 from graflo.backend.conn import Connection
-from graflo.backend.connection.onto import TigergraphConnectionConfig
+from graflo.backend.connection.onto import TigergraphConfig
 from graflo.filter.onto import Clause, Expression
 from graflo.onto import AggregationType, DBFlavor, ExpressionFlavor
 from graflo.util.transform import pick_unique_dict
@@ -59,7 +59,7 @@ class TigerGraphConnection(Connection):
 
     flavor = DBFlavor.TIGERGRAPH
 
-    def __init__(self, config: TigergraphConnectionConfig):
+    def __init__(self, config: TigergraphConfig):
         super().__init__()
         self.config = config
         # Store base URLs for REST++ and GSQL endpoints
@@ -93,7 +93,7 @@ class TigerGraphConnection(Connection):
         self.conn = PyTigerGraphConnection(**conn_kwargs)
 
         # Get authentication token if secret is provided
-        if hasattr(config, "secret") and config.secret:
+        if config.secret:
             try:
                 self.conn.getToken(config.secret)
             except Exception as e:

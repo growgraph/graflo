@@ -1,4 +1,3 @@
-from .factory import ConfigFactory
-from .onto import ConnectionKind, DBConnectionConfig
+from .onto import BackendType, DBConfig
 
-__all__ = ["ConfigFactory", "ConnectionKind", "DBConnectionConfig", "ConfigFactory"]
+__all__ = ["BackendType", "DBConfig"]

@@ -6,7 +6,7 @@ connection lifecycle and configuration.
 
 Key Components:
     - ConnectionManager: Main class for managing database connections
-    - ConnectionKind: Enum for supported database types
+    - BackendType: Enum for supported database types
 
 The manager supports:
     - Multiple database types (ArangoDB, Neo4j)
@@ -20,7 +20,7 @@ Example:
 """
 
 from graflo.backend.arango.conn import ArangoConnection
-from graflo.backend.connection.onto import ConnectionKind, ProtoConnectionConfig
+from graflo.backend.connection.onto import BackendType, DBConfig
 from graflo.backend.neo4j.conn import Neo4jConnection
 from graflo.backend.tigergraph.conn import TigerGraphConnection
 
@@ -40,14 +40,14 @@ class ConnectionManager:
     """
 
     conn_class_mapping = {
-        ConnectionKind.ARANGO: ArangoConnection,
-        ConnectionKind.NEO4J: Neo4jConnection,
-        ConnectionKind.TIGERGRAPH: TigerGraphConnection,
+        BackendType.ARANGO: ArangoConnection,
+        BackendType.NEO4J: Neo4jConnection,
+        BackendType.TIGERGRAPH: TigerGraphConnection,
     }
 
     def __init__(
         self,
-        connection_config: ProtoConnectionConfig,
+        connection_config: DBConfig,
         **kwargs,
     ):
         """Initialize the connection manager.
@@ -58,7 +58,7 @@ class ConnectionManager:
             connection_config: Optional connection configuration
             **kwargs: Additional configuration parameters
         """
-        self.config: ProtoConnectionConfig = connection_config
+        self.config: DBConfig = connection_config
         self.working_db = kwargs.pop("working_db", None)
         self.conn = None
 

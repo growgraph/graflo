@@ -33,7 +33,7 @@ from graflo.backend.conn import Connection
 from graflo.filter.onto import Expression
 from graflo.onto import AggregationType, DBFlavor, ExpressionFlavor
 
-from ..connection.onto import Neo4jConnectionConfig
+from ..connection.onto import Neo4jConfig
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +52,7 @@ class Neo4jConnection(Connection):
 
     flavor = DBFlavor.NEO4J
 
-    def __init__(self, config: Neo4jConnectionConfig):
+    def __init__(self, config: Neo4jConfig):
         """Initialize Neo4j connection.
 
         Args:

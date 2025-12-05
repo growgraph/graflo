@@ -2,50 +2,21 @@ import os
 import uuid
 
 import pytest
-from suthing import FileHandle
 
-from graflo.backend import ConfigFactory, ConnectionManager
+from graflo.backend import ConnectionManager
+from graflo.backend.connection.onto import TigergraphConfig
 
 # Set GSQL_PASSWORD environment variable for TigerGraph tests
 os.environ.setdefault("GSQL_PASSWORD", "tigergraph")
 
 
 @pytest.fixture(scope="function")
-def test_db_port():
-    FileHandle.load("docker.tigergraph", ".env")
-    port = os.environ["TG_REST"]
-    return port
-
-
-@pytest.fixture(scope="function")
-def test_gs_port():
-    FileHandle.load("docker.tigergraph", ".env")
-    port = os.environ["TG_WEB"]
-    return port
-
-
-@pytest.fixture(scope="function")
-def creds():
-    FileHandle.load("docker.tigergraph", ".env")
-    cred_name = "tigergraph"
-    cred_pass = os.environ.get("GSQL_PASSWORD", "tigergraph")
-    return cred_name, cred_pass
-
-
-@pytest.fixture(scope="function")
-def conn_conf(test_db_port, test_gs_port, creds):
-    username, password = creds
-
-    db_args = {
-        "protocol": "http",
-        "hostname": "localhost",
-        "username": username,
-        "password": password,
-        "port": test_db_port,
-        "gs_port": test_gs_port,
-        "db_type": "tigergraph",
-    }
-    conn_conf = ConfigFactory.create_config(db_args)
+def conn_conf():
+    """Load TigerGraph config from docker/tigergraph/.env file."""
+    conn_conf = TigergraphConfig.from_docker_env()
+    # Ensure password is set from environment if not in .env
+    if not conn_conf.password:
+        conn_conf.password = os.environ.get("GSQL_PASSWORD", "tigergraph")
     return conn_conf
 
 

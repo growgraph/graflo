@@ -28,7 +28,7 @@ import click
 from suthing import FileHandle
 
 from graflo import Caster, DataSourceRegistry, Patterns, Schema
-from graflo.backend import ConfigFactory
+from graflo.backend.connection.onto import DBConfig
 from graflo.data_source import DataSourceFactory
 
 logger = logging.getLogger(__name__)
@@ -127,7 +127,9 @@ def ingest(
 
     schema = Schema.from_dict(FileHandle.load(schema_path))
 
-    conn_conf = ConfigFactory.create_config(db_config_path)
+    # Load config from file
+    config_data = FileHandle.load(db_config_path)
+    conn_conf = DBConfig.from_dict(config_data)
 
     if resource_pattern_config_path is not None:
         patterns = Patterns.from_dict(FileHandle.load(resource_pattern_config_path))

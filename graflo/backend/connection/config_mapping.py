@@ -1,18 +1,16 @@
 from typing import Dict, Type
 
 from .onto import (
-    ArangoConnectionConfig,
-    ConnectionConfig,
-    ConnectionKind,
-    Neo4jConnectionConfig,
-    TigergraphConnectionConfig,
-    WSGIConfig,
+    ArangoConfig,
+    BackendType,
+    DBConfig,
+    Neo4jConfig,
+    TigergraphConfig,
 )
 
 # Define this mapping in a separate file to avoid circular imports
-CONNECTION_TYPE_MAPPING: Dict[ConnectionKind, Type[ConnectionConfig]] = {
-    ConnectionKind.ARANGO: ArangoConnectionConfig,
-    ConnectionKind.NEO4J: Neo4jConnectionConfig,
-    ConnectionKind.TIGERGRAPH: TigergraphConnectionConfig,
-    ConnectionKind.WSGI: WSGIConfig,
+BACKEND_TYPE_MAPPING: Dict[BackendType, Type[DBConfig]] = {
+    BackendType.ARANGO: ArangoConfig,
+    BackendType.NEO4J: Neo4jConfig,
+    BackendType.TIGERGRAPH: TigergraphConfig,
 }

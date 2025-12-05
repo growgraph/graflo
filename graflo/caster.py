@@ -34,7 +34,7 @@ from graflo.data_source import (
     DataSourceFactory,
     DataSourceRegistry,
 )
-from graflo.backend import ConnectionKind, ConnectionManager, DBConnectionConfig
+from graflo.backend import BackendType, ConnectionManager, DBConfig
 from graflo.util.chunker import ChunkerType
 from graflo.util.onto import FilePattern, Patterns
 
@@ -147,7 +147,7 @@ class Caster:
         self,
         batch,
         resource_name: str | None,
-        conn_conf: None | DBConnectionConfig = None,
+        conn_conf: None | DBConfig = None,
     ):
         """Process a batch of data.
 
@@ -165,7 +165,7 @@ class Caster:
         self,
         data_source: AbstractDataSource,
         resource_name: str | None = None,
-        conn_conf: None | DBConnectionConfig = None,
+        conn_conf: None | DBConfig = None,
     ):
         """Process a data source.
 
@@ -190,7 +190,7 @@ class Caster:
             Path | str | list[dict] | list[list] | pd.DataFrame | dict[str, Any]
         ),
         resource_name: str | None,
-        conn_conf: None | DBConnectionConfig = None,
+        conn_conf: None | DBConfig = None,
         **kwargs,
     ):
         """Process a resource instance from configuration or direct data.
@@ -259,7 +259,7 @@ class Caster:
     def push_db(
         self,
         gc: GraphContainer,
-        conn_conf: DBConnectionConfig,
+        conn_conf: DBConfig,
         resource_name: str | None,
     ):
         """Push graph container data to the database.
@@ -403,7 +403,7 @@ class Caster:
     def ingest_data_sources(
         self,
         data_source_registry: DataSourceRegistry,
-        conn_conf: None | DBConnectionConfig = None,
+        conn_conf: None | DBConfig = None,
         **kwargs,
     ):
         """Ingest data from data sources in a registry.
@@ -419,7 +419,7 @@ class Caster:
                 - dry: Whether to perform a dry run
                 - init_only: Whether to only initialize the database
         """
-        conn_conf = cast(DBConnectionConfig, kwargs.get("conn_conf", conn_conf))
+        conn_conf = cast(DBConfig, kwargs.get("conn_conf", conn_conf))
         self.clean_start = kwargs.pop("clean_start", self.clean_start)
         self.n_cores = kwargs.pop("n_cores", self.n_cores)
         self.max_items = kwargs.pop("max_items", self.max_items)
@@ -431,7 +431,7 @@ class Caster:
             raise ValueError("conn_conf is required for ingest_data_sources")
 
         if (
-            conn_conf.connection_type == ConnectionKind.ARANGO
+            conn_conf.connection_type == BackendType.ARANGO
             and conn_conf.database == "_system"
         ):
             db_name = self.schema.general.name

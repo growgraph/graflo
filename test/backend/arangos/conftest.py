@@ -1,10 +1,10 @@
-import os
 from test.conftest import ingest_atomic, verify
 
 import pytest
 from suthing import FileHandle
 
-from graflo.backend import ConnectionManager, ConfigFactory
+from graflo.backend import ConnectionManager
+from graflo.backend.connection.onto import ArangoConfig
 from graflo.filter.onto import ComparisonOperator
 from graflo.onto import AggregationType
 from test.conftest import fetch_schema_obj
@@ -16,27 +16,16 @@ def test_db_name():
 
 
 @pytest.fixture(scope="function")
-def test_db_port():
-    FileHandle.load("docker.arango", ".env")
-    port = os.environ["ARANGO_PORT"]
-    return port
-
-
-@pytest.fixture(scope="function")
-def conn_conf(test_db_port):
+def conn_conf():
+    """Load ArangoDB config from docker/arango/.env file."""
+    conn_conf = ArangoConfig.from_docker_env()
+    # Override password from secret file if needed
     cred_pass = FileHandle.load("docker.arango", "test.arango.secret")
-
-    db_args = {
-        "protocol": "http",
-        "hostname": "localhost",
-        "port": test_db_port,
-        "cred_name": "root",
-        "cred_pass": cred_pass,
-        "database": "_system",
-        "db_type": "arango",
-    }
-
-    conn_conf = ConfigFactory.create_config(db_args)
+    if cred_pass:
+        conn_conf.password = cred_pass
+    # Ensure database is set
+    if not conn_conf.database:
+        conn_conf.database = "_system"
     return conn_conf
 
 

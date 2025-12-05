@@ -60,22 +60,23 @@ pip install graflo
 ### Simple ingest
 
 ```python
-from suthing import ConfigFactory, FileHandle
+from suthing import FileHandle
 
 from graflo import Schema, Caster, Patterns
-
+from graflo.backend.connection.onto import ArangoConfig
 
 schema = Schema.from_dict(FileHandle.load("schema.yaml"))
 
-conn_conf = ConfigFactory.create_config({
-        "protocol": "http",
-        "hostname": "localhost",
-        "port": 8535,
-        "username": "root",
-        "password": "123",
-        "database": "_system",
-}
-)
+# Load config from docker/arango/.env (recommended)
+conn_conf = ArangoConfig.from_docker_env()
+
+# Or create config directly
+# conn_conf = ArangoConfig(
+#     uri="http://localhost:8535",
+#     username="root",
+#     password="123",
+#     database="_system",
+# )
 
 patterns = Patterns.from_dict(
     {

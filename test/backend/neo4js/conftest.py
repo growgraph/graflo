@@ -1,40 +1,16 @@
-import os
-
 import pytest
-from suthing import FileHandle
-from graflo.backend import ConfigFactory
+
 from graflo.backend import ConnectionManager
+from graflo.backend.connection.onto import Neo4jConfig
 
 
 @pytest.fixture(scope="function")
-def test_db_port():
-    FileHandle.load("docker.neo4j", ".env")
-    port = os.environ["NEO4J_BOLT_PORT"]
-    return port
-
-
-@pytest.fixture(scope="function")
-def creds():
-    FileHandle.load("docker.neo4j", ".env")
-    creds = os.environ["NEO4J_AUTH"].split("/")
-    cred_name, cred_pass = creds[0], creds[1]
-    return cred_name, cred_pass
-
-
-@pytest.fixture(scope="function")
-def conn_conf(test_db_port, creds):
-    cred_name, cred_pass = creds
-
-    db_args = {
-        "protocol": "bolt",
-        "hostname": "localhost",
-        "cred_name": cred_name,
-        "cred_pass": cred_pass,
-        "port": test_db_port,
-        "database": "_system",
-        "db_type": "neo4j",
-    }
-    conn_conf = ConfigFactory.create_config(db_args)
+def conn_conf():
+    """Load Neo4j config from docker/neo4j/.env file."""
+    conn_conf = Neo4jConfig.from_docker_env()
+    # Ensure database is set
+    if not conn_conf.database:
+        conn_conf.database = "_system"
     return conn_conf
 
 

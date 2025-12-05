@@ -102,14 +102,23 @@ Since we are defining a `refers to` relation, we need some extra configuration:
 Transforming the data and ingesting it into an ArangoDB takes a few lines of code:
 
 ```python
-from suthing import ConfigFactory, FileHandle
+from suthing import FileHandle
 from graflo import Caster, Patterns, Schema
+from graflo.backend.connection.onto import ArangoConfig, DBConfig
 
 schema = Schema.from_dict(FileHandle.load("schema.yaml"))
 
 caster = Caster(schema)
 
-conn_conf = ConfigFactory.create_config(FileHandle.load("../arango.creds.json"))
+# Load config from file
+config_data = FileHandle.load("../arango.creds.json")
+conn_conf = DBConfig.from_dict(config_data)
+# Ensure it's an ArangoConfig
+if not isinstance(conn_conf, ArangoConfig):
+    raise ValueError(f"Expected ArangoConfig, got {type(conn_conf)}")
+
+# Or use from_docker_env() (recommended)
+# conn_conf = ArangoConfig.from_docker_env()
 
 patterns = Patterns.from_dict(
     {

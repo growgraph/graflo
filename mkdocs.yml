@@ -32,11 +32,7 @@ plugins:
         scripts:
         -   docs/gen_pages.py
 -   literate-nav
--   table-reader:
-        align: center    # Global alignment: left, center, right
-        classes: striped # CSS classes: striped, hover, condensed, etc.
-        show_index: false # Show row index
-        na_rep: ''       # Representation for NaN/empty values
+-   table-reader: []
 -   mkdocstrings:
         default_handler: python
         handlers:

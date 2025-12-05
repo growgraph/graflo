@@ -10,30 +10,31 @@ This guide will help you get started with graflo by showing you how to transform
 - `DataSource` defines where data comes from (files, APIs, SQL databases, in-memory objects).
 - In case the data is provided as files, class `Patterns` manages the mapping of the resources to files. 
 - `DataSourceRegistry` maps DataSources to Resources (many DataSources can map to the same Resource).
-- `ConfigFactory` is used to create database connections used by `Caster`.
+- Database backend configurations use Pydantic `BaseSettings` with environment variable support. Use `ArangoConfig`, `Neo4jConfig`, or `TigergraphConfig` directly, or load from docker `.env` files using `from_docker_env()`.
 
 ## Basic Example
 
 Here's a simple example of transforming CSV files of two types, `people` and `department` into a graph:
 
 ```python
-from suthing import ConfigFactory, FileHandle
+from suthing import FileHandle
 from graflo import Caster, Patterns, Schema
+from graflo.backend.connection.onto import ArangoConfig
 
 schema = Schema.from_dict(FileHandle.load("schema.yaml"))
 
 caster = Caster(schema)
 
-conn_conf = ConfigFactory.create_config(
-    {
-        "protocol": "http",
-        "hostname": "localhost",
-        "port": 8535,
-        "username": "root",
-        "password": "123",
-        "database": "_system",
-    }
-)
+# Load config from docker/arango/.env (recommended)
+conn_conf = ArangoConfig.from_docker_env()
+
+# Or create config directly
+# conn_conf = ArangoConfig(
+#     uri="http://localhost:8535",
+#     username="root",
+#     password="123",
+#     database="_system",
+# )
 
 patterns = Patterns.from_dict(
     {

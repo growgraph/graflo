@@ -26,14 +26,13 @@ from datetime import date
 import click
 from suthing import FileHandle, Timer
 
-from graflo.backend import ConfigFactory
-from graflo.backend.connection.onto import ArangoConnectionConfig
+from graflo.backend.connection.onto import ArangoConfig, DBConfig
 
 logger = logging.getLogger(__name__)
 
 
 def act_db(
-    conf: ArangoConnectionConfig,
+    conf: ArangoConfig,
     db_name: str,
     output_path: pathlib.Path,
     restore: bool,
@@ -76,7 +75,7 @@ def act_db(
 
     dir_spec = "input" if restore else "output"
 
-    query = f"""{ru} --server.endpoint {host} --server.username {conf.cred_name} --server.password "{conf.cred_pass}" --{dir_spec}-directory {output} --server.database "{db_name}" """
+    query = f"""{ru} --server.endpoint {host} --server.username {conf.username} --server.password "{conf.password}" --{dir_spec}-directory {output} --server.database "{db_name}" """
 
     restore_suffix = "--create-database true --force-same-database true"
     if restore:
@@ -151,14 +150,16 @@ def manage_dbs(
             --use-docker
     """
     if db_config_path is None:
-        db_conf: ArangoConnectionConfig = ArangoConnectionConfig(
-            cred_name=db_user, cred_pass=db_password, hosts=db_host
-        )
+        # Construct URI from host
+        uri = db_host if db_host and "://" in db_host else f"http://{db_host}"
+        db_conf = ArangoConfig(uri=uri, username=db_user, password=db_password)
     else:
         conn_conf = FileHandle.load(fpath=db_config_path)
-        db_conf: ArangoConnectionConfig = ConfigFactory.create_config(
-            dict_like=conn_conf
-        )
+        db_conf_raw = DBConfig.from_dict(conn_conf)
+        # Type checker can't infer the specific type, but we know it's ArangoConfig from the config
+        if not isinstance(db_conf_raw, ArangoConfig):
+            raise ValueError(f"Expected ArangoConfig, got {type(db_conf_raw)}")
+        db_conf: ArangoConfig = db_conf_raw
 
     action = "restoring" if restore else "dumping"
     if restore:

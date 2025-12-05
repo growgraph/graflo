@@ -179,18 +179,22 @@ The resource mapping handles complex nested package data:
 The ingestion process handles the complex nested structure:
 
 ```python
-from suthing import ConfigFactory, FileHandle
+from suthing import FileHandle
 from graflo import Caster, Patterns, Schema
+from graflo.backend.connection.onto import Neo4jConfig
 
 schema = Schema.from_dict(FileHandle.load("schema.yaml"))
 
-conn_conf = ConfigFactory.create_config({
-    "protocol": "bolt",
-    "hostname": "localhost",
-    "port": 7688,
-    "username": "neo4j",
-    "password": "test!passfortesting",
-})
+# Load config from docker/neo4j/.env (recommended)
+conn_conf = Neo4jConfig.from_docker_env()
+
+# Or create config directly
+# conn_conf = Neo4jConfig(
+#     uri="bolt://localhost:7688",
+#     username="neo4j",
+#     password="test!passfortesting",
+#     bolt_port=7688,
+# )
 
 patterns = Patterns.from_dict({
     "patterns": {

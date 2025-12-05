@@ -42,7 +42,7 @@ from graflo.filter.onto import Clause
 from graflo.onto import AggregationType, DBFlavor
 from graflo.util.transform import pick_unique_dict
 
-from ..connection.onto import ArangoConnectionConfig
+from ..connection.onto import ArangoConfig
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ class ArangoConnection(Connection):
         conn: ArangoDB database connection instance
     """
 
-    def __init__(self, config: ArangoConnectionConfig):
+    def __init__(self, config: ArangoConfig):
         """Initialize ArangoDB connection.
 
         Args:
