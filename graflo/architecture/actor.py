@@ -47,7 +47,6 @@ from graflo.architecture.vertex import (
 )
 from graflo.util.merge import (
     merge_doc_basis,
-    merge_doc_basis_closest_preceding,
 )
 from graflo.util.transform import pick_unique_dict
 
@@ -420,7 +419,7 @@ class EdgeActor(Actor):
     def merge_vertices(self, ctx) -> ActionContext:
         for vertex, dd in ctx.acc_vertex.items():
             for lindex, vertex_list in dd.items():
-                vvv = merge_doc_basis_closest_preceding(
+                vvv = merge_doc_basis(
                     vertex_list,
                     tuple(self.vertex_config.index(vertex).fields),
                 )

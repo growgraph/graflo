@@ -1,148 +1,150 @@
-"""Document merging and discrimination utilities.
+"""Document merging utilities.
 
-This module provides functions for merging and discriminating between documents
-based on various criteria. It supports merging documents with common keys,
-discriminating based on specific values, and handling different document structures.
+This module provides functions for merging documents based on common index keys,
+preserving order and handling both dict and VertexRep objects.
 
 Key Functions:
-    - discriminate_by_key: Filter documents based on index fields and key presence
-    - merge_doc_basis: Merge documents based on common index keys
+    - merge_doc_basis: Merge documents based on common index keys, preserving order
 
 """
+
+from typing import cast, overload
 
 from graflo.architecture.onto import VertexRep
 
 
-def discriminate_by_key(items, indexes, discriminant_key, fast=False):
-    """Filter documents based on index fields and key presence.
-
-    This function filters a list of documents based on the presence of index fields
-    and a specific key. It can operate in fast mode to return after finding the
-    first match.
-
-    Args:
-        items: List of documents (dictionaries) to filter
-        indexes: List of index field names to check for presence
-        discriminant_key: Key to check for presence
-        fast: Whether to return after first match (default: False)
-
-    Returns:
-        list[dict]: Filtered list of documents
-    """
-    # pick items that have any of index field present
-    _items = [item for item in items if any(k in item for k in indexes)]
-
-    if discriminant_key is not None:
-        result = []
-        for item in _items:
-            if discriminant_key in item:
-                result += [item]
-                if fast:
-                    break
-        return result
-    return _items
-
-
+@overload
 def merge_doc_basis(
     docs: list[dict],
     index_keys: tuple[str, ...],
-    discriminant_key=None,
-) -> list[dict]:
-    """Merge documents based on common index keys.
-
-    This function merges documents that share common index key-value combinations.
-    Documents without index keys are merged with the first relevant document that
-    has the discriminant key.
-
-    Note:
-        Currently works best with two groups of documents: those with and without
-        the discriminant key. Future versions will support multiple discriminant
-        value groups.
-
-    Args:
-        docs: List of documents to merge
-        index_keys: Tuple of key names to use for merging
-        discriminant_key: Optional key to use for merging documents without index keys
-
-    Returns:
-        list[dict]: Merged documents
-    """
-    docs_tuplezied = [
-        tuple(sorted((k, v) for k, v in item.items() if k in index_keys))
-        for item in docs
-    ]
-
-    # pick bearing docs : those that differ by index_keys
-    bearing_docs: dict[tuple, dict] = {q: dict() for q in set(docs_tuplezied)}
-
-    # merge docs with respect to unique index key-value combinations
-    for doc, doc_tuple in zip(docs, docs_tuplezied):
-        bearing_docs[doc_tuple].update(doc)
-
-    # merge docs without any index keys onto the first relevant doc
-    if () in docs_tuplezied:
-        relevant_docs = discriminate_by_key(
-            docs, index_keys, discriminant_key, fast=True
-        )
-        if relevant_docs:
-            tuple_ix = tuple(
-                sorted((k, v) for k, v in relevant_docs[0].items() if k in index_keys)
-            )
-            bearing_docs[tuple_ix].update(bearing_docs.pop(()))
-
-    return list(bearing_docs.values())
+) -> list[dict]: ...
 
 
-def merge_doc_basis_closest_preceding(
+@overload
+def merge_doc_basis(
     docs: list[VertexRep],
     index_keys: tuple[str, ...],
-) -> list[VertexRep]:
-    """Merge VertexRep documents based on index_keys.
+) -> list[VertexRep]: ...
 
-    Leading non-ID VertexReps are merged into the first ID VertexRep.
-    Remaining non-ID VertexReps are merged into the closest preceding ID VertexRep.
-    The merge is performed on the `vertex` attribute, and `ctx` dicts are merged among merged VertexReps.
+
+def merge_doc_basis(
+    docs: list[dict] | list[VertexRep],
+    index_keys: tuple[str, ...],
+) -> list[dict] | list[VertexRep]:
+    """Merge documents based on common index keys, preserving order.
+
+    This function merges documents that share common index key-value combinations,
+    preserving the order of documents based on the first occurrence of each index
+    key combination. Documents without index keys are merged into the closest
+    preceding document with index keys. If no documents have index keys, all
+    documents are merged into a single document.
+
+    For VertexRep objects, the merge is performed on the `vertex` attribute, and
+    `ctx` dicts are merged among merged VertexReps.
 
     Args:
-        docs: List of VertexRep to merge
+        docs: Homogeneous list of documents (all dict or all VertexRep) to merge
         index_keys: Tuple of key names to use for merging
 
     Returns:
-        list[VertexRep]: Merged VertexReps
+        Merged documents in order of first occurrence (same type as input)
     """
-    merged_docs: list[VertexRep] = []
-    pending_non_ids: list[VertexRep] = []
+    if not docs:
+        return docs
 
-    def merge_vertex_ctx(target: VertexRep, sources: list[VertexRep]):
-        # Merge vertex dicts
-        for src in sources:
-            target.vertex.update(src.vertex)
-            target.ctx.update(src.ctx)
-        return target
+    # Check if we're working with VertexRep objects
+    is_vertexrep = isinstance(docs[0], VertexRep)
+
+    # Track merged documents in order of first occurrence
+    # Type: list[dict] if not is_vertexrep, list[VertexRep] if is_vertexrep
+    merged_docs: list[dict | VertexRep] = []
+    # Map from index tuple to position in merged_docs
+    index_to_position: dict[tuple, int] = {}
+    # Accumulate documents without index keys
+    # Type: list[dict] if not is_vertexrep, list[VertexRep] if is_vertexrep
+    pending_non_ids: list[dict | VertexRep] = []
+
+    def get_index_tuple(doc: dict | VertexRep) -> tuple:
+        """Extract index tuple from a document."""
+        if is_vertexrep:
+            assert isinstance(doc, VertexRep)
+            data = doc.vertex
+        else:
+            assert isinstance(doc, dict)
+            data = doc
+        return tuple(sorted((k, v) for k, v in data.items() if k in index_keys))
+
+    def has_index_keys(doc: dict | VertexRep) -> bool:
+        """Check if document has any index keys."""
+        if is_vertexrep:
+            assert isinstance(doc, VertexRep)
+            return any(k in doc.vertex for k in index_keys)
+        else:
+            assert isinstance(doc, dict)
+            return any(k in doc for k in index_keys)
+
+    def merge_doc(target: dict | VertexRep, source: dict | VertexRep) -> None:
+        """Merge source into target."""
+        if is_vertexrep:
+            assert isinstance(target, VertexRep) and isinstance(source, VertexRep)
+            target.vertex.update(source.vertex)
+            target.ctx.update(source.ctx)
+        else:
+            assert isinstance(target, dict) and isinstance(source, dict)
+            target.update(source)
+
+    def copy_doc(doc: dict | VertexRep) -> dict | VertexRep:
+        """Create a copy of a document."""
+        if is_vertexrep:
+            assert isinstance(doc, VertexRep)
+            return VertexRep(vertex=doc.vertex.copy(), ctx=doc.ctx.copy())
+        else:
+            assert isinstance(doc, dict)
+            return doc.copy()
 
     for doc in docs:
-        if any(k in doc.vertex for k in index_keys):
-            # This is an ID VertexRep
-            # First, handle any accumulated non-ID VertexReps
+        if has_index_keys(doc):
+            # This is a document with index keys
+            index_tuple = get_index_tuple(doc)
+
+            # First, handle any accumulated non-ID documents
             if pending_non_ids:
-                if not merged_docs:
-                    # No previous ID doc, create new one with accumulated non-IDs
-                    merged_doc = VertexRep(vertex={}, ctx={})
-                    merged_doc = merge_vertex_ctx(merged_doc, pending_non_ids)
-                    merged_docs.append(merged_doc)
-                else:
+                if merged_docs:
                     # Merge accumulated non-IDs into the last ID doc
-                    merged_docs[-1] = merge_vertex_ctx(merged_docs[-1], pending_non_ids)
+                    for pending in pending_non_ids:
+                        merge_doc(merged_docs[-1], pending)
+                else:
+                    # No previous ID doc, merge pending non-IDs into the current ID doc
+                    for pending in pending_non_ids:
+                        merge_doc(doc, pending)
                 pending_non_ids.clear()
 
-            # Add the current ID VertexRep (make a copy to avoid mutating input)
-            merged_docs.append(VertexRep(vertex=doc.vertex.copy(), ctx=doc.ctx.copy()))
+            # Handle the current document with index keys
+            if index_tuple in index_to_position:
+                # Merge into existing document at that position
+                merge_doc(merged_docs[index_to_position[index_tuple]], doc)
+            else:
+                # First occurrence of this index tuple, add new document
+                merged_docs.append(copy_doc(doc))
+                index_to_position[index_tuple] = len(merged_docs) - 1
         else:
-            # This is a non-ID VertexRep, accumulate it
+            # This is a document without index keys, accumulate it
             pending_non_ids.append(doc)
 
-    # Handle any remaining non-ID VertexReps at the end
+    # Handle any remaining non-ID documents at the end
     if pending_non_ids and merged_docs:
-        merged_docs[-1] = merge_vertex_ctx(merged_docs[-1], pending_non_ids)
+        # Merge into last ID doc
+        for pending in pending_non_ids:
+            merge_doc(merged_docs[-1], pending)
+    elif pending_non_ids:
+        # No documents with index keys: merge all into a single document
+        if is_vertexrep:
+            merged_doc = VertexRep(vertex={}, ctx={})
+        else:
+            merged_doc = {}
+        for pending in pending_non_ids:
+            merge_doc(merged_doc, pending)
+        merged_docs.append(merged_doc)
 
-    return merged_docs
+    # Type narrowing: return type matches input type due to homogeneous list requirement
+    return cast(list[dict] | list[VertexRep], merged_docs)

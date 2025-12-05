@@ -178,7 +178,6 @@ def render_edge(
         vertex_config: Vertex configuration for source and target
         ctx:
         lindex: Location index of the source vertex
-        local:
 
     Returns:
         defaultdict[str | None, list]: Created edges organized by relation type
@@ -341,10 +340,12 @@ def render_edge(
 
                     if edge.relation_field is not None:
                         u_relation = u_.ctx.pop(edge.relation_field, None)
-                        v_relation = v_.ctx.pop(edge.relation_field, None)
-                        if v_relation is not None:
-                            a, b = b, a
-                            relation = v_relation
+
+                        if u_relation is None:
+                            v_relation = v_.ctx.pop(edge.relation_field, None)
+                            if v_relation is not None:
+                                a, b = b, a
+                                relation = v_relation
                         else:
                             relation = u_relation
                     elif edge.relation_from_key and len(target_lindex) > 1:
