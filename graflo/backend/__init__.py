@@ -25,7 +25,7 @@ Example:
 
 from .arango.conn import ArangoConnection
 from .conn import Connection, ConnectionType
-from .connection import BackendType, DBConfig
+from .connection import DBConfig, DBType
 from .manager import ConnectionManager
 from .neo4j.conn import Neo4jConnection
 from .tigergraph.conn import TigerGraphConnection
@@ -33,7 +33,7 @@ from .tigergraph.conn import TigerGraphConnection
 __all__ = [
     "Connection",
     "ConnectionType",
-    "BackendType",
+    "DBType",
     "DBConfig",
     "ConnectionManager",
     "ArangoConnection",

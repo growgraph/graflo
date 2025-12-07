@@ -1,49 +1,64 @@
-"""Database connection manager for graph databases.
+"""Database connection manager for graph and source databases.
 
 This module provides a connection manager for handling database connections
-to different graph database implementations (ArangoDB, Neo4j). It manages
-connection lifecycle and configuration.
+to different database implementations (ArangoDB, Neo4j, PostgreSQL, etc.).
+It manages connection lifecycle and configuration.
 
 Key Components:
     - ConnectionManager: Main class for managing database connections
-    - BackendType: Enum for supported database types
+    - DBType: Enum for supported database types
 
 The manager supports:
-    - Multiple database types (ArangoDB, Neo4j)
+    - Target databases (ArangoDB, Neo4j, TigerGraph) - OUTPUT
+    - Source databases (PostgreSQL, MySQL, MongoDB, etc.) - INPUT
     - Connection configuration
     - Context manager interface
     - Automatic connection cleanup
 
 Example:
-    >>> with ConnectionManager(secret_path="config.json") as conn:
+    >>> from graflo.backend.connection.onto import ArangoConfig
+    >>> config = ArangoConfig.from_env()
+    >>> with ConnectionManager(connection_config=config) as conn:
     ...     conn.execute("FOR doc IN collection RETURN doc")
 """
 
 from graflo.backend.arango.conn import ArangoConnection
-from graflo.backend.connection.onto import BackendType, DBConfig
+from graflo.backend.connection.onto import DBConfig, DBType, TARGET_DATABASES
 from graflo.backend.neo4j.conn import Neo4jConnection
 from graflo.backend.tigergraph.conn import TigerGraphConnection
 
 
 class ConnectionManager:
-    """Manager for database connections.
+    """Manager for database connections (both graph and source databases).
 
-    This class manages database connections to different graph database
+    This class manages database connections to different database
     implementations. It provides a context manager interface for safe
     connection handling and automatic cleanup.
 
+    Supports:
+    - Target databases (OUTPUT): ArangoDB, Neo4j, TigerGraph
+    - Source databases (INPUT): PostgreSQL, MySQL, MongoDB, etc.
+
     Attributes:
-        conn_class_mapping: Mapping of connection types to connection classes
+        target_conn_mapping: Mapping of target database types to connection classes
         config: Connection configuration
         working_db: Current working database name
         conn: Active database connection
     """
 
-    conn_class_mapping = {
-        BackendType.ARANGO: ArangoConnection,
-        BackendType.NEO4J: Neo4jConnection,
-        BackendType.TIGERGRAPH: TigerGraphConnection,
+    # Target database connections (OUTPUT)
+    target_conn_mapping = {
+        DBType.ARANGO: ArangoConnection,
+        DBType.NEO4J: Neo4jConnection,
+        DBType.TIGERGRAPH: TigerGraphConnection,
     }
+
+    # Source database connections (INPUT) - to be implemented
+    # source_conn_mapping = {
+    #     DBType.POSTGRES: PostgresConnection,
+    #     DBType.MYSQL: MySQLConnection,
+    #     DBType.MONGODB: MongoDBConnection,
+    # }
 
     def __init__(
         self,
@@ -53,9 +68,7 @@ class ConnectionManager:
         """Initialize the connection manager.
 
         Args:
-            secret_path: Path to configuration file
-            args: Command line arguments
-            connection_config: Optional connection configuration
+            connection_config: Database connection configuration
             **kwargs: Additional configuration parameters
         """
         self.config: DBConfig = connection_config
@@ -70,7 +83,16 @@ class ConnectionManager:
         Returns:
             Connection: Database connection instance
         """
-        cls = self.conn_class_mapping[self.config.connection_type]
+        # Check if database can be used as target
+        if not self.config.can_be_target():
+            raise ValueError(
+                f"Database type '{self.config.connection_type}' cannot be used as a target. "
+                f"Only these types can be targets: {[t.value for t in TARGET_DATABASES]}"
+            )
+
+        db_type = self.config.connection_type
+        cls = self.target_conn_mapping[db_type]
+
         if self.working_db is not None:
             self.config.database = self.working_db
         self.conn = cls(config=self.config)

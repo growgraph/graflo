@@ -2,7 +2,7 @@ import abc
 from enum import EnumMeta
 from pathlib import Path
 from strenum import StrEnum
-from typing import Any, Dict, Type
+from typing import Any, Dict, Type, TypeVar
 from urllib.parse import urlparse
 
 from pydantic import Field, model_validator
@@ -20,19 +20,52 @@ class EnumMetaWithContains(EnumMeta):
         return True
 
 
-class BackendType(StrEnum, metaclass=EnumMetaWithContains):
-    """Enum representing different types of database backends."""
+# Type variable for DBConfig subclasses
+T = TypeVar("T", bound="DBConfig")
 
+
+class DBType(StrEnum, metaclass=EnumMetaWithContains):
+    """Enum representing different types of databases.
+
+    Includes both graph databases and source databases (SQL, NoSQL, etc.).
+    """
+
+    # Graph databases
     ARANGO = "arango"
     NEO4J = "neo4j"
     TIGERGRAPH = "tigergraph"
 
+    # Source databases (SQL, NoSQL)
+    POSTGRES = "postgres"
+    MYSQL = "mysql"
+    MONGODB = "mongodb"
+    SQLITE = "sqlite"
+
     @property
     def config_class(self) -> Type["DBConfig"]:
-        """Get the appropriate config class for this backend type."""
-        from .config_mapping import BACKEND_TYPE_MAPPING
+        """Get the appropriate config class for this database type."""
+        from .config_mapping import DB_TYPE_MAPPING
 
-        return BACKEND_TYPE_MAPPING[self]
+        return DB_TYPE_MAPPING[self]
+
+
+# Databases that can be used as sources (INPUT)
+SOURCE_DATABASES: set[DBType] = {
+    DBType.ARANGO,  # Graph DBs can be sources
+    DBType.NEO4J,  # Graph DBs can be sources
+    DBType.TIGERGRAPH,  # Graph DBs can be sources
+    DBType.POSTGRES,  # SQL DBs
+    DBType.MYSQL,
+    DBType.MONGODB,
+    DBType.SQLITE,
+}
+
+# Databases that can be used as targets (OUTPUT)
+TARGET_DATABASES: set[DBType] = {
+    DBType.ARANGO,
+    DBType.NEO4J,
+    DBType.TIGERGRAPH,
+}
 
 
 class DBConfig(BaseSettings, abc.ABC):
@@ -111,18 +144,26 @@ class DBConfig(BaseSettings, abc.ABC):
         return parsed.hostname
 
     @property
-    def connection_type(self) -> "BackendType":
-        """Get backend type from class."""
-        # Map class to BackendType - need to import here to avoid circular import
-        from .config_mapping import BACKEND_TYPE_MAPPING
+    def connection_type(self) -> "DBType":
+        """Get database type from class."""
+        # Map class to DBType - need to import here to avoid circular import
+        from .config_mapping import DB_TYPE_MAPPING
 
-        # Reverse lookup: find BackendType for this class
-        for backend_type, config_class in BACKEND_TYPE_MAPPING.items():
+        # Reverse lookup: find DBType for this class
+        for db_type, config_class in DB_TYPE_MAPPING.items():
             if type(self) is config_class:
-                return backend_type
+                return db_type
 
         # Fallback (shouldn't happen)
-        return BackendType.ARANGO
+        return DBType.ARANGO
+
+    def can_be_source(self) -> bool:
+        """Check if this database type can be used as a source."""
+        return self.connection_type in SOURCE_DATABASES
+
+    def can_be_target(self) -> bool:
+        """Check if this database type can be used as a target."""
+        return self.connection_type in TARGET_DATABASES
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "DBConfig":
@@ -140,11 +181,11 @@ class DBConfig(BaseSettings, abc.ABC):
             raise ValueError("Missing 'db_type' or 'connection_type' in configuration")
 
         try:
-            conn_type = BackendType(db_type)
+            conn_type = DBType(db_type)
         except ValueError:
             raise ValueError(
-                f"Backend type '{db_type}' not supported. "
-                f"Should be one of: {list(BackendType)}"
+                f"Database type '{db_type}' not supported. "
+                f"Should be one of: {list(DBType)}"
             )
 
         # Map old 'url' field to 'uri' for backward compatibility
@@ -189,6 +230,51 @@ class DBConfig(BaseSettings, abc.ABC):
             DBConfig instance loaded from .env file
         """
         raise NotImplementedError("Subclasses must implement from_docker_env")
+
+    @classmethod
+    def from_env(cls: Type[T], prefix: str | None = None) -> T:
+        """Load config from environment variables using Pydantic BaseSettings.
+
+        Supports custom prefixes for multiple configs:
+        - Default (prefix=None): Uses {BASE_PREFIX}URI, {BASE_PREFIX}USERNAME, etc.
+        - With prefix (prefix="USER"): Uses USER_{BASE_PREFIX}URI, USER_{BASE_PREFIX}USERNAME, etc.
+
+        Args:
+            prefix: Optional prefix for environment variables (e.g., "USER", "LAKE", "KG").
+                   If None, uses default {BASE_PREFIX}* variables.
+
+        Returns:
+            DBConfig instance loaded from environment variables using Pydantic BaseSettings
+
+        Examples:
+            # Load default config (ARANGO_URI, ARANGO_USERNAME, etc.)
+            config = ArangoConfig.from_env()
+
+            # Load config with prefix (USER_ARANGO_URI, USER_ARANGO_USERNAME, etc.)
+            user_config = ArangoConfig.from_env(prefix="USER")
+        """
+        if prefix:
+            # Get the base prefix from the class's model_config
+            base_prefix = cls.model_config.get("env_prefix")
+            if not base_prefix:
+                raise ValueError(
+                    f"Class {cls.__name__} does not have env_prefix configured in model_config"
+                )
+            # Create a new model class with modified env_prefix
+            new_prefix = f"{prefix.upper()}_{base_prefix}"
+            case_sensitive = cls.model_config.get("case_sensitive", False)
+            model_config = SettingsConfigDict(
+                env_prefix=new_prefix,
+                case_sensitive=case_sensitive,
+            )
+            # Create a new class dynamically with the modified prefix
+            temp_class = type(
+                f"{cls.__name__}WithPrefix", (cls,), {"model_config": model_config}
+            )
+            return temp_class()
+        else:
+            # Use default prefix - Pydantic will read from environment automatically
+            return cls()
 
 
 class ArangoConfig(DBConfig):
@@ -385,5 +471,70 @@ class TigergraphConfig(DBConfig):
             ) or env_vars.get("GSQL_PASSWORD")
         if "TIGERGRAPH_DATABASE" in env_vars:
             config_data["database"] = env_vars["TIGERGRAPH_DATABASE"]
+
+        return cls(**config_data)
+
+
+class PostgresConfig(DBConfig):
+    """Configuration for PostgreSQL connections."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="POSTGRES_",
+        case_sensitive=False,
+    )
+
+    def _get_default_port(self) -> int:
+        """Get default PostgreSQL port."""
+        return 5432
+
+    @classmethod
+    def from_docker_env(cls, docker_dir: str | Path | None = None) -> "PostgresConfig":
+        """Load PostgreSQL config from docker/postgres/.env file."""
+        if docker_dir is None:
+            docker_dir = (
+                Path(__file__).parent.parent.parent.parent / "docker" / "postgres"
+            )
+        else:
+            docker_dir = Path(docker_dir)
+
+        env_file = docker_dir / ".env"
+        if not env_file.exists():
+            raise FileNotFoundError(f"Environment file not found: {env_file}")
+
+        # Load .env file manually
+        env_vars: Dict[str, str] = {}
+        with open(env_file, "r") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, value = line.split("=", 1)
+                    env_vars[key.strip()] = value.strip().strip('"').strip("'")
+
+        # Map environment variables to config
+        config_data: Dict[str, Any] = {}
+        if "POSTGRES_URI" in env_vars:
+            config_data["uri"] = env_vars["POSTGRES_URI"]
+        elif "POSTGRES_PORT" in env_vars:
+            port = env_vars["POSTGRES_PORT"]
+            hostname = env_vars.get("POSTGRES_HOSTNAME", "localhost")
+            protocol = env_vars.get("POSTGRES_PROTOCOL", "postgresql")
+            config_data["uri"] = f"{protocol}://{hostname}:{port}"
+        elif "POSTGRES_HOST" in env_vars:
+            # PostgreSQL often uses POSTGRES_HOST instead of POSTGRES_HOSTNAME
+            port = env_vars.get("POSTGRES_PORT", "5432")
+            hostname = env_vars["POSTGRES_HOST"]
+            protocol = env_vars.get("POSTGRES_PROTOCOL", "postgresql")
+            config_data["uri"] = f"{protocol}://{hostname}:{port}"
+
+        if "POSTGRES_USER" in env_vars or "POSTGRES_USERNAME" in env_vars:
+            config_data["username"] = env_vars.get("POSTGRES_USER") or env_vars.get(
+                "POSTGRES_USERNAME"
+            )
+        if "POSTGRES_PASSWORD" in env_vars:
+            config_data["password"] = env_vars["POSTGRES_PASSWORD"]
+        if "POSTGRES_DB" in env_vars or "POSTGRES_DATABASE" in env_vars:
+            config_data["database"] = env_vars.get("POSTGRES_DB") or env_vars.get(
+                "POSTGRES_DATABASE"
+            )
 
         return cls(**config_data)

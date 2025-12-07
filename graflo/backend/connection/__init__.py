@@ -1,3 +1,6 @@
-from .onto import BackendType, DBConfig
+from .onto import DBConfig, DBType
 
-__all__ = ["BackendType", "DBConfig"]
+__all__ = [
+    "DBConfig",
+    "DBType",
+]

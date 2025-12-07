@@ -34,7 +34,7 @@ from graflo.data_source import (
     DataSourceFactory,
     DataSourceRegistry,
 )
-from graflo.backend import BackendType, ConnectionManager, DBConfig
+from graflo.backend import DBType, ConnectionManager, DBConfig
 from graflo.util.chunker import ChunkerType
 from graflo.util.onto import FilePattern, Patterns
 
@@ -431,7 +431,8 @@ class Caster:
             raise ValueError("conn_conf is required for ingest_data_sources")
 
         if (
-            conn_conf.connection_type == BackendType.ARANGO
+            conn_conf.can_be_target()
+            and conn_conf.connection_type == DBType.ARANGO
             and conn_conf.database == "_system"
         ):
             db_name = self.schema.general.name
