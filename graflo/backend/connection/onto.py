@@ -6,6 +6,7 @@ from typing import Any, Dict, Type, TypeVar
 from urllib.parse import urlparse
 
 from pydantic import Field, model_validator
+from pydantic import AliasChoices
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -74,7 +75,15 @@ class DBConfig(BaseSettings, abc.ABC):
     uri: str | None = Field(default=None, description="Backend URI")
     username: str | None = Field(default=None, description="Authentication username")
     password: str | None = Field(default=None, description="Authentication Password")
-    database: str | None = Field(default=None, description="Database name")
+    database: str | None = Field(
+        default=None,
+        description="Database name (backward compatibility, DB-specific mapping)",
+    )
+    schema_name: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("schema", "schema_name"),
+        description="Schema/graph name (unified internal structure)",
+    )
     request_timeout: float = Field(
         default=60.0, description="Request timeout in seconds"
     )
@@ -83,6 +92,40 @@ class DBConfig(BaseSettings, abc.ABC):
     def _get_default_port(self) -> int:
         """Get the default port for this backend type."""
         pass
+
+    @abc.abstractmethod
+    def _get_effective_database(self) -> str | None:
+        """Get the effective database name based on DB type.
+
+        For SQL databases: returns the database name
+        For graph databases: returns None (they don't have a database level)
+
+        Returns:
+            Database name or None
+        """
+        pass
+
+    @abc.abstractmethod
+    def _get_effective_schema(self) -> str | None:
+        """Get the effective schema/graph name based on DB type.
+
+        For SQL databases: returns the schema name
+        For graph databases: returns the graph/database name (mapped from user-facing field)
+
+        Returns:
+            Schema/graph name or None
+        """
+        pass
+
+    @property
+    def effective_database(self) -> str | None:
+        """Get the effective database name (delegates to concrete class)."""
+        return self._get_effective_database()
+
+    @property
+    def effective_schema(self) -> str | None:
+        """Get the effective schema/graph name (delegates to concrete class)."""
+        return self._get_effective_schema()
 
     @model_validator(mode="after")
     def _add_default_port_to_uri(self):
@@ -289,6 +332,18 @@ class ArangoConfig(DBConfig):
         """Get default ArangoDB port."""
         return 8529
 
+    def _get_effective_database(self) -> str | None:
+        """ArangoDB doesn't have a database level (connection -> database/graph -> collections)."""
+        return None
+
+    def _get_effective_schema(self) -> str | None:
+        """For ArangoDB, 'database' field maps to schema (graph) in unified model.
+
+        ArangoDB structure: connection -> database (graph) -> collections
+        Unified model: connection -> schema -> entities
+        """
+        return self.database
+
     @classmethod
     def from_docker_env(cls, docker_dir: str | Path | None = None) -> "ArangoConfig":
         """Load ArangoDB config from docker/arango/.env file."""
@@ -345,6 +400,18 @@ class Neo4jConfig(DBConfig):
     def _get_default_port(self) -> int:
         """Get default Neo4j HTTP port."""
         return 7474
+
+    def _get_effective_database(self) -> str | None:
+        """Neo4j doesn't have a database level (connection -> database -> nodes/relationships)."""
+        return None
+
+    def _get_effective_schema(self) -> str | None:
+        """For Neo4j, 'database' field maps to schema (database) in unified model.
+
+        Neo4j structure: connection -> database -> nodes/relationships
+        Unified model: connection -> schema -> entities
+        """
+        return self.database
 
     def __init__(self, **data):
         """Initialize Neo4j config."""
@@ -419,6 +486,18 @@ class TigergraphConfig(DBConfig):
         """Get default TigerGraph REST++ port."""
         return 9000
 
+    def _get_effective_database(self) -> str | None:
+        """TigerGraph doesn't have a database level (connection -> schema -> vertices/edges)."""
+        return None
+
+    def _get_effective_schema(self) -> str | None:
+        """For TigerGraph, 'schema_name' field maps to schema (graph) in unified model.
+
+        TigerGraph structure: connection -> schema -> vertices/edges
+        Unified model: connection -> schema -> entities
+        """
+        return self.schema_name
+
     def __init__(self, **data):
         """Initialize TigerGraph config."""
         super().__init__(**data)
@@ -486,6 +565,22 @@ class PostgresConfig(DBConfig):
     def _get_default_port(self) -> int:
         """Get default PostgreSQL port."""
         return 5432
+
+    def _get_effective_database(self) -> str | None:
+        """For PostgreSQL, 'database' field is the actual database name.
+
+        PostgreSQL structure: connection -> database -> schema -> table
+        Unified model: connection -> database -> schema -> entity
+        """
+        return self.database
+
+    def _get_effective_schema(self) -> str | None:
+        """For PostgreSQL, 'schema_name' field is the schema name.
+
+        PostgreSQL structure: connection -> database -> schema -> table
+        Unified model: connection -> database -> schema -> entity
+        """
+        return self.schema_name
 
     @classmethod
     def from_docker_env(cls, docker_dir: str | Path | None = None) -> "PostgresConfig":

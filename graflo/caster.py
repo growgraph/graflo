@@ -430,6 +430,18 @@ class Caster:
         if conn_conf is None:
             raise ValueError("conn_conf is required for ingest_data_sources")
 
+        # If effective_schema is not set, use schema.general.name as fallback
+        if conn_conf.can_be_target() and conn_conf.effective_schema is None:
+            schema_name = self.schema.general.name
+            # Map to the appropriate field based on DB type
+            if conn_conf.connection_type == DBType.TIGERGRAPH:
+                # TigerGraph uses 'schema_name' field
+                conn_conf.schema_name = schema_name
+            else:
+                # ArangoDB, Neo4j use 'database' field (which maps to effective_schema)
+                conn_conf.database = schema_name
+
+        # Special handling for ArangoDB _system database
         if (
             conn_conf.can_be_target()
             and conn_conf.connection_type == DBType.ARANGO
