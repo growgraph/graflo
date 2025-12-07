@@ -1,4 +1,5 @@
-from test.backend.arangos.conftest import ingest
+from test.db.arangos.conftest import ingest
+
 import pytest
 
 
@@ -7,6 +8,10 @@ def modes():
     return [
         "kg",
         "ibes",
+        # "wos_json",
+        # "lake_odds",
+        # "wos_csv",
+        # "ticker",
     ]
 
 
@@ -25,5 +30,5 @@ def test_ingest(
         current_path,
         test_db_name,
         reset,
-        n_cores=1,
+        n_cores=2,
     )

@@ -28,6 +28,7 @@ from .conn import Connection, ConnectionType
 from .connection import DBConfig, DBType
 from .manager import ConnectionManager
 from .neo4j.conn import Neo4jConnection
+from .postgres.conn import PostgresConnection
 from .tigergraph.conn import TigerGraphConnection
 
 __all__ = [
@@ -38,5 +39,6 @@ __all__ = [
     "ConnectionManager",
     "ArangoConnection",
     "Neo4jConnection",
+    "PostgresConnection",
     "TigerGraphConnection",
 ]
