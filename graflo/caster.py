@@ -14,6 +14,8 @@ Example:
     >>> caster.ingest(path="data/", conn_conf=db_config)
 """
 
+from __future__ import annotations
+
 import logging
 import multiprocessing as mp
 import queue
@@ -36,7 +38,7 @@ from graflo.data_source import (
 )
 from graflo.db import DBType, ConnectionManager, DBConfig
 from graflo.util.chunker import ChunkerType
-from graflo.util.onto import FilePattern, Patterns
+from graflo.util.onto import FilePattern, Patterns, TablePattern
 
 logger = logging.getLogger(__name__)
 
@@ -491,17 +493,24 @@ class Caster:
                     )
         logger.info(f"Processing took {klepsidra.elapsed:.1f} sec")
 
-    def ingest(self, path: Path | str, **kwargs):
-        """Ingest data from a directory.
+    def ingest(
+        self,
+        output_config: DBConfig,
+        patterns: "Patterns | None" = None,
+        **kwargs,
+    ):
+        """Ingest data into the graph database.
 
-        This method is a wrapper that creates FileDataSource instances from
-        file patterns and calls ingest_data_sources(). It maintains backward
-        compatibility with the existing file-based ingestion workflow.
+        This is the main ingestion method that takes:
+        - Schema: Graph structure (already set in Caster)
+        - OutputConfig: Target graph database configuration
+        - Patterns: Mapping of resources to physical data sources
 
         Args:
-            path: Path to directory containing files
+            output_config: Target database connection configuration (for writing graph)
+            patterns: Patterns instance mapping resources to data sources
+                If None, will try to use legacy 'patterns' kwarg
             **kwargs: Additional keyword arguments:
-                - conn_conf: Database connection configuration
                 - clean_start: Whether to clean the database before ingestion
                 - n_cores: Number of CPU cores to use
                 - max_items: Maximum number of items to process
@@ -509,30 +518,138 @@ class Caster:
                 - dry: Whether to perform a dry run
                 - init_only: Whether to only initialize the database
                 - limit_files: Optional limit on number of files to process
-                - patterns: Optional file patterns to match
+                - conn_conf: Legacy parameter (use output_config instead)
         """
-        path = Path(path).expanduser()
-        patterns = kwargs.pop("patterns", Patterns())
-        limit_files = kwargs.pop("limit_files", None)
+        # Backward compatibility: support legacy conn_conf parameter
+        if "conn_conf" in kwargs:
+            output_config = kwargs.pop("conn_conf")
 
-        # Create DataSourceRegistry from file patterns
+        # Backward compatibility: support legacy patterns parameter
+        if patterns is None:
+            patterns = kwargs.pop("patterns", Patterns())
+
+        # Create DataSourceRegistry from patterns
         registry = DataSourceRegistry()
 
         for r in self.schema.resources:
-            pattern = (
-                FilePattern(regex=r.name)
-                if r.name not in patterns.patterns
-                else patterns.patterns[r.name]
-            )
-            files = Caster.discover_files(
-                path, limit_files=limit_files, pattern=pattern
-            )
-            logger.info(f"For resource name {r.name} {len(files)} files were found")
+            resource_name = r.name
+            resource_type = patterns.get_resource_type(resource_name)
 
-            # Create FileDataSource for each file using factory
-            for file_path in files:
-                file_source = DataSourceFactory.create_file_data_source(path=file_path)
-                registry.register(file_source, resource_name=r.name)
+            if resource_type == "file":
+                # Handle file pattern
+                pattern = patterns.patterns[resource_name]
+                if not isinstance(pattern, FilePattern):
+                    logger.warning(
+                        f"Pattern for resource '{resource_name}' is not a FilePattern, skipping"
+                    )
+                    continue
 
-        # Use the new ingest_data_sources method
+                # Use sub_path from FilePattern (path is now part of the pattern)
+                if pattern.sub_path is None:
+                    logger.warning(
+                        f"FilePattern for resource '{resource_name}' has no sub_path, skipping"
+                    )
+                    continue
+                path_obj = pattern.sub_path.expanduser()
+                limit_files = kwargs.get("limit_files", None)
+
+                files = Caster.discover_files(
+                    path_obj, limit_files=limit_files, pattern=pattern
+                )
+                logger.info(
+                    f"For resource name {resource_name} {len(files)} files were found"
+                )
+
+                # Create FileDataSource for each file
+                for file_path in files:
+                    file_source = DataSourceFactory.create_file_data_source(
+                        path=file_path
+                    )
+                    registry.register(file_source, resource_name=resource_name)
+
+            elif resource_type == "table":
+                # Handle PostgreSQL table
+                pattern = patterns.patterns[resource_name]
+                if not isinstance(pattern, TablePattern):
+                    logger.warning(
+                        f"Pattern for resource '{resource_name}' is not a TablePattern, skipping"
+                    )
+                    continue
+
+                postgres_config = patterns.get_postgres_config(resource_name)
+                if postgres_config is None:
+                    logger.warning(
+                        f"PostgreSQL table '{resource_name}' has no connection config, skipping"
+                    )
+                    continue
+
+                # Get table info
+                table_info = patterns.get_table_info(resource_name)
+                if table_info is None:
+                    logger.warning(
+                        f"Could not get table info for resource '{resource_name}', skipping"
+                    )
+                    continue
+
+                table_name, schema_name = table_info
+                effective_schema = (
+                    schema_name or postgres_config.schema_name or "public"
+                )
+
+                # Create SQLDataSource for PostgreSQL table
+                try:
+                    query = f'SELECT * FROM "{effective_schema}"."{table_name}"'
+
+                    from graflo.data_source.sql import SQLConfig, SQLDataSource
+                    from urllib.parse import urlparse
+
+                    parsed = urlparse(postgres_config.uri or "")
+                    host = parsed.hostname or "localhost"
+                    port = parsed.port or 5432
+                    database = (
+                        postgres_config.database
+                        or parsed.path.lstrip("/")
+                        or "postgres"
+                    )
+                    user = postgres_config.username or parsed.username or "postgres"
+                    password = postgres_config.password or parsed.password or ""
+
+                    # Build PostgreSQL connection string
+                    if password:
+                        connection_string = (
+                            f"postgresql://{user}:{password}@{host}:{port}/{database}"
+                        )
+                    else:
+                        connection_string = (
+                            f"postgresql://{user}@{host}:{port}/{database}"
+                        )
+
+                    # Create SQLDataSource
+                    sql_config = SQLConfig(
+                        connection_string=connection_string,
+                        query=query,
+                        pagination=True,
+                        page_size=1000,
+                    )
+                    sql_source = SQLDataSource(config=sql_config)
+                    registry.register(sql_source, resource_name=resource_name)
+
+                    logger.info(
+                        f"Created SQLDataSource for table '{effective_schema}.{table_name}' "
+                        f"mapped to resource '{resource_name}'"
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"Failed to create data source for PostgreSQL table '{resource_name}': {e}",
+                        exc_info=True,
+                    )
+                    continue
+
+            else:
+                logger.warning(
+                    f"No pattern configuration found for resource '{resource_name}', skipping"
+                )
+
+        # Use the new ingest_data_sources method with output_config
+        kwargs["conn_conf"] = output_config
         self.ingest_data_sources(registry, **kwargs)

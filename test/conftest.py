@@ -12,6 +12,7 @@ from graflo.architecture.schema import Schema
 from graflo.architecture.util import cast_graph_name_to_triple
 from graflo.caster import Caster
 from graflo.util.misc import sorted_dicts
+from graflo.util.onto import Patterns, FilePattern
 
 logger = logging.getLogger(__name__)
 
@@ -56,13 +57,26 @@ def ingest_atomic(conn_conf, current_path, test_db_name, schema_o, mode, n_cores
 
     conn_conf.database = test_db_name
 
+    # Create Patterns for file-based resources
+    # Map each resource to a FilePattern that matches files in the data directory
+    patterns = Patterns()
+    for resource in schema_o.resources:
+        resource_name = resource.name
+        # Create a FilePattern that matches files for this resource
+        # Use resource name as part of the filename pattern (e.g., "resource_name.csv", "resource_name.json", etc.)
+        file_pattern = FilePattern(
+            regex=f".*{resource_name}.*",
+            sub_path=path,
+            resource_name=resource_name,
+        )
+        patterns.add_file_pattern(resource_name, file_pattern)
+
     caster = Caster(schema_o)
     caster.ingest(
+        output_config=conn_conf,
+        patterns=patterns,
         n_cores=n_cores,
-        path=path,
-        limit_files=None,
         clean_start=True,
-        conn_conf=conn_conf,
     )
 
 

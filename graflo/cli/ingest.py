@@ -181,12 +181,11 @@ def ingest(
     else:
         # Fall back to file-based ingestion
         caster.ingest(
-            path=source_path,
+            output_config=conn_conf,
+            patterns=patterns,
             limit_files=limit_files,
             clean_start=fresh_start,
             batch_size=batch_size,
-            conn_conf=conn_conf,
-            patterns=patterns,
             init_only=init_only,
         )
 

@@ -81,6 +81,23 @@ class PostgresConnection:
             logger.error(f"Failed to connect to PostgreSQL: {e}", exc_info=True)
             raise
 
+    def read(self, query: str, params: tuple | None = None) -> list[dict[str, Any]]:
+        """Execute a SELECT query and return results as a list of dictionaries.
+
+        Args:
+            query: SQL SELECT query to execute
+            params: Optional tuple of parameters for parameterized queries
+
+        Returns:
+            List of dictionaries, where each dictionary represents a row with column names as keys
+        """
+        with self.conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            if params:
+                cursor.execute(query, params)
+            else:
+                cursor.execute(query)
+            return [dict(row) for row in cursor.fetchall()]
+
     def close(self):
         """Close the PostgreSQL connection."""
         if hasattr(self, "conn") and self.conn:

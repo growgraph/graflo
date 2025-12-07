@@ -39,7 +39,7 @@ from .data_source import (
 from .db import ConnectionManager, ConnectionType
 from .filter.onto import ComparisonOperator, LogicalOperator
 from .onto import AggregationType
-from .util.onto import Patterns
+from .util.onto import FilePattern, Patterns, ResourcePattern, TablePattern
 
 __all__ = [
     "AbstractDataSource",
@@ -54,14 +54,17 @@ __all__ = [
     "DataSourceRegistry",
     "DataSourceType",
     "FileDataSource",
+    "FilePattern",
     "Index",
     "JsonFileDataSource",
     "JsonlFileDataSource",
     "LogicalOperator",
     "PaginationConfig",
     "Patterns",
+    "ResourcePattern",
     "Schema",
     "SQLConfig",
     "SQLDataSource",
     "TableFileDataSource",
+    "TablePattern",
 ]
