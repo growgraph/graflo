@@ -2,7 +2,7 @@ from test.conftest import ingest_atomic, fetch_schema_obj
 
 import pytest
 
-from graflo.backend import ConnectionManager
+from graflo.db import ConnectionManager
 
 
 @pytest.fixture(scope="function")

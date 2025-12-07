@@ -10,7 +10,7 @@ This guide will help you get started with graflo by showing you how to transform
 - `DataSource` defines where data comes from (files, APIs, SQL databases, in-memory objects).
 - In case the data is provided as files, class `Patterns` manages the mapping of the resources to files. 
 - `DataSourceRegistry` maps DataSources to Resources (many DataSources can map to the same Resource).
-- Database backend configurations use Pydantic `BaseSettings` with environment variable support. Use `ArangoConfig`, `Neo4jConfig`, or `TigergraphConfig` directly, or load from docker `.env` files using `from_docker_env()`.
+1- Database backend configurations use Pydantic `BaseSettings` with environment variable support. Use `ArangoConfig`, `Neo4jConfig`, `TigergraphConfig`, or `PostgresConfig` directly, or load from docker `.env` files using `from_docker_env()`. All configs inherit from `DBConfig` and support unified `database`/`schema_name` structure with `effective_database` and `effective_schema` properties for database-agnostic access. If `effective_schema` is not set, `Caster` automatically uses `Schema.general.name` as fallback.
 
 ## Basic Example
 
@@ -19,21 +19,37 @@ Here's a simple example of transforming CSV files of two types, `people` and `de
 ```python
 from suthing import FileHandle
 from graflo import Caster, Patterns, Schema
-from graflo.backend.connection.onto import ArangoConfig
+from graflo.db.connection.onto import ArangoConfig
 
 schema = Schema.from_dict(FileHandle.load("schema.yaml"))
 
 caster = Caster(schema)
 
-# Load config from docker/arango/.env (recommended)
+# Option 1: Load config from docker/arango/.env (recommended)
 conn_conf = ArangoConfig.from_docker_env()
 
-# Or create config directly
+# Option 2: Load from environment variables
+# Set environment variables:
+#   export ARANGO_URI=http://localhost:8529
+#   export ARANGO_USERNAME=root
+#   export ARANGO_PASSWORD=123
+#   export ARANGO_DATABASE=mygraph
+conn_conf = ArangoConfig.from_env()
+
+# Option 3: Load with custom prefix (for multiple configs)
+# Set environment variables:
+#   export USER_ARANGO_URI=http://user-db:8529
+#   export USER_ARANGO_USERNAME=user
+#   export USER_ARANGO_PASSWORD=pass
+#   export USER_ARANGO_DATABASE=usergraph
+user_conn_conf = ArangoConfig.from_env(prefix="USER")
+
+# Option 4: Create config directly
 # conn_conf = ArangoConfig(
 #     uri="http://localhost:8535",
 #     username="root",
 #     password="123",
-#     database="_system",
+#     database="mygraph",  # For ArangoDB, 'database' maps to schema/graph
 # )
 
 patterns = Patterns.from_dict(
@@ -45,7 +61,7 @@ patterns = Patterns.from_dict(
     }
 )
 
-caster.ingest_files(
+caster.ingest(
     path=".",
     conn_conf=conn_conf,
     patterns=patterns,
@@ -118,9 +134,104 @@ Then use it with the CLI:
 
 ```bash
 uv run ingest \
-    --backend-config-path config/backend.yaml \
+    --db-config-path config/db.yaml \
     --schema-path config/schema.yaml \
     --data-source-config-path data_sources.yaml
+```
+
+## Database Configuration Options
+
+graflo supports multiple ways to configure database connections:
+
+### Environment Variables
+
+You can configure database connections using environment variables. Each database type has its own prefix:
+
+**ArangoDB:**
+```bash
+export ARANGO_URI=http://localhost:8529
+export ARANGO_USERNAME=root
+export ARANGO_PASSWORD=123
+export ARANGO_DATABASE=mygraph
+```
+
+**Neo4j:**
+```bash
+export NEO4J_URI=bolt://localhost:7687
+export NEO4J_USERNAME=neo4j
+export NEO4J_PASSWORD=password
+export NEO4J_DATABASE=mydb
+```
+
+**TigerGraph:**
+```bash
+export TIGERGRAPH_URI=http://localhost:9000
+export TIGERGRAPH_USERNAME=tigergraph
+export TIGERGRAPH_PASSWORD=tigergraph
+export TIGERGRAPH_SCHEMA_NAME=mygraph
+```
+
+**PostgreSQL:**
+```bash
+export POSTGRES_URI=postgresql://localhost:5432
+export POSTGRES_USERNAME=postgres
+export POSTGRES_PASSWORD=password
+export POSTGRES_DATABASE=mydb
+export POSTGRES_SCHEMA_NAME=public
+```
+
+Then load the config:
+
+```python
+from graflo.db.connection.onto import ArangoConfig, Neo4jConfig, TigergraphConfig, PostgresConfig
+
+# Load from default environment variables
+arango_conf = ArangoConfig.from_env()
+neo4j_conf = Neo4jConfig.from_env()
+tg_conf = TigergraphConfig.from_env()
+pg_conf = PostgresConfig.from_env()
+```
+
+### Multiple Configurations with Prefixes
+
+For multiple database configurations, use prefixes:
+
+```bash
+# User database
+export USER_ARANGO_URI=http://user-db:8529
+export USER_ARANGO_USERNAME=user
+export USER_ARANGO_PASSWORD=pass
+export USER_ARANGO_DATABASE=usergraph
+
+# Knowledge graph database
+export KG_ARANGO_URI=http://kg-db:8529
+export KG_ARANGO_USERNAME=kg
+export KG_ARANGO_PASSWORD=secret
+export KG_ARANGO_DATABASE=knowledgegraph
+```
+
+```python
+user_conf = ArangoConfig.from_env(prefix="USER")
+kg_conf = ArangoConfig.from_env(prefix="KG")
+```
+
+### Docker Environment Files
+
+Load from docker `.env` files:
+```python
+conn_conf = ArangoConfig.from_docker_env()
+```
+
+### Direct Configuration
+
+Create config objects directly:
+```python
+conn_conf = ArangoConfig(
+    uri="http://localhost:8529",
+    username="root",
+    password="123",
+    database="mygraph",
+)
 ```
 
 ## Next Steps

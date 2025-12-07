@@ -6,10 +6,10 @@ from arango import ArangoClient
 parser = argparse.ArgumentParser()
 parser.add_argument("-c", "--collection", default="all", help="test setting")
 parser.add_argument(
-    "--backend",
+    "--db",
     # default="_system",
     default="wos_csv",
-    help="backend for arangodb connection",
+    help="db for arangodb connection",
 )
 
 client = ArangoClient()

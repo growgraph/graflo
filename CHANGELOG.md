@@ -8,6 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.3.0] - Unreleased
 
 ### Added
+- **Unified Database Configuration Architecture**: Simplified database configuration system
+  - **Capability-based Design**: Replaced `GraphDBConfig`/`SourceDBConfig` hierarchy with capability sets
+    - `SOURCE_DATABASES`: Set of database types that can be used as data sources
+    - `TARGET_DATABASES`: Set of database types that can be used as targets
+    - `can_be_source()`: Method to check if a database can be used as a source
+    - `can_be_target()`: Method to check if a database can be used as a target
+  - **Unified Schema/Database Structure**: Added unified internal structure for database hierarchy
+    - `database`: Database name (for SQL) or backward compatibility field (for graph DBs)
+    - `schema_name`: Schema/graph name (unified internal structure)
+    - `effective_database`: Property that returns the effective database name based on DB type
+    - `effective_schema`: Property that returns the effective schema/graph name based on DB type
+    - Database-specific mapping delegated to concrete config classes:
+      - **PostgreSQL**: `database` → effective_database, `schema_name` → effective_schema
+      - **ArangoDB**: `database` → effective_schema (no database level)
+      - **Neo4j**: `database` → effective_schema (no database level)
+      - **TigerGraph**: `schema_name` → effective_schema (no database level)
+  - **Automatic Schema Fallback**: `Caster` now automatically uses `Schema.general.name` as fallback
+    when `effective_schema` is not set in configuration
+  - **Environment Variable Support for Schema**: Added `POSTGRES_SCHEMA_NAME` and `TIGERGRAPH_SCHEMA_NAME`
+    environment variables for schema configuration
+
 - **Data Source Architecture**: Formalized data source types as a separate layer from Resources
   - New `graflo.data_source` package with abstract base classes and implementations
   - `AbstractDataSource`: Base class for all data sources with unified batch iteration interface
@@ -57,11 +78,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `urllib3>=2.0.0`: For HTTP retry functionality
 
 ### Changed
+- **Database Configuration Architecture Simplification**: Unified and simplified database configuration
+  - **Renamed `BackendType` to `DBType`**: More accurate naming reflecting unified database configuration
+    - Updated all references throughout codebase
+    - `BACKEND_TYPE_MAPPING` → `DB_TYPE_MAPPING`
+  - **Removed Intermediate Config Classes**: Simplified inheritance hierarchy
+    - Removed `GraphDBConfig` abstract class
+    - Removed `SourceDBConfig` abstract class
+    - All config classes (`ArangoConfig`, `Neo4jConfig`, `TigergraphConfig`, `PostgresConfig`) now inherit directly from `DBConfig`
+    - `connection_type` property moved to base `DBConfig` class
+  - **Fixed Field Shadowing Warning**: Renamed `schema` field to `schema_name` to avoid conflict with Pydantic `BaseSettings.schema`
+    - Field accepts both `"schema"` and `"schema_name"` keys in dict/JSON input (via validation alias)
+    - Environment variables use `SCHEMA_NAME` suffix (e.g., `POSTGRES_SCHEMA_NAME`, `TIGERGRAPH_SCHEMA_NAME`)
+  - **Updated ConnectionManager**: Now uses `can_be_target()` method instead of `isinstance` checks
+    - More flexible and extensible design
+    - Clear error messages when database type cannot be used as target
+
 - **Caster Refactoring**: Updated `Caster` to use data source architecture
   - `process_resource()`: Now accepts configuration dicts, file paths, or in-memory data
-  - `ingest_files()`: Wrapper that creates FileDataSource instances internally
+  - `ingest()`: Wrapper that creates FileDataSource instances internally (renamed from `ingest_files()`)
   - `ingest_data_sources()`: New method for ingesting from DataSourceRegistry
   - `process_data_source()`: New method for processing individual data sources
+  - **Automatic Schema Fallback**: Uses `Schema.general.name` when `effective_schema` is not set
   - Maintains full backward compatibility with existing code
 
 - **Resource vs DataSource Separation**: Clear separation of concerns
@@ -72,23 +110,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Backend Configuration Refactoring**: Complete refactor of database connection configuration system
   - **Pydantic-based Configuration**: Replaced dataclass-based configs with Pydantic `BaseSettings`
     - `DBConfig`: Abstract base class with `uri`, `username`, `password` fields
-    - `ArangoConfig`, `Neo4jConfig`, `TigergraphConfig`: Backend-specific config classes
-    - Environment variable support with prefixes (`ARANGO_`, `NEO4J_`, `TIGERGRAPH_`)
+    - `ArangoConfig`, `Neo4jConfig`, `TigergraphConfig`, `PostgresConfig`: Database-specific config classes
+    - Environment variable support with prefixes (`ARANGO_`, `NEO4J_`, `TIGERGRAPH_`, `POSTGRES_`)
     - Automatic default port handling when port is missing from URI
-  - **Renamed `ConnectionKind` to `BackendType`**: More accurate naming for database backend types
+    - Support for custom prefixes via `from_env(prefix="USER")` for multiple configs
+  - **Renamed `ConnectionKind` to `DBType`**: More accurate naming for database types (final naming: `ConnectionKind` → `BackendType` → `DBType`)
   - **Removed `ConfigFactory`**: Replaced with direct config instantiation and `DBConfig.from_dict()`
     - Use `ArangoConfig.from_docker_env()` to load from docker `.env` files
-    - Use `ArangoConfig()`, `Neo4jConfig()`, `TigergraphConfig()` for direct instantiation
+    - Use `ArangoConfig()`, `Neo4jConfig()`, `TigergraphConfig()`, `PostgresConfig()` for direct instantiation
     - Use `DBConfig.from_dict()` for loading from configuration files
   - **Separated WSGI Configuration**: Moved `WSGIConfig` to separate `wsgi.py` module
     - WSGI is not a database backend, so it no longer inherits from `DBConfig`
-    - Removed `WSGI` from `BackendType` enum
+    - Removed `WSGI` from `DBType` enum
   - **Backward Compatibility**: `from_dict()` handles old field names (`url` → `uri`, `cred_name` → `username`, etc.)
   - **Breaking Changes**:
-    - `ConnectionKind` → `BackendType`
+    - `ConnectionKind` → `BackendType` → `DBType` (final naming)
     - `ConfigFactory` removed (use `DBConfig.from_dict()` or direct config classes)
-    - `*ConnectionConfig` aliases removed (use `*Config` names directly: `ArangoConfig`, `Neo4jConfig`, `TigergraphConfig`)
+    - `*ConnectionConfig` aliases removed (use `*Config` names directly: `ArangoConfig`, `Neo4jConfig`, `TigergraphConfig`, `PostgresConfig`)
+    - `GraphDBConfig` and `SourceDBConfig` removed (all configs inherit from `DBConfig`)
     - `connection_type` field removed (now a computed property from class type)
+    - `schema` field renamed to `schema_name` (accepts `"schema"` key in dict/JSON for backward compatibility via validation alias)
 
 ### Deprecated
 - `ChunkerFactory`: Still functional but now used internally by FileDataSource
@@ -276,7 +317,7 @@ Package renamed from `graphcast` to `graflo`.
 
 - in `ingest_json_files`: ncores -> n_threads
 - in `ingest_tables`: n_thread -> n_threads
-- added a single entry point for file ingestion : `ingest_files`
+- added a single entry point for file ingestion : `ingest` (renamed from `ingest_files`)
 - added docker-compose config for Arango; all tests talk to it automatically
 - `init_db` now is member of `Connection`
 - Introduced `InputType` as `Enum` : {`TABLE`, `JSON`}

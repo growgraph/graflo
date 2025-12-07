@@ -132,7 +132,7 @@ def resource_ibes():
 def test_actio_node_wrapper_openalex(
     resource_ibes, schema_ibes_vertices, schema_ibes_edges, sample_ibes
 ):
-    # TODO blank vertices are introduced at the level of backend ingestion
+    # TODO blank vertices are introduced at the level of db ingestion
     anw = ActorWrapper(*resource_ibes, vertex_config=schema_ibes_vertices)
     for doc in sample_ibes:
         ctx = ActionContext()

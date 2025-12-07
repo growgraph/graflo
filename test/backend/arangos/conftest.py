@@ -3,8 +3,8 @@ from test.conftest import ingest_atomic, verify
 import pytest
 from suthing import FileHandle
 
-from graflo.backend import ConnectionManager
-from graflo.backend.connection.onto import ArangoConfig
+from graflo.db import ConnectionManager
+from graflo.db.connection.onto import ArangoConfig
 from graflo.filter.onto import ComparisonOperator
 from graflo.onto import AggregationType
 from test.conftest import fetch_schema_obj
@@ -84,9 +84,7 @@ def verify_from_db(conn_conf, current_path, test_db_name, mode, reset):
     )
 
 
-def ingest_files(
-    create_db, modes, conn_conf, current_path, test_db_name, reset, n_cores=1
-):
+def ingest(create_db, modes, conn_conf, current_path, test_db_name, reset, n_cores=1):
     _ = create_db
     for m in modes:
         schema_o = fetch_schema_obj(m)

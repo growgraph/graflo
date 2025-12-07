@@ -1,6 +1,6 @@
 import pytest
 
-from graflo.backend import ConnectionManager
+from graflo.db import ConnectionManager
 
 
 def test_create_vertex_index(conn_conf, schema_obj, test_graph_name):

@@ -11,7 +11,7 @@ Key Components:
 
 Example:
     >>> caster = Caster(schema=schema)
-    >>> caster.ingest_files(path="data/", conn_conf=db_config)
+    >>> caster.ingest(path="data/", conn_conf=db_config)
 """
 
 import logging
@@ -34,7 +34,7 @@ from graflo.data_source import (
     DataSourceFactory,
     DataSourceRegistry,
 )
-from graflo.backend import DBType, ConnectionManager, DBConfig
+from graflo.db import DBType, ConnectionManager, DBConfig
 from graflo.util.chunker import ChunkerType
 from graflo.util.onto import FilePattern, Patterns
 
@@ -441,21 +441,9 @@ class Caster:
                 # ArangoDB, Neo4j use 'database' field (which maps to effective_schema)
                 conn_conf.database = schema_name
 
-        # Special handling for ArangoDB _system database
-        if (
-            conn_conf.can_be_target()
-            and conn_conf.connection_type == DBType.ARANGO
-            and conn_conf.database == "_system"
-        ):
-            db_name = self.schema.general.name
-            try:
-                with ConnectionManager(connection_config=conn_conf) as db_client:
-                    db_client.create_database(db_name)
-            except Exception as exc:
-                logger.error(exc)
-
-            conn_conf.database = db_name
-
+        # init_db() now handles database/schema creation automatically
+        # It checks if the database exists and creates it if needed
+        # Uses schema.general.name if database is not set in config
         with ConnectionManager(connection_config=conn_conf) as db_client:
             db_client.init_db(self.schema, self.clean_start)
 
@@ -503,8 +491,8 @@ class Caster:
                     )
         logger.info(f"Processing took {klepsidra.elapsed:.1f} sec")
 
-    def ingest_files(self, path: Path | str, **kwargs):
-        """Ingest files from a directory.
+    def ingest(self, path: Path | str, **kwargs):
+        """Ingest data from a directory.
 
         This method is a wrapper that creates FileDataSource instances from
         file patterns and calls ingest_data_sources(). It maintains backward

@@ -1,4 +1,4 @@
-from test.backend.arangos.conftest import ingest_files
+from test.backend.arangos.conftest import ingest
 import pytest
 
 
@@ -18,7 +18,7 @@ def test_ingest(
     test_db_name,
     reset,
 ):
-    ingest_files(
+    ingest(
         create_db,
         modes,
         conn_conf,

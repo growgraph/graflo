@@ -75,19 +75,23 @@ Transforming the data and ingesting it into an ArangoDB takes a few lines of cod
 ```python
 from suthing import FileHandle
 from graflo import Caster, Patterns, Schema
-from graflo.backend.connection.onto import ArangoConfig
+from graflo.db.connection.onto import ArangoConfig
 
 schema = Schema.from_dict(FileHandle.load("schema.yaml"))
 
-# Load config from docker/arango/.env (recommended)
+# Option 1: Load config from docker/arango/.env (recommended)
 conn_conf = ArangoConfig.from_docker_env()
 
-# Or create config directly
+# Option 2: Load from environment variables
+# Set: ARANGO_URI, ARANGO_USERNAME, ARANGO_PASSWORD, ARANGO_DATABASE
+# conn_conf = ArangoConfig.from_env()
+
+# Option 3: Create config directly
 # conn_conf = ArangoConfig(
 #     uri="http://localhost:8535",
 #     username="root",
 #     password="123",
-#     database="_system",
+#     database="mygraph",  # For ArangoDB, 'database' maps to schema/graph
 # )
 
 patterns = Patterns.from_dict(
@@ -100,7 +104,7 @@ patterns = Patterns.from_dict(
 )
 
 caster = Caster(schema)
-caster.ingest_files(
+caster.ingest(
     path=".",
     conn_conf=conn_conf,
     patterns=patterns,

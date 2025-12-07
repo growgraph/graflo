@@ -181,7 +181,7 @@ The ingestion process handles the complex nested structure:
 ```python
 from suthing import FileHandle
 from graflo import Caster, Patterns, Schema
-from graflo.backend.connection.onto import Neo4jConfig
+from graflo.db.connection.onto import Neo4jConfig
 
 schema = Schema.from_dict(FileHandle.load("schema.yaml"))
 
@@ -204,7 +204,7 @@ patterns = Patterns.from_dict({
 })
 
 caster = Caster(schema)
-caster.ingest_files(
+caster.ingest(
     path="./data",
     conn_conf=conn_conf,
     patterns=patterns,

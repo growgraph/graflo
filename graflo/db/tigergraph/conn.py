@@ -36,8 +36,8 @@ from graflo.architecture.edge import Edge
 from graflo.architecture.onto import Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.vertex import FieldType, Vertex, VertexConfig
-from graflo.backend.conn import Connection
-from graflo.backend.connection.onto import TigergraphConfig
+from graflo.db.conn import Connection
+from graflo.db.connection.onto import TigergraphConfig
 from graflo.filter.onto import Clause, Expression
 from graflo.onto import AggregationType, DBFlavor, ExpressionFlavor
 from graflo.util.transform import pick_unique_dict
@@ -458,45 +458,96 @@ class TigerGraphConnection(Connection):
         # Use schema.general.name for graph creation
         graph_created = False
 
-        # Ensure config.database is set to the graph name
-        # This ensures subsequent operations use the correct graph
+        # Determine graph name: use config.database if set, otherwise use schema.general.name
         graph_name = self.config.database
         if not graph_name:
-            raise ValueError("Graph name (database) must be configured in config")
+            graph_name = schema.general.name
+            # Update config for subsequent operations
+            self.config.database = graph_name
+            logger.info(f"Using schema name '{graph_name}' from schema.general.name")
 
         try:
             if clean_start:
-                # Delete all graphs, edges, and vertices (full teardown)
-                self.delete_graph_structure([], [], delete_all=True)
+                try:
+                    # Delete all graphs, edges, and vertices (full teardown)
+                    self.delete_graph_structure([], [], delete_all=True)
+                    logger.debug(f"Cleaned graph '{graph_name}' for fresh start")
+                except Exception as clean_error:
+                    logger.warning(
+                        f"Error during clean_start for graph '{graph_name}': {clean_error}",
+                        exc_info=True,
+                    )
+                    # Continue - may be first run or already clean
 
             # Step 1: Create vertex and edge types globally first
             # These must exist before they can be included in CREATE GRAPH
             logger.debug(
                 f"Creating vertex and edge types globally for graph '{graph_name}'"
             )
-            vertex_names = self._create_vertex_types_global(schema.vertex_config)
-            edge_names = self._create_edge_types_global(
-                schema.edge_config.edges_list(include_aux=True)
-            )
-
-            # Step 2: Create graph with vertices and edges explicitly attached
-            if not self.graph_exists(graph_name):
-                logger.debug(f"Creating graph '{graph_name}' with types in init_db")
-                self.create_database(
-                    graph_name, vertex_names=vertex_names, edge_names=edge_names
-                )
-                graph_created = True
-            else:
-                logger.debug(f"Graph '{graph_name}' already exists in init_db")
-                # If graph already exists, associate types via ALTER GRAPH
-                self.define_vertex_collections(schema.vertex_config)
-                self.define_edge_collections(
+            try:
+                vertex_names = self._create_vertex_types_global(schema.vertex_config)
+                edge_names = self._create_edge_types_global(
                     schema.edge_config.edges_list(include_aux=True)
                 )
+                logger.debug(
+                    f"Created {len(vertex_names)} vertex types and {len(edge_names)} edge types"
+                )
+            except Exception as type_error:
+                logger.error(
+                    f"Failed to create vertex/edge types for graph '{graph_name}': {type_error}",
+                    exc_info=True,
+                )
+                raise
+
+            # Step 2: Create graph with vertices and edges explicitly attached
+            try:
+                if not self.graph_exists(graph_name):
+                    logger.debug(f"Creating graph '{graph_name}' with types in init_db")
+                    try:
+                        self.create_database(
+                            graph_name,
+                            vertex_names=vertex_names,
+                            edge_names=edge_names,
+                        )
+                        graph_created = True
+                        logger.info(f"Successfully created graph '{graph_name}'")
+                    except Exception as create_error:
+                        logger.error(
+                            f"Failed to create graph '{graph_name}': {create_error}",
+                            exc_info=True,
+                        )
+                        raise
+                else:
+                    logger.debug(f"Graph '{graph_name}' already exists in init_db")
+                    # If graph already exists, associate types via ALTER GRAPH
+                    try:
+                        self.define_vertex_collections(schema.vertex_config)
+                        self.define_edge_collections(
+                            schema.edge_config.edges_list(include_aux=True)
+                        )
+                    except Exception as define_error:
+                        logger.warning(
+                            f"Could not define collections for existing graph '{graph_name}': {define_error}",
+                            exc_info=True,
+                        )
+                        # Continue - graph exists, collections may already be defined
+            except Exception as graph_error:
+                logger.error(
+                    f"Error during graph creation/verification for '{graph_name}': {graph_error}",
+                    exc_info=True,
+                )
+                raise
 
             # Step 3: Define indexes
-            self.define_indexes(schema)
-            logger.info("Index definition completed")
+            try:
+                self.define_indexes(schema)
+                logger.info(f"Index definition completed for graph '{graph_name}'")
+            except Exception as index_error:
+                logger.error(
+                    f"Failed to define indexes for graph '{graph_name}': {index_error}",
+                    exc_info=True,
+                )
+                raise
         except Exception as e:
             logger.error(f"Error initializing database: {e}")
             # Graceful teardown: if graph was created in this session, clean it up

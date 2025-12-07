@@ -34,10 +34,10 @@ from graflo.architecture.onto import (
 )
 from graflo.architecture.schema import Schema
 from graflo.architecture.vertex import VertexConfig
-from graflo.backend.arango.query import fetch_fields_query
-from graflo.backend.arango.util import render_filters
-from graflo.backend.conn import Connection
-from graflo.backend.util import get_data_from_cursor
+from graflo.db.arango.query import fetch_fields_query
+from graflo.db.arango.util import render_filters
+from graflo.db.conn import Connection
+from graflo.db.util import get_data_from_cursor
 from graflo.filter.onto import Clause
 from graflo.onto import AggregationType, DBFlavor
 from graflo.util.transform import pick_unique_dict
@@ -66,6 +66,8 @@ class ArangoConnection(Connection):
                 and database name
         """
         super().__init__()
+        # Store config for later use
+        self.config = config
         # Validate required config values
         if config.url is None:
             raise ValueError("ArangoDB connection requires a URL to be configured")
@@ -79,30 +81,85 @@ class ArangoConnection(Connection):
         # ArangoDB has default username "root" if None
         username = config.username if config.username is not None else "root"
 
-        client = ArangoClient(hosts=config.url, request_timeout=config.request_timeout)
-        self.conn = client.db(
+        # Store client for system operations
+        self.client = ArangoClient(
+            hosts=config.url, request_timeout=config.request_timeout
+        )
+        # Connect to the configured database for regular operations
+        self.conn = self.client.db(
             config.database,
             username=username,
             password=password,
         )
+        # Store credentials for system operations
+        self._username = username
+        self._password = password
 
     def create_database(self, name: str):
         """Create a new ArangoDB database.
 
+        Database creation/deletion operations must be performed from the _system database.
+
         Args:
             name: Name of the database to create
         """
-        if not self.conn.has_database(name):
-            self.conn.create_database(name)
+        try:
+            # Connect to _system database for system operations
+            system_db = self.client.db(
+                "_system", username=self._username, password=self._password
+            )
+            if not system_db.has_database(name):
+                try:
+                    system_db.create_database(name)
+                    logger.info(f"Successfully created ArangoDB database '{name}'")
+                except Exception as create_error:
+                    logger.error(
+                        f"Failed to create ArangoDB database '{name}': {create_error}",
+                        exc_info=True,
+                    )
+                    raise
+            else:
+                logger.debug(f"ArangoDB database '{name}' already exists")
+        except Exception as e:
+            logger.error(
+                f"Error creating ArangoDB database '{name}': {e}",
+                exc_info=True,
+            )
+            raise
 
     def delete_database(self, name: str):
         """Delete an ArangoDB database.
 
+        Database creation/deletion operations must be performed from the _system database.
+
         Args:
             name: Name of the database to delete
         """
-        if not self.conn.has_database(name):
-            self.conn.delete_database(name)
+        try:
+            # Connect to _system database for system operations
+            system_db = self.client.db(
+                "_system", username=self._username, password=self._password
+            )
+            if system_db.has_database(name):
+                try:
+                    system_db.delete_database(name)
+                    logger.info(f"Successfully deleted ArangoDB database '{name}'")
+                except Exception as delete_error:
+                    logger.error(
+                        f"Failed to delete ArangoDB database '{name}': {delete_error}",
+                        exc_info=True,
+                    )
+                    raise
+            else:
+                logger.debug(
+                    f"ArangoDB database '{name}' does not exist, skipping deletion"
+                )
+        except Exception as e:
+            logger.error(
+                f"Error deleting ArangoDB database '{name}': {e}",
+                exc_info=True,
+            )
+            raise
 
     def execute(self, query, **kwargs):
         """Execute an AQL query.
@@ -125,14 +182,100 @@ class ArangoConnection(Connection):
     def init_db(self, schema: Schema, clean_start):
         """Initialize ArangoDB with the given schema.
 
+        Checks if the database exists and creates it if it doesn't.
+        Uses schema.general.name if database is not set in config.
+
         Args:
             schema: Schema containing graph structure definitions
             clean_start: If True, delete all existing collections before initialization
         """
-        if clean_start:
-            self.delete_graph_structure([], [], delete_all=True)
-        self.define_schema(schema)
-        self.define_indexes(schema)
+        # Determine database name: use config.database if set, otherwise use schema.general.name
+        db_name = self.config.database
+        if not db_name:
+            db_name = schema.general.name
+            # Update config for subsequent operations
+            self.config.database = db_name
+
+        # Check if database exists and create it if it doesn't
+        # Use context manager pattern for system database operations
+        try:
+            system_db = self.client.db(
+                "_system", username=self._username, password=self._password
+            )
+            if not system_db.has_database(db_name):
+                logger.info(f"Database '{db_name}' does not exist, creating it...")
+                try:
+                    system_db.create_database(db_name)
+                    logger.info(f"Successfully created database '{db_name}'")
+                except Exception as create_error:
+                    logger.error(
+                        f"Failed to create database '{db_name}': {create_error}",
+                        exc_info=True,
+                    )
+                    raise
+
+            # Reconnect to the target database (newly created or existing)
+            if (
+                self.config.database != db_name
+                or not hasattr(self, "_db_connected")
+                or self._db_connected != db_name
+            ):
+                try:
+                    self.conn = self.client.db(
+                        db_name, username=self._username, password=self._password
+                    )
+                    self._db_connected = db_name
+                    logger.debug(f"Connected to database '{db_name}'")
+                except Exception as conn_error:
+                    logger.error(
+                        f"Failed to connect to database '{db_name}': {conn_error}",
+                        exc_info=True,
+                    )
+                    raise
+        except Exception as e:
+            logger.error(
+                f"Error during database initialization for '{db_name}': {e}",
+                exc_info=True,
+            )
+            raise
+
+        try:
+            if clean_start:
+                try:
+                    self.delete_graph_structure([], [], delete_all=True)
+                    logger.debug(f"Cleaned database '{db_name}' for fresh start")
+                except Exception as clean_error:
+                    logger.warning(
+                        f"Error during clean_start for database '{db_name}': {clean_error}",
+                        exc_info=True,
+                    )
+                    # Continue - may be first run or already clean
+
+            try:
+                self.define_schema(schema)
+                logger.debug(f"Defined schema for database '{db_name}'")
+            except Exception as schema_error:
+                logger.error(
+                    f"Failed to define schema for database '{db_name}': {schema_error}",
+                    exc_info=True,
+                )
+                raise
+
+            try:
+                self.define_indexes(schema)
+                logger.debug(f"Defined indexes for database '{db_name}'")
+            except Exception as index_error:
+                logger.error(
+                    f"Failed to define indexes for database '{db_name}': {index_error}",
+                    exc_info=True,
+                )
+                raise
+        except Exception as e:
+            logger.error(
+                f"Error during database schema initialization for '{db_name}': {e}",
+                exc_info=True,
+            )
+            raise
 
     def define_schema(self, schema: Schema):
         """Define ArangoDB collections based on schema.

@@ -55,7 +55,7 @@ resources:
 from suthing import FileHandle
 from graflo import Caster, DataSourceRegistry, Schema
 from graflo.data_source import DataSourceFactory, APIConfig, PaginationConfig
-from graflo.backend.connection.onto import DBConfig
+from graflo.db.connection.onto import DBConfig
 
 # Load schema
 schema = Schema.from_dict(FileHandle.load("schema.yaml"))
@@ -85,7 +85,7 @@ registry.register(api_source, resource_name="users")
 # Create caster and ingest
 caster = Caster(schema)
 # Load config from file
-config_data = FileHandle.load("backend.yaml")
+config_data = FileHandle.load("db.yaml")
 conn_conf = DBConfig.from_dict(config_data)
 
 caster.ingest_data_sources(
@@ -121,7 +121,7 @@ Then use the CLI:
 
 ```bash
 uv run ingest \
-    --backend-config-path config/backend.yaml \
+    --db-config-path config/db.yaml \
     --schema-path config/schema.yaml \
     --data-source-config-path data_sources.yaml
 ```

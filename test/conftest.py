@@ -57,7 +57,7 @@ def ingest_atomic(conn_conf, current_path, test_db_name, schema_o, mode, n_cores
     conn_conf.database = test_db_name
 
     caster = Caster(schema_o)
-    caster.ingest_files(
+    caster.ingest(
         n_cores=n_cores,
         path=path,
         limit_files=None,

@@ -90,7 +90,7 @@ class DBConfig(BaseSettings, abc.ABC):
 
     @abc.abstractmethod
     def _get_default_port(self) -> int:
-        """Get the default port for this backend type."""
+        """Get the default port for this db type."""
         pass
 
     @abc.abstractmethod
@@ -267,7 +267,7 @@ class DBConfig(BaseSettings, abc.ABC):
         """Load config from docker .env file.
 
         Args:
-            docker_dir: Path to docker directory. If None, uses default based on backend type.
+            docker_dir: Path to docker directory. If None, uses default based on db type.
 
         Returns:
             DBConfig instance loaded from .env file
@@ -346,7 +346,18 @@ class ArangoConfig(DBConfig):
 
     @classmethod
     def from_docker_env(cls, docker_dir: str | Path | None = None) -> "ArangoConfig":
-        """Load ArangoDB config from docker/arango/.env file."""
+        """Load ArangoDB config from docker/arango/.env file.
+
+        The .env file structure is minimal and may contain:
+        - ARANGO_PORT: Port number (defaults hostname to localhost, protocol to http)
+        - ARANGO_URI: Full URI (alternative to ARANGO_PORT)
+        - ARANGO_HOSTNAME: Hostname (defaults to localhost)
+        - ARANGO_PROTOCOL: Protocol (defaults to http)
+        - ARANGO_USERNAME: Username (defaults to root)
+        - ARANGO_PASSWORD: Password (or read from secret file if PATH_TO_SECRET is set)
+        - ARANGO_DATABASE: Database name (optional, can be set later)
+        - PATH_TO_SECRET: Path to secret file containing password (relative to docker_dir)
+        """
         if docker_dir is None:
             docker_dir = (
                 Path(__file__).parent.parent.parent.parent / "docker" / "arango"
@@ -358,17 +369,34 @@ class ArangoConfig(DBConfig):
         if not env_file.exists():
             raise FileNotFoundError(f"Environment file not found: {env_file}")
 
-        # Load .env file manually
+        # Load .env file manually with simple variable expansion
         env_vars: Dict[str, str] = {}
         with open(env_file, "r") as f:
             for line in f:
                 line = line.strip()
                 if line and not line.startswith("#") and "=" in line:
                     key, value = line.split("=", 1)
-                    env_vars[key.strip()] = value.strip().strip('"').strip("'")
+                    key = key.strip()
+                    value = value.strip().strip('"').strip("'")
+                    env_vars[key] = value
+
+        # Expand variables (simple single-pass expansion)
+        # First pass: expand ${SPEC} references
+        for key, value in env_vars.items():
+            if "${SPEC}" in value and "SPEC" in env_vars:
+                env_vars[key] = value.replace("${SPEC}", env_vars["SPEC"])
+
+        # Second pass: expand other variables (like ${CONTAINER_NAME})
+        for key, value in env_vars.items():
+            for var_name, var_value in env_vars.items():
+                var_ref = f"${{{var_name}}}"
+                if var_ref in value:
+                    env_vars[key] = value.replace(var_ref, var_value)
 
         # Map environment variables to config
         config_data: Dict[str, Any] = {}
+
+        # URI construction
         if "ARANGO_URI" in env_vars:
             config_data["uri"] = env_vars["ARANGO_URI"]
         elif "ARANGO_PORT" in env_vars:
@@ -376,11 +404,36 @@ class ArangoConfig(DBConfig):
             hostname = env_vars.get("ARANGO_HOSTNAME", "localhost")
             protocol = env_vars.get("ARANGO_PROTOCOL", "http")
             config_data["uri"] = f"{protocol}://{hostname}:{port}"
+        else:
+            # Default to localhost:8529 if nothing is specified
+            config_data["uri"] = "http://localhost:8529"
 
+        # Username (defaults to root for ArangoDB)
         if "ARANGO_USERNAME" in env_vars:
             config_data["username"] = env_vars["ARANGO_USERNAME"]
+        else:
+            config_data["username"] = "root"
+
+        # Password: check ARANGO_PASSWORD first, then try secret file
         if "ARANGO_PASSWORD" in env_vars:
             config_data["password"] = env_vars["ARANGO_PASSWORD"]
+        elif "PATH_TO_SECRET" in env_vars:
+            # Read password from secret file
+            secret_path_str = env_vars["PATH_TO_SECRET"]
+            # Handle relative paths (relative to docker_dir)
+            if secret_path_str.startswith("./"):
+                secret_path = docker_dir / secret_path_str[2:]
+            else:
+                secret_path = Path(secret_path_str)
+
+            if secret_path.exists():
+                with open(secret_path, "r") as f:
+                    config_data["password"] = f.read().strip()
+            else:
+                # Secret file not found, password will be None (ArangoDB accepts empty string)
+                config_data["password"] = None
+
+        # Database (optional, can be set later or use Schema.general.name)
         if "ARANGO_DATABASE" in env_vars:
             config_data["database"] = env_vars["ARANGO_DATABASE"]
 

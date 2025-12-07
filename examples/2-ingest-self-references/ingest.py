@@ -1,6 +1,6 @@
 from suthing import FileHandle
 from graflo import Caster, Patterns, Schema
-from graflo.backend.connection.onto import ArangoConfig
+from graflo.db.connection.onto import ArangoConfig
 
 schema = Schema.from_dict(FileHandle.load("schema.yaml"))
 
@@ -29,4 +29,4 @@ patterns = Patterns.from_dict(
 
 caster = Caster(schema)
 
-caster.ingest_files(path=".", conn_conf=conn_conf, patterns=patterns, clean_start=True)
+caster.ingest(path=".", conn_conf=conn_conf, patterns=patterns, clean_start=True)

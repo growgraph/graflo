@@ -29,7 +29,7 @@ from graflo.architecture.edge import Edge
 from graflo.architecture.onto import Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.vertex import VertexConfig
-from graflo.backend.conn import Connection
+from graflo.db.conn import Connection
 from graflo.filter.onto import Expression
 from graflo.onto import AggregationType, DBFlavor, ExpressionFlavor
 
@@ -59,6 +59,8 @@ class Neo4jConnection(Connection):
             config: Neo4j connection configuration containing URL and credentials
         """
         super().__init__()
+        # Store config for later use
+        self.config = config
         # Ensure url is not None - GraphDatabase.driver requires a non-None URI
         if config.url is None:
             raise ValueError("Neo4j connection requires a URL to be configured")
@@ -93,14 +95,16 @@ class Neo4jConnection(Connection):
         """Create a new Neo4j database.
 
         Note: This operation is only supported in Neo4j Enterprise Edition.
+        Community Edition only supports one database per instance.
 
         Args:
             name: Name of the database to create
         """
         try:
             self.execute(f"CREATE DATABASE {name}")
+            logger.info(f"Successfully created Neo4j database '{name}'")
         except Exception as e:
-            logger.error(f"{e}")
+            raise e
 
     def delete_database(self, name: str):
         """Delete a Neo4j database.
@@ -109,12 +113,17 @@ class Neo4jConnection(Connection):
         As a fallback, it deletes all nodes and relationships.
 
         Args:
-            name: Name of the database to delete
+            name: Name of the database to delete (unused, deletes all data)
         """
         try:
             self.execute("MATCH (n) DETACH DELETE n")
+            logger.info("Successfully cleaned Neo4j database")
         except Exception as e:
-            logger.error(f"Could not clean database : {e}")
+            logger.error(
+                f"Failed to clean Neo4j database: {e}",
+                exc_info=True,
+            )
+            raise
 
     def define_vertex_indices(self, vertex_config: VertexConfig):
         """Define indices for vertex labels.
@@ -216,13 +225,114 @@ class Neo4jConnection(Connection):
     def init_db(self, schema: Schema, clean_start):
         """Initialize Neo4j with the given schema.
 
+        Checks if the database exists and creates it if it doesn't.
+        Uses schema.general.name if database is not set in config.
+        Note: Database creation is only supported in Neo4j Enterprise Edition.
+
         Args:
             schema: Schema containing graph structure definitions
             clean_start: If True, delete all existing data before initialization
         """
-        if clean_start:
-            self.delete_database("")
-        self.define_indexes(schema)
+        # Determine database name: use config.database if set, otherwise use schema.general.name
+        db_name = self.config.database
+        if not db_name:
+            db_name = schema.general.name
+            # Update config for subsequent operations
+            self.config.database = db_name
+
+        # Check if database exists and create it if it doesn't
+        # Note: This only works in Neo4j Enterprise Edition
+        # For Community Edition, we'll try to create it but it may fail gracefully
+        # Community Edition only allows one database per instance
+        try:
+            # Try to check if database exists (Enterprise feature)
+            try:
+                result = self.execute("SHOW DATABASES")
+                # Neo4j result is a cursor-like object, iterate to get records
+                databases = []
+                for record in result:
+                    # Record structure may vary, try common field names
+                    if hasattr(record, "get"):
+                        db_name_field = (
+                            record.get("name")
+                            or record.get("database")
+                            or record.get("db")
+                        )
+                    else:
+                        # If record is a dict-like object, try direct access
+                        db_name_field = getattr(record, "name", None) or getattr(
+                            record, "database", None
+                        )
+                    if db_name_field:
+                        databases.append(db_name_field)
+
+                if db_name not in databases:
+                    logger.info(
+                        f"Database '{db_name}' does not exist, attempting to create it..."
+                    )
+                    try:
+                        self.create_database(db_name)
+                        logger.info(f"Successfully created database '{db_name}'")
+                    except Exception as create_error:
+                        logger.info(
+                            f"Neo4j Community Edition? Could not create database '{db_name}': {create_error}. "
+                            f"This may be Neo4j Community Edition which only supports one database per instance.",
+                            exc_info=True,
+                        )
+                        # Continue with default database for Community Edition
+            except Exception as show_error:
+                # If SHOW DATABASES fails (Community Edition or older versions), try to create anyway
+                logger.debug(
+                    f"Could not check database existence (may be Community Edition): {show_error}"
+                )
+                try:
+                    self.create_database(db_name)
+                    logger.info(f"Successfully created database '{db_name}'")
+                except Exception as create_error:
+                    logger.info(
+                        f"Neo4j Community Edition? Could not create database '{db_name}': {create_error}. "
+                        f"This may be Neo4j Community Edition which only supports one database per instance. "
+                        f"Continuing with default database.",
+                        exc_info=True,
+                    )
+                    # Continue with default database for Community Edition
+        except Exception as e:
+            logger.error(
+                f"Error during database initialization for '{db_name}': {e}",
+                exc_info=True,
+            )
+            # Don't raise - allow operation to continue with default database
+            logger.warning(
+                "Continuing with default database due to initialization error"
+            )
+
+        try:
+            if clean_start:
+                try:
+                    self.delete_database("")
+                    logger.debug(f"Cleaned database '{db_name}' for fresh start")
+                except Exception as clean_error:
+                    logger.warning(
+                        f"Error during clean_start for database '{db_name}': {clean_error}",
+                        exc_info=True,
+                    )
+                    # Continue - may be first run or already clean
+
+            try:
+                self.define_indexes(schema)
+                logger.debug(f"Defined indexes for database '{db_name}'")
+            except Exception as index_error:
+                logger.error(
+                    f"Failed to define indexes for database '{db_name}': {index_error}",
+                    exc_info=True,
+                )
+                raise
+        except Exception as e:
+            logger.error(
+                f"Error during database schema initialization for '{db_name}': {e}",
+                exc_info=True,
+            )
+            raise
 
     def upsert_docs_batch(self, docs, class_name, match_keys, **kwargs):
         """Upsert a batch of nodes using Cypher.

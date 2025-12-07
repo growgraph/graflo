@@ -43,7 +43,7 @@ Resources are your data sources that can be:
     - Specify edge constraints and properties
     - Apply advanced filtering and transformations
 - **Parallel processing**: Use as many cores as you have
-- **Database support**: Ingest into ArangoDB, Neo4j, and **TigerGraph** using the same API (database agnostic)
+- **Database support**: Ingest into ArangoDB, Neo4j, and **TigerGraph** using the same API (database agnostic). Source data from PostgreSQL and other SQL databases.
 - **Server-side filtering**: Efficient querying with server-side filtering support (TigerGraph REST++ API)
 
 ## Documentation
@@ -63,20 +63,30 @@ pip install graflo
 from suthing import FileHandle
 
 from graflo import Schema, Caster, Patterns
-from graflo.backend.connection.onto import ArangoConfig
+from graflo.db.connection.onto import ArangoConfig
 
 schema = Schema.from_dict(FileHandle.load("schema.yaml"))
 
-# Load config from docker/arango/.env (recommended)
+# Option 1: Load config from docker/arango/.env (recommended)
 conn_conf = ArangoConfig.from_docker_env()
 
-# Or create config directly
+# Option 2: Load from environment variables
+# Set: ARANGO_URI, ARANGO_USERNAME, ARANGO_PASSWORD, ARANGO_DATABASE
+conn_conf = ArangoConfig.from_env()
+
+# Option 3: Load with custom prefix (for multiple configs)
+# Set: USER_ARANGO_URI, USER_ARANGO_USERNAME, USER_ARANGO_PASSWORD, USER_ARANGO_DATABASE
+user_conn_conf = ArangoConfig.from_env(prefix="USER")
+
+# Option 4: Create config directly
 # conn_conf = ArangoConfig(
 #     uri="http://localhost:8535",
 #     username="root",
 #     password="123",
-#     database="_system",
+#     database="mygraph",  # For ArangoDB, 'database' maps to schema/graph
 # )
+# Note: If 'database' (or 'schema_name' for TigerGraph) is not set,
+# Caster will automatically use Schema.general.name as fallback
 
 patterns = Patterns.from_dict(
     {
@@ -92,7 +102,7 @@ caster = Caster(
     schema,
 )
 
-caster.ingest_files(
+caster.ingest(
     path="./data",
     conn_conf=conn_conf,
     patterns=patterns,

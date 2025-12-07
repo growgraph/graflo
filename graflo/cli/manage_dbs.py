@@ -11,8 +11,8 @@ Key Features:
 
 Example:
     $ uv run manage_dbs \\
-        --backend-config-path config/backend.yaml \\
-        --backend mydb1 mydb2 \\
+        --db-config-path config/db.yaml \\
+        --db mydb1 mydb2 \\
         --store-directory-path /backups \\
         --use-docker
 """
@@ -26,7 +26,7 @@ from datetime import date
 import click
 from suthing import FileHandle, Timer
 
-from graflo.backend.connection.onto import ArangoConfig, DBConfig
+from graflo.db.connection.onto import ArangoConfig, DBConfig
 
 logger = logging.getLogger(__name__)
 
@@ -89,26 +89,26 @@ def act_db(
 
 @click.command()
 @click.option(
-    "--backend-config-path",
+    "--db-config-path",
     type=click.Path(exists=True, path_type=pathlib.Path),
     required=False,
     default=None,
 )
-@click.option("--backend-host", type=str)
-@click.option("--backend-password", type=str)
-@click.option("--backend-user", type=str, default="root")
+@click.option("--db-host", type=str)
+@click.option("--db-password", type=str)
+@click.option("--db-user", type=str, default="root")
 @click.option(
-    "--backend",
+    "--db",
     type=str,
     multiple=True,
     required=True,
-    help="filesystem path where to dump backend snapshot",
+    help="filesystem path where to dump db snapshot",
 )
 @click.option(
     "--store-directory-path",
     type=click.Path(path_type=pathlib.Path),
     required=True,
-    help="filesystem path where to dump backend snapshot",
+    help="filesystem path where to dump db snapshot",
 )
 @click.option("--docker-version", type=str, default="3.12.1")
 @click.option("--restore", type=bool, default=False, is_flag=True)
@@ -144,8 +144,8 @@ def manage_dbs(
 
     Example:
         $ uv run manage_dbs \\
-            --backend-config-path config/backend.yaml \\
-            --backend mydb1 mydb2 \\
+            --db-config-path config/db.yaml \\
+            --db mydb1 mydb2 \\
             --store-directory-path /backups \\
             --use-docker
     """

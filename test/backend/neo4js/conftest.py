@@ -1,7 +1,7 @@
 import pytest
 
-from graflo.backend import ConnectionManager
-from graflo.backend.connection.onto import Neo4jConfig
+from graflo.db import ConnectionManager
+from graflo.db.connection.onto import Neo4jConfig
 
 
 @pytest.fixture(scope="function")

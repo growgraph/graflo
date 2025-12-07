@@ -1,6 +1,6 @@
 """Tests for DBConfig.from_env() method with prefix support."""
 
-from graflo.backend.connection.onto import ArangoConfig, Neo4jConfig, TigergraphConfig
+from graflo.db.connection.onto import ArangoConfig, Neo4jConfig, TigergraphConfig
 
 
 class TestArangoConfigFromEnv:

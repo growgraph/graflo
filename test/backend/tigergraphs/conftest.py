@@ -3,8 +3,8 @@ import uuid
 
 import pytest
 
-from graflo.backend import ConnectionManager
-from graflo.backend.connection.onto import TigergraphConfig
+from graflo.db import ConnectionManager
+from graflo.db.connection.onto import TigergraphConfig
 
 # Set GSQL_PASSWORD environment variable for TigerGraph tests
 os.environ.setdefault("GSQL_PASSWORD", "tigergraph")

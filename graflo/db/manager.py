@@ -16,16 +16,16 @@ The manager supports:
     - Automatic connection cleanup
 
 Example:
-    >>> from graflo.backend.connection.onto import ArangoConfig
+    >>> from graflo.db.connection.onto import ArangoConfig
     >>> config = ArangoConfig.from_env()
     >>> with ConnectionManager(connection_config=config) as conn:
     ...     conn.execute("FOR doc IN collection RETURN doc")
 """
 
-from graflo.backend.arango.conn import ArangoConnection
-from graflo.backend.connection.onto import DBConfig, DBType, TARGET_DATABASES
-from graflo.backend.neo4j.conn import Neo4jConnection
-from graflo.backend.tigergraph.conn import TigerGraphConnection
+from graflo.db.arango.conn import ArangoConnection
+from graflo.db.connection.onto import DBConfig, DBType, TARGET_DATABASES
+from graflo.db.neo4j.conn import Neo4jConnection
+from graflo.db.tigergraph.conn import TigerGraphConnection
 
 
 class ConnectionManager:

@@ -7,8 +7,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class WSGIConfig(BaseSettings):
     """Configuration for WSGI connections.
 
-    Note: WSGI is not a database backend, so it doesn't inherit from DBConfig.
-    This is kept separate from database backend configurations.
+    Note: WSGI is not a database db, so it doesn't inherit from DBConfig.
+    This is kept separate from database db configurations.
     """
 
     model_config = SettingsConfigDict(

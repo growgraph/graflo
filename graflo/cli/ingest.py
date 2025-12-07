@@ -13,7 +13,7 @@ Key Features:
 
 Example:
     $ uv run ingest \\
-        --backend-config-path config/backend.yaml \\
+        --db-config-path config/db.yaml \\
         --schema-path config/schema.yaml \\
         --source-path data/ \\
         --batch-size 5000 \\
@@ -28,7 +28,7 @@ import click
 from suthing import FileHandle
 
 from graflo import Caster, DataSourceRegistry, Patterns, Schema
-from graflo.backend.connection.onto import DBConfig
+from graflo.db.connection.onto import DBConfig
 from graflo.data_source import DataSourceFactory
 
 logger = logging.getLogger(__name__)
@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 @click.command()
 @click.option(
-    "--backend-config-path",
+    "--db-config-path",
     type=click.Path(exists=True, path_type=pathlib.Path),
     required=True,
 )
@@ -75,7 +75,7 @@ logger = logging.getLogger(__name__)
     "--init-only",
     default=False,
     is_flag=True,
-    help="skip ingestion; only init the backend",
+    help="skip ingestion; only init the db",
 )
 def ingest(
     db_config_path,
@@ -110,7 +110,7 @@ def ingest(
 
     Example:
         $ uv run ingest \\
-            --backend-config-path config/backend.yaml \\
+            --db-config-path config/db.yaml \\
             --schema-path config/schema.yaml \\
             --source-path data/ \\
             --batch-size 5000 \\
@@ -180,7 +180,7 @@ def ingest(
         )
     else:
         # Fall back to file-based ingestion
-        caster.ingest_files(
+        caster.ingest(
             path=source_path,
             limit_files=limit_files,
             clean_start=fresh_start,

@@ -91,9 +91,7 @@ class Edge(BaseDataclass):
 
     type: EdgeType = EdgeType.DIRECT
 
-    aux: bool = (
-        False  # aux=True edges are init in the backend but not considered by graflo
-    )
+    aux: bool = False  # aux=True edges are init in the db but not considered by graflo
 
     by: str | None = None
     graph_name: str | None = None

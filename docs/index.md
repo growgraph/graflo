@@ -54,7 +54,7 @@ Resources define how data is transformed into a graph (semantic mapping). They w
     - Specify edge constraints and properties
     - Apply advanced filtering and transformations
 - **Parallel Processing**: Efficient processing with multi-threading
-- **Database Integration**: Seamless integration with Neo4j, ArangoDB, and TigerGraph
+- **Database Integration**: Seamless integration with Neo4j, ArangoDB, TigerGraph, and PostgreSQL (as source)
 - **Advanced Filtering**: Powerful filtering capabilities for data transformation with server-side filtering support
 - **Blank Node Support**: Create intermediate vertices for complex relationships
 
@@ -75,6 +75,7 @@ Resources define how data is transformed into a graph (semantic mapping). They w
 
 - Python 3.10 or higher
 - Graph database (Neo4j, ArangoDB, or TigerGraph) for storage
+- Optional: PostgreSQL or other SQL databases for data sources
 - Dependencies as specified in pyproject.toml
 
 ## Contributing
