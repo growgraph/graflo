@@ -19,7 +19,9 @@ def test_patterns():
     patterns.add_file_pattern("b", pattern_b)
 
     # Test that patterns work correctly
+    assert patterns.patterns["a"].sub_path is not None
     assert isinstance(patterns.patterns["a"].sub_path / "a", pathlib.Path)
+    assert patterns.patterns["b"].sub_path is not None
     assert str(patterns.patterns["b"].sub_path / "a") == "a"
 
     # Test that patterns can be accessed by name

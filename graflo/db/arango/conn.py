@@ -47,6 +47,31 @@ from ..connection.onto import ArangoConfig
 logger = logging.getLogger(__name__)
 
 
+def _json_serializer(obj):
+    """JSON serializer for objects not serializable by default json code.
+
+    Handles datetime, date, time, and other non-serializable types.
+    Decimal should already be converted to float at the data source level.
+
+    Args:
+        obj: Object to serialize
+
+    Returns:
+        JSON-serializable representation
+    """
+    from datetime import date, datetime, time
+
+    if isinstance(obj, (datetime, date, time)):
+        return obj.isoformat()
+    # Decimal should be converted to float at source (SQLDataSource)
+    # But handle it here as a fallback
+    from decimal import Decimal
+
+    if isinstance(obj, Decimal):
+        return float(obj)
+    raise TypeError(f"Type {type(obj)} not serializable")
+
+
 class ArangoConnection(Connection):
     """ArangoDB-specific implementation of the Connection interface.
 
@@ -535,7 +560,7 @@ class ArangoConnection(Connection):
         if isinstance(docs, list):
             if filter_uniques:
                 docs = pick_unique_dict(docs)
-            docs = json.dumps(docs)
+            docs = json.dumps(docs, default=_json_serializer)
         if match_keys is None:
             upsert_clause = ""
             update_clause = ""

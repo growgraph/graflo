@@ -1,5 +1,7 @@
+import pathlib
 from suthing import FileHandle
 from graflo import Caster, Patterns, Schema
+from graflo.util.onto import FilePattern
 from graflo.db.connection.onto import ArangoConfig
 
 schema = Schema.from_dict(FileHandle.load("schema.yaml"))
@@ -19,14 +21,20 @@ conn_conf = ArangoConfig.from_docker_env()
 #     database="_system",
 # )
 
-patterns = Patterns.from_dict(
-    {
-        "patterns": {
-            "work": {"regex": "\Sjson$"},
-        }
-    }
+# Create Patterns with file patterns
+patterns = Patterns()
+patterns.add_file_pattern(
+    "work",
+    FilePattern(regex="\Sjson$", sub_path=pathlib.Path("."), resource_name="work"),
 )
+
+# Or use resource_mapping for simpler initialization
+# patterns = Patterns(
+#     _resource_mapping={
+#         "work": "./work.json",
+#     }
+# )
 
 caster = Caster(schema)
 
-caster.ingest(path=".", conn_conf=conn_conf, patterns=patterns, clean_start=True)
+caster.ingest(output_config=conn_conf, patterns=patterns, clean_start=True)

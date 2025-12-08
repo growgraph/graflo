@@ -15,7 +15,7 @@ import abc
 import dataclasses
 import pathlib
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Union
 
 from graflo.onto import BaseDataclass
 
@@ -73,6 +73,9 @@ class FilePattern(ResourcePattern):
         sub_path: Path to search for matching files (default: "./")
     """
 
+    class _(BaseDataclass.Meta):
+        tag = "file"
+
     regex: str | None = None
     sub_path: None | pathlib.Path = dataclasses.field(
         default_factory=lambda: pathlib.Path("./")
@@ -114,6 +117,9 @@ class TablePattern(ResourcePattern):
         schema_name: Schema name (optional, defaults to public)
         database: Database name (optional)
     """
+
+    class _(BaseDataclass.Meta):
+        tag = "table"
 
     table_name: str = ""
     schema_name: str | None = None
@@ -181,7 +187,9 @@ class Patterns(BaseDataclass):
         postgres_table_configs: Dictionary mapping resource_name to (config_key, schema_name, table_name)
     """
 
-    patterns: dict[str, ResourcePattern] = dataclasses.field(default_factory=dict)
+    patterns: dict[str, Union[FilePattern, TablePattern]] = dataclasses.field(
+        default_factory=dict
+    )
     postgres_configs: dict[tuple[str, str | None], Any] = dataclasses.field(
         default_factory=dict, metadata={"exclude": True}
     )

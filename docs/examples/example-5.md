@@ -1,215 +1,157 @@
-# Example 5: REST API Data Source
+# Example 5: Ingesting Data from PostgreSQL Tables
 
-This example demonstrates how to ingest data from a REST API endpoint into a graph database.
+This example demonstrates how to automatically infer a graph schema from a PostgreSQL database and ingest data directly from PostgreSQL tables into a graph database.
 
-## Scenario
+## Overview
 
-Suppose you have a REST API that provides user data with pagination. You want to ingest this data into a graph database.
+Instead of manually defining schemas and loading data from files, this example shows how to:
+- Automatically detect vertex-like and edge-like tables in PostgreSQL
+- Infer the graph schema from the database structure
+- Create patterns that map PostgreSQL tables to graph resources
+- Ingest data directly from PostgreSQL into a graph database
 
-## API Response Format
+## PostgreSQL Database Structure
 
-The API returns data in the following format:
+The example uses a PostgreSQL database with a typical 3NF (Third Normal Form) schema:
 
-```json
-{
-  "data": [
-    {"id": 1, "name": "Alice", "department": "Engineering"},
-    {"id": 2, "name": "Bob", "department": "Sales"}
-  ],
-  "has_more": true,
-  "offset": 0,
-  "limit": 100,
-  "total": 250
-}
-```
+- **Vertex tables** (entities with primary keys):
+  - `users`: User information with id, name, email, created_at
+  - `products`: Product information with id, name, price, description
 
-## Schema Definition
+- **Edge tables** (relationships with foreign keys):
+  - `purchases`: Links users to products (user_id → product_id) with quantity and price
+  - `follows`: Links users to users (follower_id → followed_id) with created_at
 
-Define your schema as usual:
+## Automatic Schema Inference
 
-```yaml
-general:
-  name: users_api
+The `infer_schema_from_postgres()` function automatically:
 
-vertices:
-  - name: person
-    fields:
-      - id
-      - name
-      - department
-    indexes:
-      - fields:
-          - id
+1. **Detects vertex tables**: Tables with a primary key and descriptive columns
+2. **Detects edge tables**: Tables with 2+ foreign keys (representing relationships)
+3. **Maps field types**: Converts PostgreSQL types (INT, VARCHAR, TIMESTAMP, DECIMAL) to graflo Field types
+4. **Creates resources**: Automatically generates Resource configurations with appropriate actors
 
-resources:
-  - resource_name: users
-    apply:
-      - vertex: person
-```
-
-## Using API Data Source
-
-### Python Code
+### Inferred Schema Structure
 
 ```python
-from suthing import FileHandle
-from graflo import Caster, DataSourceRegistry, Schema
-from graflo.data_source import DataSourceFactory, APIConfig, PaginationConfig
-from graflo.db.connection.onto import DBConfig
+from graflo.db.postgres import PostgresConnection, infer_schema_from_postgres
+from graflo.db.connection.onto import PostgresConfig
 
-# Load schema
-schema = Schema.from_dict(FileHandle.load("schema.yaml"))
+# Connect to PostgreSQL
+postgres_conf = PostgresConfig.from_docker_env()
+postgres_conn = PostgresConnection(postgres_conf)
 
-# Create API configuration
-api_config = APIConfig(
-    url="https://api.example.com/users",
-    method="GET",
-    headers={"Authorization": "Bearer your-token"},
-    pagination=PaginationConfig(
-        strategy="offset",
-        offset_param="offset",
-        limit_param="limit",
-        page_size=100,
-        has_more_path="has_more",
-        data_path="data",
-    ),
+# Infer schema automatically
+schema = infer_schema_from_postgres(postgres_conn, schema_name="public")
+```
+
+The inferred schema will have:
+- **Vertices**: `users`, `products`
+- **Edges**: `users → products` (purchases), `users → users` (follows)
+- **Resources**: Automatically created for each table with appropriate actors
+
+## Pattern Creation
+
+The `create_patterns_from_postgres()` function creates `Patterns` that map PostgreSQL tables to resources:
+
+```python
+from graflo.db.postgres import create_patterns_from_postgres
+
+# Create patterns from PostgreSQL tables
+patterns = create_patterns_from_postgres(postgres_conn, schema_name="public")
+```
+
+This creates `TablePattern` instances for each table, which:
+- Map table names to resource names
+- Store PostgreSQL connection configuration
+- Enable the Caster to query data directly from PostgreSQL
+
+## Complete Example
+
+```python
+import logging
+from pathlib import Path
+
+from graflo import Caster
+from graflo.db.postgres import (
+    PostgresConnection,
+    create_patterns_from_postgres,
+    infer_schema_from_postgres,
 )
+from graflo.db.connection.onto import ArangoConfig, PostgresConfig
 
-# Create API data source
-api_source = DataSourceFactory.create_api_data_source(api_config)
+logger = logging.getLogger(__name__)
 
-# Register with resource
-registry = DataSourceRegistry()
-registry.register(api_source, resource_name="users")
+# Step 1: Connect to PostgreSQL (source database)
+postgres_conf = PostgresConfig.from_docker_env()
+postgres_conn = PostgresConnection(postgres_conf)
 
-# Create caster and ingest
+# Step 1.5: Initialize database with mock schema if needed
+docker_dir = Path(__file__).parent.parent.parent / "docker" / "postgres"
+schema_file = docker_dir / "mock_schema.sql"
+
+if schema_file.exists():
+    logger.info(f"Loading mock schema from {schema_file}")
+    # ... (load and execute SQL schema) ...
+
+# Step 2: Infer Schema from PostgreSQL database structure
+schema = infer_schema_from_postgres(postgres_conn, schema_name="public")
+
+# Step 3: Create Patterns from PostgreSQL tables
+patterns = create_patterns_from_postgres(postgres_conn, schema_name="public")
+
+# Step 4: Connect to target graph database (ArangoDB)
+conn_conf = ArangoConfig.from_docker_env()
+
+# Step 5: Create Caster and ingest data
 caster = Caster(schema)
-# Load config from file
-config_data = FileHandle.load("db.yaml")
-conn_conf = DBConfig.from_dict(config_data)
+caster.ingest(output_config=conn_conf, patterns=patterns, clean_start=True)
 
-caster.ingest_data_sources(
-    data_source_registry=registry,
-    conn_conf=conn_conf,
-    batch_size=1000,
-)
+# Cleanup
+postgres_conn.close()
 ```
 
-### Using Configuration File
+## Key Features
 
-Create a data source configuration file (`data_sources.yaml`):
+### Automatic Type Mapping
 
-```yaml
-data_sources:
-  - source_type: api
-    resource_name: users
-    config:
-      url: https://api.example.com/users
-      method: GET
-      headers:
-        Authorization: "Bearer your-token"
-      pagination:
-        strategy: offset
-        offset_param: offset
-        limit_param: limit
-        page_size: 100
-        has_more_path: has_more
-        data_path: data
-```
+PostgreSQL types are automatically mapped to graflo Field types:
+- `INTEGER`, `BIGINT` → `INT`
+- `VARCHAR`, `TEXT` → `STRING`
+- `TIMESTAMP`, `DATE`, `TIME` → `DATETIME`
+- `DECIMAL`, `NUMERIC` → `FLOAT` (converted to float when reading)
 
-Then use the CLI:
+### Vertex/Edge Detection Heuristics
 
-```bash
-uv run ingest \
-    --db-config-path config/db.yaml \
-    --schema-path config/schema.yaml \
-    --data-source-config-path data_sources.yaml
-```
+The system uses heuristics to classify tables:
 
-## Pagination Strategies
+**Vertex tables:**
+- Have a primary key
+- Have descriptive columns (not just foreign keys)
+- Represent entities in the domain
 
-### Offset-based Pagination
+**Edge tables:**
+- Have 2+ foreign keys
+- Represent relationships between entities
+- May have additional attributes (weights, timestamps)
 
-```python
-pagination = PaginationConfig(
-    strategy="offset",
-    offset_param="offset",
-    limit_param="limit",
-    page_size=100,
-    has_more_path="has_more",
-    data_path="data",
-)
-```
+### Data Type Handling
 
-### Cursor-based Pagination
+- **Decimal/Numeric**: Automatically converted to `float` when reading from PostgreSQL
+- **DateTime**: Preserved as `datetime` objects during processing, serialized to ISO format for JSON
+- **Type preservation**: Original types are preserved in `pick_unique_dict` for accurate duplicate detection
 
-```python
-pagination = PaginationConfig(
-    strategy="cursor",
-    cursor_param="next_cursor",
-    cursor_path="next_cursor",
-    page_size=100,
-    data_path="items",
-)
-```
+## Benefits
 
-### Page-based Pagination
+1. **No manual schema definition**: Schema is inferred from existing database structure
+2. **Direct database access**: No need to export data to files first
+3. **Automatic resource mapping**: Tables are automatically mapped to graph resources
+4. **Type safety**: Proper handling of PostgreSQL-specific types (Decimal, DateTime)
+5. **Flexible**: Works with any 3NF PostgreSQL schema
 
-```python
-pagination = PaginationConfig(
-    strategy="page",
-    page_param="page",
-    per_page_param="per_page",
-    page_size=50,
-    data_path="results",
-)
-```
+## Use Cases
 
-## Authentication
-
-### Basic Authentication
-
-```python
-api_config = APIConfig(
-    url="https://api.example.com/users",
-    auth={"type": "basic", "username": "user", "password": "pass"},
-)
-```
-
-### Bearer Token
-
-```python
-api_config = APIConfig(
-    url="https://api.example.com/users",
-    auth={"type": "bearer", "token": "your-token"},
-)
-```
-
-### Custom Headers
-
-```python
-api_config = APIConfig(
-    url="https://api.example.com/users",
-    headers={"X-API-Key": "your-api-key"},
-)
-```
-
-## Combining Multiple Data Sources
-
-You can combine multiple data sources for the same resource:
-
-```python
-registry = DataSourceRegistry()
-
-# API source
-api_source = DataSourceFactory.create_api_data_source(api_config)
-registry.register(api_source, resource_name="users")
-
-# File source
-file_source = DataSourceFactory.create_file_data_source(path="users_backup.json")
-registry.register(file_source, resource_name="users")
-
-# Both will be processed and combined
-caster.ingest_data_sources(data_source_registry=registry, conn_conf=conn_conf)
-```
-
+- Migrating relational data to graph databases
+- Creating graph views of existing PostgreSQL databases
+- Analyzing relationships in normalized database schemas
+- Building graph analytics on top of transactional databases

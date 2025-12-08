@@ -45,7 +45,6 @@ class AbstractDataSource(BaseDataclass, abc.ABC):
 
     def __post_init__(self):
         """Initialize the data source after dataclass initialization."""
-        super().__post_init__()
         self._resource_name: str | None = None
 
     @property

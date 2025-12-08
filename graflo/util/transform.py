@@ -18,7 +18,6 @@ Example:
     >>> analyst = cast_ibes_analyst("ADKINS/NARRA")
 """
 
-import json
 import logging
 import re
 import time
@@ -366,22 +365,63 @@ def parse_multi_item(s, mapper: dict, direct: list):
 def pick_unique_dict(docs):
     """Removes duplicate dictionaries from a list.
 
-    Uses JSON serialization to identify unique dictionaries.
+    Uses a hash-based approach to identify unique dictionaries, which is more
+    efficient than JSON serialization and preserves original object types.
 
     Args:
         docs (list): List of dictionaries.
 
     Returns:
-        list: List of unique dictionaries.
+        list: List of unique dictionaries (preserving original objects).
 
     Example:
         >>> docs = [{"a": 1}, {"a": 1}, {"b": 2}]
         >>> pick_unique_dict(docs)
         [{"a": 1}, {"b": 2}]
     """
-    docs = {json.dumps(d, sort_keys=True) for d in docs}
-    docs = [json.loads(t) for t in docs]
-    return docs
+    from datetime import date, datetime, time
+    from decimal import Decimal
+
+    def make_hashable(obj):
+        """Convert an object to a hashable representation.
+
+        Handles nested structures, datetime objects, and Decimal types.
+
+        Args:
+            obj: Object to make hashable
+
+        Returns:
+            Hashable representation of the object
+        """
+        if isinstance(obj, dict):
+            # Sort items by key for consistent hashing
+            return tuple(sorted((k, make_hashable(v)) for k, v in obj.items()))
+        elif isinstance(obj, (list, tuple)):
+            return tuple(make_hashable(item) for item in obj)
+        elif isinstance(obj, (datetime, date, time)):
+            # Convert to ISO format string for hashing
+            return ("__datetime__", obj.isoformat())
+        elif isinstance(obj, Decimal):
+            # Convert to string representation to preserve precision
+            return ("__decimal__", str(obj))
+        elif isinstance(obj, set):
+            # Convert set to sorted tuple for consistent hashing
+            return tuple(sorted(make_hashable(item) for item in obj))
+        else:
+            # Primitive types (int, float, str, bool, None) are already hashable
+            return obj
+
+    # Use a dict to preserve insertion order and original objects
+    seen = {}
+    for doc in docs:
+        # Create hashable representation
+        hashable_repr = make_hashable(doc)
+        # Use hashable representation as key, original doc as value
+        if hashable_repr not in seen:
+            seen[hashable_repr] = doc
+
+    # Return list of unique documents (preserving original objects)
+    return list(seen.values())
 
 
 def split_keep_part(s: str, sep="/", keep=-1) -> str:

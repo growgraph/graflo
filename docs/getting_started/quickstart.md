@@ -8,7 +8,7 @@ This guide will help you get started with graflo by showing you how to transform
 - Class `Schema` encodes the representation of vertices, and edges (relations), the transformations the original data undergoes to become a graph and how data sources are mapped onto graph definition.
 - `Resource` class defines how data is transformed into a graph (semantic mapping).
 - `DataSource` defines where data comes from (files, APIs, SQL databases, in-memory objects).
-- In case the data is provided as files, class `Patterns` manages the mapping of the resources to files. 
+- Class `Patterns` manages the mapping of resources to their physical data sources (files or PostgreSQL tables). It efficiently handles PostgreSQL connections by grouping tables that share the same connection configuration. 
 - `DataSourceRegistry` maps DataSources to Resources (many DataSources can map to the same Resource).
 1- Database backend configurations use Pydantic `BaseSettings` with environment variable support. Use `ArangoConfig`, `Neo4jConfig`, `TigergraphConfig`, or `PostgresConfig` directly, or load from docker `.env` files using `from_docker_env()`. All configs inherit from `DBConfig` and support unified `database`/`schema_name` structure with `effective_database` and `effective_schema` properties for database-agnostic access. If `effective_schema` is not set, `Caster` automatically uses `Schema.general.name` as fallback.
 
@@ -17,8 +17,10 @@ This guide will help you get started with graflo by showing you how to transform
 Here's a simple example of transforming CSV files of two types, `people` and `department` into a graph:
 
 ```python
+import pathlib
 from suthing import FileHandle
 from graflo import Caster, Patterns, Schema
+from graflo.util.onto import FilePattern
 from graflo.db.connection.onto import ArangoConfig
 
 schema = Schema.from_dict(FileHandle.load("schema.yaml"))
@@ -52,24 +54,87 @@ user_conn_conf = ArangoConfig.from_env(prefix="USER")
 #     database="mygraph",  # For ArangoDB, 'database' maps to schema/graph
 # )
 
-patterns = Patterns.from_dict(
-    {
-        "patterns": {
-            "people": {"regex": "^people.*\.csv$"},
-            "departments": {"regex": "^dep.*\.csv$"},
-        }
+# Create Patterns with file patterns
+# FilePattern includes the path (sub_path) where files are located
+from graflo.util.onto import FilePattern
+
+patterns = Patterns()
+patterns.add_file_pattern(
+    "people",
+    FilePattern(regex="^people.*\.csv$", sub_path=pathlib.Path("."), resource_name="people")
+)
+patterns.add_file_pattern(
+    "departments",
+    FilePattern(regex="^dep.*\.csv$", sub_path=pathlib.Path("."), resource_name="departments")
+)
+
+# Or use resource_mapping for simpler initialization
+patterns = Patterns(
+    _resource_mapping={
+        "people": "./people.csv",  # File path - creates FilePattern automatically
+        "departments": "./departments.csv",
     }
 )
 
 caster.ingest(
-    path=".",
-    conn_conf=conn_conf,
-    patterns=patterns,
+    output_config=conn_conf,  # Target database config
+    patterns=patterns,  # Source data patterns
 )
 ```
 
 Here `schema` defines the graph and the mapping the sources to vertices and edges (refer to [Schema](concepts/schema) for details on schema and its components).
-In `patterns` the keys `"people"` and `"departments"` correspond to resource names from `Schema`, while `"regex"` contain regex patterns to find the corresponding files.
+
+The `Patterns` class maps resource names (from `Schema`) to their physical data sources:
+- **FilePattern**: For file-based resources with `regex` for matching filenames and `sub_path` for the directory to search
+- **TablePattern**: For PostgreSQL table resources with connection configuration
+
+The `ingest()` method takes:
+- `output_config`: Target graph database configuration (where to write the graph)
+- `patterns`: Source data patterns (where to read data from - files or database tables)
+
+## Using PostgreSQL Tables as Data Sources
+
+You can ingest data directly from PostgreSQL tables. First, infer the schema from your PostgreSQL database:
+
+```python
+from graflo.db.postgres import PostgresConnection, infer_schema_from_postgres, create_patterns_from_postgres
+from graflo.db.connection.onto import PostgresConfig
+
+# Connect to PostgreSQL
+pg_config = PostgresConfig.from_docker_env()  # Or from_env(), or create directly
+pg_conn = PostgresConnection(pg_config)
+
+# Infer schema from PostgreSQL (automatically detects vertices and edges)
+schema = infer_schema_from_postgres(pg_conn, schema_name="public")
+
+# Create patterns from PostgreSQL tables
+patterns = create_patterns_from_postgres(pg_conn, schema_name="public")
+
+# Or create patterns manually
+from graflo.util.onto import Patterns, TablePattern
+
+patterns = Patterns(
+    _resource_mapping={
+        "users": ("db1", "users"),  # (config_key, table_name) tuple
+        "products": ("db1", "products"),
+    },
+    _postgres_connections={
+        "db1": pg_config,  # Maps config_key to PostgresConfig
+    }
+)
+
+# Ingest
+from graflo.db.connection.onto import ArangoConfig
+
+arango_config = ArangoConfig.from_docker_env()  # Target graph database
+caster = Caster(schema)
+caster.ingest(
+    output_config=arango_config,  # Target graph database
+    patterns=patterns,  # Source PostgreSQL tables
+)
+
+pg_conn.close()
+```
 
 ## Using API Data Sources
 
@@ -105,7 +170,7 @@ registry.register(api_source, resource_name="users")
 caster = Caster(schema)
 caster.ingest_data_sources(
     data_source_registry=registry,
-    conn_conf=conn_conf,
+    conn_conf=conn_conf,  # Target database config
 )
 ```
 

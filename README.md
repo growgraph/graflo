@@ -43,7 +43,7 @@ Resources are your data sources that can be:
     - Specify edge constraints and properties
     - Apply advanced filtering and transformations
 - **Parallel processing**: Use as many cores as you have
-- **Database support**: Ingest into ArangoDB, Neo4j, and **TigerGraph** using the same API (database agnostic). Source data from PostgreSQL and other SQL databases.
+- **Database support**: Ingest into ArangoDB, Neo4j, and **TigerGraph** using the same API (database agnostic). Source data from PostgreSQL and other SQL databases. Automatically infer graph schemas from PostgreSQL 3NF databases.
 - **Server-side filtering**: Efficient querying with server-side filtering support (TigerGraph REST++ API)
 
 ## Documentation
@@ -88,24 +88,30 @@ user_conn_conf = ArangoConfig.from_env(prefix="USER")
 # Note: If 'database' (or 'schema_name' for TigerGraph) is not set,
 # Caster will automatically use Schema.general.name as fallback
 
-patterns = Patterns.from_dict(
-    {
-        "patterns": {
-            "work": {"regex": "\Sjson$"},
-        }
-    }
+from graflo.util.onto import FilePattern
+import pathlib
+
+# Create Patterns with file patterns
+patterns = Patterns()
+patterns.add_file_pattern(
+    "work",
+    FilePattern(regex="\Sjson$", sub_path=pathlib.Path("./data"), resource_name="work")
 )
+
+# Or use resource_mapping for simpler initialization
+# patterns = Patterns(
+#     _resource_mapping={
+#         "work": "./data/work.json",
+#     }
+# )
 
 schema.fetch_resource()
 
-caster = Caster(
-    schema,
-)
+caster = Caster(schema)
 
 caster.ingest(
-    path="./data",
-    conn_conf=conn_conf,
-    patterns=patterns,
+    output_config=conn_conf,  # Target database config
+    patterns=patterns,  # Source data patterns
 )
 ```
 

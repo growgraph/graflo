@@ -196,17 +196,23 @@ conn_conf = Neo4jConfig.from_docker_env()
 #     bolt_port=7688,
 # )
 
-patterns = Patterns.from_dict({
-    "patterns": {
-        "package": {"regex": r"^package\.meta.*\.json(?:\.gz)?$"},
-        "bugs": {"regex": r"^bugs.head.*\.json(?:\.gz)?$"},
-    }
-})
+from graflo.util.onto import FilePattern
+import pathlib
+
+patterns = Patterns()
+patterns.add_file_pattern(
+    "package",
+    FilePattern(regex=r"^package\.meta.*\.json(?:\.gz)?$", sub_path=pathlib.Path("./data"), resource_name="package")
+)
+patterns.add_file_pattern(
+    "bugs",
+    FilePattern(regex=r"^bugs.head.*\.json(?:\.gz)?$", sub_path=pathlib.Path("./data"), resource_name="bugs")
+)
 
 caster = Caster(schema)
 caster.ingest(
-    path="./data",
-    conn_conf=conn_conf,
+    output_config=conn_conf,  # Target database config
+    patterns=patterns,  # Source data patterns
     patterns=patterns,
     clean_start=True,
 )

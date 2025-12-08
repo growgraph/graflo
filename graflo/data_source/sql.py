@@ -140,12 +140,18 @@ class SQLDataSource(AbstractDataSource):
 
                     # Convert rows to dictionaries
                     batch = []
+                    from decimal import Decimal
+
                     for row in rows:
                         if limit and total_items >= limit:
                             break
 
                         # Convert row to dictionary
                         row_dict = dict(row._mapping)
+                        # Convert Decimal to float for JSON compatibility
+                        for key, value in row_dict.items():
+                            if isinstance(value, Decimal):
+                                row_dict[key] = float(value)
                         batch.append(row_dict)
                         total_items += 1
 

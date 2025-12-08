@@ -62,6 +62,7 @@ nav:
     -   2 - JSON with Edges between the same Vertex Type (ArangoDB): examples/example-2.md
     -   3 - CSV with Edge Weights and Multiple Relations (Neo4j): examples/example-3.md
     -   4 - Dynamic Relations from Keys (Neo4j): examples/example-4.md
+    -   5 - Ingesting Data from PostgreSQL Tables: examples/example-5.md
 -   API Reference: reference/
 -   Contributing: contributing.md
 

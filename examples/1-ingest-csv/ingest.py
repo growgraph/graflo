@@ -1,5 +1,7 @@
+import pathlib
 from suthing import FileHandle
 from graflo import Caster, Patterns, Schema
+from graflo.util.onto import FilePattern
 from graflo.db.connection.onto import ArangoConfig
 
 schema = Schema.from_dict(FileHandle.load("schema.yaml"))
@@ -19,15 +21,29 @@ conn_conf = ArangoConfig.from_docker_env()
 #     database="_system",
 # )
 
-patterns = Patterns.from_dict(
-    {
-        "patterns": {
-            "people": {"regex": "^people.*\.csv$"},
-            "departments": {"regex": "^dep.*\.csv$"},
-        }
-    }
+# Create Patterns with file patterns
+patterns = Patterns()
+patterns.add_file_pattern(
+    "people",
+    FilePattern(
+        regex="^people.*\.csv$", sub_path=pathlib.Path("."), resource_name="people"
+    ),
 )
+patterns.add_file_pattern(
+    "departments",
+    FilePattern(
+        regex="^dep.*\.csv$", sub_path=pathlib.Path("."), resource_name="departments"
+    ),
+)
+
+# Or use resource_mapping for simpler initialization
+# patterns = Patterns(
+#     _resource_mapping={
+#         "people": "./people.csv",
+#         "departments": "./departments.csv",
+#     }
+# )
 
 caster = Caster(schema)
 
-caster.ingest(path=".", conn_conf=conn_conf, patterns=patterns, clean_start=True)
+caster.ingest(output_config=conn_conf, patterns=patterns, clean_start=True)

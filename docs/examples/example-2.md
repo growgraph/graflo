@@ -120,16 +120,19 @@ if not isinstance(conn_conf, ArangoConfig):
 # Or use from_docker_env() (recommended)
 # conn_conf = ArangoConfig.from_docker_env()
 
-patterns = Patterns.from_dict(
-    {
-        "patterns": {
-            "work": {"regex": "\Sjson$"},
-        }
-    }
+from graflo.util.onto import FilePattern
+import pathlib
+
+patterns = Patterns()
+patterns.add_file_pattern(
+    "work",
+    FilePattern(regex="\Sjson$", sub_path=pathlib.Path("."), resource_name="work")
 )
 
 caster.ingest(
-    path=".", conn_conf=conn_conf, patterns=patterns, clean_start=True
+    output_config=conn_conf,  # Target database config
+    patterns=patterns,  # Source data patterns
+    clean_start=True
 )
 ```
 

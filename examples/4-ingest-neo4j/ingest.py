@@ -1,5 +1,7 @@
+import pathlib
 from suthing import FileHandle
 from graflo import Caster, Patterns, Schema
+from graflo.util.onto import FilePattern
 from graflo.db.connection.onto import Neo4jConfig
 
 schema = Schema.from_dict(FileHandle.load("schema.yaml"))
@@ -19,21 +21,38 @@ conn_conf = Neo4jConfig.from_docker_env()
 #     bolt_port=7688,
 # )
 
-patterns = Patterns.from_dict(
-    {
-        "patterns": {
-            "package": {"regex": r"^package\.meta.*\.json(?:\.gz)?$"},
-            "bugs": {"regex": r"^bugs.head.*\.json(?:\.gz)?$"},
-        }
-    }
+# Create Patterns with file patterns
+patterns = Patterns()
+patterns.add_file_pattern(
+    "package",
+    FilePattern(
+        regex=r"^package\.meta.*\.json(?:\.gz)?$",
+        sub_path=pathlib.Path("./data"),
+        resource_name="package",
+    ),
 )
+patterns.add_file_pattern(
+    "bugs",
+    FilePattern(
+        regex=r"^bugs.head.*\.json(?:\.gz)?$",
+        sub_path=pathlib.Path("./data"),
+        resource_name="bugs",
+    ),
+)
+
+# Or use resource_mapping for simpler initialization
+# patterns = Patterns(
+#     _resource_mapping={
+#         "package": "./data/package.meta.json",
+#         "bugs": "./data/bugs.head.json",
+#     }
+# )
 
 caster = Caster(schema)
 
 caster.ingest(
-    path="./data",
-    conn_conf=conn_conf,
-    patterns=patterns,
+    output_config=conn_conf,  # Target database config
+    patterns=patterns,  # Source data patterns
     clean_start=True,
     # max_items=5,
 )
