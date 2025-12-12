@@ -351,13 +351,19 @@ def parse_multi_item(s, mapper: dict, direct: list):
                     r[n_final] += [None]
 
             for n_final in direct:
+                # Use field.name for dictionary keys (JSON serialization requires strings)
+                # Handle both Field objects and strings for backward compatibility
+                key = n_final.name if hasattr(n_final, "name") else str(n_final)
                 try:
-                    r[n_final] += [doc0_dict[n_final]]
+                    r[key] += [doc0_dict[key]]
                 except KeyError:
-                    r[n_final] += [None]
+                    r[key] += [None]
         else:
             for key, value in zip(direct, doc0):
-                r[key] += [value]
+                # Use field.name for dictionary keys (JSON serialization requires strings)
+                # Handle both Field objects and strings for backward compatibility
+                key_str = key.name if hasattr(key, "name") else str(key)
+                r[key_str] += [value]
 
     return r
 

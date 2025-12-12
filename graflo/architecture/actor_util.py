@@ -324,16 +324,18 @@ def render_edge(
                     weight = dict()
                     if edge.weights is not None:
                         for field in edge.weights.direct:
+                            # Use field.name for dictionary keys (JSON serialization requires strings)
+                            field_name = field.name
                             if field in u_.ctx:
-                                weight[field] = u_.ctx[field]
+                                weight[field_name] = u_.ctx[field]
 
                             if field in v_.ctx:
-                                weight[field] = v_.ctx[field]
+                                weight[field_name] = v_.ctx[field]
 
                             if field in u_tr:
-                                weight[field] = u_tr[field]
+                                weight[field_name] = u_tr[field]
                             if field in v_tr:
-                                weight[field] = v_tr[field]
+                                weight[field_name] = v_tr[field]
 
                     a = project_dict(u, source_index)
                     b = project_dict(v, target_index)
