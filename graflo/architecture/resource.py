@@ -76,6 +76,7 @@ class Resource(BaseDataclass, JSONWizard):
     merge_collections: list[str] = dataclasses.field(default_factory=list)
     extra_weights: list[Edge] = dataclasses.field(default_factory=list)
     types: dict[str, str] = dataclasses.field(default_factory=dict)
+    edge_greedy: bool = True
 
     def __post_init__(self):
         """Initialize the resource after dataclass initialization.
@@ -131,6 +132,7 @@ class Resource(BaseDataclass, JSONWizard):
             vertex_config=vertex_config,
             transforms=transforms,
             edge_config=edge_config,
+            edge_greedy=self.edge_greedy,
         )
 
         logger.debug(f"total resource actor count (after 2 finit): {self.root.count()}")

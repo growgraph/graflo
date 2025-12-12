@@ -849,6 +849,8 @@ class ActorWrapper:
         self.actor: Actor
         self.vertex_config: VertexConfig
         self.edge_config: EdgeConfig
+        self.edge_greedy: bool = True
+        self.target_vertices: set[str] = set()
 
         # Try initialization methods in order
         # Make copies of kwargs for each attempt to avoid mutation issues
@@ -884,7 +886,28 @@ class ActorWrapper:
         kwargs["vertex_config"] = self.vertex_config
         self.edge_config = kwargs.get("edge_config", EdgeConfig())
         kwargs["edge_config"] = self.edge_config
+        # Set edge_greedy if provided (only used at top-level ActorWrapper)
+        if "edge_greedy" in kwargs:
+            self.edge_greedy = kwargs.pop("edge_greedy")
         self.actor.finish_init(**kwargs)
+
+        # Collect target vertices from TransformActors with target_vertex
+        # This is used when edge_greedy is False to only process relevant edges
+        all_actors = self.collect_actors()
+        transform_actors_with_target = [
+            actor
+            for actor in all_actors
+            if isinstance(actor, TransformActor) and actor.vertex is not None
+        ]
+        self.target_vertices = {actor.vertex for actor in transform_actors_with_target}
+
+        # Auto-set edge_greedy to False if there are at least 2 TransformActors with target_vertex
+        if len(transform_actors_with_target) >= 2:
+            self.edge_greedy = False
+            logger.debug(
+                f"Auto-set edge_greedy=False (found {len(transform_actors_with_target)} "
+                f"TransformActors with target_vertex: {self.target_vertices})"
+            )
 
     def count(self):
         """Get count of items processed by the wrapped actor.
@@ -1010,22 +1033,42 @@ class ActorWrapper:
             defaultdict[GraphEntity, list]: Normalized context
         """
 
+        # Prepare list of edges to process based on edge_greedy setting
+        edges_to_process = []
+        edges_ids = [k for k in ctx.acc_global if not isinstance(k, str)]
+
         for edge_id, edge in self.edge_config.edges_items():
             s, t, _ = edge_id
-            edges_ids = [k for k in ctx.acc_global if not isinstance(k, str)]
-            if not any(s == sp and t == tp for sp, tp, _ in edges_ids):
-                extra_edges = render_edge(
-                    edge=edge, vertex_config=self.vertex_config, ctx=ctx
-                )
-                extra_edges = render_weights(
-                    edge,
-                    self.vertex_config,
-                    ctx.acc_vertex,
-                    extra_edges,
-                )
+            # Skip if edge already exists
+            if any(s == sp and t == tp for sp, tp, _ in edges_ids):
+                continue
 
-                for relation, v in extra_edges.items():
-                    ctx.acc_global[s, t, relation] += v
+            # Filter edges based on edge_greedy setting
+            if self.edge_greedy:
+                # When edge_greedy is True, process all edges
+                edges_to_process.append((edge_id, edge))
+            else:
+                # When edge_greedy is False, only process edges where both source and target
+                # are in the set of target_vertices from TransformActors
+                # This ensures we only create edges between vertices explicitly mapped by TransformActors
+                if s in self.target_vertices and t in self.target_vertices:
+                    edges_to_process.append((edge_id, edge))
+
+        # Process the filtered list of edges
+        for edge_id, edge in edges_to_process:
+            s, t, _ = edge_id
+            extra_edges = render_edge(
+                edge=edge, vertex_config=self.vertex_config, ctx=ctx
+            )
+            extra_edges = render_weights(
+                edge,
+                self.vertex_config,
+                ctx.acc_vertex,
+                extra_edges,
+            )
+
+            for relation, v in extra_edges.items():
+                ctx.acc_global[s, t, relation] += v
 
         for vertex_name, dd in ctx.acc_vertex.items():
             for lindex, vertex_list in dd.items():
@@ -1118,3 +1161,18 @@ class ActorWrapper:
             tuple: (level, actor_type, string_representation, edges)
         """
         return self.actor.fetch_actors(level, edges)
+
+    def collect_actors(self) -> list[Actor]:
+        """Collect all actors from the actor tree.
+
+        Traverses the entire actor tree and collects all actor instances,
+        including nested actors within DescendActor.
+
+        Returns:
+            list[Actor]: List of all actors in the tree
+        """
+        actors = [self.actor]
+        if isinstance(self.actor, DescendActor):
+            for descendant in self.actor.descendants:
+                actors.extend(descendant.collect_actors())
+        return actors

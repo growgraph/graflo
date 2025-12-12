@@ -17,7 +17,7 @@ import pathlib
 import re
 from typing import TYPE_CHECKING, Any, Union
 
-from graflo.onto import BaseDataclass
+from graflo.onto import BaseDataclass, BaseEnum
 
 if TYPE_CHECKING:
     from graflo.db.connection.onto import PostgresConfig
@@ -27,6 +27,22 @@ else:
         from graflo.db.connection.onto import PostgresConfig
     except ImportError:
         PostgresConfig = Any  # type: ignore
+
+
+class ResourceType(BaseEnum):
+    """Resource types for data sources.
+
+    Resource types distinguish between different data source categories.
+    File type detection (CSV, JSON, JSONL, Parquet, etc.) is handled
+    automatically by the loader based on file extensions.
+
+    Attributes:
+        FILE: File-based data source (any format: CSV, JSON, JSONL, Parquet, etc.)
+        SQL_TABLE: SQL database table (e.g., PostgreSQL table)
+    """
+
+    FILE = "file"
+    SQL_TABLE = "sql_table"
 
 
 @dataclasses.dataclass
@@ -55,11 +71,11 @@ class ResourcePattern(BaseDataclass, abc.ABC):
         pass
 
     @abc.abstractmethod
-    def get_resource_type(self) -> str:
+    def get_resource_type(self) -> ResourceType:
         """Get the type of resource this pattern matches.
 
         Returns:
-            str: Resource type ("file" or "table")
+            ResourceType: Resource type enum value
         """
         pass
 
@@ -103,9 +119,14 @@ class FilePattern(ResourcePattern):
             return False
         return bool(re.match(self.regex, filename))
 
-    def get_resource_type(self) -> str:
-        """Get resource type."""
-        return "file"
+    def get_resource_type(self) -> ResourceType:
+        """Get resource type.
+
+        FilePattern always represents a FILE resource type.
+        The specific file format (CSV, JSON, JSONL, Parquet, etc.) is
+        automatically detected by the loader based on file extensions.
+        """
+        return ResourceType.FILE
 
 
 @dataclasses.dataclass
@@ -162,9 +183,9 @@ class TablePattern(ResourcePattern):
 
         return False
 
-    def get_resource_type(self) -> str:
+    def get_resource_type(self) -> ResourceType:
         """Get resource type."""
-        return "table"
+        return ResourceType.SQL_TABLE
 
 
 @dataclasses.dataclass
@@ -304,14 +325,14 @@ class Patterns(BaseDataclass):
             return self.postgres_configs.get((config_key, schema_name))
         return None
 
-    def get_resource_type(self, resource_name: str) -> str | None:
+    def get_resource_type(self, resource_name: str) -> ResourceType | None:
         """Get the resource type for a resource name.
 
         Args:
             resource_name: Name of the resource
 
         Returns:
-            "file", "table", or None if not found
+            ResourceType enum value or None if not found
         """
         if resource_name in self.patterns:
             return self.patterns[resource_name].get_resource_type()

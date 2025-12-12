@@ -15,6 +15,7 @@ Example:
 """
 
 from __future__ import annotations
+from graflo.db.postgres import PostgresConnection
 
 import logging
 import multiprocessing as mp
@@ -38,7 +39,7 @@ from graflo.data_source import (
 )
 from graflo.db import DBType, ConnectionManager, DBConfig
 from graflo.util.chunker import ChunkerType
-from graflo.util.onto import FilePattern, Patterns, TablePattern
+from graflo.util.onto import FilePattern, Patterns, ResourceType, TablePattern
 
 logger = logging.getLogger(__name__)
 
@@ -535,7 +536,13 @@ class Caster:
             resource_name = r.name
             resource_type = patterns.get_resource_type(resource_name)
 
-            if resource_type == "file":
+            if resource_type is None:
+                logger.warning(
+                    f"No resource type found for resource '{resource_name}', skipping"
+                )
+                continue
+
+            if resource_type == ResourceType.FILE:
                 # Handle file pattern
                 pattern = patterns.patterns[resource_name]
                 if not isinstance(pattern, FilePattern):
@@ -567,8 +574,8 @@ class Caster:
                     )
                     registry.register(file_source, resource_name=resource_name)
 
-            elif resource_type == "table":
-                # Handle PostgreSQL table
+            elif resource_type == ResourceType.SQL_TABLE:
+                # Handle PostgreSQL table using PostgresConnection
                 pattern = patterns.patterns[resource_name]
                 if not isinstance(pattern, TablePattern):
                     logger.warning(
@@ -596,47 +603,23 @@ class Caster:
                     schema_name or postgres_config.schema_name or "public"
                 )
 
-                # Create SQLDataSource for PostgreSQL table
+                # Use PostgresConnection directly to read data, similar to ArangoConnection pattern
                 try:
                     query = f'SELECT * FROM "{effective_schema}"."{table_name}"'
 
-                    from graflo.data_source.sql import SQLConfig, SQLDataSource
-                    from urllib.parse import urlparse
+                    # Use PostgresConnection to read data directly
+                    with PostgresConnection(postgres_config) as pg_conn:
+                        data = pg_conn.read(query)
 
-                    parsed = urlparse(postgres_config.uri or "")
-                    host = parsed.hostname or "localhost"
-                    port = parsed.port or 5432
-                    database = (
-                        postgres_config.database
-                        or parsed.path.lstrip("/")
-                        or "postgres"
+                    # Create InMemoryDataSource from the results
+                    in_memory_source = DataSourceFactory.create_in_memory_data_source(
+                        data=data
                     )
-                    user = postgres_config.username or parsed.username or "postgres"
-                    password = postgres_config.password or parsed.password or ""
-
-                    # Build PostgreSQL connection string
-                    if password:
-                        connection_string = (
-                            f"postgresql://{user}:{password}@{host}:{port}/{database}"
-                        )
-                    else:
-                        connection_string = (
-                            f"postgresql://{user}@{host}:{port}/{database}"
-                        )
-
-                    # Create SQLDataSource
-                    sql_config = SQLConfig(
-                        connection_string=connection_string,
-                        query=query,
-                        pagination=True,
-                        page_size=1000,
-                    )
-                    sql_source = SQLDataSource(config=sql_config)
-                    registry.register(sql_source, resource_name=resource_name)
+                    registry.register(in_memory_source, resource_name=resource_name)
 
                     logger.info(
-                        f"Created SQLDataSource for table '{effective_schema}.{table_name}' "
-                        f"mapped to resource '{resource_name}'"
+                        f"Created data source for table '{effective_schema}.{table_name}' "
+                        f"mapped to resource '{resource_name}' ({len(data)} rows)"
                     )
                 except Exception as e:
                     logger.error(

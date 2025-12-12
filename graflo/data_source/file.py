@@ -131,3 +131,20 @@ class TableFileDataSource(FileDataSource):
         """Initialize the table file data source."""
         super().__post_init__()
         self.file_type = ChunkerType.TABLE.value
+
+
+@dataclasses.dataclass
+class ParquetFileDataSource(FileDataSource):
+    """Data source for Parquet files.
+
+    Parquet files are columnar storage format files that are read using pandas.
+    Each row becomes a dictionary with column names as keys.
+
+    Attributes:
+        path: Path to the Parquet file
+    """
+
+    def __post_init__(self):
+        """Initialize the Parquet file data source."""
+        super().__post_init__()
+        self.file_type = ChunkerType.PARQUET.value

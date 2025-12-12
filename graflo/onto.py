@@ -65,7 +65,35 @@ class BaseEnum(StrEnum, metaclass=MetaEnum):
     membership testing through the MetaEnum metaclass.
     """
 
-    pass
+    def __str__(self) -> str:
+        """Return the enum value as string for proper serialization."""
+        return self.value
+
+    def __repr__(self) -> str:
+        """Return the enum value as string for proper serialization."""
+        return self.value
+
+
+# Register custom YAML representer for BaseEnum to serialize as string values
+def _register_yaml_representer():
+    """Register YAML representer for BaseEnum and all its subclasses to serialize as string values."""
+    try:
+        import yaml
+
+        def base_enum_representer(dumper, data):
+            """Custom YAML representer for BaseEnum - serializes as string value."""
+            return dumper.represent_scalar("tag:yaml.org,2002:str", str(data.value))
+
+        # Register for BaseEnum and use multi_representer for all subclasses
+        yaml.add_representer(BaseEnum, base_enum_representer)
+        yaml.add_multi_representer(BaseEnum, base_enum_representer)
+    except ImportError:
+        # yaml not available, skip registration
+        pass
+
+
+# Register the representer at module import time (after BaseEnum is defined)
+_register_yaml_representer()
 
 
 class DBFlavor(BaseEnum):
@@ -136,9 +164,103 @@ class BaseDataclass(JSONWizard, JSONWizard.Meta, YAMLWizard):
         key_transform_with_dump: Key transformation style for serialization
     """
 
+    class _(JSONWizard.Meta):
+        """Meta configuration for serialization.
+
+        Set skip_defaults=True here to exclude fields with default values
+        by default when serializing. Can still be overridden per-call.
+        """
+
+        skip_defaults = True
+
     marshal_date_time_as = DateTimeTo.ISO_FORMAT
     key_transform_with_dump = "SNAKE"
-    # skip_defaults = True
+
+    def to_dict(self, skip_defaults: bool | None = None, **kwargs):
+        """Convert instance to dictionary with enums serialized as strings.
+
+        This method overrides the default to_dict to ensure that all BaseEnum
+        instances are automatically converted to their string values during
+        serialization, making YAML/JSON output cleaner and more portable.
+
+        Args:
+            skip_defaults: If True, fields with default values are excluded.
+                          If None, uses the Meta class skip_defaults setting.
+            **kwargs: Additional arguments passed to parent to_dict method
+
+        Returns:
+            dict: Dictionary representation with enums as strings
+        """
+        result = super().to_dict(skip_defaults=skip_defaults, **kwargs)
+        return self._convert_enums_to_strings(result)
+
+    def to_yaml(self, skip_defaults: bool | None = None, **kwargs) -> str:
+        """Convert instance to YAML string with enums serialized as strings.
+
+        Args:
+            skip_defaults: If True, fields with default values are excluded.
+                          If None, uses the Meta class skip_defaults setting.
+            **kwargs: Additional arguments passed to yaml.safe_dump
+
+        Returns:
+            str: YAML string representation with enums as strings
+        """
+        # Convert to dict first (with enum conversion), then to YAML
+        data = self.to_dict(skip_defaults=skip_defaults)
+        try:
+            import yaml
+
+            return yaml.safe_dump(data, **kwargs)
+        except ImportError:
+            # Fallback to parent method if yaml not available
+            return super().to_yaml(skip_defaults=skip_defaults, **kwargs)
+
+    def to_yaml_file(
+        self, file_path: str, skip_defaults: bool | None = None, **kwargs
+    ) -> None:
+        """Write instance to YAML file with enums serialized as strings.
+
+        Args:
+            file_path: Path to the YAML file to write
+            skip_defaults: If True, fields with default values are excluded.
+                          If None, uses the Meta class skip_defaults setting.
+            **kwargs: Additional arguments passed to yaml.safe_dump
+        """
+        # Convert to dict first (with enum conversion), then write to file
+        data = self.to_dict(skip_defaults=skip_defaults)
+        try:
+            import yaml
+
+            with open(file_path, "w") as f:
+                yaml.safe_dump(data, f, **kwargs)
+        except ImportError:
+            # Fallback to parent method if yaml not available
+            super().to_yaml_file(file_path, skip_defaults=skip_defaults, **kwargs)
+
+    @staticmethod
+    def _convert_enums_to_strings(obj):
+        """Recursively convert BaseEnum instances to their string values.
+
+        Args:
+            obj: Object to convert (dict, list, enum, or other)
+
+        Returns:
+            Object with BaseEnum instances converted to strings
+        """
+        if isinstance(obj, BaseEnum):
+            return obj.value
+        elif isinstance(obj, dict):
+            return {
+                k: BaseDataclass._convert_enums_to_strings(v) for k, v in obj.items()
+            }
+        elif isinstance(obj, list):
+            return [BaseDataclass._convert_enums_to_strings(item) for item in obj]
+        elif isinstance(obj, tuple):
+            return tuple(BaseDataclass._convert_enums_to_strings(item) for item in obj)
+        elif isinstance(obj, set):
+            return {BaseDataclass._convert_enums_to_strings(item) for item in obj}
+        else:
+            return obj
 
     def update(self, other):
         """Update this instance with values from another instance.
