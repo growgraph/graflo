@@ -865,10 +865,13 @@ class DescendActor(Actor):
         for idoc, (key, sub_doc) in enumerate(doc_expanded):
             logger.debug(f"Processing item {idoc + 1}/{len(doc_expanded)}")
             if isinstance(sub_doc, dict):
-                nargs: tuple = tuple()
-                kwargs["doc"] = sub_doc
+                nargs: tuple[Any, ...] = tuple()
+                # Create new dict to avoid mutating original kwargs
+                child_kwargs = {**kwargs, "doc": sub_doc}
             else:
                 nargs = (sub_doc,)
+                # Use original kwargs when passing non-dict as positional arg
+                child_kwargs = kwargs
 
             # Extend location index for nested processing
             extra_step = (idoc,) if key is None else (key, idoc)
@@ -880,7 +883,7 @@ class DescendActor(Actor):
                     ctx,
                     lindex.extend(extra_step),
                     *nargs,
-                    **kwargs,
+                    **child_kwargs,
                 )
         return ctx
 
