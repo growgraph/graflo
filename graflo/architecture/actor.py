@@ -236,6 +236,55 @@ class VertexActor(Actor):
         """
         self.vertex_config: VertexConfig = kwargs.pop("vertex_config")
 
+    def _filter_and_aggregate_vertex_docs(
+        self, docs: list[dict], doc: dict
+    ) -> list[dict]:
+        """Filter and aggregate vertex documents based on vertex filters.
+
+        Args:
+            docs: List of vertex documents to filter
+            doc: Original document for filter context
+
+        Returns:
+            list[dict]: Filtered list of vertex documents
+        """
+        filters = self.vertex_config.filters(self.name)
+        return [_doc for _doc in docs if all(cfilter(doc) for cfilter in filters)]
+
+    def _extract_vertex_doc_from_transformed_item(
+        self, item: dict, vertex_keys: tuple[str, ...]
+    ) -> dict:
+        """Extract vertex document from a transformed item.
+
+        Args:
+            item: Item dictionary (may be modified by pop operations)
+            vertex_keys: Tuple of vertex field keys
+
+        Returns:
+            dict: Extracted vertex document
+        """
+        _doc: dict = {}
+        # Extract transformed values with special keys
+        n_value_keys = len(
+            [
+                k
+                for k in item
+                if k.startswith(ActorConstants.DRESSING_TRANSFORMED_VALUE_KEY)
+            ]
+        )
+        for j in range(n_value_keys):
+            vkey = self.vertex_config.index(self.name).fields[j]
+            v = item.pop(f"{ActorConstants.DRESSING_TRANSFORMED_VALUE_KEY}#{j}")
+            _doc[vkey] = v
+
+        # Extract remaining vertex keys
+        for vkey in set(vertex_keys) - set(_doc):
+            v = item.pop(vkey, None)
+            if v is not None:
+                _doc[vkey] = v
+
+        return _doc
+
     def _process_transformed_items(
         self, ctx: ActionContext, lindex: LocationIndex, doc: dict, vertex_keys: tuple
     ) -> list[dict]:
@@ -250,36 +299,15 @@ class VertexActor(Actor):
         Returns:
             list[dict]: List of processed documents
         """
-        agg = []
-        filters = self.vertex_config.filters(self.name)
-
-        for item in ctx.buffer_transforms[lindex]:
-            _doc: dict = {}
-            # Extract transformed values with special keys
-            n_value_keys = len(
-                [
-                    k
-                    for k in item
-                    if k.startswith(ActorConstants.DRESSING_TRANSFORMED_VALUE_KEY)
-                ]
-            )
-            for j in range(n_value_keys):
-                vkey = self.vertex_config.index(self.name).fields[j]
-                v = item.pop(f"{ActorConstants.DRESSING_TRANSFORMED_VALUE_KEY}#{j}")
-                _doc[vkey] = v
-
-            # Extract remaining vertex keys
-            for vkey in set(vertex_keys) - set(_doc):
-                v = item.pop(vkey, None)
-                if v is not None:
-                    _doc[vkey] = v
-
-            if all(cfilter(doc) for cfilter in filters):
-                agg.append(_doc)
+        extracted_docs = [
+            self._extract_vertex_doc_from_transformed_item(item, vertex_keys)
+            for item in ctx.buffer_transforms[lindex]
+        ]
 
         # Clean up empty items
         ctx.buffer_transforms[lindex] = [x for x in ctx.buffer_transforms[lindex] if x]
-        return agg
+
+        return self._filter_and_aggregate_vertex_docs(extracted_docs, doc)
 
     def _process_buffer_vertex(
         self, buffer_vertex: list[dict], doc: dict, vertex_keys: tuple
@@ -294,14 +322,10 @@ class VertexActor(Actor):
         Returns:
             list[dict]: List of processed documents
         """
-        agg = []
-        filters = self.vertex_config.filters(self.name)
-
-        for item in buffer_vertex:
-            _doc = {k: item[k] for k in vertex_keys if k in item}
-            if all(cfilter(doc) for cfilter in filters):
-                agg.append(_doc)
-        return agg
+        extracted_docs = [
+            {k: item[k] for k in vertex_keys if k in item} for item in buffer_vertex
+        ]
+        return self._filter_and_aggregate_vertex_docs(extracted_docs, doc)
 
     def __call__(self, ctx: ActionContext, lindex: LocationIndex, *nargs, **kwargs):
         """Process vertex data.
