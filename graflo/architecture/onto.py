@@ -358,6 +358,7 @@ class ActionContext(BaseDataclass):
         acc_global: Global accumulation of graph entities
         buffer_vertex: Buffer for vertex data
         buffer_transforms: Buffer for transforms data
+        target_vertices: Set of target vertex names indicating user intention
     """
 
     acc_vertex: defaultdict[str, defaultdict[LocationIndex, list]] = dataclasses.field(
@@ -372,3 +373,4 @@ class ActionContext(BaseDataclass):
     buffer_transforms: defaultdict[LocationIndex, list[dict]] = dataclasses.field(
         default_factory=lambda: defaultdict(list)
     )
+    target_vertices: set[str] = dataclasses.field(default_factory=set)

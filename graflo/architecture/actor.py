@@ -307,13 +307,14 @@ class VertexActor(Actor):
             field.name if hasattr(field, "name") else str(field)
             for field in vertex_keys_list
         )
+
+        agg = []
+        # if self.name not in ctx.target_vertices:
         buffer_vertex = ctx.buffer_vertex.pop(self.name, [])
+        agg.extend(self._process_buffer_vertex(buffer_vertex, doc, vertex_keys))
 
         # Process transformed items
-        agg = self._process_transformed_items(ctx, lindex, doc, vertex_keys)
-
-        # Process buffer vertex items
-        agg.extend(self._process_buffer_vertex(buffer_vertex, doc, vertex_keys))
+        agg.extend(self._process_transformed_items(ctx, lindex, doc, vertex_keys))
 
         # Add passthrough items from doc
         remaining_keys = set(vertex_keys) - reduce(
@@ -667,6 +668,29 @@ class DescendActor(Actor):
         for an in self.descendants:
             an.init_transforms(**kwargs)
 
+    def _collect_transform_actors_with_target(
+        self, actor_wrappers: list[ActorWrapper]
+    ) -> list[TransformActor]:
+        """Recursively collect all TransformActors with target_vertex from actor wrappers.
+
+        Args:
+            actor_wrappers: List of ActorWrapper instances to search
+
+        Returns:
+            list[TransformActor]: List of TransformActors with target_vertex specified
+        """
+        result = []
+        for anw in actor_wrappers:
+            # Check current level TransformActors
+            if isinstance(anw.actor, TransformActor) and anw.actor.vertex is not None:
+                result.append(anw.actor)
+            # Recursively check nested DescendActors (they're already initialized at this point)
+            elif isinstance(anw.actor, DescendActor):
+                result.extend(
+                    self._collect_transform_actors_with_target(anw.actor.descendants)
+                )
+        return result
+
     def finish_init(self, **kwargs):
         """Complete initialization of the descend actor and its descendants.
 
@@ -679,6 +703,13 @@ class DescendActor(Actor):
 
         for an in self.descendants:
             an.finish_init(**kwargs)
+
+        # Count TransformActors with target_vertex at current level and below
+        # Use the helper method which safely traverses the tree after initialization
+        transform_actors_with_target = self._collect_transform_actors_with_target(
+            self.descendants
+        )
+        transform_targets = [t.vertex for t in transform_actors_with_target]
 
         available_fields = set()
         for anw in self.descendants:
@@ -699,10 +730,13 @@ class DescendActor(Actor):
             # Use field_names property for cleaner set operations
             v_field_names = set(v.field_names)
             intersection = available_fields & v_field_names
+            # If there are 2+ TransformActors with target_vertex, don't auto-create VertexActors
+            skip_vertex = len(transform_targets) >= 2
             if intersection and v.name not in present_vertices:
-                new_descendant = ActorWrapper(vertex=v.name)
-                new_descendant.finish_init(**kwargs)
-                self.add_descendant(new_descendant)
+                if not skip_vertex or (v.name in transform_targets and skip_vertex):
+                    new_descendant = ActorWrapper(vertex=v.name)
+                    new_descendant.finish_init(**kwargs)
+                    self.add_descendant(new_descendant)
 
         logger.debug(
             f"""type, priority: {
@@ -863,7 +897,7 @@ class ActorWrapper:
         elif self._try_init_edge(**kwargs.copy()):
             pass
         else:
-            raise ValueError(f"Not able to init ActionNodeWrapper with {kwargs}")
+            raise ValueError(f"Not able to init ActorWrapper with {kwargs}")
 
     def init_transforms(self, **kwargs):
         """Initialize transforms for the wrapped actor.
@@ -1020,6 +1054,9 @@ class ActorWrapper:
         Returns:
             Updated action context
         """
+        # Set target_vertices in context if not already set (preserves user intention)
+        if not ctx.target_vertices and self.target_vertices:
+            ctx.target_vertices = self.target_vertices
         ctx = self.actor(ctx, lindex, *nargs, **kwargs)
         return ctx
 
