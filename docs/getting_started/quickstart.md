@@ -82,7 +82,7 @@ caster.ingest(
 )
 ```
 
-Here `schema` defines the graph and the mapping the sources to vertices and edges (refer to [Schema](concepts/schema) for details on schema and its components).
+Here `schema` defines the graph and the mapping the sources to vertices and edges (refer to [Schema](../concepts/index.md#schema) for details on schema and its components).
 
 The `Patterns` class maps resource names (from `Schema`) to their physical data sources:
 - **FilePattern**: For file-based resources with `regex` for matching filenames and `sub_path` for the directory to search

@@ -2,7 +2,7 @@
 
 graflo is a framework for transforming **tabular** data (CSV) and **hierarchical** data (JSON, XML) into property graphs and ingesting them into graph databases (ArangoDB, Neo4j, TigerGraph).
 
-![Python](https://img.shields.io/badge/python-3.11-blue.svg) 
+![Python](https://img.shields.io/badge/python-3.10-blue.svg) 
 [![PyPI version](https://badge.fury.io/py/graflo.svg)](https://badge.fury.io/py/graflo)
 [![PyPI Downloads](https://static.pepy.tech/badge/graflo)](https://pepy.tech/projects/graflo)
 [![License: BSL](https://img.shields.io/badge/license-BSL--1.1-green)](https://github.com/growgraph/graflo/blob/main/LICENSE)
@@ -27,9 +27,13 @@ graflo works with property graphs, which consist of:
 The Schema defines how your data should be transformed into a graph and contains:
 
 - **Vertex Definitions**: Specify vertex types, their properties, and unique identifiers
+  - Fields can be specified as strings (backward compatible) or typed `Field` objects with types (INT, FLOAT, STRING, DATETIME, BOOL)
+  - Type information enables better validation and database-specific optimizations
 - **Edge Definitions**: Define relationships between vertices and their properties
+  - Weight fields support typed definitions for better type safety
 - **Resource Mapping**: describe how data sources map to vertices and edges
 - **Transforms**: Modify data during the casting process
+- **Automatic Schema Inference**: Generate schemas automatically from PostgreSQL 3NF databases
 
 ### Data Sources
 Data Sources define where data comes from:
@@ -48,11 +52,21 @@ Resources define how data is transformed into a graph (semantic mapping). They w
 ## Key Features
 
 - **Graph Transformation Meta-language**: A powerful declarative language to describe how your data becomes a property graph:
-    - Define vertex and edge structures
+    - Define vertex and edge structures with typed fields
     - Set compound indexes for vertices and edges
     - Use blank vertices for complex relationships
-    - Specify edge constraints and properties
+    - Specify edge constraints and properties with typed weight fields
     - Apply advanced filtering and transformations
+- **Typed Schema Definitions**: Enhanced type support throughout the schema system
+    - Vertex fields support types (INT, FLOAT, STRING, DATETIME, BOOL) for better validation
+    - Edge weight fields can specify types for improved type safety
+    - Backward compatible: fields without types default to None (suitable for databases like ArangoDB)
+- **PostgreSQL Schema Inference**: Automatically generate schemas from PostgreSQL 3NF databases
+    - Introspect PostgreSQL schemas to identify vertex-like and edge-like tables
+    - Automatically map PostgreSQL data types to graflo Field types
+    - Infer vertex configurations from table structures
+    - Infer edge configurations from foreign key relationships
+    - Create Resource mappings from PostgreSQL tables
 - **Parallel Processing**: Efficient processing with multi-threading
 - **Database Integration**: Seamless integration with Neo4j, ArangoDB, TigerGraph, and PostgreSQL (as source)
 - **Advanced Filtering**: Powerful filtering capabilities for data transformation with server-side filtering support

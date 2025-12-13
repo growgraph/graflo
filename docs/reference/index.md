@@ -20,14 +20,19 @@ Core architectural components that define the graflo framework:
 Database connection and management components:
 
 - **[Connection Manager](db/manager.md)**: Database connection lifecycle management
-- **[ArangoDB](db/arango/)**:
+- **[ArangoDB](db/arango/__init__.md)**:
   - [Connection](db/arango/conn.md): ArangoDB-specific connection implementation
   - [Query](db/arango/query.md): AQL query execution and utilities
   - [Utilities](db/arango/util.md): ArangoDB-specific utility functions
-- **[Neo4j](db/neo4j/)**:
+- **[Neo4j](db/neo4j/__init__.md)**:
   - [Connection](db/neo4j/conn.md): Neo4j-specific connection implementation
-- **[TigerGraph](db/tigergraph/)**:
+- **[TigerGraph](db/tigergraph/__init__.md)**:
   - [Connection](db/tigergraph/conn.md): TigerGraph-specific connection implementation with REST++ API and GSQL support
+- **[PostgreSQL](db/postgres/__init__.md)**:
+  - [Connection](db/postgres/conn.md): PostgreSQL connection and schema introspection
+  - [Schema Inference](db/postgres/schema_inference.md): Automatic schema generation from PostgreSQL 3NF databases
+  - [Resource Mapping](db/postgres/resource_mapping.md): Mapping PostgreSQL tables to graflo Resources
+  - [Type Mapping](db/postgres/types.md): PostgreSQL to graflo type conversion
 
 ## Core Components
 

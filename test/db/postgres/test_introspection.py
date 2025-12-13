@@ -498,3 +498,158 @@ def test_edge_table_without_foreign_keys(postgres_conn):
             cursor.execute("DROP TABLE IF EXISTS rel_test_edge CASCADE")
             cursor.execute("DROP TABLE IF EXISTS test_vertex CASCADE")
             postgres_conn.conn.commit()
+
+
+def test_schema_inference_with_pg_catalog_fallback(postgres_conn, load_mock_schema):
+    """Test that schema inference works correctly when using pg_catalog fallback methods.
+
+    This test simulates a scenario where information_schema is unavailable or unreliable,
+    forcing the use of pg_catalog fallback methods for schema introspection.
+    """
+    _ = load_mock_schema  # Ensure schema is loaded
+
+    # Mock the _check_information_schema_reliable method to return False
+    # This forces the use of pg_catalog fallback
+    original_check = postgres_conn._check_information_schema_reliable
+    postgres_conn._check_information_schema_reliable = lambda schema_name: False
+
+    try:
+        # Test that get_tables uses pg_catalog fallback
+        tables = postgres_conn.get_tables("public")
+        table_names = {t["table_name"] for t in tables}
+
+        # Verify all expected tables are found using pg_catalog
+        assert "users" in table_names, "users table should be found via pg_catalog"
+        assert "products" in table_names, (
+            "products table should be found via pg_catalog"
+        )
+        assert "purchases" in table_names, (
+            "purchases table should be found via pg_catalog"
+        )
+        assert "follows" in table_names, "follows table should be found via pg_catalog"
+        assert len(tables) == 4, f"Expected 4 tables, got {len(tables)}"
+
+        # Verify schema name
+        for table in tables:
+            assert table["table_schema"] == "public", (
+                f"Expected schema 'public', got {table['table_schema']}"
+            )
+
+        # Test that columns can be retrieved using pg_catalog fallback
+        users_columns = postgres_conn.get_table_columns("users", "public")
+        column_names = {col["name"] for col in users_columns}
+        assert "id" in column_names, "id column should be found via pg_catalog"
+        assert "name" in column_names, "name column should be found via pg_catalog"
+        assert "email" in column_names, "email column should be found via pg_catalog"
+        assert "created_at" in column_names, (
+            "created_at column should be found via pg_catalog"
+        )
+
+        # Test that primary keys can be retrieved using pg_catalog fallback
+        pk_users = postgres_conn.get_primary_keys("users")
+        assert len(pk_users) == 1, f"Expected 1 primary key, got {len(pk_users)}"
+        assert "id" in pk_users, "id should be the primary key"
+
+        # Test that foreign keys can be retrieved using pg_catalog fallback
+        fk_purchases = postgres_conn.get_foreign_keys("purchases")
+        assert len(fk_purchases) == 2, (
+            f"Expected 2 foreign keys, got {len(fk_purchases)}"
+        )
+        fk_columns = {fk["column"] for fk in fk_purchases}
+        assert "user_id" in fk_columns, "user_id should be a foreign key"
+        assert "product_id" in fk_columns, "product_id should be a foreign key"
+
+        # Test that vertex detection works with pg_catalog fallback
+        vertex_tables = postgres_conn.detect_vertex_tables("public")
+        vertex_table_names = {vt["name"] for vt in vertex_tables}
+        assert "users" in vertex_table_names, "users should be detected as vertex table"
+        assert "products" in vertex_table_names, (
+            "products should be detected as vertex table"
+        )
+        assert len(vertex_tables) == 2, (
+            f"Expected 2 vertex tables, got {len(vertex_tables)}"
+        )
+
+        # Test that edge detection works with pg_catalog fallback
+        edge_tables = postgres_conn.detect_edge_tables("public")
+        edge_table_names = {et["name"] for et in edge_tables}
+        assert "purchases" in edge_table_names, (
+            "purchases should be detected as edge table"
+        )
+        assert "follows" in edge_table_names, "follows should be detected as edge table"
+        assert len(edge_tables) == 2, f"Expected 2 edge tables, got {len(edge_tables)}"
+
+        # Test that full schema introspection works with pg_catalog fallback
+        schema_info = postgres_conn.introspect_schema("public")
+
+        # Verify structure
+        assert "vertex_tables" in schema_info, "schema_info should have vertex_tables"
+        assert "edge_tables" in schema_info, "schema_info should have edge_tables"
+        assert "schema_name" in schema_info, "schema_info should have schema_name"
+        assert schema_info["schema_name"] == "public", (
+            f"Expected schema_name 'public', got {schema_info['schema_name']}"
+        )
+
+        # Verify vertex tables
+        vertex_table_names = {vt["name"] for vt in schema_info["vertex_tables"]}
+        assert "users" in vertex_table_names, "users should be in vertex_tables"
+        assert "products" in vertex_table_names, "products should be in vertex_tables"
+        assert len(schema_info["vertex_tables"]) == 2, (
+            f"Expected 2 vertex tables, got {len(schema_info['vertex_tables'])}"
+        )
+
+        # Verify edge tables
+        edge_table_names = {et["name"] for et in schema_info["edge_tables"]}
+        assert "purchases" in edge_table_names, "purchases should be in edge_tables"
+        assert "follows" in edge_table_names, "follows should be in edge_tables"
+        assert len(schema_info["edge_tables"]) == 2, (
+            f"Expected 2 edge tables, got {len(schema_info['edge_tables'])}"
+        )
+
+        # Verify that vertex tables have proper structure
+        users_table = next(
+            vt for vt in schema_info["vertex_tables"] if vt["name"] == "users"
+        )
+        assert "id" in users_table["primary_key"], "users should have id as primary key"
+        assert len(users_table["foreign_keys"]) == 0, (
+            "users should have no foreign keys"
+        )
+        assert len(users_table["columns"]) > 0, "users should have columns"
+
+        # Verify that edge tables have proper structure
+        purchases_table = next(
+            et for et in schema_info["edge_tables"] if et["name"] == "purchases"
+        )
+        # Source and target can be in either order, but should reference users and products
+        assert purchases_table["source_table"] in ["users", "products"], (
+            f"Expected purchases.source_table to be 'users' or 'products', "
+            f"got {purchases_table['source_table']}"
+        )
+        assert purchases_table["target_table"] in ["users", "products"], (
+            f"Expected purchases.target_table to be 'users' or 'products', "
+            f"got {purchases_table['target_table']}"
+        )
+        # They should be different
+        assert purchases_table["source_table"] != purchases_table["target_table"], (
+            "purchases should connect different tables"
+        )
+        assert len(purchases_table["foreign_keys"]) == 2, (
+            f"Expected 2 foreign keys, got {len(purchases_table['foreign_keys'])}"
+        )
+
+        # Verify that columns have is_pk flag set correctly
+        for vt in schema_info["vertex_tables"]:
+            for col in vt["columns"]:
+                assert "is_pk" in col, "columns should have is_pk flag"
+                if col["name"] in vt["primary_key"]:
+                    assert col["is_pk"] is True, (
+                        f"{col['name']} should be marked as primary key"
+                    )
+                else:
+                    assert col["is_pk"] is False, (
+                        f"{col['name']} should not be marked as primary key"
+                    )
+
+    finally:
+        # Restore original method
+        postgres_conn._check_information_schema_reliable = original_check

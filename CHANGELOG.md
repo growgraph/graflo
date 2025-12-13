@@ -77,6 +77,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `sqlalchemy>=2.0.0`: For SQL data sources
   - `urllib3>=2.0.0`: For HTTP retry functionality
 
+- **PostgreSQL Schema Inference**: Automatic schema generation from PostgreSQL 3NF databases
+  - `PostgresConnection`: PostgreSQL connection and schema introspection implementation
+  - `PostgresSchemaInferencer`: Infers complete graflo Schema from PostgreSQL database schemas
+    - Automatically identifies vertex-like and edge-like tables
+    - Infers vertex configurations with typed fields from table columns
+    - Infers edge configurations from foreign key relationships
+    - Maps PostgreSQL data types to graflo Field types
+  - `PostgresResourceMapper`: Maps PostgreSQL tables to graflo Resources
+  - `PostgresTypeMapper`: Converts PostgreSQL types (INTEGER, VARCHAR, TIMESTAMP, etc.) to graflo Field types
+  - `infer_schema_from_postgres()`: Convenience function for one-step schema inference
+  - `create_resources_from_postgres()`: Creates Resource mappings from PostgreSQL tables
+  - Full support for PostgreSQL schema introspection including:
+    - Table and column metadata extraction
+    - Foreign key relationship detection
+    - Primary key identification
+    - Data type mapping
+
+- **Typed Fields for Schema Definitions**: Enhanced field type support throughout the schema system
+  - **Vertex Fields**: `Vertex.fields` now supports typed `Field` objects in addition to strings
+    - Fields can be specified as strings (backward compatible), `Field` objects, or dicts
+    - Type information preserved for databases that require it (e.g., TigerGraph)
+    - Automatic normalization to `Field` objects internally while maintaining string-like behavior
+  - **Edge Weight Fields**: `WeightConfig.direct` now supports typed `Field` objects
+    - Weight fields can specify types (e.g., `Field(name="date", type="DATETIME")`)
+    - Supports strings, `Field` objects, or dicts for flexible configuration
+    - Type information enables better validation and database-specific optimizations
+  - **Field Type System**: Comprehensive type support with `FieldType` enum
+    - Supported types: `INT`, `FLOAT`, `BOOL`, `STRING`, `DATETIME`
+    - Type validation and normalization from strings to enum values
+    - Backward compatible: fields without types default to `None` (suitable for databases like ArangoDB)
+
 ### Changed
 - **Database Configuration Architecture Simplification**: Unified and simplified database configuration
   - **Renamed `BackendType` to `DBType`**: More accurate naming reflecting unified database configuration
@@ -106,6 +137,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Resources: Define semantic transformations (how data becomes a graph)
   - DataSources: Define data retrieval (where data comes from)
   - Many DataSources can map to the same Resource
+
+- **Package Structure Refactoring**: Renamed `backend` package to `db` for clarity
+  - `graflo.backend` → `graflo.db` (all database-related code)
+  - `graflo.backend.connection` → `graflo.db.connection` (connection configuration)
+  - Updated all imports and references throughout codebase
+  - Maintains backward compatibility through import aliases where applicable
 
 - **Backend Configuration Refactoring**: Complete refactor of database connection configuration system
   - **Pydantic-based Configuration**: Replaced dataclass-based configs with Pydantic `BaseSettings`

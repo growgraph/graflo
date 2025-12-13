@@ -4,7 +4,7 @@ A framework for transforming **tabular** (CSV, SQL) and **hierarchical** data (J
 
 > **⚠️ Package Renamed**: This package was formerly known as `graphcast`.
 
-![Python](https://img.shields.io/badge/python-3.11-blue.svg) 
+![Python](https://img.shields.io/badge/python-3.10-blue.svg) 
 [![PyPI version](https://badge.fury.io/py/graflo.svg)](https://badge.fury.io/py/graflo)
 [![PyPI Downloads](https://static.pepy.tech/badge/graflo)](https://pepy.tech/projects/graflo)
 [![License: BSL](https://img.shields.io/badge/license-BSL--1.1-green)](https://github.com/growgraph/graflo/blob/main/LICENSE)
@@ -24,9 +24,13 @@ graflo works with property graphs, which consist of:
 The Schema defines how your data should be transformed into a graph and contains:
 
 - **Vertex Definitions**: Specify vertex types, their properties, and unique identifiers
+  - Fields can be specified as strings (backward compatible) or typed `Field` objects with types (INT, FLOAT, STRING, DATETIME, BOOL)
+  - Type information enables better validation and database-specific optimizations
 - **Edge Definitions**: Define relationships between vertices and their properties
+  - Weight fields support typed definitions for better type safety
 - **Resource Mapping**: describe how data sources map to vertices and edges
 - **Transforms**: Modify data during the casting process
+- **Automatic Schema Inference**: Generate schemas automatically from PostgreSQL 3NF databases
 
 ### Resources
 Resources are your data sources that can be:
@@ -37,13 +41,23 @@ Resources are your data sources that can be:
 ## Features
 
 - **Graph Transformation Meta-language**: A powerful declarative language to describe how your data becomes a property graph:
-    - Define vertex and edge structures
+    - Define vertex and edge structures with typed fields
     - Set compound indexes for vertices and edges
     - Use blank vertices for complex relationships
-    - Specify edge constraints and properties
+    - Specify edge constraints and properties with typed weight fields
     - Apply advanced filtering and transformations
+- **Typed Schema Definitions**: Enhanced type support throughout the schema system
+    - Vertex fields support types (INT, FLOAT, STRING, DATETIME, BOOL) for better validation
+    - Edge weight fields can specify types for improved type safety
+    - Backward compatible: fields without types default to None (suitable for databases like ArangoDB)
+- **PostgreSQL Schema Inference**: Automatically generate schemas from PostgreSQL 3NF databases
+    - Introspect PostgreSQL schemas to identify vertex-like and edge-like tables
+    - Automatically map PostgreSQL data types to graflo Field types
+    - Infer vertex configurations from table structures
+    - Infer edge configurations from foreign key relationships
+    - Create Resource mappings from PostgreSQL tables
 - **Parallel processing**: Use as many cores as you have
-- **Database support**: Ingest into ArangoDB, Neo4j, and **TigerGraph** using the same API (database agnostic). Source data from PostgreSQL and other SQL databases. Automatically infer graph schemas from PostgreSQL 3NF databases.
+- **Database support**: Ingest into ArangoDB, Neo4j, and **TigerGraph** using the same API (database agnostic). Source data from PostgreSQL and other SQL databases.
 - **Server-side filtering**: Efficient querying with server-side filtering support (TigerGraph REST++ API)
 
 ## Documentation
@@ -115,6 +129,34 @@ caster.ingest(
 )
 ```
 
+### PostgreSQL Schema Inference
+
+```python
+from graflo.db.postgres import PostgresConnection
+from graflo.db.postgres.heuristics import infer_schema_from_postgres
+from graflo.db.connection.onto import PostgresConfig
+from graflo import Caster
+from graflo.onto import DBFlavor
+
+# Connect to PostgreSQL
+postgres_config = PostgresConfig.from_docker_env()  # or PostgresConfig.from_env()
+postgres_conn = PostgresConnection(postgres_config)
+
+# Infer schema from PostgreSQL 3NF database
+schema = infer_schema_from_postgres(
+    postgres_conn,
+    schema_name="public",  # PostgreSQL schema name
+    db_flavor=DBFlavor.ARANGO  # Target graph database flavor
+)
+
+# Close PostgreSQL connection
+postgres_conn.close()
+
+# Use the inferred schema with Caster
+caster = Caster(schema)
+# ... continue with ingestion
+```
+
 ## Development
 
 To install requirements
@@ -153,8 +195,9 @@ pytest test
 
 ## Requirements
 
-- Python 3.11+
+- Python 3.10+
 - python-arango
+- sqlalchemy>=2.0.0 (for PostgreSQL and SQL data sources)
 
 ## Contributing
 
