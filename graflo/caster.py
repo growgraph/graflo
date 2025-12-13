@@ -180,9 +180,12 @@ class Caster:
         # Use provided resource_name or fall back to data_source's resource_name
         actual_resource_name = resource_name or data_source.resource_name
 
-        for batch in data_source.iter_batches(
-            batch_size=self.batch_size, limit=self.max_items
-        ):
+        # Use pattern-specific limit if available, otherwise use global max_items
+        limit = getattr(data_source, "_pattern_limit", None)
+        if limit is None:
+            limit = self.max_items
+
+        for batch in data_source.iter_batches(batch_size=self.batch_size, limit=limit):
             self.process_batch(
                 batch, resource_name=actual_resource_name, conn_conf=conn_conf
             )
@@ -572,6 +575,11 @@ class Caster:
                     file_source = DataSourceFactory.create_file_data_source(
                         path=file_path
                     )
+                    # Store pattern-specific limit if specified
+                    if pattern.limit_rows is not None:
+                        file_source._pattern_limit = pattern.limit_rows
+                    # Note: Date filtering for files would require post-processing
+                    # and is not implemented here (would be inefficient for large files)
                     registry.register(file_source, resource_name=resource_name)
 
             elif resource_type == ResourceType.SQL_TABLE:
@@ -605,7 +613,17 @@ class Caster:
 
                 # Use PostgresConnection directly to read data, similar to ArangoConnection pattern
                 try:
+                    # Build base query
                     query = f'SELECT * FROM "{effective_schema}"."{table_name}"'
+
+                    # Add WHERE clause if date filtering is specified
+                    where_clause = pattern.build_where_clause()
+                    if where_clause:
+                        query += f" WHERE {where_clause}"
+
+                    # Add LIMIT if specified
+                    if pattern.limit_rows is not None:
+                        query += f" LIMIT {pattern.limit_rows}"
 
                     # Use PostgresConnection to read data directly
                     with PostgresConnection(postgres_config) as pg_conn:
