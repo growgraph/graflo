@@ -33,7 +33,7 @@ def postgres_conn(conn_conf):
 def load_mock_schema(postgres_conn):
     """Load the mock schema SQL file into the database."""
     # Get the path to mock_schema.sql
-    docker_dir = Path(__file__).parent.parent.parent.parent / "docker" / "postgres"
+    docker_dir = Path(__file__).parent.parent.parent / "data" / "postgres"
     schema_file = docker_dir / "mock_schema.sql"
 
     if not schema_file.exists():

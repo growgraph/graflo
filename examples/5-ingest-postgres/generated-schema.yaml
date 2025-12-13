@@ -1,0 +1,97 @@
+general:
+    name: public
+vertex_config:
+    vertices:
+    -   name: products
+        fields:
+        -   name: id
+            type: INT
+        -   name: name
+            type: STRING
+        -   name: price
+            type: FLOAT
+        -   name: description
+            type: STRING
+        -   name: created_at
+            type: DATETIME
+        indexes:
+        -   fields:
+            -   id
+        dbname: products
+    -   name: users
+        fields:
+        -   name: id
+            type: INT
+        -   name: name
+            type: STRING
+        -   name: email
+            type: STRING
+        -   name: created_at
+            type: DATETIME
+        indexes:
+        -   fields:
+            -   id
+        dbname: users
+    db_flavor: neo4j
+edge_config:
+    edges:
+    -   source: users
+        target: users
+        indexes:
+        -   fields:
+            -   id
+        -   fields:
+            -   follower_id
+            unique: false
+        -   fields:
+            -   followed_id
+            unique: false
+        weights:
+            direct:
+            -   name: created_at
+        graph_name: users_users_graph
+        collection_name: users_users_edges
+        db_flavor: neo4j
+    -   source: users
+        target: products
+        indexes:
+        -   fields:
+            -   id
+        -   fields:
+            -   user_id
+            unique: false
+        -   fields:
+            -   product_id
+            unique: false
+        weights:
+            direct:
+            -   name: purchase_date
+            -   name: quantity
+            -   name: total_amount
+        graph_name: users_products_graph
+        collection_name: users_products_edges
+        db_flavor: neo4j
+resources:
+-   resource_name: products
+    apply:
+    -   vertex: products
+-   resource_name: users
+    apply:
+    -   vertex: users
+-   resource_name: follows
+    apply:
+    -   target_vertex: users
+        map:
+            follower_id: id
+    -   target_vertex: users
+        map:
+            followed_id: id
+-   resource_name: purchases
+    apply:
+    -   target_vertex: users
+        map:
+            user_id: id
+    -   target_vertex: products
+        map:
+            product_id: id
+transforms: {}

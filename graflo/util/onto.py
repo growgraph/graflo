@@ -17,7 +17,7 @@ import pathlib
 import re
 from typing import TYPE_CHECKING, Any, Union
 
-from graflo.onto import BaseDataclass
+from graflo.onto import BaseDataclass, BaseEnum
 
 if TYPE_CHECKING:
     from graflo.db.connection.onto import PostgresConfig
@@ -27,6 +27,22 @@ else:
         from graflo.db.connection.onto import PostgresConfig
     except ImportError:
         PostgresConfig = Any  # type: ignore
+
+
+class ResourceType(BaseEnum):
+    """Resource types for data sources.
+
+    Resource types distinguish between different data source categories.
+    File type detection (CSV, JSON, JSONL, Parquet, etc.) is handled
+    automatically by the loader based on file extensions.
+
+    Attributes:
+        FILE: File-based data source (any format: CSV, JSON, JSONL, Parquet, etc.)
+        SQL_TABLE: SQL database table (e.g., PostgreSQL table)
+    """
+
+    FILE = "file"
+    SQL_TABLE = "sql_table"
 
 
 @dataclasses.dataclass
@@ -55,11 +71,11 @@ class ResourcePattern(BaseDataclass, abc.ABC):
         pass
 
     @abc.abstractmethod
-    def get_resource_type(self) -> str:
+    def get_resource_type(self) -> ResourceType:
         """Get the type of resource this pattern matches.
 
         Returns:
-            str: Resource type ("file" or "table")
+            ResourceType: Resource type enum value
         """
         pass
 
@@ -71,6 +87,11 @@ class FilePattern(ResourcePattern):
     Attributes:
         regex: Regular expression pattern for matching filenames
         sub_path: Path to search for matching files (default: "./")
+        limit_rows: Limit to first N rows/docs (None for no limit)
+        date_field: Name of the date field to filter on (for date-based filtering)
+        date_filter: SQL-style date filter condition (e.g., "> '2020-10-10'")
+        date_range_start: Start date for range filtering (e.g., "2015-11-11")
+        date_range_days: Number of days after start date (used with date_range_start)
     """
 
     class _(BaseDataclass.Meta):
@@ -80,6 +101,11 @@ class FilePattern(ResourcePattern):
     sub_path: None | pathlib.Path = dataclasses.field(
         default_factory=lambda: pathlib.Path("./")
     )
+    limit_rows: int | None = None
+    date_field: str | None = None
+    date_filter: str | None = None
+    date_range_start: str | None = None
+    date_range_days: int | None = None
 
     def __post_init__(self):
         """Initialize and validate the file pattern.
@@ -89,6 +115,13 @@ class FilePattern(ResourcePattern):
         if not isinstance(self.sub_path, pathlib.Path):
             self.sub_path = pathlib.Path(self.sub_path)
         assert self.sub_path is not None
+        # Validate date filtering parameters (note: date filtering for files is not yet implemented)
+        if (self.date_filter or self.date_range_start) and not self.date_field:
+            raise ValueError(
+                "date_field is required when using date_filter or date_range_start"
+            )
+        if self.date_range_days is not None and not self.date_range_start:
+            raise ValueError("date_range_start is required when using date_range_days")
 
     def matches(self, filename: str) -> bool:
         """Check if pattern matches a filename.
@@ -103,9 +136,14 @@ class FilePattern(ResourcePattern):
             return False
         return bool(re.match(self.regex, filename))
 
-    def get_resource_type(self) -> str:
-        """Get resource type."""
-        return "file"
+    def get_resource_type(self) -> ResourceType:
+        """Get resource type.
+
+        FilePattern always represents a FILE resource type.
+        The specific file format (CSV, JSON, JSONL, Parquet, etc.) is
+        automatically detected by the loader based on file extensions.
+        """
+        return ResourceType.FILE
 
 
 @dataclasses.dataclass
@@ -116,6 +154,11 @@ class TablePattern(ResourcePattern):
         table_name: Exact table name or regex pattern
         schema_name: Schema name (optional, defaults to public)
         database: Database name (optional)
+        limit_rows: Limit to first N rows/docs (None for no limit)
+        date_field: Name of the date field to filter on (for date-based filtering)
+        date_filter: SQL-style date filter condition (e.g., "> '2020-10-10'")
+        date_range_start: Start date for range filtering (e.g., "2015-11-11")
+        date_range_days: Number of days after start date (used with date_range_start)
     """
 
     class _(BaseDataclass.Meta):
@@ -124,11 +167,23 @@ class TablePattern(ResourcePattern):
     table_name: str = ""
     schema_name: str | None = None
     database: str | None = None
+    limit_rows: int | None = None
+    date_field: str | None = None
+    date_filter: str | None = None
+    date_range_start: str | None = None
+    date_range_days: int | None = None
 
     def __post_init__(self):
         """Validate table pattern after initialization."""
         if not self.table_name:
             raise ValueError("table_name is required for TablePattern")
+        # Validate date filtering parameters
+        if (self.date_filter or self.date_range_start) and not self.date_field:
+            raise ValueError(
+                "date_field is required when using date_filter or date_range_start"
+            )
+        if self.date_range_days is not None and not self.date_range_start:
+            raise ValueError("date_range_start is required when using date_range_days")
 
     def matches(self, table_identifier: str) -> bool:
         """Check if pattern matches a table name.
@@ -162,9 +217,48 @@ class TablePattern(ResourcePattern):
 
         return False
 
-    def get_resource_type(self) -> str:
+    def get_resource_type(self) -> ResourceType:
         """Get resource type."""
-        return "table"
+        return ResourceType.SQL_TABLE
+
+    def build_where_clause(self) -> str:
+        """Build SQL WHERE clause from date filtering parameters.
+
+        Returns:
+            WHERE clause string (without the WHERE keyword) or empty string if no filters
+        """
+        conditions = []
+
+        if self.date_field:
+            if self.date_range_start and self.date_range_days is not None:
+                # Range filtering: dt >= start_date AND dt < start_date + interval
+                # Example: Ingest for k days after 2015-11-11
+                conditions.append(
+                    f"\"{self.date_field}\" >= '{self.date_range_start}'::date"
+                )
+                conditions.append(
+                    f"\"{self.date_field}\" < '{self.date_range_start}'::date + INTERVAL '{self.date_range_days} days'"
+                )
+            elif self.date_filter:
+                # Direct filter: dt > 2020-10-10 or dt > '2020-10-10'
+                # The date_filter should include the operator and value
+                # If value doesn't have quotes, add them
+                filter_parts = self.date_filter.strip().split(None, 1)
+                if len(filter_parts) == 2:
+                    operator, value = filter_parts
+                    # Add quotes if not already present and value looks like a date
+                    if not (value.startswith("'") and value.endswith("'")):
+                        # Check if it's a date-like string (YYYY-MM-DD format)
+                        if len(value) == 10 and value.count("-") == 2:
+                            value = f"'{value}'"
+                    conditions.append(f'"{self.date_field}" {operator} {value}')
+                else:
+                    # If format is unexpected, use as-is
+                    conditions.append(f'"{self.date_field}" {self.date_filter}')
+
+        if conditions:
+            return " AND ".join(conditions)
+        return ""
 
 
 @dataclasses.dataclass
@@ -304,14 +398,14 @@ class Patterns(BaseDataclass):
             return self.postgres_configs.get((config_key, schema_name))
         return None
 
-    def get_resource_type(self, resource_name: str) -> str | None:
+    def get_resource_type(self, resource_name: str) -> ResourceType | None:
         """Get the resource type for a resource name.
 
         Args:
             resource_name: Name of the resource
 
         Returns:
-            "file", "table", or None if not found
+            ResourceType enum value or None if not found
         """
         if resource_name in self.patterns:
             return self.patterns[resource_name].get_resource_type()

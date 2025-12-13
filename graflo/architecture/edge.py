@@ -25,7 +25,7 @@ from graflo.architecture.onto import (
     Index,
     Weight,
 )
-from graflo.architecture.vertex import VertexConfig
+from graflo.architecture.vertex import Field, VertexConfig, _FieldsType
 from graflo.onto import DBFlavor
 
 
@@ -38,11 +38,115 @@ class WeightConfig(BaseDataclass):
 
     Attributes:
         vertices: List of weight configurations
-        direct: List of direct field mappings
+        direct: List of direct field mappings. Can be specified as strings, Field objects, or dicts.
+               Will be normalized to Field objects internally in __post_init__.
+               After initialization, this is always list[Field] (type checker sees this).
+
+    Examples:
+        >>> # Backward compatible: list of strings
+        >>> wc1 = WeightConfig(direct=["date", "weight"])
+
+        >>> # Typed fields: list of Field objects
+        >>> wc2 = WeightConfig(direct=[
+        ...     Field(name="date", type="DATETIME"),
+        ...     Field(name="weight", type="FLOAT")
+        ... ])
+
+        >>> # From dicts (e.g., from YAML/JSON)
+        >>> wc3 = WeightConfig(direct=[
+        ...     {"name": "date", "type": "DATETIME"},
+        ...     {"name": "weight"}  # defaults to None type
+        ... ])
     """
 
     vertices: list[Weight] = dataclasses.field(default_factory=list)
-    direct: list[str] = dataclasses.field(default_factory=list)
+    # Internal representation: After __post_init__, this is always list[Field]
+    # Input types: Accepts list[str], list[Field], or list[dict] at construction
+    # The _FieldsType allows flexible input but normalizes to list[Field] internally
+    direct: _FieldsType = dataclasses.field(default_factory=list)
+
+    def _normalize_fields(
+        self, fields: list[str] | list[Field] | list[dict]
+    ) -> list[Field]:
+        """Normalize fields to Field objects.
+
+        Converts strings, Field objects, or dicts to Field objects.
+        Field objects behave like strings for backward compatibility.
+
+        Args:
+            fields: List of strings, Field objects, or dicts
+
+        Returns:
+            list[Field]: Normalized list of Field objects (preserving order)
+        """
+        normalized = []
+        for field in fields:
+            if isinstance(field, Field):
+                normalized.append(field)
+            elif isinstance(field, str):
+                # Backward compatibility: string becomes Field with None type
+                # (most databases like ArangoDB don't require types)
+                normalized.append(Field(name=field, type=None))
+            elif isinstance(field, dict):
+                # From dict (e.g., from YAML/JSON)
+                # Extract name and optional type
+                name = field.get("name")
+                if name is None:
+                    raise ValueError(f"Field dict must have 'name' key: {field}")
+                field_type = field.get("type")
+                normalized.append(Field(name=name, type=field_type))
+            else:
+                raise TypeError(f"Field must be str, Field, or dict, got {type(field)}")
+        return normalized
+
+    @property
+    def direct_names(self) -> list[str]:
+        """Get list of direct field names (as strings).
+
+        Returns:
+            list[str]: List of field names
+        """
+        return [field.name for field in self.direct]
+
+    def __post_init__(self):
+        """Initialize the weight configuration after dataclass initialization.
+
+        Normalizes direct fields to Field objects. Field objects behave like strings,
+        maintaining backward compatibility.
+
+        After this method, self.direct is always list[Field], regardless of input type.
+        """
+        # Normalize direct fields to Field objects (preserve order)
+        # This converts str, Field, or dict inputs to list[Field]
+        self.direct = self._normalize_fields(self.direct)
+
+    @classmethod
+    def from_dict(cls, data: dict):
+        """Create WeightConfig from dictionary, handling field normalization.
+
+        Overrides parent to properly handle direct fields that may be strings, dicts, or Field objects.
+        JSONWizard may incorrectly deserialize dicts in direct, so we need to handle them manually.
+
+        Args:
+            data: Dictionary containing weight config data
+
+        Returns:
+            WeightConfig: New WeightConfig instance with direct normalized to list[Field]
+        """
+        # Extract and preserve direct fields before JSONWizard processes them
+        direct_data = data.get("direct", [])
+        # Create a copy without direct to let JSONWizard handle the rest
+        data_copy = {k: v for k, v in data.items() if k != "direct"}
+
+        # Call parent from_dict (JSONWizard)
+        instance = super().from_dict(data_copy)
+
+        # Now manually set direct (could be strings, dicts, or already Field objects)
+        # __post_init__ will normalize them to list[Field]
+        instance.direct = direct_data
+        # Trigger normalization - this ensures direct is always list[Field] after init
+        instance.direct = instance._normalize_fields(instance.direct)
+        return instance
 
 
 @dataclasses.dataclass

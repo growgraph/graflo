@@ -18,6 +18,7 @@ from graflo.data_source.base import AbstractDataSource, DataSourceType
 from graflo.data_source.file import (
     JsonFileDataSource,
     JsonlFileDataSource,
+    ParquetFileDataSource,
     TableFileDataSource,
 )
 from graflo.data_source.memory import InMemoryDataSource
@@ -56,12 +57,17 @@ class DataSourceFactory:
         file_type: str | ChunkerType | None = None,
         encoding: EncodingType = EncodingType.UTF_8,
         sep: str | None = None,
-    ) -> JsonFileDataSource | JsonlFileDataSource | TableFileDataSource:
+    ) -> (
+        JsonFileDataSource
+        | JsonlFileDataSource
+        | TableFileDataSource
+        | ParquetFileDataSource
+    ):
         """Create a file-based data source.
 
         Args:
             path: Path to the file
-            file_type: Type of file ('json', 'jsonl', 'table') or ChunkerType.
+            file_type: Type of file ('json', 'jsonl', 'table', 'parquet') or ChunkerType.
                 If None, will be guessed from file extension.
             encoding: File encoding (default: UTF_8)
             sep: Field separator for table files (default: ',').
@@ -69,7 +75,7 @@ class DataSourceFactory:
 
         Returns:
             Appropriate file data source instance (JsonFileDataSource,
-            JsonlFileDataSource, or TableFileDataSource)
+            JsonlFileDataSource, TableFileDataSource, or ParquetFileDataSource)
 
         Raises:
             ValueError: If file type cannot be determined
@@ -99,6 +105,8 @@ class DataSourceFactory:
         elif file_type_enum == ChunkerType.TABLE:
             # sep is only for table files
             return TableFileDataSource(path=path, encoding=encoding, sep=sep or ",")
+        elif file_type_enum == ChunkerType.PARQUET:
+            return ParquetFileDataSource(path=path)
         else:
             raise ValueError(f"Unsupported file type: {file_type_enum}")
 

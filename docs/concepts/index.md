@@ -29,16 +29,20 @@ It's important to understand the distinction between **Data Sources** and **Reso
 ### Schema
 The `Schema` is the central configuration that defines how data sources are transformed into a property graph. It encapsulates:
  
-- Vertex and edge definitions
+- Vertex and edge definitions with optional type information
 - Resource mappings
 - Data transformations
 - Index configurations
+- Automatic schema inference from PostgreSQL 3NF databases
 
 ### Vertex
 A `Vertex` describes vertices and their database indexes. It supports:
  
 - Single or compound indexes (e.g., `["first_name", "last_name"]` instead of `"full_name"`)
-- Property definitions
+- Property definitions with optional type information
+  - Fields can be specified as strings (backward compatible) or typed `Field` objects
+  - Supported types: `INT`, `FLOAT`, `BOOL`, `STRING`, `DATETIME`
+  - Type information enables better validation and database-specific optimizations
 - Filtering conditions
 - Optional blank vertex configuration
 
@@ -47,7 +51,7 @@ An `Edge` describes edges and their database indexes. It allows:
  
 - Definition at any level of a hierarchical document
 - Reliance on vertex principal index
-- Weight configuration using `source_fields`, `target_fields`, and `direct` parameters
+- Weight configuration using `direct` parameter (with optional type information)
 - Uniqueness constraints with respect to `source`, `target`, and `weight` fields
 
 ### Edge Attributes and Configuration
@@ -68,8 +72,11 @@ Edges in graflo support a rich set of attributes that enable flexible relationsh
 #### Weight Configuration
 - **`weights.vertices`**: List of weight configurations from vertex properties
 - **`weights.direct`**: List of direct field mappings as edge properties
-- **`weights.source_fields`**: Fields from source vertex to use as weights
-- **`weights.target_fields`**: Fields from target vertex to use as weights
+  - Can be specified as strings (backward compatible), `Field` objects with types, or dicts
+  - Supports typed fields: `Field(name="date", type="DATETIME")` or `{"name": "date", "type": "DATETIME"}`
+  - Type information enables better validation and database-specific optimizations
+- **`weights.source_fields`**: Fields from source vertex to use as weights (deprecated)
+- **`weights.target_fields`**: Fields from target vertex to use as weights (deprecated)
 
 #### Edge Behavior Control
 - **`aux`**: Whether this is an auxiliary edge (collection created, but not considered by graflo)
@@ -105,7 +112,8 @@ Edges in graflo support a rich set of attributes that enable flexible relationsh
  
 - Use when you want to add properties directly to edges
 - For temporal data (dates), quantitative values, or metadata
-- Example: `weights: {direct: ["date", "confidence_score"]}`
+- Can specify types for better validation: `weights: {direct: [{"name": "date", "type": "DATETIME"}, {"name": "confidence_score", "type": "FLOAT"}]}`
+- Backward compatible with strings: `weights: {direct: ["date", "confidence_score"]}`
 
 **`match_source`/`match_target`**:
  
@@ -152,14 +160,16 @@ A `Transform` defines data transforms, from renaming and type-casting to arbitra
 
 ### Schema Features
 - **Flexible Indexing**: Support for compound indexes on vertices and edges
+- **Typed Fields**: Optional type information for vertex fields and edge weights (INT, FLOAT, STRING, DATETIME, BOOL)
 - **Hierarchical Edge Definition**: Define edges at any level of nested documents
-- **Weighted Edges**: Configure edge weights from document fields or vertex properties
+- **Weighted Edges**: Configure edge weights from document fields or vertex properties with optional type information
 - **Blank Vertices**: Create intermediate vertices for complex relationships
 - **Actor Pipeline**: Process documents through a sequence of specialized actors
 - **Smart Navigation**: Automatic handling of both single documents and lists
 - **Edge Constraints**: Ensure edge uniqueness based on source, target, and weight
 - **Reusable Transforms**: Define and reference transformations by name
 - **Vertex Filtering**: Filter vertices based on custom conditions
+- **PostgreSQL Schema Inference**: Automatically infer schemas from PostgreSQL 3NF databases
 
 ### Performance Optimization
 - **Batch Processing**: Process large datasets in configurable batches (`batch_size` parameter of `Caster`)
@@ -178,5 +188,9 @@ A `Transform` defines data transforms, from renaming and type-casting to arbitra
    - `relation_from_key` - extract relation from the key above
    - `relation` for explicit relationship names
 7. Use edge weights to capture temporal or quantitative relationship properties
+   - Specify types for weight fields when using databases that require type information (e.g., TigerGraph)
+   - Use typed `Field` objects or dicts with `type` key for better validation
 8. Leverage key matching (`match_source`, `match_target`) for complex matching scenarios
+9. Use PostgreSQL schema inference for automatic schema generation from existing 3NF databases
+10. Specify field types for better validation and database-specific optimizations, especially when targeting TigerGraph
 

@@ -55,12 +55,14 @@ class ChunkerType(BaseEnum):
     JSON: For JSON files
     JSONL: For JSON Lines files
     TABLE: For CSV/TSV files
+    PARQUET: For Parquet files (columnar storage format)
     TRIVIAL: For in-memory lists
     """
 
     JSON = "json"
     JSONL = "jsonl"
     TABLE = "table"
+    PARQUET = "parquet"
     TRIVIAL = "trivial"
 
 
@@ -369,6 +371,56 @@ class TrivialChunker(AbstractChunker):
         return batch
 
 
+class ParquetChunker(FileChunker):
+    """Chunker for Parquet files.
+
+    This class extends FileChunker to handle Parquet files (columnar storage format).
+    It reads Parquet files in batches using pandas, converting each batch to dictionaries.
+
+    Args:
+        filename: Path to the Parquet file
+        **kwargs: Additional arguments for FileChunker
+    """
+
+    def __init__(self, filename: Path, **kwargs):
+        super().__init__(filename=filename, **kwargs)
+        self.df: pd.DataFrame | None = None
+        self.columns: list[str] | None = None
+
+    def _prepare_iteration(self):
+        """Prepare for iteration by loading the Parquet file."""
+        super()._prepare_iteration()
+        try:
+            self.df = pd.read_parquet(self.filename)
+            self.columns = self.df.columns.tolist()
+        except ImportError:
+            raise ImportError(
+                "Reading Parquet files requires 'pyarrow' or 'fastparquet'. "
+                "Install with: pip install pyarrow"
+            )
+        except Exception as e:
+            logger.error(f"Failed to read Parquet file '{self.filename}': {e}")
+            raise
+
+    def _next_item(self):
+        """Get the next batch of rows as dictionaries.
+
+        Returns:
+            list[dict]: Next batch of rows as dictionaries
+        """
+        if self.df is None or self.columns is None:
+            return []
+
+        cid = self.cnt
+        end_idx = min(cid + self.batch_size, len(self.df))
+        if cid >= end_idx:
+            return []
+
+        pre_batch = self.df.iloc[cid:end_idx].values.tolist()
+        batch = [{k: v for k, v in zip(self.columns, item)} for item in pre_batch]
+        return batch
+
+
 class ChunkerDataFrame(AbstractChunker):
     """Chunker for Pandas DataFrames.
 
@@ -440,6 +492,8 @@ class ChunkerFactory:
             return ChunkerType.JSONL
         elif base_suffix in (".csv", ".tsv", ".txt"):
             return ChunkerType.TABLE
+        elif base_suffix == ".parquet":
+            return ChunkerType.PARQUET
         else:
             raise ValueError(
                 f"Could not guess chunker type for file extension: {base_suffix}"
@@ -478,6 +532,8 @@ class ChunkerFactory:
                 return JsonlChunker(filename=resource, **kwargs)
             elif chunker_type == ChunkerType.TABLE:
                 return TableChunker(filename=resource, **kwargs)
+            elif chunker_type == ChunkerType.PARQUET:
+                return ParquetChunker(filename=resource, **kwargs)
             else:
                 raise ValueError(f"Unknown chunker type: {chunker_type}")
         else:

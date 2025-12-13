@@ -101,10 +101,10 @@ INSERT INTO products (name, price, description) VALUES
     ('Monitor', 299.99, '27-inch 4K monitor');
 
 INSERT INTO purchases (user_id, product_id, quantity, total_amount) VALUES
+    (2, 4, 1, 299.99),
     (1, 1, 1, 999.99),
     (1, 2, 2, 59.98),
     (2, 3, 1, 79.99),
-    (2, 4, 1, 299.99),
     (3, 1, 1, 999.99),
     (3, 2, 1, 29.99);
 
@@ -112,6 +112,5 @@ INSERT INTO follows (follower_id, followed_id) VALUES
     (1, 2),
     (1, 3),
     (2, 1),
-    (2, 4),
     (3, 1),
     (4, 2);

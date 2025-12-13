@@ -160,3 +160,190 @@ def test_infer_schema_from_postgres(postgres_conn, load_mock_schema):
         print(f"  - {r.name} (actors: {', '.join(actor_types)})")
 
     print("=" * 80)
+
+
+def test_infer_schema_with_pg_catalog_fallback(postgres_conn, load_mock_schema):
+    """Test that schema inference works correctly when using pg_catalog fallback methods.
+
+    This test simulates a scenario where information_schema is unavailable or unreliable,
+    forcing the use of pg_catalog fallback methods. It verifies that the complete schema
+    inference pipeline (from PostgreSQL schema to graflo Schema) works correctly
+    using only pg_catalog methods.
+    """
+    _ = load_mock_schema  # Ensure schema is loaded
+
+    # Mock the _check_information_schema_reliable method to return False
+    # This forces the use of pg_catalog fallback throughout the introspection process
+    original_check = postgres_conn._check_information_schema_reliable
+    postgres_conn._check_information_schema_reliable = lambda schema_name: False
+
+    try:
+        # Test that infer_schema_from_postgres works with pg_catalog fallback
+        schema = infer_schema_from_postgres(postgres_conn, schema_name="public")
+
+        # Verify schema structure
+        assert schema is not None, "Schema should be inferred"
+        assert schema.vertex_config is not None, "Schema should have vertex_config"
+        assert schema.edge_config is not None, "Schema should have edge_config"
+        assert schema.general is not None, "Schema should have general metadata"
+        assert schema.general.name == "public", (
+            f"Expected schema name 'public', got {schema.general.name}"
+        )
+
+        # Check vertex tables (users, products) - should be detected correctly via pg_catalog
+        vertex_names = [v.name for v in schema.vertex_config.vertices]
+        assert "users" in vertex_names, (
+            f"Expected 'users' in vertices when using pg_catalog, got {vertex_names}"
+        )
+        assert "products" in vertex_names, (
+            f"Expected 'products' in vertices when using pg_catalog, got {vertex_names}"
+        )
+        assert len(vertex_names) == 2, (
+            f"Expected 2 vertices when using pg_catalog, got {len(vertex_names)}"
+        )
+
+        # Check edge tables (purchases, follows) - should be detected correctly via pg_catalog
+        edge_ids = list(schema.edge_config._edges_map.keys())
+        # Purchases edge can be in either direction (users -> products or products -> users)
+        purchases_found = any(
+            (e.source == "users" and e.target == "products")
+            or (e.source == "products" and e.target == "users")
+            for e in schema.edge_config._edges_map.values()
+        )
+        follows_found = any(
+            e.source == "users" and e.target == "users"
+            for e in schema.edge_config._edges_map.values()
+        )
+        assert purchases_found, (
+            f"Expected purchases edge (users <-> products) when using pg_catalog, "
+            f"got edges: {edge_ids}"
+        )
+        assert follows_found, (
+            f"Expected follows edge (users -> users) when using pg_catalog, "
+            f"got edges: {edge_ids}"
+        )
+
+        # Verify users vertex fields - should be correctly inferred via pg_catalog
+        users_vertex = next(
+            v for v in schema.vertex_config.vertices if v.name == "users"
+        )
+        field_names = [f.name for f in users_vertex.fields]
+        assert "id" in field_names, (
+            f"Expected 'id' in users fields when using pg_catalog, got {field_names}"
+        )
+        assert "name" in field_names, (
+            f"Expected 'name' in users fields when using pg_catalog, got {field_names}"
+        )
+        assert "email" in field_names, (
+            f"Expected 'email' in users fields when using pg_catalog, got {field_names}"
+        )
+
+        # Verify field types - should be correctly mapped via pg_catalog
+        id_field = next(f for f in users_vertex.fields if f.name == "id")
+        assert id_field.type is not None, (
+            "id field should have a type when using pg_catalog"
+        )
+        assert id_field.type.value == "INT", (
+            f"Expected id type to be INT when using pg_catalog, got {id_field.type.value}"
+        )
+
+        name_field = next(f for f in users_vertex.fields if f.name == "name")
+        assert name_field.type is not None, (
+            "name field should have a type when using pg_catalog"
+        )
+        assert name_field.type.value == "STRING", (
+            f"Expected name type to be STRING when using pg_catalog, got {name_field.type.value}"
+        )
+
+        # Verify purchases edge structure - should be correctly inferred via pg_catalog
+        # Edge direction can vary, but should connect users and products
+        purchases_edge = next(
+            (
+                e
+                for e in schema.edge_config._edges_map.values()
+                if (e.source == "users" and e.target == "products")
+                or (e.source == "products" and e.target == "users")
+            ),
+            None,
+        )
+        assert purchases_edge is not None, (
+            "purchases edge should exist when using pg_catalog"
+        )
+        assert purchases_edge.source in ["users", "products"], (
+            f"Expected purchases.source to be 'users' or 'products' when using pg_catalog, "
+            f"got {purchases_edge.source}"
+        )
+        assert purchases_edge.target in ["users", "products"], (
+            f"Expected purchases.target to be 'users' or 'products' when using pg_catalog, "
+            f"got {purchases_edge.target}"
+        )
+        assert purchases_edge.source != purchases_edge.target, (
+            "purchases edge should connect different tables"
+        )
+
+        # Verify resources were created - should work correctly via pg_catalog
+        assert len(schema.resources) > 0, (
+            "Schema should have resources when using pg_catalog"
+        )
+        resource_names = [r.name for r in schema.resources]
+        assert "users" in resource_names, (
+            f"Expected 'users' resource when using pg_catalog, got {resource_names}"
+        )
+        assert "products" in resource_names, (
+            f"Expected 'products' resource when using pg_catalog, got {resource_names}"
+        )
+        assert "purchases" in resource_names, (
+            f"Expected 'purchases' resource when using pg_catalog, got {resource_names}"
+        )
+        assert "follows" in resource_names, (
+            f"Expected 'follows' resource when using pg_catalog, got {resource_names}"
+        )
+
+        # Verify resource actors - should be correctly created via pg_catalog
+        users_resource = next(r for r in schema.resources if r.name == "users")
+        assert users_resource.apply is not None, (
+            "users resource should have apply list when using pg_catalog"
+        )
+        assert len(users_resource.apply) > 0, (
+            "users resource should have at least one actor when using pg_catalog"
+        )
+
+        purchases_resource = next(r for r in schema.resources if r.name == "purchases")
+        assert purchases_resource.apply is not None, (
+            "purchases resource should have apply list when using pg_catalog"
+        )
+        assert len(purchases_resource.apply) > 0, (
+            "purchases resource should have at least one actor when using pg_catalog"
+        )
+
+        print("\n" + "=" * 80)
+        print("Schema Inference Results (using pg_catalog fallback):")
+        print("=" * 80)
+        print(f"\nVertices ({len(schema.vertex_config.vertices)}):")
+        for v in schema.vertex_config.vertices:
+            field_types = ", ".join(
+                [f"{f.name}:{f.type.value if f.type else 'None'}" for f in v.fields[:5]]
+            )
+            print(f"  - {v.name}: {field_types}...")
+
+        print(f"\nEdges ({len(schema.edge_config._edges_map)}):")
+        for edge_id, e in schema.edge_config._edges_map.items():
+            weights_info = ""
+            if e.weights:
+                weight_count = len(e.weights.direct) + len(e.weights.vertices)
+                weights_info = f" (weights: {weight_count})"
+            relation_info = f" [{e.relation}]" if e.relation else ""
+            print(
+                f"  - {edge_id}: {e.source} -> {e.target}{relation_info}{weights_info}"
+            )
+
+        print(f"\nResources ({len(schema.resources)}):")
+        for r in schema.resources:
+            actor_types = [type(a).__name__ for a in r.apply]
+            print(f"  - {r.name} (actors: {', '.join(actor_types)})")
+
+        print("=" * 80)
+
+    finally:
+        # Restore original method
+        postgres_conn._check_information_schema_reliable = original_check

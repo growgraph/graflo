@@ -63,6 +63,8 @@ class PostgresResourceMapper:
         table_name = edge_table_info["name"]
         source_table = edge_table_info["source_table"]
         target_table = edge_table_info["target_table"]
+        source_column = edge_table_info.get("source_column")
+        target_column = edge_table_info.get("target_column")
 
         # Verify source and target vertices exist
         if source_table not in vertex_config.vertex_set:
@@ -77,9 +79,43 @@ class PostgresResourceMapper:
                 f"not found in vertex config"
             )
 
-        # Create apply list with EdgeActor
-        # The actor wrapper will interpret {"source": source, "target": target} as EdgeActor
-        apply = [{"source": source_table, "target": target_table}]
+        # Get primary key fields for source and target vertices
+        source_vertex_obj = vertex_config._vertices_map[source_table]
+        target_vertex_obj = vertex_config._vertices_map[target_table]
+
+        # Get the primary key field(s) from the first index (primary key)
+        source_pk_fields = (
+            source_vertex_obj.indexes[0].fields if source_vertex_obj.indexes else []
+        )
+        target_pk_fields = (
+            target_vertex_obj.indexes[0].fields if target_vertex_obj.indexes else []
+        )
+
+        # For simplicity, use the first PK field (most common case is single-column PK)
+        # If composite keys are needed, this would need to be extended
+        source_pk_field = source_pk_fields[0] if source_pk_fields else "id"
+        target_pk_field = target_pk_fields[0] if target_pk_fields else "id"
+
+        # Create apply list using source_vertex and target_vertex pattern
+        # This pattern explicitly specifies which vertex type each mapping targets,
+        # avoiding attribute collisions between different vertex types
+        apply = []
+
+        # First mapping: map source foreign key column to source vertex's primary key field
+        if source_column:
+            source_map_config = {
+                "target_vertex": source_table,
+                "map": {source_column: source_pk_field},
+            }
+            apply.append(source_map_config)
+
+        # Second mapping: map target foreign key column to target vertex's primary key field
+        if target_column:
+            target_map_config = {
+                "target_vertex": target_table,
+                "map": {target_column: target_pk_field},
+            }
+            apply.append(target_map_config)
 
         resource = Resource(
             resource_name=table_name,
@@ -87,7 +123,9 @@ class PostgresResourceMapper:
         )
 
         logger.debug(
-            f"Created edge resource '{table_name}' from {source_table} to {target_table}"
+            f"Created edge resource '{table_name}' from {source_table} to {target_table} "
+            f"(source_col: {source_column} -> {source_pk_field}, "
+            f"target_col: {target_column} -> {target_pk_field})"
         )
 
         return resource
