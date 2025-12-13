@@ -53,8 +53,19 @@ from graflo.util.transform import pick_unique_dict
 logger = logging.getLogger(__name__)
 
 
-DESCEND_KEY = "key"
-DRESSING_TRANSFORMED_VALUE_KEY = "__value__"
+class ActorConstants:
+    """Constants used throughout the actor system.
+
+    This class centralizes magic strings and constants to improve
+    maintainability and make the codebase more self-documenting.
+    """
+
+    # Key used for accessing nested data in DescendActor
+    DESCEND_KEY: str = "key"
+
+    # Prefix for transformed values in vertex processing
+    # Format: f"{DRESSING_TRANSFORMED_VALUE_KEY}#{index}"
+    DRESSING_TRANSFORMED_VALUE_KEY: str = "__value__"
 
 
 class Actor(ABC):
@@ -246,11 +257,15 @@ class VertexActor(Actor):
             _doc: dict = {}
             # Extract transformed values with special keys
             n_value_keys = len(
-                [k for k in item if k.startswith(DRESSING_TRANSFORMED_VALUE_KEY)]
+                [
+                    k
+                    for k in item
+                    if k.startswith(ActorConstants.DRESSING_TRANSFORMED_VALUE_KEY)
+                ]
             )
             for j in range(n_value_keys):
                 vkey = self.vertex_config.index(self.name).fields[j]
-                v = item.pop(f"{DRESSING_TRANSFORMED_VALUE_KEY}#{j}")
+                v = item.pop(f"{ActorConstants.DRESSING_TRANSFORMED_VALUE_KEY}#{j}")
                 _doc[vkey] = v
 
             # Extract remaining vertex keys
@@ -554,10 +569,11 @@ class TransformActor(Actor):
             return result
         elif isinstance(result, tuple):
             return {
-                f"{DRESSING_TRANSFORMED_VALUE_KEY}#{j}": v for j, v in enumerate(result)
+                f"{ActorConstants.DRESSING_TRANSFORMED_VALUE_KEY}#{j}": v
+                for j, v in enumerate(result)
             }
         else:
-            return {f"{DRESSING_TRANSFORMED_VALUE_KEY}#0": result}
+            return {f"{ActorConstants.DRESSING_TRANSFORMED_VALUE_KEY}#0": result}
 
     def __call__(self, ctx: ActionContext, lindex: LocationIndex, *nargs, **kwargs):
         """Apply transformation to input data.
@@ -622,6 +638,8 @@ class DescendActor(Actor):
         self._descendants: list[ActorWrapper] = []
         for descendant_kwargs in descendants_kwargs:
             self._descendants += [ActorWrapper(**descendant_kwargs, **kwargs)]
+        # Sort descendants once after initialization
+        self._descendants.sort(key=lambda x: _NodeTypePriority[type(x.actor)])
 
     def fetch_important_items(self):
         """Get important items for string representation.
@@ -640,7 +658,9 @@ class DescendActor(Actor):
         Args:
             d: Actor wrapper to add
         """
-        self._descendants += [d]
+        self._descendants.append(d)
+        # Keep descendants sorted
+        self._descendants.sort(key=lambda x: _NodeTypePriority[type(x.actor)])
 
     def count(self):
         """Get total count of items processed by all descendants.
@@ -657,7 +677,7 @@ class DescendActor(Actor):
         Returns:
             list[ActorWrapper]: Sorted list of descendant actors
         """
-        return sorted(self._descendants, key=lambda x: _NodeTypePriority[type(x.actor)])
+        return self._descendants
 
     def init_transforms(self, **kwargs):
         """Initialize transforms for all descendants.
@@ -887,14 +907,16 @@ class ActorWrapper:
         self.target_vertices: set[str] = set()
 
         # Try initialization methods in order
-        # Make copies of kwargs for each attempt to avoid mutation issues
-        if self._try_init_descend(*args, **kwargs.copy()):
+        # Make a single copy of kwargs to avoid mutation issues
+        # (only _try_init_descend modifies kwargs, but we use copy for all for consistency)
+        kwargs_copy = kwargs.copy()
+        if self._try_init_descend(*args, **kwargs_copy):
             pass
-        elif self._try_init_transform(**kwargs.copy()):
+        elif self._try_init_transform(**kwargs_copy):
             pass
-        elif self._try_init_vertex(**kwargs.copy()):
+        elif self._try_init_vertex(**kwargs_copy):
             pass
-        elif self._try_init_edge(**kwargs.copy()):
+        elif self._try_init_edge(**kwargs_copy):
             pass
         else:
             raise ValueError(f"Not able to init ActorWrapper with {kwargs}")
@@ -968,7 +990,7 @@ class ActorWrapper:
             return False
 
         # Now safe to pop from kwargs
-        descend_key = kwargs.pop(DESCEND_KEY, None)
+        descend_key = kwargs.pop(ActorConstants.DESCEND_KEY, None)
         descendants = kwargs.pop("apply", None)
 
         if descendants is not None:
