@@ -41,6 +41,7 @@ from graflo.db.connection.onto import TigergraphConfig
 from graflo.filter.onto import Clause, Expression
 from graflo.onto import AggregationType, DBFlavor, ExpressionFlavor
 from graflo.util.transform import pick_unique_dict
+from urllib.parse import quote
 
 logger = logging.getLogger(__name__)
 
@@ -597,8 +598,7 @@ class TigerGraphConnection(Connection):
         Returns:
             str: Formatted field definitions for GSQL CREATE VERTEX statement
         """
-        # Get fields with TigerGraph default types applied (None -> STRING)
-        fields = vertex.get_fields_with_defaults(DBFlavor.TIGERGRAPH, with_aux=False)
+        fields = vertex.fields
 
         if not fields:
             # Default fields if none specified
@@ -1781,40 +1781,6 @@ class TigerGraphConnection(Connection):
         else:
             return ""
 
-    def _get_field_types_for_vertex(
-        self, vertex_name: str, vertex_config: None | VertexConfig = None
-    ) -> dict[str, FieldType] | None:
-        """Get field types for a vertex from vertex config.
-
-        Args:
-            vertex_name: Name of the vertex type (or dbname)
-            vertex_config: Vertex configuration to use for lookup
-
-        Returns:
-            dict[str, FieldType]: Mapping of field names to their FieldType enum values, or None if not available
-        """
-        if vertex_config is None:
-            return None
-
-        try:
-            # Get fields with TigerGraph defaults applied
-            fields = vertex_config.fields(
-                vertex_name,
-                with_aux=False,
-                as_names=False,
-                db_flavor=DBFlavor.TIGERGRAPH,
-            )
-            # Build field_types dict: {field_name: FieldType}
-            field_types = {}
-            for field in fields:
-                if field.type:
-                    # Convert string type to FieldType enum
-                    field_types[field.name] = FieldType(field.type)
-            return field_types if field_types else None
-        except (KeyError, ValueError):
-            # Vertex not found in config
-            return None
-
     def fetch_docs(
         self,
         class_name,
@@ -1849,11 +1815,10 @@ class TigerGraphConnection(Connection):
 
             # Get field_types from kwargs or auto-detect from vertex_config
             field_types = kwargs.get("field_types")
-            if field_types is None:
-                vertex_config = kwargs.get("vertex_config")
-                field_types = self._get_field_types_for_vertex(
-                    class_name, vertex_config
-                )
+            vertex_config = kwargs.get("vertex_config")
+
+            if field_types is None and vertex_config is not None:
+                field_types = {f.name: f.type for f in vertex_config.fields(class_name)}
 
             # Build REST++ filter string with field type information
             filter_str = self._render_rest_filter(filters, field_types=field_types)
@@ -1861,7 +1826,6 @@ class TigerGraphConnection(Connection):
             # Build REST++ API endpoint with query parameters manually
             # Format: /graph/{graph_name}/vertices/{vertex_type}?filter=...&limit=...
             # Example: /graph/g22c97325/vertices/Author?filter=hindex>20&limit=10
-            from urllib.parse import quote
 
             endpoint = f"/graph/{graph_name}/vertices/{class_name}"
             query_parts = []
