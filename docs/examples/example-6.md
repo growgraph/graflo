@@ -83,15 +83,21 @@ registry = DataSourceRegistry()
 registry.register(api_source, resource_name="users")
 
 # Create caster and ingest
+from graflo.caster import IngestionParams
+
 caster = Caster(schema)
 # Load config from file
 config_data = FileHandle.load("db.yaml")
 conn_conf = DBConfig.from_dict(config_data)
 
+ingestion_params = IngestionParams(
+    batch_size=1000,  # Process 1000 items per batch
+)
+
 caster.ingest_data_sources(
     data_source_registry=registry,
     conn_conf=conn_conf,
-    batch_size=1000,
+    ingestion_params=ingestion_params,
 )
 ```
 
@@ -210,6 +216,14 @@ file_source = DataSourceFactory.create_file_data_source(path="users_backup.json"
 registry.register(file_source, resource_name="users")
 
 # Both will be processed and combined
-caster.ingest_data_sources(data_source_registry=registry, conn_conf=conn_conf)
+from graflo.caster import IngestionParams
+
+ingestion_params = IngestionParams()  # Use default parameters
+
+caster.ingest_data_sources(
+    data_source_registry=registry,
+    conn_conf=conn_conf,
+    ingestion_params=ingestion_params,
+)
 ```
 

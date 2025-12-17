@@ -168,37 +168,14 @@ def test_vertex_mixed_field_inputs():
     assert vertex.fields[2].type == FieldType.STRING
 
 
-def test_vertex_fields_all_includes_aux():
-    """Test fields_all property includes auxiliary fields."""
-    vertex = Vertex(
-        name="user",
-        fields=cast(_FieldsInput, ["id", "name"]),
-        fields_aux=["weight", "score"],
-    )
-
-    all_fields = vertex.fields_all
-    assert len(all_fields) == 4
-    assert all(isinstance(f, Field) for f in all_fields)
-
-    field_names = [f.name for f in all_fields]
-    assert "id" in field_names
-    assert "name" in field_names
-    assert "weight" in field_names
-    assert "score" in field_names
-
-    # Auxiliary fields should have None type
-    weight_field = next(f for f in all_fields if f.name == "weight")
-    assert weight_field.type is None
-
-
 def test_vertex_config_fields_backward_compatible():
-    """Test VertexConfig.fields() method returns names by default (backward compatible)."""
+    """Test VertexConfig.fields_names() method returns names (backward compatible)."""
     vertex = Vertex(name="user", fields=cast(_FieldsInput, ["id", "name", "email"]))
     config = VertexConfig(vertices=[vertex])
 
-    # Default behavior: returns names (strings) for backward compatibility
+    # fields_names() returns names (strings) for backward compatibility
     # Order may vary, so check membership and length
-    fields = config.fields("user")
+    fields = config.fields_names("user")
     assert len(fields) == 3
     assert all(isinstance(f, str) for f in fields)
     assert set(fields) == {"id", "name", "email"}
@@ -207,7 +184,7 @@ def test_vertex_config_fields_backward_compatible():
 
 
 def test_vertex_config_fields_with_objects():
-    """Test VertexConfig.fields() can return Field objects."""
+    """Test VertexConfig.fields() returns Field objects, fields_names() returns strings."""
     vertex = Vertex(
         name="user",
         fields=[
@@ -217,30 +194,16 @@ def test_vertex_config_fields_with_objects():
     )
     config = VertexConfig(vertices=[vertex])
 
-    # Return Field objects when as_names=False
-    fields = config.fields("user", as_names=False)
+    # fields() returns Field objects
+    fields = config.fields("user")
     assert len(fields) == 2
     assert all(isinstance(f, Field) for f in fields)
     assert fields[0].type == FieldType.INT
     assert fields[1].type == FieldType.STRING
 
-    # Still works with as_names=True
-    field_names = config.fields("user", as_names=True)
+    # fields_names() returns strings
+    field_names = config.fields_names("user")
     assert field_names == ["id", "name"]
-
-
-def test_vertex_config_fields_with_aux():
-    """Test VertexConfig.fields() with auxiliary fields."""
-    vertex = Vertex(
-        name="user", fields=cast(_FieldsInput, ["id", "name"]), fields_aux=["weight"]
-    )
-    config = VertexConfig(vertices=[vertex])
-
-    fields_without_aux = config.fields("user", with_aux=False)
-    assert fields_without_aux == ["id", "name"]
-
-    fields_with_aux = config.fields("user", with_aux=True)
-    assert set(fields_with_aux) == {"id", "name", "weight"}
 
 
 def test_vertex_from_dict_with_string_fields():
@@ -320,19 +283,6 @@ def test_field_all_types():
         assert field.type == field_type.value
 
 
-def test_vertex_update_aux_fields():
-    """Test update_aux_fields() method."""
-    vertex = Vertex(name="user", fields=cast(_FieldsInput, ["id", "name"]))
-    vertex.update_aux_fields(["weight", "score"])
-
-    assert "weight" in vertex.fields_aux
-    assert "score" in vertex.fields_aux
-
-    # Test adding more
-    vertex.update_aux_fields(["rank"])
-    assert "rank" in vertex.fields_aux
-
-
 def test_invalid_field_type_in_dict():
     """Test that invalid field types in dict raise error."""
     with pytest.raises(ValueError, match="not allowed"):
@@ -368,8 +318,9 @@ def test_get_fields_with_defaults_tigergraph():
         ),
     )
 
+    vertex.finish_init(DBFlavor.TIGERGRAPH)
     # For TigerGraph, None types should default to STRING
-    fields = vertex.get_fields_with_defaults(DBFlavor.TIGERGRAPH)
+    fields = vertex.get_fields()
     assert len(fields) == 4
     assert fields[0].name == "id"
     assert fields[0].type == "INT"
@@ -392,14 +343,14 @@ def test_get_fields_with_defaults_other_db():
     )
 
     # For ArangoDB, None types should remain None
-    fields = vertex.get_fields_with_defaults(DBFlavor.ARANGO)
+    fields = vertex.get_fields()
     assert len(fields) == 2
     assert fields[0].type == "INT"
     assert fields[1].name == "name"
     assert fields[1].type is None  # Preserved
 
     # For Neo4j, None types should also remain None
-    fields = vertex.get_fields_with_defaults(DBFlavor.NEO4J)
+    fields = vertex.get_fields()
     assert fields[1].type is None  # Preserved
 
 
@@ -414,34 +365,14 @@ def test_get_fields_with_defaults_none():
     )
 
     # With None db_flavor, should return fields as-is
-    fields = vertex.get_fields_with_defaults(None)
+    fields = vertex.get_fields()
     assert len(fields) == 2
     assert fields[0].type == "INT"
     assert fields[1].type is None  # Preserved
 
 
-def test_get_fields_with_defaults_with_aux():
-    """Test get_fields_with_defaults() includes auxiliary fields when requested."""
-    vertex = Vertex(
-        name="user",
-        fields=cast(_FieldsInput, ["id", "name"]),
-        fields_aux=["weight", "score"],
-    )
-
-    # For TigerGraph with aux fields
-    fields = vertex.get_fields_with_defaults(DBFlavor.TIGERGRAPH, with_aux=True)
-    assert len(fields) == 4
-    field_names = [f.name for f in fields]
-    assert "id" in field_names
-    assert "name" in field_names
-    assert "weight" in field_names
-    assert "score" in field_names
-    # All should have STRING type (default)
-    assert all(f.type == "STRING" for f in fields)
-
-
 def test_vertex_config_fields_with_db_flavor():
-    """Test VertexConfig.fields() with db_flavor parameter."""
+    """Test VertexConfig.fields() and fields_names() with db_flavor parameter."""
     vertex = Vertex(
         name="user",
         fields=[
@@ -451,16 +382,17 @@ def test_vertex_config_fields_with_db_flavor():
     )
     config = VertexConfig(vertices=[vertex])
 
+    # With ArangoDB, None types should remain None
+    fields = config.fields("user")
+    assert fields[1].type is None  # Preserved
+
+    vertex.finish_init(DBFlavor.TIGERGRAPH)
     # With TigerGraph, should get fields with defaults applied
-    fields = config.fields("user", db_flavor=DBFlavor.TIGERGRAPH, as_names=False)
+    fields = config.fields("user")
     assert len(fields) == 2
     assert fields[0].type == "INT"
     assert fields[1].type == "STRING"  # Default applied
 
-    # With ArangoDB, None types should remain None
-    fields = config.fields("user", db_flavor=DBFlavor.ARANGO, as_names=False)
-    assert fields[1].type is None  # Preserved
-
-    # As names (backward compatible)
-    field_names = config.fields("user", db_flavor=DBFlavor.TIGERGRAPH, as_names=True)
+    # fields_names() returns strings
+    field_names = config.fields_names("user")
     assert field_names == ["id", "name"]

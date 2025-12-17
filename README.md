@@ -50,12 +50,13 @@ Resources are your data sources that can be:
     - Vertex fields support types (INT, FLOAT, STRING, DATETIME, BOOL) for better validation
     - Edge weight fields can specify types for improved type safety
     - Backward compatible: fields without types default to None (suitable for databases like ArangoDB)
-- **PostgreSQL Schema Inference**: Automatically generate schemas from PostgreSQL 3NF databases
+- **🚀 PostgreSQL Schema Inference**: **Automatically generate schemas from PostgreSQL 3NF databases** - No manual schema definition needed!
     - Introspect PostgreSQL schemas to identify vertex-like and edge-like tables
-    - Automatically map PostgreSQL data types to graflo Field types
-    - Infer vertex configurations from table structures
+    - Automatically map PostgreSQL data types to graflo Field types (INT, FLOAT, STRING, DATETIME, BOOL)
+    - Infer vertex configurations from table structures with proper indexes
     - Infer edge configurations from foreign key relationships
-    - Create Resource mappings from PostgreSQL tables
+    - Create Resource mappings from PostgreSQL tables automatically
+    - Direct database access - ingest data without exporting to files first
 - **Parallel processing**: Use as many cores as you have
 - **Database support**: Ingest into ArangoDB, Neo4j, and **TigerGraph** using the same API (database agnostic). Source data from PostgreSQL and other SQL databases.
 - **Server-side filtering**: Efficient querying with server-side filtering support (TigerGraph REST++ API)
@@ -121,11 +122,20 @@ patterns.add_file_pattern(
 
 schema.fetch_resource()
 
+from graflo.caster import IngestionParams
+
 caster = Caster(schema)
+
+ingestion_params = IngestionParams(
+    clean_start=False,  # Set to True to wipe existing database
+    # max_items=1000,  # Optional: limit number of items to process
+    # batch_size=10000,  # Optional: customize batch size
+)
 
 caster.ingest(
     output_config=conn_conf,  # Target database config
     patterns=patterns,  # Source data patterns
+    ingestion_params=ingestion_params,
 )
 ```
 

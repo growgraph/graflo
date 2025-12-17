@@ -115,11 +115,18 @@ patterns.add_file_pattern(
     FilePattern(regex="^relations.*\.csv$", sub_path=pathlib.Path("."), resource_name="people")
 )
 
+from graflo.caster import IngestionParams
+
 caster = Caster(schema)
+
+ingestion_params = IngestionParams(
+    clean_start=True,  # Wipe existing database before ingestion
+)
+
 caster.ingest(
     output_config=conn_conf,  # Target database config
     patterns=patterns,  # Source data patterns
-    clean_start=True
+    ingestion_params=ingestion_params,
 )
 ```
 

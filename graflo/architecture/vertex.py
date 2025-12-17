@@ -11,10 +11,13 @@ Key Components:
 Example:
     >>> vertex = Vertex(name="user", fields=["id", "name"])
     >>> config = VertexConfig(vertices=[vertex])
-    >>> fields = config.fields("user", with_aux=True)
+    >>> fields = config.fields("user")  # Returns list[Field]
+    >>> field_names = config.fields_names("user")  # Returns list[str]
 """
 
+import ast
 import dataclasses
+import json
 import logging
 from typing import TYPE_CHECKING
 
@@ -84,7 +87,13 @@ class Field(BaseDataclass):
     type: _FieldTypeType = None
 
     def __post_init__(self):
-        """Validate and normalize type if specified."""
+        """Validate and normalize type if specified.
+
+        This method handles type normalization AFTER a Field object has been created.
+        It converts string types to FieldType enum and validates the type.
+        This is separate from _normalize_fields() which handles the creation of Field
+        objects from various input formats (str/dict/Field).
+        """
         if self.type is not None:
             # Convert string to FieldType enum if it's a string
             if isinstance(self.type, str):
@@ -152,7 +161,6 @@ class Vertex(BaseDataclass):
         fields: List of field names (str), Field objects, or dicts.
                Will be normalized to Field objects internally in __post_init__.
                After initialization, this is always list[Field] (type checker sees this).
-        fields_aux: List of auxiliary field names for weight passing
         indexes: List of indexes for the vertex
         filters: List of filter expressions
         dbname: Optional database name (defaults to vertex name)
@@ -176,12 +184,51 @@ class Vertex(BaseDataclass):
 
     name: str
     fields: _FieldsType = dataclasses.field(default_factory=list)
-    fields_aux: list[str] = dataclasses.field(
-        default_factory=list
-    )  # temporary field necessary to pass weights to edges
     indexes: list[Index] = dataclasses.field(default_factory=list)
     filters: list[Expression] = dataclasses.field(default_factory=list)
     dbname: str | None = None
+
+    @staticmethod
+    def _parse_string_to_dict(field_str: str) -> dict | None:
+        """Parse a string that might be a JSON or Python dict representation.
+
+        Args:
+            field_str: String that might be a dict representation
+
+        Returns:
+            dict if successfully parsed as dict, None otherwise
+        """
+        # Try JSON first (handles double-quoted strings)
+        try:
+            parsed = json.loads(field_str)
+            return parsed if isinstance(parsed, dict) else None
+        except json.JSONDecodeError:
+            pass
+
+        # Try Python literal eval (handles single-quoted strings)
+        try:
+            parsed = ast.literal_eval(field_str)
+            return parsed if isinstance(parsed, dict) else None
+        except (ValueError, SyntaxError):
+            return None
+
+    @staticmethod
+    def _dict_to_field(field_dict: dict) -> Field:
+        """Convert a dict to a Field object.
+
+        Args:
+            field_dict: Dictionary with 'name' key and optional 'type' key
+
+        Returns:
+            Field object
+
+        Raises:
+            ValueError: If dict doesn't have 'name' key
+        """
+        name = field_dict.get("name")
+        if name is None:
+            raise ValueError(f"Field dict must have 'name' key: {field_dict}")
+        return Field(name=name, type=field_dict.get("type"))
 
     def _normalize_fields(
         self, fields: list[str] | list[Field] | list[dict]
@@ -189,6 +236,7 @@ class Vertex(BaseDataclass):
         """Normalize fields to Field objects.
 
         Converts strings, Field objects, or dicts to Field objects.
+        Handles the case where dataclass_wizard may have converted dicts to JSON strings.
         Field objects behave like strings for backward compatibility.
 
         Args:
@@ -201,18 +249,16 @@ class Vertex(BaseDataclass):
         for field in fields:
             if isinstance(field, Field):
                 normalized.append(field)
-            elif isinstance(field, str):
-                # Backward compatibility: string becomes Field with None type
-                # (most databases like ArangoDB don't require types)
-                normalized.append(Field(name=field, type=None))
             elif isinstance(field, dict):
-                # From dict (e.g., from YAML/JSON)
-                # Extract name and optional type
-                name = field.get("name")
-                if name is None:
-                    raise ValueError(f"Field dict must have 'name' key: {field}")
-                field_type = field.get("type")
-                normalized.append(Field(name=name, type=field_type))
+                normalized.append(self._dict_to_field(field))
+            elif isinstance(field, str):
+                # Try to parse as dict (JSON or Python literal)
+                parsed_dict = self._parse_string_to_dict(field)
+                if parsed_dict:
+                    normalized.append(self._dict_to_field(parsed_dict))
+                else:
+                    # Plain field name
+                    normalized.append(Field(name=field, type=None))
             else:
                 raise TypeError(f"Field must be str, Field, or dict, got {type(field)}")
         return normalized
@@ -226,44 +272,8 @@ class Vertex(BaseDataclass):
         """
         return [field.name for field in self.fields]
 
-    @property
-    def fields_all(self):
-        """Get all fields including auxiliary fields.
-
-        Returns:
-            list[Field]: Combined list of regular and auxiliary fields.
-                        Field objects behave like strings, so this is backward compatible.
-        """
-        # fields_aux are still strings, convert to Field objects with None type
-        aux_fields = [Field(name=name, type=None) for name in self.fields_aux]
-        return self.fields + aux_fields
-
-    def get_fields_with_defaults(
-        self, db_flavor: DBFlavor | None = None, with_aux: bool = False
-    ) -> list[Field]:
-        """Get fields with default types applied based on database flavor.
-
-        For TigerGraph, fields with None type will default to "STRING".
-        Other databases keep None types as-is.
-
-        Args:
-            db_flavor: Optional database flavor. If None, returns fields as-is.
-            with_aux: Whether to include auxiliary fields
-
-        Returns:
-            list[Field]: List of Field objects with default types applied
-        """
-        fields = self.fields_all if with_aux else self.fields
-
-        if db_flavor == DBFlavor.TIGERGRAPH:
-            # For TigerGraph, default None types to STRING
-            return [
-                Field(name=f.name, type=f.type if f.type is not None else "STRING")
-                for f in fields
-            ]
-
-        # For other databases or None, return fields as-is
-        return fields
+    def get_fields(self) -> list[Field]:
+        return self.fields
 
     def __post_init__(self):
         """Initialize the vertex after dataclass initialization.
@@ -302,45 +312,14 @@ class Vertex(BaseDataclass):
                     self.fields.append(Field(name=field_name, type=None))
                     seen_names.add(field_name)
 
-    def update_aux_fields(self, fields_aux: list):
-        """Update auxiliary fields.
-
-        Args:
-            fields_aux: List of new auxiliary fields to add
-
-        Returns:
-            Vertex: Self for method chaining
-        """
-        self.fields_aux = list(set(self.fields_aux) | set(fields_aux))
-        return self
-
-    @classmethod
-    def from_dict(cls, data: dict):
-        """Create Vertex from dictionary, handling field normalization.
-
-        Overrides parent to properly handle fields that may be strings, dicts, or Field objects.
-        JSONWizard may incorrectly deserialize dicts in fields, so we need to handle them manually.
-
-        Args:
-            data: Dictionary containing vertex data
-
-        Returns:
-            Vertex: New Vertex instance
-        """
-        # Extract and preserve fields before JSONWizard processes them
-        fields_data = data.get("fields", [])
-        # Create a copy without fields to let JSONWizard handle the rest
-        data_copy = {k: v for k, v in data.items() if k != "fields"}
-
-        # Call parent from_dict (JSONWizard)
-        instance = super().from_dict(data_copy)
-
-        # Now manually set fields (could be strings, dicts, or already Field objects)
-        # __post_init__ will normalize them properly
-        instance.fields = fields_data
-        # Trigger normalization again
-        instance.fields = instance._normalize_fields(instance.fields)
-        return instance
+    def finish_init(self, db_flavor: DBFlavor):
+        """Complete initialization of all edges with vertex configuration."""
+        self.fields = [
+            Field(name=f.name, type=FieldType.STRING)
+            if f.type is None and db_flavor == DBFlavor.TIGERGRAPH
+            else f
+            for f in self.fields
+        ]
 
 
 @dataclasses.dataclass
@@ -477,42 +456,34 @@ class VertexConfig(BaseDataclass):
         """
         return self._vertices_map[vertex_name].indexes
 
-    def fields(
-        self,
-        vertex_name: str,
-        with_aux=False,
-        as_names=True,
-        db_flavor: DBFlavor | None = None,
-    ) -> list[Field]:
+    def fields(self, vertex_name: str) -> list[Field]:
         """Get fields for a vertex.
 
         Args:
             vertex_name: Name of the vertex or dbname
-            with_aux: Whether to include auxiliary fields
-            as_names: If True (default), return field names as strings for backward compatibility.
-                     If False, return Field objects.
-            db_flavor: Optional database flavor. If provided, applies default types
-                      (e.g., TigerGraph defaults None types to "STRING").
 
         Returns:
-            list[str] | list[Field]: List of field names or Field objects
+            list[Field]: List of Field objects
         """
         # Get vertex by name or dbname
         vertex = self._get_vertex_by_name_or_dbname(vertex_name)
 
-        # Get fields with defaults applied if db_flavor is provided
-        if db_flavor is not None:
-            fields = vertex.get_fields_with_defaults(db_flavor, with_aux=with_aux)
-        elif with_aux:
-            fields = vertex.fields_all
-        else:
-            fields = vertex.fields
+        return vertex.fields
 
-        if as_names:
-            # Return as strings for backward compatibility
-            return [field.name for field in fields]
-        # Return Field objects
-        return fields
+    def fields_names(
+        self,
+        vertex_name: str,
+    ) -> list[str]:
+        """Get field names for a vertex as strings.
+
+        Args:
+            vertex_name: Name of the vertex or dbname
+
+        Returns:
+            list[str]: List of field names as strings
+        """
+        vertex = self._get_vertex_by_name_or_dbname(vertex_name)
+        return vertex.field_names
 
     def numeric_fields_list(self, vertex_name):
         """Get list of numeric fields for a vertex.
@@ -584,3 +555,9 @@ class VertexConfig(BaseDataclass):
             value: Vertex configuration
         """
         self._vertices_map[key] = value
+
+    def finish_init(self, db_flavor: DBFlavor):
+        """Complete initialization of all edges with vertex configuration."""
+
+        for v in self.vertices:
+            v.finish_init(db_flavor)

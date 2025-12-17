@@ -71,12 +71,14 @@ def ingest_atomic(conn_conf, current_path, test_db_name, schema_o, mode, n_cores
         )
         patterns.add_file_pattern(resource_name, file_pattern)
 
+    from graflo.caster import IngestionParams
+
     caster = Caster(schema_o)
+    ingestion_params = IngestionParams(n_cores=n_cores, clean_start=True)
     caster.ingest(
         output_config=conn_conf,
         patterns=patterns,
-        n_cores=n_cores,
-        clean_start=True,
+        ingestion_params=ingestion_params,
     )
 
 

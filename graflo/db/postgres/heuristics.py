@@ -1,11 +1,18 @@
-from graflo.db.postgres.conn import PostgresConnection
+import logging
+
+from graflo.util.onto import Patterns, TablePattern
+from graflo.db.postgres.conn import (
+    PostgresConnection,
+)
 from graflo.db.postgres.resource_mapping import PostgresResourceMapper
 from graflo.db.postgres.schema_inference import PostgresSchemaInferencer
+
+logger = logging.getLogger(__name__)
 
 
 def create_patterns_from_postgres(
     conn: PostgresConnection, schema_name: str | None = None
-):
+) -> Patterns:
     """Create Patterns from PostgreSQL tables.
 
     Args:
@@ -15,7 +22,6 @@ def create_patterns_from_postgres(
     Returns:
         Patterns: Patterns object with TablePattern instances for all tables
     """
-    from graflo.util.onto import Patterns, TablePattern
 
     # Introspect the schema
     introspection_result = conn.introspect_schema(schema_name=schema_name)
@@ -24,15 +30,15 @@ def create_patterns_from_postgres(
     patterns = Patterns()
 
     # Get schema name
-    effective_schema = schema_name or introspection_result.get("schema_name", "public")
+    effective_schema = schema_name or introspection_result.schema_name
 
     # Store the connection config
     config_key = "default"
     patterns.postgres_configs[(config_key, effective_schema)] = conn.config
 
     # Add patterns for vertex tables
-    for table_info in introspection_result.get("vertex_tables", []):
-        table_name = table_info["name"]
+    for table_info in introspection_result.vertex_tables:
+        table_name = table_info.name
         table_pattern = TablePattern(
             table_name=table_name,
             schema_name=effective_schema,
@@ -46,8 +52,8 @@ def create_patterns_from_postgres(
         )
 
     # Add patterns for edge tables
-    for table_info in introspection_result.get("edge_tables", []):
-        table_name = table_info["name"]
+    for table_info in introspection_result.edge_tables:
+        table_name = table_info.name
         table_pattern = TablePattern(
             table_name=table_name,
             schema_name=effective_schema,

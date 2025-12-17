@@ -87,7 +87,6 @@ class FilePattern(ResourcePattern):
     Attributes:
         regex: Regular expression pattern for matching filenames
         sub_path: Path to search for matching files (default: "./")
-        limit_rows: Limit to first N rows/docs (None for no limit)
         date_field: Name of the date field to filter on (for date-based filtering)
         date_filter: SQL-style date filter condition (e.g., "> '2020-10-10'")
         date_range_start: Start date for range filtering (e.g., "2015-11-11")
@@ -101,7 +100,6 @@ class FilePattern(ResourcePattern):
     sub_path: None | pathlib.Path = dataclasses.field(
         default_factory=lambda: pathlib.Path("./")
     )
-    limit_rows: int | None = None
     date_field: str | None = None
     date_filter: str | None = None
     date_range_start: str | None = None
@@ -154,7 +152,6 @@ class TablePattern(ResourcePattern):
         table_name: Exact table name or regex pattern
         schema_name: Schema name (optional, defaults to public)
         database: Database name (optional)
-        limit_rows: Limit to first N rows/docs (None for no limit)
         date_field: Name of the date field to filter on (for date-based filtering)
         date_filter: SQL-style date filter condition (e.g., "> '2020-10-10'")
         date_range_start: Start date for range filtering (e.g., "2015-11-11")
@@ -167,7 +164,6 @@ class TablePattern(ResourcePattern):
     table_name: str = ""
     schema_name: str | None = None
     database: str | None = None
-    limit_rows: int | None = None
     date_field: str | None = None
     date_filter: str | None = None
     date_range_start: str | None = None

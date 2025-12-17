@@ -349,12 +349,9 @@ class VertexActor(Actor):
         """
         doc: dict[str, Any] = kwargs.pop("doc", {})
 
-        vertex_keys_list = self.vertex_config.fields(self.name, with_aux=True)
+        vertex_keys_list = self.vertex_config.fields_names(self.name)
         # Convert to tuple of strings for type compatibility
-        vertex_keys: tuple[str, ...] = tuple(
-            field.name if hasattr(field, "name") else str(field)
-            for field in vertex_keys_list
-        )
+        vertex_keys: tuple[str, ...] = tuple(vertex_keys_list)
 
         agg = []
         # if self.name not in ctx.target_vertices:
@@ -781,7 +778,7 @@ class DescendActor(Actor):
         ]
 
         for v in present_vertices:
-            available_fields -= set(self.vertex_config.fields(v))
+            available_fields -= set(self.vertex_config.fields_names(v))
 
         for v in self.vertex_config.vertex_list:
             # Use field_names property for cleaner set operations

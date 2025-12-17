@@ -53,7 +53,7 @@ def test_api_data_source_basic(
     api_source.resource_name = resource_name
 
     # Create caster and process
-    caster = Caster(schema, n_threads=1)
+    caster = Caster(schema, n_cores=1)
     caster.process_data_source(data_source=api_source, resource_name=resource_name)
 
     # Verify we got data
@@ -70,7 +70,7 @@ def test_api_data_source_via_process_resource(
     schema = schema_obj(api_mode)
 
     # Create caster
-    caster = Caster(schema, n_threads=1)
+    caster = Caster(schema, n_cores=1)
 
     # Process using configuration dict
     resource_config = {

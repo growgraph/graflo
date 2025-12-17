@@ -205,16 +205,22 @@ patterns.add_file_pattern(
     FilePattern(regex=r"^package\.meta.*\.json(?:\.gz)?$", sub_path=pathlib.Path("./data"), resource_name="package")
 )
 patterns.add_file_pattern(
-    "bugs",
-    FilePattern(regex=r"^bugs.head.*\.json(?:\.gz)?$", sub_path=pathlib.Path("./data"), resource_name="bugs")
+    "bug",
+    FilePattern(regex=r"^bugs.*\.json(?:\.gz)?$", sub_path=pathlib.Path("./data"), resource_name="bug")
 )
 
+from graflo.caster import IngestionParams
+
 caster = Caster(schema)
+
+ingestion_params = IngestionParams(
+    clean_start=True,  # Wipe existing database before ingestion
+)
+
 caster.ingest(
     output_config=conn_conf,  # Target database config
     patterns=patterns,  # Source data patterns
-    patterns=patterns,
-    clean_start=True,
+    ingestion_params=ingestion_params,
 )
 ```
 

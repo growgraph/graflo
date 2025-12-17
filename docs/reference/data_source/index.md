@@ -152,15 +152,23 @@ source = DataSourceFactory.create_sql_data_source(config)
 
 ```python
 from graflo import Caster, DataSourceRegistry
+from graflo.caster import IngestionParams
 
 registry = DataSourceRegistry()
 registry.register(file_source, resource_name="users")
 registry.register(api_source, resource_name="users")  # Multiple sources for same resource
 
 caster = Caster(schema)
+
+ingestion_params = IngestionParams(
+    batch_size=1000,  # Process 1000 items per batch
+    clean_start=False,  # Set to True to wipe existing database
+)
+
 caster.ingest_data_sources(
     data_source_registry=registry,
     conn_conf=conn_conf,
+    ingestion_params=ingestion_params,
 )
 ```
 

@@ -15,7 +15,6 @@ Example:
 """
 
 from __future__ import annotations
-from graflo.db.postgres import PostgresConnection
 
 import logging
 import multiprocessing as mp
@@ -28,6 +27,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pandas as pd
+from pydantic import BaseModel
 from suthing import Timer
 
 from graflo.architecture.onto import EncodingType, GraphContainer
@@ -37,11 +37,35 @@ from graflo.data_source import (
     DataSourceFactory,
     DataSourceRegistry,
 )
+from graflo.data_source.sql import SQLConfig, SQLDataSource
 from graflo.db import DBType, ConnectionManager, DBConfig
+from graflo.onto import DBFlavor
 from graflo.util.chunker import ChunkerType
 from graflo.util.onto import FilePattern, Patterns, ResourceType, TablePattern
 
 logger = logging.getLogger(__name__)
+
+
+class IngestionParams(BaseModel):
+    """Parameters for controlling the ingestion process.
+
+    Attributes:
+        clean_start: Whether to clean the database before ingestion
+        n_cores: Number of CPU cores/threads to use for parallel processing
+        max_items: Maximum number of items to process per resource (applies to all data sources)
+        batch_size: Size of batches for processing
+        dry: Whether to perform a dry run (no database changes)
+        init_only: Whether to only initialize the database without ingestion
+        limit_files: Optional limit on number of files to process
+    """
+
+    clean_start: bool = False
+    n_cores: int = 1
+    max_items: int | None = None
+    batch_size: int = 10000
+    dry: bool = False
+    init_only: bool = False
+    limit_files: int | None = None
 
 
 class Caster:
@@ -52,34 +76,33 @@ class Caster:
     execution, and various data formats.
 
     Attributes:
-        clean_start: Whether to clean the database before ingestion
-        n_cores: Number of CPU cores to use for parallel processing
-        max_items: Maximum number of items to process
-        batch_size: Size of batches for processing
-        n_threads: Number of threads for parallel processing
-        dry: Whether to perform a dry run (no database changes)
         schema: Schema configuration for the graph
+        ingestion_params: IngestionParams instance controlling ingestion behavior
     """
 
-    def __init__(self, schema: Schema, **kwargs):
+    def __init__(
+        self,
+        schema: Schema,
+        ingestion_params: IngestionParams | None = None,
+        **kwargs,
+    ):
         """Initialize the caster with schema and configuration.
 
         Args:
             schema: Schema configuration for the graph
-            **kwargs: Additional configuration options:
+            ingestion_params: IngestionParams instance with ingestion configuration.
+                If None, creates IngestionParams from kwargs or uses defaults
+            **kwargs: Additional configuration options (for backward compatibility):
                 - clean_start: Whether to clean the database before ingestion
-                - n_cores: Number of CPU cores to use
+                - n_cores: Number of CPU cores/threads to use for parallel processing
                 - max_items: Maximum number of items to process
                 - batch_size: Size of batches for processing
-                - n_threads: Number of threads for parallel processing
                 - dry: Whether to perform a dry run
         """
-        self.clean_start: bool = False
-        self.n_cores = kwargs.pop("n_cores", 1)
-        self.max_items = kwargs.pop("max_items", None)
-        self.batch_size = kwargs.pop("batch_size", 10000)
-        self.n_threads = kwargs.pop("n_threads", 1)
-        self.dry = kwargs.pop("dry", False)
+        if ingestion_params is None:
+            # Create IngestionParams from kwargs or use defaults
+            ingestion_params = IngestionParams(**kwargs)
+        self.ingestion_params = ingestion_params
         self.schema = schema
 
     @staticmethod
@@ -89,7 +112,7 @@ class Caster:
         """Discover files matching a pattern in a directory.
 
         Args:
-            fpath: Path to search in
+            fpath: Path to search in (should be the directory containing files)
             pattern: Pattern to match files against
             limit_files: Optional limit on number of files to return
 
@@ -105,9 +128,11 @@ class Caster:
         else:
             fpath_pathlib = fpath
 
+        # fpath is already the directory to search (pattern.sub_path from caller)
+        # so we use it directly, not combined with pattern.sub_path again
         files = [
             f
-            for f in (fpath_pathlib / pattern.sub_path).iterdir()
+            for f in fpath_pathlib.iterdir()
             if f.is_file()
             and (
                 True
@@ -135,7 +160,7 @@ class Caster:
         """
         rr = self.schema.fetch_resource(resource_name)
 
-        with ThreadPoolExecutor(max_workers=self.n_threads) as executor:
+        with ThreadPoolExecutor(max_workers=self.ingestion_params.n_cores) as executor:
             docs = list(
                 executor.map(
                     lambda doc: rr(doc),
@@ -183,9 +208,11 @@ class Caster:
         # Use pattern-specific limit if available, otherwise use global max_items
         limit = getattr(data_source, "_pattern_limit", None)
         if limit is None:
-            limit = self.max_items
+            limit = self.ingestion_params.max_items
 
-        for batch in data_source.iter_batches(batch_size=self.batch_size, limit=limit):
+        for batch in data_source.iter_batches(
+            batch_size=self.ingestion_params.batch_size, limit=limit
+        ):
             self.process_batch(
                 batch, resource_name=actual_resource_name, conn_conf=conn_conf
             )
@@ -291,7 +318,7 @@ class Caster:
                         vc.index(vcol),
                         update_keys="doc",
                         filter_uniques=True,
-                        dry=self.dry,
+                        dry=self.ingestion_params.dry,
                     )
 
             # update edge misc with blank node edges
@@ -317,7 +344,7 @@ class Caster:
                     if weight.name in vc.vertex_set:
                         index_fields = vc.index(weight.name)
 
-                        if not self.dry and weight.name in gc.vertices:
+                        if not self.ingestion_params.dry and weight.name in gc.vertices:
                             weights_per_item = db_client.fetch_present_documents(
                                 class_name=vc.vertex_dbname(weight.name),
                                 batch=gc.vertices[weight.name],
@@ -341,7 +368,7 @@ class Caster:
             for edge_id, edge in self.schema.edge_config.edges_items():
                 for ee in gc.loop_over_relations(edge_id):
                     _, _, relation = ee
-                    if not self.dry:
+                    if not self.ingestion_params.dry:
                         data = gc.edges[ee]
                         db_client.insert_edges_batch(
                             docs_edges=data,
@@ -352,15 +379,15 @@ class Caster:
                             match_keys_source=vc.index(edge.source).fields,
                             match_keys_target=vc.index(edge.target).fields,
                             filter_uniques=False,
-                            dry=self.dry,
+                            dry=self.ingestion_params.dry,
                         )
 
-    def process_with_queue(self, tasks: mp.Queue, **kwargs):
+    def process_with_queue(self, tasks: mp.Queue, conn_conf: DBConfig | None = None):
         """Process tasks from a queue.
 
         Args:
             tasks: Queue of tasks to process
-            **kwargs: Additional keyword arguments
+            conn_conf: Optional database connection configuration
         """
         while True:
             try:
@@ -371,10 +398,10 @@ class Caster:
                     self.process_resource(
                         resource_instance=filepath,
                         resource_name=resource_name,
-                        **kwargs,
+                        conn_conf=conn_conf,
                     )
                 elif isinstance(task, AbstractDataSource):
-                    self.process_data_source(data_source=task, **kwargs)
+                    self.process_data_source(data_source=task, conn_conf=conn_conf)
             except queue.Empty:
                 break
 
@@ -409,32 +436,23 @@ class Caster:
     def ingest_data_sources(
         self,
         data_source_registry: DataSourceRegistry,
-        conn_conf: None | DBConfig = None,
-        **kwargs,
+        conn_conf: DBConfig,
+        ingestion_params: IngestionParams | None = None,
     ):
         """Ingest data from data sources in a registry.
 
         Args:
             data_source_registry: Registry containing data sources mapped to resources
             conn_conf: Database connection configuration
-            **kwargs: Additional keyword arguments:
-                - clean_start: Whether to clean the database before ingestion
-                - n_cores: Number of CPU cores to use
-                - max_items: Maximum number of items to process
-                - batch_size: Size of batches for processing
-                - dry: Whether to perform a dry run
-                - init_only: Whether to only initialize the database
+            ingestion_params: IngestionParams instance with ingestion configuration.
+                If None, uses default IngestionParams()
         """
-        conn_conf = cast(DBConfig, kwargs.get("conn_conf", conn_conf))
-        self.clean_start = kwargs.pop("clean_start", self.clean_start)
-        self.n_cores = kwargs.pop("n_cores", self.n_cores)
-        self.max_items = kwargs.pop("max_items", self.max_items)
-        self.batch_size = kwargs.pop("batch_size", self.batch_size)
-        self.dry = kwargs.pop("dry", self.dry)
-        init_only = kwargs.pop("init_only", False)
+        if ingestion_params is None:
+            ingestion_params = IngestionParams()
 
-        if conn_conf is None:
-            raise ValueError("conn_conf is required for ingest_data_sources")
+        # Update ingestion params (may override defaults set in __init__)
+        self.ingestion_params = ingestion_params
+        init_only = ingestion_params.init_only
 
         # If effective_schema is not set, use schema.general.name as fallback
         if conn_conf.can_be_target() and conn_conf.effective_schema is None:
@@ -451,7 +469,7 @@ class Caster:
         # It checks if the database exists and creates it if needed
         # Uses schema.general.name if database is not set in config
         with ConnectionManager(connection_config=conn_conf) as db_client:
-            db_client.init_db(self.schema, self.clean_start)
+            db_client.init_db(self.schema, self.ingestion_params.clean_start)
 
         if init_only:
             logger.info("ingest execution bound to init")
@@ -468,7 +486,7 @@ class Caster:
                 tasks.extend(data_sources)
 
         with Timer() as klepsidra:
-            if self.n_cores > 1:
+            if self.ingestion_params.n_cores > 1:
                 queue_tasks: mp.Queue = mp.Queue()
                 for item in tasks:
                     queue_tasks.put(item)
@@ -476,7 +494,6 @@ class Caster:
                 func = partial(
                     self.process_with_queue,
                     conn_conf=conn_conf,
-                    **kwargs,
                 )
                 assert mp.get_start_method() == "fork", (
                     "Requires 'forking' operating system"
@@ -484,8 +501,8 @@ class Caster:
 
                 processes = []
 
-                for w in range(self.n_cores):
-                    p = mp.Process(target=func, args=(queue_tasks,), kwargs=kwargs)
+                for w in range(self.ingestion_params.n_cores):
+                    p = mp.Process(target=func, args=(queue_tasks,))
                     processes.append(p)
                     p.start()
                     for p in processes:
@@ -497,46 +514,146 @@ class Caster:
                     )
         logger.info(f"Processing took {klepsidra.elapsed:.1f} sec")
 
-    def ingest(
-        self,
-        output_config: DBConfig,
-        patterns: "Patterns | None" = None,
-        **kwargs,
-    ):
-        """Ingest data into the graph database.
-
-        This is the main ingestion method that takes:
-        - Schema: Graph structure (already set in Caster)
-        - OutputConfig: Target graph database configuration
-        - Patterns: Mapping of resources to physical data sources
+    @staticmethod
+    def _get_db_flavor_from_config(output_config: DBConfig) -> DBFlavor:
+        """Convert DBConfig connection type to DBFlavor.
 
         Args:
-            output_config: Target database connection configuration (for writing graph)
-            patterns: Patterns instance mapping resources to data sources
-                If None, will try to use legacy 'patterns' kwarg
-            **kwargs: Additional keyword arguments:
-                - clean_start: Whether to clean the database before ingestion
-                - n_cores: Number of CPU cores to use
-                - max_items: Maximum number of items to process
-                - batch_size: Size of batches for processing
-                - dry: Whether to perform a dry run
-                - init_only: Whether to only initialize the database
-                - limit_files: Optional limit on number of files to process
-                - conn_conf: Legacy parameter (use output_config instead)
+            output_config: Database configuration
+
+        Returns:
+            DBFlavor enum value corresponding to the database type
         """
-        # Backward compatibility: support legacy conn_conf parameter
-        if "conn_conf" in kwargs:
-            output_config = kwargs.pop("conn_conf")
+        db_type = output_config.connection_type
+        if db_type == DBType.ARANGO:
+            return DBFlavor.ARANGO
+        elif db_type == DBType.NEO4J:
+            return DBFlavor.NEO4J
+        elif db_type == DBType.TIGERGRAPH:
+            return DBFlavor.TIGERGRAPH
+        else:
+            # Default to ARANGO for unknown types
+            return DBFlavor.ARANGO
 
-        # Backward compatibility: support legacy patterns parameter
-        if patterns is None:
-            patterns = kwargs.pop("patterns", Patterns())
+    def _register_file_sources(
+        self,
+        registry: DataSourceRegistry,
+        resource_name: str,
+        pattern: FilePattern,
+        ingestion_params: IngestionParams,
+    ) -> None:
+        """Register file data sources for a resource.
 
-        # Create DataSourceRegistry from patterns
+        Args:
+            registry: Data source registry to add sources to
+            resource_name: Name of the resource
+            pattern: File pattern configuration
+            ingestion_params: Ingestion parameters
+        """
+        if pattern.sub_path is None:
+            logger.warning(
+                f"FilePattern for resource '{resource_name}' has no sub_path, skipping"
+            )
+            return
+
+        path_obj = pattern.sub_path.expanduser()
+        files = Caster.discover_files(
+            path_obj, limit_files=ingestion_params.limit_files, pattern=pattern
+        )
+        logger.info(f"For resource name {resource_name} {len(files)} files were found")
+
+        for file_path in files:
+            file_source = DataSourceFactory.create_file_data_source(path=file_path)
+            registry.register(file_source, resource_name=resource_name)
+
+    def _register_sql_table_sources(
+        self,
+        registry: DataSourceRegistry,
+        resource_name: str,
+        pattern: TablePattern,
+        patterns: "Patterns",
+        ingestion_params: IngestionParams,
+    ) -> None:
+        """Register SQL table data sources for a resource.
+
+        Uses SQLDataSource with batch processing (cursors) instead of loading
+        all data into memory. This is efficient for large tables.
+
+        Args:
+            registry: Data source registry to add sources to
+            resource_name: Name of the resource
+            pattern: Table pattern configuration
+            patterns: Patterns instance for accessing configs
+            ingestion_params: Ingestion parameters
+        """
+        postgres_config = patterns.get_postgres_config(resource_name)
+        if postgres_config is None:
+            logger.warning(
+                f"PostgreSQL table '{resource_name}' has no connection config, skipping"
+            )
+            return
+
+        table_info = patterns.get_table_info(resource_name)
+        if table_info is None:
+            logger.warning(
+                f"Could not get table info for resource '{resource_name}', skipping"
+            )
+            return
+
+        table_name, schema_name = table_info
+        effective_schema = schema_name or postgres_config.schema_name or "public"
+
+        try:
+            # Build base query
+            query = f'SELECT * FROM "{effective_schema}"."{table_name}"'
+            where_clause = pattern.build_where_clause()
+            if where_clause:
+                query += f" WHERE {where_clause}"
+
+            # Get SQLAlchemy connection string from PostgresConfig
+            connection_string = postgres_config.to_sqlalchemy_connection_string()
+
+            # Create SQLDataSource with pagination for efficient batch processing
+            # Note: max_items limit is handled by SQLDataSource.iter_batches() limit parameter
+            sql_config = SQLConfig(
+                connection_string=connection_string,
+                query=query,
+                pagination=True,
+                page_size=ingestion_params.batch_size,  # Use batch_size for page size
+            )
+            sql_source = SQLDataSource(config=sql_config)
+
+            # Register the SQL data source (it will be processed in batches)
+            registry.register(sql_source, resource_name=resource_name)
+
+            logger.info(
+                f"Created SQL data source for table '{effective_schema}.{table_name}' "
+                f"mapped to resource '{resource_name}' (will process in batches of {ingestion_params.batch_size})"
+            )
+        except Exception as e:
+            logger.error(
+                f"Failed to create data source for PostgreSQL table '{resource_name}': {e}",
+                exc_info=True,
+            )
+
+    def _build_registry_from_patterns(
+        self,
+        patterns: "Patterns",
+        ingestion_params: IngestionParams,
+    ) -> DataSourceRegistry:
+        """Build data source registry from patterns.
+
+        Args:
+            patterns: Patterns instance mapping resources to data sources
+            ingestion_params: Ingestion parameters
+
+        Returns:
+            DataSourceRegistry with registered data sources
+        """
         registry = DataSourceRegistry()
 
-        for r in self.schema.resources:
-            resource_name = r.name
+        for resource in self.schema.resources:
+            resource_name = resource.name
             resource_type = patterns.get_resource_type(resource_name)
 
             if resource_type is None:
@@ -545,112 +662,75 @@ class Caster:
                 )
                 continue
 
+            pattern = patterns.patterns.get(resource_name)
+            if pattern is None:
+                logger.warning(
+                    f"No pattern found for resource '{resource_name}', skipping"
+                )
+                continue
+
             if resource_type == ResourceType.FILE:
-                # Handle file pattern
-                pattern = patterns.patterns[resource_name]
                 if not isinstance(pattern, FilePattern):
                     logger.warning(
                         f"Pattern for resource '{resource_name}' is not a FilePattern, skipping"
                     )
                     continue
-
-                # Use sub_path from FilePattern (path is now part of the pattern)
-                if pattern.sub_path is None:
-                    logger.warning(
-                        f"FilePattern for resource '{resource_name}' has no sub_path, skipping"
-                    )
-                    continue
-                path_obj = pattern.sub_path.expanduser()
-                limit_files = kwargs.get("limit_files", None)
-
-                files = Caster.discover_files(
-                    path_obj, limit_files=limit_files, pattern=pattern
+                self._register_file_sources(
+                    registry, resource_name, pattern, ingestion_params
                 )
-                logger.info(
-                    f"For resource name {resource_name} {len(files)} files were found"
-                )
-
-                # Create FileDataSource for each file
-                for file_path in files:
-                    file_source = DataSourceFactory.create_file_data_source(
-                        path=file_path
-                    )
-                    # Store pattern-specific limit if specified
-                    if pattern.limit_rows is not None:
-                        file_source._pattern_limit = pattern.limit_rows
-                    # Note: Date filtering for files would require post-processing
-                    # and is not implemented here (would be inefficient for large files)
-                    registry.register(file_source, resource_name=resource_name)
 
             elif resource_type == ResourceType.SQL_TABLE:
-                # Handle PostgreSQL table using PostgresConnection
-                pattern = patterns.patterns[resource_name]
                 if not isinstance(pattern, TablePattern):
                     logger.warning(
                         f"Pattern for resource '{resource_name}' is not a TablePattern, skipping"
                     )
                     continue
-
-                postgres_config = patterns.get_postgres_config(resource_name)
-                if postgres_config is None:
-                    logger.warning(
-                        f"PostgreSQL table '{resource_name}' has no connection config, skipping"
-                    )
-                    continue
-
-                # Get table info
-                table_info = patterns.get_table_info(resource_name)
-                if table_info is None:
-                    logger.warning(
-                        f"Could not get table info for resource '{resource_name}', skipping"
-                    )
-                    continue
-
-                table_name, schema_name = table_info
-                effective_schema = (
-                    schema_name or postgres_config.schema_name or "public"
+                self._register_sql_table_sources(
+                    registry, resource_name, pattern, patterns, ingestion_params
                 )
-
-                # Use PostgresConnection directly to read data, similar to ArangoConnection pattern
-                try:
-                    # Build base query
-                    query = f'SELECT * FROM "{effective_schema}"."{table_name}"'
-
-                    # Add WHERE clause if date filtering is specified
-                    where_clause = pattern.build_where_clause()
-                    if where_clause:
-                        query += f" WHERE {where_clause}"
-
-                    # Add LIMIT if specified
-                    if pattern.limit_rows is not None:
-                        query += f" LIMIT {pattern.limit_rows}"
-
-                    # Use PostgresConnection to read data directly
-                    with PostgresConnection(postgres_config) as pg_conn:
-                        data = pg_conn.read(query)
-
-                    # Create InMemoryDataSource from the results
-                    in_memory_source = DataSourceFactory.create_in_memory_data_source(
-                        data=data
-                    )
-                    registry.register(in_memory_source, resource_name=resource_name)
-
-                    logger.info(
-                        f"Created data source for table '{effective_schema}.{table_name}' "
-                        f"mapped to resource '{resource_name}' ({len(data)} rows)"
-                    )
-                except Exception as e:
-                    logger.error(
-                        f"Failed to create data source for PostgreSQL table '{resource_name}': {e}",
-                        exc_info=True,
-                    )
-                    continue
 
             else:
                 logger.warning(
-                    f"No pattern configuration found for resource '{resource_name}', skipping"
+                    f"Unsupported resource type '{resource_type}' for resource '{resource_name}', skipping"
                 )
 
-        # Use the new ingest_data_sources method with output_config
-        kwargs["conn_conf"] = output_config
-        self.ingest_data_sources(registry, **kwargs)
+        return registry
+
+    def ingest(
+        self,
+        output_config: DBConfig,
+        patterns: "Patterns | None" = None,
+        ingestion_params: IngestionParams | None = None,
+    ):
+        """Ingest data into the graph database.
+
+        This is the main ingestion method that takes:
+        - Schema: Graph structure (already set in Caster)
+        - OutputConfig: Target graph database configuration
+        - Patterns: Mapping of resources to physical data sources
+        - IngestionParams: Parameters controlling the ingestion process
+
+        Args:
+            output_config: Target database connection configuration (for writing graph)
+            patterns: Patterns instance mapping resources to data sources
+                If None, defaults to empty Patterns()
+            ingestion_params: IngestionParams instance with ingestion configuration.
+                If None, uses default IngestionParams()
+        """
+        # Normalize parameters
+        patterns = patterns or Patterns()
+        ingestion_params = ingestion_params or IngestionParams()
+
+        # Initialize vertex config with correct field types based on database type
+        db_flavor = self._get_db_flavor_from_config(output_config)
+        self.schema.vertex_config.finish_init(db_flavor)
+
+        # Build registry from patterns
+        registry = self._build_registry_from_patterns(patterns, ingestion_params)
+
+        # Ingest data sources
+        self.ingest_data_sources(
+            data_source_registry=registry,
+            conn_conf=output_config,
+            ingestion_params=ingestion_params,
+        )

@@ -76,9 +76,16 @@ patterns = Patterns(
     }
 )
 
+from graflo.caster import IngestionParams
+
+ingestion_params = IngestionParams(
+    clean_start=False,  # Set to True to wipe existing database
+)
+
 caster.ingest(
     output_config=conn_conf,  # Target database config
     patterns=patterns,  # Source data patterns
+    ingestion_params=ingestion_params,
 )
 ```
 
@@ -128,9 +135,17 @@ from graflo.db.connection.onto import ArangoConfig
 
 arango_config = ArangoConfig.from_docker_env()  # Target graph database
 caster = Caster(schema)
+
+from graflo.caster import IngestionParams
+
+ingestion_params = IngestionParams(
+    clean_start=False,  # Set to True to wipe existing database
+)
+
 caster.ingest(
     output_config=arango_config,  # Target graph database
     patterns=patterns,  # Source PostgreSQL tables
+    ingestion_params=ingestion_params,
 )
 
 pg_conn.close()
@@ -167,10 +182,16 @@ registry = DataSourceRegistry()
 registry.register(api_source, resource_name="users")
 
 # Ingest
+from graflo.caster import IngestionParams
+
 caster = Caster(schema)
+
+ingestion_params = IngestionParams()  # Use default parameters
+
 caster.ingest_data_sources(
     data_source_registry=registry,
     conn_conf=conn_conf,  # Target database config
+    ingestion_params=ingestion_params,
 )
 ```
 
