@@ -277,6 +277,33 @@ class SchemaPlotter:
         self.name = self.schema.general.name
         self.prefix = self.name
 
+    def _discover_edges_from_resources(self):
+        """Discover edges from resources by walking through ActorWrappers.
+
+        This method finds all EdgeActors in resources and extracts their edges,
+        which may include edges with dynamic relations (relation_field, relation_from_key)
+        that aren't fully represented in edge_config.
+
+        Returns:
+            dict: Dictionary mapping (source, target, purpose) to Edge objects
+        """
+        discovered_edges = {}
+
+        for resource in self.schema.resources:
+            # Collect all actors from the resource's ActorWrapper
+            actors = resource.root.collect_actors()
+
+            for actor in actors:
+                if isinstance(actor, EdgeActor):
+                    edge = actor.edge
+                    edge_id = edge.edge_id
+                    # Store the edge, preferring already discovered edges from edge_config
+                    # but allowing resource edges to supplement
+                    if edge_id not in discovered_edges:
+                        discovered_edges[edge_id] = edge
+
+        return discovered_edges
+
     def plot_vc2fields(self):
         """Plot vertex collections and their fields.
 
@@ -476,6 +503,9 @@ class SchemaPlotter:
         Creates a visualization showing the relationships between vertex collections.
         Optionally prunes leaf nodes from the visualization.
 
+        This method discovers edges from both edge_config and resources to ensure
+        all relationships are visualized, including those with dynamic relations.
+
         Args:
             prune_leaves: Whether to remove leaf nodes from the visualization
 
@@ -485,12 +515,38 @@ class SchemaPlotter:
         g = nx.MultiDiGraph()
         nodes = []
         edges = []
-        for (source, target, relation), e in self.schema.edge_config.edges_items():
-            if relation is not None:
+
+        # Discover edges from resources (may include edges not in edge_config)
+        discovered_edges = self._discover_edges_from_resources()
+
+        # Collect all edges: from edge_config and discovered from resources
+        all_edges = {}
+        for edge_id, e in self.schema.edge_config.edges_items():
+            all_edges[edge_id] = e
+        # Add discovered edges (they may already be in edge_config, but that's fine)
+        for edge_id, e in discovered_edges.items():
+            if edge_id not in all_edges:
+                all_edges[edge_id] = e
+
+        # Create graph edges with relation labels
+        for (source, target, purpose), e in all_edges.items():
+            # Determine label based on relation configuration
+            label = None
+            if e.relation is not None:
+                # Static relation
+                label = e.relation
+            elif e.relation_field is not None:
+                # Dynamic relation from field - show indicator
+                label = f"[{e.relation_field}]"
+            elif e.relation_from_key:
+                # Dynamic relation from key - show indicator
+                label = "[key]"
+
+            if label is not None:
                 ee = (
                     get_auxnode_id(AuxNodeType.VERTEX, vertex=source),
                     get_auxnode_id(AuxNodeType.VERTEX, vertex=target),
-                    {"label": e.relation},
+                    {"label": label},
                 )
             else:
                 ee = (
@@ -499,7 +555,8 @@ class SchemaPlotter:
                 )
             edges += [ee]
 
-        for (source, target, relation), ee in self.schema.edge_config.edges_items():
+        # Create nodes for all vertices involved in edges
+        for (source, target, purpose), e in all_edges.items():
             for v in (source, target):
                 nodes += [
                     (
@@ -541,10 +598,14 @@ class SchemaPlotter:
         for e in g.edges:
             s, t, ix = e
             target_props = g.nodes[s]
+            edge_data = g.edges[s, t, ix]
             upd_dict = {
                 "style": edge_status[target_props["type"]],
                 "arrowhead": "vee",
             }
+            # Preserve existing label if present (for relation display)
+            if "label" in edge_data:
+                upd_dict["label"] = edge_data["label"]
             for k, v in upd_dict.items():
                 g.edges[s, t, ix][k] = v
 

@@ -22,8 +22,13 @@
 !docs/**/*.md
 !docs/**/*.py
 
+!sh
+!sh/
+!sh/**/*.sh
+
+
 !.github/**
 !.env.example
 !pyproject.toml
-!mkdocs.yaml
+!mkdocs.yml
 !*.md

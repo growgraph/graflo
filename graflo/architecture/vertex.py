@@ -6,7 +6,7 @@ The module supports both ArangoDB and Neo4j through the DBFlavor enum.
 
 Key Components:
     - Vertex: Represents a vertex with its fields and indexes
-    - VertexConfig: Manages collections of vertices and their configurations
+    - VertexConfig: Manages vertices and their configurations
 
 Example:
     >>> vertex = Vertex(name="user", fields=["id", "name"])
@@ -324,9 +324,9 @@ class Vertex(BaseDataclass):
 
 @dataclasses.dataclass
 class VertexConfig(BaseDataclass):
-    """Configuration for managing collections of vertices.
+    """Configuration for managing vertices.
 
-    This class manages a collection of vertices, providing methods for accessing
+    This class manages vertices, providing methods for accessing
     and manipulating vertex configurations.
 
     Attributes:
@@ -354,13 +354,12 @@ class VertexConfig(BaseDataclass):
         }
 
         # TODO replace by types
-        # vertex_collection_name -> [numeric fields]
-        self._vcollection_numeric_fields_map = {}
+        # vertex_name -> [numeric fields]
+        self._vertex_numeric_fields_map = {}
 
         if set(self.blank_vertices) - set(self.vertex_set):
             raise ValueError(
-                f" Blank collections {self.blank_vertices} are not defined"
-                " as vertex collections"
+                f" Blank vertices {self.blank_vertices} are not defined as vertices"
             )
 
     @property
@@ -427,8 +426,8 @@ class VertexConfig(BaseDataclass):
             value = self._vertices_map[vertex_name].dbname
         except KeyError as e:
             logger.error(
-                "Available vertex collections :"
-                f" {self._vertices_map.keys()}; vertex collection"
+                "Available vertices :"
+                f" {self._vertices_map.keys()}; vertex"
                 f" requested : {vertex_name}"
             )
             raise e
@@ -498,14 +497,14 @@ class VertexConfig(BaseDataclass):
             ValueError: If vertex is not defined in config
         """
         if vertex_name in self.vertex_set:
-            if vertex_name in self._vcollection_numeric_fields_map:
-                return self._vcollection_numeric_fields_map[vertex_name]
+            if vertex_name in self._vertex_numeric_fields_map:
+                return self._vertex_numeric_fields_map[vertex_name]
             else:
                 return ()
         else:
             raise ValueError(
-                " Accessing vertex collection numeric fields: vertex"
-                f" collection {vertex_name} was not defined in config"
+                " Accessing vertex numeric fields: vertex"
+                f" {vertex_name} was not defined in config"
             )
 
     def filters(self, vertex_name) -> list[Expression]:

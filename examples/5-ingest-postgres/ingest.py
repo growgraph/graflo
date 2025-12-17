@@ -67,7 +67,7 @@ db_flavor = (
 # Step 1.5: Initialize PostgreSQL database with mock schema if needed
 # This ensures the database has the required tables (users, products, purchases, follows)
 # Look for mock_schema.sql in the same directory as this script
-schema_file = Path(__file__).parent / "mock_schema.sql"
+schema_file = Path(__file__).parent / "data" / "mock_schema.sql"
 
 if schema_file.exists():
     # Connection is automatically managed by load_schema_from_sql_file

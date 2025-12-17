@@ -19,12 +19,14 @@ The example uses a PostgreSQL database with a typical 3NF (Third Normal Form) sc
 ### Vertex Tables (Entities)
 
 **`users`** - User accounts:
+
 - `id` (SERIAL PRIMARY KEY) - Unique user identifier
 - `name` (VARCHAR) - User full name
 - `email` (VARCHAR, UNIQUE) - User email address
 - `created_at` (TIMESTAMP) - Account creation timestamp
 
 **`products`** - Product catalog:
+
 - `id` (SERIAL PRIMARY KEY) - Unique product identifier
 - `name` (VARCHAR) - Product name
 - `price` (DECIMAL) - Product price
@@ -34,6 +36,7 @@ The example uses a PostgreSQL database with a typical 3NF (Third Normal Form) sc
 ### Edge Tables (Relationships)
 
 **`purchases`** - Purchase transactions linking users to products:
+
 - `id` (SERIAL PRIMARY KEY) - Unique purchase identifier
 - `user_id` (INTEGER, FOREIGN KEY → users.id) - Purchasing user
 - `product_id` (INTEGER, FOREIGN KEY → products.id) - Purchased product
@@ -42,6 +45,7 @@ The example uses a PostgreSQL database with a typical 3NF (Third Normal Form) sc
 - `total_amount` (DECIMAL) - Total purchase amount
 
 **`follows`** - User follow relationships (self-referential):
+
 - `id` (SERIAL PRIMARY KEY) - Unique follow relationship identifier
 - `follower_id` (INTEGER, FOREIGN KEY → users.id) - User who is following
 - `followed_id` (INTEGER, FOREIGN KEY → users.id) - User being followed
@@ -49,49 +53,94 @@ The example uses a PostgreSQL database with a typical 3NF (Third Normal Form) sc
 
 ## Automatic Schema Inference
 
-The `infer_schema_from_postgres()` function automatically analyzes your PostgreSQL database and creates a complete graflo Schema:
+The `infer_schema_from_postgres()` function automatically analyzes your PostgreSQL database and creates a complete graflo Schema. This process involves several sophisticated steps:
+
+### How Schema Inference Works
+
+1. **Table Discovery**: The function queries PostgreSQL's information schema to discover all tables in the specified schema
+2. **Column Analysis**: For each table, it examines columns, data types, constraints (primary keys, foreign keys), and relationships
+3. **Table Classification**: Tables are classified as either vertex tables or edge tables using heuristics
+4. **Schema Generation**: A complete graflo Schema object is constructed with vertices, edges, resources, and type mappings
 
 ### Detection Heuristics
 
+The inference engine uses intelligent heuristics to classify tables:
+
 **Vertex Tables:**
-- Have a primary key
-- Have descriptive columns (not just foreign keys)
-- Represent entities in the domain
+- 
+- Have a primary key (identifies unique entities)
+- Contain descriptive columns beyond just foreign keys
+- Represent domain entities (users, products, etc.)
+- Typically have more non-foreign-key columns than foreign keys
 
 **Edge Tables:**
-- Have 2+ foreign keys (representing relationships)
-- May have additional attributes (weights, timestamps)
-- Represent relationships between entities
+
+- Have 2+ foreign keys (representing relationships between entities)
+- May have additional attributes (weights, timestamps, quantities)
+- Represent relationships or transactions between entities
+- Foreign keys point to vertex tables
+
+**Edge Relation Inference:**
+
+- The system analyzes table names to infer relationship names
+- For example, `purchases` table creates a relationship from `users` to `products`
+- Self-referential tables (like `follows`) are automatically detected
+- Uses fuzzy matching to identify source and target vertices from table names
 
 ### Automatic Type Mapping
 
-PostgreSQL types are automatically mapped to graflo Field types:
+PostgreSQL types are automatically mapped to graflo Field types with proper type information:
 
-| PostgreSQL Type | graflo Field Type |
-|----------------|-------------------|
-| `INTEGER`, `BIGINT`, `SERIAL` | `INT` |
-| `VARCHAR`, `TEXT`, `CHAR` | `STRING` |
-| `TIMESTAMP`, `DATE`, `TIME` | `DATETIME` |
-| `DECIMAL`, `NUMERIC`, `REAL`, `DOUBLE PRECISION` | `FLOAT` |
-| `BOOLEAN` | `BOOL` |
+| PostgreSQL Type | graflo Field Type | Notes |
+|----------------|-------------------|-------|
+| `INTEGER`, `BIGINT`, `SERIAL` | `INT` | Integer types preserved |
+| `VARCHAR`, `TEXT`, `CHAR` | `STRING` | String types preserved |
+| `TIMESTAMP`, `DATE`, `TIME` | `DATETIME` | Temporal types preserved |
+| `DECIMAL`, `NUMERIC`, `REAL`, `DOUBLE PRECISION` | `FLOAT` | Numeric types converted |
+| `BOOLEAN` | `BOOL` | Boolean types preserved |
 
 ### Inferred Schema Structure
 
 The inferred schema automatically includes:
 
-- **Vertices**: `users`, `products` (with typed fields)
+- **Vertices**: `users`, `products` (with typed fields matching PostgreSQL columns)
 - **Edges**: 
-  - `users → products` (purchases relationship)
-  - `users → users` (follows relationship)
+  - `users → products` (from `purchases` table) with weights: `purchase_date`, `quantity`, `total_amount`
+  - `users → users` (from `follows` table) with weight: `created_at`
 - **Resources**: Automatically created for each table with appropriate actors
 - **Indexes**: Primary keys become vertex indexes, foreign keys become edge indexes
 - **Weights**: Additional columns in edge tables become edge weight properties
+
+### Graph Structure Visualization
+
+The resulting graph structure shows the relationships between entities:
+
+![Graph Structure](../assets/5-ingest-postgres/figs/public_vc2vc.png){ width="300" }
+
+This diagram shows:
+
+- **Vertices**: `users` and `products` as nodes
+- **Edges**: 
+  - `users → products` relationship (purchases)
+  - `users → users` self-referential relationship (follows)
+
+### Vertex Fields Structure
+
+Each vertex includes typed fields inferred from PostgreSQL columns:
+
+![Vertex Fields](../assets/5-ingest-postgres/figs/public_vc2fields.png){ width="500" }
 
 ## Step-by-Step Guide
 
 ### Step 1: Connect to PostgreSQL
 
-First, establish a connection to your PostgreSQL database:
+First, establish a connection to your PostgreSQL database. This connection will be used to:
+- Query the database schema (tables, columns, constraints)
+- Read data from tables during ingestion
+- Understand foreign key relationships
+
+**What happens:**
+The `PostgresConnection` class wraps a `psycopg2` connection and provides methods for schema introspection and data querying.
 
 ```python
 from graflo.db.postgres import PostgresConnection
@@ -146,7 +195,19 @@ load_mock_schema_if_needed(postgres_conn)
 
 ### Step 3: Infer Schema from PostgreSQL
 
-Automatically generate a graflo Schema from your PostgreSQL database:
+Automatically generate a graflo Schema from your PostgreSQL database. This is the core of the automatic inference process:
+
+**What `infer_schema_from_postgres()` does:**
+
+1. **Queries PostgreSQL Information Schema**: The function queries PostgreSQL's information schema to discover all tables in the specified schema. It retrieves column information (names, types, constraints), identifies primary keys and foreign keys, and understands table relationships.
+
+2. **Classifies Tables**: Each table's structure is analyzed to determine if it's a vertex table (entity) or edge table (relationship). This classification uses heuristics based on primary keys, foreign keys, and column counts.
+
+3. **Infers Relationships**: For edge tables, the system identifies source and target vertices from foreign keys. It uses table name analysis and fuzzy matching to infer relationship names, and handles self-referential relationships (like `follows`).
+
+4. **Maps Types**: PostgreSQL column types are converted to graflo Field types, preserving type information for validation and optimization.
+
+5. **Creates Resources**: Resource definitions are generated for each table with appropriate actors (VertexActor for vertex tables, EdgeActor for edge tables). Foreign keys are mapped to vertex matching keys.
 
 ```python
 from graflo.db.postgres import infer_schema_from_postgres
@@ -170,11 +231,22 @@ schema = infer_schema_from_postgres(
 ```
 
 The inferred schema will have:
-- **Vertices**: `users`, `products` with typed fields
-- **Edges**: 
-  - `users → products` (from `purchases` table)
-  - `users → users` (from `follows` table)
-- **Resources**: Automatically created for each table
+
+- **Vertices**: `users`, `products` with typed fields matching PostgreSQL column types
+- **Edges**:
+
+  - `users → products` (from `purchases` table) with weight properties
+  - `users → users` (from `follows` table) with weight properties
+- **Resources**: Automatically created for each table with appropriate actors
+
+**What happens during inference:**
+
+1. **Table Analysis**: Each table is examined for primary keys, foreign keys, and column types
+2. **Vertex Detection**: Tables with primary keys and descriptive columns become vertices
+3. **Edge Detection**: Tables with 2+ foreign keys become edges, with source/target inferred from foreign key relationships
+4. **Type Mapping**: PostgreSQL column types are mapped to graflo Field types
+5. **Resource Creation**: Each table gets a corresponding resource with actors that map PostgreSQL rows to graph elements
+6. **Weight Extraction**: Non-key columns in edge tables become edge weight properties
 
 ### Step 4: Save Inferred Schema (Optional)
 
@@ -208,13 +280,33 @@ patterns = create_patterns_from_postgres(
 ```
 
 This creates `TablePattern` instances for each table, which:
-- Map table names to resource names
+
+- Map table names to resource names (e.g., `users` table → `users` resource)
 - Store PostgreSQL connection configuration
-- Enable the Caster to query data directly from PostgreSQL
+- Enable the Caster to query data directly from PostgreSQL using SQL
+
+**How Patterns Work:**
+
+- Each `TablePattern` contains the PostgreSQL connection info and table name
+- During ingestion, the Caster queries each table using SQL `SELECT * FROM table_name`
+- Data is streamed directly from PostgreSQL without intermediate files
+- This enables efficient processing of large tables
 
 ### Step 6: Ingest Data into Graph Database
 
-Finally, ingest the data from PostgreSQL into your target graph database:
+Finally, ingest the data from PostgreSQL into your target graph database. This is where the actual data transformation and loading happens:
+
+**What happens during ingestion:**
+
+1. **Resource Processing**: For each resource in the schema, the system queries the corresponding PostgreSQL table using SQL and streams rows from PostgreSQL without loading everything into memory.
+
+2. **Vertex Creation**: For vertex table resources, each row becomes a vertex. Column values become vertex properties, and the primary key becomes the vertex key/index.
+
+3. **Edge Creation**: For edge table resources, each row becomes an edge. Foreign keys are used to find source and target vertices, additional columns become edge weight properties, and the edge connects the matched source vertex to the matched target vertex.
+
+4. **Batch Processing**: Data is processed in batches for efficiency. Vertices are created/upserted first, then edges are created after vertices exist.
+
+5. **Graph Database Storage**: Data is written to the target graph database (ArangoDB/Neo4j/TigerGraph) using database-specific APIs for optimal performance. The system handles duplicates and updates based on indexes.
 
 ```python
 from graflo import Caster
@@ -320,6 +412,62 @@ print(f"Edges: {len(list(schema.edge_config.edges_list()))}")
 print(f"Resources: {len(schema.resources)}")
 print("=" * 80)
 ```
+
+## Resource Mappings
+
+The automatically generated resources map PostgreSQL tables to graph elements. Each resource defines how table rows are transformed into vertices and edges:
+
+### Users Resource
+
+The `users` resource maps each row in the `users` table to a `users` vertex:
+
+![Users Resource](../assets/5-ingest-postgres/figs/public.resource-users.png){ width="600" }
+
+**What happens:**
+
+- Each row in the `users` table becomes a vertex
+- Column values (`id`, `name`, `email`, `created_at`) become vertex properties
+- The `id` column is used as the vertex key/index
+
+### Products Resource
+
+The `products` resource maps each row in the `products` table to a `products` vertex:
+
+![Products Resource](../assets/5-ingest-postgres/figs/public.resource-products.png){ width="600" }
+
+**What happens:**
+
+- Each row in the `products` table becomes a vertex
+- Column values (`id`, `name`, `price`, `description`, `created_at`) become vertex properties
+- The `id` column is used as the vertex key/index
+
+### Purchases Resource
+
+The `purchases` resource creates edges between `users` and `products` vertices:
+
+![Purchases Resource](../assets/5-ingest-postgres/figs/public.resource-purchases.png){ width="700" }
+
+**What happens:**
+
+- Each row in the `purchases` table becomes an edge
+- The `user_id` foreign key maps to the source `users` vertex (using `id` as the match key)
+- The `product_id` foreign key maps to the target `products` vertex (using `id` as the match key)
+- Additional columns (`purchase_date`, `quantity`, `total_amount`) become edge weight properties
+- The edge connects the matched user vertex to the matched product vertex
+
+### Follows Resource
+
+The `follows` resource creates self-referential edges between `users` vertices:
+
+![Follows Resource](../assets/5-ingest-postgres/figs/public.resource-follows.png){ width="700" }
+
+**What happens:**
+
+- Each row in the `follows` table becomes an edge
+- The `follower_id` foreign key maps to the source `users` vertex (using `id` as the match key)
+- The `followed_id` foreign key maps to the target `users` vertex (using `id` as the match key)
+- The `created_at` column becomes an edge weight property
+- The edge connects a user (follower) to another user (followed), creating a social network structure
 
 ## Generated Schema Example
 
@@ -437,14 +585,34 @@ Special handling for PostgreSQL-specific types:
 - **DateTime**: Preserved as `datetime` objects during processing, serialized to ISO format for JSON
 - **Type preservation**: Original types are preserved for accurate duplicate detection
 
-## Graph Structure
+## Data Flow and Processing
 
-The resulting graph structure shows:
+Understanding how data flows from PostgreSQL to the graph database:
 
-- **Vertices**: `users` and `products` with their properties
-- **Edges**: 
-  - `users → products` (purchases) with weight properties: `purchase_date`, `quantity`, `total_amount`
-  - `users → users` (follows) with weight property: `created_at`
+### Step-by-Step Data Processing
+
+1. **Connection**: Establish connection to PostgreSQL database
+2. **Schema Inference**: Analyze database structure and generate graflo Schema
+3. **Pattern Creation**: Create patterns that map PostgreSQL tables to resources
+4. **Ingestion Process**:
+   - For each resource, query the corresponding PostgreSQL table
+   - Transform each row according to the resource mapping
+   - Create vertices from vertex table rows
+   - Create edges from edge table rows, matching foreign keys to vertex keys
+   - Add weight properties to edges from additional columns
+5. **Graph Database Storage**: Store transformed data in the target graph database
+
+### Foreign Key Matching
+
+The system uses foreign keys to match edge table rows to vertices:
+
+- **Edge Table Row**: `{user_id: 5, product_id: 12, quantity: 2, total_amount: 99.98}`
+- **Source Vertex Match**: Find `users` vertex where `id = 5`
+- **Target Vertex Match**: Find `products` vertex where `id = 12`
+- **Edge Creation**: Create edge from matched user vertex to matched product vertex
+- **Weight Properties**: Add `quantity: 2` and `total_amount: 99.98` to the edge
+
+This matching happens automatically based on the foreign key relationships detected during schema inference.
 
 ## Benefits
 

@@ -375,7 +375,7 @@ class Caster:
                             source_class=vc.vertex_dbname(edge.source),
                             target_class=vc.vertex_dbname(edge.target),
                             relation_name=relation,
-                            collection_name=edge.collection_name,
+                            collection_name=edge.database_name,
                             match_keys_source=vc.index(edge.source).fields,
                             match_keys_target=vc.index(edge.target).fields,
                             filter_uniques=False,
@@ -724,6 +724,8 @@ class Caster:
         # Initialize vertex config with correct field types based on database type
         db_flavor = self._get_db_flavor_from_config(output_config)
         self.schema.vertex_config.finish_init(db_flavor)
+        # Initialize edge config after vertex config is fully initialized
+        self.schema.edge_config.finish_init(self.schema.vertex_config)
 
         # Build registry from patterns
         registry = self._build_registry_from_patterns(patterns, ingestion_params)

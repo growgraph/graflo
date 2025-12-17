@@ -34,7 +34,11 @@ from graflo.architecture.onto_sql import (
 )
 from graflo.db.connection.onto import PostgresConfig
 
-from .inference_utils import infer_edge_vertices_from_table_name
+from .inference_utils import (
+    FuzzyMatchCache,
+    infer_edge_vertices_from_table_name,
+    infer_vertex_from_column_name,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -743,6 +747,9 @@ class PostgresConnection:
             vertex_tables = self.detect_vertex_tables(schema_name)
             vertex_table_names = [vt.name for vt in vertex_tables]
 
+        # Create fuzzy match cache once for all tables (significant performance improvement)
+        match_cache = FuzzyMatchCache(vertex_table_names)
+
         tables = self.get_tables(schema_name)
         edge_tables = []
 
@@ -793,6 +800,7 @@ class PostgresConnection:
             target_table = None
             source_column = None
             target_column = None
+            relation_name = None
 
             # If we have exactly 2 foreign keys, use them directly
             if len(fk_infos) == 2:
@@ -802,6 +810,17 @@ class PostgresConnection:
                 target_table = target_fk.references_table
                 source_column = source_fk.column
                 target_column = target_fk.column
+                # Still try to infer relation from table name
+                fk_dicts = [
+                    {
+                        "column": fk.column,
+                        "references_table": fk.references_table,
+                    }
+                    for fk in fk_infos
+                ]
+                _, _, relation_name = infer_edge_vertices_from_table_name(
+                    table_name, pk_columns, fk_dicts, vertex_table_names, match_cache
+                )
             # If we have 2 or more primary keys, try to infer from table name and structure
             elif len(pk_columns) >= 2:
                 # Convert fk_infos to dicts for _infer_edge_vertices_from_table_name
@@ -812,9 +831,16 @@ class PostgresConnection:
                     }
                     for fk in fk_infos
                 ]
+
                 # Try to infer from table name pattern
-                inferred_source, inferred_target = infer_edge_vertices_from_table_name(
-                    table_name, pk_columns, fk_dicts, vertex_table_names
+                inferred_source, inferred_target, relation_name = (
+                    infer_edge_vertices_from_table_name(
+                        table_name,
+                        pk_columns,
+                        fk_dicts,
+                        vertex_table_names,
+                        match_cache,
+                    )
                 )
 
                 if inferred_source and inferred_target:
@@ -849,19 +875,18 @@ class PostgresConnection:
                         source_column = fk_infos[0].column
                         target_column = fk_infos[0].column
                 else:
-                    # Last resort: use PK columns
+                    # Last resort: use PK columns and infer table names from column names
                     source_column = pk_columns[0]
                     target_column = (
                         pk_columns[1] if len(pk_columns) > 1 else pk_columns[0]
                     )
-                    # Try to infer table names from column names
-                    # Common pattern: <table>_id
-                    if source_column.endswith("_id"):
-                        potential_table = source_column[:-3]
-                        source_table = potential_table
-                    if target_column.endswith("_id"):
-                        potential_table = target_column[:-3]
-                        target_table = potential_table
+                    # Use robust inference logic to extract vertex names from column names
+                    source_table = infer_vertex_from_column_name(
+                        source_column, vertex_table_names, match_cache
+                    )
+                    target_table = infer_vertex_from_column_name(
+                        target_column, vertex_table_names, match_cache
+                    )
 
             # Only add if we have source and target information
             if source_table and target_table:
@@ -877,6 +902,7 @@ class PostgresConnection:
                         source_column=source_column or pk_columns[0],
                         target_column=target_column
                         or (pk_columns[1] if len(pk_columns) > 1 else pk_columns[0]),
+                        relation=relation_name,
                     )
                 )
             else:
