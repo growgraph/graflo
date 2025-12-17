@@ -4,6 +4,7 @@ from .onto import (
     ArangoConfig,
     DBConfig,
     DBType,
+    FalkordbConfig,
     Neo4jConfig,
     PostgresConfig,
     TigergraphConfig,
@@ -14,5 +15,6 @@ DB_TYPE_MAPPING: Dict[DBType, Type[DBConfig]] = {
     DBType.ARANGO: ArangoConfig,
     DBType.NEO4J: Neo4jConfig,
     DBType.TIGERGRAPH: TigergraphConfig,
+    DBType.FALKORDB: FalkordbConfig,
     DBType.POSTGRES: PostgresConfig,
 }

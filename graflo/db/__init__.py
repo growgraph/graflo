@@ -26,6 +26,7 @@ Example:
 from .arango.conn import ArangoConnection
 from .conn import Connection, ConnectionType
 from .connection import DBConfig, DBType
+from .falkordb.conn import FalkordbConnection
 from .manager import ConnectionManager
 from .neo4j.conn import Neo4jConnection
 from .postgres.conn import PostgresConnection
@@ -38,6 +39,7 @@ __all__ = [
     "DBConfig",
     "ConnectionManager",
     "ArangoConnection",
+    "FalkordbConnection",
     "Neo4jConnection",
     "PostgresConnection",
     "TigerGraphConnection",

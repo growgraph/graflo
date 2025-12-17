@@ -41,7 +41,9 @@ dependencies = [
   "strenum>=0.4.15",
   "suthing>=0.5.0",
   "urllib3>=2.0.0",
-  "xmltodict>=0.14.2,<0.15"
+  "xmltodict>=0.14.2,<0.15",
+  "falkordb>=1.0.9",
+  "redis>=5.0.0"
 ]
 description = "A framework for transforming tabular (CSV, SQL) and hierarchical data (JSON, XML) into property graphs and ingesting them into graph databases (ArangoDB, Neo4j, TigerGraph). Features automatic PostgreSQL schema inference."
 name = "graflo"

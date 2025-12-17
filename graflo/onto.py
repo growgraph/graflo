@@ -105,11 +105,13 @@ class DBFlavor(BaseEnum):
         ARANGO: ArangoDB database
         NEO4J: Neo4j database
         TIGERGRAPH: TigerGraph database
+        FALKORDB: FalkorDB database (Redis-based graph database using Cypher)
     """
 
     ARANGO = "arango"
     NEO4J = "neo4j"
     TIGERGRAPH = "tigergraph"
+    FALKORDB = "falkordb"
 
 
 class ExpressionFlavor(BaseEnum):
@@ -122,12 +124,14 @@ class ExpressionFlavor(BaseEnum):
         ARANGO: ArangoDB AQL expressions
         NEO4J: Neo4j Cypher expressions
         TIGERGRAPH: TigerGraph GSQL expressions
+        FALKORDB: FalkorDB Cypher expressions (OpenCypher compatible)
         PYTHON: Python expressions
     """
 
     ARANGO = "arango"
     NEO4J = "neo4j"
     TIGERGRAPH = "tigergraph"
+    FALKORDB = "falkordb"
     PYTHON = "python"
 
 

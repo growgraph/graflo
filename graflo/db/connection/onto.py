@@ -35,6 +35,7 @@ class DBType(StrEnum, metaclass=EnumMetaWithContains):
     ARANGO = "arango"
     NEO4J = "neo4j"
     TIGERGRAPH = "tigergraph"
+    FALKORDB = "falkordb"
 
     # Source databases (SQL, NoSQL)
     POSTGRES = "postgres"
@@ -55,6 +56,7 @@ SOURCE_DATABASES: set[DBType] = {
     DBType.ARANGO,  # Graph DBs can be sources
     DBType.NEO4J,  # Graph DBs can be sources
     DBType.TIGERGRAPH,  # Graph DBs can be sources
+    DBType.FALKORDB,  # Graph DBs can be sources
     DBType.POSTGRES,  # SQL DBs
     DBType.MYSQL,
     DBType.MONGODB,
@@ -66,6 +68,7 @@ TARGET_DATABASES: set[DBType] = {
     DBType.ARANGO,
     DBType.NEO4J,
     DBType.TIGERGRAPH,
+    DBType.FALKORDB,
 }
 
 
@@ -603,6 +606,89 @@ class TigergraphConfig(DBConfig):
             ) or env_vars.get("GSQL_PASSWORD")
         if "TIGERGRAPH_DATABASE" in env_vars:
             config_data["database"] = env_vars["TIGERGRAPH_DATABASE"]
+
+        return cls(**config_data)
+
+
+class FalkordbConfig(DBConfig):
+    """Configuration for FalkorDB connections.
+
+    FalkorDB is a Redis-based graph database that supports OpenCypher.
+    It stores graphs as Redis keys where each graph is a separate namespace.
+
+    FalkorDB structure: connection -> graph (Redis key) -> nodes/relationships
+    Unified model: connection -> schema -> entities
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="FALKORDB_",
+        case_sensitive=False,
+    )
+
+    def _get_default_port(self) -> int:
+        """Get default FalkorDB/Redis port."""
+        return 6379
+
+    def _get_effective_database(self) -> str | None:
+        """FalkorDB doesn't have a database level (connection -> graph -> nodes/relationships)."""
+        return None
+
+    def _get_effective_schema(self) -> str | None:
+        """For FalkorDB, 'database' field maps to schema (graph name) in unified model.
+
+        FalkorDB structure: connection -> graph (Redis key) -> nodes/relationships
+        Unified model: connection -> schema -> entities
+        """
+        return self.database
+
+    @classmethod
+    def from_docker_env(cls, docker_dir: str | Path | None = None) -> "FalkordbConfig":
+        """Load FalkorDB config from docker/falkordb/.env file.
+
+        The .env file structure may contain:
+        - FALKORDB_HOST: Hostname (defaults to localhost)
+        - FALKORDB_PORT: Port number (defaults to 6379)
+        - FALKORDB_PASSWORD: Redis AUTH password (optional)
+        - FALKORDB_DATABASE: Graph name (optional, can be set later)
+        """
+        if docker_dir is None:
+            docker_dir = (
+                Path(__file__).parent.parent.parent.parent / "docker" / "falkordb"
+            )
+        else:
+            docker_dir = Path(docker_dir)
+
+        env_file = docker_dir / ".env"
+        if not env_file.exists():
+            raise FileNotFoundError(f"Environment file not found: {env_file}")
+
+        # Load .env file manually
+        env_vars: Dict[str, str] = {}
+        with open(env_file, "r") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, value = line.split("=", 1)
+                    env_vars[key.strip()] = value.strip().strip('"').strip("'")
+
+        # Map environment variables to config
+        config_data: Dict[str, Any] = {}
+
+        # URI construction (FalkorDB uses redis:// protocol)
+        if "FALKORDB_URI" in env_vars:
+            config_data["uri"] = env_vars["FALKORDB_URI"]
+        else:
+            port = env_vars.get("FALKORDB_PORT", "6379")
+            hostname = env_vars.get("FALKORDB_HOST", "localhost")
+            config_data["uri"] = f"redis://{hostname}:{port}"
+
+        # Password (Redis AUTH)
+        if "FALKORDB_PASSWORD" in env_vars and env_vars["FALKORDB_PASSWORD"]:
+            config_data["password"] = env_vars["FALKORDB_PASSWORD"]
+
+        # Graph name (database in unified model)
+        if "FALKORDB_DATABASE" in env_vars:
+            config_data["database"] = env_vars["FALKORDB_DATABASE"]
 
         return cls(**config_data)
 
