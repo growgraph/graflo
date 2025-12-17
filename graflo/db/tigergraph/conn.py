@@ -749,8 +749,8 @@ class TigerGraphConnection(Connection):
             # Edges are global in TigerGraph, so no USE GRAPH needed
             create_edge_cmd = (
                 f"CREATE DIRECTED EDGE {edge.relation} (\n"
-                f"    FROM {edge._source_collection},\n"
-                f"    TO {edge._target_collection}{edge_attrs}\n"
+                f"    FROM {edge._source},\n"
+                f"    TO {edge._target}{edge_attrs}\n"
                 f")"
             )
             logger.debug(f"Executing GSQL: {create_edge_cmd}")

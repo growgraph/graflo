@@ -28,6 +28,9 @@ from graflo.architecture.onto import (
 from graflo.architecture.vertex import Field, VertexConfig, _FieldsType
 from graflo.onto import DBFlavor
 
+# Default relation name for TigerGraph edges when relation is not specified
+DEFAULT_TIGERGRAPH_RELATION = "relates"
+
 
 @dataclasses.dataclass
 class WeightConfig(BaseDataclass):
@@ -169,8 +172,10 @@ class Edge(BaseDataclass):
         aux: Whether this is an auxiliary edge
         by: Optional vertex name for indirect edges
         graph_name: Optional graph name
-        collection_name: Optional collection name
-        db_flavor: Database flavor (ARANGO or NEO4J)
+        database_name: Optional database-specific edge identifier.
+                       For ArangoDB, this corresponds to the edge collection name.
+                       For TigerGraph, used as fallback identifier when relation is not specified.
+                       For Neo4j, unused (relation is used instead).
     """
 
     source: str
@@ -199,14 +204,15 @@ class Edge(BaseDataclass):
 
     by: str | None = None
     graph_name: str | None = None
-    collection_name: str | None = None
-    db_flavor: DBFlavor = DBFlavor.ARANGO
+    database_name: str | None = (
+        None  # Database-specific edge identifier (collection_name for ArangoDB)
+    )
 
     def __post_init__(self):
         """Initialize the edge after dataclass initialization."""
 
-        self._source_collection: str | None = None
-        self._target_collection: str | None = None
+        self._source: str | None = None
+        self._target: str | None = None
 
     def finish_init(self, vertex_config: VertexConfig):
         """Complete edge initialization with vertex configuration.
@@ -221,8 +227,8 @@ class Edge(BaseDataclass):
         if self.type == EdgeType.INDIRECT and self.by is not None:
             self.by = vertex_config.vertex_dbname(self.by)
 
-        self._source_collection = vertex_config.vertex_dbname(self.source)
-        self._target_collection = vertex_config.vertex_dbname(self.target)
+        self._source = vertex_config.vertex_dbname(self.source)
+        self._target = vertex_config.vertex_dbname(self.target)
         graph_name = [
             vertex_config.vertex_dbname(self.source),
             vertex_config.vertex_dbname(self.target),
@@ -230,8 +236,14 @@ class Edge(BaseDataclass):
         if self.purpose is not None:
             graph_name += [self.purpose]
         self.graph_name = "_".join(graph_name + ["graph"])
-        self.collection_name = "_".join(graph_name + ["edges"])
-        self.db_flavor = vertex_config.db_flavor
+        self.database_name = "_".join(graph_name + ["edges"])
+
+        # TigerGraph requires named edge types (relations), so assign default if missing
+        if vertex_config.db_flavor == DBFlavor.TIGERGRAPH and self.relation is None:
+            # Use default relation name for TigerGraph
+            # TigerGraph requires all edges to have a named type (relation)
+            self.relation = DEFAULT_TIGERGRAPH_RELATION
+
         self._init_indices(vertex_config)
 
     def _init_indices(self, vc: VertexConfig):
@@ -271,7 +283,7 @@ class Edge(BaseDataclass):
                 fields = vc.index(index.name).fields
             index_fields += [f"{index.name}@{x}" for x in fields]
 
-        if not index.exclude_edge_endpoints and self.db_flavor == DBFlavor.ARANGO:
+        if not index.exclude_edge_endpoints and vc.db_flavor == DBFlavor.ARANGO:
             if all([item not in index_fields for item in ["_from", "_to"]]):
                 index_fields = ["_from", "_to"] + index_fields
 
@@ -323,7 +335,7 @@ class EdgeConfig(BaseDataclass):
         Args:
             vc: Vertex configuration
         """
-        for _, e in self._edges_map.items():
+        for e in self.edges:
             e.finish_init(vc)
 
     def edges_list(self, include_aux=False):

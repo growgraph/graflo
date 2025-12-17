@@ -43,6 +43,7 @@ class EdgeTableInfo(BaseModel):
     target_table: str
     source_column: str
     target_column: str
+    relation: str | None = None
 
 
 class SchemaIntrospectionResult(BaseModel):

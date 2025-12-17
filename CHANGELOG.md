@@ -5,7 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.3.0] - Unreleased
+## [1.3.6] - 2025-12-17
+
+### Added
+- **Database-agnostic terminology**: Renamed database-specific terminology to be more generic
+  - `Edge.collection_name` → `Edge.database_name`: More generic field name that works across all database types
+    - For ArangoDB, `database_name` corresponds to the edge collection name
+    - For TigerGraph, used as fallback identifier when relation is not specified
+    - For Neo4j, unused (relation is used instead)
+  - Updated all references throughout codebase to use `database_name` instead of `collection_name`
+  - Removed ArangoDB-specific "collection" terminology from `Vertex` and `VertexConfig` classes
+    - Replaced with generic "vertex" or "vertex class" terminology
+    - Updated variable names: `_vcollection_numeric_fields_map` → `_vertex_numeric_fields_map`
+    - Updated error messages and documentation to use database-agnostic terms
+
+- **Enhanced PostgreSQL example documentation**: Significantly improved Example 5 documentation
+  - Added detailed explanations of schema inference process
+  - Added visual diagrams showing graph structure, vertex fields, and resource mappings
+  - Explained data flow from PostgreSQL to graph database
+  - Added step-by-step breakdown of what happens during each phase
+  - Included resource mapping diagrams for all table types
+
+- **Improved schema file discovery**: Enhanced `generate_examples_figs.sh` script
+  - Now handles files ending with `schema.yaml` (e.g., `generated-schema.yaml`)
+  - Uses pattern matching to find schema files instead of hardcoded filename
+  - More flexible for generated or custom-named schema files
+
+## [1.3.5] - 2025-12-16
 
 ### Added
 - **Unified Database Configuration Architecture**: Simplified database configuration system
@@ -28,6 +54,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     when `effective_schema` is not set in configuration
   - **Environment Variable Support for Schema**: Added `POSTGRES_SCHEMA_NAME` and `TIGERGRAPH_SCHEMA_NAME`
     environment variables for schema configuration
+
+## [1.3.4] - 2025-12-12
 
 - **Data Source Architecture**: Formalized data source types as a separate layer from Resources
   - New `graflo.data_source` package with abstract base classes and implementations
@@ -189,7 +217,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Now correctly uses `fpath` directly as the search directory
   - Fixes `FileNotFoundError` when using `FilePattern` with `sub_path` in ingestion
 
-## [1.2.1]
+## [1.2.1] - 2025-01-XX
 
 ### Added
 - **`any_key` parameter for `DescendActor`**: Added support for processing all keys in a dictionary dynamically
@@ -203,7 +231,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Updated `requires-python` to `~=3.10.0` in `pyproject.toml`
   - Maintains compatibility with Python 3.10 while using modern type hints
 
-## [1.2.0]
+## [1.2.0] - 2025-01-XX
 
 ### Added
 - **TigerGraph backend support**: Full support for TigerGraph as a graph database backend

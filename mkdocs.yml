@@ -61,7 +61,7 @@ nav:
     -   3 - CSV with Edge Weights and Multiple Relations (Neo4j): examples/example-3.md
     -   4 - Dynamic Relations from Keys (Neo4j): examples/example-4.md
     -   5 - Ingesting Data from PostgreSQL Tables: examples/example-5.md
-    -   6 - REST API Data Source: examples/example-6.md
+#    -   6 - REST API Data Source: examples/example-6.md
 -   API Reference: reference/
 -   Contributing: contributing.md
 markdown_extensions:

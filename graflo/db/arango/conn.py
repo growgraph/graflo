@@ -367,15 +367,15 @@ class ArangoConnection(Connection):
                 g = self.conn.graph(gname)
             else:
                 g = self.conn.create_graph(gname)  # type: ignore
-            collection_name = item.collection_name
+            collection_name = item.database_name
             if not collection_name:
-                logger.warning("Edge has no collection_name, skipping")
+                logger.warning("Edge has no database_name, skipping")
                 continue
             if not g.has_edge_definition(collection_name):
                 _ = g.create_edge_definition(
                     edge_collection=collection_name,
-                    from_vertex_collections=[item._source_collection],
-                    to_vertex_collections=[item._target_collection],
+                    from_vertex_collections=[item._source],
+                    to_vertex_collections=[item._target],
                 )
 
     def _add_index(self, general_collection, index: Index):
@@ -432,9 +432,9 @@ class ArangoConnection(Connection):
             edges: List of edge configurations containing index definitions
         """
         for edge in edges:
-            collection_name = edge.collection_name
+            collection_name = edge.database_name
             if not collection_name:
-                logger.warning("Edge has no collection_name, skipping index creation")
+                logger.warning("Edge has no database_name, skipping index creation")
                 continue
             general_collection = self.conn.collection(collection_name)
             for index_obj in edge.indexes:

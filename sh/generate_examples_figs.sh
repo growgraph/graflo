@@ -9,21 +9,23 @@ if [[ ! -d "$BASE_DIR" ]]; then
     exit 1
 fi
 
-# Find all subdirectories with schema.yaml
+# Find all subdirectories with schema.yaml files (ending with schema.yaml)
 for subdir in "$BASE_DIR"*/; do
     # Skip if not a directory
     [[ ! -d "$subdir" ]] && continue
 
-    schema_file="${subdir}schema.yaml"
+    # Find files ending with schema.yaml
+    schema_file=$(find "$subdir" -maxdepth 1 -type f -name "*schema.yaml" | head -n 1)
     output_dir="${subdir}figs/"
 
     # Create assets dir path: strip BASE_DIR prefix and add docs/assets
     subdir_name=$(basename "$subdir")
     assets_dir="../docs/assets/${subdir_name}/figs/"
 
-    # Check if schema.yaml exists
-    if [[ -f "$schema_file" ]]; then
-        echo "Processing: $(basename "$subdir")"
+    # Check if a schema file was found
+    if [[ -n "$schema_file" && -f "$schema_file" ]]; then
+        schema_basename=$(basename "$schema_file")
+        echo "Processing: $(basename "$subdir") (using $schema_basename)"
 
         # Create output directory if it doesn't exist
         mkdir -p "$output_dir"
@@ -50,7 +52,7 @@ for subdir in "$BASE_DIR"*/; do
 
         echo ""
     else
-        echo "Skipping $(basename "$subdir"): no schema.yaml found"
+        echo "Skipping $(basename "$subdir"): no *schema.yaml file found"
     fi
 done
 

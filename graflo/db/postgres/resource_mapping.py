@@ -11,9 +11,9 @@ from graflo.architecture.resource import Resource
 from graflo.architecture.vertex import VertexConfig
 
 from .conn import EdgeTableInfo, SchemaIntrospectionResult
+from .fuzzy_matcher import FuzzyMatchCache
 from .inference_utils import (
     detect_separator,
-    fuzzy_match_fragment,
     is_relation_fragment,
     split_by_separator,
 )
@@ -57,12 +57,14 @@ class PostgresResourceMapper:
         self,
         edge_table_info: EdgeTableInfo,
         vertex_config: VertexConfig,
+        match_cache: FuzzyMatchCache | None = None,
     ) -> Resource:
         """Create a Resource for an edge table.
 
         Args:
             edge_table_info: Edge table information from introspection
             vertex_config: Vertex configuration for source/target validation
+            match_cache: Optional fuzzy match cache for better performance
 
         Returns:
             Resource: Resource configured to ingest edge data
@@ -72,6 +74,7 @@ class PostgresResourceMapper:
         target_table = edge_table_info.target_table
         source_column = edge_table_info.source_column
         target_column = edge_table_info.target_column
+        relation = edge_table_info.relation
 
         # Verify source and target vertices exist
         if source_table not in vertex_config.vertex_set:
@@ -102,10 +105,10 @@ class PostgresResourceMapper:
         # This handles cases like "bla_user" -> "user" vertex -> use "id" or matched field
         vertex_names = list(vertex_config.vertex_set)
         source_pk_field = self._infer_pk_field_from_column(
-            source_column, source_table, source_pk_fields, vertex_names
+            source_column, source_table, source_pk_fields, vertex_names, match_cache
         )
         target_pk_field = self._infer_pk_field_from_column(
-            target_column, target_table, target_pk_fields, vertex_names
+            target_column, target_table, target_pk_fields, vertex_names, match_cache
         )
 
         # Create apply list using source_vertex and target_vertex pattern
@@ -134,8 +137,10 @@ class PostgresResourceMapper:
             apply=apply,
         )
 
+        relation_info = f" with relation '{relation}'" if relation else ""
         logger.debug(
-            f"Created edge resource '{table_name}' from {source_table} to {target_table} "
+            f"Created edge resource '{table_name}' from {source_table} to {target_table}"
+            f"{relation_info} "
             f"(source_col: {source_column} -> {source_pk_field}, "
             f"target_col: {target_column} -> {target_pk_field})"
         )
@@ -148,6 +153,7 @@ class PostgresResourceMapper:
         vertex_name: str,
         pk_fields: list[str],
         vertex_names: list[str],
+        match_cache: FuzzyMatchCache | None = None,
     ) -> str:
         """Infer primary key field name from column name using heuristics.
 
@@ -170,6 +176,7 @@ class PostgresResourceMapper:
             vertex_name: Name of the target vertex (already known from edge table info)
             pk_fields: List of primary key field names for the vertex
             vertex_names: List of all vertex names for fuzzy matching
+            match_cache: Optional fuzzy match cache for better performance
 
         Returns:
             Primary key field name (defaults to first PK field or "id" if no match)
@@ -186,7 +193,14 @@ class PostgresResourceMapper:
                 continue
 
             # Fuzzy match fragment to vertex names
-            matched_vertex = fuzzy_match_fragment(fragment, vertex_names)
+            if match_cache:
+                matched_vertex = match_cache.get_match(fragment)
+            else:
+                # Fallback: create temporary matcher if cache not provided
+                from .fuzzy_matcher import FuzzyMatcher
+
+                matcher = FuzzyMatcher(vertex_names)
+                matched_vertex, _ = matcher.match(fragment)
 
             # If we found a match to our target vertex, use its PK field
             if matched_vertex == vertex_name:
@@ -232,6 +246,10 @@ class PostgresResourceMapper:
         """
         resources = []
 
+        # Create fuzzy match cache once for all edge tables (significant performance improvement)
+        vertex_names = list(vertex_config.vertex_set)
+        match_cache = FuzzyMatchCache(vertex_names)
+
         # Map vertex tables to resources
         vertex_tables = introspection_result.vertex_tables
         for table_info in vertex_tables:
@@ -244,7 +262,9 @@ class PostgresResourceMapper:
         edge_tables = introspection_result.edge_tables
         for edge_table_info in edge_tables:
             try:
-                resource = self.create_edge_resource(edge_table_info, vertex_config)
+                resource = self.create_edge_resource(
+                    edge_table_info, vertex_config, match_cache
+                )
                 resources.append(resource)
             except ValueError as e:
                 logger.warning(f"Skipping edge resource creation: {e}")

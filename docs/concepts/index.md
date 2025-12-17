@@ -79,8 +79,8 @@ Edges in graflo support a rich set of attributes that enable flexible relationsh
 - **`weights.target_fields`**: Fields from target vertex to use as weights (deprecated)
 
 #### Edge Behavior Control
-- **`aux`**: Whether this is an auxiliary edge (collection created, but not considered by graflo)
-- **`purpose`**: Additional identifier for utility collections between same vertex types
+- **`aux`**: Whether this is an auxiliary edge (created in database, but not considered by graflo)
+- **`purpose`**: Additional identifier for utility edges between same vertex types
 
 #### Matching and Filtering
 - **`match_source`**: Select source items from a specific branch of json
@@ -91,8 +91,10 @@ Edges in graflo support a rich set of attributes that enable flexible relationsh
 - **`type`**: Edge type (DIRECT or INDIRECT)
 - **`by`**: Vertex name for indirect edges
 - **`graph_name`**: Custom graph name (auto-generated if not specified)
-- **`collection_name`**: Custom collection name (auto-generated if not specified)
-- **`db_flavor`**: Database flavor (ARANGO or NEO4J)
+- **`database_name`**: Database-specific edge identifier (auto-generated if not specified)
+  - For ArangoDB, this corresponds to the edge collection name
+  - For TigerGraph, used as fallback identifier when relation is not specified
+  - For Neo4j, unused (relation is used instead)
 
 #### When to Use Different Attributes
 

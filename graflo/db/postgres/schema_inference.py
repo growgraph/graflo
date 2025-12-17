@@ -142,8 +142,6 @@ class PostgresSchemaInferencer:
             table_name = edge_table_info.name
             source_table = edge_table_info.source_table
             target_table = edge_table_info.target_table
-            fk_columns = edge_table_info.foreign_keys
-            pk_columns = edge_table_info.primary_key
 
             # Verify source and target vertices exist
             if source_table not in vertex_names:
@@ -162,42 +160,19 @@ class PostgresSchemaInferencer:
 
             # Infer weights
             weights = self.infer_edge_weights(edge_table_info)
-
-            # Create indexes from primary key and foreign keys
             indexes = []
-            if pk_columns:
-                indexes.append(
-                    Index(fields=pk_columns, type=IndexType.PERSISTENT, unique=True)
-                )
-
-            # Add indexes for foreign keys (for efficient lookups)
-            # Note: Only add index if not already covered by primary key
-            pk_set = set(pk_columns)
-            for fk in fk_columns:
-                fk_column_name = fk.column
-                # Skip if FK column is part of primary key (already indexed)
-                if fk_column_name not in pk_set:
-                    indexes.append(
-                        Index(
-                            fields=[fk_column_name],
-                            type=IndexType.PERSISTENT,
-                            unique=False,
-                        )
-                    )
-
             # Create edge
             edge = Edge(
                 source=source_table,
                 target=target_table,
                 indexes=indexes,
                 weights=weights,
-                collection_name=table_name,
+                relation=edge_table_info.relation,
             )
 
             edges.append(edge)
             logger.debug(
-                f"Inferred edge '{table_name}' from {source_table} to {target_table} "
-                f"with {len(indexes)} indexes"
+                f"Inferred edge '{table_name}' from {source_table} to {target_table}"
             )
 
         return EdgeConfig(edges=edges)

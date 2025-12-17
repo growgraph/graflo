@@ -88,15 +88,16 @@ class TestRelationIdentification:
         vertex_names = ["cluster", "host", "user"]
 
         # Test with FK references (most reliable)
-        source, target = infer_edge_vertices_from_table_name(
+        source, target, relation = infer_edge_vertices_from_table_name(
             "rel_cluster_containment_host", pk_columns, fk_columns, vertex_names
         )
         assert source == "cluster"
         assert target == "host"
+        assert relation == "containment"
 
         # Test self-reference
         fk_columns_self = [{"column": "user_id", "references_table": "user"}]
-        source, target = infer_edge_vertices_from_table_name(
+        source, target, relation = infer_edge_vertices_from_table_name(
             "rel_user_follows_user",
             ["user_id", "follows_user_id"],
             fk_columns_self,
@@ -104,6 +105,7 @@ class TestRelationIdentification:
         )
         assert source == "user"
         assert target == "user"
+        assert relation == "follows"
 
     def test_infer_edge_vertices_from_table_name_fuzzy_matching(self):
         """Test inference using fuzzy matching when FKs are not available."""
@@ -112,21 +114,23 @@ class TestRelationIdentification:
         vertex_names = ["cluster", "host", "user", "product", "category"]
 
         # Test fuzzy matching from table name
-        source, target = infer_edge_vertices_from_table_name(
+        source, target, relation = infer_edge_vertices_from_table_name(
             "rel_cluster_containment_host", pk_columns, fk_columns, vertex_names
         )
         assert source == "cluster"
         assert target == "host"
+        assert relation == "containment"
 
         # Test with different separator
-        source, target = infer_edge_vertices_from_table_name(
+        source, target, relation = infer_edge_vertices_from_table_name(
             "rel-cluster-containment-host", pk_columns, fk_columns, vertex_names
         )
         assert source == "cluster"
         assert target == "host"
+        assert relation == "containment"
 
         # Test product_category_mapping pattern
-        source, target = infer_edge_vertices_from_table_name(
+        source, target, relation = infer_edge_vertices_from_table_name(
             "product_category_mapping",
             ["product_id", "category_id"],
             fk_columns,
@@ -134,6 +138,7 @@ class TestRelationIdentification:
         )
         assert source == "product"
         assert target == "category"
+        assert relation == "mapping"
 
     def test_infer_edge_vertices_from_key_fragments(self):
         """Test inference from key column fragments."""
@@ -142,22 +147,24 @@ class TestRelationIdentification:
         vertex_names = ["cluster", "host"]
 
         # Test matching from PK column names
-        source, target = infer_edge_vertices_from_table_name(
+        source, target, relation = infer_edge_vertices_from_table_name(
             "rel_containment", pk_columns, fk_columns, vertex_names
         )
         assert source == "cluster"
         assert target == "host"
+        assert relation == "containment"
 
         # Test with FK column fragments
         fk_columns_with_fragments = [
             {"column": "source_cluster_id", "references_table": None},
             {"column": "target_host_id", "references_table": None},
         ]
-        source, target = infer_edge_vertices_from_table_name(
+        source, target, relation = infer_edge_vertices_from_table_name(
             "rel_containment", pk_columns, fk_columns_with_fragments, vertex_names
         )
         assert source == "cluster"
         assert target == "host"
+        assert relation == "containment"
 
     def test_infer_edge_vertices_priority(self):
         """Test that FK references take priority over fuzzy matching."""
@@ -169,11 +176,13 @@ class TestRelationIdentification:
         vertex_names = ["cluster", "host", "wrong", "also_wrong"]
 
         # FK references should override fuzzy matches from table/column names
-        source, target = infer_edge_vertices_from_table_name(
+        source, target, relation = infer_edge_vertices_from_table_name(
             "rel_wrong_also_wrong", pk_columns, fk_columns, vertex_names
         )
         assert source == "cluster"
         assert target == "host"
+        # Relation should still be inferred from table name
+        assert relation is not None
 
     def test_infer_edge_vertices_no_match(self):
         """Test inference when no matches are found."""
@@ -181,18 +190,20 @@ class TestRelationIdentification:
         fk_columns = []
         vertex_names = ["cluster", "host"]
 
-        source, target = infer_edge_vertices_from_table_name(
+        source, target, relation = infer_edge_vertices_from_table_name(
             "rel_xyz_abc", pk_columns, fk_columns, vertex_names
         )
         assert source is None
         assert target is None
+        assert relation is None
 
         # Test with empty vertex names
-        source, target = infer_edge_vertices_from_table_name(
+        source, target, relation = infer_edge_vertices_from_table_name(
             "rel_cluster_host", pk_columns, fk_columns, []
         )
         assert source is None
         assert target is None
+        assert relation is None
 
     def test_infer_edge_vertices_complex_patterns(self):
         """Test inference with complex naming patterns."""
@@ -204,17 +215,19 @@ class TestRelationIdentification:
             {"column": "cluster_id", "references_table": "cluster"},
             {"column": "cluster_id_2", "references_table": "cluster"},
         ]
-        source, target = infer_edge_vertices_from_table_name(
+        source, target, relation = infer_edge_vertices_from_table_name(
             "rel_cluster_containment_cluster_2", pk_columns, fk_columns, vertex_names
         )
         assert source == "cluster"
         assert target == "cluster"
+        assert relation == "containment"
 
         # Test pattern without rel_ prefix
         pk_columns = ["user_id", "follows_user_id"]
         fk_columns = []
-        source, target = infer_edge_vertices_from_table_name(
+        source, target, relation = infer_edge_vertices_from_table_name(
             "user_follows_user", pk_columns, fk_columns, vertex_names
         )
         assert source == "user"
         assert target == "user"
+        assert relation == "follows"
