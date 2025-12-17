@@ -136,7 +136,7 @@ def test_detect_vertex_tables(postgres_conn, load_mock_schema):
     vertex_tables = postgres_conn.detect_vertex_tables()
 
     # Should detect users and products as vertex tables
-    vertex_table_names = {vt["name"] for vt in vertex_tables}
+    vertex_table_names = {vt.name for vt in vertex_tables}
     assert "users" in vertex_table_names
     assert "products" in vertex_table_names
 
@@ -145,17 +145,17 @@ def test_detect_vertex_tables(postgres_conn, load_mock_schema):
     assert "follows" not in vertex_table_names
 
     # Verify structure of vertex tables
-    users_table = next(vt for vt in vertex_tables if vt["name"] == "users")
-    assert "id" in users_table["primary_key"]
-    assert len(users_table["foreign_keys"]) == 0
-    assert len(users_table["columns"]) > 0
+    users_table = next(vt for vt in vertex_tables if vt.name == "users")
+    assert "id" in users_table.primary_key
+    assert len(users_table.foreign_keys) == 0
+    assert len(users_table.columns) > 0
 
     # Check that columns have is_pk flag set
-    id_col = next(col for col in users_table["columns"] if col["name"] == "id")
-    assert id_col["is_pk"] is True
+    id_col = next(col for col in users_table.columns if col.name == "id")
+    assert id_col.is_pk is True
 
-    name_col = next(col for col in users_table["columns"] if col["name"] == "name")
-    assert name_col["is_pk"] is False
+    name_col = next(col for col in users_table.columns if col.name == "name")
+    assert name_col.is_pk is False
 
 
 def test_detect_edge_tables(postgres_conn, load_mock_schema):
@@ -165,7 +165,7 @@ def test_detect_edge_tables(postgres_conn, load_mock_schema):
     edge_tables = postgres_conn.detect_edge_tables()
 
     # Should detect purchases and follows as edge tables
-    edge_table_names = {et["name"] for et in edge_tables}
+    edge_table_names = {et.name for et in edge_tables}
     assert "purchases" in edge_table_names
     assert "follows" in edge_table_names
 
@@ -174,19 +174,19 @@ def test_detect_edge_tables(postgres_conn, load_mock_schema):
     assert "products" not in edge_table_names
 
     # Verify structure of edge tables
-    purchases_table = next(et for et in edge_tables if et["name"] == "purchases")
-    assert purchases_table["source_table"] == "users"
-    assert purchases_table["target_table"] == "products"
-    assert purchases_table["source_column"] == "user_id"
-    assert purchases_table["target_column"] == "product_id"
-    assert len(purchases_table["foreign_keys"]) == 2
+    purchases_table = next(et for et in edge_tables if et.name == "purchases")
+    assert purchases_table.source_table == "users"
+    assert purchases_table.target_table == "products"
+    assert purchases_table.source_column == "user_id"
+    assert purchases_table.target_column == "product_id"
+    assert len(purchases_table.foreign_keys) == 2
 
-    follows_table = next(et for et in edge_tables if et["name"] == "follows")
-    assert follows_table["source_table"] == "users"
-    assert follows_table["target_table"] == "users"  # Self-referential
-    assert follows_table["source_column"] in ["follower_id", "followed_id"]
-    assert follows_table["target_column"] in ["follower_id", "followed_id"]
-    assert len(follows_table["foreign_keys"]) == 2
+    follows_table = next(et for et in edge_tables if et.name == "follows")
+    assert follows_table.source_table == "users"
+    assert follows_table.target_table == "users"  # Self-referential
+    assert follows_table.source_column in ["follower_id", "followed_id"]
+    assert follows_table.target_column in ["follower_id", "followed_id"]
+    assert len(follows_table.foreign_keys) == 2
 
 
 def test_introspect_schema(postgres_conn, load_mock_schema):
@@ -196,51 +196,34 @@ def test_introspect_schema(postgres_conn, load_mock_schema):
     schema_info = postgres_conn.introspect_schema()
 
     # Check structure
-    assert "vertex_tables" in schema_info
-    assert "edge_tables" in schema_info
-    assert "schema_name" in schema_info
-    assert schema_info["schema_name"] == "public"
+    assert schema_info.schema_name == "public"
 
     # Check vertex tables
-    vertex_table_names = {vt["name"] for vt in schema_info["vertex_tables"]}
+    vertex_table_names = {vt.name for vt in schema_info.vertex_tables}
     assert "users" in vertex_table_names
     assert "products" in vertex_table_names
-    assert len(schema_info["vertex_tables"]) == 2
+    assert len(schema_info.vertex_tables) == 2
 
     # Check edge tables
-    edge_table_names = {et["name"] for et in schema_info["edge_tables"]}
+    edge_table_names = {et.name for et in schema_info.edge_tables}
     assert "purchases" in edge_table_names
     assert "follows" in edge_table_names
-    assert len(schema_info["edge_tables"]) == 2
+    assert len(schema_info.edge_tables) == 2
 
     # Verify that all tables have proper structure
-    for vt in schema_info["vertex_tables"]:
-        assert "name" in vt
-        assert "schema" in vt
-        assert "columns" in vt
-        assert "primary_key" in vt
-        assert "foreign_keys" in vt
-        assert len(vt["primary_key"]) > 0
+    for vt in schema_info.vertex_tables:
+        assert len(vt.primary_key) > 0
 
         # Check that columns have is_pk flag
-        for col in vt["columns"]:
-            assert "is_pk" in col
+        for col in vt.columns:
+            assert hasattr(col, "is_pk")
 
-    for et in schema_info["edge_tables"]:
-        assert "name" in et
-        assert "schema" in et
-        assert "columns" in et
-        assert "primary_key" in et
-        assert "foreign_keys" in et
-        assert "source_table" in et
-        assert "target_table" in et
-        assert "source_column" in et
-        assert "target_column" in et
-        assert len(et["foreign_keys"]) == 2
+    for et in schema_info.edge_tables:
+        assert len(et.foreign_keys) == 2
 
         # Check that columns have is_pk flag
-        for col in et["columns"]:
-            assert "is_pk" in col
+        for col in et.columns:
+            assert hasattr(col, "is_pk")
 
 
 def test_introspect_schema_with_custom_schema(postgres_conn, load_mock_schema):
@@ -250,9 +233,9 @@ def test_introspect_schema_with_custom_schema(postgres_conn, load_mock_schema):
     # Test with explicit schema name
     schema_info = postgres_conn.introspect_schema(schema_name="public")
 
-    assert schema_info["schema_name"] == "public"
-    assert len(schema_info["vertex_tables"]) == 2
-    assert len(schema_info["edge_tables"]) == 2
+    assert schema_info.schema_name == "public"
+    assert len(schema_info.vertex_tables) == 2
+    assert len(schema_info.edge_tables) == 2
 
 
 def test_connection_close(postgres_conn):
@@ -337,18 +320,18 @@ def test_edge_table_with_multiple_primary_keys(postgres_conn):
 
         # Test edge detection
         edge_tables = postgres_conn.detect_edge_tables()
-        edge_table_names = {et["name"] for et in edge_tables}
+        edge_table_names = {et.name for et in edge_tables}
         assert "rel_cluster_containment_host" in edge_table_names
 
         # Verify structure
         edge_table = next(
-            et for et in edge_tables if et["name"] == "rel_cluster_containment_host"
+            et for et in edge_tables if et.name == "rel_cluster_containment_host"
         )
-        assert len(edge_table["primary_key"]) >= 2
-        assert edge_table["source_table"] in ["cluster", "host"]
-        assert edge_table["target_table"] in ["cluster", "host"]
-        assert edge_table["source_column"] in ["cluster_id", "host_id"]
-        assert edge_table["target_column"] in ["cluster_id", "host_id"]
+        assert len(edge_table.primary_key) >= 2
+        assert edge_table.source_table in ["cluster", "host"]
+        assert edge_table.target_table in ["cluster", "host"]
+        assert edge_table.source_column in ["cluster_id", "host_id"]
+        assert edge_table.target_column in ["cluster_id", "host_id"]
 
     finally:
         # Cleanup
@@ -389,12 +372,12 @@ def test_rel_prefix_table_detection(postgres_conn):
     try:
         # Test edge detection - rel_ prefix should be detected as edge-like
         edge_tables = postgres_conn.detect_edge_tables()
-        edge_table_names = {et["name"] for et in edge_tables}
+        edge_table_names = {et.name for et in edge_tables}
         assert "rel_vertex_a_to_vertex_b" in edge_table_names
 
         # Verify it's not in vertex tables
         vertex_tables = postgres_conn.detect_vertex_tables()
-        vertex_table_names = {vt["name"] for vt in vertex_tables}
+        vertex_table_names = {vt.name for vt in vertex_tables}
         assert "rel_vertex_a_to_vertex_b" not in vertex_table_names
 
     finally:
@@ -561,7 +544,7 @@ def test_schema_inference_with_pg_catalog_fallback(postgres_conn, load_mock_sche
 
         # Test that vertex detection works with pg_catalog fallback
         vertex_tables = postgres_conn.detect_vertex_tables("public")
-        vertex_table_names = {vt["name"] for vt in vertex_tables}
+        vertex_table_names = {vt.name for vt in vertex_tables}
         assert "users" in vertex_table_names, "users should be detected as vertex table"
         assert "products" in vertex_table_names, (
             "products should be detected as vertex table"
@@ -572,7 +555,7 @@ def test_schema_inference_with_pg_catalog_fallback(postgres_conn, load_mock_sche
 
         # Test that edge detection works with pg_catalog fallback
         edge_tables = postgres_conn.detect_edge_tables("public")
-        edge_table_names = {et["name"] for et in edge_tables}
+        edge_table_names = {et.name for et in edge_tables}
         assert "purchases" in edge_table_names, (
             "purchases should be detected as edge table"
         )
@@ -583,71 +566,64 @@ def test_schema_inference_with_pg_catalog_fallback(postgres_conn, load_mock_sche
         schema_info = postgres_conn.introspect_schema("public")
 
         # Verify structure
-        assert "vertex_tables" in schema_info, "schema_info should have vertex_tables"
-        assert "edge_tables" in schema_info, "schema_info should have edge_tables"
-        assert "schema_name" in schema_info, "schema_info should have schema_name"
-        assert schema_info["schema_name"] == "public", (
-            f"Expected schema_name 'public', got {schema_info['schema_name']}"
+        assert schema_info.schema_name == "public", (
+            f"Expected schema_name 'public', got {schema_info.schema_name}"
         )
 
         # Verify vertex tables
-        vertex_table_names = {vt["name"] for vt in schema_info["vertex_tables"]}
+        vertex_table_names = {vt.name for vt in schema_info.vertex_tables}
         assert "users" in vertex_table_names, "users should be in vertex_tables"
         assert "products" in vertex_table_names, "products should be in vertex_tables"
-        assert len(schema_info["vertex_tables"]) == 2, (
-            f"Expected 2 vertex tables, got {len(schema_info['vertex_tables'])}"
+        assert len(schema_info.vertex_tables) == 2, (
+            f"Expected 2 vertex tables, got {len(schema_info.vertex_tables)}"
         )
 
         # Verify edge tables
-        edge_table_names = {et["name"] for et in schema_info["edge_tables"]}
+        edge_table_names = {et.name for et in schema_info.edge_tables}
         assert "purchases" in edge_table_names, "purchases should be in edge_tables"
         assert "follows" in edge_table_names, "follows should be in edge_tables"
-        assert len(schema_info["edge_tables"]) == 2, (
-            f"Expected 2 edge tables, got {len(schema_info['edge_tables'])}"
+        assert len(schema_info.edge_tables) == 2, (
+            f"Expected 2 edge tables, got {len(schema_info.edge_tables)}"
         )
 
         # Verify that vertex tables have proper structure
-        users_table = next(
-            vt for vt in schema_info["vertex_tables"] if vt["name"] == "users"
-        )
-        assert "id" in users_table["primary_key"], "users should have id as primary key"
-        assert len(users_table["foreign_keys"]) == 0, (
-            "users should have no foreign keys"
-        )
-        assert len(users_table["columns"]) > 0, "users should have columns"
+        users_table = next(vt for vt in schema_info.vertex_tables if vt.name == "users")
+        assert "id" in users_table.primary_key, "users should have id as primary key"
+        assert len(users_table.foreign_keys) == 0, "users should have no foreign keys"
+        assert len(users_table.columns) > 0, "users should have columns"
 
         # Verify that edge tables have proper structure
         purchases_table = next(
-            et for et in schema_info["edge_tables"] if et["name"] == "purchases"
+            et for et in schema_info.edge_tables if et.name == "purchases"
         )
         # Source and target can be in either order, but should reference users and products
-        assert purchases_table["source_table"] in ["users", "products"], (
+        assert purchases_table.source_table in ["users", "products"], (
             f"Expected purchases.source_table to be 'users' or 'products', "
-            f"got {purchases_table['source_table']}"
+            f"got {purchases_table.source_table}"
         )
-        assert purchases_table["target_table"] in ["users", "products"], (
+        assert purchases_table.target_table in ["users", "products"], (
             f"Expected purchases.target_table to be 'users' or 'products', "
-            f"got {purchases_table['target_table']}"
+            f"got {purchases_table.target_table}"
         )
         # They should be different
-        assert purchases_table["source_table"] != purchases_table["target_table"], (
+        assert purchases_table.source_table != purchases_table.target_table, (
             "purchases should connect different tables"
         )
-        assert len(purchases_table["foreign_keys"]) == 2, (
-            f"Expected 2 foreign keys, got {len(purchases_table['foreign_keys'])}"
+        assert len(purchases_table.foreign_keys) == 2, (
+            f"Expected 2 foreign keys, got {len(purchases_table.foreign_keys)}"
         )
 
         # Verify that columns have is_pk flag set correctly
-        for vt in schema_info["vertex_tables"]:
-            for col in vt["columns"]:
-                assert "is_pk" in col, "columns should have is_pk flag"
-                if col["name"] in vt["primary_key"]:
-                    assert col["is_pk"] is True, (
-                        f"{col['name']} should be marked as primary key"
+        for vt in schema_info.vertex_tables:
+            for col in vt.columns:
+                assert hasattr(col, "is_pk"), "columns should have is_pk flag"
+                if col.name in vt.primary_key:
+                    assert col.is_pk is True, (
+                        f"{col.name} should be marked as primary key"
                     )
                 else:
-                    assert col["is_pk"] is False, (
-                        f"{col['name']} should not be marked as primary key"
+                    assert col.is_pk is False, (
+                        f"{col.name} should not be marked as primary key"
                     )
 
     finally:

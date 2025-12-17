@@ -5,11 +5,12 @@ to graflo Resource objects that can be used for data ingestion.
 """
 
 import logging
-from typing import Any
 
 from graflo.architecture.edge import EdgeConfig
 from graflo.architecture.resource import Resource
 from graflo.architecture.vertex import VertexConfig
+
+from .conn import EdgeTableInfo, SchemaIntrospectionResult
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,7 @@ class PostgresResourceMapper:
 
     def create_edge_resource(
         self,
-        edge_table_info: dict[str, Any],
+        edge_table_info: EdgeTableInfo,
         vertex_config: VertexConfig,
     ) -> Resource:
         """Create a Resource for an edge table.
@@ -60,11 +61,11 @@ class PostgresResourceMapper:
         Returns:
             Resource: Resource configured to ingest edge data
         """
-        table_name = edge_table_info["name"]
-        source_table = edge_table_info["source_table"]
-        target_table = edge_table_info["target_table"]
-        source_column = edge_table_info.get("source_column")
-        target_column = edge_table_info.get("target_column")
+        table_name = edge_table_info.name
+        source_table = edge_table_info.source_table
+        target_table = edge_table_info.target_table
+        source_column = edge_table_info.source_column
+        target_column = edge_table_info.target_column
 
         # Verify source and target vertices exist
         if source_table not in vertex_config.vertex_set:
@@ -132,7 +133,7 @@ class PostgresResourceMapper:
 
     def map_tables_to_resources(
         self,
-        introspection_result: dict[str, Any],
+        introspection_result: SchemaIntrospectionResult,
         vertex_config: VertexConfig,
         edge_config: EdgeConfig,
     ) -> list[Resource]:
@@ -152,15 +153,15 @@ class PostgresResourceMapper:
         resources = []
 
         # Map vertex tables to resources
-        vertex_tables = introspection_result.get("vertex_tables", [])
+        vertex_tables = introspection_result.vertex_tables
         for table_info in vertex_tables:
-            table_name = table_info["name"]
+            table_name = table_info.name
             vertex_name = table_name  # Use table name as vertex name
             resource = self.create_vertex_resource(table_name, vertex_name)
             resources.append(resource)
 
         # Map edge tables to resources
-        edge_tables = introspection_result.get("edge_tables", [])
+        edge_tables = introspection_result.edge_tables
         for edge_table_info in edge_tables:
             try:
                 resource = self.create_edge_resource(edge_table_info, vertex_config)

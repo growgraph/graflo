@@ -15,16 +15,24 @@ Example:
     >>> config = PostgresConfig.from_docker_env()
     >>> conn = PostgresConnection(config)
     >>> schema_info = conn.introspect_schema()
-    >>> print(schema_info["vertex_tables"])
+    >>> print(schema_info.vertex_tables)
     >>> conn.close()
 """
 
 import logging
+from difflib import SequenceMatcher
 from typing import Any
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
+from graflo.architecture.onto_sql import (
+    ColumnInfo,
+    ForeignKeyInfo,
+    VertexTableInfo,
+    EdgeTableInfo,
+    SchemaIntrospectionResult,
+)
 from graflo.db.connection.onto import PostgresConfig
 
 logger = logging.getLogger(__name__)
@@ -619,7 +627,7 @@ class PostgresConnection:
 
     def detect_vertex_tables(
         self, schema_name: str | None = None
-    ) -> list[dict[str, Any]]:
+    ) -> list[VertexTableInfo]:
         """Detect vertex-like tables in the schema.
 
         Heuristic: Tables with a primary key and descriptive columns
@@ -669,84 +677,313 @@ class PostgresConnection:
 
             # If table has descriptive columns, consider it vertex-like
             if descriptive_columns:
-                # Mark primary key columns
+                # Mark primary key columns and convert to ColumnInfo
                 pk_set = set(pk_columns)
+                column_infos = []
                 for col in all_columns:
-                    col["is_pk"] = col["name"] in pk_set
+                    column_infos.append(
+                        ColumnInfo(
+                            name=col["name"],
+                            type=col["type"],
+                            description=col.get("description", ""),
+                            is_nullable=col.get("is_nullable", "YES"),
+                            column_default=col.get("column_default"),
+                            is_pk=col["name"] in pk_set,
+                        )
+                    )
+
+                # Convert foreign keys to ForeignKeyInfo
+                fk_infos = []
+                for fk in fk_columns:
+                    fk_infos.append(
+                        ForeignKeyInfo(
+                            column=fk["column"],
+                            references_table=fk["references_table"],
+                            references_column=fk.get("references_column"),
+                            constraint_name=fk.get("constraint_name"),
+                        )
+                    )
 
                 vertex_tables.append(
-                    {
-                        "name": table_name,
-                        "schema": schema_name,
-                        "columns": all_columns,
-                        "primary_key": pk_columns,
-                        "foreign_keys": fk_columns,
-                    }
+                    VertexTableInfo(
+                        name=table_name,
+                        schema_name=schema_name,
+                        columns=column_infos,
+                        primary_key=pk_columns,
+                        foreign_keys=fk_infos,
+                    )
                 )
 
         return vertex_tables
 
+    @staticmethod
+    def _detect_separator(text: str) -> str:
+        """Detect the most common separator character in a text.
+
+        Args:
+            text: Text to analyze
+
+        Returns:
+            Most common separator character, defaults to '_'
+        """
+        # Common separators
+        separators = ["_", "-", "."]
+        counts = {sep: text.count(sep) for sep in separators}
+
+        if max(counts.values()) > 0:
+            return max(counts, key=counts.get)
+        return "_"  # Default separator
+
+    @staticmethod
+    def _split_by_separator(text: str, separator: str) -> list[str]:
+        """Split text by separator, handling multiple consecutive separators.
+
+        Args:
+            text: Text to split
+            separator: Separator character
+
+        Returns:
+            List of non-empty fragments
+        """
+        # Split and filter out empty strings
+        parts = [p for p in text.split(separator) if p]
+        return parts
+
+    @staticmethod
+    def _fuzzy_match_fragment(
+        fragment: str, vertex_names: list[str], threshold: float = 0.6
+    ) -> str | None:
+        """Fuzzy match a fragment to vertex names.
+
+        Args:
+            fragment: Fragment to match
+            vertex_names: List of vertex table names to match against
+            threshold: Similarity threshold (0.0 to 1.0)
+
+        Returns:
+            Best matching vertex name or None if no match above threshold
+        """
+        if not vertex_names:
+            return None
+
+        fragment_lower = fragment.lower()
+        best_match = None
+        best_score = 0.0
+
+        for vertex_name in vertex_names:
+            vertex_lower = vertex_name.lower()
+
+            # Exact match (case-insensitive)
+            if fragment_lower == vertex_lower:
+                return vertex_name
+
+            # Check if fragment is contained in vertex name or vice versa
+            if fragment_lower in vertex_lower or vertex_lower in fragment_lower:
+                score = min(len(fragment_lower), len(vertex_lower)) / max(
+                    len(fragment_lower), len(vertex_lower)
+                )
+                if score > best_score:
+                    best_score = score
+                    best_match = vertex_name
+
+            # Use SequenceMatcher for fuzzy matching
+            similarity = SequenceMatcher(None, fragment_lower, vertex_lower).ratio()
+            if similarity > best_score:
+                best_score = similarity
+                best_match = vertex_name
+
+        return best_match if best_score >= threshold else None
+
+    @staticmethod
+    def _is_relation_fragment(fragment: str) -> bool:
+        """Check if a fragment looks like a relation name rather than a vertex name.
+
+        Common relation words: contains, has, belongs_to, references, etc.
+
+        Args:
+            fragment: Fragment to check
+
+        Returns:
+            True if fragment looks like a relation name
+        """
+        relation_keywords = {
+            "rel",
+            "relation",
+            "link",
+            "edge",
+            "contains",
+            "has",
+            "belongs",
+            "references",
+            "refers",
+            "connects",
+            "joins",
+            "maps",
+            "associates",
+            "owns",
+            "includes",
+            "part",
+            "member",
+            "child",
+            "parent",
+        }
+        fragment_lower = fragment.lower()
+
+        # Check if fragment contains relation keywords
+        for keyword in relation_keywords:
+            if keyword in fragment_lower or fragment_lower in keyword:
+                return True
+
+        # Check if fragment is very short (likely not a vertex name)
+        if len(fragment) <= 2:
+            return True
+
+        return False
+
+    @staticmethod
     def _infer_edge_vertices_from_table_name(
-        self, table_name: str, pk_columns: list[str], fk_columns: list[dict[str, Any]]
+        table_name: str,
+        pk_columns: list[str],
+        fk_columns: list[dict[str, Any]],
+        vertex_table_names: list[str] | None = None,
     ) -> tuple[str | None, str | None]:
         """Infer source and target vertex names from table name and structure.
 
+        Uses fuzzy matching to identify vertex names in table name fragments and key names.
         Handles patterns like:
         - rel_cluster_containment_host -> cluster, host
         - rel_cluster_containment_cluster_2 -> cluster, cluster (self-reference)
+        - user_follows_user -> user, user (self-reference)
+        - product_category_mapping -> product, category
 
         Args:
             table_name: Name of the table
             pk_columns: List of primary key column names
-            fk_columns: List of foreign key dictionaries
+            fk_columns: List of foreign key dictionaries with 'column' and 'references_table' keys
+            vertex_table_names: Optional list of known vertex table names for fuzzy matching
 
         Returns:
             Tuple of (source_table, target_table) or (None, None) if cannot infer
         """
-        # If table name starts with 'rel_', try to extract vertex names
-        if table_name.startswith("rel_"):
-            # Remove 'rel_' prefix
-            name_part = table_name[4:]
-            # Split by underscores
-            parts = name_part.split("_")
+        if vertex_table_names is None:
+            vertex_table_names = []
 
-            # Try to find pattern: rel_<source>_<relation>_<target>
-            # or rel_<source>_<relation>_<target>_<number>
-            if len(parts) >= 3:
-                # Common pattern: rel_<source>_<relation>_<target>
-                # Try to identify source and target
-                # Often the last part is the target, and first part(s) are source
-                # But we need to be careful with patterns like cluster_containment_cluster_2
+        # Step 1: Detect separator
+        separator = PostgresConnection._detect_separator(table_name)
 
-                # If we have foreign keys, use them to help identify
-                if fk_columns:
-                    # Map FK column names to referenced tables
-                    fk_map = {fk["column"]: fk["references_table"] for fk in fk_columns}
+        # Step 2: Split table name by separator
+        table_fragments = PostgresConnection._split_by_separator(table_name, separator)
 
-                    # Try to match PK column names to FK column names
-                    # If PK columns match FK columns, we can infer from FK references
-                    pk_set = set(pk_columns)
-                    fk_column_names = set(fk_map.keys())
+        # Step 3: Extract fragments from keys (preserve order for PK columns)
+        key_fragments_list = []  # Preserve order
+        key_fragments_set = set()  # For deduplication
 
-                    if pk_set.issubset(fk_column_names):
-                        # All PKs are FKs, use FK references
-                        if len(fk_columns) >= 2:
-                            return (
-                                fk_columns[0]["references_table"],
-                                fk_columns[1]["references_table"],
-                            )
-                        elif len(fk_columns) == 1:
-                            # Self-reference case
-                            return (
-                                fk_columns[0]["references_table"],
-                                fk_columns[0]["references_table"],
-                            )
+        # Extract fragments from PK columns in order
+        for pk_col in pk_columns:
+            pk_fragments = PostgresConnection._split_by_separator(pk_col, separator)
+            for frag in pk_fragments:
+                if frag not in key_fragments_set:
+                    key_fragments_list.append(frag)
+                    key_fragments_set.add(frag)
 
-        return (None, None)
+        # Extract fragments from FK columns
+        for fk in fk_columns:
+            fk_col = fk.get("column", "")
+            fk_fragments = PostgresConnection._split_by_separator(fk_col, separator)
+            for frag in fk_fragments:
+                if frag not in key_fragments_set:
+                    key_fragments_list.append(frag)
+                    key_fragments_set.add(frag)
+
+        # Step 4: Fuzzy match fragments to vertex names
+        matched_vertices = []  # Preserve order - first match is source, second is target
+        matched_vertices_set = set()  # For deduplication
+        relation_fragments = []
+
+        # Match table name fragments first (higher priority, preserves order)
+        for fragment in table_fragments:
+            if PostgresConnection._is_relation_fragment(fragment):
+                relation_fragments.append(fragment)
+                continue
+
+            matched = PostgresConnection._fuzzy_match_fragment(
+                fragment, vertex_table_names
+            )
+            if matched and matched not in matched_vertices_set:
+                matched_vertices.append(matched)
+                matched_vertices_set.add(matched)
+
+        # Match key fragments (add to end if not already matched)
+        for fragment in key_fragments_list:
+            if PostgresConnection._is_relation_fragment(fragment):
+                continue
+
+            matched = PostgresConnection._fuzzy_match_fragment(
+                fragment, vertex_table_names
+            )
+            if matched and matched not in matched_vertices_set:
+                matched_vertices.append(matched)
+                matched_vertices_set.add(matched)
+
+        # Step 5: Use foreign keys to confirm or infer vertices
+        fk_vertex_names = []
+        if fk_columns:
+            for fk in fk_columns:
+                ref_table = fk.get("references_table")
+                if ref_table:
+                    fk_vertex_names.append(ref_table)
+
+        # Step 6: Form hypothesis
+        source_table = None
+        target_table = None
+
+        # Priority 1: Use FK references if available (most reliable)
+        if len(fk_vertex_names) >= 2:
+            source_table = fk_vertex_names[0]
+            target_table = fk_vertex_names[1]
+        elif len(fk_vertex_names) == 1:
+            # Self-reference case
+            source_table = fk_vertex_names[0]
+            target_table = fk_vertex_names[0]
+
+        # Priority 2: Use matched vertices from fuzzy matching
+        if not source_table or not target_table:
+            if len(matched_vertices) >= 2:
+                source_table = matched_vertices[0]
+                target_table = matched_vertices[1]
+            elif len(matched_vertices) == 1:
+                # Self-reference case
+                source_table = matched_vertices[0]
+                target_table = matched_vertices[0]
+
+        # Priority 3: Fill in missing vertex from remaining options
+        if source_table and not target_table:
+            # Try to find target from remaining fragments or keys
+            if fk_vertex_names and len(fk_vertex_names) > 1:
+                # Use second FK if available
+                target_table = fk_vertex_names[1]
+            elif matched_vertices and len(matched_vertices) > 1:
+                target_table = matched_vertices[1]
+            elif fk_vertex_names:
+                # Self-reference case
+                target_table = fk_vertex_names[0]
+            elif matched_vertices:
+                target_table = matched_vertices[0]
+
+        if target_table and not source_table:
+            # Try to find source from remaining fragments or keys
+            if fk_vertex_names:
+                source_table = fk_vertex_names[0]
+            elif matched_vertices:
+                source_table = matched_vertices[0]
+
+        return (source_table, target_table)
 
     def detect_edge_tables(
-        self, schema_name: str | None = None
-    ) -> list[dict[str, Any]]:
+        self,
+        schema_name: str | None = None,
+        vertex_table_names: list[str] | None = None,
+    ) -> list[EdgeTableInfo]:
         """Detect edge-like tables in the schema.
 
         Heuristic: Tables with 2 or more primary keys, or exactly 2 foreign keys,
@@ -754,12 +991,19 @@ class PostgresConnection:
 
         Args:
             schema_name: Schema name. If None, uses 'public' or config schema_name.
+            vertex_table_names: Optional list of vertex table names for fuzzy matching.
+                              If None, will be inferred from detect_vertex_tables().
 
         Returns:
             List of edge table information dictionaries with source_table and target_table
         """
         if schema_name is None:
             schema_name = self.config.schema_name or "public"
+
+        # Get vertex table names if not provided
+        if vertex_table_names is None:
+            vertex_tables = self.detect_vertex_tables(schema_name)
+            vertex_table_names = [vt.name for vt in vertex_tables]
 
         tables = self.get_tables(schema_name)
         edge_tables = []
@@ -779,10 +1023,32 @@ class PostgresConnection:
 
             all_columns = self.get_table_columns(table_name, schema_name)
 
-            # Mark primary key columns
+            # Mark primary key columns and convert to ColumnInfo
             pk_set = set(pk_columns)
+            column_infos = []
             for col in all_columns:
-                col["is_pk"] = col["name"] in pk_set
+                column_infos.append(
+                    ColumnInfo(
+                        name=col["name"],
+                        type=col["type"],
+                        description=col.get("description", ""),
+                        is_nullable=col.get("is_nullable", "YES"),
+                        column_default=col.get("column_default"),
+                        is_pk=col["name"] in pk_set,
+                    )
+                )
+
+            # Convert foreign keys to ForeignKeyInfo
+            fk_infos = []
+            for fk in fk_columns:
+                fk_infos.append(
+                    ForeignKeyInfo(
+                        column=fk["column"],
+                        references_table=fk["references_table"],
+                        references_column=fk.get("references_column"),
+                        constraint_name=fk.get("constraint_name"),
+                    )
+                )
 
             # Determine source and target tables
             source_table = None
@@ -791,19 +1057,27 @@ class PostgresConnection:
             target_column = None
 
             # If we have exactly 2 foreign keys, use them directly
-            if len(fk_columns) == 2:
-                source_fk = fk_columns[0]
-                target_fk = fk_columns[1]
-                source_table = source_fk["references_table"]
-                target_table = target_fk["references_table"]
-                source_column = source_fk["column"]
-                target_column = target_fk["column"]
+            if len(fk_infos) == 2:
+                source_fk = fk_infos[0]
+                target_fk = fk_infos[1]
+                source_table = source_fk.references_table
+                target_table = target_fk.references_table
+                source_column = source_fk.column
+                target_column = target_fk.column
             # If we have 2 or more primary keys, try to infer from table name and structure
             elif len(pk_columns) >= 2:
+                # Convert fk_infos to dicts for _infer_edge_vertices_from_table_name
+                fk_dicts = [
+                    {
+                        "column": fk.column,
+                        "references_table": fk.references_table,
+                    }
+                    for fk in fk_infos
+                ]
                 # Try to infer from table name pattern
                 inferred_source, inferred_target = (
                     self._infer_edge_vertices_from_table_name(
-                        table_name, pk_columns, fk_columns
+                        table_name, pk_columns, fk_dicts, vertex_table_names
                     )
                 )
 
@@ -811,33 +1085,33 @@ class PostgresConnection:
                     source_table = inferred_source
                     target_table = inferred_target
                     # Try to match PK columns to FK columns for source/target columns
-                    if fk_columns:
+                    if fk_infos:
                         # Use first FK for source, second for target if available
-                        if len(fk_columns) >= 2:
-                            source_column = fk_columns[0]["column"]
-                            target_column = fk_columns[1]["column"]
-                        elif len(fk_columns) == 1:
+                        if len(fk_infos) >= 2:
+                            source_column = fk_infos[0].column
+                            target_column = fk_infos[1].column
+                        elif len(fk_infos) == 1:
                             # Self-reference case
-                            source_column = fk_columns[0]["column"]
-                            target_column = fk_columns[0]["column"]
+                            source_column = fk_infos[0].column
+                            target_column = fk_infos[0].column
                     else:
                         # Use PK columns as source/target columns
                         source_column = pk_columns[0]
                         target_column = (
                             pk_columns[1] if len(pk_columns) > 1 else pk_columns[0]
                         )
-                elif fk_columns:
+                elif fk_infos:
                     # Fallback: use FK references if available
-                    if len(fk_columns) >= 2:
-                        source_table = fk_columns[0]["references_table"]
-                        target_table = fk_columns[1]["references_table"]
-                        source_column = fk_columns[0]["column"]
-                        target_column = fk_columns[1]["column"]
-                    elif len(fk_columns) == 1:
-                        source_table = fk_columns[0]["references_table"]
-                        target_table = fk_columns[0]["references_table"]
-                        source_column = fk_columns[0]["column"]
-                        target_column = fk_columns[0]["column"]
+                    if len(fk_infos) >= 2:
+                        source_table = fk_infos[0].references_table
+                        target_table = fk_infos[1].references_table
+                        source_column = fk_infos[0].column
+                        target_column = fk_infos[1].column
+                    elif len(fk_infos) == 1:
+                        source_table = fk_infos[0].references_table
+                        target_table = fk_infos[0].references_table
+                        source_column = fk_infos[0].column
+                        target_column = fk_infos[0].column
                 else:
                     # Last resort: use PK columns
                     source_column = pk_columns[0]
@@ -856,18 +1130,18 @@ class PostgresConnection:
             # Only add if we have source and target information
             if source_table and target_table:
                 edge_tables.append(
-                    {
-                        "name": table_name,
-                        "schema": schema_name,
-                        "columns": all_columns,
-                        "primary_key": pk_columns,
-                        "foreign_keys": fk_columns,
-                        "source_table": source_table,
-                        "target_table": target_table,
-                        "source_column": source_column or pk_columns[0],
-                        "target_column": target_column
+                    EdgeTableInfo(
+                        name=table_name,
+                        schema_name=schema_name,
+                        columns=column_infos,
+                        primary_key=pk_columns,
+                        foreign_keys=fk_infos,
+                        source_table=source_table,
+                        target_table=target_table,
+                        source_column=source_column or pk_columns[0],
+                        target_column=target_column
                         or (pk_columns[1] if len(pk_columns) > 1 else pk_columns[0]),
-                    }
+                    )
                 )
             else:
                 logger.warning(
@@ -877,7 +1151,9 @@ class PostgresConnection:
 
         return edge_tables
 
-    def introspect_schema(self, schema_name: str | None = None) -> dict[str, Any]:
+    def introspect_schema(
+        self, schema_name: str | None = None
+    ) -> SchemaIntrospectionResult:
         """Introspect the database schema and return structured information.
 
         This is the main method that analyzes the schema and returns information
@@ -887,10 +1163,7 @@ class PostgresConnection:
             schema_name: Schema name. If None, uses 'public' or config schema_name.
 
         Returns:
-            Dictionary with keys:
-            - vertex_tables: List of vertex table information
-            - edge_tables: List of edge table information
-            - schema_name: The schema name that was analyzed
+            SchemaIntrospectionResult with vertex_tables, edge_tables, and schema_name
         """
         if schema_name is None:
             schema_name = self.config.schema_name or "public"
@@ -900,17 +1173,11 @@ class PostgresConnection:
         vertex_tables = self.detect_vertex_tables(schema_name)
         edge_tables = self.detect_edge_tables(schema_name)
 
-        # Mark primary key columns in column lists
-        for table_info in vertex_tables + edge_tables:
-            pk_set = set(table_info["primary_key"])
-            for col in table_info["columns"]:
-                col["is_pk"] = col["name"] in pk_set
-
-        result = {
-            "vertex_tables": vertex_tables,
-            "edge_tables": edge_tables,
-            "schema_name": schema_name,
-        }
+        result = SchemaIntrospectionResult(
+            vertex_tables=vertex_tables,
+            edge_tables=edge_tables,
+            schema_name=schema_name,
+        )
 
         logger.info(
             f"Found {len(vertex_tables)} vertex-like tables and {len(edge_tables)} edge-like tables"

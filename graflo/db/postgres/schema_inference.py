@@ -5,7 +5,7 @@ This module provides functionality to infer graflo Schema objects from PostgreSQ
 """
 
 import logging
-from typing import Any, Optional
+from typing import Optional
 
 from graflo.architecture.edge import Edge, EdgeConfig, WeightConfig
 from graflo.architecture.onto import Index, IndexType
@@ -13,6 +13,7 @@ from graflo.architecture.schema import Schema, SchemaMetadata
 from graflo.architecture.vertex import Field, Vertex, VertexConfig
 from graflo.onto import DBFlavor
 
+from ...architecture.onto_sql import EdgeTableInfo, SchemaIntrospectionResult
 from .types import PostgresTypeMapper
 
 logger = logging.getLogger(__name__)
@@ -34,7 +35,9 @@ class PostgresSchemaInferencer:
         self.db_flavor = db_flavor
         self.type_mapper = PostgresTypeMapper()
 
-    def infer_vertex_config(self, introspection_result: dict[str, Any]) -> VertexConfig:
+    def infer_vertex_config(
+        self, introspection_result: SchemaIntrospectionResult
+    ) -> VertexConfig:
         """Infer VertexConfig from vertex tables.
 
         Args:
@@ -43,19 +46,19 @@ class PostgresSchemaInferencer:
         Returns:
             VertexConfig: Inferred vertex configuration
         """
-        vertex_tables = introspection_result.get("vertex_tables", [])
+        vertex_tables = introspection_result.vertex_tables
         vertices = []
 
         for table_info in vertex_tables:
-            table_name = table_info["name"]
-            columns = table_info["columns"]
-            pk_columns = table_info["primary_key"]
+            table_name = table_info.name
+            columns = table_info.columns
+            pk_columns = table_info.primary_key
 
             # Create fields from columns
             fields = []
             for col in columns:
-                field_name = col["name"]
-                field_type = self.type_mapper.map_type(col["type"])
+                field_name = col.name
+                field_type = self.type_mapper.map_type(col.type)
                 fields.append(Field(name=field_name, type=field_type))
 
             # Create indexes from primary key
@@ -82,7 +85,7 @@ class PostgresSchemaInferencer:
         return VertexConfig(vertices=vertices, db_flavor=self.db_flavor)
 
     def infer_edge_weights(
-        self, edge_table_info: dict[str, Any]
+        self, edge_table_info: EdgeTableInfo
     ) -> Optional[WeightConfig]:
         """Infer edge weights from edge table columns.
 
@@ -92,33 +95,33 @@ class PostgresSchemaInferencer:
         Returns:
             WeightConfig if there are weight columns, None otherwise
         """
-        columns = edge_table_info["columns"]
-        pk_columns = set(edge_table_info["primary_key"])
-        fk_columns = {fk["column"] for fk in edge_table_info["foreign_keys"]}
+        columns = edge_table_info.columns
+        pk_columns = set(edge_table_info.primary_key)
+        fk_columns = {fk.column for fk in edge_table_info.foreign_keys}
 
         # Find non-PK, non-FK columns (these become weights)
         weight_columns = [
             col
             for col in columns
-            if col["name"] not in pk_columns and col["name"] not in fk_columns
+            if col.name not in pk_columns and col.name not in fk_columns
         ]
 
         if not weight_columns:
             return None
 
         # Extract column names as direct weights
-        direct_weights = [col["name"] for col in weight_columns]
+        direct_weights = [col.name for col in weight_columns]
 
         logger.debug(
             f"Inferred {len(direct_weights)} weights for edge table "
-            f"'{edge_table_info['name']}': {direct_weights}"
+            f"'{edge_table_info.name}': {direct_weights}"
         )
 
         return WeightConfig(direct=direct_weights)
 
     def infer_edge_config(
         self,
-        introspection_result: dict[str, Any],
+        introspection_result: SchemaIntrospectionResult,
         vertex_config: VertexConfig,
     ) -> EdgeConfig:
         """Infer EdgeConfig from edge tables.
@@ -130,17 +133,17 @@ class PostgresSchemaInferencer:
         Returns:
             EdgeConfig: Inferred edge configuration
         """
-        edge_tables = introspection_result.get("edge_tables", [])
+        edge_tables = introspection_result.edge_tables
         edges = []
 
         vertex_names = vertex_config.vertex_set
 
         for edge_table_info in edge_tables:
-            table_name = edge_table_info["name"]
-            source_table = edge_table_info["source_table"]
-            target_table = edge_table_info["target_table"]
-            fk_columns = edge_table_info["foreign_keys"]
-            pk_columns = edge_table_info["primary_key"]
+            table_name = edge_table_info.name
+            source_table = edge_table_info.source_table
+            target_table = edge_table_info.target_table
+            fk_columns = edge_table_info.foreign_keys
+            pk_columns = edge_table_info.primary_key
 
             # Verify source and target vertices exist
             if source_table not in vertex_names:
@@ -171,7 +174,7 @@ class PostgresSchemaInferencer:
             # Note: Only add index if not already covered by primary key
             pk_set = set(pk_columns)
             for fk in fk_columns:
-                fk_column_name = fk["column"]
+                fk_column_name = fk.column
                 # Skip if FK column is part of primary key (already indexed)
                 if fk_column_name not in pk_set:
                     indexes.append(
@@ -200,7 +203,9 @@ class PostgresSchemaInferencer:
         return EdgeConfig(edges=edges)
 
     def infer_schema(
-        self, introspection_result: dict[str, Any], schema_name: str | None = None
+        self,
+        introspection_result: SchemaIntrospectionResult,
+        schema_name: str | None = None,
     ) -> Schema:
         """Infer complete Schema from PostgreSQL introspection.
 
@@ -212,7 +217,7 @@ class PostgresSchemaInferencer:
             Schema: Complete inferred schema with vertices, edges, and metadata
         """
         if schema_name is None:
-            schema_name = introspection_result.get("schema_name", "public")
+            schema_name = introspection_result.schema_name
 
         logger.info(f"Inferring schema from PostgreSQL schema '{schema_name}'")
 
