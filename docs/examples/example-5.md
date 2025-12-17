@@ -223,10 +223,16 @@ from graflo import Caster
 caster = Caster(schema)
 
 # Ingest data from PostgreSQL into graph database
+from graflo.caster import IngestionParams
+
+ingestion_params = IngestionParams(
+    clean_start=True,  # Clear existing data first
+)
+
 caster.ingest(
     output_config=target_config,  # Target graph database config
     patterns=patterns,             # PostgreSQL table patterns
-    clean_start=True               # Clear existing data first
+    ingestion_params=ingestion_params,
 )
 
 # Cleanup
@@ -288,11 +294,18 @@ logger.info(f"Inferred schema saved to {schema_output_file}")
 patterns = create_patterns_from_postgres(postgres_conn, schema_name="public")
 
 # Step 7: Create Caster and ingest data
+from graflo.caster import IngestionParams
+
 caster = Caster(schema)
+
+ingestion_params = IngestionParams(
+    clean_start=True,  # Clear existing data first
+)
+
 caster.ingest(
     output_config=target_config,
     patterns=patterns,
-    clean_start=True
+    ingestion_params=ingestion_params,
 )
 
 # Cleanup

@@ -43,11 +43,11 @@ dependencies = [
   "urllib3>=2.0.0",
   "xmltodict>=0.14.2,<0.15"
 ]
-description = "A framework for transforming tabular (CSV, SQL) and hierarchical data (JSON, XML) into property graphs and ingesting them into graph databases (ArangoDB, Neo4j)"
+description = "A framework for transforming tabular (CSV, SQL) and hierarchical data (JSON, XML) into property graphs and ingesting them into graph databases (ArangoDB, Neo4j, TigerGraph). Features automatic PostgreSQL schema inference."
 name = "graflo"
 readme = "README.md"
 requires-python = "~=3.10.0"
-version = "1.3.4"
+version = "1.3.5"
 
 [project.optional-dependencies]
 plot = [

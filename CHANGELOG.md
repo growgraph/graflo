@@ -131,7 +131,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `ingest_data_sources()`: New method for ingesting from DataSourceRegistry
   - `process_data_source()`: New method for processing individual data sources
   - **Automatic Schema Fallback**: Uses `Schema.general.name` when `effective_schema` is not set
+  - **Ingestion Parameters Consolidation**: Refactored `Caster` to use `IngestionParams` as a single attribute
+    - Replaced individual attributes (`clean_start`, `n_cores`, `max_items`, `batch_size`, `dry`) with `ingestion_params: IngestionParams`
+    - `Caster.__init__()` now accepts `ingestion_params` parameter (backward compatible with kwargs)
+    - All ingestion parameters are now centralized in the `IngestionParams` Pydantic model
+    - Improved type safety and consistency across ingestion methods
   - Maintains full backward compatibility with existing code
+
+- **Parallel Processing Simplification**: Consolidated threading and multiprocessing parameters
+  - Removed redundant `n_threads` parameter from `IngestionParams` and CLI
+  - `n_cores` now controls both multiprocessing (number of processes) and threading (ThreadPoolExecutor workers)
+  - Simplified API: single parameter controls all parallel execution
+  - Updated CLI: removed `--n-threads` option, `--n-cores` now controls both process and thread counts
 
 - **Resource vs DataSource Separation**: Clear separation of concerns
   - Resources: Define semantic transformations (how data becomes a graph)
@@ -171,6 +182,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `ChunkerFactory`: Still functional but now used internally by FileDataSource
 - Direct file path processing: Use DataSource configuration for new code
+
+### Fixed
+- **File Discovery Path Bug**: Fixed incorrect path combination in `Caster.discover_files()`
+  - Previously combined `fpath` with `pattern.sub_path` again, causing `data/data` errors
+  - Now correctly uses `fpath` directly as the search directory
+  - Fixes `FileNotFoundError` when using `FilePattern` with `sub_path` in ingestion
 
 ## [1.2.1]
 
