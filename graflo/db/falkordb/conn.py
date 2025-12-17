@@ -448,8 +448,8 @@ class FalkordbConnection(Connection):
         else:
             return_clause = "RETURN n"
 
-        # Build limit clause
-        if limit is not None and isinstance(limit, int):
+        # Build limit clause (must be positive integer)
+        if limit is not None and isinstance(limit, int) and limit > 0:
             limit_clause = f"LIMIT {limit}"
         else:
             limit_clause = ""
@@ -553,7 +553,7 @@ class FalkordbConnection(Connection):
         else:
             return_clause = "RETURN r"
 
-        limit_clause = f"LIMIT {limit}" if limit else ""
+        limit_clause = f"LIMIT {limit}" if limit and limit > 0 else ""
 
         query = f"""
             MATCH {source_match}{rel_pattern}{target_match}
