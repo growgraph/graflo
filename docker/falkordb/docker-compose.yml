@@ -8,8 +8,6 @@ services:
         container_name: ${CONTAINER_NAME}
         volumes:
         -   falkordb_data:/data
-        environment:
-        -   REDIS_ARGS=--requirepass ${FALKORDB_PASSWORD:-}
 
 volumes:
     falkordb_data:
