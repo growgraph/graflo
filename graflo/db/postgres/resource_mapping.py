@@ -11,6 +11,12 @@ from graflo.architecture.resource import Resource
 from graflo.architecture.vertex import VertexConfig
 
 from .conn import EdgeTableInfo, SchemaIntrospectionResult
+from .inference_utils import (
+    detect_separator,
+    fuzzy_match_fragment,
+    is_relation_fragment,
+    split_by_separator,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -92,10 +98,15 @@ class PostgresResourceMapper:
             target_vertex_obj.indexes[0].fields if target_vertex_obj.indexes else []
         )
 
-        # For simplicity, use the first PK field (most common case is single-column PK)
-        # If composite keys are needed, this would need to be extended
-        source_pk_field = source_pk_fields[0] if source_pk_fields else "id"
-        target_pk_field = target_pk_fields[0] if target_pk_fields else "id"
+        # Use heuristics to infer PK field names from column names
+        # This handles cases like "bla_user" -> "user" vertex -> use "id" or matched field
+        vertex_names = list(vertex_config.vertex_set)
+        source_pk_field = self._infer_pk_field_from_column(
+            source_column, source_table, source_pk_fields, vertex_names
+        )
+        target_pk_field = self._infer_pk_field_from_column(
+            target_column, target_table, target_pk_fields, vertex_names
+        )
 
         # Create apply list using source_vertex and target_vertex pattern
         # This pattern explicitly specifies which vertex type each mapping targets,
@@ -130,6 +141,75 @@ class PostgresResourceMapper:
         )
 
         return resource
+
+    @staticmethod
+    def _infer_pk_field_from_column(
+        column_name: str,
+        vertex_name: str,
+        pk_fields: list[str],
+        vertex_names: list[str],
+    ) -> str:
+        """Infer primary key field name from column name using heuristics.
+
+        Uses fuzzy matching to identify vertex name fragments in column names,
+        then matches to the appropriate PK field. Handles cases like:
+        - "user_id" -> "user" vertex -> use first PK field (e.g., "id")
+        - "bla_user" -> "user" vertex -> use first PK field
+        - "user_id_2" -> "user" vertex -> use first PK field
+        - "source_user_id" -> "user" vertex -> use first PK field
+        - "bla_user" and "bla_user_2" -> both map to "user" vertex PK field
+
+        The heuristic works by:
+        1. Splitting the column name into fragments
+        2. Fuzzy matching fragments to vertex names
+        3. If a fragment matches the target vertex_name, use the vertex's PK field
+        4. Otherwise, fall back to first PK field or "id"
+
+        Args:
+            column_name: Name of the column (e.g., "user_id", "bla_user", "bla_user_2")
+            vertex_name: Name of the target vertex (already known from edge table info)
+            pk_fields: List of primary key field names for the vertex
+            vertex_names: List of all vertex names for fuzzy matching
+
+        Returns:
+            Primary key field name (defaults to first PK field or "id" if no match)
+        """
+        # Split column name into fragments
+        separator = detect_separator(column_name)
+        fragments = split_by_separator(column_name, separator)
+
+        # Try to find a fragment that matches the target vertex name
+        # This confirms that the column is indeed related to this vertex
+        for fragment in fragments:
+            # Skip relation-like fragments (e.g., "id", "rel", "source", "target")
+            if is_relation_fragment(fragment):
+                continue
+
+            # Fuzzy match fragment to vertex names
+            matched_vertex = fuzzy_match_fragment(fragment, vertex_names)
+
+            # If we found a match to our target vertex, use its PK field
+            if matched_vertex == vertex_name:
+                if pk_fields:
+                    # Use the first PK field (most common case is single-column PK)
+                    return pk_fields[0]
+                else:
+                    # No PK fields available, use "id" as default
+                    return "id"
+
+        # No fragment matched the target vertex, but we still have vertex_name
+        # This might happen if the column name doesn't contain the vertex name fragment
+        # In this case, trust that vertex_name is correct and use its PK field
+        if pk_fields:
+            return pk_fields[0]
+
+        # Last resort: use "id" as default
+        # This is better than failing, but ideally pk_fields should always be available
+        logger.debug(
+            f"No PK fields found for vertex '{vertex_name}', using 'id' as default "
+            f"for column '{column_name}'"
+        )
+        return "id"
 
     def map_tables_to_resources(
         self,

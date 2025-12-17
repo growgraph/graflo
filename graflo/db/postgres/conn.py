@@ -20,7 +20,6 @@ Example:
 """
 
 import logging
-from difflib import SequenceMatcher
 from typing import Any
 
 import psycopg2
@@ -34,6 +33,8 @@ from graflo.architecture.onto_sql import (
     SchemaIntrospectionResult,
 )
 from graflo.db.connection.onto import PostgresConfig
+
+from .inference_utils import infer_edge_vertices_from_table_name
 
 logger = logging.getLogger(__name__)
 
@@ -716,269 +717,6 @@ class PostgresConnection:
 
         return vertex_tables
 
-    @staticmethod
-    def _detect_separator(text: str) -> str:
-        """Detect the most common separator character in a text.
-
-        Args:
-            text: Text to analyze
-
-        Returns:
-            Most common separator character, defaults to '_'
-        """
-        # Common separators
-        separators = ["_", "-", "."]
-        counts = {sep: text.count(sep) for sep in separators}
-
-        if max(counts.values()) > 0:
-            return max(counts, key=counts.get)
-        return "_"  # Default separator
-
-    @staticmethod
-    def _split_by_separator(text: str, separator: str) -> list[str]:
-        """Split text by separator, handling multiple consecutive separators.
-
-        Args:
-            text: Text to split
-            separator: Separator character
-
-        Returns:
-            List of non-empty fragments
-        """
-        # Split and filter out empty strings
-        parts = [p for p in text.split(separator) if p]
-        return parts
-
-    @staticmethod
-    def _fuzzy_match_fragment(
-        fragment: str, vertex_names: list[str], threshold: float = 0.6
-    ) -> str | None:
-        """Fuzzy match a fragment to vertex names.
-
-        Args:
-            fragment: Fragment to match
-            vertex_names: List of vertex table names to match against
-            threshold: Similarity threshold (0.0 to 1.0)
-
-        Returns:
-            Best matching vertex name or None if no match above threshold
-        """
-        if not vertex_names:
-            return None
-
-        fragment_lower = fragment.lower()
-        best_match = None
-        best_score = 0.0
-
-        for vertex_name in vertex_names:
-            vertex_lower = vertex_name.lower()
-
-            # Exact match (case-insensitive)
-            if fragment_lower == vertex_lower:
-                return vertex_name
-
-            # Check if fragment is contained in vertex name or vice versa
-            if fragment_lower in vertex_lower or vertex_lower in fragment_lower:
-                score = min(len(fragment_lower), len(vertex_lower)) / max(
-                    len(fragment_lower), len(vertex_lower)
-                )
-                if score > best_score:
-                    best_score = score
-                    best_match = vertex_name
-
-            # Use SequenceMatcher for fuzzy matching
-            similarity = SequenceMatcher(None, fragment_lower, vertex_lower).ratio()
-            if similarity > best_score:
-                best_score = similarity
-                best_match = vertex_name
-
-        return best_match if best_score >= threshold else None
-
-    @staticmethod
-    def _is_relation_fragment(fragment: str) -> bool:
-        """Check if a fragment looks like a relation name rather than a vertex name.
-
-        Common relation words: contains, has, belongs_to, references, etc.
-
-        Args:
-            fragment: Fragment to check
-
-        Returns:
-            True if fragment looks like a relation name
-        """
-        relation_keywords = {
-            "rel",
-            "relation",
-            "link",
-            "edge",
-            "contains",
-            "has",
-            "belongs",
-            "references",
-            "refers",
-            "connects",
-            "joins",
-            "maps",
-            "associates",
-            "owns",
-            "includes",
-            "part",
-            "member",
-            "child",
-            "parent",
-        }
-        fragment_lower = fragment.lower()
-
-        # Check if fragment contains relation keywords
-        for keyword in relation_keywords:
-            if keyword in fragment_lower or fragment_lower in keyword:
-                return True
-
-        # Check if fragment is very short (likely not a vertex name)
-        if len(fragment) <= 2:
-            return True
-
-        return False
-
-    @staticmethod
-    def _infer_edge_vertices_from_table_name(
-        table_name: str,
-        pk_columns: list[str],
-        fk_columns: list[dict[str, Any]],
-        vertex_table_names: list[str] | None = None,
-    ) -> tuple[str | None, str | None]:
-        """Infer source and target vertex names from table name and structure.
-
-        Uses fuzzy matching to identify vertex names in table name fragments and key names.
-        Handles patterns like:
-        - rel_cluster_containment_host -> cluster, host
-        - rel_cluster_containment_cluster_2 -> cluster, cluster (self-reference)
-        - user_follows_user -> user, user (self-reference)
-        - product_category_mapping -> product, category
-
-        Args:
-            table_name: Name of the table
-            pk_columns: List of primary key column names
-            fk_columns: List of foreign key dictionaries with 'column' and 'references_table' keys
-            vertex_table_names: Optional list of known vertex table names for fuzzy matching
-
-        Returns:
-            Tuple of (source_table, target_table) or (None, None) if cannot infer
-        """
-        if vertex_table_names is None:
-            vertex_table_names = []
-
-        # Step 1: Detect separator
-        separator = PostgresConnection._detect_separator(table_name)
-
-        # Step 2: Split table name by separator
-        table_fragments = PostgresConnection._split_by_separator(table_name, separator)
-
-        # Step 3: Extract fragments from keys (preserve order for PK columns)
-        key_fragments_list = []  # Preserve order
-        key_fragments_set = set()  # For deduplication
-
-        # Extract fragments from PK columns in order
-        for pk_col in pk_columns:
-            pk_fragments = PostgresConnection._split_by_separator(pk_col, separator)
-            for frag in pk_fragments:
-                if frag not in key_fragments_set:
-                    key_fragments_list.append(frag)
-                    key_fragments_set.add(frag)
-
-        # Extract fragments from FK columns
-        for fk in fk_columns:
-            fk_col = fk.get("column", "")
-            fk_fragments = PostgresConnection._split_by_separator(fk_col, separator)
-            for frag in fk_fragments:
-                if frag not in key_fragments_set:
-                    key_fragments_list.append(frag)
-                    key_fragments_set.add(frag)
-
-        # Step 4: Fuzzy match fragments to vertex names
-        matched_vertices = []  # Preserve order - first match is source, second is target
-        matched_vertices_set = set()  # For deduplication
-        relation_fragments = []
-
-        # Match table name fragments first (higher priority, preserves order)
-        for fragment in table_fragments:
-            if PostgresConnection._is_relation_fragment(fragment):
-                relation_fragments.append(fragment)
-                continue
-
-            matched = PostgresConnection._fuzzy_match_fragment(
-                fragment, vertex_table_names
-            )
-            if matched and matched not in matched_vertices_set:
-                matched_vertices.append(matched)
-                matched_vertices_set.add(matched)
-
-        # Match key fragments (add to end if not already matched)
-        for fragment in key_fragments_list:
-            if PostgresConnection._is_relation_fragment(fragment):
-                continue
-
-            matched = PostgresConnection._fuzzy_match_fragment(
-                fragment, vertex_table_names
-            )
-            if matched and matched not in matched_vertices_set:
-                matched_vertices.append(matched)
-                matched_vertices_set.add(matched)
-
-        # Step 5: Use foreign keys to confirm or infer vertices
-        fk_vertex_names = []
-        if fk_columns:
-            for fk in fk_columns:
-                ref_table = fk.get("references_table")
-                if ref_table:
-                    fk_vertex_names.append(ref_table)
-
-        # Step 6: Form hypothesis
-        source_table = None
-        target_table = None
-
-        # Priority 1: Use FK references if available (most reliable)
-        if len(fk_vertex_names) >= 2:
-            source_table = fk_vertex_names[0]
-            target_table = fk_vertex_names[1]
-        elif len(fk_vertex_names) == 1:
-            # Self-reference case
-            source_table = fk_vertex_names[0]
-            target_table = fk_vertex_names[0]
-
-        # Priority 2: Use matched vertices from fuzzy matching
-        if not source_table or not target_table:
-            if len(matched_vertices) >= 2:
-                source_table = matched_vertices[0]
-                target_table = matched_vertices[1]
-            elif len(matched_vertices) == 1:
-                # Self-reference case
-                source_table = matched_vertices[0]
-                target_table = matched_vertices[0]
-
-        # Priority 3: Fill in missing vertex from remaining options
-        if source_table and not target_table:
-            # Try to find target from remaining fragments or keys
-            if fk_vertex_names and len(fk_vertex_names) > 1:
-                # Use second FK if available
-                target_table = fk_vertex_names[1]
-            elif matched_vertices and len(matched_vertices) > 1:
-                target_table = matched_vertices[1]
-            elif fk_vertex_names:
-                # Self-reference case
-                target_table = fk_vertex_names[0]
-            elif matched_vertices:
-                target_table = matched_vertices[0]
-
-        if target_table and not source_table:
-            # Try to find source from remaining fragments or keys
-            if fk_vertex_names:
-                source_table = fk_vertex_names[0]
-            elif matched_vertices:
-                source_table = matched_vertices[0]
-
-        return (source_table, target_table)
-
     def detect_edge_tables(
         self,
         schema_name: str | None = None,
@@ -1075,10 +813,8 @@ class PostgresConnection:
                     for fk in fk_infos
                 ]
                 # Try to infer from table name pattern
-                inferred_source, inferred_target = (
-                    self._infer_edge_vertices_from_table_name(
-                        table_name, pk_columns, fk_dicts, vertex_table_names
-                    )
+                inferred_source, inferred_target = infer_edge_vertices_from_table_name(
+                    table_name, pk_columns, fk_dicts, vertex_table_names
                 )
 
                 if inferred_source and inferred_target:

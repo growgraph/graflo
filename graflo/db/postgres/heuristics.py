@@ -1,8 +1,12 @@
+import logging
+
 from graflo.db.postgres.conn import (
     PostgresConnection,
 )
 from graflo.db.postgres.resource_mapping import PostgresResourceMapper
 from graflo.db.postgres.schema_inference import PostgresSchemaInferencer
+
+logger = logging.getLogger(__name__)
 
 
 def create_patterns_from_postgres(

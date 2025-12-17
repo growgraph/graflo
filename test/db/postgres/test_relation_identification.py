@@ -1,6 +1,12 @@
 """Tests for relation table identification logic in PostgreSQL connection."""
 
-from graflo.db.postgres import PostgresConnection
+from graflo.db.postgres.inference_utils import (
+    detect_separator,
+    fuzzy_match_fragment,
+    infer_edge_vertices_from_table_name,
+    is_relation_fragment,
+    split_by_separator,
+)
 
 
 class TestRelationIdentification:
@@ -9,97 +15,87 @@ class TestRelationIdentification:
     def test_detect_separator(self):
         """Test separator detection."""
         # Test underscore separator
-        assert (
-            PostgresConnection._detect_separator("rel_cluster_containment_host") == "_"
-        )
+        assert detect_separator("rel_cluster_containment_host") == "_"
 
         # Test hyphen separator
-        assert (
-            PostgresConnection._detect_separator("rel-cluster-containment-host") == "-"
-        )
+        assert detect_separator("rel-cluster-containment-host") == "-"
 
         # Test dot separator
-        assert (
-            PostgresConnection._detect_separator("rel.cluster.containment.host") == "."
-        )
+        assert detect_separator("rel.cluster.containment.host") == "."
 
         # Test default when no separator
-        assert PostgresConnection._detect_separator("relclustercontainmenthost") == "_"
+        assert detect_separator("relclustercontainmenthost") == "_"
 
         # Test mixed separators (should pick most common)
-        assert (
-            PostgresConnection._detect_separator("rel_cluster-containment_host") == "_"
-        )
+        assert detect_separator("rel_cluster-containment_host") == "_"
 
     def test_split_by_separator(self):
         """Test splitting by separator."""
         # Test underscore separator
-        assert PostgresConnection._split_by_separator(
-            "rel_cluster_containment_host", "_"
-        ) == ["rel", "cluster", "containment", "host"]
+        assert split_by_separator("rel_cluster_containment_host", "_") == [
+            "rel",
+            "cluster",
+            "containment",
+            "host",
+        ]
 
         # Test hyphen separator
-        assert PostgresConnection._split_by_separator(
-            "rel-cluster-containment-host", "-"
-        ) == ["rel", "cluster", "containment", "host"]
+        assert split_by_separator("rel-cluster-containment-host", "-") == [
+            "rel",
+            "cluster",
+            "containment",
+            "host",
+        ]
 
         # Test multiple consecutive separators
-        assert PostgresConnection._split_by_separator(
-            "rel__cluster___containment", "_"
-        ) == ["rel", "cluster", "containment"]
+        assert split_by_separator("rel__cluster___containment", "_") == [
+            "rel",
+            "cluster",
+            "containment",
+        ]
 
         # Test empty string
-        assert PostgresConnection._split_by_separator("", "_") == []
+        assert split_by_separator("", "_") == []
 
     def test_fuzzy_match_fragment(self):
         """Test fuzzy matching of fragments to vertex names."""
         vertex_names = ["cluster", "host", "user", "product", "category"]
 
         # Test exact match (case-insensitive)
-        assert (
-            PostgresConnection._fuzzy_match_fragment("cluster", vertex_names)
-            == "cluster"
-        )
-        assert (
-            PostgresConnection._fuzzy_match_fragment("CLUSTER", vertex_names)
-            == "cluster"
-        )
+        assert fuzzy_match_fragment("cluster", vertex_names) == "cluster"
+        assert fuzzy_match_fragment("CLUSTER", vertex_names) == "cluster"
 
         # Test substring match
-        assert (
-            PostgresConnection._fuzzy_match_fragment("clust", vertex_names) == "cluster"
-        )
-        assert PostgresConnection._fuzzy_match_fragment("hosts", vertex_names) == "host"
+        assert fuzzy_match_fragment("clust", vertex_names) == "cluster"
+        assert fuzzy_match_fragment("hosts", vertex_names) == "host"
 
         # Test fuzzy match
-        assert PostgresConnection._fuzzy_match_fragment("usr", vertex_names) == "user"
-        assert (
-            PostgresConnection._fuzzy_match_fragment("prod", vertex_names) == "product"
-        )
+        assert fuzzy_match_fragment("usr", vertex_names) == "user"
+        assert fuzzy_match_fragment("prod", vertex_names) == "product"
 
         # Test no match (below threshold)
-        assert PostgresConnection._fuzzy_match_fragment("xyz", vertex_names) is None
+        assert fuzzy_match_fragment("xyz", vertex_names) is None
 
         # Test empty vertex names
-        assert PostgresConnection._fuzzy_match_fragment("cluster", []) is None
+        assert fuzzy_match_fragment("cluster", []) is None
 
     def test_is_relation_fragment(self):
         """Test relation fragment detection."""
         # Test relation keywords
-        assert PostgresConnection._is_relation_fragment("rel") is True
-        assert PostgresConnection._is_relation_fragment("contains") is True
-        assert PostgresConnection._is_relation_fragment("has") is True
-        assert PostgresConnection._is_relation_fragment("belongs") is True
-        assert PostgresConnection._is_relation_fragment("references") is True
+        assert is_relation_fragment("rel") is True
+        assert is_relation_fragment("contains") is True
+        assert is_relation_fragment("has") is True
+        assert is_relation_fragment("belongs") is True
+        assert is_relation_fragment("references") is True
 
         # Test short fragments
-        assert PostgresConnection._is_relation_fragment("ab") is True
-        assert PostgresConnection._is_relation_fragment("a") is True
+        assert is_relation_fragment("ab") is True
+        assert is_relation_fragment("a") is True
 
         # Test vertex-like fragments
-        assert PostgresConnection._is_relation_fragment("cluster") is False
-        assert PostgresConnection._is_relation_fragment("user") is False
-        assert PostgresConnection._is_relation_fragment("product") is False
+        assert is_relation_fragment("cluster") is False
+        assert is_relation_fragment("user") is False
+        assert is_relation_fragment("product") is False
 
     def test_infer_edge_vertices_from_table_name_with_fks(self):
         """Test inference when foreign keys are available."""
@@ -111,7 +107,7 @@ class TestRelationIdentification:
         vertex_names = ["cluster", "host", "user"]
 
         # Test with FK references (most reliable)
-        source, target = PostgresConnection._infer_edge_vertices_from_table_name(
+        source, target = infer_edge_vertices_from_table_name(
             "rel_cluster_containment_host", pk_columns, fk_columns, vertex_names
         )
         assert source == "cluster"
@@ -119,7 +115,7 @@ class TestRelationIdentification:
 
         # Test self-reference
         fk_columns_self = [{"column": "user_id", "references_table": "user"}]
-        source, target = PostgresConnection._infer_edge_vertices_from_table_name(
+        source, target = infer_edge_vertices_from_table_name(
             "rel_user_follows_user",
             ["user_id", "follows_user_id"],
             fk_columns_self,
@@ -135,21 +131,21 @@ class TestRelationIdentification:
         vertex_names = ["cluster", "host", "user", "product", "category"]
 
         # Test fuzzy matching from table name
-        source, target = PostgresConnection._infer_edge_vertices_from_table_name(
+        source, target = infer_edge_vertices_from_table_name(
             "rel_cluster_containment_host", pk_columns, fk_columns, vertex_names
         )
         assert source == "cluster"
         assert target == "host"
 
         # Test with different separator
-        source, target = PostgresConnection._infer_edge_vertices_from_table_name(
+        source, target = infer_edge_vertices_from_table_name(
             "rel-cluster-containment-host", pk_columns, fk_columns, vertex_names
         )
         assert source == "cluster"
         assert target == "host"
 
         # Test product_category_mapping pattern
-        source, target = PostgresConnection._infer_edge_vertices_from_table_name(
+        source, target = infer_edge_vertices_from_table_name(
             "product_category_mapping",
             ["product_id", "category_id"],
             fk_columns,
@@ -165,7 +161,7 @@ class TestRelationIdentification:
         vertex_names = ["cluster", "host"]
 
         # Test matching from PK column names
-        source, target = PostgresConnection._infer_edge_vertices_from_table_name(
+        source, target = infer_edge_vertices_from_table_name(
             "rel_containment", pk_columns, fk_columns, vertex_names
         )
         assert source == "cluster"
@@ -176,7 +172,7 @@ class TestRelationIdentification:
             {"column": "source_cluster_id", "references_table": None},
             {"column": "target_host_id", "references_table": None},
         ]
-        source, target = PostgresConnection._infer_edge_vertices_from_table_name(
+        source, target = infer_edge_vertices_from_table_name(
             "rel_containment", pk_columns, fk_columns_with_fragments, vertex_names
         )
         assert source == "cluster"
@@ -192,7 +188,7 @@ class TestRelationIdentification:
         vertex_names = ["cluster", "host", "wrong", "also_wrong"]
 
         # FK references should override fuzzy matches from table/column names
-        source, target = PostgresConnection._infer_edge_vertices_from_table_name(
+        source, target = infer_edge_vertices_from_table_name(
             "rel_wrong_also_wrong", pk_columns, fk_columns, vertex_names
         )
         assert source == "cluster"
@@ -204,14 +200,14 @@ class TestRelationIdentification:
         fk_columns = []
         vertex_names = ["cluster", "host"]
 
-        source, target = PostgresConnection._infer_edge_vertices_from_table_name(
+        source, target = infer_edge_vertices_from_table_name(
             "rel_xyz_abc", pk_columns, fk_columns, vertex_names
         )
         assert source is None
         assert target is None
 
         # Test with empty vertex names
-        source, target = PostgresConnection._infer_edge_vertices_from_table_name(
+        source, target = infer_edge_vertices_from_table_name(
             "rel_cluster_host", pk_columns, fk_columns, []
         )
         assert source is None
@@ -227,7 +223,7 @@ class TestRelationIdentification:
             {"column": "cluster_id", "references_table": "cluster"},
             {"column": "cluster_id_2", "references_table": "cluster"},
         ]
-        source, target = PostgresConnection._infer_edge_vertices_from_table_name(
+        source, target = infer_edge_vertices_from_table_name(
             "rel_cluster_containment_cluster_2", pk_columns, fk_columns, vertex_names
         )
         assert source == "cluster"
@@ -236,7 +232,7 @@ class TestRelationIdentification:
         # Test pattern without rel_ prefix
         pk_columns = ["user_id", "follows_user_id"]
         fk_columns = []
-        source, target = PostgresConnection._infer_edge_vertices_from_table_name(
+        source, target = infer_edge_vertices_from_table_name(
             "user_follows_user", pk_columns, fk_columns, vertex_names
         )
         assert source == "user"
