@@ -3,6 +3,7 @@ from suthing import FileHandle
 from graflo import Caster, Patterns, Schema
 from graflo.util.onto import FilePattern
 from graflo.db.connection.onto import ArangoConfig
+from graflo.caster import IngestionParams
 
 schema = Schema.from_dict(FileHandle.load("schema.yaml"))
 
@@ -46,4 +47,8 @@ patterns.add_file_pattern(
 
 caster = Caster(schema)
 
-caster.ingest(output_config=conn_conf, patterns=patterns, clean_start=True)
+
+ingestion_params = IngestionParams(clean_start=True)
+caster.ingest(
+    output_config=conn_conf, patterns=patterns, ingestion_params=ingestion_params
+)

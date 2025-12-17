@@ -3,6 +3,7 @@ from suthing import FileHandle
 from graflo import Caster, Patterns, Schema
 from graflo.util.onto import FilePattern
 from graflo.db.connection.onto import Neo4jConfig
+from graflo.caster import IngestionParams
 
 schema = Schema.from_dict(FileHandle.load("schema.yaml"))
 
@@ -32,9 +33,9 @@ patterns.add_file_pattern(
     ),
 )
 patterns.add_file_pattern(
-    "bugs",
+    "bug",
     FilePattern(
-        regex=r"^bugs.head.*\.json(?:\.gz)?$",
+        regex=r"^bugs.*\.json(?:\.gz)?$",
         sub_path=pathlib.Path("./data"),
         resource_name="bugs",
     ),
@@ -50,9 +51,13 @@ patterns.add_file_pattern(
 
 caster = Caster(schema)
 
+
+ingestion_params = IngestionParams(
+    clean_start=True,
+    # max_items=5,
+)
 caster.ingest(
     output_config=conn_conf,  # Target database config
     patterns=patterns,  # Source data patterns
-    clean_start=True,
-    # max_items=5,
+    ingestion_params=ingestion_params,
 )

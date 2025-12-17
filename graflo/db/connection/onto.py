@@ -635,6 +635,35 @@ class PostgresConfig(DBConfig):
         """
         return self.schema_name
 
+    def to_sqlalchemy_connection_string(self) -> str:
+        """Convert PostgresConfig to SQLAlchemy connection string.
+
+        Returns:
+            SQLAlchemy connection string (e.g., 'postgresql://user:pass@host:port/dbname')
+        """
+        from urllib.parse import quote_plus
+
+        host = self.hostname or "localhost"
+        port = int(self.port) if self.port else 5432
+        database = self.database
+        if database is None:
+            raise ValueError(
+                "PostgreSQL database name is required for connection string"
+            )
+        user = self.username or "postgres"
+        password = self.password or ""
+
+        # URL-encode user, password, and database name to handle special characters
+        user_encoded = quote_plus(user)
+        password_encoded = quote_plus(password) if password else ""
+        database_encoded = quote_plus(database)
+
+        # Build connection string
+        if password_encoded:
+            return f"postgresql://{user_encoded}:{password_encoded}@{host}:{port}/{database_encoded}"
+        else:
+            return f"postgresql://{user_encoded}@{host}:{port}/{database_encoded}"
+
     @classmethod
     def from_docker_env(cls, docker_dir: str | Path | None = None) -> "PostgresConfig":
         """Load PostgreSQL config from docker/postgres/.env file."""

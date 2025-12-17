@@ -1,5 +1,6 @@
 import logging
 
+from graflo.util.onto import Patterns, TablePattern
 from graflo.db.postgres.conn import (
     PostgresConnection,
 )
@@ -11,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 def create_patterns_from_postgres(
     conn: PostgresConnection, schema_name: str | None = None
-):
+) -> Patterns:
     """Create Patterns from PostgreSQL tables.
 
     Args:
@@ -21,7 +22,6 @@ def create_patterns_from_postgres(
     Returns:
         Patterns: Patterns object with TablePattern instances for all tables
     """
-    from graflo.util.onto import Patterns, TablePattern
 
     # Introspect the schema
     introspection_result = conn.introspect_schema(schema_name=schema_name)

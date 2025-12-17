@@ -23,7 +23,7 @@ def modes():
     return [("kg", "json"), ("ibes", "csv")]
 
 
-def cast(modes, schema_obj, current_path, level, reset, n_threads=1):
+def cast(modes, schema_obj, current_path, level, reset, n_cores=1):
     for mode, ext in modes:
         # work with main resource
         resource_name = mode.split("_")[0]
@@ -35,7 +35,7 @@ def cast(modes, schema_obj, current_path, level, reset, n_threads=1):
 
         for r in schema.resources:
             assemble_tree(r.root, f"{output_dir}/{mode}.resource-{r.resource_name}.pdf")
-        caster = Caster(schema, n_threads=n_threads)
+        caster = Caster(schema, n_cores=n_cores)
 
         if level == 0:
             fname = os.path.join(
@@ -77,4 +77,4 @@ def test_cast(modes, schema_obj, current_path, reset):
     cast(modes, schema_obj, current_path, level=0, reset=reset)
     cast(modes, schema_obj, current_path, level=1, reset=reset)
     cast(modes, schema_obj, current_path, level=2, reset=reset)
-    cast(modes, schema_obj, current_path, level=2, reset=reset, n_threads=4)
+    cast(modes, schema_obj, current_path, level=2, reset=reset, n_cores=4)

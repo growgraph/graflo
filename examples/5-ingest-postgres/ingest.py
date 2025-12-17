@@ -22,9 +22,10 @@ from graflo.db.postgres import (
     PostgresConnection,
     create_patterns_from_postgres,
     infer_schema_from_postgres,
-    load_schema_from_sql_file,
 )
+from graflo.db.postgres.util import load_schema_from_sql_file
 from graflo.db.connection.onto import PostgresConfig, Neo4jConfig
+from graflo.caster import IngestionParams
 
 logger = logging.getLogger(__name__)
 
@@ -109,8 +110,12 @@ with PostgresConnection(postgres_conf) as postgres_conn:
 
 # Step 5: Create Caster and ingest data
 # Note: caster.ingest() will create its own PostgreSQL connections per table internally
+
 caster = Caster(schema)
-caster.ingest(output_config=conn_conf, patterns=patterns, clean_start=True)
+ingestion_params = IngestionParams(clean_start=True)
+caster.ingest(
+    output_config=conn_conf, patterns=patterns, ingestion_params=ingestion_params
+)
 
 print("\n" + "=" * 80)
 print("Ingestion complete!")

@@ -84,7 +84,6 @@ def ingest(
     limit_files,
     batch_size,
     n_cores,
-    n_threads,
     fresh_start,
     init_only,
     resource_pattern_config_path,
@@ -102,8 +101,7 @@ def ingest(
         source_path: Path to source data directory
         limit_files: Optional limit on number of files to process
         batch_size: Number of items to process in each batch (default: 5000)
-        n_cores: Number of CPU cores to use for parallel processing (default: 1)
-        n_threads: Number of threads per core for parallel processing (default: 1)
+        n_cores: Number of CPU cores/threads to use for parallel processing (default: 1)
         fresh_start: Whether to wipe existing database before ingestion
         init_only: Whether to only initialize the database without ingestion
         resource_pattern_config_path: Optional path to resource pattern configuration
@@ -138,10 +136,16 @@ def ingest(
 
     schema.fetch_resource()
 
+    # Create ingestion params with CLI arguments
+    from graflo.caster import IngestionParams
+
+    ingestion_params = IngestionParams(
+        n_cores=n_cores,
+    )
+
     caster = Caster(
         schema,
-        n_cores=n_cores,
-        n_threads=n_threads,
+        ingestion_params=ingestion_params,
     )
 
     # Validate that either source_path or data_source_config_path is provided
@@ -170,23 +174,28 @@ def ingest(
                 )
                 registry.register(data_source, resource_name=resource_name)
 
-        # Use data source registry for ingestion
+        # Update ingestion params with runtime options
+        ingestion_params.clean_start = fresh_start
+        ingestion_params.batch_size = batch_size
+        ingestion_params.init_only = init_only
+
         caster.ingest_data_sources(
             data_source_registry=registry,
             conn_conf=conn_conf,
-            clean_start=fresh_start,
-            batch_size=batch_size,
-            init_only=init_only,
+            ingestion_params=ingestion_params,
         )
     else:
         # Fall back to file-based ingestion
+        # Update ingestion params with runtime options
+        ingestion_params.clean_start = fresh_start
+        ingestion_params.batch_size = batch_size
+        ingestion_params.init_only = init_only
+        ingestion_params.limit_files = limit_files
+
         caster.ingest(
             output_config=conn_conf,
             patterns=patterns,
-            limit_files=limit_files,
-            clean_start=fresh_start,
-            batch_size=batch_size,
-            init_only=init_only,
+            ingestion_params=ingestion_params,
         )
 
 

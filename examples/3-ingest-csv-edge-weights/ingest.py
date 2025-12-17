@@ -1,6 +1,7 @@
 from suthing import FileHandle
 from graflo import Caster, Patterns, Schema
 from graflo.db.connection.onto import Neo4jConfig
+from graflo.caster import IngestionParams
 
 schema = Schema.from_dict(FileHandle.load("schema.yaml"))
 
@@ -33,4 +34,8 @@ patterns = Patterns.from_dict(FileHandle.load("patterns.yaml"))
 
 caster = Caster(schema)
 
-caster.ingest(output_config=conn_conf, patterns=patterns, clean_start=True)
+
+ingestion_params = IngestionParams(clean_start=True)
+caster.ingest(
+    output_config=conn_conf, patterns=patterns, ingestion_params=ingestion_params
+)

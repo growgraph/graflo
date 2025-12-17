@@ -32,14 +32,13 @@ def test_patterns():
     assert patterns.get_resource_type("b") == "file"
 
 
-def test_file_pattern_limit_rows():
-    """Test FilePattern with limit_rows parameter."""
+def test_file_pattern_basic():
+    """Test FilePattern basic functionality."""
     pattern = FilePattern(
         regex=r".*\.csv$",
         sub_path=pathlib.Path("./data"),
-        limit_rows=100,
     )
-    assert pattern.limit_rows == 100
+    assert pattern.regex == r".*\.csv$"
     assert pattern.date_field is None
     assert pattern.date_filter is None
 
@@ -82,14 +81,12 @@ def test_file_pattern_date_validation():
     assert pattern.date_filter == "> '2020-10-10'"
 
 
-def test_table_pattern_limit_rows():
-    """Test TablePattern with limit_rows parameter."""
+def test_table_pattern_basic():
+    """Test TablePattern basic functionality."""
     pattern = TablePattern(
         table_name="events",
         schema_name="public",
-        limit_rows=1000,
     )
-    assert pattern.limit_rows == 1000
     assert pattern.table_name == "events"
     assert pattern.schema_name == "public"
 
@@ -214,11 +211,10 @@ def test_patterns_with_filtering():
     """Test Patterns collection with filtering parameters."""
     patterns = Patterns()
 
-    # Add file pattern with limit
+    # Add file pattern
     file_pattern = FilePattern(
         regex=r".*\.csv$",
         sub_path=pathlib.Path("./data"),
-        limit_rows=500,
         resource_name="users",
     )
     patterns.add_file_pattern("users", file_pattern)
@@ -229,14 +225,12 @@ def test_patterns_with_filtering():
         schema_name="public",
         date_field="created_at",
         date_filter="> '2020-10-10'",
-        limit_rows=1000,
         resource_name="events",
     )
     patterns.add_table_pattern("events", table_pattern)
 
     # Verify patterns are stored correctly
-    assert patterns.patterns["users"].limit_rows == 500
-    assert patterns.patterns["events"].limit_rows == 1000
+    assert patterns.patterns["users"].regex == r".*\.csv$"
     assert patterns.patterns["events"].date_field == "created_at"
     assert patterns.patterns["events"].date_filter == "> '2020-10-10'"
 
@@ -249,7 +243,6 @@ def test_table_pattern_sql_query_building():
         schema_name="public",
         date_field="dt",
         date_filter="> '2020-10-10'",
-        limit_rows=100,
         resource_name="events",
     )
 
@@ -258,34 +251,26 @@ def test_table_pattern_sql_query_building():
     expected_where = "\"dt\" > '2020-10-10'"
     assert where_clause == expected_where
 
-    # Test that the query would include WHERE and LIMIT (as built in caster.py)
+    # Test that the query would include WHERE (LIMIT is now controlled by IngestionParams)
     base_query = 'SELECT * FROM "public"."events"'
     if where_clause:
         full_query = f"{base_query} WHERE {where_clause}"
     else:
         full_query = base_query
-    if table_pattern.limit_rows:
-        full_query += f" LIMIT {table_pattern.limit_rows}"
 
     assert "WHERE" in full_query
-    assert "LIMIT 100" in full_query
     assert "> '2020-10-10'" in full_query
     assert '"dt"' in full_query
 
-    # Test with only limit (no date filter)
+    # Test with no date filter
     pattern_no_date = TablePattern(
         table_name="users",
         schema_name="public",
-        limit_rows=50,
     )
     where_clause_no_date = pattern_no_date.build_where_clause()
     assert where_clause_no_date == ""
 
     query_no_date = 'SELECT * FROM "public"."users"'
-    if pattern_no_date.limit_rows:
-        query_no_date += f" LIMIT {pattern_no_date.limit_rows}"
-
-    assert "LIMIT 50" in query_no_date
     assert "WHERE" not in query_no_date
 
 

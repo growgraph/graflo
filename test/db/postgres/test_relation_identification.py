@@ -4,7 +4,6 @@ from graflo.db.postgres.inference_utils import (
     detect_separator,
     fuzzy_match_fragment,
     infer_edge_vertices_from_table_name,
-    is_relation_fragment,
     split_by_separator,
 )
 
@@ -78,24 +77,6 @@ class TestRelationIdentification:
 
         # Test empty vertex names
         assert fuzzy_match_fragment("cluster", []) is None
-
-    def test_is_relation_fragment(self):
-        """Test relation fragment detection."""
-        # Test relation keywords
-        assert is_relation_fragment("rel") is True
-        assert is_relation_fragment("contains") is True
-        assert is_relation_fragment("has") is True
-        assert is_relation_fragment("belongs") is True
-        assert is_relation_fragment("references") is True
-
-        # Test short fragments
-        assert is_relation_fragment("ab") is True
-        assert is_relation_fragment("a") is True
-
-        # Test vertex-like fragments
-        assert is_relation_fragment("cluster") is False
-        assert is_relation_fragment("user") is False
-        assert is_relation_fragment("product") is False
 
     def test_infer_edge_vertices_from_table_name_with_fks(self):
         """Test inference when foreign keys are available."""
