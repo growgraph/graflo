@@ -70,7 +70,6 @@ See Also
 
 import concurrent.futures
 import math
-import string
 import threading
 import uuid
 
@@ -102,7 +101,9 @@ class TestCypherInjection:
         - Neo4j Cypher Injection documentation
     """
 
-    def test_injection_via_node_property_value(self, conn_conf, test_graph_name, clean_db):
+    def test_injection_via_node_property_value(
+        self, conn_conf, test_graph_name, clean_db
+    ):
         """Verify property values cannot escape string context to inject Cypher.
 
         Attempts classic injection patterns adapted from SQL injection,
@@ -115,7 +116,7 @@ class TestCypherInjection:
                 "'; MATCH (n) DETACH DELETE n; //",
                 "' OR 1=1 --",
                 "test'}) MATCH (x) DETACH DELETE x CREATE (n:Pwned {id: '1",
-                "\" OR \"\"=\"",
+                '" OR ""="',
                 "\\'; DROP DATABASE test; --",
                 "' UNION MATCH (n) RETURN n.password //",
                 "${injection}",
@@ -213,7 +214,7 @@ class TestUnicodeTorture:
                 "مرحبا بالعالم",  # Arabic
                 "שלום עולם",  # Hebrew
                 "Hello مرحبا World عالم",  # Mixed LTR/RTL
-                "\u202Eevil\u202C",  # RTL override characters
+                "\u202eevil\u202c",  # RTL override characters
             ]
 
             for i, text in enumerate(rtl_texts):
@@ -272,10 +273,10 @@ class TestUnicodeTorture:
         _ = clean_db
         with ConnectionManager(connection_config=conn_conf) as db:
             invisible_strings = [
-                "hello\u200Bworld",  # Zero-width space
-                "hello\u200Cworld",  # Zero-width non-joiner
-                "hello\u200Dworld",  # Zero-width joiner
-                "hello\uFEFFworld",  # BOM
+                "hello\u200bworld",  # Zero-width space
+                "hello\u200cworld",  # Zero-width non-joiner
+                "hello\u200dworld",  # Zero-width joiner
+                "hello\ufeffworld",  # BOM
                 "\u2060invisible\u2060",  # Word joiner
             ]
 
@@ -588,8 +589,17 @@ class TestMalformedInputs:
         _ = clean_db
         with ConnectionManager(connection_config=conn_conf) as db:
             reserved_words = [
-                "MATCH", "CREATE", "DELETE", "RETURN", "WHERE",
-                "AND", "OR", "NOT", "NULL", "TRUE", "FALSE",
+                "MATCH",
+                "CREATE",
+                "DELETE",
+                "RETURN",
+                "WHERE",
+                "AND",
+                "OR",
+                "NOT",
+                "NULL",
+                "TRUE",
+                "FALSE",
             ]
 
             for word in reserved_words:
@@ -599,7 +609,9 @@ class TestMalformedInputs:
                 except Exception:
                     pass
 
-    def test_special_characters_in_property_names(self, conn_conf, test_graph_name, clean_db):
+    def test_special_characters_in_property_names(
+        self, conn_conf, test_graph_name, clean_db
+    ):
         """Test property names with special characters."""
         _ = clean_db
         with ConnectionManager(connection_config=conn_conf) as db:
@@ -662,18 +674,14 @@ class TestPathologicalGraphs:
             )
 
             # Verify self-loop exists
-            result = db.execute(
-                "MATCH (p:Person)-[r:LOVES]->(p) RETURN count(r)"
-            )
+            result = db.execute("MATCH (p:Person)-[r:LOVES]->(p) RETURN count(r)")
             assert result.result_set[0][0] == 1
 
     def test_bidirectional_edges(self, conn_conf, test_graph_name, clean_db):
         """Create edges in both directions between same nodes."""
         _ = clean_db
         with ConnectionManager(connection_config=conn_conf) as db:
-            db.upsert_docs_batch(
-                [{"id": "A"}, {"id": "B"}], "Node", match_keys=["id"]
-            )
+            db.upsert_docs_batch([{"id": "A"}, {"id": "B"}], "Node", match_keys=["id"])
 
             # A -> B and B -> A
             edges = [
@@ -698,9 +706,7 @@ class TestPathologicalGraphs:
         """Create multiple edges of same type between same nodes."""
         _ = clean_db
         with ConnectionManager(connection_config=conn_conf) as db:
-            db.upsert_docs_batch(
-                [{"id": "A"}, {"id": "B"}], "Node", match_keys=["id"]
-            )
+            db.upsert_docs_batch([{"id": "A"}, {"id": "B"}], "Node", match_keys=["id"])
 
             # Multiple edges A -> B
             for i in range(5):
@@ -715,9 +721,7 @@ class TestPathologicalGraphs:
                 )
 
             # MERGE should create only 1, but let's verify behavior
-            result = db.execute(
-                "MATCH (a:Node)-[r:MULTI]->(b:Node) RETURN count(r)"
-            )
+            result = db.execute("MATCH (a:Node)-[r:MULTI]->(b:Node) RETURN count(r)")
             # With MERGE, should be 1 (updated each time)
             assert result.result_set[0][0] >= 1
 
@@ -887,7 +891,9 @@ class TestConcurrencyChaos:
         def updater(thread_id):
             for i in range(10):
                 with ConnectionManager(connection_config=conn_conf) as db:
-                    docs = [{"id": "contested", "last_writer": thread_id, "iteration": i}]
+                    docs = [
+                        {"id": "contested", "last_writer": thread_id, "iteration": i}
+                    ]
                     db.upsert_docs_batch(docs, "Contested", match_keys=["id"])
                     results.append((thread_id, i))
 
@@ -917,7 +923,9 @@ class TestStateCorruption:
 
         # These should fail gracefully
         with pytest.raises(Exception):
-            db.fetch_docs("SomeLabel")
+            # Use getattr to call dynamically proxied method
+            fetch_docs = getattr(db, "fetch_docs")
+            fetch_docs("SomeLabel")
 
     def test_double_close(self, conn_conf, test_graph_name):
         """Close connection twice."""
@@ -974,11 +982,15 @@ class TestAggregationEdgeCases:
             ]
             db.upsert_docs_batch(docs, "NullAgg", match_keys=["id"])
 
-            avg = db.aggregate("NullAgg", AggregationType.AVERAGE, aggregated_field="score")
+            avg = db.aggregate(
+                "NullAgg", AggregationType.AVERAGE, aggregated_field="score"
+            )
             # Should handle nulls gracefully
             assert avg is not None or avg == 0 or math.isnan(avg) if avg else True
 
-    def test_aggregate_discriminant_with_nulls(self, conn_conf, test_graph_name, clean_db):
+    def test_aggregate_discriminant_with_nulls(
+        self, conn_conf, test_graph_name, clean_db
+    ):
         """Group by field that has null values."""
         _ = clean_db
         with ConnectionManager(connection_config=conn_conf) as db:
@@ -1037,7 +1049,9 @@ class TestFilterEdgeCases:
 class TestEdgeOperationsEdgeCases:
     """Test edge/relationship operations with edge cases."""
 
-    def test_edge_between_non_existent_nodes(self, conn_conf, test_graph_name, clean_db):
+    def test_edge_between_non_existent_nodes(
+        self, conn_conf, test_graph_name, clean_db
+    ):
         """Create edge between nodes that don't exist."""
         _ = clean_db
         with ConnectionManager(connection_config=conn_conf) as db:
@@ -1193,7 +1207,7 @@ class TestMemoryExhaustion:
         _ = clean_db
         with ConnectionManager(connection_config=conn_conf) as db:
             # String that might confuse naive JSON parsers
-            evil = '{"a":' * 100 + '"bomb"' + '}' * 100
+            evil = '{"a":' * 100 + '"bomb"' + "}" * 100
             docs = [{"id": "json_bomb", "data": evil}]
             db.upsert_docs_batch(docs, "JsonBomb", match_keys=["id"])
 
@@ -1267,8 +1281,7 @@ class TestCartesianProductBomb:
             # Variable length path query - exponential explosion
             try:
                 result = db.execute(
-                    "MATCH p=(a:Dense)-[:CONNECTED*1..5]->(b:Dense) "
-                    "RETURN count(p)"
+                    "MATCH p=(a:Dense)-[:CONNECTED*1..5]->(b:Dense) RETURN count(p)"
                 )
                 assert result.result_set[0][0] > 0
             except Exception:
@@ -1290,7 +1303,7 @@ class TestMalformedEncoding:
             # Overlong encoding of '/' (0x2F)
             # Normal: 0x2F, Overlong: 0xC0 0xAF
             try:
-                overlong = b'\xc0\xaf'.decode('utf-8', errors='replace')
+                overlong = b"\xc0\xaf".decode("utf-8", errors="replace")
                 docs = [{"id": "overlong", "path": overlong}]
                 db.upsert_docs_batch(docs, "Overlong", match_keys=["id"])
             except Exception:
@@ -1320,7 +1333,7 @@ class TestMalformedEncoding:
         with ConnectionManager(connection_config=conn_conf) as db:
             # These are invalid in well-formed UTF-8
             try:
-                lone_high = '\ud800'  # High surrogate without low
+                lone_high = "\ud800"  # High surrogate without low
                 docs = [{"id": "surrogate", "broken": lone_high}]
                 db.upsert_docs_batch(docs, "Surrogate", match_keys=["id"])
             except Exception:
@@ -1352,9 +1365,21 @@ class TestPropertyKeySmuggling:
         _ = clean_db
         with ConnectionManager(connection_config=conn_conf) as db:
             keywords = [
-                "MATCH", "WHERE", "RETURN", "CREATE", "DELETE",
-                "MERGE", "SET", "REMOVE", "DETACH", "OPTIONAL",
-                "WITH", "UNWIND", "FOREACH", "CALL", "YIELD",
+                "MATCH",
+                "WHERE",
+                "RETURN",
+                "CREATE",
+                "DELETE",
+                "MERGE",
+                "SET",
+                "REMOVE",
+                "DETACH",
+                "OPTIONAL",
+                "WITH",
+                "UNWIND",
+                "FOREACH",
+                "CALL",
+                "YIELD",
             ]
 
             docs = [{"id": "keyword_node"}]
@@ -1373,9 +1398,18 @@ class TestPropertyKeySmuggling:
         _ = clean_db
         with ConnectionManager(connection_config=conn_conf) as db:
             operator_keys = [
-                "a+b", "a-b", "a*b", "a/b", "a%b",
-                "a=b", "a<>b", "a<b", "a>b",
-                "a AND b", "a OR b", "NOT a",
+                "a+b",
+                "a-b",
+                "a*b",
+                "a/b",
+                "a%b",
+                "a=b",
+                "a<>b",
+                "a<b",
+                "a>b",
+                "a AND b",
+                "a OR b",
+                "NOT a",
             ]
 
             for i, key in enumerate(operator_keys):
@@ -1390,9 +1424,17 @@ class TestPropertyKeySmuggling:
         _ = clean_db
         with ConnectionManager(connection_config=conn_conf) as db:
             internal_names = [
-                "_id", "__id__", "_key", "__key__",
-                "_labels", "__labels__", "_type", "__type__",
-                "__class__", "__dict__", "__proto__",
+                "_id",
+                "__id__",
+                "_key",
+                "__key__",
+                "_labels",
+                "__labels__",
+                "_type",
+                "__type__",
+                "__class__",
+                "__dict__",
+                "__proto__",
             ]
 
             for name in internal_names:
@@ -1548,19 +1590,23 @@ class TestGraphAlgorithmExploits:
             edges = []
             for i in range(clique_size):
                 for j in range(i + 1, clique_size):
-                    edges.append([
-                        {"id": f"clique_{i}"},
-                        {"id": f"clique_{j}"},
-                        {},
-                    ])
+                    edges.append(
+                        [
+                            {"id": f"clique_{i}"},
+                            {"id": f"clique_{j}"},
+                            {},
+                        ]
+                    )
 
             # Stick edges (path)
             for i in range(stick_length - 1):
-                edges.append([
-                    {"id": f"stick_{i}"},
-                    {"id": f"stick_{i + 1}"},
-                    {},
-                ])
+                edges.append(
+                    [
+                        {"id": f"stick_{i}"},
+                        {"id": f"stick_{i + 1}"},
+                        {},
+                    ]
+                )
 
             # Connect stick to clique
             edges.append([{"id": "stick_0"}, {"id": "clique_0"}, {}])
@@ -1575,9 +1621,7 @@ class TestGraphAlgorithmExploits:
             )
 
             # Verify structure
-            result = db.execute(
-                "MATCH ()-[r:CONNECTED]->() RETURN count(r)"
-            )
+            result = db.execute("MATCH ()-[r:CONNECTED]->() RETURN count(r)")
             expected = (clique_size * (clique_size - 1)) // 2 + stick_length
             assert result.result_set[0][0] == expected
 
@@ -1599,19 +1643,23 @@ class TestGraphAlgorithmExploits:
             # Left clique edges
             for i in range(clique_size):
                 for j in range(i + 1, clique_size):
-                    edges.append([
-                        {"id": f"left_{i}"},
-                        {"id": f"left_{j}"},
-                        {},
-                    ])
+                    edges.append(
+                        [
+                            {"id": f"left_{i}"},
+                            {"id": f"left_{j}"},
+                            {},
+                        ]
+                    )
             # Right clique edges
             for i in range(clique_size):
                 for j in range(i + 1, clique_size):
-                    edges.append([
-                        {"id": f"right_{i}"},
-                        {"id": f"right_{j}"},
-                        {},
-                    ])
+                    edges.append(
+                        [
+                            {"id": f"right_{i}"},
+                            {"id": f"right_{j}"},
+                            {},
+                        ]
+                    )
             # Bridge
             edges.append([{"id": "left_0"}, {"id": "right_0"}, {}])
 
@@ -1670,9 +1718,7 @@ class TestConnectionTorture:
                     match_keys=["id"],
                 )
                 # Read again
-                result = db.fetch_docs(
-                    "Interleaved", filters=["==", str(i), "id"]
-                )
+                result = db.fetch_docs("Interleaved", filters=["==", str(i), "id"])
                 assert result[0]["phase"] == "overwrite"
 
     def test_massive_transaction(self, conn_conf, test_graph_name, clean_db):
@@ -1915,7 +1961,9 @@ class TestFilterSadism:
             except Exception:
                 pass  # Deep nesting may not be supported
 
-    def test_filter_with_regex_metacharacters(self, conn_conf, test_graph_name, clean_db):
+    def test_filter_with_regex_metacharacters(
+        self, conn_conf, test_graph_name, clean_db
+    ):
         """Filter values containing regex metacharacters."""
         _ = clean_db
         with ConnectionManager(connection_config=conn_conf) as db:
@@ -1986,10 +2034,14 @@ class TestDeadlockHell:
                 with ConnectionManager(connection_config=conn_conf) as db:
                     for _ in range(10):
                         db.upsert_docs_batch(
-                            [{"id": "A", "by": "thread1"}], "Deadlock", match_keys=["id"]
+                            [{"id": "A", "by": "thread1"}],
+                            "Deadlock",
+                            match_keys=["id"],
                         )
                         db.upsert_docs_batch(
-                            [{"id": "B", "by": "thread1"}], "Deadlock", match_keys=["id"]
+                            [{"id": "B", "by": "thread1"}],
+                            "Deadlock",
+                            match_keys=["id"],
                         )
             except Exception as e:
                 errors.append(str(e))
@@ -1999,10 +2051,14 @@ class TestDeadlockHell:
                 with ConnectionManager(connection_config=conn_conf) as db:
                     for _ in range(10):
                         db.upsert_docs_batch(
-                            [{"id": "B", "by": "thread2"}], "Deadlock", match_keys=["id"]
+                            [{"id": "B", "by": "thread2"}],
+                            "Deadlock",
+                            match_keys=["id"],
                         )
                         db.upsert_docs_batch(
-                            [{"id": "A", "by": "thread2"}], "Deadlock", match_keys=["id"]
+                            [{"id": "A", "by": "thread2"}],
+                            "Deadlock",
+                            match_keys=["id"],
                         )
             except Exception as e:
                 errors.append(str(e))
@@ -2241,9 +2297,7 @@ class TestQueryComplexity:
             db.upsert_docs_batch(docs, "UnionBomb", match_keys=["id"])
 
             # Build query with many UNIONs
-            query_parts = [
-                "MATCH (n:UnionBomb) RETURN n.id AS id" for _ in range(50)
-            ]
+            query_parts = ["MATCH (n:UnionBomb) RETURN n.id AS id" for _ in range(50)]
             query = " UNION ALL ".join(query_parts)
 
             try:
@@ -2433,9 +2487,21 @@ class TestPathologicalIds:
         _ = clean_db
         with ConnectionManager(connection_config=conn_conf) as db:
             sql_keywords = [
-                "SELECT", "INSERT", "UPDATE", "DELETE", "DROP",
-                "TABLE", "DATABASE", "INDEX", "FROM", "WHERE",
-                "JOIN", "UNION", "GROUP", "ORDER", "HAVING",
+                "SELECT",
+                "INSERT",
+                "UPDATE",
+                "DELETE",
+                "DROP",
+                "TABLE",
+                "DATABASE",
+                "INDEX",
+                "FROM",
+                "WHERE",
+                "JOIN",
+                "UNION",
+                "GROUP",
+                "ORDER",
+                "HAVING",
             ]
 
             docs = [{"id": kw} for kw in sql_keywords]

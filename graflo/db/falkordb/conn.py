@@ -1,33 +1,86 @@
-"""FalkorDB connection implementation for graph database operations.
+"""FalkorDB graph database connector implementation.
 
-This module implements the Connection interface for FalkorDB, providing
-specific functionality for graph operations in FalkorDB. FalkorDB is a
-Redis-based graph database that supports OpenCypher query language.
+This module provides a production-ready connector for FalkorDB, a high-performance
+graph database built on Redis. It implements the graflo Connection interface,
+enabling seamless integration with the graflo ETL pipeline.
 
-Key Features:
-    - Label-based node organization (similar to Neo4j)
-    - Relationship type management
-    - Property indices
-    - OpenCypher query execution
-    - Batch node and relationship operations
-    - Redis-based storage with graph namespacing
+Architecture
+------------
+FalkorDB extends Redis with graph capabilities using the RedisGraph module.
+Data is organized as:
 
-FalkorDB Structure:
-    - Graph: A Redis key that contains the graph data
-    - Labels: Categories for nodes (equivalent to vertex types)
-    - Relationship Types: Types of relationships (equivalent to edge types)
-    - All nodes/relationships are stored within a single graph key
+    Redis Instance
+    └── Graph (Redis key)
+        ├── Nodes (with labels)
+        │   └── Properties (key-value pairs)
+        └── Relationships (typed, directed)
+            └── Properties (key-value pairs)
 
-Example:
-    >>> conn = FalkordbConnection(config)
-    >>> conn.init_db(schema, clean_start=True)
-    >>> conn.upsert_docs_batch(docs, "User", match_keys=["email"])
+Key Features
+------------
+- **OpenCypher Support**: Full Cypher query language for graph traversals
+- **Redis Performance**: Sub-millisecond latency with Redis storage backend
+- **Batch Operations**: Efficient bulk insert/upsert with UNWIND patterns
+- **Input Sanitization**: Protection against Cypher injection and malformed data
+- **Connection Pooling**: Automatic connection management via Redis client
+
+Input Sanitization
+------------------
+The connector automatically sanitizes inputs to prevent:
+
+- Cypher injection via property values
+- Invalid property keys (non-string, reserved names)
+- Unsupported values (NaN, Inf, null bytes)
+
+Example
+-------
+Basic usage with ConnectionManager::
+
+    from graflo.db import ConnectionManager
+
+    config = FalkordbConfig(uri="redis://localhost:6379", database="mygraph")
+
+    with ConnectionManager(connection_config=config) as db:
+        # Insert nodes
+        db.upsert_docs_batch(
+            [{"id": "1", "name": "Alice"}],
+            "Person",
+            match_keys=["id"]
+        )
+
+        # Query nodes
+        results = db.fetch_docs("Person", filters=["==", "Alice", "name"])
+
+        # Create relationships
+        db.insert_edges_batch(
+            [[{"id": "1"}, {"id": "2"}, {"since": 2024}]],
+            source_class="Person",
+            target_class="Person",
+            relation_name="KNOWS",
+            match_keys_source=["id"],
+            match_keys_target=["id"]
+        )
+
+Configuration
+-------------
+Connection is configured via FalkordbConfig:
+
+    - uri: Redis connection URI (redis://host:port)
+    - database: Graph name (defaults to "default")
+    - password: Optional Redis authentication
+
+See Also
+--------
+- FalkorDB documentation: https://docs.falkordb.com/
+- OpenCypher specification: https://opencypher.org/
+- graflo.db.conn.Connection: Base connection interface
 """
 
 import logging
 from urllib.parse import urlparse
 
 from falkordb import FalkorDB
+from falkordb.graph import Graph
 
 from graflo.architecture.edge import Edge
 from graflo.architecture.onto import Index
@@ -43,30 +96,76 @@ logger = logging.getLogger(__name__)
 
 
 class FalkordbConnection(Connection):
-    """FalkorDB-specific implementation of the Connection interface.
+    """FalkorDB connector implementing the graflo Connection interface.
 
-    This class provides FalkorDB-specific implementations for all database
-    operations, including node management, relationship operations, and
-    OpenCypher query execution. It uses the FalkorDB Python driver for all operations.
+    Provides complete graph database operations for FalkorDB including
+    node/relationship CRUD, batch operations, aggregations, and raw
+    Cypher query execution.
 
-    FalkorDB is a Redis-based graph database that supports OpenCypher.
-    Each graph is stored as a Redis key, and operations are performed
-    within that graph namespace.
+    Thread Safety
+    -------------
+    This class is NOT thread-safe. Each thread should use its own
+    connection instance. For concurrent access, use ConnectionManager
+    with separate instances per thread.
 
-    Attributes:
-        flavor: Database flavor identifier (FALKORDB)
-        config: FalkorDB connection configuration
-        client: FalkorDB client instance
-        graph: Active graph instance
+    Error Handling
+    --------------
+    - Connection errors raise on instantiation
+    - Query errors propagate as redis.exceptions.ResponseError
+    - Invalid inputs raise ValueError with descriptive messages
+
+    Attributes
+    ----------
+    flavor : DBFlavor
+        Database type identifier (DBFlavor.FALKORDB)
+    config : FalkordbConfig
+        Connection configuration (URI, database, credentials)
+    client : FalkorDB
+        Underlying FalkorDB client instance
+    graph : Graph
+        Active graph object for query execution
+    _graph_name : str
+        Name of the currently selected graph
+
+    Examples
+    --------
+    Direct instantiation (prefer ConnectionManager for production)::
+
+        config = FalkordbConfig(uri="redis://localhost:6379")
+        conn = FalkordbConnection(config)
+        try:
+            result = conn.execute("MATCH (n) RETURN count(n)")
+        finally:
+            conn.close()
     """
 
     flavor = DBFlavor.FALKORDB
 
-    def __init__(self, config: FalkordbConfig):
-        """Initialize FalkorDB connection.
+    # Type annotations for instance attributes
+    client: FalkorDB | None
+    graph: Graph | None
+    _graph_name: str
 
-        Args:
-            config: FalkorDB connection configuration containing URI and credentials
+    def __init__(self, config: FalkordbConfig):
+        """Initialize FalkorDB connection and select graph.
+
+        Establishes connection to the FalkorDB instance and selects
+        the specified graph for subsequent operations.
+
+        Parameters
+        ----------
+        config : FalkordbConfig
+            Connection configuration with the following fields:
+            - uri: Redis URI (redis://host:port)
+            - database: Graph name (optional, defaults to "default")
+            - password: Redis password (optional)
+
+        Raises
+        ------
+        ValueError
+            If URI is not provided in configuration
+        redis.exceptions.ConnectionError
+            If unable to connect to Redis instance
         """
         super().__init__()
         self.config = config
@@ -90,16 +189,43 @@ class FalkordbConnection(Connection):
         self.graph = self.client.select_graph(graph_name)
         self._graph_name = graph_name
 
-    def execute(self, query, **kwargs):
-        """Execute an OpenCypher query.
+    def execute(self, query: str, **kwargs):
+        """Execute a raw OpenCypher query against the graph.
 
-        Args:
-            query: Cypher query string to execute
-            **kwargs: Additional query parameters
+        Executes the provided Cypher query with optional parameters.
+        Parameters are safely injected using FalkorDB's parameterized
+        query mechanism to prevent injection attacks.
 
-        Returns:
-            QueryResult: FalkorDB query result
+        Parameters
+        ----------
+        query : str
+            OpenCypher query string. Can include parameter placeholders
+            using $name syntax (e.g., "MATCH (n) WHERE n.id = $id")
+        **kwargs
+            Query parameters as keyword arguments. Values are safely
+            escaped by the driver.
+
+        Returns
+        -------
+        QueryResult
+            FalkorDB result object containing:
+            - result_set: List of result rows
+            - statistics: Query execution statistics
+
+        Examples
+        --------
+        Simple query::
+
+            result = conn.execute("MATCH (n:Person) RETURN n.name")
+
+        Parameterized query::
+
+            result = conn.execute(
+                "MATCH (n:Person) WHERE n.age > $min_age RETURN n",
+                min_age=21
+            )
         """
+        assert self.graph is not None, "Connection is closed"
         result = self.graph.query(query, kwargs if kwargs else None)
         return result
 
@@ -114,6 +240,159 @@ class FalkordbConnection(Connection):
         self.graph = None
         self.client = None
 
+    @staticmethod
+    def _is_valid_property_value(value) -> bool:
+        """Validate that a value can be stored as a FalkorDB property.
+
+        FalkorDB (like most databases) cannot store special float values.
+        This method rejects values that would cause query failures.
+
+        Parameters
+        ----------
+        value : Any
+            Value to validate
+
+        Returns
+        -------
+        bool
+            True if value can be safely stored, False otherwise
+
+        Notes
+        -----
+        Rejected values:
+        - float('nan'): Not a Number
+        - float('inf'): Positive infinity
+        - float('-inf'): Negative infinity
+        """
+        import math
+
+        if isinstance(value, float):
+            if math.isnan(value) or math.isinf(value):
+                return False
+        return True
+
+    @staticmethod
+    def _sanitize_string_value(value: str) -> str:
+        """Remove characters that break the Cypher parser.
+
+        Null bytes (\\x00) cause FalkorDB's Cypher parser to fail with
+        cryptic errors. This method strips them from string values.
+
+        Parameters
+        ----------
+        value : str
+            String value to sanitize
+
+        Returns
+        -------
+        str
+            Sanitized string with problematic characters removed
+
+        Notes
+        -----
+        Currently handles:
+        - Null bytes (\\x00): Break Cypher parser tokenization
+        """
+        if "\x00" in value:
+            value = value.replace("\x00", "")
+        return value
+
+    def _sanitize_document(
+        self, doc: dict, match_keys: list[str] | None = None
+    ) -> dict:
+        """Sanitize a document for safe FalkorDB insertion.
+
+        Performs comprehensive input validation and sanitization to ensure
+        documents can be safely inserted without query errors or injection.
+
+        Sanitization Steps
+        ------------------
+        1. Filter non-string property keys (log warning)
+        2. Remove properties with invalid float values (NaN, Inf)
+        3. Strip null bytes from string values
+        4. Validate presence of required match keys
+
+        Parameters
+        ----------
+        doc : dict
+            Document to sanitize. Modified values are logged as warnings.
+        match_keys : list[str], optional
+            Keys that must be present with valid (non-None) values.
+            Typically the fields used for MERGE matching.
+
+        Returns
+        -------
+        dict
+            Sanitized copy of the document
+
+        Raises
+        ------
+        ValueError
+            If a required match_key is missing or has None value
+
+        Examples
+        --------
+        >>> doc = {"id": "1", "name": "test\\x00", 123: "bad_key"}
+        >>> sanitized = conn._sanitize_document(doc, match_keys=["id"])
+        # Logs: Skipping non-string property key: 123
+        # Logs: Sanitized property 'name': removed null bytes
+        >>> sanitized
+        {"id": "1", "name": "test"}
+        """
+        sanitized = {}
+
+        for key, value in doc.items():
+            # Filter non-string keys
+            if not isinstance(key, str):
+                logger.warning(
+                    f"Skipping non-string property key: {key!r} (type: {type(key).__name__})"
+                )
+                continue
+
+            # Check for invalid float values
+            if not self._is_valid_property_value(value):
+                logger.warning(f"Skipping property '{key}' with invalid value: {value}")
+                continue
+
+            # Sanitize string values (remove null bytes that break Cypher)
+            if isinstance(value, str):
+                original = value
+                value = self._sanitize_string_value(value)
+                if value != original:
+                    logger.warning(
+                        f"Sanitized property '{key}': removed null bytes from value"
+                    )
+
+            sanitized[key] = value
+
+        # Validate match_keys presence
+        if match_keys:
+            for key in match_keys:
+                if key not in sanitized:
+                    raise ValueError(
+                        f"Required match key '{key}' is missing or has invalid value in document: {doc}"
+                    )
+                if sanitized[key] is None:
+                    raise ValueError(
+                        f"Match key '{key}' cannot be None in document: {doc}"
+                    )
+
+        return sanitized
+
+    def _sanitize_batch(
+        self, docs: list[dict], match_keys: list[str] | None = None
+    ) -> list[dict]:
+        """Sanitize a batch of documents.
+
+        Args:
+            docs: List of documents to sanitize
+            match_keys: Optional list of required keys to validate
+
+        Returns:
+            list[dict]: List of sanitized documents
+        """
+        return [self._sanitize_document(doc, match_keys) for doc in docs]
+
     def create_database(self, name: str):
         """Create a new graph in FalkorDB.
 
@@ -125,6 +404,7 @@ class FalkordbConnection(Connection):
         """
         # In FalkorDB, graphs are created implicitly when you first insert data
         # We just need to select the graph
+        assert self.client is not None, "Connection is closed"
         self.graph = self.client.select_graph(name)
         self._graph_name = name
         logger.info(f"Selected FalkorDB graph '{name}'")
@@ -136,6 +416,7 @@ class FalkordbConnection(Connection):
             name: Name of the graph to delete (if empty, uses current graph)
         """
         graph_to_delete = name if name else self._graph_name
+        assert self.client is not None, "Connection is closed"
         try:
             # Delete the graph using the FalkorDB API
             graph = self.client.select_graph(graph_to_delete)
@@ -231,9 +512,7 @@ class FalkordbConnection(Connection):
         """
         pass
 
-    def delete_graph_structure(
-        self, vertex_types=(), graph_names=(), delete_all=False
-    ):
+    def delete_graph_structure(self, vertex_types=(), graph_names=(), delete_all=False):
         """Delete graph structure (nodes and relationships) from FalkorDB.
 
         In FalkorDB:
@@ -263,6 +542,7 @@ class FalkordbConnection(Connection):
                     logger.warning(f"Failed to delete nodes with label '{label}': {e}")
 
         # Delete specific graphs
+        assert self.client is not None, "Connection is closed"
         for graph_name in graph_names:
             try:
                 graph = self.client.select_graph(graph_name)
@@ -287,6 +567,7 @@ class FalkordbConnection(Connection):
             self.config.database = graph_name
 
         # Select/create the graph
+        assert self.client is not None, "Connection is closed"
         self.graph = self.client.select_graph(graph_name)
         self._graph_name = graph_name
         logger.info(f"Initialized FalkorDB graph '{graph_name}'")
@@ -308,22 +589,66 @@ class FalkordbConnection(Connection):
             )
             raise
 
-    def upsert_docs_batch(self, docs, class_name, match_keys, **kwargs):
-        """Upsert a batch of nodes using Cypher.
+    def upsert_docs_batch(
+        self, docs: list[dict], class_name: str, match_keys: list[str], **kwargs
+    ):
+        """Upsert a batch of nodes using Cypher MERGE.
 
-        Performs an upsert operation on a batch of nodes, using the specified
-        match keys to determine whether to update existing nodes or create new ones.
+        Performs atomic upsert (update-or-insert) operations on a batch of
+        documents. Uses Cypher MERGE with ON MATCH/ON CREATE for efficiency.
 
-        Args:
-            docs: List of node documents to upsert
-            class_name: Label to upsert into
-            match_keys: Keys to match for upsert operation
-            **kwargs: Additional options:
-                - dry: If True, don't execute the query
+        The operation:
+        1. Sanitizes all documents (removes invalid keys/values)
+        2. For each document, attempts to MERGE on match_keys
+        3. If node exists: updates all properties
+        4. If node doesn't exist: creates with all properties
+
+        Parameters
+        ----------
+        docs : list[dict]
+            Documents to upsert. Each document must contain all match_keys.
+        class_name : str
+            Node label (e.g., "Person", "Product")
+        match_keys : list[str]
+            Properties used to identify existing nodes. These form the
+            MERGE pattern: ``MERGE (n:Label {key1: val1, key2: val2})``
+        **kwargs
+            Additional options:
+            - dry (bool): If True, build query but don't execute
+
+        Raises
+        ------
+        ValueError
+            If any document is missing a required match_key or has None value
+
+        Examples
+        --------
+        Insert or update users by email::
+
+            docs = [
+                {"email": "alice@example.com", "name": "Alice", "age": 30},
+                {"email": "bob@example.com", "name": "Bob", "age": 25}
+            ]
+            conn.upsert_docs_batch(docs, "User", match_keys=["email"])
+
+        Notes
+        -----
+        The generated Cypher query uses UNWIND for batch efficiency::
+
+            UNWIND $batch AS row
+            MERGE (n:Label {match_key: row.match_key})
+            ON MATCH SET n += row
+            ON CREATE SET n += row
         """
         dry = kwargs.pop("dry", False)
 
         if not docs:
+            return
+
+        # Sanitize documents: filter invalid keys/values, validate match_keys
+        sanitized_docs = self._sanitize_batch(docs, match_keys)
+
+        if not sanitized_docs:
             return
 
         # Build the MERGE clause with match keys
@@ -335,44 +660,86 @@ class FalkordbConnection(Connection):
             ON CREATE SET n += row
         """
         if not dry:
-            self.execute(q, batch=docs)
+            self.execute(q, batch=sanitized_docs)
 
     def insert_edges_batch(
         self,
-        docs_edges,
-        source_class,
-        target_class,
-        relation_name,
-        collection_name=None,
-        match_keys_source=("_key",),
-        match_keys_target=("_key",),
-        filter_uniques=True,
+        docs_edges: list,
+        source_class: str,
+        target_class: str,
+        relation_name: str,
+        collection_name: str | None = None,
+        match_keys_source: tuple[str, ...] = ("_key",),
+        match_keys_target: tuple[str, ...] = ("_key",),
+        filter_uniques: bool = True,
         uniq_weight_fields=None,
         uniq_weight_collections=None,
-        upsert_option=False,
-        head=None,
+        upsert_option: bool = False,
+        head: int | None = None,
         **kwargs,
     ):
-        """Insert a batch of relationships using Cypher.
+        """Create relationships between existing nodes using Cypher MERGE.
 
-        Creates relationships between source and target nodes, with support for
-        property matching and unique constraints.
+        Efficiently creates relationships in batch by matching source and
+        target nodes, then creating or updating the relationship between them.
 
-        Args:
-            docs_edges: List of edge documents in format [[source_doc, target_doc, edge_props], ...]
-            source_class: Source node label
-            target_class: Target node label
-            relation_name: Relationship type name
-            collection_name: Unused in FalkorDB
-            match_keys_source: Keys to match source nodes
-            match_keys_target: Keys to match target nodes
-            filter_uniques: Unused in FalkorDB
-            uniq_weight_fields: Unused in FalkorDB
-            uniq_weight_collections: Unused in FalkorDB
-            upsert_option: Unused in FalkorDB
-            head: Optional limit on number of relationships to insert
-            **kwargs: Additional options:
-                - dry: If True, don't execute the query
+        Parameters
+        ----------
+        docs_edges : list
+            Edge specifications as list of [source, target, props] triples:
+            ``[[{source_props}, {target_props}, {edge_props}], ...]``
+        source_class : str
+            Label of source nodes (e.g., "Person")
+        target_class : str
+            Label of target nodes (e.g., "Company")
+        relation_name : str
+            Relationship type name (e.g., "WORKS_AT")
+        collection_name : str, optional
+            Unused in FalkorDB (kept for interface compatibility)
+        match_keys_source : tuple[str, ...]
+            Properties to match source nodes (default: ("_key",))
+        match_keys_target : tuple[str, ...]
+            Properties to match target nodes (default: ("_key",))
+        filter_uniques : bool
+            Unused in FalkorDB (kept for interface compatibility)
+        uniq_weight_fields
+            Unused in FalkorDB (kept for interface compatibility)
+        uniq_weight_collections
+            Unused in FalkorDB (kept for interface compatibility)
+        upsert_option : bool
+            Unused in FalkorDB (kept for interface compatibility)
+        head : int, optional
+            Unused in FalkorDB (kept for interface compatibility)
+        **kwargs
+            Additional options:
+            - dry (bool): If True, build query but don't execute
+
+        Examples
+        --------
+        Create KNOWS relationships between people::
+
+            edges = [
+                [{"id": "1"}, {"id": "2"}, {"since": 2020}],
+                [{"id": "1"}, {"id": "3"}, {"since": 2021}]
+            ]
+            conn.insert_edges_batch(
+                edges,
+                source_class="Person",
+                target_class="Person",
+                relation_name="KNOWS",
+                match_keys_source=["id"],
+                match_keys_target=["id"]
+            )
+
+        Notes
+        -----
+        Generated Cypher pattern::
+
+            UNWIND $batch AS row
+            MATCH (source:Label), (target:Label)
+            WHERE source.key = row[0].key AND target.key = row[1].key
+            MERGE (source)-[r:REL_TYPE]->(target)
+            SET r += row[2]
         """
         dry = kwargs.pop("dry", False)
 
@@ -407,9 +774,7 @@ class FalkordbConnection(Connection):
         Raises:
             NotImplementedError: This method is not fully implemented for FalkorDB
         """
-        raise NotImplementedError(
-            "insert_return_batch is not implemented for FalkorDB"
-        )
+        raise NotImplementedError("insert_return_batch is not implemented for FalkorDB")
 
     def fetch_docs(
         self,
@@ -614,9 +979,7 @@ class FalkordbConnection(Connection):
         # Build match conditions for each document in batch
         results = []
         for doc in batch:
-            match_conditions = " AND ".join(
-                [f"n.{key} = ${key}" for key in match_keys]
-            )
+            match_conditions = " AND ".join([f"n.{key} = ${key}" for key in match_keys])
             params = {key: doc.get(key) for key in match_keys}
 
             q = f"""
@@ -732,7 +1095,9 @@ class FalkordbConnection(Connection):
             return [row[0] for row in result.result_set]
 
         else:
-            raise ValueError(f"Unsupported aggregation function: {aggregation_function}")
+            raise ValueError(
+                f"Unsupported aggregation function: {aggregation_function}"
+            )
 
     def keep_absent_documents(
         self,

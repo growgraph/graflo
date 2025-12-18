@@ -1,7 +1,5 @@
 """Tests for FalkorDB index creation operations."""
 
-import pytest
-
 from graflo.db import ConnectionManager
 
 
@@ -24,9 +22,7 @@ def test_create_edge_index(conn_conf, test_graph_name, schema_obj):
     schema_o = schema_obj("review")
 
     with ConnectionManager(connection_config=conn_conf) as db_client:
-        db_client.define_edge_indices(
-            schema_o.edge_config.edges_list(include_aux=True)
-        )
+        db_client.define_edge_indices(schema_o.edge_config.edges_list(include_aux=True))
 
     # FalkorDB indices are created silently.
     # Verification is implicit - no errors means success.

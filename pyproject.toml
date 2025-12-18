@@ -26,6 +26,7 @@ authors = [{email = "alexander@growgraph.dev", name = "Alexander Belikov"}]
 dependencies = [
   "click>=8.2.0,<9",
   "dataclass-wizard>=0.34.0",
+  "falkordb>=1.0.9",
   "ijson>=3.2.3,<4",
   "neo4j>=5.22.0,<6",
   "networkx~=3.3",
@@ -36,14 +37,13 @@ dependencies = [
   "pydantic>=2.12.5",
   "python-arango>=8.1.2,<9",
   "pytigergraph>=1.9.0",
+  "redis>=5.0.0",
   "requests>=2.31.0",
   "sqlalchemy>=2.0.0",
   "strenum>=0.4.15",
   "suthing>=0.5.0",
   "urllib3>=2.0.0",
-  "xmltodict>=0.14.2,<0.15",
-  "falkordb>=1.0.9",
-  "redis>=5.0.0"
+  "xmltodict>=0.14.2,<0.15"
 ]
 description = "A framework for transforming tabular (CSV, SQL) and hierarchical data (JSON, XML) into property graphs and ingesting them into graph databases (ArangoDB, Neo4j, TigerGraph). Features automatic PostgreSQL schema inference."
 name = "graflo"

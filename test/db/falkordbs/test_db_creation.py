@@ -1,9 +1,6 @@
 """Tests for FalkorDB database/graph creation and deletion operations."""
 
-import pytest
-
 from graflo.db import ConnectionManager
-from graflo.db.connection.onto import FalkordbConfig
 
 
 def test_connection_initialization(conn_conf):
