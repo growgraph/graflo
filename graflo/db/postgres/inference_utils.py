@@ -62,51 +62,23 @@ def split_by_separator(text: str, separator: str) -> list[str]:
     return parts
 
 
-def infer_edge_vertices_from_table_name(
-    table_name: str,
+def _extract_key_fragments(
     pk_columns: list[str],
     fk_columns: list[dict[str, Any]],
-    vertex_table_names: list[str] | None = None,
-    match_cache: FuzzyMatchCache | None = None,
-) -> tuple[str | None, str | None, str | None]:
-    """Infer source and target vertex names from table name and structure.
-
-    Uses fuzzy matching to identify vertex names in table name fragments and key names.
-    Handles patterns like:
-    - rel_cluster_containment_host -> cluster, host, containment
-    - rel_cluster_containment_cluster_2 -> cluster, cluster, containment (self-reference)
-    - user_follows_user -> user, user, follows (self-reference)
-    - product_category_mapping -> product, category, mapping
+    separator: str,
+) -> list[str]:
+    """Extract unique fragments from primary and foreign key column names.
 
     Args:
-        table_name: Name of the table
         pk_columns: List of primary key column names
-        fk_columns: List of foreign key dictionaries with 'column' and 'references_table' keys
-        vertex_table_names: Optional list of known vertex table names for fuzzy matching
-        match_cache: Optional pre-computed fuzzy match cache for better performance
+        fk_columns: List of foreign key dictionaries with 'column' key
+        separator: Separator character used to split column names
 
     Returns:
-        Tuple of (source_table, target_table, relation_name) or (None, None, None) if cannot infer
+        List of unique fragments in order (PK fragments first, then FK fragments)
     """
-    if vertex_table_names is None:
-        vertex_table_names = []
-
-    # Use cache if provided, otherwise create a temporary one
-    if match_cache is None:
-        match_cache = FuzzyMatchCache(vertex_table_names)
-
-    # Step 1: Detect separator
-    separator = detect_separator(table_name)
-
-    # Step 2: Split table name by separator
-    table_fragments = split_by_separator(table_name, separator)
-
-    # Initialize relation_name - will be set if we identify a relation fragment
-    relation_name = None
-
-    # Step 3: Extract fragments from keys (preserve order for PK columns)
-    key_fragments_list = []  # Preserve order
-    key_fragments_set = set()  # For deduplication
+    key_fragments_list: list[str] = []  # Preserve order
+    key_fragments_set: set[str] = set()  # For deduplication
 
     # Extract fragments from PK columns in order
     for pk_col in pk_columns:
@@ -125,15 +97,27 @@ def infer_edge_vertices_from_table_name(
                 key_fragments_list.append(frag)
                 key_fragments_set.add(frag)
 
-    # Step 4: Match table name fragments to vertices
-    # Strategy: match source from left, target from right
-    # Stop when we have 2 matches OR target_index > source_index + 1
+    return key_fragments_list
+
+
+def _match_vertices_from_table_fragments(
+    table_fragments: list[str],
+    match_cache: FuzzyMatchCache,
+) -> tuple[int | None, int | None, str | None, str | None, set[str]]:
+    """Match vertices from table name fragments using left-to-right and right-to-left strategy.
+
+    Args:
+        table_fragments: List of fragments from table name
+        match_cache: Fuzzy match cache for vertex matching
+
+    Returns:
+        Tuple of (source_match_idx, target_match_idx, source_vertex, target_vertex, matched_vertices_set)
+    """
     source_match_idx: int | None = None
     target_match_idx: int | None = None
     source_vertex: str | None = None
     target_vertex: str | None = None
-    matched_vertices_set = set()  # For deduplication
-    matched_fragment_indices = {}  # Track which fragment indices matched which vertices
+    matched_vertices_set: set[str] = set()
 
     # Match source starting from the left
     for i, fragment in enumerate(table_fragments):
@@ -142,7 +126,6 @@ def infer_edge_vertices_from_table_name(
             source_match_idx = i
             source_vertex = matched
             matched_vertices_set.add(matched)
-            matched_fragment_indices[i] = matched
             break  # Found source, stop searching left
 
     # Match target starting from the right
@@ -157,19 +140,47 @@ def infer_edge_vertices_from_table_name(
             target_match_idx = i
             target_vertex = matched
             matched_vertices_set.add(matched)
-            matched_fragment_indices[i] = matched
             break  # Found target, stop searching right
 
-    # Match key fragments to fill in missing vertices (keys are primary source of truth)
-    matched_vertices = []
-    key_matched_vertices = []  # Track vertices matched from keys (higher priority)
+    return (
+        source_match_idx,
+        target_match_idx,
+        source_vertex,
+        target_vertex,
+        matched_vertices_set,
+    )
 
+
+def _match_vertices_from_key_fragments(
+    key_fragments: list[str],
+    match_cache: FuzzyMatchCache,
+    matched_vertices_set: set[str],
+    source_vertex: str | None,
+    target_vertex: str | None,
+) -> tuple[list[str], list[str]]:
+    """Match vertices from key fragments and collect all matched vertices.
+
+    Args:
+        key_fragments: List of fragments extracted from key columns
+        match_cache: Fuzzy match cache for vertex matching
+        matched_vertices_set: Set of already matched vertices (will be updated)
+        source_vertex: Source vertex matched from table name (if any)
+        target_vertex: Target vertex matched from table name (if any)
+
+    Returns:
+        Tuple of (all_matched_vertices, key_matched_vertices)
+    """
+    matched_vertices: list[str] = []
+    key_matched_vertices: list[str] = []
+
+    # Add table name matches first
     if source_vertex:
         matched_vertices.append(source_vertex)
     if target_vertex and target_vertex != source_vertex:
         matched_vertices.append(target_vertex)
 
-    for fragment in key_fragments_list:
+    # Match key fragments
+    for fragment in key_fragments:
         matched = match_cache.get_match(fragment)
         if matched:
             if matched not in matched_vertices_set:
@@ -179,17 +190,57 @@ def infer_edge_vertices_from_table_name(
             if matched not in key_matched_vertices:
                 key_matched_vertices.append(matched)
 
-    # Step 5: Use foreign keys to confirm or infer vertices
-    fk_vertex_names = []
-    if fk_columns:
-        for fk in fk_columns:
-            ref_table = fk.get("references_table")
-            if ref_table:
-                fk_vertex_names.append(ref_table)
+    return (matched_vertices, key_matched_vertices)
 
-    # Step 6: Form hypothesis
-    source_table = None
-    target_table = None
+
+def _extract_fk_vertex_names(fk_columns: list[dict[str, Any]]) -> list[str]:
+    """Extract vertex names from foreign key references.
+
+    Args:
+        fk_columns: List of foreign key dictionaries with 'references_table' key
+
+    Returns:
+        List of referenced table names
+    """
+    fk_vertex_names: list[str] = []
+    for fk in fk_columns:
+        ref_table = fk.get("references_table")
+        if ref_table:
+            fk_vertex_names.append(ref_table)
+    return fk_vertex_names
+
+
+def _determine_source_target_vertices(
+    fk_vertex_names: list[str],
+    source_match_idx: int | None,
+    target_match_idx: int | None,
+    source_vertex: str | None,
+    target_vertex: str | None,
+    key_matched_vertices: list[str],
+    matched_vertices: list[str],
+) -> tuple[str | None, str | None]:
+    """Determine source and target vertices using priority-based logic.
+
+    Priority order:
+    1. FK references (most reliable)
+    2. Table name matches with indices (more specific)
+    3. Key-matched vertices
+    4. All matched vertices
+
+    Args:
+        fk_vertex_names: Vertex names from foreign key references
+        source_match_idx: Index of source match in table fragments
+        target_match_idx: Index of target match in table fragments
+        source_vertex: Source vertex matched from table name
+        target_vertex: Target vertex matched from table name
+        key_matched_vertices: Vertices matched from key fragments
+        matched_vertices: All matched vertices
+
+    Returns:
+        Tuple of (source_table, target_table)
+    """
+    source_table: str | None = None
+    target_table: str | None = None
 
     # Priority 1: Use FK references if available (most reliable)
     if len(fk_vertex_names) >= 2:
@@ -254,59 +305,244 @@ def infer_edge_vertices_from_table_name(
         elif matched_vertices:
             source_table = matched_vertices[0]
 
-    # Step 7: Identify relation from table fragments (after we know source/target)
-    # Relation is derived from table name fragments that are neither source nor target
+    return (source_table, target_table)
+
+
+def _identify_relation_name(
+    table_fragments: list[str],
+    source_match_idx: int | None,
+    target_match_idx: int | None,
+    source_table: str | None,
+    target_table: str | None,
+) -> str | None:
+    """Identify relation name from table fragments that are not source or target vertices.
+
+    Args:
+        table_fragments: List of fragments from table name
+        source_match_idx: Index of source match in table fragments
+        target_match_idx: Index of target match in table fragments
+        source_table: Source vertex name
+        target_table: Target vertex name
+
+    Returns:
+        Relation name or None if cannot identify
+    """
+    if not source_table or not target_table:
+        return None
 
     vertex_idxs = {x for x in [source_match_idx, target_match_idx] if x is not None}
+    source_lower = source_table.lower()
+    target_lower = target_table.lower()
 
-    if relation_name is None and source_table and target_table:
-        source_lower = source_table.lower()
-        target_lower = target_table.lower()
+    relation_candidates: list[tuple[int, int, str]] = []
 
-        relation_candidates = []
+    # Collect all fragments that are not source or target
+    # Allow relation to appear anywhere: before, between, or after source/target
+    for idx, fragment in enumerate(table_fragments):
+        if idx in vertex_idxs:
+            continue
 
-        # Collect all fragments that are not source or target
-        # Allow relation to appear anywhere: before, between, or after source/target
-        for idx, fragment in enumerate(table_fragments):
-            if idx in vertex_idxs:
-                continue
+        # Include all non-source/target fragments as relation candidates
+        relation_candidates.append((len(fragment), idx, fragment))
 
-            # Include all non-source/target fragments as relation candidates
-            relation_candidates.append((len(fragment), idx, fragment))
+    # Select candidate using scoring system:
+    # - Score = fragment_length + (position_index * 5) if fragment_length >= 3
+    # - Score = fragment_length if fragment_length < 3
+    # - Prefer candidates further to the right and longer
+    if relation_candidates:
 
-        # Select candidate using scoring system:
-        # - Score = fragment_length + (position_index * 5) if fragment_length >= 3
-        # - Score = fragment_length if fragment_length < 3
-        # - Prefer candidates further to the right and longer
-        if relation_candidates:
+        def score_candidate(candidate: tuple[int, int, str]) -> int:
+            fragment_length, position_idx, _ = candidate
+            if fragment_length >= 3:
+                # Position bonus: each position to the right counts as 5 extra characters
+                return fragment_length + (position_idx * 5)
+            else:
+                # Fragments below 3 symbols don't get position bonus
+                return fragment_length
 
-            def score_candidate(candidate: tuple[int, int, str]) -> int:
-                fragment_length, position_idx, _ = candidate
-                if fragment_length >= 3:
-                    # Position bonus: each position to the right counts as 5 extra characters
-                    return fragment_length + (position_idx * 5)
-                else:
-                    # Fragments below 3 symbols don't get position bonus
-                    return fragment_length
+        _, _, relation_name = max(relation_candidates, key=score_candidate)
+        return relation_name
 
-            _, _, relation_name = max(relation_candidates, key=score_candidate)
-        elif len(table_fragments) >= 2:
-            # Fallback: if we have 2+ fragments and one doesn't match source/target, it might be the relation
-            for fragment in table_fragments:
-                fragment_lower = fragment.lower()
-                # Use if it doesn't match source or target
-                if (
-                    fragment_lower != source_lower
-                    and source_lower not in fragment_lower
-                    and fragment_lower not in source_lower
-                    and fragment_lower != target_lower
-                    and target_lower not in fragment_lower
-                    and fragment_lower not in target_lower
-                ):
-                    relation_name = fragment
-                    break
+    # Fallback: if we have 2+ fragments and one doesn't match source/target, it might be the relation
+    if len(table_fragments) >= 2:
+        for fragment in table_fragments:
+            fragment_lower = fragment.lower()
+            # Use if it doesn't match source or target
+            if (
+                fragment_lower != source_lower
+                and source_lower not in fragment_lower
+                and fragment_lower not in source_lower
+                and fragment_lower != target_lower
+                and target_lower not in fragment_lower
+                and fragment_lower not in target_lower
+            ):
+                return fragment
+
+    return None
+
+
+def infer_edge_vertices_from_table_name(
+    table_name: str,
+    pk_columns: list[str],
+    fk_columns: list[dict[str, Any]],
+    vertex_table_names: list[str] | None = None,
+    match_cache: FuzzyMatchCache | None = None,
+) -> tuple[str | None, str | None, str | None]:
+    """Infer source and target vertex names from table name and structure.
+
+    Uses fuzzy matching to identify vertex names in table name fragments and key names.
+    Handles patterns like:
+    - rel_cluster_containment_host -> cluster, host, containment
+    - rel_cluster_containment_cluster_2 -> cluster, cluster, containment (self-reference)
+    - user_follows_user -> user, user, follows (self-reference)
+    - product_category_mapping -> product, category, mapping
+
+    Args:
+        table_name: Name of the table
+        pk_columns: List of primary key column names
+        fk_columns: List of foreign key dictionaries with 'column' and 'references_table' keys
+        vertex_table_names: Optional list of known vertex table names for fuzzy matching
+        match_cache: Optional pre-computed fuzzy match cache for better performance
+
+    Returns:
+        Tuple of (source_table, target_table, relation_name) or (None, None, None) if cannot infer
+    """
+    if vertex_table_names is None:
+        vertex_table_names = []
+
+    # Use cache if provided, otherwise create a temporary one
+    if match_cache is None:
+        match_cache = FuzzyMatchCache(vertex_table_names)
+
+    # Step 1: Detect separator and split table name
+    separator = detect_separator(table_name)
+    table_fragments = split_by_separator(table_name, separator)
+
+    # Step 2: Extract fragments from keys
+    key_fragments = _extract_key_fragments(pk_columns, fk_columns, separator)
+
+    # Step 3: Match vertices from table name fragments
+    (
+        source_match_idx,
+        target_match_idx,
+        source_vertex,
+        target_vertex,
+        matched_vertices_set,
+    ) = _match_vertices_from_table_fragments(table_fragments, match_cache)
+
+    # Step 4: Match vertices from key fragments
+    matched_vertices, key_matched_vertices = _match_vertices_from_key_fragments(
+        key_fragments, match_cache, matched_vertices_set, source_vertex, target_vertex
+    )
+
+    # Step 5: Extract FK vertex names
+    fk_vertex_names = _extract_fk_vertex_names(fk_columns)
+
+    # Step 6: Determine source and target vertices
+    source_table, target_table = _determine_source_target_vertices(
+        fk_vertex_names,
+        source_match_idx,
+        target_match_idx,
+        source_vertex,
+        target_vertex,
+        key_matched_vertices,
+        matched_vertices,
+    )
+
+    # Step 7: Identify relation name
+    relation_name = _identify_relation_name(
+        table_fragments, source_match_idx, target_match_idx, source_table, target_table
+    )
 
     return (source_table, target_table, relation_name)
+
+
+def _match_fragments_excluding_suffixes(
+    fragments: list[str],
+    match_cache: FuzzyMatchCache,
+    common_suffixes: set[str],
+) -> str | None:
+    """Match fragments to vertices, excluding common suffixes.
+
+    Args:
+        fragments: List of fragments to match
+        match_cache: Fuzzy match cache for vertex matching
+        common_suffixes: Set of common suffix strings to skip
+
+    Returns:
+        Matched vertex name or None
+    """
+    for fragment in fragments:
+        fragment_lower = fragment.lower()
+        # Skip common suffixes
+        if fragment_lower in common_suffixes:
+            continue
+
+        matched = match_cache.get_match(fragment)
+        if matched:
+            return matched
+    return None
+
+
+def _try_match_without_suffix(
+    fragments: list[str],
+    separator: str,
+    match_cache: FuzzyMatchCache,
+    common_suffixes: set[str],
+) -> str | None:
+    """Try matching fragments after removing common suffix.
+
+    Args:
+        fragments: List of fragments
+        separator: Separator character
+        match_cache: Fuzzy match cache for vertex matching
+        common_suffixes: Set of common suffix strings
+
+    Returns:
+        Matched vertex name or None
+    """
+    if len(fragments) > 1:
+        last_fragment = fragments[-1].lower()
+        if last_fragment in common_suffixes:
+            # Try matching the remaining fragments
+            remaining = separator.join(fragments[:-1])
+            matched = match_cache.get_match(remaining)
+            if matched:
+                return matched
+    return None
+
+
+def _try_exact_match_with_suffix_removal(
+    column_name: str,
+    vertex_table_names: list[str],
+    common_suffixes: set[str],
+) -> str | None:
+    """Try exact match after removing common suffixes (last resort).
+
+    Args:
+        column_name: Column name to match
+        vertex_table_names: List of vertex table names
+        common_suffixes: Set of common suffix strings
+
+    Returns:
+        Matched vertex name or None
+    """
+    column_lower = column_name.lower()
+    for vertex_name in vertex_table_names:
+        vertex_lower = vertex_name.lower()
+        # Check if column name contains vertex name
+        if vertex_lower in column_lower:
+            # Remove common suffixes from column name and check if it matches
+            for suffix in common_suffixes:
+                if column_lower.endswith(f"_{suffix}") or column_lower.endswith(suffix):
+                    base = (
+                        column_lower[: -len(f"_{suffix}")]
+                        if column_lower.endswith(f"_{suffix}")
+                        else column_lower[: -len(suffix)]
+                    )
+                    if base == vertex_lower:
+                        return vertex_name
+    return None
 
 
 def infer_vertex_from_column_name(
@@ -341,61 +577,36 @@ def infer_vertex_from_column_name(
     if not column_name:
         return None
 
-    # Step 1: Detect separator
-    separator = detect_separator(column_name)
+    # Common suffixes to remove: id, fk, key, pk, ref
+    common_suffixes = {"id", "fk", "key", "pk", "ref", "reference"}
 
-    # Step 2: Split column name by separator
+    # Step 1: Try matching full column name first
+    matched = match_cache.get_match(column_name)
+    if matched:
+        return matched
+
+    # Step 2: Detect separator and split column name
+    separator = detect_separator(column_name)
     fragments = split_by_separator(column_name, separator)
 
     if not fragments:
         return None
 
-    # Step 3: Try to match fragments to vertex names
-    # Common suffixes to remove: id, fk, key, pk, ref
-    common_suffixes = {"id", "fk", "key", "pk", "ref", "reference"}
-
-    # Try matching full column name first
-    matched = match_cache.get_match(column_name)
+    # Step 3: Try matching fragments (excluding common suffixes)
+    matched = _match_fragments_excluding_suffixes(
+        fragments, match_cache, common_suffixes
+    )
     if matched:
         return matched
 
-    # Try matching fragments (excluding common suffixes)
-    for fragment in fragments:
-        fragment_lower = fragment.lower()
-        # Skip common suffixes
-        if fragment_lower in common_suffixes:
-            continue
-
-        matched = match_cache.get_match(fragment)
-        if matched:
-            return matched
-
-    # Step 4: If no match found, try removing common suffixes and matching again
-    # Remove last fragment if it's a common suffix
-    if len(fragments) > 1:
-        last_fragment = fragments[-1].lower()
-        if last_fragment in common_suffixes:
-            # Try matching the remaining fragments
-            remaining = separator.join(fragments[:-1])
-            matched = match_cache.get_match(remaining)
-            if matched:
-                return matched
+    # Step 4: Try removing common suffix and matching again
+    matched = _try_match_without_suffix(
+        fragments, separator, match_cache, common_suffixes
+    )
+    if matched:
+        return matched
 
     # Step 5: As last resort, try exact match against vertex names (case-insensitive)
-    column_lower = column_name.lower()
-    for vertex_name in vertex_table_names:
-        vertex_lower = vertex_name.lower()
-        # Check if column name contains vertex name or vice versa
-        if vertex_lower in column_lower:
-            # Remove common suffixes from column name and check if it matches
-            for suffix in common_suffixes:
-                if column_lower.endswith(f"_{suffix}") or column_lower.endswith(suffix):
-                    base = (
-                        column_lower[: -len(f"_{suffix}")]
-                        if column_lower.endswith(f"_{suffix}")
-                        else column_lower[: -len(suffix)]
-                    )
-                    if base == vertex_lower:
-                        return vertex_name
-
-    return None
+    return _try_exact_match_with_suffix_removal(
+        column_name, vertex_table_names, common_suffixes
+    )

@@ -1,11 +1,18 @@
 """Tests for relation table identification logic in PostgreSQL connection."""
 
 from graflo.db.postgres.inference_utils import (
+    _determine_source_target_vertices,
+    _extract_fk_vertex_names,
+    _extract_key_fragments,
+    _identify_relation_name,
+    _match_vertices_from_key_fragments,
+    _match_vertices_from_table_fragments,
     detect_separator,
     fuzzy_match_fragment,
     infer_edge_vertices_from_table_name,
     split_by_separator,
 )
+from graflo.db.postgres.fuzzy_matcher import FuzzyMatchCache
 
 
 class TestRelationIdentification:
@@ -439,3 +446,275 @@ class TestRelationIdentification:
         # "id" should not be selected (too short, no position bonus)
         # "rel" should be selected if it's the only candidate, or nothing if filtered out
         assert relation is not None
+
+
+class TestHelperFunctions:
+    """Test suite for helper functions extracted from infer_edge_vertices_from_table_name."""
+
+    def test_extract_key_fragments(self):
+        """Test extraction of key fragments from PK and FK columns."""
+        pk_columns = ["cluster_id", "host_id"]
+        fk_columns = [
+            {"column": "source_cluster_id", "references_table": "cluster"},
+            {"column": "target_host_id", "references_table": "host"},
+        ]
+        separator = "_"
+
+        fragments = _extract_key_fragments(pk_columns, fk_columns, separator)
+
+        # Should extract unique fragments in order (PK first, then FK)
+        assert "cluster" in fragments
+        assert "host" in fragments
+        assert "id" in fragments
+        assert "source" in fragments
+        assert "target" in fragments
+        # Check order: PK fragments come first
+        assert fragments.index("cluster") < fragments.index("source")
+
+    def test_match_vertices_from_table_fragments(self):
+        """Test matching vertices from table name fragments."""
+        table_fragments = ["rel", "user", "purchases", "product"]
+        vertex_names = ["user", "product"]
+        match_cache = FuzzyMatchCache(vertex_names)
+
+        (
+            source_idx,
+            target_idx,
+            source_vertex,
+            target_vertex,
+            matched_set,
+        ) = _match_vertices_from_table_fragments(table_fragments, match_cache)
+
+        # Should match source from left (user at index 1)
+        assert source_idx == 1
+        assert source_vertex == "user"
+        # Should match target from right (product at index 3)
+        assert target_idx == 3
+        assert target_vertex == "product"
+        # Should track matched vertices
+        assert "user" in matched_set
+        assert "product" in matched_set
+
+    def test_match_vertices_from_table_fragments_self_reference(self):
+        """Test matching vertices when source and target are the same."""
+        table_fragments = ["user", "follows", "user"]
+        vertex_names = ["user"]
+        match_cache = FuzzyMatchCache(vertex_names)
+
+        (
+            source_idx,
+            target_idx,
+            source_vertex,
+            target_vertex,
+            matched_set,
+        ) = _match_vertices_from_table_fragments(table_fragments, match_cache)
+
+        # Should match source from left
+        assert source_idx == 0
+        assert source_vertex == "user"
+        # Should match target from right (same vertex)
+        assert target_idx == 2
+        assert target_vertex == "user"
+        assert matched_set == {"user"}
+
+    def test_match_vertices_from_key_fragments(self):
+        """Test matching vertices from key fragments."""
+        key_fragments = ["cluster", "host", "id"]
+        vertex_names = ["cluster", "host"]
+        match_cache = FuzzyMatchCache(vertex_names)
+        matched_set = set()
+
+        matched_vertices, key_matched = _match_vertices_from_key_fragments(
+            key_fragments, match_cache, matched_set, None, None
+        )
+
+        # Should match cluster and host
+        assert "cluster" in matched_vertices
+        assert "host" in matched_vertices
+        assert "cluster" in key_matched
+        assert "host" in key_matched
+        # Should not include "id" (not a vertex)
+        assert "id" not in matched_vertices
+
+    def test_match_vertices_from_key_fragments_with_existing(self):
+        """Test matching when some vertices already matched from table name."""
+        key_fragments = ["cluster", "host"]
+        vertex_names = ["cluster", "host", "user"]
+        match_cache = FuzzyMatchCache(vertex_names)
+        matched_set = {"user"}  # Already matched from table name
+
+        matched_vertices, key_matched = _match_vertices_from_key_fragments(
+            key_fragments, match_cache, matched_set, "user", None
+        )
+
+        # Should include user (from table name) and cluster/host (from keys)
+        assert "user" in matched_vertices
+        assert "cluster" in matched_vertices
+        assert "host" in matched_vertices
+        # Key matched should only include cluster and host
+        assert "cluster" in key_matched
+        assert "host" in key_matched
+        assert "user" not in key_matched
+
+    def test_extract_fk_vertex_names(self):
+        """Test extraction of vertex names from foreign keys."""
+        fk_columns = [
+            {"column": "cluster_id", "references_table": "cluster"},
+            {"column": "host_id", "references_table": "host"},
+        ]
+
+        fk_vertex_names = _extract_fk_vertex_names(fk_columns)
+
+        assert fk_vertex_names == ["cluster", "host"]
+
+    def test_extract_fk_vertex_names_with_none(self):
+        """Test extraction when some FKs don't have references_table."""
+        fk_columns = [
+            {"column": "cluster_id", "references_table": "cluster"},
+            {"column": "host_id", "references_table": None},
+        ]
+
+        fk_vertex_names = _extract_fk_vertex_names(fk_columns)
+
+        assert fk_vertex_names == ["cluster"]
+
+    def test_determine_source_target_vertices_priority_fk(self):
+        """Test that FK references take highest priority."""
+        fk_vertex_names = ["cluster", "host"]
+        source_idx, target_idx = None, None
+        source_vertex, target_vertex = None, None
+        key_matched = ["wrong", "also_wrong"]
+        matched_vertices = ["wrong", "also_wrong"]
+
+        source, target = _determine_source_target_vertices(
+            fk_vertex_names,
+            source_idx,
+            target_idx,
+            source_vertex,
+            target_vertex,
+            key_matched,
+            matched_vertices,
+        )
+
+        # FK should override fuzzy matches
+        assert source == "cluster"
+        assert target == "host"
+
+    def test_determine_source_target_vertices_priority_table_name(self):
+        """Test that table name matches take priority over key matches."""
+        fk_vertex_names = []
+        source_idx, target_idx = 1, 3
+        source_vertex, target_vertex = "user", "product"
+        key_matched = ["cluster", "host"]
+        matched_vertices = ["user", "product"]
+
+        source, target = _determine_source_target_vertices(
+            fk_vertex_names,
+            source_idx,
+            target_idx,
+            source_vertex,
+            target_vertex,
+            key_matched,
+            matched_vertices,
+        )
+
+        # Table name matches should be used
+        assert source == "user"
+        assert target == "product"
+
+    def test_determine_source_target_vertices_priority_key_matched(self):
+        """Test that key-matched vertices take priority over other matches."""
+        fk_vertex_names = []
+        source_idx, target_idx = None, None
+        source_vertex, target_vertex = None, None
+        key_matched = ["cluster", "host"]
+        matched_vertices = ["cluster", "host", "user"]
+
+        source, target = _determine_source_target_vertices(
+            fk_vertex_names,
+            source_idx,
+            target_idx,
+            source_vertex,
+            target_vertex,
+            key_matched,
+            matched_vertices,
+        )
+
+        # Key-matched vertices should be used
+        assert source == "cluster"
+        assert target == "host"
+
+    def test_determine_source_target_vertices_self_reference(self):
+        """Test self-reference case."""
+        fk_vertex_names = ["user"]
+        source_idx, target_idx = None, None
+        source_vertex, target_vertex = None, None
+        key_matched = []
+        matched_vertices = ["user"]
+
+        source, target = _determine_source_target_vertices(
+            fk_vertex_names,
+            source_idx,
+            target_idx,
+            source_vertex,
+            target_vertex,
+            key_matched,
+            matched_vertices,
+        )
+
+        # Should be self-reference
+        assert source == "user"
+        assert target == "user"
+
+    def test_identify_relation_name(self):
+        """Test relation name identification from table fragments."""
+        table_fragments = ["rel", "user", "purchases", "product"]
+        source_idx, target_idx = 1, 3
+        source_table, target_table = "user", "product"
+
+        relation = _identify_relation_name(
+            table_fragments, source_idx, target_idx, source_table, target_table
+        )
+
+        # Should identify "purchases" as relation (between user and product)
+        assert relation == "purchases"
+
+    def test_identify_relation_name_scoring(self):
+        """Test that longer fragments further right are preferred."""
+        table_fragments = ["user", "has", "many", "products"]
+        source_idx, target_idx = 0, 3
+        source_table, target_table = "user", "product"
+
+        relation = _identify_relation_name(
+            table_fragments, source_idx, target_idx, source_table, target_table
+        )
+
+        # "many" (length 4, index 2) should be preferred over "has" (length 3, index 1)
+        # Score: "many" = 4 + 2*5 = 14, "has" = 3 + 1*5 = 8
+        assert relation == "many"
+
+    def test_identify_relation_name_no_candidates(self):
+        """Test when no relation candidates are found."""
+        table_fragments = ["user", "product"]
+        source_idx, target_idx = 0, 1
+        source_table, target_table = "user", "product"
+
+        relation = _identify_relation_name(
+            table_fragments, source_idx, target_idx, source_table, target_table
+        )
+
+        # Should return None when no relation candidates
+        assert relation is None
+
+    def test_identify_relation_name_fallback(self):
+        """Test fallback logic when fragments don't match source/target."""
+        table_fragments = ["prefix", "user", "product", "relation"]
+        source_idx, target_idx = 1, 2
+        source_table, target_table = "user", "product"
+
+        relation = _identify_relation_name(
+            table_fragments, source_idx, target_idx, source_table, target_table
+        )
+
+        # Should use fallback to find fragment that doesn't match source/target
+        assert relation in ["prefix", "relation"]
