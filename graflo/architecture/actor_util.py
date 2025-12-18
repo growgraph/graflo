@@ -29,8 +29,6 @@ Example:
     >>> edges = render_weights(edge, vertex_config, acc_vertex, cdoc, edges)
 """
 
-from __future__ import annotations
-
 import logging
 from collections import defaultdict
 from functools import partial

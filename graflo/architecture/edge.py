@@ -15,8 +15,10 @@ Example:
     >>> edge.finish_init(vertex_config=vertex_config)
 """
 
+from __future__ import annotations
+
 import dataclasses
-from typing import Optional
+from typing import Union
 
 from graflo.architecture.onto import (
     BaseDataclass,
@@ -179,7 +181,9 @@ class Edge(BaseDataclass):
     source: str
     target: str
     indexes: list[Index] = dataclasses.field(default_factory=list)
-    weights: Optional[WeightConfig] = None
+    weights: Union[WeightConfig, None] = (
+        None  # Using Union for dataclass_wizard compatibility
+    )
 
     # relation represents Class in neo4j, for arango it becomes a weight
     relation: str | None = None

@@ -16,10 +16,6 @@ Example:
     ('user', 'post', None)
 """
 
-from __future__ import annotations
-
-from typing import Union
-
 from graflo.architecture.onto import GraphEntity
 
 
@@ -52,7 +48,7 @@ def project_dict(item, keys, how="include"):
         return {}
 
 
-def cast_graph_name_to_triple(s: GraphEntity) -> Union[str, tuple]:
+def cast_graph_name_to_triple(s: GraphEntity) -> str | tuple:
     """Convert a graph name string to a triple format.
 
     This function parses graph entity names into a standardized triple format
@@ -63,7 +59,7 @@ def cast_graph_name_to_triple(s: GraphEntity) -> Union[str, tuple]:
         s: Graph entity name or ID
 
     Returns:
-        Union[str, tuple]: Either a string for simple names or a tuple
+        str | tuple: Either a string for simple names or a tuple
             representing (source, target, type) for complex names
 
     Raises:

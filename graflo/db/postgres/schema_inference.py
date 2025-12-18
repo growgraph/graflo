@@ -4,8 +4,9 @@ This module provides functionality to infer graflo Schema objects from PostgreSQ
 3NF database schemas by analyzing table structures, relationships, and column types.
 """
 
+from __future__ import annotations
+
 import logging
-from typing import Optional
 
 from graflo.architecture.edge import Edge, EdgeConfig, WeightConfig
 from graflo.architecture.onto import Index, IndexType
@@ -30,13 +31,13 @@ class PostgresSchemaInferencer:
     def __init__(
         self,
         db_flavor: DBFlavor = DBFlavor.ARANGO,
-        conn: Optional[PostgresConnection] = None,
+        conn: PostgresConnection | None = None,
     ):
         """Initialize the schema inferencer.
 
         Args:
             db_flavor: Target database flavor for the inferred schema
-            conn: Optional PostgreSQL connection for sampling data to infer types
+            conn: PostgreSQL connection for sampling data to infer types (optional)
         """
         self.db_flavor = db_flavor
         self.type_mapper = PostgresTypeMapper()
@@ -221,9 +222,7 @@ class PostgresSchemaInferencer:
             )
             return mapped_type
 
-    def infer_edge_weights(
-        self, edge_table_info: EdgeTableInfo
-    ) -> Optional[WeightConfig]:
+    def infer_edge_weights(self, edge_table_info: EdgeTableInfo) -> WeightConfig | None:
         """Infer edge weights from edge table columns with types.
 
         Uses PostgreSQL column types and optionally samples data to infer accurate types.
@@ -334,7 +333,7 @@ class PostgresSchemaInferencer:
 
         Args:
             introspection_result: Result from PostgresConnection.introspect_schema()
-            schema_name: Optional schema name (defaults to schema_name from introspection)
+            schema_name: Schema name (defaults to schema_name from introspection if None)
 
         Returns:
             Schema: Complete inferred schema with vertices, edges, and metadata

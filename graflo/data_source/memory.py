@@ -4,8 +4,6 @@ This module provides data source implementations for in-memory data structures,
 including lists of dictionaries, lists of lists, and Pandas DataFrames.
 """
 
-from __future__ import annotations
-
 import dataclasses
 from typing import Iterator
 

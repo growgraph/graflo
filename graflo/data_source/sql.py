@@ -4,8 +4,6 @@ This module provides a data source for SQL databases using SQLAlchemy-style
 configuration. It supports parameterized queries and pagination.
 """
 
-from __future__ import annotations
-
 import dataclasses
 import logging
 from typing import Any, Iterator

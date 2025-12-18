@@ -23,7 +23,6 @@ Example:
 
 import json
 import logging
-from typing import Optional
 
 from arango import ArangoClient
 
@@ -440,7 +439,7 @@ class ArangoConnection(Connection):
             for index_obj in edge.indexes:
                 self._add_index(general_collection, index_obj)
 
-    def fetch_indexes(self, db_class_name: Optional[str] = None):
+    def fetch_indexes(self, db_class_name: str | None = None):
         """Fetch all indices from the database.
 
         Args:
@@ -747,7 +746,7 @@ class ArangoConnection(Connection):
             filters: Additional query filters
 
         Returns:
-            Union[list, dict]: Documents that exist in the database, either as a
+            list | dict: Documents that exist in the database, either as a
                 flat list or a dictionary mapping batch indices to documents
         """
         q0 = fetch_fields_query(

@@ -32,7 +32,7 @@ import dataclasses
 import importlib
 import logging
 from copy import deepcopy
-from typing import Any, Optional
+from typing import Any
 
 from graflo.onto import BaseDataclass
 
@@ -62,10 +62,10 @@ class ProtoTransform(BaseDataclass):
         _foo: Internal reference to the transform function
     """
 
-    name: Optional[str] = None
-    module: Optional[str] = None
+    name: str | None = None
+    module: str | None = None
     params: dict[str, Any] = dataclasses.field(default_factory=dict)
-    foo: Optional[str] = None
+    foo: str | None = None
     input: str | list[str] | tuple[str, ...] = dataclasses.field(default_factory=tuple)
     output: str | list[str] | tuple[str, ...] = dataclasses.field(default_factory=tuple)
 
@@ -266,15 +266,15 @@ class Transform(ProtoTransform):
         return t_copy
 
     def get_barebone(
-        self, other: Optional[Transform]
-    ) -> tuple[Optional[Transform], Optional[Transform]]:
+        self, other: Transform | None
+    ) -> tuple[Transform | None, Transform | None]:
         """Get the barebone transform configuration.
 
         Args:
             other: Optional transform to use as base
 
         Returns:
-            tuple[Optional[Transform], Optional[Transform]]: Updated self transform
+            tuple[Transform | None, Transform | None]: Updated self transform
             and transform to store in library
         """
         self_param = self.to_dict(skip_defaults=True)

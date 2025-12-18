@@ -30,7 +30,6 @@ Example:
 import dataclasses
 import logging
 from collections import Counter
-from typing import Optional
 
 from graflo.architecture.edge import EdgeConfig
 from graflo.architecture.resource import Resource
@@ -54,7 +53,7 @@ class SchemaMetadata(BaseDataclass):
     """
 
     name: str
-    version: Optional[str] = None
+    version: str | None = None
 
 
 @dataclasses.dataclass
