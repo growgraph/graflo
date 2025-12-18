@@ -32,45 +32,27 @@ vertex_config:
         -   fields:
             -   id
         dbname: users
-    db_flavor: neo4j
+    db_flavor: tigergraph
 edge_config:
     edges:
     -   source: users
         target: users
-        indexes:
-        -   fields:
-            -   id
-        -   fields:
-            -   follower_id
-            unique: false
-        -   fields:
-            -   followed_id
-            unique: false
         weights:
             direct:
             -   name: created_at
-        graph_name: users_users_graph
-        collection_name: users_users_edges
-        db_flavor: neo4j
+                type: DATETIME
+        relation: follows
     -   source: users
         target: products
-        indexes:
-        -   fields:
-            -   id
-        -   fields:
-            -   user_id
-            unique: false
-        -   fields:
-            -   product_id
-            unique: false
         weights:
             direct:
             -   name: purchase_date
+                type: DATETIME
             -   name: quantity
+                type: INT
             -   name: total_amount
-        graph_name: users_products_graph
-        collection_name: users_products_edges
-        db_flavor: neo4j
+                type: FLOAT
+        relation: purchases
 resources:
 -   resource_name: products
     apply:

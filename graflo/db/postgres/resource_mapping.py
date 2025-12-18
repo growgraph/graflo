@@ -14,7 +14,6 @@ from .conn import EdgeTableInfo, SchemaIntrospectionResult
 from .fuzzy_matcher import FuzzyMatchCache
 from .inference_utils import (
     detect_separator,
-    is_relation_fragment,
     split_by_separator,
 )
 
@@ -188,10 +187,6 @@ class PostgresResourceMapper:
         # Try to find a fragment that matches the target vertex name
         # This confirms that the column is indeed related to this vertex
         for fragment in fragments:
-            # Skip relation-like fragments (e.g., "id", "rel", "source", "target")
-            if is_relation_fragment(fragment):
-                continue
-
             # Fuzzy match fragment to vertex names
             if match_cache:
                 matched_vertex = match_cache.get_match(fragment)

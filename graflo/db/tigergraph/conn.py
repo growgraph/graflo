@@ -32,16 +32,47 @@ from requests import exceptions as requests_exceptions
 
 from pyTigerGraph import TigerGraphConnection as PyTigerGraphConnection
 
+
 from graflo.architecture.edge import Edge
 from graflo.architecture.onto import Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.vertex import FieldType, Vertex, VertexConfig
 from graflo.db.conn import Connection
 from graflo.db.connection.onto import TigergraphConfig
+from graflo.db.tigergraph.onto import (
+    TIGERGRAPH_TYPE_ALIASES,
+    VALID_TIGERGRAPH_TYPES,
+)
 from graflo.filter.onto import Clause, Expression
 from graflo.onto import AggregationType, DBFlavor, ExpressionFlavor
 from graflo.util.transform import pick_unique_dict
 from urllib.parse import quote
+
+
+def _json_serializer(obj):
+    """JSON serializer for objects not serializable by default json code.
+
+    Handles datetime, date, time, and other non-serializable types.
+    Decimal should already be converted to float at the data source level.
+
+    Args:
+        obj: Object to serialize
+
+    Returns:
+        JSON-serializable representation
+    """
+    from datetime import date, datetime, time
+
+    if isinstance(obj, (datetime, date, time)):
+        return obj.isoformat()
+    # Decimal should be converted to float at source (SQLDataSource)
+    # But handle it here as a fallback
+    from decimal import Decimal
+
+    if isinstance(obj, Decimal):
+        return float(obj)
+    raise TypeError(f"Type {type(obj)} not serializable")
+
 
 logger = logging.getLogger(__name__)
 
@@ -151,7 +182,7 @@ class TigerGraphConnection(Connection):
                 response = requests.post(
                     url,
                     headers=headers,
-                    data=json.dumps(data) if data else None,
+                    data=json.dumps(data, default=_json_serializer) if data else None,
                     params=params,
                     timeout=120,
                 )
@@ -487,9 +518,28 @@ class TigerGraphConnection(Connection):
             )
             try:
                 vertex_names = self._create_vertex_types_global(schema.vertex_config)
-                edge_names = self._create_edge_types_global(
-                    schema.edge_config.edges_list(include_aux=True)
-                )
+
+                # Initialize edges before creating edge types
+                # This sets edge._source and edge._target to dbnames (required for GSQL)
+                edges_to_create = list(schema.edge_config.edges_list(include_aux=True))
+                for edge in edges_to_create:
+                    edge.finish_init(schema.vertex_config)
+
+                # Verify all vertices referenced by edges were created
+                created_vertex_set = set(vertex_names)
+                for edge in edges_to_create:
+                    if edge._source not in created_vertex_set:
+                        raise ValueError(
+                            f"Edge '{edge.relation}' references source vertex '{edge._source}' "
+                            f"which was not created. Created vertices: {vertex_names}"
+                        )
+                    if edge._target not in created_vertex_set:
+                        raise ValueError(
+                            f"Edge '{edge.relation}' references target vertex '{edge._target}' "
+                            f"which was not created. Created vertices: {vertex_names}"
+                        )
+
+                edge_names = self._create_edge_types_global(edges_to_create)
                 logger.debug(
                     f"Created {len(vertex_names)} vertex types and {len(edge_names)} edge types"
                 )
@@ -523,9 +573,14 @@ class TigerGraphConnection(Connection):
                     # If graph already exists, associate types via ALTER GRAPH
                     try:
                         self.define_vertex_collections(schema.vertex_config)
-                        self.define_edge_collections(
+                        # Ensure edges are initialized before defining collections
+                        edges_for_collections = list(
                             schema.edge_config.edges_list(include_aux=True)
                         )
+                        for edge in edges_for_collections:
+                            if edge._source is None or edge._target is None:
+                                edge.finish_init(schema.vertex_config)
+                        self.define_edge_collections(edges_for_collections)
                     except Exception as define_error:
                         logger.warning(
                             f"Could not define collections for existing graph '{graph_name}': {define_error}",
@@ -577,9 +632,14 @@ class TigerGraphConnection(Connection):
             # Define vertex and edge types within the graph
             # Graph context is ensured by _ensure_graph_context in the called methods
             self.define_vertex_collections(schema.vertex_config)
-            self.define_edge_collections(
+            # Ensure edges are initialized before defining collections
+            edges_for_collections = list(
                 schema.edge_config.edges_list(include_aux=True)
             )
+            for edge in edges_for_collections:
+                if edge._source is None or edge._target is None:
+                    edge.finish_init(schema.vertex_config)
+            self.define_edge_collections(edges_for_collections)
 
         except Exception as e:
             logger.error(f"Error defining schema: {e}")
@@ -617,35 +677,63 @@ class TigerGraphConnection(Connection):
     def _format_edge_attributes(self, edge: Edge) -> str:
         """
         Format edge attributes for GSQL CREATE EDGE statement.
-        """
-        if hasattr(edge, "attributes") and edge.attributes:
-            attrs = []
-            for attr_name, attr_type in edge.attributes.items():
-                tg_type = self._map_type_to_tigergraph(attr_type)
-                attrs.append(f"{attr_name} {tg_type}")
-            return ",\n    " + ",\n    ".join(attrs) if attrs else ""
-        else:
-            return ",\n    weight FLOAT DEFAULT 1.0"
 
-    def _map_type_to_tigergraph(self, field_type: str) -> str:
+        Edge weights/attributes come from edge.weights.direct (list of Field objects).
+        Each weight field needs to be included in the CREATE EDGE statement with its type.
         """
-        Map common field types to TigerGraph types.
-        """
-        type_mapping = {
-            "str": "STRING",
-            "string": "STRING",
-            "int": "INT",
-            "integer": "INT",
-            "float": "FLOAT",
-            "double": "DOUBLE",
-            "bool": "BOOL",
-            "boolean": "BOOL",
-            "datetime": "DATETIME",
-            "date": "DATETIME",
-        }
-        return type_mapping.get(field_type.lower(), "STRING")
+        attrs = []
 
-    # _get_graph_name removed: always use schema.general.name
+        # Get weight fields from edge.weights.direct
+        if edge.weights and edge.weights.direct:
+            for field in edge.weights.direct:
+                # Field objects have name and type attributes
+                field_name = field.name
+                # Get TigerGraph type - FieldType enum values are already in TigerGraph format
+                tg_type = self._get_tigergraph_type(field.type)
+                attrs.append(f"{field_name} {tg_type}")
+
+        return ",\n    " + ",\n    ".join(attrs) if attrs else ""
+
+    def _get_tigergraph_type(self, field_type: FieldType | str | None) -> str:
+        """
+        Convert field type to TigerGraph type string.
+
+        FieldType enum values are already in TigerGraph format (e.g., "INT", "STRING", "DATETIME").
+        This method normalizes various input formats to the correct TigerGraph type.
+
+        Args:
+            field_type: FieldType enum, string, or None
+
+        Returns:
+            str: TigerGraph type string (e.g., "INT", "STRING", "DATETIME")
+        """
+        if field_type is None:
+            return FieldType.STRING.value
+
+        # If it's a FieldType enum, use its value directly (already in TigerGraph format)
+        if isinstance(field_type, FieldType):
+            return field_type.value
+
+        # If it's an enum-like object with a value attribute
+        if hasattr(field_type, "value"):
+            enum_value = field_type.value
+            # Convert to string and normalize
+            enum_value_str = str(enum_value).upper()
+            # Check if the value matches a FieldType enum value
+            if enum_value_str in VALID_TIGERGRAPH_TYPES:
+                return enum_value_str
+            # Return as string (normalized to uppercase)
+            return enum_value_str
+
+        # If it's a string, normalize and check against FieldType values
+        field_type_str = str(field_type).upper()
+
+        # Check if it matches a FieldType enum value directly
+        if field_type_str in VALID_TIGERGRAPH_TYPES:
+            return field_type_str
+
+        # Handle TigerGraph-specific type aliases
+        return TIGERGRAPH_TYPE_ALIASES.get(field_type_str, FieldType.STRING.value)
 
     def _create_vertex_types_global(self, vertex_config: VertexConfig) -> list[str]:
         """Create TigerGraph vertex types globally (without graph association).
@@ -653,11 +741,16 @@ class TigerGraphConnection(Connection):
         Vertices are global in TigerGraph and must be created before they can be
         included in a CREATE GRAPH statement.
 
-        Creates vertices with composite primary keys using PRIMARY KEY syntax.
-        According to TigerGraph documentation, fields used in PRIMARY KEY must be
+        Creates vertices with PRIMARY_ID (single field) or PRIMARY KEY (composite) syntax.
+        For single-field indexes, uses PRIMARY_ID syntax (required by GraphStudio).
+        For composite keys, uses PRIMARY KEY syntax (works in GSQL but not GraphStudio).
+        According to TigerGraph documentation, fields used in PRIMARY KEY/PRIMARY_ID must be
         defined as regular attributes first, and they remain accessible as attributes.
 
-        Reference: https://docs.tigergraph.com/gsql-ref/4.2/ddl-and-loading/defining-a-graph-schema#_composite_key_using_primary_key
+        Note: GraphStudio does not support composite keys. Use PRIMARY_ID for single fields
+        to ensure compatibility with GraphStudio.
+
+        Reference: https://docs.tigergraph.com/gsql-ref/4.2/ddl-and-loading/defining-a-graph-schema
 
         Args:
             vertex_config: Vertex configuration containing vertices to create
@@ -667,33 +760,119 @@ class TigerGraphConnection(Connection):
         """
         vertex_names = []
         for vertex in vertex_config.vertices:
-            field_definitions = self._format_vertex_fields(vertex)
             vertex_dbname = vertex_config.vertex_dbname(vertex.name)
-            vindex = "(" + ", ".join(vertex_config.index(vertex.name).fields) + ")"
+            index_fields = vertex_config.index(vertex.name).fields
+
+            if len(index_fields) == 0:
+                raise ValueError(
+                    f"Vertex '{vertex_dbname}' must have at least one index field"
+                )
+
+            # Get field type for primary key field(s) - convert FieldType enum to string
+            field_type_map = {}
+            for f in vertex.fields:
+                if f.type:
+                    field_type_map[f.name] = (
+                        f.type.value if hasattr(f.type, "value") else str(f.type)
+                    )
+                else:
+                    field_type_map[f.name] = FieldType.STRING.value
+
+            # Format all fields
+            all_fields = []
+            for field in vertex.fields:
+                if field.type:
+                    field_type = (
+                        field.type.value
+                        if hasattr(field.type, "value")
+                        else str(field.type)
+                    )
+                else:
+                    field_type = FieldType.STRING.value
+                all_fields.append((field.name, field_type))
+
+            if len(index_fields) == 1:
+                # Single field: use PRIMARY_ID syntax (required by GSQL)
+                # Format: PRIMARY_ID field_name field_type, other_field1 TYPE, other_field2 TYPE, ...
+                primary_field_name = index_fields[0]
+                primary_field_type = field_type_map.get(
+                    primary_field_name, FieldType.STRING.value
+                )
+
+                other_fields = [
+                    (name, ftype)
+                    for name, ftype in all_fields
+                    if name != primary_field_name
+                ]
+
+                # Build field list: PRIMARY_ID comes first, then other fields
+                field_parts = [f"PRIMARY_ID {primary_field_name} {primary_field_type}"]
+                field_parts.extend([f"{name} {ftype}" for name, ftype in other_fields])
+
+                field_definitions = ",\n    ".join(field_parts)
+            elif len(index_fields) > 1:
+                # Composite key: use PRIMARY KEY syntax (works in GSQL but not GraphStudio UI)
+                # Format: field1 TYPE, field2 TYPE, ..., PRIMARY KEY (field1, field2, ...)
+                logger.warning(
+                    f"Vertex '{vertex_dbname}' has composite primary key {index_fields}. "
+                    f"GraphStudio UI does not support composite keys. "
+                    f"Consider using a single-field PRIMARY_ID instead."
+                )
+
+                # List all fields first
+                field_parts = [f"{name} {ftype}" for name, ftype in all_fields]
+                # Then add PRIMARY KEY at the end
+                vindex = "(" + ", ".join(index_fields) + ")"
+                field_parts.append(f"PRIMARY KEY {vindex}")
+
+                field_definitions = ",\n    ".join(field_parts)
+            else:
+                raise ValueError(
+                    f"Vertex '{vertex_dbname}' must have at least one index field"
+                )
 
             # Create the vertex type globally (ignore if exists)
             # Vertices are global in TigerGraph, so no USE GRAPH needed
-            # Note: Fields used in PRIMARY KEY must be defined as regular attributes first.
-            # They remain accessible as attributes automatically (no primary_id_as_attribute needed).
-            create_vertex_cmd = (
-                f"CREATE VERTEX {vertex_dbname} (\n"
-                f"    {field_definitions},\n"
-                f"    PRIMARY KEY {vindex}\n"
-                f') WITH STATS="OUTDEGREE_BY_EDGETYPE"'
-            )
+            # Note: For PRIMARY_ID, the ID field is listed first with PRIMARY_ID keyword
+            # For PRIMARY KEY, all fields are listed first, then PRIMARY KEY clause at the end
+            # When using PRIMARY_ID, we need primary_id_as_attribute="true" to make the ID
+            # accessible as an attribute (required for REST++ API upserts)
+            if len(index_fields) == 1:
+                # Single field with PRIMARY_ID: enable primary_id_as_attribute so ID is accessible
+                create_vertex_cmd = (
+                    f"CREATE VERTEX {vertex_dbname} (\n"
+                    f"    {field_definitions}\n"
+                    f') WITH STATS="OUTDEGREE_BY_EDGETYPE", primary_id_as_attribute="true"'
+                )
+            else:
+                # Composite key with PRIMARY KEY: key fields are automatically accessible as attributes
+                create_vertex_cmd = (
+                    f"CREATE VERTEX {vertex_dbname} (\n"
+                    f"    {field_definitions}\n"
+                    f') WITH STATS="OUTDEGREE_BY_EDGETYPE"'
+                )
             logger.debug(f"Executing GSQL: {create_vertex_cmd}")
             try:
                 result = self.conn.gsql(create_vertex_cmd)
                 logger.debug(f"Result: {result}")
                 vertex_names.append(vertex_dbname)
+                logger.info(f"Successfully created vertex type '{vertex_dbname}'")
             except Exception as e:
                 err = str(e).lower()
-                if "used by another object" in err or "duplicate" in err:
+                if (
+                    "used by another object" in err
+                    or "duplicate" in err
+                    or "already exists" in err
+                ):
                     logger.debug(
                         f"Vertex type '{vertex_dbname}' already exists; will include in graph"
                     )
                     vertex_names.append(vertex_dbname)
                 else:
+                    logger.error(
+                        f"Failed to create vertex type '{vertex_dbname}': {e}\n"
+                        f"GSQL command was: {create_vertex_cmd}"
+                    )
                     raise
         return vertex_names
 
@@ -1384,7 +1563,7 @@ class TigerGraphConnection(Connection):
             response = requests.post(
                 url,
                 headers=headers,
-                data=json.dumps(payload),
+                data=json.dumps(payload, default=_json_serializer),
                 auth=auth,
                 # Increase timeout for large batches
                 timeout=120,
@@ -1476,7 +1655,12 @@ class TigerGraphConnection(Connection):
                 vertex_id = self._extract_id(doc, match_keys)
                 if vertex_id:
                     clean_doc = self._clean_document(doc)
-                    self.conn.upsertVertex(class_name, vertex_id, clean_doc)
+                    # Serialize datetime objects before passing to pyTigerGraph
+                    # pyTigerGraph's upsertVertex expects JSON-serializable data
+                    serialized_doc = json.loads(
+                        json.dumps(clean_doc, default=_json_serializer)
+                    )
+                    self.conn.upsertVertex(class_name, vertex_id, serialized_doc)
             except Exception as e:
                 logger.error(f"Error upserting individual vertex {vertex_id}: {e}")
 
@@ -2123,7 +2307,12 @@ class TigerGraphConnection(Connection):
         """Define all indexes from schema."""
         try:
             self.define_vertex_indices(schema.vertex_config)
-            self.define_edge_indices(schema.edge_config.edges_list(include_aux=True))
+            # Ensure edges are initialized before defining indices
+            edges_for_indices = list(schema.edge_config.edges_list(include_aux=True))
+            for edge in edges_for_indices:
+                if edge._source is None or edge._target is None:
+                    edge.finish_init(schema.vertex_config)
+            self.define_edge_indices(edges_for_indices)
         except Exception as e:
             logger.error(f"Error defining indexes: {e}")
 

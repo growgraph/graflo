@@ -171,11 +171,9 @@ class Edge(BaseDataclass):
         type: Edge type (DIRECT or INDIRECT)
         aux: Whether this is an auxiliary edge
         by: Optional vertex name for indirect edges
-        graph_name: Optional graph name
-        database_name: Optional database-specific edge identifier.
+        graph_name: Optional graph name (ArangoDB only, set in finish_init)
+        database_name: Optional database-specific edge identifier (ArangoDB only, set in finish_init).
                        For ArangoDB, this corresponds to the edge collection name.
-                       For TigerGraph, used as fallback identifier when relation is not specified.
-                       For Neo4j, unused (relation is used instead).
     """
 
     source: str
@@ -203,9 +201,9 @@ class Edge(BaseDataclass):
     aux: bool = False  # aux=True edges are init in the db but not considered by graflo
 
     by: str | None = None
-    graph_name: str | None = None
+    graph_name: str | None = None  # ArangoDB-specific: graph name (set in finish_init)
     database_name: str | None = (
-        None  # Database-specific edge identifier (collection_name for ArangoDB)
+        None  # ArangoDB-specific: edge collection name (set in finish_init)
     )
 
     def __post_init__(self):
@@ -229,14 +227,17 @@ class Edge(BaseDataclass):
 
         self._source = vertex_config.vertex_dbname(self.source)
         self._target = vertex_config.vertex_dbname(self.target)
-        graph_name = [
-            vertex_config.vertex_dbname(self.source),
-            vertex_config.vertex_dbname(self.target),
-        ]
-        if self.purpose is not None:
-            graph_name += [self.purpose]
-        self.graph_name = "_".join(graph_name + ["graph"])
-        self.database_name = "_".join(graph_name + ["edges"])
+
+        # ArangoDB-specific: set graph_name and database_name only for ArangoDB
+        if vertex_config.db_flavor == DBFlavor.ARANGO:
+            graph_name = [
+                vertex_config.vertex_dbname(self.source),
+                vertex_config.vertex_dbname(self.target),
+            ]
+            if self.purpose is not None:
+                graph_name += [self.purpose]
+            self.graph_name = "_".join(graph_name + ["graph"])
+            self.database_name = "_".join(graph_name + ["edges"])
 
         # TigerGraph requires named edge types (relations), so assign default if missing
         if vertex_config.db_flavor == DBFlavor.TIGERGRAPH and self.relation is None:

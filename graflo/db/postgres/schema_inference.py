@@ -10,10 +10,11 @@ from typing import Optional
 from graflo.architecture.edge import Edge, EdgeConfig, WeightConfig
 from graflo.architecture.onto import Index, IndexType
 from graflo.architecture.schema import Schema, SchemaMetadata
-from graflo.architecture.vertex import Field, Vertex, VertexConfig
+from graflo.architecture.vertex import Field, FieldType, Vertex, VertexConfig
 from graflo.onto import DBFlavor
 
 from ...architecture.onto_sql import EdgeTableInfo, SchemaIntrospectionResult
+from .conn import PostgresConnection
 from .types import PostgresTypeMapper
 
 logger = logging.getLogger(__name__)
@@ -26,14 +27,20 @@ class PostgresSchemaInferencer:
     generates a complete graflo Schema with vertices, edges, and weights.
     """
 
-    def __init__(self, db_flavor: DBFlavor = DBFlavor.ARANGO):
+    def __init__(
+        self,
+        db_flavor: DBFlavor = DBFlavor.ARANGO,
+        conn: Optional[PostgresConnection] = None,
+    ):
         """Initialize the schema inferencer.
 
         Args:
             db_flavor: Target database flavor for the inferred schema
+            conn: Optional PostgreSQL connection for sampling data to infer types
         """
         self.db_flavor = db_flavor
         self.type_mapper = PostgresTypeMapper()
+        self.conn = conn
 
     def infer_vertex_config(
         self, introspection_result: SchemaIntrospectionResult
@@ -84,10 +91,142 @@ class PostgresSchemaInferencer:
 
         return VertexConfig(vertices=vertices, db_flavor=self.db_flavor)
 
+    def _infer_type_from_samples(
+        self, table_name: str, schema_name: str, column_name: str, pg_type: str
+    ) -> str:
+        """Infer field type by sampling 5 rows from the table.
+
+        Uses heuristics to determine if a column contains integers, floats, datetimes, etc.
+        Falls back to PostgreSQL type mapping if sampling fails or is unavailable.
+
+        Args:
+            table_name: Name of the table
+            schema_name: Schema name
+            column_name: Name of the column to sample
+            pg_type: PostgreSQL type from schema introspection
+
+        Returns:
+            str: FieldType value (INT, FLOAT, DATETIME, STRING, etc.)
+        """
+        # First try PostgreSQL type mapping
+        mapped_type = self.type_mapper.map_type(pg_type)
+
+        # If we have a connection, sample data to refine the type
+        if self.conn is None:
+            logger.debug(
+                f"No connection available for sampling, using mapped type '{mapped_type}' "
+                f"for column '{column_name}' in table '{table_name}'"
+            )
+            return mapped_type
+
+        try:
+            # Sample 5 rows from the table
+            query = (
+                f'SELECT "{column_name}" FROM "{schema_name}"."{table_name}" LIMIT 5'
+            )
+            samples = self.conn.read(query)
+
+            if not samples:
+                logger.debug(
+                    f"No samples found for column '{column_name}' in table '{table_name}', "
+                    f"using mapped type '{mapped_type}'"
+                )
+                return mapped_type
+
+            # Extract non-None values
+            values = [
+                row[column_name] for row in samples if row[column_name] is not None
+            ]
+
+            if not values:
+                logger.debug(
+                    f"All samples are NULL for column '{column_name}' in table '{table_name}', "
+                    f"using mapped type '{mapped_type}'"
+                )
+                return mapped_type
+
+            # Heuristics to infer type from values
+            # Check for integers (all values are integers)
+            if all(isinstance(v, int) for v in values):
+                logger.debug(
+                    f"Inferred INT type for column '{column_name}' in table '{table_name}' "
+                    f"from samples"
+                )
+                return FieldType.INT.value
+
+            # Check for floats (all values are floats or ints that could be floats)
+            if all(isinstance(v, (int, float)) for v in values):
+                # If any value has decimal part, it's a float
+                if any(isinstance(v, float) and v != float(int(v)) for v in values):
+                    logger.debug(
+                        f"Inferred FLOAT type for column '{column_name}' in table '{table_name}' "
+                        f"from samples"
+                    )
+                    return FieldType.FLOAT.value
+                # All integers, but might be stored as float - check PostgreSQL type
+                if mapped_type == FieldType.FLOAT.value:
+                    return FieldType.FLOAT.value
+                return FieldType.INT.value
+
+            # Check for datetime/date objects
+            from datetime import date, datetime, time
+
+            if all(isinstance(v, (datetime, date, time)) for v in values):
+                logger.debug(
+                    f"Inferred DATETIME type for column '{column_name}' in table '{table_name}' "
+                    f"from samples"
+                )
+                return FieldType.DATETIME.value
+
+            # Check for ISO format datetime strings
+            if all(isinstance(v, str) for v in values):
+                # Try to parse as ISO datetime
+                iso_datetime_count = 0
+                for v in values:
+                    try:
+                        # Try ISO format (with or without timezone)
+                        datetime.fromisoformat(v.replace("Z", "+00:00"))
+                        iso_datetime_count += 1
+                    except (ValueError, AttributeError):
+                        # Try other common formats
+                        try:
+                            datetime.strptime(v, "%Y-%m-%d %H:%M:%S")
+                            iso_datetime_count += 1
+                        except ValueError:
+                            try:
+                                datetime.strptime(v, "%Y-%m-%d")
+                                iso_datetime_count += 1
+                            except ValueError:
+                                pass
+
+                # If most values look like datetimes, infer DATETIME
+                if iso_datetime_count >= len(values) * 0.8:  # 80% threshold
+                    logger.debug(
+                        f"Inferred DATETIME type for column '{column_name}' in table '{table_name}' "
+                        f"from ISO format strings"
+                    )
+                    return FieldType.DATETIME.value
+
+            # Default to mapped type
+            logger.debug(
+                f"Using mapped type '{mapped_type}' for column '{column_name}' in table '{table_name}' "
+                f"(could not infer from samples)"
+            )
+            return mapped_type
+
+        except Exception as e:
+            logger.warning(
+                f"Error sampling data for column '{column_name}' in table '{table_name}': {e}. "
+                f"Using mapped type '{mapped_type}'"
+            )
+            return mapped_type
+
     def infer_edge_weights(
         self, edge_table_info: EdgeTableInfo
     ) -> Optional[WeightConfig]:
-        """Infer edge weights from edge table columns.
+        """Infer edge weights from edge table columns with types.
+
+        Uses PostgreSQL column types and optionally samples data to infer accurate types.
 
         Args:
             edge_table_info: Edge table information from introspection
@@ -109,12 +248,21 @@ class PostgresSchemaInferencer:
         if not weight_columns:
             return None
 
-        # Extract column names as direct weights
-        direct_weights = [col.name for col in weight_columns]
+        # Create Field objects with types for each weight column
+        direct_weights = []
+        for col in weight_columns:
+            # Infer type: use PostgreSQL type first, then sample if needed
+            field_type = self._infer_type_from_samples(
+                edge_table_info.name,
+                edge_table_info.schema_name,
+                col.name,
+                col.type,
+            )
+            direct_weights.append(Field(name=col.name, type=field_type))
 
         logger.debug(
             f"Inferred {len(direct_weights)} weights for edge table "
-            f"'{edge_table_info.name}': {direct_weights}"
+            f"'{edge_table_info.name}': {[f.name for f in direct_weights]}"
         )
 
         return WeightConfig(direct=direct_weights)

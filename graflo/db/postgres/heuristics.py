@@ -115,8 +115,8 @@ def infer_schema_from_postgres(
     # Introspect the schema
     introspection_result = conn.introspect_schema(schema_name=schema_name)
 
-    # Infer schema
-    inferencer = PostgresSchemaInferencer(db_flavor=db_flavor)
+    # Infer schema (pass connection for type sampling)
+    inferencer = PostgresSchemaInferencer(db_flavor=db_flavor, conn=conn)
     schema = inferencer.infer_schema(introspection_result, schema_name=schema_name)
 
     # Create and add resources
