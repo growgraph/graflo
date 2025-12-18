@@ -29,6 +29,10 @@ from graflo.caster import IngestionParams
 
 logger = logging.getLogger(__name__)
 
+# Configure logging: INFO level for graflo module, WARNING for others
+logging.basicConfig(level=logging.WARNING, handlers=[logging.StreamHandler()])
+# Set graflo module to INFO level
+logging.getLogger("graflo").setLevel(logging.INFO)
 
 # Step 1: Connect to PostgreSQL (source database)
 # Load PostgreSQL config from docker/postgres/.env (recommended)

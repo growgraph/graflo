@@ -383,58 +383,65 @@ class TigerGraphConnection(Connection):
                     f"Could not drop graph '{name}' (may not exist or have dependencies): {e}"
                 )
 
-            # Fallback 1: Attempt to drop edge and vertex types via ALTER GRAPH and DROP
+            # Fallback 1: Attempt to disassociate edge and vertex types from graph
+            # DO NOT drop global vertex/edge types as they might be used by other graphs
             try:
                 with self._ensure_graph_context(name):
-                    # Drop edge associations and edge types
+                    # Disassociate edge types from graph (but don't drop them globally)
                     try:
                         edge_types = self.conn.getEdgeTypes(force=True)
                     except Exception:
                         edge_types = []
 
                     for e_type in edge_types:
-                        # Try disassociate from graph (safe if already disassociated)
+                        # Only disassociate from graph, don't drop globally
                         # ALTER GRAPH requires USE GRAPH context
                         try:
                             drop_edge_cmd = f"USE GRAPH {name}\nALTER GRAPH {name} DROP DIRECTED EDGE {e_type}"
                             self.conn.gsql(drop_edge_cmd)
-                        except Exception:
-                            pass
-                        # Try drop edge type globally (edges are global, no USE GRAPH needed)
-                        try:
-                            drop_edge_global_cmd = f"DROP DIRECTED EDGE {e_type}"
-                            self.conn.gsql(drop_edge_global_cmd)
-                        except Exception:
-                            pass
+                            logger.debug(
+                                f"Disassociated edge type '{e_type}' from graph '{name}'"
+                            )
+                        except Exception as e:
+                            logger.debug(
+                                f"Could not disassociate edge type '{e_type}' from graph '{name}': {e}"
+                            )
+                            # Continue - edge might not be associated or graph might not exist
 
-                    # Drop vertex associations and vertex types
+                    # Disassociate vertex types from graph (but don't drop them globally)
                     try:
                         vertex_types = self.conn.getVertexTypes(force=True)
                     except Exception:
                         vertex_types = []
 
                     for v_type in vertex_types:
-                        # Remove all data first to avoid dependency issues
+                        # Only clear data from this graph's vertices, don't drop vertex type globally
+                        # Clear data first to avoid dependency issues
                         try:
                             self.conn.delVertices(v_type)
-                        except Exception:
-                            pass
+                            logger.debug(
+                                f"Cleared vertices of type '{v_type}' from graph '{name}'"
+                            )
+                        except Exception as e:
+                            logger.debug(
+                                f"Could not clear vertices of type '{v_type}' from graph '{name}': {e}"
+                            )
                         # Disassociate from graph (best-effort)
                         # ALTER GRAPH requires USE GRAPH context
                         try:
                             drop_vertex_cmd = f"USE GRAPH {name}\nALTER GRAPH {name} DROP VERTEX {v_type}"
                             self.conn.gsql(drop_vertex_cmd)
-                        except Exception:
-                            pass
-                        # Drop vertex type globally (vertices are global, no USE GRAPH needed)
-                        try:
-                            drop_vertex_global_cmd = f"DROP VERTEX {v_type}"
-                            self.conn.gsql(drop_vertex_global_cmd)
-                        except Exception:
-                            pass
+                            logger.debug(
+                                f"Disassociated vertex type '{v_type}' from graph '{name}'"
+                            )
+                        except Exception as e:
+                            logger.debug(
+                                f"Could not disassociate vertex type '{v_type}' from graph '{name}': {e}"
+                            )
+                            # Continue - vertex might not be associated or graph might not exist
             except Exception as e3:
                 logger.warning(
-                    f"Could not drop schema types for graph '{name}': {e3}. Proceeding to data clear."
+                    f"Could not disassociate schema types from graph '{name}': {e3}. Proceeding to data clear."
                 )
 
             # Fallback 2: Clear all data (if any remain)
@@ -501,15 +508,16 @@ class TigerGraphConnection(Connection):
         try:
             if clean_start:
                 try:
-                    # Delete all graphs, edges, and vertices (full teardown)
-                    self.delete_graph_structure([], [], delete_all=True)
+                    # Only delete the current graph, not all graphs or global vertex/edge types
+                    # This ensures we don't affect other graphs that might share vertex/edge types
+                    self.delete_database(graph_name)
                     logger.debug(f"Cleaned graph '{graph_name}' for fresh start")
                 except Exception as clean_error:
                     logger.warning(
                         f"Error during clean_start for graph '{graph_name}': {clean_error}",
                         exc_info=True,
                     )
-                    # Continue - may be first run or already clean
+                    # Continue - may be first run or already clean, schema will be recreated anyway
 
             # Step 1: Create vertex and edge types globally first
             # These must exist before they can be included in CREATE GRAPH

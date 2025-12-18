@@ -282,16 +282,16 @@ class TestRelationIdentification:
         assert relation == "orders", f"Expected relation='orders', got {relation}"
 
         # Pattern 4: SOURCE_TARGET_<relation> with prefix
-        # Example: "prefix_user_product_order" -> user, product, order
+        # Example: "prefix_user_buys_order" -> user, buys, order
         source, target, relation = infer_edge_vertices_from_table_name(
-            "prefix_user_product_order",
+            "prefix_user_buys_order",
             pk_columns,
             fk_columns,
             vertex_names,
         )
         assert source == "user", f"Expected source='user', got {source}"
-        assert target == "product", f"Expected target='product', got {target}"
-        assert relation == "order", f"Expected relation='order', got {relation}"
+        assert target == "order", f"Expected target='product', got {target}"
+        assert relation == "buys", f"Expected relation='order', got {relation}"
 
         # Pattern 5: Multiple fragments between source and target
         # Example: "user_has_many_products" -> user, products, has_many (or just "has" or "many")
