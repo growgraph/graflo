@@ -24,7 +24,7 @@ from graflo.db.postgres import (
     infer_schema_from_postgres,
 )
 from graflo.db.postgres.util import load_schema_from_sql_file
-from graflo.db.connection.onto import PostgresConfig, Neo4jConfig
+from graflo.db.connection.onto import PostgresConfig, TigergraphConfig
 from graflo.caster import IngestionParams
 
 logger = logging.getLogger(__name__)
@@ -49,7 +49,8 @@ postgres_conf = PostgresConfig.from_docker_env()
 
 # Step 2: Connect to target graph database (Neo4j or ArangoDB)
 # Load config from docker/neo4j/.env or docker/arango/.env (recommended)
-conn_conf = Neo4jConfig.from_docker_env()
+# conn_conf = Neo4jConfig.from_docker_env()
+conn_conf = TigergraphConfig.from_docker_env()
 
 # Alternative: Use ArangoDB instead
 # from graflo.db.connection.onto import ArangoConfig

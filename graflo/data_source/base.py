@@ -5,8 +5,6 @@ Data sources handle data retrieval from various sources (files, APIs, databases)
 and provide a unified interface for batch iteration.
 """
 
-from __future__ import annotations
-
 import abc
 from typing import Iterator
 

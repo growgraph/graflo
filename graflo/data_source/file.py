@@ -5,8 +5,6 @@ including JSON, JSONL, and CSV/TSV files. It integrates with the existing
 chunker logic for efficient batch processing.
 """
 
-from __future__ import annotations
-
 import dataclasses
 from pathlib import Path
 from typing import Iterator

@@ -62,27 +62,6 @@ def split_by_separator(text: str, separator: str) -> list[str]:
     return parts
 
 
-def is_relation_fragment(fragment: str) -> bool:
-    """Check if a fragment looks like a relation name rather than a vertex name.
-
-    Only very short fragments (<= 2 chars) are considered relations by default.
-    Actual relation identification is done contextually in infer_edge_vertices_from_table_name
-    based on fragment position and length when there are more than 2 fragments.
-
-    Args:
-        fragment: Fragment to check
-
-    Returns:
-        True if fragment is very short (likely not a vertex name)
-    """
-    # Only very short fragments are considered relations by default
-    # Longer relation identification is done contextually based on position
-    if len(fragment) <= 2:
-        return True
-
-    return False
-
-
 def infer_edge_vertices_from_table_name(
     table_name: str,
     pk_columns: list[str],
@@ -146,33 +125,59 @@ def infer_edge_vertices_from_table_name(
                 key_fragments_list.append(frag)
                 key_fragments_set.add(frag)
 
-    # Step 4: Fuzzy match fragments to vertex names
-    matched_vertices = []  # Preserve order - first match is source, second is target
+    # Step 4: Match table name fragments to vertices
+    # Strategy: match source from left, target from right
+    # Stop when we have 2 matches OR target_index > source_index + 1
+    source_match_idx: int | None = None
+    target_match_idx: int | None = None
+    source_vertex: str | None = None
+    target_vertex: str | None = None
     matched_vertices_set = set()  # For deduplication
     matched_fragment_indices = {}  # Track which fragment indices matched which vertices
 
-    # Match table name fragments first (higher priority, preserves order)
-    # Skip very short fragments (likely not vertices)
+    # Match source starting from the left
     for i, fragment in enumerate(table_fragments):
-        if is_relation_fragment(fragment):
-            continue
-
         matched = match_cache.get_match(fragment)
         if matched and matched not in matched_vertices_set:
-            matched_vertices.append(matched)
+            source_match_idx = i
+            source_vertex = matched
             matched_vertices_set.add(matched)
             matched_fragment_indices[i] = matched
+            break  # Found source, stop searching left
 
-    # Match key fragments (add to end if not already matched)
-    # Skip relation fragments identified above
-    for fragment in key_fragments_list:
-        if is_relation_fragment(fragment):
-            continue
-
+    # Match target starting from the right
+    for i in range(
+        len(table_fragments) - 1,
+        source_match_idx if source_match_idx is not None else -1,
+        -1,
+    ):
+        fragment = table_fragments[i]
         matched = match_cache.get_match(fragment)
         if matched and matched not in matched_vertices_set:
-            matched_vertices.append(matched)
+            target_match_idx = i
+            target_vertex = matched
             matched_vertices_set.add(matched)
+            matched_fragment_indices[i] = matched
+            break  # Found target, stop searching right
+
+    # Match key fragments to fill in missing vertices (keys are primary source of truth)
+    matched_vertices = []
+    key_matched_vertices = []  # Track vertices matched from keys (higher priority)
+
+    if source_vertex:
+        matched_vertices.append(source_vertex)
+    if target_vertex and target_vertex != source_vertex:
+        matched_vertices.append(target_vertex)
+
+    for fragment in key_fragments_list:
+        matched = match_cache.get_match(fragment)
+        if matched:
+            if matched not in matched_vertices_set:
+                matched_vertices.append(matched)
+                matched_vertices_set.add(matched)
+            # Track key-matched vertices separately for priority
+            if matched not in key_matched_vertices:
+                key_matched_vertices.append(matched)
 
     # Step 5: Use foreign keys to confirm or infer vertices
     fk_vertex_names = []
@@ -196,8 +201,26 @@ def infer_edge_vertices_from_table_name(
         target_table = fk_vertex_names[0]
 
     # Priority 2: Use matched vertices from fuzzy matching
+    # Prefer vertices from keys (primary source of truth) over table matches
     if not source_table or not target_table:
-        if len(matched_vertices) >= 2:
+        # If we have vertices from keys, prefer those
+        if len(key_matched_vertices) >= 2:
+            source_table = key_matched_vertices[0]
+            target_table = key_matched_vertices[1]
+        elif len(key_matched_vertices) == 1:
+            # Use key vertex for source, try to find target from all matched vertices
+            source_table = key_matched_vertices[0]
+            if len(matched_vertices) >= 2:
+                # Find target that's not the source
+                for v in matched_vertices:
+                    if v != source_table:
+                        target_table = v
+                        break
+                if not target_table:
+                    target_table = source_table  # Self-reference
+            else:
+                target_table = source_table  # Self-reference
+        elif len(matched_vertices) >= 2:
             source_table = matched_vertices[0]
             target_table = matched_vertices[1]
         elif len(matched_vertices) == 1:
@@ -227,97 +250,76 @@ def infer_edge_vertices_from_table_name(
             source_table = matched_vertices[0]
 
     # Step 7: Identify relation from table fragments (after we know source/target)
-    # This works even when FKs override matched vertices
+    # Relation is derived from table name fragments that are neither source nor target
+    # Patterns: bla_SOURCE_<relation>_TARGET, bla_SOURCE_TARGET_<relation>,
+    #           bla_<relation>_SOURCE_TARGET, and other combinations
+    # We allow relation to appear anywhere except as source/target fragments
     if relation_name is None and source_table and target_table:
-        # Find positions of source and target in table fragments
-        source_indices = []
-        target_indices = []
         source_lower = source_table.lower()
         target_lower = target_table.lower()
 
+        # Use the matched fragment indices if available (more precise)
+        # Otherwise, find by matching fragment text
+        source_idx = source_match_idx
+        target_idx = target_match_idx
+
+        # If we don't have indices from matching, find them by text matching
+        if source_idx is None or target_idx is None:
+            for idx, fragment in enumerate(table_fragments):
+                fragment_lower = fragment.lower()
+                if source_idx is None and (
+                    fragment_lower == source_lower
+                    or source_lower in fragment_lower
+                    or fragment_lower in source_lower
+                ):
+                    source_idx = idx
+                if target_idx is None and (
+                    fragment_lower == target_lower
+                    or target_lower in fragment_lower
+                    or fragment_lower in target_lower
+                ):
+                    target_idx = idx
+
+        relation_candidates = []
+
+        # Collect all fragments that are not source or target
+        # Allow relation to appear anywhere: before, between, or after source/target
         for idx, fragment in enumerate(table_fragments):
             fragment_lower = fragment.lower()
-            # Check if fragment matches source (exact or substring)
+
+            # Skip if it's a source or target fragment
             if (
                 fragment_lower == source_lower
                 or source_lower in fragment_lower
                 or fragment_lower in source_lower
-            ):
-                source_indices.append(idx)
-            # Check if fragment matches target (exact or substring)
-            if (
-                fragment_lower == target_lower
+                or fragment_lower == target_lower
                 or target_lower in fragment_lower
                 or fragment_lower in target_lower
             ):
-                target_indices.append(idx)
+                continue
 
-        # Also check matched fragment indices for more precise matching
-        for idx, vertex in matched_fragment_indices.items():
-            vertex_lower = vertex.lower()
-            if vertex_lower == source_lower:
-                if idx not in source_indices:
-                    source_indices.append(idx)
-            if vertex_lower == target_lower:
-                if idx not in target_indices:
-                    target_indices.append(idx)
+            # Include all non-source/target fragments as relation candidates
+            relation_candidates.append((len(fragment), idx, fragment))
 
-        relation_candidates = []
-
-        if source_indices and target_indices:
-            # Find fragments between or around source/target positions
-            min_source_idx = min(source_indices)
-            max_source_idx = max(source_indices)
-            min_target_idx = min(target_indices)
-            max_target_idx = max(target_indices)
-
-            # Determine the range between source and target
-            start_idx = min(min_source_idx, min_target_idx)
-            end_idx = max(max_source_idx, max_target_idx)
-
-            for idx, fragment in enumerate(table_fragments):
-                if is_relation_fragment(fragment):
-                    continue
-                # Skip if it's a source or target fragment
-                fragment_lower = fragment.lower()
-                if (
-                    fragment_lower == source_lower
-                    or source_lower in fragment_lower
-                    or fragment_lower in source_lower
-                    or fragment_lower == target_lower
-                    or target_lower in fragment_lower
-                    or fragment_lower in target_lower
-                ):
-                    continue
-                # Include fragments between or after source/target
-                if start_idx < idx < end_idx or idx > end_idx:
-                    relation_candidates.append((len(fragment), idx, fragment))
-        else:
-            # Can't find source/target positions, look for any non-vertex fragment
-            for idx, fragment in enumerate(table_fragments):
-                if is_relation_fragment(fragment):
-                    continue
-                fragment_lower = fragment.lower()
-                # Skip if it matches source or target
-                if (
-                    fragment_lower == source_lower
-                    or source_lower in fragment_lower
-                    or fragment_lower in source_lower
-                    or fragment_lower == target_lower
-                    or target_lower in fragment_lower
-                    or fragment_lower in target_lower
-                ):
-                    continue
-                relation_candidates.append((len(fragment), idx, fragment))
-
-        # Select the longest candidate as the relation
+        # Select candidate using scoring system:
+        # - Score = fragment_length + (position_index * 5) if fragment_length >= 3
+        # - Score = fragment_length if fragment_length < 3
+        # - Prefer candidates further to the right and longer
         if relation_candidates:
-            _, _, relation_name = max(relation_candidates, key=lambda x: x[0])
+
+            def score_candidate(candidate: tuple[int, int, str]) -> int:
+                fragment_length, position_idx, _ = candidate
+                if fragment_length >= 3:
+                    # Position bonus: each position to the right counts as 5 extra characters
+                    return fragment_length + (position_idx * 5)
+                else:
+                    # Fragments below 3 symbols don't get position bonus
+                    return fragment_length
+
+            _, _, relation_name = max(relation_candidates, key=score_candidate)
         elif len(table_fragments) >= 2:
-            # Special case: if we have 2+ fragments and one doesn't match source/target, it might be the relation
+            # Fallback: if we have 2+ fragments and one doesn't match source/target, it might be the relation
             for fragment in table_fragments:
-                if is_relation_fragment(fragment):
-                    continue
                 fragment_lower = fragment.lower()
                 # Use if it doesn't match source or target
                 if (
@@ -389,9 +391,6 @@ def infer_vertex_from_column_name(
         fragment_lower = fragment.lower()
         # Skip common suffixes
         if fragment_lower in common_suffixes:
-            continue
-        # Skip very short fragments
-        if is_relation_fragment(fragment):
             continue
 
         matched = match_cache.get_match(fragment)

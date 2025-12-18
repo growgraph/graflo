@@ -21,7 +21,6 @@ import logging
 import os
 from itertools import product
 from pathlib import Path
-from typing import Optional
 
 import networkx as nx
 from suthing import FileHandle
@@ -204,7 +203,7 @@ def lto_dict(strings):
     return r
 
 
-def assemble_tree(aw: ActorWrapper, fig_path: Optional[Path | str] = None):
+def assemble_tree(aw: ActorWrapper, fig_path: Path | str | None = None):
     """Assemble a tree visualization from an actor wrapper.
 
     Args:
@@ -212,7 +211,7 @@ def assemble_tree(aw: ActorWrapper, fig_path: Optional[Path | str] = None):
         fig_path: Optional path to save the visualization
 
     Returns:
-        Optional[nx.MultiDiGraph]: The assembled graph if fig_path is None
+        nx.MultiDiGraph | None: The assembled graph if fig_path is None
 
     Example:
         >>> graph = assemble_tree(actor_wrapper)

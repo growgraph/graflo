@@ -32,7 +32,7 @@ import dataclasses
 import logging
 from abc import ABCMeta
 from collections import defaultdict
-from typing import Any, Optional, TypeAlias, Union
+from typing import Any, TypeAlias
 
 from dataclass_wizard import JSONWizard, YAMLWizard
 
@@ -40,8 +40,8 @@ from graflo.onto import BaseDataclass, BaseEnum, DBFlavor
 from graflo.util.transform import pick_unique_dict
 
 # type for vertex or edge name (index)
-EdgeId: TypeAlias = tuple[str, str, Optional[str]]
-GraphEntity: TypeAlias = Union[str, EdgeId]
+EdgeId: TypeAlias = tuple[str, str, str | None]
+GraphEntity: TypeAlias = str | EdgeId
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +99,7 @@ class ABCFields(BaseDataclass, metaclass=ABCMeta):
         fields: List of field names
     """
 
-    name: Optional[str] = None
+    name: str | None = None
     fields: list[str] = dataclasses.field(default_factory=list)
     keep_vertex_name: bool = True
 

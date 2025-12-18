@@ -27,7 +27,7 @@ from collections import defaultdict
 from functools import reduce
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Optional, Type
+from typing import Any, Type
 
 from graflo.architecture.actor_util import (
     add_blank_collections,
@@ -430,7 +430,7 @@ class EdgeActor(Actor):
             **kwargs: Additional initialization parameters
         """
         self.vertex_config: VertexConfig = kwargs.pop("vertex_config")
-        edge_config: Optional[EdgeConfig] = kwargs.pop("edge_config", None)
+        edge_config: EdgeConfig | None = kwargs.pop("edge_config", None)
         if edge_config is not None and self.vertex_config is not None:
             self.edge.finish_init(vertex_config=self.vertex_config)
             edge_config.update_edges(self.edge, vertex_config=self.vertex_config)
@@ -497,9 +497,9 @@ class TransformActor(Actor):
             **kwargs: Transform configuration parameters
         """
         self._kwargs = kwargs
-        self.vertex: Optional[str] = kwargs.pop("target_vertex", None)
+        self.vertex: str | None = kwargs.pop("target_vertex", None)
         self.transforms: dict[str, ProtoTransform]
-        self.name: Optional[str] = kwargs.get("name", None)
+        self.name: str | None = kwargs.get("name", None)
         self.params: dict[str, Any] = kwargs.get("params", {})
         self.t: Transform = Transform(**kwargs)
 
@@ -577,7 +577,7 @@ class TransformActor(Actor):
             ValueError: If no document is provided
         """
         if kwargs:
-            doc: Optional[dict[str, Any]] = kwargs.get("doc")
+            doc: dict[str, Any] | None = kwargs.get("doc")
         elif nargs:
             doc = nargs[0]
         else:
@@ -1198,14 +1198,14 @@ class ActorWrapper:
         else:
             return cls(**data)
 
-    def assemble_tree(self, fig_path: Optional[Path] = None):
+    def assemble_tree(self, fig_path: Path | None = None):
         """Assemble and optionally visualize the actor tree.
 
         Args:
             fig_path: Optional path to save the visualization
 
         Returns:
-            Optional[networkx.MultiDiGraph]: Graph representation of the actor tree
+            networkx.MultiDiGraph | None: Graph representation of the actor tree
         """
         _, _, _, edges = self.fetch_actors(0, [])
         logger.info(f"{len(edges)}")

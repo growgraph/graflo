@@ -14,8 +14,6 @@ Example:
     >>> caster.ingest(path="data/", conn_conf=db_config)
 """
 
-from __future__ import annotations
-
 import logging
 import multiprocessing as mp
 import queue

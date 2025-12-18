@@ -4,8 +4,6 @@ This module provides a factory for creating appropriate data source instances
 based on configuration. It supports file-based, API, and SQL data sources.
 """
 
-from __future__ import annotations
-
 import logging
 from pathlib import Path
 from typing import Any

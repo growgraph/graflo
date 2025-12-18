@@ -15,7 +15,7 @@ import abc
 import dataclasses
 import pathlib
 import re
-from typing import TYPE_CHECKING, Any, Union
+from typing import TYPE_CHECKING, Any
 
 from graflo.onto import BaseDataclass, BaseEnum
 
@@ -277,7 +277,7 @@ class Patterns(BaseDataclass):
         postgres_table_configs: Dictionary mapping resource_name to (config_key, schema_name, table_name)
     """
 
-    patterns: dict[str, Union[FilePattern, TablePattern]] = dataclasses.field(
+    patterns: dict[str, TablePattern | FilePattern] = dataclasses.field(
         default_factory=dict
     )
     postgres_configs: dict[tuple[str, str | None], Any] = dataclasses.field(
