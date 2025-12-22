@@ -106,12 +106,14 @@ class DBFlavor(BaseEnum):
         NEO4J: Neo4j database
         TIGERGRAPH: TigerGraph database
         FALKORDB: FalkorDB database (Redis-based graph database using Cypher)
+        MEMGRAPH: Memgraph database (in-memory graph database using Cypher)
     """
 
     ARANGO = "arango"
     NEO4J = "neo4j"
     TIGERGRAPH = "tigergraph"
     FALKORDB = "falkordb"
+    MEMGRAPH = "memgraph"
 
 
 class ExpressionFlavor(BaseEnum):
@@ -125,6 +127,7 @@ class ExpressionFlavor(BaseEnum):
         NEO4J: Neo4j Cypher expressions
         TIGERGRAPH: TigerGraph GSQL expressions
         FALKORDB: FalkorDB Cypher expressions (OpenCypher compatible)
+        MEMGRAPH: Memgraph Cypher expressions (OpenCypher compatible)
         PYTHON: Python expressions
     """
 
@@ -132,6 +135,7 @@ class ExpressionFlavor(BaseEnum):
     NEO4J = "neo4j"
     TIGERGRAPH = "tigergraph"
     FALKORDB = "falkordb"
+    MEMGRAPH = "memgraph"
     PYTHON = "python"
 
 

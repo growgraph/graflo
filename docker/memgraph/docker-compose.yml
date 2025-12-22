@@ -1,0 +1,13 @@
+services:
+    memgraph:
+        image: ${IMAGE_VERSION}
+        restart: "no"
+        profiles: ["test.memgraph"]
+        ports:
+        -   "${MEMGRAPH_PORT}:7687"
+        container_name: ${CONTAINER_NAME}
+        volumes:
+        -   memgraph_data:/var/lib/memgraph
+
+volumes:
+    memgraph_data:
