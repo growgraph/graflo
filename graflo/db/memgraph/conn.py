@@ -821,6 +821,7 @@ class MemgraphConnection(Connection):
         self,
         class_name: str,
         agg_type: AggregationType,
+        discriminant: str | None = None,
         aggregated_field: str | None = None,
         filters: list | dict | None = None,
         **kwargs,
@@ -833,6 +834,8 @@ class MemgraphConnection(Connection):
             Node label to aggregate
         agg_type : AggregationType
             Type of aggregation
+        discriminant : str, optional
+            Field to group by (for COUNT with GROUP BY)
         aggregated_field : str, optional
             Field to aggregate (required for non-COUNT)
         filters : list | dict, optional
@@ -841,19 +844,29 @@ class MemgraphConnection(Connection):
         Returns
         -------
         Any
-            Aggregation result
+            Aggregation result (dict if discriminant is used, scalar otherwise)
         """
         assert self.conn is not None, "Connection is closed"
 
-        q = f"MATCH (n:{class_name})"
-
+        # Build filter clause
+        filter_clause = ""
         if filters is not None:
             ff = Expression.from_dict(filters)
             filter_str = ff(doc_name="n", kind=ExpressionFlavor.NEO4J)
-            q += f" WHERE {filter_str}"
+            filter_clause = f" WHERE {filter_str}"
+
+        q = f"MATCH (n:{class_name}){filter_clause}"
 
         if agg_type == AggregationType.COUNT:
-            q += " RETURN count(n)"
+            if discriminant:
+                q += f" RETURN n.{discriminant} AS key, count(*) AS count"
+                cursor = self.conn.cursor()
+                cursor.execute(q)
+                rows = cursor.fetchall()
+                cursor.close()
+                return {row[0]: row[1] for row in rows}
+            else:
+                q += " RETURN count(n)"
         elif agg_type == AggregationType.MAX:
             q += f" RETURN max(n.{aggregated_field})"
         elif agg_type == AggregationType.MIN:
