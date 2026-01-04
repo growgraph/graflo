@@ -34,7 +34,16 @@ docker compose --env-file .env up <container_spec> -d
 
 NB: we only use default password `tigergraph` in this repo (our docker-compose script does not change default password).
 
-## arangoshell
+## Nebula
+Nebula requires several services, run as 
+
+```sh
+docker compose --env-file .env --profile test.nebula up
+```
+
+Use `nebula-graphd` host to connect using GraphStudio.
+
+## Arangoshell
 
 Arango web interface [http://localhost:ARANGO_PORT](http://localhost:8535). NB: the standard arango port is 8529, `.env` config in graflo uses 8535.
 
@@ -55,3 +64,6 @@ Neo4j web interface [http://localhost:NEO4J_PORT](http://localhost:7475). NB: th
        gadmin status #should see all services are up.
 ```
 Follow instructions given [here](https://github.com/tigergraph/ecosys/blob/master/demos/guru_scripts/docker/README.md#quick-start-for-community-edition) to work with community edition.
+
+
+To 
