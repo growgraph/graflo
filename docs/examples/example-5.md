@@ -67,7 +67,7 @@ The `infer_schema_from_postgres()` function automatically analyzes your PostgreS
 The inference engine uses intelligent heuristics to classify tables:
 
 **Vertex Tables:**
-- 
+
 - Have a primary key (identifies unique entities)
 - Contain descriptive columns beyond just foreign keys
 - Represent domain entities (users, products, etc.)

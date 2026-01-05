@@ -19,7 +19,8 @@ Example:
     >>> from graflo.db.connection.onto import ArangoConfig
     >>> config = ArangoConfig.from_env()
     >>> with ConnectionManager(connection_config=config) as conn:
-    ...     conn.execute("FOR doc IN collection RETURN doc")
+    ...     # ArangoDB-specific AQL query (collection is ArangoDB terminology)
+    ...     conn.execute("FOR doc IN vertex_class RETURN doc")
 """
 
 from graflo.db.arango.conn import ArangoConnection

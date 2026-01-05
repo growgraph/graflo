@@ -26,6 +26,8 @@ Database connection and management components:
   - [Utilities](db/arango/util.md): ArangoDB-specific utility functions
 - **[Neo4j](db/neo4j/__init__.md)**:
   - [Connection](db/neo4j/conn.md): Neo4j-specific connection implementation
+- **[FalkorDB](db/falkordb/__init__.md)**:
+  - [Connection](db/falkordb/conn.md): FalkorDB-specific connection implementation
 - **[TigerGraph](db/tigergraph/__init__.md)**:
   - [Connection](db/tigergraph/conn.md): TigerGraph-specific connection implementation with REST++ API and GSQL support
 - **[PostgreSQL](db/postgres/__init__.md)**:

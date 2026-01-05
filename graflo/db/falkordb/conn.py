@@ -18,6 +18,7 @@ Data is organized as:
 
 Key Features
 ------------
+t
 - **OpenCypher Support**: Full Cypher query language for graph traversals
 - **Redis Performance**: Sub-millisecond latency with Redis storage backend
 - **Batch Operations**: Efficient bulk insert/upsert with UNWIND patterns
@@ -488,24 +489,24 @@ class FalkordbConnection(Connection):
         Labels and relationship types are created when data is inserted.
 
         Args:
-            schema: Schema containing collection definitions
+            schema: Schema containing vertex and edge class definitions
         """
         pass
 
-    def define_vertex_collections(self, schema: Schema):
-        """Define vertex collections based on schema.
+    def define_vertex_classes(self, schema: Schema):
+        """Define vertex classes based on schema.
 
-        Note: This is a no-op in FalkorDB as vertex collections are implicit.
+        Note: This is a no-op in FalkorDB as vertex classes (labels) are implicit.
 
         Args:
             schema: Schema containing vertex definitions
         """
         pass
 
-    def define_edge_collections(self, edges: list[Edge]):
-        """Define edge collections based on schema.
+    def define_edge_classes(self, edges: list[Edge]):
+        """Define edge classes based on schema.
 
-        Note: This is a no-op in FalkorDB as edge collections are implicit.
+        Note: This is a no-op in FalkorDB as edge classes (relationship types) are implicit.
 
         Args:
             edges: List of edge configurations
@@ -668,13 +669,9 @@ class FalkordbConnection(Connection):
         source_class: str,
         target_class: str,
         relation_name: str,
-        collection_name: str | None = None,
-        match_keys_source: tuple[str, ...] = ("_key",),
-        match_keys_target: tuple[str, ...] = ("_key",),
+        match_keys_source: tuple[str, ...],
+        match_keys_target: tuple[str, ...],
         filter_uniques: bool = True,
-        uniq_weight_fields=None,
-        uniq_weight_collections=None,
-        upsert_option: bool = False,
         head: int | None = None,
         **kwargs,
     ):
@@ -694,25 +691,21 @@ class FalkordbConnection(Connection):
             Label of target nodes (e.g., "Company")
         relation_name : str
             Relationship type name (e.g., "WORKS_AT")
-        collection_name : str, optional
-            Unused in FalkorDB (kept for interface compatibility)
         match_keys_source : tuple[str, ...]
             Properties to match source nodes (default: ("_key",))
         match_keys_target : tuple[str, ...]
             Properties to match target nodes (default: ("_key",))
         filter_uniques : bool
-            Unused in FalkorDB (kept for interface compatibility)
-        uniq_weight_fields
-            Unused in FalkorDB (kept for interface compatibility)
-        uniq_weight_collections
-            Unused in FalkorDB (kept for interface compatibility)
-        upsert_option : bool
-            Unused in FalkorDB (kept for interface compatibility)
+            Unused in FalkorDB (MERGE handles uniqueness automatically)
         head : int, optional
-            Unused in FalkorDB (kept for interface compatibility)
+            Optional limit on number of relationships to insert
         **kwargs
             Additional options:
             - dry (bool): If True, build query but don't execute
+            - collection_name (str, optional): Unused in FalkorDB (kept for interface compatibility)
+            - uniq_weight_fields: Unused in FalkorDB (ArangoDB-specific)
+            - uniq_weight_collections: Unused in FalkorDB (ArangoDB-specific)
+            - upsert_option: Unused in FalkorDB (ArangoDB-specific, MERGE is always upsert)
 
         Examples
         --------
@@ -742,9 +735,20 @@ class FalkordbConnection(Connection):
             SET r += row[2]
         """
         dry = kwargs.pop("dry", False)
+        # Extract and ignore unused parameters (kept for interface compatibility)
+        kwargs.pop("collection_name", None)
+        kwargs.pop("uniq_weight_fields", None)
+        kwargs.pop("uniq_weight_collections", None)
+        kwargs.pop("upsert_option", None)
+
+        # Apply head limit if specified
+        if head is not None and isinstance(docs_edges, list):
+            docs_edges = docs_edges[:head]
 
         if not docs_edges:
             return
+
+        # Note: filter_uniques is unused because FalkorDB's MERGE handles uniqueness automatically
 
         # Build match conditions for source and target nodes
         source_match_str = [f"source.{key} = row[0].{key}" for key in match_keys_source]

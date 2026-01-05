@@ -2,6 +2,7 @@
 
 This module implements the Connection interface for Neo4j, providing
 specific functionality for graph operations in Neo4j. It handles:
+
 - Node and relationship management
 - Cypher query execution
 - Index creation and management
@@ -9,6 +10,7 @@ specific functionality for graph operations in Neo4j. It handles:
 - Graph traversal and pattern matching
 
 Key Features:
+
     - Label-based node organization
     - Relationship type management
     - Property indices
@@ -171,29 +173,29 @@ class Neo4jConnection(Connection):
         self.execute(q)
 
     def define_schema(self, schema: Schema):
-        """Define collections based on schema.
+        """Define vertex and edge classes based on schema.
 
-        Note: This is a no-op in Neo4j as collections are implicit.
+        Note: This is a no-op in Neo4j as vertex/edge classes (labels/relationship types) are implicit.
 
         Args:
-            schema: Schema containing collection definitions
+            schema: Schema containing vertex and edge class definitions
         """
         pass
 
-    def define_vertex_collections(self, schema: Schema):
-        """Define vertex collections based on schema.
+    def define_vertex_classes(self, schema: Schema):
+        """Define vertex classes based on schema.
 
-        Note: This is a no-op in Neo4j as vertex collections are implicit.
+        Note: This is a no-op in Neo4j as vertex classes (labels) are implicit.
 
         Args:
             schema: Schema containing vertex definitions
         """
         pass
 
-    def define_edge_collections(self, edges: list[Edge]):
-        """Define edge collections based on schema.
+    def define_edge_classes(self, edges: list[Edge]):
+        """Define edge classes based on schema.
 
-        Note: This is a no-op in Neo4j as edge collections are implicit.
+        Note: This is a no-op in Neo4j as edge classes (relationship types) are implicit.
 
         Args:
             edges: List of edge configurations
@@ -363,17 +365,13 @@ class Neo4jConnection(Connection):
     def insert_edges_batch(
         self,
         docs_edges,
-        source_class,
-        target_class,
-        relation_name,
-        collection_name=None,
-        match_keys_source=("_key",),
-        match_keys_target=("_key",),
-        filter_uniques=True,
-        uniq_weight_fields=None,
-        uniq_weight_collections=None,
-        upsert_option=False,
-        head=None,
+        source_class: str,
+        target_class: str,
+        relation_name: str,
+        match_keys_source: tuple[str, ...],
+        match_keys_target: tuple[str, ...],
+        filter_uniques: bool = True,
+        head: int | None = None,
         **kwargs,
     ):
         """Insert a batch of relationships using Cypher.
@@ -386,18 +384,29 @@ class Neo4jConnection(Connection):
             source_class: Source node label
             target_class: Target node label
             relation_name: Relationship type name
-            collection_name: Unused in Neo4j
             match_keys_source: Keys to match source nodes
             match_keys_target: Keys to match target nodes
-            filter_uniques: Unused in Neo4j
-            uniq_weight_fields: Unused in Neo4j
-            uniq_weight_collections: Unused in Neo4j
-            upsert_option: Unused in Neo4j
+            filter_uniques: Unused in Neo4j (MERGE handles uniqueness automatically)
             head: Optional limit on number of relationships to insert
             **kwargs: Additional options:
                 - dry: If True, don't execute the query
+                - collection_name: Unused in Neo4j (kept for interface compatibility)
+                - uniq_weight_fields: Unused in Neo4j (ArangoDB-specific)
+                - uniq_weight_collections: Unused in Neo4j (ArangoDB-specific)
+                - upsert_option: Unused in Neo4j (ArangoDB-specific, MERGE is always upsert)
         """
         dry = kwargs.pop("dry", False)
+        # Extract and ignore unused parameters (kept for interface compatibility)
+        kwargs.pop("collection_name", None)
+        kwargs.pop("uniq_weight_fields", None)
+        kwargs.pop("uniq_weight_collections", None)
+        kwargs.pop("upsert_option", None)
+
+        # Apply head limit if specified
+        if head is not None and isinstance(docs_edges, list):
+            docs_edges = docs_edges[:head]
+
+        # Note: filter_uniques is unused because Neo4j's MERGE handles uniqueness automatically
 
         source_match_str = [f"source.{key} = row[0].{key}" for key in match_keys_source]
         target_match_str = [f"target.{key} = row[1].{key}" for key in match_keys_target]

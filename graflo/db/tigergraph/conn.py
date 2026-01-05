@@ -2,6 +2,7 @@
 
 This module implements the Connection interface for TigerGraph, providing
 specific functionality for graph operations in TigerGraph. It handles:
+
 - Vertex and edge management
 - GSQL query execution
 - Schema management
@@ -9,6 +10,7 @@ specific functionality for graph operations in TigerGraph. It handles:
 - Graph traversal and analytics
 
 Key Features:
+
     - Vertex and edge type management
     - GSQL query execution
     - Schema definition and management
@@ -84,7 +86,7 @@ class TigerGraphConnection(Connection):
     Key conceptual differences from ArangoDB:
     1. TigerGraph uses GSQL (Graph Query Language) instead of AQL
     2. Schema must be defined explicitly before data insertion
-    3. No automatic collection creation - vertices and edges must be pre-defined
+    3. No automatic vertex/edge class creation - vertices and edges must be pre-defined
     4. Different query syntax and execution model
     5. Token-based authentication for some operations
     """
@@ -580,15 +582,15 @@ class TigerGraphConnection(Connection):
                     logger.debug(f"Graph '{graph_name}' already exists in init_db")
                     # If graph already exists, associate types via ALTER GRAPH
                     try:
-                        self.define_vertex_collections(schema.vertex_config)
-                        # Ensure edges are initialized before defining collections
-                        edges_for_collections = list(
+                        self.define_vertex_classes(schema.vertex_config)
+                        # Ensure edges are initialized before defining classes
+                        edges_for_classes = list(
                             schema.edge_config.edges_list(include_aux=True)
                         )
-                        for edge in edges_for_collections:
+                        for edge in edges_for_classes:
                             if edge._source is None or edge._target is None:
                                 edge.finish_init(schema.vertex_config)
-                        self.define_edge_collections(edges_for_collections)
+                        self.define_edge_classes(edges_for_classes)
                     except Exception as define_error:
                         logger.warning(
                             f"Could not define collections for existing graph '{graph_name}': {define_error}",
@@ -639,15 +641,13 @@ class TigerGraphConnection(Connection):
         try:
             # Define vertex and edge types within the graph
             # Graph context is ensured by _ensure_graph_context in the called methods
-            self.define_vertex_collections(schema.vertex_config)
-            # Ensure edges are initialized before defining collections
-            edges_for_collections = list(
-                schema.edge_config.edges_list(include_aux=True)
-            )
-            for edge in edges_for_collections:
+            self.define_vertex_classes(schema.vertex_config)
+            # Ensure edges are initialized before defining classes
+            edges_for_classes = list(schema.edge_config.edges_list(include_aux=True))
+            for edge in edges_for_classes:
                 if edge._source is None or edge._target is None:
                     edge.finish_init(schema.vertex_config)
-            self.define_edge_collections(edges_for_collections)
+            self.define_edge_classes(edges_for_classes)
 
         except Exception as e:
             logger.error(f"Error defining schema: {e}")
@@ -884,7 +884,7 @@ class TigerGraphConnection(Connection):
                     raise
         return vertex_names
 
-    def define_vertex_collections(self, vertex_config: VertexConfig):
+    def define_vertex_classes(self, vertex_config: VertexConfig):
         """Define TigerGraph vertex types and associate them with the current graph.
 
         Flow per vertex type:
@@ -961,7 +961,7 @@ class TigerGraphConnection(Connection):
                     raise
         return edge_names
 
-    def define_edge_collections(self, edges: list[Edge]):
+    def define_edge_classes(self, edges: list[Edge]):
         """Define TigerGraph edge types and associate them with the current graph.
 
         Flow per edge type:
@@ -1765,17 +1765,13 @@ class TigerGraphConnection(Connection):
     def insert_edges_batch(
         self,
         docs_edges,
-        source_class,
-        target_class,
-        relation_name,
-        collection_name=None,
-        match_keys_source=("_key",),
-        match_keys_target=("_key",),
-        filter_uniques=True,
-        uniq_weight_fields=None,
-        uniq_weight_collections=None,
-        upsert_option=False,
-        head=None,
+        source_class: str,
+        target_class: str,
+        relation_name: str,
+        match_keys_source: tuple[str, ...] = ("_key",),
+        match_keys_target: tuple[str, ...] = ("_key",),
+        filter_uniques: bool = True,
+        head: int | None = None,
         **kwargs,
     ):
         """
@@ -1789,18 +1785,23 @@ class TigerGraphConnection(Connection):
             source_class: Source vertex type name
             target_class: Target vertex type name
             relation_name: Edge type/relation name
-            collection_name: Alternative edge collection name (used if relation_name is None)
             match_keys_source: Keys to match source vertices
             match_keys_target: Keys to match target vertices
-            filter_uniques: If True, filter duplicate edges
-            uniq_weight_fields: Fields to consider for uniqueness (not used in TigerGraph)
-            uniq_weight_collections: Collections to consider for uniqueness (not used in TigerGraph)
-            upsert_option: If True, use upsert (default behavior in TigerGraph)
-            head: Optional limit on number of edges to insert
+            filter_uniques: If True, filter duplicate edges (used)
+            head: Optional limit on number of edges to insert (used)
             **kwargs: Additional options:
                 - dry: If True, don't execute the query
+                - collection_name: Alternative edge type name (used if relation_name is None)
+                - uniq_weight_fields: Unused in TigerGraph (ArangoDB-specific)
+                - uniq_weight_collections: Unused in TigerGraph (ArangoDB-specific)
+                - upsert_option: Unused in TigerGraph (ArangoDB-specific, always upserts by default)
         """
         dry = kwargs.pop("dry", False)
+        collection_name = kwargs.pop("collection_name", None)
+        # Extract and ignore ArangoDB-specific parameters
+        kwargs.pop("uniq_weight_fields", None)
+        kwargs.pop("uniq_weight_collections", None)
+        kwargs.pop("upsert_option", None)
         if dry:
             logger.debug(f"Dry run: would insert {len(docs_edges)} edges")
             return

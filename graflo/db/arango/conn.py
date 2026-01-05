@@ -2,15 +2,17 @@
 
 This module implements the Connection interface for ArangoDB, providing
 specific functionality for graph operations in ArangoDB. It handles:
-- Graph and collection management
+
+- Graph and vertex/edge class management (ArangoDB uses collections internally)
 - Document and edge operations
 - Index creation and management
 - AQL query execution
 - Batch operations with upsert support
 
 Key Features:
+
     - Graph-based document organization
-    - Edge collection management
+    - Vertex and edge class management
     - Persistent, hash, skiplist, and fulltext indices
     - Batch document and edge operations
     - AQL query generation and execution
@@ -211,7 +213,7 @@ class ArangoConnection(Connection):
 
         Args:
             schema: Schema containing graph structure definitions
-            clean_start: If True, delete all existing collections before initialization
+            clean_start: If True, delete all existing vertex and edge classes before initialization
         """
         # Determine database name: use config.database if set, otherwise use schema.general.name
         db_name = self.config.database
@@ -307,10 +309,10 @@ class ArangoConnection(Connection):
         Args:
             schema: Schema containing collection definitions
         """
-        self.define_vertex_collections(schema)
-        self.define_edge_collections(schema.edge_config.edges_list(include_aux=True))
+        self.define_vertex_classes(schema)
+        self.define_edge_classes(schema.edge_config.edges_list(include_aux=True))
 
-    def define_vertex_collections(self, schema: Schema):
+    def define_vertex_classes(self, schema: Schema):
         """Define vertex collections in ArangoDB.
 
         Creates vertex collections for both connected and disconnected vertices,
@@ -349,8 +351,8 @@ class ArangoConnection(Connection):
                 vertex_config.vertex_dbname(v), vertex_config.index(v), None
             )
 
-    def define_edge_collections(self, edges: list[Edge]):
-        """Define edge collections in ArangoDB.
+    def define_edge_classes(self, edges: list[Edge]):
+        """Define edge classes in ArangoDB.
 
         Creates edge collections and their definitions in the appropriate graphs.
 
@@ -463,12 +465,12 @@ class ArangoConnection(Connection):
         return r
 
     def create_collection(self, db_class_name, index: None | Index = None, g=None):
-        """Create a new ArangoDB collection.
+        """Create a new vertex or edge class (ArangoDB uses collections internally).
 
         Args:
-            db_class_name: Name of the collection to create
-            index: Optional index to create on the collection
-            g: Optional graph to create the collection in
+            db_class_name: Name of the vertex/edge class to create (ArangoDB collection name)
+            index: Optional index to create on the class
+            g: Optional graph to create the class in
 
         Returns:
             IndexHandle: Handle to the created index if one was created
@@ -486,20 +488,20 @@ class ArangoConnection(Connection):
                 return None
 
     def delete_graph_structure(self, vertex_types=(), graph_names=(), delete_all=False):
-        """Delete graph structure (collections and graphs) from ArangoDB.
+        """Delete graph structure (vertex/edge classes and graphs) from ArangoDB.
 
         In ArangoDB:
-        - Collections: Container for vertices (vertex collections) and edges (edge collections)
+        - Collections (internal): Container for vertices (vertex collections) and edges (edge collections)
         - Graphs: Named graphs that connect vertex and edge collections
 
         Args:
-            vertex_types: Collection names to delete (vertex or edge collections)
+            vertex_types: Vertex/edge class names to delete (ArangoDB collection names)
             graph_names: Graph names to delete
-            delete_all: If True, delete all non-system collections and graphs
+            delete_all: If True, delete all non-system vertex/edge classes and graphs
         """
         cnames = vertex_types
         gnames = graph_names
-        logger.info("collections (non system):")
+        logger.info("vertex/edge classes (non system, ArangoDB collections):")
         logger.info([c for c in self.conn.collections() if c["name"][0] != "_"])
 
         if delete_all:
@@ -517,17 +519,19 @@ class ArangoConnection(Connection):
             if self.conn.has_collection(cn):
                 self.conn.delete_collection(cn)
 
-        logger.info("collections (after delete operation):")
+        logger.info(
+            "vertex/edge classes (after delete operation, ArangoDB collections):"
+        )
         logger.info([c for c in self.conn.collections() if c["name"][0] != "_"])
 
         logger.info("graphs:")
         logger.info(self.conn.graphs())
 
     def get_collections(self):
-        """Get all collections in the database.
+        """Get all vertex and edge classes in the database (ArangoDB collections).
 
         Returns:
-            list: List of collection information dictionaries
+            list: List of class information dictionaries (ArangoDB collection info)
         """
         return self.conn.collections()
 
@@ -589,17 +593,13 @@ class ArangoConnection(Connection):
     def insert_edges_batch(
         self,
         docs_edges,
-        source_class,
-        target_class,
-        relation_name=None,
-        collection_name=None,
-        match_keys_source=("_key",),
-        match_keys_target=("_key",),
-        filter_uniques=True,
-        uniq_weight_fields=None,
-        uniq_weight_collections=None,
-        upsert_option=False,
-        head=None,
+        source_class: str,
+        target_class: str,
+        relation_name: str | None = None,
+        match_keys_source: tuple[str, ...] = ("_key",),
+        match_keys_target: tuple[str, ...] = ("_key",),
+        filter_uniques: bool = True,
+        head: int | None = None,
         **kwargs,
     ):
         """Insert a batch of edges using AQL.
@@ -609,21 +609,31 @@ class ArangoConnection(Connection):
 
         Args:
             docs_edges: List of edge documents in format [{_source_aux: source_doc, _target_aux: target_doc}]
-            source_class: Source vertex collection name
-            target_class: Target vertex collection name
+            source_class: Source vertex class name
+            target_class: Target vertex class name
             relation_name: Optional relation name for the edges
-            collection_name: Edge collection name
             match_keys_source: Keys to match source vertices
             match_keys_target: Keys to match target vertices
             filter_uniques: If True, filter duplicate edges
-            uniq_weight_fields: Fields to consider for uniqueness
-            uniq_weight_collections: Collections to consider for uniqueness
-            upsert_option: If True, use upsert instead of insert
             head: Optional limit on number of edges to insert
             **kwargs: Additional options:
                 - dry: If True, don't execute the query
+                - collection_name: Edge collection name (defaults to {source_class}_{target_class}_edges if not provided)
+                - uniq_weight_fields: Fields to consider for uniqueness
+                - uniq_weight_collections: Classes to consider for uniqueness
+                - upsert_option: If True, use upsert instead of insert
         """
         dry = kwargs.pop("dry", False)
+
+        # Extract collection_name from kwargs, with default generation
+        collection_name = kwargs.pop("collection_name", None)
+        if collection_name is None:
+            collection_name = f"{source_class}_{target_class}_edges"
+
+        # Extract ArangoDB-specific parameters from kwargs
+        uniq_weight_fields = kwargs.pop("uniq_weight_fields", None)
+        uniq_weight_collections = kwargs.pop("uniq_weight_collections", None)
+        upsert_option = kwargs.pop("upsert_option", False)
 
         if isinstance(docs_edges, list):
             if docs_edges:
@@ -1012,7 +1022,7 @@ class ArangoConnection(Connection):
         """Update a field to numeric type in all documents.
 
         Args:
-            collection_name: Collection to update
+            collection_name: Vertex/edge class name to update (ArangoDB collection name)
             field: Field to convert to numeric
 
         Returns:

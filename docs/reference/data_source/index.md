@@ -5,6 +5,7 @@ This section documents the data source abstraction layer in graflo. Data sources
 ## Overview
 
 Data sources handle data retrieval from various sources:
+
 - **File Data Sources**: JSON, JSONL, CSV/TSV files
 - **API Data Sources**: REST API endpoints
 - **SQL Data Sources**: SQL databases
@@ -17,6 +18,7 @@ Many data sources can map to the same Resource, allowing flexible data ingestion
 ### AbstractDataSource
 
 Base class for all data sources. Provides:
+
 - Unified batch iteration interface (`iter_batches()`)
 - Resource name mapping
 - Type information
@@ -24,6 +26,7 @@ Base class for all data sources. Provides:
 ### DataSourceFactory
 
 Factory for creating data source instances:
+
 - Automatic type detection
 - Configuration-based creation
 - Support for all data source types
@@ -31,6 +34,7 @@ Factory for creating data source instances:
 ### DataSourceRegistry
 
 Maps data sources to resource names:
+
 - Register multiple data sources per resource
 - Retrieve data sources by resource name
 - Manage data source lifecycle
@@ -62,6 +66,7 @@ REST API connector with full HTTP configuration support.
 ### APIConfig
 
 Configuration for API endpoints:
+
 - URL, method, headers
 - Authentication (Basic, Bearer, Digest)
 - Query parameters, timeouts, retries
@@ -70,6 +75,7 @@ Configuration for API endpoints:
 ### PaginationConfig
 
 Pagination configuration:
+
 - Offset-based pagination
 - Cursor-based pagination
 - Page-based pagination
@@ -84,6 +90,7 @@ SQL database connector using SQLAlchemy.
 ### SQLConfig
 
 SQL configuration:
+
 - Connection string (SQLAlchemy format)
 - Query string with parameterized queries
 - Pagination support
@@ -93,6 +100,7 @@ SQL configuration:
 ### InMemoryDataSource
 
 For Python objects already in memory:
+
 - `list[dict]`: List of dictionaries
 - `list[list]`: List of lists (requires column names)
 - `pd.DataFrame`: Pandas DataFrame

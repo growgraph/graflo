@@ -5,10 +5,12 @@ a unified API for different graph database implementations. It includes methods
 for database management, graph structure operations, and data manipulation.
 
 Key Components:
+
     - Connection: Abstract base class for database connections
     - ConnectionType: Type variable for connection implementations
 
 The connection interface supports:
+
     - Database/Graph creation and deletion
     - Graph structure management (vertex types, edge types)
     - Index definition
@@ -21,8 +23,8 @@ Database Organization Terminology:
 
     - ArangoDB:
         * Database: Top-level container (like a schema)
-        * Collections: Container for vertices (vertex collections)
-        * Edge Collections: Container for edges
+        * Collections (ArangoDB-specific): Container for vertices (vertex collections)
+        * Edge Collections (ArangoDB-specific): Container for edges
         * Graph: Named graph that connects vertex and edge collections
 
     - Neo4j:
@@ -121,10 +123,10 @@ class Connection(abc.ABC):
 
     @abc.abstractmethod
     def define_schema(self, schema: Schema):
-        """Define collections based on the schema.
+        """Define vertex and edge classes based on the schema.
 
         Args:
-            schema: Schema containing collection definitions
+            schema: Schema containing vertex and edge class definitions
         """
         pass
 
@@ -172,17 +174,13 @@ class Connection(abc.ABC):
     def insert_edges_batch(
         self,
         docs_edges,
-        source_class,
-        target_class,
-        relation_name,
-        collection_name,
-        match_keys_source,
-        match_keys_target,
-        filter_uniques=True,
-        uniq_weight_fields=None,
-        uniq_weight_collections=None,
-        upsert_option=False,
-        head=None,
+        source_class: str,
+        target_class: str,
+        relation_name: str,
+        match_keys_source: tuple[str, ...],
+        match_keys_target: tuple[str, ...],
+        filter_uniques: bool = True,
+        head: int | None = None,
         **kwargs,
     ):
         """Insert a batch of edges.
@@ -192,15 +190,17 @@ class Connection(abc.ABC):
             source_class: Source vertex type/class
             target_class: Target vertex type/class
             relation_name: Name of the edge type/relation
-            collection_name: Name of the edge type (database-specific: collection/relationship type)
             match_keys_source: Keys to match source vertices
             match_keys_target: Keys to match target vertices
             filter_uniques: Whether to filter unique edges
-            uniq_weight_fields: Fields to consider for uniqueness
-            uniq_weight_collections: Vertex/edge types to consider for uniqueness (database-specific)
-            upsert_option: Whether to upsert existing edges
-            head: Optional head document
-            **kwargs: Additional insertion parameters
+            head: Optional limit on number of edges to insert
+            **kwargs: Additional insertion parameters, including:
+                - collection_name: Name of the edge type (database-specific: collection/relationship type).
+                  Required for ArangoDB (defaults to {source_class}_{target_class}_edges if not provided),
+                  optional for other databases.
+                - uniq_weight_fields: Fields to consider for uniqueness (ArangoDB-specific)
+                - uniq_weight_collections: Vertex/edge types to consider for uniqueness (ArangoDB-specific)
+                - upsert_option: Whether to upsert existing edges (ArangoDB-specific)
         """
         pass
 
@@ -348,7 +348,7 @@ class Connection(abc.ABC):
 
     @abc.abstractmethod
     def define_vertex_indices(self, vertex_config: VertexConfig):
-        """Define indices for vertex collections.
+        """Define indices for vertex classes.
 
         Args:
             vertex_config: Vertex configuration containing index definitions
@@ -357,7 +357,7 @@ class Connection(abc.ABC):
 
     @abc.abstractmethod
     def define_edge_indices(self, edges: list[Edge]):
-        """Define indices for edge collections.
+        """Define indices for edge classes.
 
         Args:
             edges: List of edge configurations containing index definitions
@@ -365,11 +365,11 @@ class Connection(abc.ABC):
         pass
 
     # @abc.abstractmethod
-    # def define_vertex_collections(self, graph_config, vertex_config):
+    # def define_vertex_classes(self, graph_config, vertex_config):
     #     pass
     #
     # @abc.abstractmethod
-    # def define_edge_collections(self, graph_config):
+    # def define_edge_classes(self, graph_config):
     #     pass
 
     # @abc.abstractmethod

@@ -373,11 +373,11 @@ class Caster:
                             source_class=vc.vertex_dbname(edge.source),
                             target_class=vc.vertex_dbname(edge.target),
                             relation_name=relation,
-                            collection_name=edge.database_name,
                             match_keys_source=vc.index(edge.source).fields,
                             match_keys_target=vc.index(edge.target).fields,
                             filter_uniques=False,
                             dry=self.ingestion_params.dry,
+                            collection_name=edge.database_name,
                         )
 
     def process_with_queue(self, tasks: mp.Queue, conn_conf: DBConfig | None = None):

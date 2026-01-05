@@ -137,7 +137,7 @@ def fetch_fields_query(
     that match the given criteria. It supports filtering and field projection.
 
     Args:
-        collection_name: Collection to query
+        collection_name: Vertex/edge class name to query (ArangoDB collection name)
         docs: List of documents to match against
         match_keys: Keys to use for matching documents
         keep_keys: Keys to return in the result

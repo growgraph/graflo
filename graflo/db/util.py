@@ -7,7 +7,8 @@ Key Functions:
     - get_data_from_cursor: Retrieve data from a cursor with optional limit
 
 Example:
-    >>> cursor = db.execute("FOR doc IN collection RETURN doc")
+    >>> # ArangoDB-specific AQL query (collection is ArangoDB terminology)
+    >>> cursor = db.execute("FOR doc IN vertex_class RETURN doc")
     >>> batch = get_data_from_cursor(cursor, limit=100)
 """
 
