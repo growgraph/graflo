@@ -106,12 +106,14 @@ class DBFlavor(BaseEnum):
         NEO4J: Neo4j database
         TIGERGRAPH: TigerGraph database
         FALKORDB: FalkorDB database (Redis-based graph database using Cypher)
+        NEBULA: NebulaGraph database
     """
 
     ARANGO = "arango"
     NEO4J = "neo4j"
     TIGERGRAPH = "tigergraph"
     FALKORDB = "falkordb"
+    NEBULA = "nebula"
 
 
 class ExpressionFlavor(BaseEnum):

@@ -2,7 +2,7 @@ services:
     nebula-metad:
         image: vesoft/nebula-metad:${NEBULA_VERSION}
         restart: "no"
-        profiles: ["test.nebula"]
+        profiles: ["${SPEC}.nebula"]
         ports:
         -   "${METAD_PORT}:9559"
         container_name: ${METAD_CONTAINER_NAME}
@@ -16,7 +16,7 @@ services:
     nebula-storaged:
         image: vesoft/nebula-storaged:${NEBULA_VERSION}
         restart: "no"
-        profiles: ["test.nebula"]
+        profiles: ["${SPEC}.nebula"]
         ports:
         -   "${STORAGED_PORT}:9779"
         container_name: ${STORAGED_CONTAINER_NAME}
@@ -41,7 +41,7 @@ services:
     nebula-graphd:
         image: vesoft/nebula-graphd:${NEBULA_VERSION}
         restart: "no"
-        profiles: ["test.nebula"]
+        profiles: ["${SPEC}.nebula"]
         ports:
         -   "${NEBULA_PORT}:9669"
         container_name: ${CONTAINER_NAME}
@@ -68,7 +68,7 @@ services:
     nebula-graphstudio:
         image: vesoft/nebula-graph-studio:${NEBULA_VERSION}
         restart: "no"
-        profiles: ["test.nebula"]
+        profiles: ["${SPEC}.nebula"]
         ports:
         -   "${GRAPHSTUDIO_PORT}:7001"
         container_name: ${SPEC}.nebula-graphstudio
