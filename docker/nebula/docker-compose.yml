@@ -1,0 +1,86 @@
+services:
+    nebula-metad:
+        image: vesoft/nebula-metad:${NEBULA_VERSION}
+        restart: "no"
+        profiles: ["${SPEC}.nebula"]
+        ports:
+        -   "${METAD_PORT}:9559"
+        container_name: ${METAD_CONTAINER_NAME}
+        volumes:
+        -   ${STORE_FOLDER}/metad/data:/data/meta
+        -   ${STORE_FOLDER}/metad/logs:/usr/local/nebula/logs
+        networks:
+        -   nebula-net
+        hostname: nebula-metad
+
+    nebula-storaged:
+        image: vesoft/nebula-storaged:${NEBULA_VERSION}
+        restart: "no"
+        profiles: ["${SPEC}.nebula"]
+        ports:
+        -   "${STORAGED_PORT}:9779"
+        container_name: ${STORAGED_CONTAINER_NAME}
+        volumes:
+        -   ${STORE_FOLDER}/storaged/data:/data/storage
+        -   ${STORE_FOLDER}/storaged/logs:/usr/local/nebula/logs
+        networks:
+        -   nebula-net
+        depends_on:
+        -   nebula-metad
+        hostname: nebula-storaged
+        command:
+        -   --meta_server_addrs=nebula-metad:9559
+        -   --local_ip=nebula-storaged
+        -   --ws_ip=nebula-storaged
+        -   --port=9779
+        -   --data_path=/data/storage
+        -   --log_dir=/usr/local/nebula/logs
+        -   --v=0
+        -   --minloglevel=0
+
+    nebula-graphd:
+        image: vesoft/nebula-graphd:${NEBULA_VERSION}
+        restart: "no"
+        profiles: ["${SPEC}.nebula"]
+        ports:
+        -   "${NEBULA_PORT}:9669"
+        container_name: ${CONTAINER_NAME}
+        volumes:
+        -   ${STORE_FOLDER}/graphd/logs:/usr/local/nebula/logs
+        networks:
+        -   nebula-net
+        depends_on:
+        -   nebula-metad
+        -   nebula-storaged
+        environment:
+        -   USER=${NEBULA_USER}
+        -   PASSWORD=${NEBULA_PASSWORD}
+        hostname: nebula-graphd
+        command:
+        -   --meta_server_addrs=nebula-metad:9559
+        -   --local_ip=nebula-graphd
+        -   --ws_ip=nebula-graphd
+        -   --port=9669
+        -   --log_dir=/usr/local/nebula/logs
+        -   --v=0
+        -   --minloglevel=0
+
+    nebula-graphstudio:
+        image: vesoft/nebula-graph-studio:${NEBULA_VERSION}
+        restart: "no"
+        profiles: ["${SPEC}.nebula"]
+        ports:
+        -   "${GRAPHSTUDIO_PORT}:7001"
+        container_name: ${SPEC}.nebula-graphstudio
+        networks:
+        -   nebula-net
+        depends_on:
+        -   nebula-graphd
+        environment:
+        -   NGINX_HOST=localhost
+        -   NGINX_PORT=${GRAPHSTUDIO_PORT}
+        -   NEBULA_ADDRESS=nebula-graphd:${NEBULA_PORT}
+
+networks:
+    nebula-net:
+        driver: bridge

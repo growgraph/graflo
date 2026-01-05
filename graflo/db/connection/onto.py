@@ -36,6 +36,7 @@ class DBType(StrEnum, metaclass=EnumMetaWithContains):
     NEO4J = "neo4j"
     TIGERGRAPH = "tigergraph"
     FALKORDB = "falkordb"
+    NEBULA = "nebula"
 
     # Source databases (SQL, NoSQL)
     POSTGRES = "postgres"
@@ -57,6 +58,7 @@ SOURCE_DATABASES: set[DBType] = {
     DBType.NEO4J,  # Graph DBs can be sources
     DBType.TIGERGRAPH,  # Graph DBs can be sources
     DBType.FALKORDB,  # Graph DBs can be sources
+    DBType.NEBULA,  # Graph DBs can be sources
     DBType.POSTGRES,  # SQL DBs
     DBType.MYSQL,
     DBType.MONGODB,
@@ -69,6 +71,7 @@ TARGET_DATABASES: set[DBType] = {
     DBType.NEO4J,
     DBType.TIGERGRAPH,
     DBType.FALKORDB,
+    DBType.NEBULA,
 }
 
 
@@ -689,6 +692,83 @@ class FalkordbConfig(DBConfig):
         # Graph name (database in unified model)
         if "FALKORDB_DATABASE" in env_vars:
             config_data["database"] = env_vars["FALKORDB_DATABASE"]
+
+        return cls(**config_data)
+
+
+class NebulaConfig(DBConfig):
+    """Configuration for NebulaGraph connections."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="NEBULA_",
+        case_sensitive=False,
+    )
+
+    def _get_default_port(self) -> int:
+        """Get default NebulaGraph GraphD port."""
+        return 9669
+
+    def _get_effective_database(self) -> str | None:
+        """NebulaGraph doesn't have a database level (connection -> space -> vertices/edges)."""
+        return None
+
+    def _get_effective_schema(self) -> str | None:
+        """For NebulaGraph, 'schema_name' field maps to schema (space) in unified model.
+
+        NebulaGraph structure: connection -> space -> vertices/edges
+        Unified model: connection -> schema -> entities
+        """
+        return self.schema_name
+
+    @classmethod
+    def from_docker_env(cls, docker_dir: str | Path | None = None) -> "NebulaConfig":
+        """Load NebulaGraph config from docker/nebula/.env file."""
+        if docker_dir is None:
+            docker_dir = (
+                Path(__file__).parent.parent.parent.parent / "docker" / "nebula"
+            )
+        else:
+            docker_dir = Path(docker_dir)
+
+        env_file = docker_dir / ".env"
+        if not env_file.exists():
+            raise FileNotFoundError(f"Environment file not found: {env_file}")
+
+        # Load .env file manually
+        env_vars: Dict[str, str] = {}
+        with open(env_file, "r") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, value = line.split("=", 1)
+                    env_vars[key.strip()] = value.strip().strip('"').strip("'")
+
+        # Map environment variables to config
+        config_data: Dict[str, Any] = {}
+        if "NEBULA_URI" in env_vars:
+            config_data["uri"] = env_vars["NEBULA_URI"]
+        elif "NEBULA_PORT" in env_vars:
+            port = env_vars["NEBULA_PORT"]
+            hostname = env_vars.get("NEBULA_ADDRESS", "localhost")
+            protocol = env_vars.get("NEBULA_PROTOCOL", "nebula")
+            config_data["uri"] = f"{protocol}://{hostname}:{port}"
+        elif "NEBULA_ADDRESS" in env_vars:
+            # NebulaGraph often uses NEBULA_ADDRESS instead of NEBULA_HOSTNAME
+            port = env_vars.get("NEBULA_PORT", "9669")
+            hostname = env_vars["NEBULA_ADDRESS"]
+            protocol = env_vars.get("NEBULA_PROTOCOL", "nebula")
+            config_data["uri"] = f"{protocol}://{hostname}:{port}"
+
+        if "NEBULA_USER" in env_vars or "NEBULA_USERNAME" in env_vars:
+            config_data["username"] = env_vars.get("NEBULA_USER") or env_vars.get(
+                "NEBULA_USERNAME"
+            )
+        if "NEBULA_PASSWORD" in env_vars:
+            config_data["password"] = env_vars["NEBULA_PASSWORD"]
+        if "NEBULA_SPACE" in env_vars or "NEBULA_SCHEMA_NAME" in env_vars:
+            config_data["schema_name"] = env_vars.get("NEBULA_SPACE") or env_vars.get(
+                "NEBULA_SCHEMA_NAME"
+            )
 
         return cls(**config_data)
 
