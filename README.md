@@ -1,6 +1,6 @@
 # GraFlo <img src="https://raw.githubusercontent.com/growgraph/graflo/main/docs/assets/favicon.ico" alt="graflo logo" style="height: 32px; width:32px;"/>
 
-A framework for transforming **tabular** (CSV, SQL) and **hierarchical** data (JSON, XML) into property graphs and ingesting them into graph databases (ArangoDB, Neo4j, **TigerGraph**).
+A framework for transforming **tabular** (CSV, SQL) and **hierarchical** data (JSON, XML) into property graphs and ingesting them into graph databases (ArangoDB, Neo4j, **TigerGraph**, **FalkorDB**).
 
 > **⚠️ Package Renamed**: This package was formerly known as `graphcast`.
 
@@ -58,7 +58,7 @@ Resources are your data sources that can be:
     - Create Resource mappings from PostgreSQL tables automatically
     - Direct database access - ingest data without exporting to files first
 - **Parallel processing**: Use as many cores as you have
-- **Database support**: Ingest into ArangoDB, Neo4j, and **TigerGraph** using the same API (database agnostic). Source data from PostgreSQL and other SQL databases.
+- **Database support**: Ingest into ArangoDB, Neo4j, **TigerGraph**, and **FalkorDB** using the same API (database agnostic). Source data from PostgreSQL and other SQL databases.
 - **Server-side filtering**: Efficient querying with server-side filtering support (TigerGraph REST++ API)
 
 ## Documentation
@@ -191,10 +191,16 @@ Neo4j from [neo4j docker folder](./docker/neo4j) by
 docker-compose --env-file .env up neo4j
 ```
 
-and TigerGraph from [tigergraph docker folder](./docker/tigergraph) by
+TigerGraph from [tigergraph docker folder](./docker/tigergraph) by
 
 ```shell
 docker-compose --env-file .env up tigergraph
+```
+
+and FalkorDB from [falkordb docker folder](./docker/falkordb) by
+
+```shell
+docker-compose --env-file .env up falkordb
 ```
 
 To run unit tests

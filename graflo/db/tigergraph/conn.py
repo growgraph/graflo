@@ -45,35 +45,14 @@ from graflo.db.tigergraph.onto import (
     TIGERGRAPH_TYPE_ALIASES,
     VALID_TIGERGRAPH_TYPES,
 )
+from graflo.db.util import json_serializer
 from graflo.filter.onto import Clause, Expression
 from graflo.onto import AggregationType, DBFlavor, ExpressionFlavor
 from graflo.util.transform import pick_unique_dict
 from urllib.parse import quote
 
-
-def _json_serializer(obj):
-    """JSON serializer for objects not serializable by default json code.
-
-    Handles datetime, date, time, and other non-serializable types.
-    Decimal should already be converted to float at the data source level.
-
-    Args:
-        obj: Object to serialize
-
-    Returns:
-        JSON-serializable representation
-    """
-    from datetime import date, datetime, time
-
-    if isinstance(obj, (datetime, date, time)):
-        return obj.isoformat()
-    # Decimal should be converted to float at source (SQLDataSource)
-    # But handle it here as a fallback
-    from decimal import Decimal
-
-    if isinstance(obj, Decimal):
-        return float(obj)
-    raise TypeError(f"Type {type(obj)} not serializable")
+# Alias for backward compatibility
+_json_serializer = json_serializer
 
 
 logger = logging.getLogger(__name__)

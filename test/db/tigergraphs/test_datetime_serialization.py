@@ -8,7 +8,10 @@ from datetime import date, datetime, time
 
 import pytest
 
-from graflo.db.tigergraph.conn import _json_serializer
+from graflo.db.util import json_serializer
+
+# Alias for backward compatibility with test
+_json_serializer = json_serializer
 
 
 class TestDatetimeSerialization:

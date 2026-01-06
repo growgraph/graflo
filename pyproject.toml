@@ -49,7 +49,7 @@ description = "A framework for transforming tabular (CSV, SQL) and hierarchical 
 name = "graflo"
 readme = "README.md"
 requires-python = "~=3.10.0"
-version = "1.3.8"
+version = "1.3.9"
 
 [project.optional-dependencies]
 plot = [
@@ -67,3 +67,8 @@ include = ["graflo"]
 
 [tool.hatch.build.targets.wheel]
 include = ["graflo"]
+
+[tool.pytest.ini_options]
+markers = [
+  "slow: marks tests as slow (deselect with '-m \"not slow\"')"
+]

@@ -1,0 +1,29 @@
+CREATE QUERY countGB() FOR GRAPH public {
+
+  /* 1. Define accumulators */
+  SumAccum<INT> @@total_triples;           // Global total
+  MapAccum<STRING, INT> @@counts_by_user;  // Grouped: { "Name": Count }
+
+  /* 2. Start with users */
+  Seed = {users.*};
+
+  /* 3. Process follows (User -> User) */
+  S1 = SELECT t
+       FROM Seed:s -(follows:e)-> users:t
+       ACCUM
+         @@total_triples += 1,
+         @@counts_by_user += (s.name -> 1);
+
+  /* 4. Process purchases (User -> Product) */
+  S2 = SELECT t
+       FROM Seed:s -(purchases:e)-> products:t
+       ACCUM
+         @@total_triples += 1,
+         @@counts_by_user += (s.name -> 1);
+
+  /* 5. Output results */
+  PRINT @@total_triples AS TotalTriples;
+  PRINT @@counts_by_user AS InteractionsPerUser;
+}
+
+

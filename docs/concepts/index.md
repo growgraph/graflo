@@ -33,7 +33,7 @@ The `Schema` is the central configuration that defines how data sources are tran
 - Resource mappings
 - Data transformations
 - Index configurations
-- Automatic schema inference from PostgreSQL 3NF databases
+- Automatic schema inference from normalized PostgreSQL databases (3NF) with proper primary keys (PK) and foreign keys (FK) using intelligent heuristics
 
 ### Vertex
 A `Vertex` describes vertices and their database indexes. It supports:
@@ -171,7 +171,7 @@ A `Transform` defines data transforms, from renaming and type-casting to arbitra
 - **Edge Constraints**: Ensure edge uniqueness based on source, target, and weight
 - **Reusable Transforms**: Define and reference transformations by name
 - **Vertex Filtering**: Filter vertices based on custom conditions
-- **PostgreSQL Schema Inference**: Automatically infer schemas from PostgreSQL 3NF databases
+- **PostgreSQL Schema Inference**: Automatically infer schemas from normalized PostgreSQL databases (3NF) with proper primary keys (PK) and foreign keys (FK) decorated, using intelligent heuristics to detect vertices and edges
 
 ### Performance Optimization
 - **Batch Processing**: Process large datasets in configurable batches (`batch_size` parameter of `Caster`)
@@ -193,6 +193,6 @@ A `Transform` defines data transforms, from renaming and type-casting to arbitra
    - Specify types for weight fields when using databases that require type information (e.g., TigerGraph)
    - Use typed `Field` objects or dicts with `type` key for better validation
 8. Leverage key matching (`match_source`, `match_target`) for complex matching scenarios
-9. Use PostgreSQL schema inference for automatic schema generation from existing 3NF databases
+9. Use PostgreSQL schema inference for automatic schema generation from normalized databases (3NF) with proper PK/FK constraints - the heuristics work best when primary keys and foreign keys are properly decorated
 10. Specify field types for better validation and database-specific optimizations, especially when targeting TigerGraph
 

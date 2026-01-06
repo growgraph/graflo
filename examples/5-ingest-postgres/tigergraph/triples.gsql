@@ -1,0 +1,22 @@
+CREATE OR REPLACE QUERY checkAll() FOR GRAPH public {
+
+TYPEDEF TUPLE <STRING u, STRING relation, STRING v> TRIPLE;
+  ListAccum<TRIPLE> @@triple_list;
+
+  /* 2. Start with users */
+  Seed = {users.*};
+
+  /* 3. Capture follows (User -> User) */
+  S1 = SELECT t
+       FROM Seed:s -(follows:e)-> users:t
+       ACCUM @@triple_list += TRIPLE(s.name, "follows", t.name);
+
+  /* 4. Capture purchases (User -> Product) */
+  S2 = SELECT t
+       FROM Seed:s -(purchases:e)-> products:t
+       ACCUM @@triple_list += TRIPLE(s.name, "purchases", t.name);
+
+  /* 5. Print only the list */
+  PRINT
+  PRINT @@triple_list;
+}

@@ -6,15 +6,26 @@ This example demonstrates how to automatically infer a graph schema from a Postg
 
 Instead of manually defining schemas and exporting data to files, this example shows how to:
 
-- **Automatically detect** vertex-like and edge-like tables in PostgreSQL
+- **Automatically detect** vertex-like and edge-like tables in PostgreSQL using intelligent heuristics
 - **Infer the graph schema** from the database structure
 - **Map PostgreSQL types** to graflo Field types automatically
 - **Create patterns** that map PostgreSQL tables to graph resources
 - **Ingest data directly** from PostgreSQL into a graph database
 
+## Requirements
+
+**Database Requirements**: This feature works best with normalized PostgreSQL databases (3NF - Third Normal Form) that have:
+- **Primary Keys (PK)**: Tables should have proper primary key constraints decorated
+- **Foreign Keys (FK)**: Tables should have proper foreign key constraints decorated
+- **Normalized Structure**: Database should follow 3NF normalization principles
+
+The inference engine uses heuristics to classify tables:
+- **Vertex tables**: Identified by having primary keys and descriptive columns
+- **Edge tables**: Identified by having 2+ foreign keys representing relationships
+
 ## PostgreSQL Database Structure
 
-The example uses a PostgreSQL database with a typical 3NF (Third Normal Form) schema:
+The example uses a PostgreSQL database with a typical 3NF (Third Normal Form) schema with proper primary keys and foreign keys:
 
 ### Vertex Tables (Entities)
 
@@ -64,21 +75,23 @@ The `infer_schema_from_postgres()` function automatically analyzes your PostgreS
 
 ### Detection Heuristics
 
-The inference engine uses intelligent heuristics to classify tables:
+The inference engine uses intelligent heuristics to classify tables. **These heuristics work best with normalized databases (3NF) that have proper primary keys (PK) and foreign keys (FK) decorated:**
 
-**Vertex Tables:**
+**Vertex Tables** (detected by heuristics):
 
-- Have a primary key (identifies unique entities)
-- Contain descriptive columns beyond just foreign keys
+- **Require**: Primary key (PK) constraint decorated on the table
+- Have descriptive columns beyond just foreign keys
 - Represent domain entities (users, products, etc.)
 - Typically have more non-foreign-key columns than foreign keys
+- Primary keys automatically become vertex indexes
 
-**Edge Tables:**
+**Edge Tables** (detected by heuristics):
 
-- Have 2+ foreign keys (representing relationships between entities)
+- **Require**: 2+ foreign key (FK) constraints decorated on the table
+- Foreign keys represent relationships between entities
 - May have additional attributes (weights, timestamps, quantities)
 - Represent relationships or transactions between entities
-- Foreign keys point to vertex tables
+- Foreign keys point to vertex tables and become edge source/target mappings
 
 **Edge Relation Inference:**
 
@@ -193,6 +206,45 @@ def load_mock_schema_if_needed(postgres_conn: PostgresConnection) -> None:
 load_mock_schema_if_needed(postgres_conn)
 ```
 
+### Step 2.5: Choose Target Graph Database
+
+You can ingest data into any supported graph database. Simply uncomment the desired database configuration in your script:
+
+```python
+from graflo.db.connection.onto import ArangoConfig, Neo4jConfig, TigergraphConfig, FalkordbConfig
+
+# Choose one of the following target databases:
+# Option 1: ArangoDB
+target_config = ArangoConfig.from_docker_env()
+
+# Option 2: Neo4j
+# target_config = Neo4jConfig.from_docker_env()
+
+# Option 3: TigerGraph
+# target_config = TigergraphConfig.from_docker_env()
+
+# Option 4: FalkorDB
+# target_config = FalkordbConfig.from_docker_env()
+```
+
+**Viewing Results in Web Interfaces:**
+
+After ingestion, you can view and explore your graph data in each database's web interface:
+
+- **ArangoDB**: Open `http://localhost:8535` in your browser (check `ARANGO_PORT` in `docker/arango/.env`, standard port is 8529)
+  - Default credentials: username `root`, password from secret file
+  
+- **Neo4j**: Open `http://localhost:7475` in your browser (check `NEO4J_PORT` in `docker/neo4j/.env`, standard port is 7474)
+  - Use the Neo4j Browser to run Cypher queries and visualize your graph
+  
+- **TigerGraph**: Open `http://localhost:14241` in your browser (check `TG_WEB` in `docker/tigergraph/.env`, standard port is 14240)
+  - Access GraphStudio to explore your graph schema and data
+  
+- **FalkorDB**: Open `http://localhost:3001` in your browser (check `FALKORDB_BROWSER_PORT` in `docker/falkordb/.env`)
+  - Use the FalkorDB Browser UI to query and visualize your graph
+
+Make sure the corresponding database container is running before starting ingestion. You can start databases using docker-compose from their respective directories (e.g., `docker/arango/docker-compose.yml`).
+
 ### Step 3: Infer Schema from PostgreSQL
 
 Automatically generate a graflo Schema from your PostgreSQL database. This is the core of the automatic inference process:
@@ -212,15 +264,20 @@ Automatically generate a graflo Schema from your PostgreSQL database. This is th
 ```python
 from graflo.db.postgres import infer_schema_from_postgres
 from graflo.onto import DBFlavor
-from graflo.db.connection.onto import ArangoConfig, Neo4jConfig
+from graflo.db.connection.onto import ArangoConfig, Neo4jConfig, TigergraphConfig, FalkordbConfig
+from graflo.db import DBType
 
 # Connect to target graph database to determine flavor
-target_config = ArangoConfig.from_docker_env()  # or Neo4jConfig, TigergraphConfig
+# Choose one of: ArangoConfig, Neo4jConfig, TigergraphConfig, or FalkordbConfig
+target_config = ArangoConfig.from_docker_env()  # or Neo4jConfig, TigergraphConfig, FalkordbConfig
 
 # Determine db_flavor from target config
-from graflo.db import DBType
 db_type = target_config.connection_type
-db_flavor = DBFlavor(db_type.value) if db_type in (DBType.ARANGO, DBType.NEO4J, DBType.TIGERGRAPH) else DBFlavor.ARANGO
+db_flavor = (
+    DBFlavor(db_type.value)
+    if db_type in (DBType.ARANGO, DBType.NEO4J, DBType.TIGERGRAPH, DBType.FALKORDB)
+    else DBFlavor.ARANGO
+)
 
 # Infer schema automatically
 schema = infer_schema_from_postgres(
@@ -360,7 +417,9 @@ postgres_conn = PostgresConnection(postgres_conf)
 # (Implementation details omitted - see full example in examples/5-ingest-postgres/ingest.py)
 
 # Step 3: Connect to target graph database
-target_config = ArangoConfig.from_docker_env()  # or Neo4jConfig, TigergraphConfig
+# You can try different databases by uncommenting the desired config:
+from graflo.db.connection.onto import ArangoConfig, Neo4jConfig, TigergraphConfig, FalkordbConfig
+target_config = ArangoConfig.from_docker_env()  # or Neo4jConfig, TigergraphConfig, FalkordbConfig
 
 # Step 4: Infer Schema from PostgreSQL database structure
 db_type = target_config.connection_type
@@ -411,6 +470,12 @@ print(f"Vertices: {len(schema.vertex_config.vertices)}")
 print(f"Edges: {len(list(schema.edge_config.edges_list()))}")
 print(f"Resources: {len(schema.resources)}")
 print("=" * 80)
+
+# View the ingested data in your graph database's web interface:
+# - ArangoDB: http://localhost:8535 (check ARANGO_PORT in docker/arango/.env, standard port is 8529)
+# - Neo4j: http://localhost:7475 (check NEO4J_PORT in docker/neo4j/.env, standard port is 7474)
+# - TigerGraph: http://localhost:14241 (check TG_WEB in docker/tigergraph/.env, standard port is 14240)
+# - FalkorDB: http://localhost:3001 (check FALKORDB_BROWSER_PORT in docker/falkordb/.env)
 ```
 
 ## Resource Mappings
@@ -620,7 +685,7 @@ This matching happens automatically based on the foreign key relationships detec
 2. **Direct database access**: No need to export data to files first
 3. **Automatic resource mapping**: Tables are automatically mapped to graph resources
 4. **Type safety**: Proper handling of PostgreSQL-specific types with automatic conversion
-5. **Flexible**: Works with any 3NF PostgreSQL schema
+5. **Flexible**: Works with any normalized PostgreSQL schema (3NF) that has proper primary keys (PK) and foreign keys (FK) decorated
 6. **Time-saving**: Reduces manual configuration significantly
 7. **Maintainable**: Schema can be regenerated when database structure changes
 
@@ -671,15 +736,50 @@ patterns = Patterns(
 )
 ```
 
+## Viewing Results in Graph Database Web Interfaces
+
+After successful ingestion, you can explore your graph data using each database's web interface. The default ports and access information are listed below. Check the corresponding `.env` files in the `docker/` directories for custom port configurations.
+
+### ArangoDB
+
+- **Web Interface**: `http://localhost:8535` (check `ARANGO_PORT` in `docker/arango/.env`, standard port is 8529)
+- **Port Configuration**: Check `ARANGO_PORT` in `docker/arango/.env`
+- **Default Credentials**: Username `root`, password from secret file
+- **Features**: Browse collections, run AQL queries, visualize graphs
+
+### Neo4j
+
+- **Web Interface**: `http://localhost:7475` (check `NEO4J_PORT` in `docker/neo4j/.env`, standard port is 7474)
+- **Port Configuration**: Check `NEO4J_PORT` in `docker/neo4j/.env`
+- **Default Credentials**: Username `neo4j`, password from `NEO4J_AUTH` in docker config
+- **Features**: Neo4j Browser for Cypher queries and graph visualization
+
+### TigerGraph
+
+- **Web Interface**: `http://localhost:14241` (check `TG_WEB` in `docker/tigergraph/.env`, standard port is 14240)
+- **Port Configuration**: Check `TG_WEB` in `docker/tigergraph/.env`
+- **Default Credentials**: Username `tigergraph`, password from docker config
+- **Features**: GraphStudio for schema exploration, query development, and data visualization
+
+### FalkorDB
+
+- **Web Interface**: `http://localhost:3001` (check `FALKORDB_BROWSER_PORT` in `docker/falkordb/.env`)
+- **Port Configuration**: Check `FALKORDB_BROWSER_PORT` in `docker/falkordb/.env`
+- **Default Credentials**: No authentication required by default
+- **Features**: FalkorDB Browser UI for graph queries and visualization
+
+**Note**: Make sure the corresponding database container is running before accessing the web interface. You can start databases using docker-compose from their respective directories.
+
 ## Key Takeaways
 
-1. **Automatic schema inference** eliminates manual schema definition for 3NF databases
+1. **Automatic schema inference** eliminates manual schema definition for normalized databases (3NF) with proper PK/FK constraints
 2. **Type mapping** ensures proper type handling across PostgreSQL and graph databases
 3. **Direct database access** enables efficient data ingestion without intermediate files
 4. **Flexible heuristics** automatically detect vertices and edges from table structure
 5. **Type-safe fields** provide better validation and database-specific optimizations
 6. **Resource generation** automatically creates appropriate actors for each table
 7. **Schema customization** allows modifications after inference for specific use cases
+8. **Multiple database support** allows you to try different graph databases and compare results
 
 ## Next Steps
 

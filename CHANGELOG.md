@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.9] - 2026-01-06
+
+### Added
+- **FalkorDB documentation**: Added comprehensive FalkorDB support documentation across all documentation files
+  - Added FalkorDB to main README.md database support list
+  - Added FalkorDB to examples and quickstart guides
+  - Added FalkorDB web interface access information (port 3001)
+  - Added FalkorDB to documentation reference index
+
+### Changed
+- **Enhanced PostgreSQL Schema Inference documentation**: Significantly improved documentation clarity and prominence
+  - Added explicit requirements section: normalized databases (3NF) with proper primary keys (PK) and foreign keys (FK) decorated
+  - Clarified that intelligent heuristics are used to classify tables as vertices or edges
+  - Made PostgreSQL schema inference feature more prominent in main documentation (moved to top of Key Features)
+  - Added cross-references to Example 5 from multiple documentation locations
+  - Enhanced Example 5 with detailed requirements and heuristics explanation
+  - Updated all documentation to consistently mention PK/FK requirements and heuristics
+
+- **Database port information updates**: Updated all documentation with correct port numbers from docker .env files
+  - ArangoDB: Updated to port 8535 (from docker/arango/.env, standard port 8529)
+  - Neo4j: Updated to port 7475 (from docker/neo4j/.env, standard port 7474)
+  - TigerGraph: Updated to port 14241 (from docker/tigergraph/.env, standard port 14240)
+  - FalkorDB: Port 3001 (from docker/falkordb/.env)
+  - Added notes about standard ports vs. configured ports in docker setup
+
+- **Documentation structure improvements**: Enhanced documentation organization
+  - Added "Step 2.5: Choose Target Graph Database" section in Example 5
+  - Added "Viewing Results in Graph Database Web Interfaces" section with detailed access information
+  - Improved examples index to highlight PostgreSQL schema inference feature
+  - Enhanced quickstart guide with PostgreSQL schema inference requirements
+
 ## [1.3.6] - 2025-12-17
 
 ### Added

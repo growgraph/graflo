@@ -1,6 +1,6 @@
 # GraFlo <img src="https://raw.githubusercontent.com/growgraph/graflo/main/docs/assets/favicon.ico" alt="graflo logo" style="height: 32px; width:32px;"/>
 
-graflo is a framework for transforming **tabular** data (CSV) and **hierarchical** data (JSON, XML) into property graphs and ingesting them into graph databases (ArangoDB, Neo4j, TigerGraph).
+graflo is a framework for transforming **tabular** data (CSV, SQL) and **hierarchical** data (JSON, XML) into property graphs and ingesting them into graph databases (ArangoDB, Neo4j, TigerGraph, FalkorDB). **Automatically infer schemas from normalized PostgreSQL databases (3NF)** with proper primary keys (PK) and foreign keys (FK) - uses intelligent heuristics to detect vertices and edges!
 
 ![Python](https://img.shields.io/badge/python-3.10-blue.svg) 
 [![PyPI version](https://badge.fury.io/py/graflo.svg)](https://badge.fury.io/py/graflo)
@@ -51,6 +51,16 @@ Resources define how data is transformed into a graph (semantic mapping). They w
 
 ## Key Features
 
+- **🚀 PostgreSQL Schema Inference**: **Automatically generate schemas from normalized PostgreSQL databases (3NF)** - No manual schema definition needed!
+    - **Requirements**: Works with normalized databases (3NF) that have proper primary keys (PK) and foreign keys (FK) decorated
+    - Uses intelligent heuristics to classify tables as vertices or edges based on structure
+    - Introspect PostgreSQL schemas to identify vertex-like and edge-like tables automatically
+    - Automatically map PostgreSQL data types to graflo Field types (INT, FLOAT, STRING, DATETIME, BOOL)
+    - Infer vertex configurations from table structures with proper indexes (primary keys become vertex indexes)
+    - Infer edge configurations from foreign key relationships (foreign keys become edge source/target mappings)
+    - Create Resource mappings from PostgreSQL tables automatically
+    - Direct database access - ingest data without exporting to files first
+    - See [Example 5: PostgreSQL Schema Inference](examples/example-5.md) for a complete walkthrough
 - **Graph Transformation Meta-language**: A powerful declarative language to describe how your data becomes a property graph:
     - Define vertex and edge structures with typed fields
     - Set compound indexes for vertices and edges
@@ -61,12 +71,6 @@ Resources define how data is transformed into a graph (semantic mapping). They w
     - Vertex fields support types (INT, FLOAT, STRING, DATETIME, BOOL) for better validation
     - Edge weight fields can specify types for improved type safety
     - Backward compatible: fields without types default to None (suitable for databases like ArangoDB)
-- **PostgreSQL Schema Inference**: Automatically generate schemas from PostgreSQL 3NF databases
-    - Introspect PostgreSQL schemas to identify vertex-like and edge-like tables
-    - Automatically map PostgreSQL data types to graflo Field types
-    - Infer vertex configurations from table structures
-    - Infer edge configurations from foreign key relationships
-    - Create Resource mappings from PostgreSQL tables
 - **Parallel Processing**: Efficient processing with multi-threading
 - **Database Integration**: Seamless integration with Neo4j, ArangoDB, TigerGraph, and PostgreSQL (as source)
 - **Advanced Filtering**: Powerful filtering capabilities for data transformation with server-side filtering support
@@ -82,14 +86,18 @@ Resources define how data is transformed into a graph (semantic mapping). They w
 ## Use Cases
 
 - **Data Migration**: Transform relational data into graph structures
+    - **PostgreSQL to Graph**: Automatically infer schemas from normalized PostgreSQL databases (3NF) with proper PK/FK constraints and migrate data directly
+    - Uses intelligent heuristics to detect vertices and edges - no manual schema definition required
+    - Perfect for migrating existing relational databases that follow normalization best practices
 - **Knowledge Graphs**: Build complex knowledge representations
 - **Data Integration**: Combine multiple data sources into a unified graph
+- **Graph Views**: Create graph views of existing PostgreSQL databases without schema changes
 
 ## Requirements
 
 - Python 3.10 or higher
-- Graph database (Neo4j, ArangoDB, or TigerGraph) for storage
-- Optional: PostgreSQL or other SQL databases for data sources
+- Graph database (Neo4j, ArangoDB, TigerGraph, or FalkorDB) for storage
+- Optional: PostgreSQL or other SQL databases for data sources (with automatic schema inference support)
 - Dependencies as specified in pyproject.toml
 
 ## Contributing

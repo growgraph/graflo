@@ -1,10 +1,13 @@
 services:
     falkordb:
         image: ${IMAGE_VERSION}
+        container_name: ${CONTAINER_NAME}
         restart: "no"
         profiles: ["${SPEC}.falkordb"]
+
         ports:
-        -   "${FALKORDB_PORT}:6379"
-        container_name: ${CONTAINER_NAME}
+        -   "${FALKORDB_PORT}:6379"  # FalkorDB (Redis protocol)
+        -   "${FALKORDB_BROWSER_PORT}:3000" # FalkorDB Browser UI
+
         volumes:
         -   ${STORE_FOLDER}/data:/data

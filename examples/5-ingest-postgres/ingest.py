@@ -51,14 +51,22 @@ postgres_conf = PostgresConfig.from_docker_env()
 #     database="postgres",
 # )
 
-# Step 2: Connect to target graph database (Neo4j or ArangoDB)
-# Load config from docker/neo4j/.env or docker/arango/.env (recommended)
-# conn_conf = Neo4jConfig.from_docker_env()
-conn_conf = TigergraphConfig.from_docker_env()
-
-# Alternative: Use ArangoDB instead
-# from graflo.db.connection.onto import ArangoConfig
-# conn_conf = ArangoConfig.from_docker_env()
+# Step 2: Connect to target graph database
+# You can try different graph databases by uncommenting the desired config below.
+# Make sure the corresponding database is running (e.g., via docker-compose).
+#
+# After ingestion, you can view the results in each database's web interface:
+# - ArangoDB: http://localhost:8535 (check ARANGO_PORT in docker/arango/.env, standard port is 8529)
+# - Neo4j: http://localhost:7475 (check NEO4J_PORT in docker/neo4j/.env, standard port is 7474)
+# - TigerGraph: http://localhost:14241 (check TG_WEB in docker/tigergraph/.env, standard port is 14240)
+# - FalkorDB: http://localhost:3001 (check FALKORDB_BROWSER_PORT in docker/falkordb/.env)
+#
+# Load config from docker/*/.env files (recommended):
+# from graflo.db.connection.onto import ArangoConfig, Neo4jConfig, TigergraphConfig, FalkordbConfig
+# conn_conf = ArangoConfig.from_docker_env()      # ArangoDB
+# conn_conf = Neo4jConfig.from_docker_env()       # Neo4j
+conn_conf = TigergraphConfig.from_docker_env()  # TigerGraph
+# conn_conf = FalkordbConfig.from_docker_env()    # FalkorDB
 
 # Determine db_flavor from target config
 db_type = conn_conf.connection_type
@@ -130,3 +138,9 @@ print(f"Vertices: {len(schema.vertex_config.vertices)}")
 print(f"Edges: {len(list(schema.edge_config.edges_list()))}")
 print(f"Resources: {len(schema.resources)}")
 print("=" * 80)
+
+# View the ingested data in your graph database's web interface:
+# - ArangoDB: http://localhost:8535 (check ARANGO_PORT in docker/arango/.env, standard port is 8529)
+# - Neo4j: http://localhost:7475 (check NEO4J_PORT in docker/neo4j/.env, standard port is 7474)
+# - TigerGraph: http://localhost:14241 (check TG_WEB in docker/tigergraph/.env, standard port is 14240)
+# - FalkorDB: http://localhost:3001 (check FALKORDB_BROWSER_PORT in docker/falkordb/.env)

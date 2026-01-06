@@ -10,7 +10,7 @@ This guide will help you get started with graflo by showing you how to transform
 - `DataSource` defines where data comes from (files, APIs, SQL databases, in-memory objects).
 - Class `Patterns` manages the mapping of resources to their physical data sources (files or PostgreSQL tables). It efficiently handles PostgreSQL connections by grouping tables that share the same connection configuration. 
 - `DataSourceRegistry` maps DataSources to Resources (many DataSources can map to the same Resource).
-1- Database backend configurations use Pydantic `BaseSettings` with environment variable support. Use `ArangoConfig`, `Neo4jConfig`, `TigergraphConfig`, or `PostgresConfig` directly, or load from docker `.env` files using `from_docker_env()`. All configs inherit from `DBConfig` and support unified `database`/`schema_name` structure with `effective_database` and `effective_schema` properties for database-agnostic access. If `effective_schema` is not set, `Caster` automatically uses `Schema.general.name` as fallback.
+1- Database backend configurations use Pydantic `BaseSettings` with environment variable support. Use `ArangoConfig`, `Neo4jConfig`, `TigergraphConfig`, `FalkordbConfig`, or `PostgresConfig` directly, or load from docker `.env` files using `from_docker_env()`. All configs inherit from `DBConfig` and support unified `database`/`schema_name` structure with `effective_database` and `effective_schema` properties for database-agnostic access. If `effective_schema` is not set, `Caster` automatically uses `Schema.general.name` as fallback.
 
 ## Basic Example
 
@@ -99,7 +99,11 @@ The `ingest()` method takes:
 - `output_config`: Target graph database configuration (where to write the graph)
 - `patterns`: Source data patterns (where to read data from - files or database tables)
 
-## Using PostgreSQL Tables as Data Sources
+## 🚀 Using PostgreSQL Tables as Data Sources
+
+**Automatically infer graph schemas from normalized PostgreSQL databases (3NF)** - No manual schema definition needed! 
+
+**Requirements**: Works best with normalized databases (3NF) that have proper primary keys (PK) and foreign keys (FK) decorated. graflo uses intelligent heuristics to automatically detect vertex-like and edge-like tables, infer relationships from foreign keys, and map PostgreSQL types to graph types.
 
 You can ingest data directly from PostgreSQL tables. First, infer the schema from your PostgreSQL database:
 
@@ -257,6 +261,13 @@ export TIGERGRAPH_PASSWORD=tigergraph
 export TIGERGRAPH_SCHEMA_NAME=mygraph
 ```
 
+**FalkorDB:**
+```bash
+export FALKORDB_URI=redis://localhost:6379
+export FALKORDB_PASSWORD=
+export FALKORDB_DATABASE=mygraph
+```
+
 **PostgreSQL:**
 ```bash
 export POSTGRES_URI=postgresql://localhost:5432
@@ -269,12 +280,13 @@ export POSTGRES_SCHEMA_NAME=public
 Then load the config:
 
 ```python
-from graflo.db.connection.onto import ArangoConfig, Neo4jConfig, TigergraphConfig, PostgresConfig
+from graflo.db.connection.onto import ArangoConfig, Neo4jConfig, TigergraphConfig, FalkordbConfig, PostgresConfig
 
 # Load from default environment variables
 arango_conf = ArangoConfig.from_env()
 neo4j_conf = Neo4jConfig.from_env()
 tg_conf = TigergraphConfig.from_env()
+falkordb_conf = FalkordbConfig.from_env()
 pg_conf = PostgresConfig.from_env()
 ```
 
