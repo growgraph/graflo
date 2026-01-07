@@ -19,12 +19,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added Memgraph configuration examples to quickstart guide
   - Added Memgraph to docker/README.md with connection details (Bolt port 7687)
   - Added Memgraph to documentation reference index
+- **TigerGraph robust schema definition and ingestion**: Enhanced TigerGraph support with improved reliability
+  - **Schema Change Job Approach**: Uses SCHEMA_CHANGE jobs for local schema definition within graphs
+    - More reliable than global vertex/edge creation approach
+    - Better integration with TigerGraph's graph-scoped schema model
+    - Automatic schema verification after creation to ensure types were created correctly
+  - **Automatic Edge Discriminator Handling**: Automatically adds indexed fields to edge weights when missing
+    - Required for TigerGraph discriminators (allows multiple edges of same type between same vertices)
+    - Ensures discriminator fields are also edge attributes (TigerGraph requirement)
+    - Handles both explicit indexes and relation_field for backward compatibility
+  - **Robust Edge Ingestion with Fallback**: Enhanced batch edge insertion with automatic fallback
+    - Failed batch payloads automatically retry with individual edge upserts
+    - Preserves original edge data for fallback operations
+    - Better error recovery and data integrity
+  - **Improved Error Handling**: More lenient error detection and better error messages
+    - Case-insensitive vertex type comparison (handles TigerGraph capitalization)
+    - Better error messages with detailed schema verification results
+    - Graceful handling of schema change job errors
 
 ### Changed
 - **Improved connection typing and signatures**: Enhanced type hints and method signatures across all database connectors
   - Improved type annotations for ArangoDB, Neo4j, TigerGraph, FalkorDB, and Memgraph connection classes
   - Better IDE support and type checking for database connection methods
   - Enhanced method signatures for better developer experience
+- **Neo4j Community Edition support**: Improved handling of Neo4j Community Edition limitations
+  - Gracefully handles unsupported CREATE DATABASE command in Community Edition
+  - Automatically continues with default database when database creation fails
+  - Clearer error messages indicating Community Edition limitations
 
 ## [1.3.9] - 2026-01-06
 
