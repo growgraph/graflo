@@ -27,11 +27,14 @@ from graflo.architecture.onto import (
     Index,
     Weight,
 )
-from graflo.architecture.vertex import Field, VertexConfig, _FieldsType
+from graflo.architecture.vertex import Field, FieldType, VertexConfig, _FieldsType
 from graflo.onto import DBFlavor
 
 # Default relation name for TigerGraph edges when relation is not specified
 DEFAULT_TIGERGRAPH_RELATION = "relates"
+
+# Default field name for storing extracted relations in TigerGraph weights
+DEFAULT_TIGERGRAPH_RELATION_WEIGHTNAME = "relation"
 
 
 @dataclasses.dataclass
@@ -248,6 +251,33 @@ class Edge(BaseDataclass):
             # Use default relation name for TigerGraph
             # TigerGraph requires all edges to have a named type (relation)
             self.relation = DEFAULT_TIGERGRAPH_RELATION
+
+        # TigerGraph: add relation field to weights if relation_field or relation_from_key is set
+        # This ensures the relation value is included as a typed property in the edge schema
+        if vertex_config.db_flavor == DBFlavor.TIGERGRAPH:
+            if self.relation_field is None and self.relation_from_key:
+                # relation_from_key is True but relation_field not set, default to standard name
+                self.relation_field = DEFAULT_TIGERGRAPH_RELATION_WEIGHTNAME
+
+            if self.relation_field is not None:
+                # Initialize weights if not already present
+                if self.weights is None:
+                    self.weights = WeightConfig()
+                # Check if the field already exists in direct weights
+                if self.relation_field not in self.weights.direct_names:
+                    # Add the relation field with STRING type for TigerGraph
+                    self.weights.direct.append(
+                        Field(name=self.relation_field, type=FieldType.STRING)
+                    )
+
+                # TigerGraph: optionally add index for relation_field if it's dynamic
+                # Check if the field already has an index
+                has_index = any(
+                    self.relation_field in idx.fields for idx in self.indexes
+                )
+                if not has_index:
+                    # Add a persistent secondary index for the relation field
+                    self.indexes.append(Index(fields=[self.relation_field]))
 
         self._init_indices(vertex_config)
 

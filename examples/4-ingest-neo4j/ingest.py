@@ -19,7 +19,7 @@ conn_conf = Neo4jConfig.from_docker_env()
 #     uri="bolt://localhost:7688",
 #     username="neo4j",
 #     password="test!passfortesting",
-#     bolt_port=7688,
+#     bolt_port=7688
 # )
 
 # Create Patterns with file patterns

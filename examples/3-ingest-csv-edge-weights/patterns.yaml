@@ -1,6 +1,6 @@
-patterns:
+file_patterns:
     relations:
         __tag__: file
         regex: "^relations.*\\.csv$"
         sub_path: "."
-        resource_name: "people"
+        resource_name: "relations"

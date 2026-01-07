@@ -88,16 +88,16 @@ def test_schema_creation(conn_conf, test_graph_name, schema_obj):
         # Verify graph exists (using name from schema.general.name)
         assert db_client.graph_exists(test_graph_name)
 
-        # Use the graph to verify schema
-        db_client.conn.gsql(f"USE GRAPH {test_graph_name}")
+        # Use the graph context to verify schema
+        # getVertexTypes() and getEdgeTypes() require graph context via _ensure_graph_context
+        with db_client._ensure_graph_context(test_graph_name):
+            # Verify schema was created
+            vertex_types = db_client.conn.getVertexTypes(force=True)
+            edge_types = db_client.conn.getEdgeTypes(force=True)
 
-        # Verify schema was created
-        vertex_types = db_client.conn.getVertexTypes()
-        edge_types = db_client.conn.getEdgeTypes()
+            # Check expected types exist
+            assert len(vertex_types) > 0, "No vertex types created"
+            assert len(edge_types) > 0, "No edge types created"
 
-        # Check expected types exist
-        assert len(vertex_types) > 0, "No vertex types created"
-        assert len(edge_types) > 0, "No edge types created"
-
-        print(f"Created vertex types: {vertex_types}")
-        print(f"Created edge types: {edge_types}")
+            print(f"Created vertex types: {vertex_types}")
+            print(f"Created edge types: {edge_types}")

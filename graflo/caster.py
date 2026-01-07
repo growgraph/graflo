@@ -721,7 +721,8 @@ class Caster:
 
         # Initialize vertex config with correct field types based on database type
         db_flavor = self._get_db_flavor_from_config(output_config)
-        self.schema.vertex_config.finish_init(db_flavor)
+        self.schema.vertex_config.db_flavor = db_flavor
+        self.schema.vertex_config.finish_init()
         # Initialize edge config after vertex config is fully initialized
         self.schema.edge_config.finish_init(self.schema.vertex_config)
 

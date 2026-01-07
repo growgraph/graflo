@@ -315,7 +315,11 @@ class Vertex(BaseDataclass):
                     seen_names.add(field_name)
 
     def finish_init(self, db_flavor: DBFlavor):
-        """Complete initialization of all edges with vertex configuration."""
+        """Complete initialization of vertex with database-specific field types.
+
+        Args:
+            db_flavor: Database flavor to use for initialization
+        """
         self.fields = [
             Field(name=f.name, type=FieldType.STRING)
             if f.type is None and db_flavor == DBFlavor.TIGERGRAPH
@@ -557,8 +561,10 @@ class VertexConfig(BaseDataclass):
         """
         self._vertices_map[key] = value
 
-    def finish_init(self, db_flavor: DBFlavor):
-        """Complete initialization of all edges with vertex configuration."""
+    def finish_init(self):
+        """Complete initialization of all vertices with database-specific field types.
 
+        Uses self.db_flavor to determine database-specific initialization behavior.
+        """
         for v in self.vertices:
-            v.finish_init(db_flavor)
+            v.finish_init(self.db_flavor)

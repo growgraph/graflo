@@ -353,6 +353,86 @@ class TigerGraphConnection(Connection):
         """
         try:
             logger.debug(f"Attempting to drop graph '{name}'")
+
+            # First, try to drop all queries associated with the graph
+            # Try multiple approaches to ensure queries are dropped
+            queries_dropped = False
+            try:
+                with self._ensure_graph_context(name):
+                    # Get all installed queries for this graph
+                    try:
+                        queries = self.conn.getInstalledQueries()
+                        if queries:
+                            logger.info(
+                                f"Dropping {len(queries)} queries from graph '{name}'"
+                            )
+                            for query_name in queries:
+                                try:
+                                    # Try DROP QUERY with IF EXISTS to avoid errors
+                                    drop_query_cmd = f"USE GRAPH {name}\nDROP QUERY {query_name} IF EXISTS"
+                                    self.conn.gsql(drop_query_cmd)
+                                    logger.debug(
+                                        f"Dropped query '{query_name}' from graph '{name}'"
+                                    )
+                                    queries_dropped = True
+                                except Exception:
+                                    # Try without IF EXISTS for older TigerGraph versions
+                                    try:
+                                        drop_query_cmd = (
+                                            f"USE GRAPH {name}\nDROP QUERY {query_name}"
+                                        )
+                                        self.conn.gsql(drop_query_cmd)
+                                        logger.debug(
+                                            f"Dropped query '{query_name}' from graph '{name}'"
+                                        )
+                                        queries_dropped = True
+                                    except Exception as qe2:
+                                        logger.warning(
+                                            f"Could not drop query '{query_name}' from graph '{name}': {qe2}"
+                                        )
+                    except Exception as e:
+                        logger.debug(f"Could not list queries for graph '{name}': {e}")
+            except Exception as e:
+                logger.debug(
+                    f"Could not access graph '{name}' to drop queries: {e}. "
+                    f"Graph may not exist or queries may not be accessible."
+                )
+
+            # If we couldn't drop queries through the API, try direct GSQL
+            if not queries_dropped:
+                try:
+                    # Try to drop queries using GSQL directly
+                    list_queries_cmd = f"USE GRAPH {name}\nSHOW QUERY *"
+                    result = self.conn.gsql(list_queries_cmd)
+                    # Parse result to get query names and drop them
+                    # This is a fallback if getInstalledQueries() doesn't work
+                except Exception as e:
+                    logger.debug(
+                        f"Could not list queries via GSQL for graph '{name}': {e}"
+                    )
+
+            # Now try to drop the graph
+            # First, try to clear all data from the graph to avoid dependency issues
+            try:
+                with self._ensure_graph_context(name):
+                    # Clear all vertices to remove dependencies
+                    try:
+                        vertex_types = self.conn.getVertexTypes(force=True)
+                        for v_type in vertex_types:
+                            try:
+                                self.conn.delVertices(v_type)
+                                logger.debug(
+                                    f"Cleared vertices of type '{v_type}' from graph '{name}'"
+                                )
+                            except Exception as ve:
+                                logger.debug(
+                                    f"Could not clear vertices '{v_type}': {ve}"
+                                )
+                    except Exception as e:
+                        logger.debug(f"Could not clear vertices: {e}")
+            except Exception as e:
+                logger.debug(f"Could not access graph context to clear data: {e}")
+
             try:
                 # Use the graph first to ensure we're working with the right graph
                 drop_command = f"USE GRAPH {name}\nDROP GRAPH {name}"
@@ -360,9 +440,21 @@ class TigerGraphConnection(Connection):
                 logger.info(f"Successfully dropped graph '{name}': {result}")
                 return result
             except Exception as e:
-                logger.debug(
-                    f"Could not drop graph '{name}' (may not exist or have dependencies): {e}"
-                )
+                error_str = str(e).lower()
+                # If graph has dependencies (queries, etc.), try to continue anyway
+                # The graph structure might still be partially cleaned
+                if "depends on" in error_str or "query" in error_str:
+                    logger.warning(
+                        f"Could not fully drop graph '{name}' due to dependencies: {e}. "
+                        f"Attempting to continue - graph may be partially cleaned."
+                    )
+                    # Don't raise - allow the process to continue
+                    # The schema creation will handle existing types
+                    return None
+                else:
+                    error_msg = f"Could not drop graph '{name}'. Error: {e}"
+                    logger.error(error_msg)
+                    raise RuntimeError(error_msg) from e
 
             # Fallback 1: Attempt to disassociate edge and vertex types from graph
             # DO NOT drop global vertex/edge types as they might be used by other graphs
@@ -463,14 +555,380 @@ class TigerGraphConnection(Connection):
         """Close connection - pyTigerGraph handles cleanup automatically."""
         pass
 
+    def _get_vertex_add_statement(
+        self, vertex: Vertex, vertex_config: VertexConfig
+    ) -> str:
+        """Generate ADD VERTEX statement for a schema change job.
+
+        Args:
+            vertex: Vertex object to generate statement for
+            vertex_config: Vertex configuration
+
+        Returns:
+            str: GSQL ADD VERTEX statement
+        """
+        vertex_dbname = vertex_config.vertex_dbname(vertex.name)
+        index_fields = vertex_config.index(vertex.name).fields
+
+        if len(index_fields) == 0:
+            raise ValueError(
+                f"Vertex '{vertex_dbname}' must have at least one index field"
+            )
+
+        # Get field type for primary key field(s) - convert FieldType enum to string
+        field_type_map = {}
+        for f in vertex.fields:
+            if f.type:
+                field_type_map[f.name] = (
+                    f.type.value if hasattr(f.type, "value") else str(f.type)
+                )
+            else:
+                field_type_map[f.name] = FieldType.STRING.value
+
+        # Format all fields
+        all_fields = []
+        for field in vertex.fields:
+            if field.type:
+                field_type = (
+                    field.type.value
+                    if hasattr(field.type, "value")
+                    else str(field.type)
+                )
+            else:
+                field_type = FieldType.STRING.value
+            all_fields.append((field.name, field_type))
+
+        if len(index_fields) == 1:
+            # Single field: use PRIMARY_ID syntax (required by GSQL)
+            primary_field_name = index_fields[0]
+            primary_field_type = field_type_map.get(
+                primary_field_name, FieldType.STRING.value
+            )
+
+            other_fields = [
+                (name, ftype)
+                for name, ftype in all_fields
+                if name != primary_field_name
+            ]
+
+            # Build field list: PRIMARY_ID comes first, then other fields
+            field_parts = [f"PRIMARY_ID {primary_field_name} {primary_field_type}"]
+            field_parts.extend([f"{name} {ftype}" for name, ftype in other_fields])
+
+            field_definitions = ",\n        ".join(field_parts)
+
+            return (
+                f"ADD VERTEX {vertex_dbname} (\n"
+                f"        {field_definitions}\n"
+                f'    ) WITH STATS="OUTDEGREE_BY_EDGETYPE", PRIMARY_ID_AS_ATTRIBUTE="true"'
+            )
+        else:
+            # Composite key: use PRIMARY KEY syntax
+            field_parts = [f"{name} {ftype}" for name, ftype in all_fields]
+            vindex = "(" + ", ".join(index_fields) + ")"
+            field_parts.append(f"PRIMARY KEY {vindex}")
+
+            field_definitions = ",\n        ".join(field_parts)
+
+            return (
+                f"ADD VERTEX {vertex_dbname} (\n"
+                f"        {field_definitions}\n"
+                f'    ) WITH STATS="OUTDEGREE_BY_EDGETYPE"'
+            )
+
+    def _format_edge_attributes(
+        self, edge: Edge, exclude_fields: set[str] | None = None
+    ) -> str:
+        """Format edge attributes for GSQL ADD DIRECTED EDGE statement.
+
+        Args:
+            edge: Edge object to format attributes for
+            exclude_fields: Optional set of field names to exclude from attributes
+
+        Returns:
+            str: Formatted attribute string (e.g., "    date STRING,\n    relation STRING")
+        """
+        if not edge.weights or not edge.weights.direct:
+            return ""
+
+        if exclude_fields is None:
+            exclude_fields = set()
+
+        attr_parts = []
+        for field in edge.weights.direct:
+            field_name = field.name
+            if field_name not in exclude_fields:
+                field_type = self._get_tigergraph_type(field.type)
+                attr_parts.append(f"    {field_name} {field_type}")
+
+        return ",\n".join(attr_parts)
+
+    def _get_edge_add_statement(self, edge: Edge) -> str:
+        """Generate ADD DIRECTED EDGE statement for a schema change job.
+
+        Args:
+            edge: Edge object to generate statement for
+
+        Returns:
+            str: GSQL ADD DIRECTED EDGE statement
+        """
+        # TigerGraph requires discriminators to support multiple edges of the same type
+        # between the same pair of vertices. We add discriminators for all indexed fields.
+        # Collect all indexed fields from edge.indexes
+        indexed_field_names = set()
+        for index in edge.indexes:
+            for field_name in index.fields:
+                # Skip special fields like "_from", "_to" which are ArangoDB-specific
+                if field_name not in ["_from", "_to"]:
+                    indexed_field_names.add(field_name)
+
+        # Also include relation_field if it's set (for backward compatibility)
+        if edge.relation_field and edge.relation_field not in indexed_field_names:
+            indexed_field_names.add(edge.relation_field)
+
+        # IMPORTANT: In TigerGraph, discriminator fields MUST also be edge attributes.
+        # If an indexed field is not in weights.direct, we need to add it.
+        # Initialize weights if not present
+        if edge.weights is None:
+            from graflo.architecture.edge import WeightConfig, Field
+
+            edge.weights = WeightConfig()
+
+        # Get existing weight field names
+        existing_weight_names = set()
+        if edge.weights.direct:
+            existing_weight_names = {field.name for field in edge.weights.direct}
+
+        # Add any indexed fields that are missing from weights
+        for field_name in indexed_field_names:
+            if field_name not in existing_weight_names:
+                # Add the field to weights with STRING type (default)
+                from graflo.architecture.edge import Field
+
+                edge.weights.direct.append(
+                    Field(name=field_name, type=FieldType.STRING)
+                )
+                logger.info(
+                    f"Added indexed field '{field_name}' to edge weights for discriminator compatibility"
+                )
+
+        # Format edge attributes, excluding discriminator fields (they're in DISCRIMINATOR clause)
+        edge_attrs = self._format_edge_attributes(
+            edge, exclude_fields=indexed_field_names
+        )
+
+        # Build discriminator clause with all indexed fields
+        # DISCRIMINATOR goes INSIDE parentheses, on same line as FROM/TO, with types
+        # Format: FROM company, TO company, DISCRIMINATOR(relation STRING), date STRING, ...
+
+        # Get field types for discriminator fields
+        field_types = {}
+        if edge.weights and edge.weights.direct:
+            for field in edge.weights.direct:
+                field_types[field.name] = self._get_tigergraph_type(field.type)
+
+        # Build FROM/TO line with discriminator
+        from_to_parts = [
+            f"        FROM {edge._source}",
+            f"        TO {edge._target}",
+        ]
+
+        if indexed_field_names:
+            # Format discriminator with types: DISCRIMINATOR(field1 TYPE1, field2 TYPE2)
+            discriminator_parts = []
+            for field_name in sorted(indexed_field_names):
+                field_type = field_types.get(field_name, "STRING")  # Default to STRING
+                discriminator_parts.append(f"{field_name} {field_type}")
+
+            discriminator_str = f"DISCRIMINATOR({', '.join(discriminator_parts)})"
+            from_to_parts.append(f"        {discriminator_str}")
+            logger.info(
+                f"Added discriminator for edge {edge.relation}: {', '.join(discriminator_parts)}"
+            )
+        else:
+            logger.debug(
+                f"No indexed fields found for edge {edge.relation}. "
+                f"Indexes: {[idx.fields for idx in edge.indexes]}, "
+                f"relation_field: {edge.relation_field}"
+            )
+
+        # Combine FROM/TO and discriminator with commas
+        from_to_line = ",\n".join(from_to_parts)
+
+        # Build the complete statement
+        if edge_attrs:
+            # Has attributes - add comma after FROM/TO line (which may include discriminator)
+            # edge_attrs already has proper indentation, so we just need to add it after a comma
+            return (
+                f"ADD DIRECTED EDGE {edge.relation} (\n"
+                f"{from_to_line},\n"
+                f"{edge_attrs}\n"
+                f"    )"
+            )
+        else:
+            # No attributes - FROM/TO line (which may include discriminator) is the last thing
+            # No trailing comma needed
+            return f"ADD DIRECTED EDGE {edge.relation} (\n{from_to_line}\n    )"
+
+    def _define_schema_local(self, schema: Schema) -> None:
+        """Define TigerGraph schema locally for the current graph using a SCHEMA_CHANGE job.
+
+        Args:
+            schema: Schema definition
+        """
+        graph_name = self.config.database
+        if not graph_name:
+            raise ValueError("Graph name (database) must be configured")
+
+        vertex_config = schema.vertex_config
+        edge_config = schema.edge_config
+
+        schema_change_stmts = []
+
+        # Vertices
+        for vertex in vertex_config.vertices:
+            stmt = self._get_vertex_add_statement(vertex, vertex_config)
+            schema_change_stmts.append(stmt)
+
+        # Edges
+        edges_to_create = list(edge_config.edges_list(include_aux=True))
+        for edge in edges_to_create:
+            edge.finish_init(vertex_config)
+            stmt = self._get_edge_add_statement(edge)
+            schema_change_stmts.append(stmt)
+
+        if not schema_change_stmts:
+            logger.debug(f"No schema changes to apply for graph '{graph_name}'")
+            return
+
+        job_name = f"schema_change_{graph_name}"
+
+        # First, try to drop the job if it exists (ignore errors if it doesn't)
+        try:
+            drop_job_cmd = f"USE GRAPH {graph_name}\nDROP JOB {job_name}"
+            self.conn.gsql(drop_job_cmd)
+            logger.debug(f"Dropped existing schema change job '{job_name}'")
+        except Exception as e:
+            err_str = str(e).lower()
+            # Ignore errors if job doesn't exist
+            if "not found" in err_str or "could not be found" in err_str:
+                logger.debug(
+                    f"Schema change job '{job_name}' does not exist, skipping drop"
+                )
+            else:
+                logger.debug(f"Could not drop schema change job '{job_name}': {e}")
+
+        # Combine into a single SCHEMA_CHANGE job
+        gsql_commands = [
+            f"USE GRAPH {graph_name}",
+            f"CREATE SCHEMA_CHANGE JOB {job_name} FOR GRAPH {graph_name} {{",
+            "    " + ";\n    ".join(schema_change_stmts) + ";",
+            "}",
+            f"RUN SCHEMA_CHANGE JOB {job_name}",
+        ]
+
+        full_gsql = "\n".join(gsql_commands)
+        logger.info(f"Applying local schema change for graph '{graph_name}'")
+        logger.info(f"GSQL command:\n{full_gsql}")
+        try:
+            result = self.conn.gsql(full_gsql)
+            logger.debug(f"Schema change result: {result}")
+
+            # Check if result indicates an error - be more lenient with error detection
+            result_str = str(result) if result else ""
+            # Only treat as error if result explicitly contains error indicators
+            if (
+                result
+                and result_str
+                and (
+                    "Encountered" in result_str
+                    or "syntax error" in result_str.lower()
+                    or "parse error" in result_str.lower()
+                )
+            ):
+                error_msg = f"Schema change job reported a syntax/parse error: {result}"
+                logger.error(error_msg)
+                logger.error(f"GSQL command that failed: {full_gsql}")
+                raise RuntimeError(error_msg)
+
+            # Verify that the schema was actually created by checking vertex and edge types
+            # Wait a moment for schema changes to propagate
+            import time
+
+            time.sleep(1.0)  # Increased wait time
+
+            with self._ensure_graph_context(graph_name):
+                vertex_types = self.conn.getVertexTypes(force=True)
+                edge_types = self.conn.getEdgeTypes(force=True)
+
+                # Use vertex_dbname instead of v.name to match what TigerGraph actually creates
+                # vertex_dbname returns dbname if set, otherwise None - fallback to v.name if None
+                expected_vertex_types = set()
+                for v in vertex_config.vertices:
+                    try:
+                        dbname = vertex_config.vertex_dbname(v.name)
+                        # If dbname is None, use vertex name
+                        expected_name = dbname if dbname is not None else v.name
+                    except (KeyError, AttributeError):
+                        # Fallback to vertex name if vertex_dbname fails
+                        expected_name = v.name
+                    expected_vertex_types.add(expected_name)
+
+                expected_edge_types = {
+                    e.relation for e in edges_to_create if e.relation
+                }
+
+                # Convert to sets for case-insensitive comparison
+                # TigerGraph may capitalize vertex names, so compare case-insensitively
+                vertex_types_lower = {vt.lower() for vt in vertex_types}
+                expected_vertex_types_lower = {
+                    evt.lower() for evt in expected_vertex_types
+                }
+
+                missing_vertices_lower = (
+                    expected_vertex_types_lower - vertex_types_lower
+                )
+                # Convert back to original case for error message
+                missing_vertices = {
+                    evt
+                    for evt in expected_vertex_types
+                    if evt.lower() in missing_vertices_lower
+                }
+
+                missing_edges = expected_edge_types - set(edge_types)
+
+                if missing_vertices or missing_edges:
+                    error_msg = (
+                        f"Schema change job completed but types were not created correctly. "
+                        f"Missing vertex types: {missing_vertices}, "
+                        f"Missing edge types: {missing_edges}. "
+                        f"Created vertex types: {vertex_types}, "
+                        f"Created edge types: {edge_types}. "
+                        f"GSQL result: {result}"
+                    )
+                    logger.error(error_msg)
+                    logger.error(f"GSQL command that failed: {full_gsql}")
+                    raise RuntimeError(error_msg)
+
+                logger.info(
+                    f"Schema verified: {len(vertex_types)} vertex types, {len(edge_types)} edge types created"
+                )
+        except RuntimeError:
+            # Re-raise RuntimeError as-is
+            raise
+        except Exception as e:
+            logger.error(f"Failed to apply local schema change: {e}")
+            logger.error(f"GSQL command was: {full_gsql}")
+            raise
+
     def init_db(self, schema: Schema, clean_start: bool = False) -> None:
         """
         Initialize database with schema definition.
 
         Follows the same pattern as ArangoDB:
         1. Clean if needed
-        2. Create vertex and edge types globally (required before CREATE GRAPH)
-        3. Create graph with vertices and edges explicitly attached
+        2. Create graph if not exists
+        3. Define schema locally within the graph
         4. Define indexes
 
         If any step fails, the graph will be cleaned up gracefully.
@@ -489,8 +947,7 @@ class TigerGraphConnection(Connection):
         try:
             if clean_start:
                 try:
-                    # Only delete the current graph, not all graphs or global vertex/edge types
-                    # This ensures we don't affect other graphs that might share vertex/edge types
+                    # Only delete the current graph
                     self.delete_database(graph_name)
                     logger.debug(f"Cleaned graph '{graph_name}' for fresh start")
                 except Exception as clean_error:
@@ -498,87 +955,32 @@ class TigerGraphConnection(Connection):
                         f"Error during clean_start for graph '{graph_name}': {clean_error}",
                         exc_info=True,
                     )
-                    # Continue - may be first run or already clean, schema will be recreated anyway
 
-            # Step 1: Create vertex and edge types globally first
-            # These must exist before they can be included in CREATE GRAPH
-            logger.debug(
-                f"Creating vertex and edge types globally for graph '{graph_name}'"
-            )
+            # Step 1: Create graph first if it doesn't exist
+            if not self.graph_exists(graph_name):
+                logger.debug(f"Creating empty graph '{graph_name}'")
+                try:
+                    # Create empty graph
+                    self.create_database(graph_name)
+                    graph_created = True
+                    logger.info(f"Successfully created empty graph '{graph_name}'")
+                except Exception as create_error:
+                    logger.error(
+                        f"Failed to create graph '{graph_name}': {create_error}",
+                        exc_info=True,
+                    )
+                    raise
+            else:
+                logger.debug(f"Graph '{graph_name}' already exists in init_db")
+
+            # Step 2: Define schema locally for the graph
+            # This uses a SCHEMA_CHANGE job which is the standard way to define local types
+            logger.info(f"Defining local schema for graph '{graph_name}'")
             try:
-                vertex_names = self._create_vertex_types_global(schema.vertex_config)
-
-                # Initialize edges before creating edge types
-                # This sets edge._source and edge._target to dbnames (required for GSQL)
-                edges_to_create = list(schema.edge_config.edges_list(include_aux=True))
-                for edge in edges_to_create:
-                    edge.finish_init(schema.vertex_config)
-
-                # Verify all vertices referenced by edges were created
-                created_vertex_set = set(vertex_names)
-                for edge in edges_to_create:
-                    if edge._source not in created_vertex_set:
-                        raise ValueError(
-                            f"Edge '{edge.relation}' references source vertex '{edge._source}' "
-                            f"which was not created. Created vertices: {vertex_names}"
-                        )
-                    if edge._target not in created_vertex_set:
-                        raise ValueError(
-                            f"Edge '{edge.relation}' references target vertex '{edge._target}' "
-                            f"which was not created. Created vertices: {vertex_names}"
-                        )
-
-                edge_names = self._create_edge_types_global(edges_to_create)
-                logger.debug(
-                    f"Created {len(vertex_names)} vertex types and {len(edge_names)} edge types"
-                )
-            except Exception as type_error:
+                self._define_schema_local(schema)
+            except Exception as schema_error:
                 logger.error(
-                    f"Failed to create vertex/edge types for graph '{graph_name}': {type_error}",
-                    exc_info=True,
-                )
-                raise
-
-            # Step 2: Create graph with vertices and edges explicitly attached
-            try:
-                if not self.graph_exists(graph_name):
-                    logger.debug(f"Creating graph '{graph_name}' with types in init_db")
-                    try:
-                        self.create_database(
-                            graph_name,
-                            vertex_names=vertex_names,
-                            edge_names=edge_names,
-                        )
-                        graph_created = True
-                        logger.info(f"Successfully created graph '{graph_name}'")
-                    except Exception as create_error:
-                        logger.error(
-                            f"Failed to create graph '{graph_name}': {create_error}",
-                            exc_info=True,
-                        )
-                        raise
-                else:
-                    logger.debug(f"Graph '{graph_name}' already exists in init_db")
-                    # If graph already exists, associate types via ALTER GRAPH
-                    try:
-                        self.define_vertex_classes(schema.vertex_config)
-                        # Ensure edges are initialized before defining classes
-                        edges_for_classes = list(
-                            schema.edge_config.edges_list(include_aux=True)
-                        )
-                        for edge in edges_for_classes:
-                            if edge._source is None or edge._target is None:
-                                edge.finish_init(schema.vertex_config)
-                        self.define_edge_classes(edges_for_classes)
-                    except Exception as define_error:
-                        logger.warning(
-                            f"Could not define collections for existing graph '{graph_name}': {define_error}",
-                            exc_info=True,
-                        )
-                        # Continue - graph exists, collections may already be defined
-            except Exception as graph_error:
-                logger.error(
-                    f"Error during graph creation/verification for '{graph_name}': {graph_error}",
+                    f"Failed to define local schema for graph '{graph_name}': {schema_error}",
                     exc_info=True,
                 )
                 raise
@@ -610,27 +1012,83 @@ class TigerGraphConnection(Connection):
 
     def define_schema(self, schema: Schema):
         """
-        Define TigerGraph schema with proper GSQL syntax.
+        Define TigerGraph schema locally for the current graph.
 
-        Assumes graph already exists (created in init_db). This method:
-        1. Uses the graph from config.database
-        2. Defines vertex types within the graph
-        3. Defines edge types within the graph
+        Assumes graph already exists (created in init_db).
         """
         try:
-            # Define vertex and edge types within the graph
-            # Graph context is ensured by _ensure_graph_context in the called methods
-            self.define_vertex_classes(schema.vertex_config)
-            # Ensure edges are initialized before defining classes
-            edges_for_classes = list(schema.edge_config.edges_list(include_aux=True))
-            for edge in edges_for_classes:
-                if edge._source is None or edge._target is None:
-                    edge.finish_init(schema.vertex_config)
-            self.define_edge_classes(edges_for_classes)
-
+            self._define_schema_local(schema)
         except Exception as e:
             logger.error(f"Error defining schema: {e}")
             raise
+
+    def define_vertex_classes(  # type: ignore[override]
+        self, vertex_config: VertexConfig
+    ) -> None:
+        """Define TigerGraph vertex types locally for the current graph.
+
+        Args:
+            vertex_config: Vertex configuration containing vertices to create
+        """
+        graph_name = self.config.database
+        if not graph_name:
+            raise ValueError("Graph name (database) must be configured")
+
+        schema_change_stmts = []
+        for vertex in vertex_config.vertices:
+            stmt = self._get_vertex_add_statement(vertex, vertex_config)
+            schema_change_stmts.append(stmt)
+
+        if not schema_change_stmts:
+            return
+
+        job_name = f"add_vertices_{graph_name}"
+        gsql_commands = [
+            f"USE GRAPH {graph_name}",
+            f"DROP JOB {job_name}",
+            f"CREATE SCHEMA_CHANGE JOB {job_name} FOR GRAPH {graph_name} {{",
+            "    " + ";\n    ".join(schema_change_stmts) + ";",
+            "}",
+            f"RUN SCHEMA_CHANGE JOB {job_name}",
+        ]
+
+        logger.info(f"Adding vertices locally to graph '{graph_name}'")
+        self.conn.gsql("\n".join(gsql_commands))
+
+    def define_edge_classes(self, edges: list[Edge]):
+        """Define TigerGraph edge types locally for the current graph.
+
+        Args:
+            edges: List of edges to create
+        """
+        graph_name = self.config.database
+        if not graph_name:
+            raise ValueError("Graph name (database) must be configured")
+
+        # Need vertex_config for dbname lookup if finish_init hasn't been called
+        # But edges should ideally already be initialized.
+        # If not, this might fail or needs a vertex_config.
+
+        schema_change_stmts = []
+        for edge in edges:
+            stmt = self._get_edge_add_statement(edge)
+            schema_change_stmts.append(stmt)
+
+        if not schema_change_stmts:
+            return
+
+        job_name = f"add_edges_{graph_name}"
+        gsql_commands = [
+            f"USE GRAPH {graph_name}",
+            f"DROP JOB {job_name}",
+            f"CREATE SCHEMA_CHANGE JOB {job_name} FOR GRAPH {graph_name} {{",
+            "    " + ";\n    ".join(schema_change_stmts) + ";",
+            "}",
+            f"RUN SCHEMA_CHANGE JOB {job_name}",
+        ]
+
+        logger.info(f"Adding edges locally to graph '{graph_name}'")
+        self.conn.gsql("\n".join(gsql_commands))
 
     def _format_vertex_fields(self, vertex: Vertex) -> str:
         """
@@ -661,7 +1119,7 @@ class TigerGraphConnection(Connection):
 
         return ",\n    ".join(field_list)
 
-    def _format_edge_attributes(self, edge: Edge) -> str:
+    def _format_edge_attributes_for_create(self, edge: Edge) -> str:
         """
         Format edge attributes for GSQL CREATE EDGE statement.
 
@@ -722,261 +1180,6 @@ class TigerGraphConnection(Connection):
         # Handle TigerGraph-specific type aliases
         return TIGERGRAPH_TYPE_ALIASES.get(field_type_str, FieldType.STRING.value)
 
-    def _create_vertex_types_global(self, vertex_config: VertexConfig) -> list[str]:
-        """Create TigerGraph vertex types globally (without graph association).
-
-        Vertices are global in TigerGraph and must be created before they can be
-        included in a CREATE GRAPH statement.
-
-        Creates vertices with PRIMARY_ID (single field) or PRIMARY KEY (composite) syntax.
-        For single-field indexes, uses PRIMARY_ID syntax (required by GraphStudio).
-        For composite keys, uses PRIMARY KEY syntax (works in GSQL but not GraphStudio).
-        According to TigerGraph documentation, fields used in PRIMARY KEY/PRIMARY_ID must be
-        defined as regular attributes first, and they remain accessible as attributes.
-
-        Note: GraphStudio does not support composite keys. Use PRIMARY_ID for single fields
-        to ensure compatibility with GraphStudio.
-
-        Reference: https://docs.tigergraph.com/gsql-ref/4.2/ddl-and-loading/defining-a-graph-schema
-
-        Args:
-            vertex_config: Vertex configuration containing vertices to create
-
-        Returns:
-            list[str]: List of vertex type names that were created (or already existed)
-        """
-        vertex_names = []
-        for vertex in vertex_config.vertices:
-            vertex_dbname = vertex_config.vertex_dbname(vertex.name)
-            index_fields = vertex_config.index(vertex.name).fields
-
-            if len(index_fields) == 0:
-                raise ValueError(
-                    f"Vertex '{vertex_dbname}' must have at least one index field"
-                )
-
-            # Get field type for primary key field(s) - convert FieldType enum to string
-            field_type_map = {}
-            for f in vertex.fields:
-                if f.type:
-                    field_type_map[f.name] = (
-                        f.type.value if hasattr(f.type, "value") else str(f.type)
-                    )
-                else:
-                    field_type_map[f.name] = FieldType.STRING.value
-
-            # Format all fields
-            all_fields = []
-            for field in vertex.fields:
-                if field.type:
-                    field_type = (
-                        field.type.value
-                        if hasattr(field.type, "value")
-                        else str(field.type)
-                    )
-                else:
-                    field_type = FieldType.STRING.value
-                all_fields.append((field.name, field_type))
-
-            if len(index_fields) == 1:
-                # Single field: use PRIMARY_ID syntax (required by GSQL)
-                # Format: PRIMARY_ID field_name field_type, other_field1 TYPE, other_field2 TYPE, ...
-                primary_field_name = index_fields[0]
-                primary_field_type = field_type_map.get(
-                    primary_field_name, FieldType.STRING.value
-                )
-
-                other_fields = [
-                    (name, ftype)
-                    for name, ftype in all_fields
-                    if name != primary_field_name
-                ]
-
-                # Build field list: PRIMARY_ID comes first, then other fields
-                field_parts = [f"PRIMARY_ID {primary_field_name} {primary_field_type}"]
-                field_parts.extend([f"{name} {ftype}" for name, ftype in other_fields])
-
-                field_definitions = ",\n    ".join(field_parts)
-            elif len(index_fields) > 1:
-                # Composite key: use PRIMARY KEY syntax (works in GSQL but not GraphStudio UI)
-                # Format: field1 TYPE, field2 TYPE, ..., PRIMARY KEY (field1, field2, ...)
-                logger.warning(
-                    f"Vertex '{vertex_dbname}' has composite primary key {index_fields}. "
-                    f"GraphStudio UI does not support composite keys. "
-                    f"Consider using a single-field PRIMARY_ID instead."
-                )
-
-                # List all fields first
-                field_parts = [f"{name} {ftype}" for name, ftype in all_fields]
-                # Then add PRIMARY KEY at the end
-                vindex = "(" + ", ".join(index_fields) + ")"
-                field_parts.append(f"PRIMARY KEY {vindex}")
-
-                field_definitions = ",\n    ".join(field_parts)
-            else:
-                raise ValueError(
-                    f"Vertex '{vertex_dbname}' must have at least one index field"
-                )
-
-            # Create the vertex type globally (ignore if exists)
-            # Vertices are global in TigerGraph, so no USE GRAPH needed
-            # Note: For PRIMARY_ID, the ID field is listed first with PRIMARY_ID keyword
-            # For PRIMARY KEY, all fields are listed first, then PRIMARY KEY clause at the end
-            # When using PRIMARY_ID, we need primary_id_as_attribute="true" to make the ID
-            # accessible as an attribute (required for REST++ API upserts)
-            if len(index_fields) == 1:
-                # Single field with PRIMARY_ID: enable primary_id_as_attribute so ID is accessible
-                create_vertex_cmd = (
-                    f"CREATE VERTEX {vertex_dbname} (\n"
-                    f"    {field_definitions}\n"
-                    f') WITH STATS="OUTDEGREE_BY_EDGETYPE", primary_id_as_attribute="true"'
-                )
-            else:
-                # Composite key with PRIMARY KEY: key fields are automatically accessible as attributes
-                create_vertex_cmd = (
-                    f"CREATE VERTEX {vertex_dbname} (\n"
-                    f"    {field_definitions}\n"
-                    f') WITH STATS="OUTDEGREE_BY_EDGETYPE"'
-                )
-            logger.debug(f"Executing GSQL: {create_vertex_cmd}")
-            try:
-                result = self.conn.gsql(create_vertex_cmd)
-                logger.debug(f"Result: {result}")
-                vertex_names.append(vertex_dbname)
-                logger.info(f"Successfully created vertex type '{vertex_dbname}'")
-            except Exception as e:
-                err = str(e).lower()
-                if (
-                    "used by another object" in err
-                    or "duplicate" in err
-                    or "already exists" in err
-                ):
-                    logger.debug(
-                        f"Vertex type '{vertex_dbname}' already exists; will include in graph"
-                    )
-                    vertex_names.append(vertex_dbname)
-                else:
-                    logger.error(
-                        f"Failed to create vertex type '{vertex_dbname}': {e}\n"
-                        f"GSQL command was: {create_vertex_cmd}"
-                    )
-                    raise
-        return vertex_names
-
-    def define_vertex_classes(  # type: ignore[override]
-        self, vertex_config: VertexConfig
-    ) -> None:
-        """Define TigerGraph vertex types and associate them with the current graph.
-
-        Flow per vertex type:
-        1) Try to CREATE VERTEX (idempotent: ignore "already exists" errors)
-        2) Associate the vertex with the graph via ALTER GRAPH <graph> ADD VERTEX <vertex>
-
-        Args:
-            vertex_config: Vertex configuration containing vertices to create
-        """
-        # First create all vertex types globally
-        vertex_names = self._create_vertex_types_global(vertex_config)
-
-        # Then associate them with the graph (if graph already exists)
-        graph_name = self.config.database
-        if graph_name:
-            for vertex_name in vertex_names:
-                alter_graph_cmd = f"USE GRAPH {graph_name}\nALTER GRAPH {graph_name} ADD VERTEX {vertex_name}"
-                logger.debug(f"Executing GSQL: {alter_graph_cmd}")
-                try:
-                    result = self.conn.gsql(alter_graph_cmd)
-                    logger.debug(f"Result: {result}")
-                except Exception as e:
-                    err = str(e).lower()
-                    # If already associated, ignore
-                    if "already" in err and ("added" in err or "exists" in err):
-                        logger.debug(
-                            f"Vertex '{vertex_name}' already associated with graph '{graph_name}'"
-                        )
-                    else:
-                        raise
-
-    def _create_edge_types_global(self, edges: list[Edge]) -> list[str]:
-        """Create TigerGraph edge types globally (without graph association).
-
-        Edges are global in TigerGraph and must be created before they can be
-        included in a CREATE GRAPH statement.
-
-        Args:
-            edges: List of edges to create (should have _source_collection and _target_collection populated)
-
-        Returns:
-            list[str]: List of edge type names (relation names) that were created (or already existed)
-        """
-        edge_names = []
-        for edge in edges:
-            edge_attrs = self._format_edge_attributes(edge)
-
-            # Create the edge type globally (ignore if exists/used elsewhere)
-            # Edges are global in TigerGraph, so no USE GRAPH needed
-            create_edge_cmd = (
-                f"CREATE DIRECTED EDGE {edge.relation} (\n"
-                f"    FROM {edge._source},\n"
-                f"    TO {edge._target}{edge_attrs}\n"
-                f")"
-            )
-            logger.debug(f"Executing GSQL: {create_edge_cmd}")
-            try:
-                result = self.conn.gsql(create_edge_cmd)
-                logger.debug(f"Result: {result}")
-                edge_names.append(edge.relation)
-            except Exception as e:
-                err = str(e).lower()
-                # If the edge name is already used by another object or duplicates exist, continue
-                if (
-                    "used by another object" in err
-                    or "duplicate" in err
-                    or "already exists" in err
-                ):
-                    logger.debug(
-                        f"Edge type '{edge.relation}' already defined; will include in graph"
-                    )
-                    edge_names.append(edge.relation)
-                else:
-                    raise
-        return edge_names
-
-    def define_edge_classes(self, edges: list[Edge]):
-        """Define TigerGraph edge types and associate them with the current graph.
-
-        Flow per edge type:
-        1) Try to CREATE DIRECTED EDGE (idempotent: ignore "used by another object"/"duplicate"/"already exists")
-        2) Associate the edge with the graph via ALTER GRAPH <graph> ADD DIRECTED EDGE <edge>
-
-        Args:
-            edges: List of edges to create (should have _source_collection and _target_collection populated)
-        """
-        # First create all edge types globally
-        edge_names = self._create_edge_types_global(edges)
-
-        # Then associate them with the graph (if graph already exists)
-        graph_name = self.config.database
-        if graph_name:
-            for edge_name in edge_names:
-                alter_graph_cmd = (
-                    f"USE GRAPH {graph_name}\n"
-                    f"ALTER GRAPH {graph_name} ADD DIRECTED EDGE {edge_name}"
-                )
-                logger.debug(f"Executing GSQL: {alter_graph_cmd}")
-                try:
-                    result = self.conn.gsql(alter_graph_cmd)
-                    logger.debug(f"Result: {result}")
-                except Exception as e:
-                    err = str(e).lower()
-                    # If already associated, ignore
-                    if "already" in err and ("added" in err or "exists" in err):
-                        logger.debug(
-                            f"Edge '{edge_name}' already associated with graph '{graph_name}'"
-                        )
-                    else:
-                        raise
-
     def define_vertex_indices(self, vertex_config: VertexConfig):
         """
         TigerGraph automatically indexes primary keys.
@@ -988,35 +1191,49 @@ class TigerGraphConnection(Connection):
                 self._add_index(vertex_dbname, index_obj)
 
     def define_edge_indices(self, edges: list[Edge]):
-        """Define indices for edges if specified."""
-        logger.warning("TigerGraph edge indices not implemented yet [version 4.2.2]")
+        """Define indices for edges if specified.
+
+        Note: TigerGraph does not support creating indexes on edge attributes.
+        Edge indexes are skipped with a warning. Only vertex indexes are supported.
+        """
+        for edge in edges:
+            if edge.indexes:
+                logger.info(
+                    f"Skipping {len(edge.indexes)} index(es) on edge '{edge.relation}': "
+                    f"TigerGraph does not support indexes on edge attributes. "
+                    f"Only vertex indexes are supported."
+                )
+                # Skip edge index creation - TigerGraph doesn't support it
+                # for index_obj in edge.indexes:
+                #     self._add_index(edge.relation, index_obj, is_vertex_index=False)
 
     def _add_index(self, obj_name, index: Index, is_vertex_index=True):
         """
-        Create an index on a vertex or edge type using GSQL schema change jobs.
+        Create an index on a vertex type using GSQL schema change jobs.
 
-        TigerGraph requires indexes to be created through schema change jobs:
-        1. CREATE GLOBAL SCHEMA_CHANGE job job_name {ALTER VERTEX ... ADD INDEX ... ON (...);}
-        2. RUN GLOBAL SCHEMA_CHANGE job job_name
+        TigerGraph requires indexes to be created through schema change jobs.
+        This implementation creates a local schema change job for the current graph.
 
-        Note: TigerGraph only supports secondary indexes on a single field.
+        Note: TigerGraph only supports secondary indexes on vertex attributes, not on edge attributes.
+        Indexes on edges are not supported and should be skipped.
+        TigerGraph only supports indexes on a single field.
         Indexes with multiple fields will be skipped with a warning.
-        Edge indexes are not supported in TigerGraph and will be skipped with a warning.
 
         Args:
-            obj_name: Name of the vertex type or edge type
+            obj_name: Name of the vertex type
             index: Index configuration object
             is_vertex_index: Whether this is a vertex index (True) or edge index (False)
         """
-        try:
-            # TigerGraph doesn't support indexes on edges
-            if not is_vertex_index:
-                logger.warning(
-                    f"Edge indexes are not supported in TigerGraph [current version 4.2.2]"
-                    f"Skipping index creation for edge '{obj_name}' on field(s) '{index.fields}'"
-                )
-                return
+        # TigerGraph does not support indexes on edge attributes
+        if not is_vertex_index:
+            logger.warning(
+                f"Skipping index creation on edge '{obj_name}': "
+                f"TigerGraph does not support indexes on edge attributes. "
+                f"Only vertex indexes are supported."
+            )
+            return
 
+        try:
             if not index.fields:
                 logger.warning(f"No fields specified for index on {obj_name}, skipping")
                 return
@@ -1051,17 +1268,31 @@ class TigerGraphConnection(Connection):
                 )
                 return
 
-            # Build the ALTER statement inside the job (single field in parentheses)
-            # Note: Only vertex indexes are supported - edge indexes are handled earlier
+            # Build the ALTER statement inside the job
+            # Note: For edges, use "EDGE" not "DIRECTED EDGE" in ALTER statements
+            obj_type = "VERTEX" if is_vertex_index else "EDGE"
             alter_stmt = (
-                f"ALTER VERTEX {obj_name} ADD INDEX {index_name} ON ({field_name})"
+                f"ALTER {obj_type} {obj_name} ADD INDEX {index_name} ON ({field_name})"
             )
 
-            # Step 1: Create the schema change job
-            # only global changes are supported by tigergraph
+            # Step 1: Drop existing job if it exists (ignore errors)
+            try:
+                drop_job_cmd = f"USE GRAPH {graph_name}\nDROP JOB {job_name}"
+                self.conn.gsql(drop_job_cmd)
+                logger.debug(f"Dropped existing job '{job_name}'")
+            except Exception as e:
+                err_str = str(e).lower()
+                # Ignore errors if job doesn't exist
+                if "not found" in err_str or "could not be found" in err_str:
+                    logger.debug(f"Job '{job_name}' does not exist, skipping drop")
+                else:
+                    logger.debug(f"Could not drop job '{job_name}': {e}")
+
+            # Step 2: Create the schema change job
+            # Use local schema change for the graph
             create_job_cmd = (
-                f"USE GLOBAL \n"
-                f"CREATE GLOBAL SCHEMA_CHANGE job {job_name} {{{alter_stmt};}}"
+                f"USE GRAPH {graph_name}\n"
+                f"CREATE SCHEMA_CHANGE job {job_name} FOR GRAPH {graph_name} {{{alter_stmt};}}"
             )
 
             logger.debug(f"Executing GSQL (create job): {create_job_cmd}")
@@ -1084,7 +1315,7 @@ class TigerGraphConnection(Connection):
                     raise
 
             # Step 2: Run the schema change job
-            run_job_cmd = f"RUN GLOBAL SCHEMA_CHANGE job {job_name}"
+            run_job_cmd = f"RUN SCHEMA_CHANGE job {job_name}"
 
             logger.debug(f"Executing GSQL (run job): {run_job_cmd}")
             try:
@@ -1653,7 +1884,7 @@ class TigerGraphConnection(Connection):
             except Exception as e:
                 logger.error(f"Error upserting individual vertex {vertex_id}: {e}")
 
-    def _generate_edge_upsert_payload(
+    def _generate_edge_upsert_payloads(
         self,
         edges_data: list[tuple[dict, dict, dict]],
         source_class: str,
@@ -1661,44 +1892,44 @@ class TigerGraphConnection(Connection):
         edge_type: str,
         match_keys_source: tuple[str, ...],
         match_keys_target: tuple[str, ...],
-    ) -> dict[str, Any]:
+    ) -> list[dict[str, Any]]:
         """
-        Transforms edge data into the TigerGraph REST++ batch upsert JSON format.
+        Transforms edge data into multiple TigerGraph REST++ batch upsert JSON payloads.
+
+        Groups edges by (source_id, target_id, edge_type) and collects all weight combinations
+        for each triple. Then creates separate payloads by "zipping" the weight lists across
+        all (source_id, target_id, edge_type) groups.
 
         Args:
             edges_data: List of tuples (source_doc, target_doc, edge_props)
             source_class: Source vertex type name
             target_class: Target vertex type name
-            edge_type: Edge type/relation name
+            edge_type: Edge type/relation name (e.g., "relates")
             match_keys_source: Tuple of index fields for source vertex
             match_keys_target: Tuple of index fields for target vertex
 
         Returns:
-            Dictionary in TigerGraph REST++ batch upsert format for edges
+            List of payload dictionaries in TigerGraph REST++ format:
+            [{"edges": {source_v_type: {source_id: {edge_type: {target_v_type: {target_id: attributes}}}}}}, ...]
         """
-        # Initialize the required JSON structure for edges
-        payload: dict[str, Any] = {"edges": {source_class: {}}}
-        source_map = payload["edges"][source_class]
+        from collections import defaultdict
+
+        # Step 1: Group edges by (source_id, target_id, edge_type) and collect weight combinations
+        # Structure: {(source_id, target_id, edge_type): [weight_dict1, weight_dict2, ...]}
+        uvr_weights_map: defaultdict[tuple[str, str, str], list[dict]] = defaultdict(
+            list
+        )
+
+        # Also track original edge data for fallback
+        uvr_edges_map: defaultdict[
+            tuple[str, str, str], list[tuple[dict, dict, dict]]
+        ] = defaultdict(list)
 
         for source_doc, target_doc, edge_props in edges_data:
             try:
-                # Extract source ID (composite if needed)
-                if isinstance(match_keys_source, tuple) and len(match_keys_source) > 1:
-                    source_id_components = [
-                        str(source_doc[key]) for key in match_keys_source
-                    ]
-                    source_id = "_".join(source_id_components)
-                else:
-                    source_id = self._extract_id(source_doc, match_keys_source)
-
-                # Extract target ID (composite if needed)
-                if isinstance(match_keys_target, tuple) and len(match_keys_target) > 1:
-                    target_id_components = [
-                        str(target_doc[key]) for key in match_keys_target
-                    ]
-                    target_id = "_".join(target_id_components)
-                else:
-                    target_id = self._extract_id(target_doc, match_keys_target)
+                # Extract IDs
+                source_id = self._extract_id(source_doc, match_keys_source)
+                target_id = self._extract_id(target_doc, match_keys_target)
 
                 if not source_id or not target_id:
                     logger.warning(
@@ -1706,42 +1937,155 @@ class TigerGraphConnection(Connection):
                     )
                     continue
 
-                # Initialize source vertex entry if not exists
-                if source_id not in source_map:
-                    source_map[source_id] = {edge_type: {}}
-
-                # Initialize edge type entry if not exists
-                if edge_type not in source_map[source_id]:
-                    source_map[source_id][edge_type] = {}
-
-                # Initialize target vertex type entry if not exists
-                if target_class not in source_map[source_id][edge_type]:
-                    source_map[source_id][edge_type][target_class] = {}
-
-                # Format edge attributes for TigerGraph REST++ API
-                # Clean edge properties (remove internal keys)
+                # Clean and format edge attributes
                 clean_edge_props = self._clean_document(edge_props)
-
-                # Format attributes with {"value": ...} wrapper
                 formatted_attributes = {
                     k: {"value": v} for k, v in clean_edge_props.items()
                 }
 
-                # Add target vertex with edge attributes under target vertex type
-                source_map[source_id][edge_type][target_class][target_id] = (
-                    formatted_attributes
-                )
+                # Group by (source_id, target_id, edge_type)
+                # edge_type is the actual edge type name (e.g., "relates"), not a weight value
+                uvr_key = (source_id, target_id, edge_type)
+                uvr_weights_map[uvr_key].append(formatted_attributes)
+                uvr_edges_map[uvr_key].append((source_doc, target_doc, edge_props))
 
-            except KeyError as e:
-                logger.warning(
-                    f"Edge is missing a required field: {e}. Skipping edge: {source_doc}, {target_doc}"
-                )
-                continue
             except Exception as e:
                 logger.error(f"Error processing edge: {e}")
                 continue
 
-        return payload
+        # Step 2: Find the maximum number of weights across all (u, v, r) groups
+        # This determines how many payloads we need to create (k payloads for k max elements)
+        max_weights = (
+            max(len(weights_list) for weights_list in uvr_weights_map.values())
+            if uvr_weights_map
+            else 0
+        )
+
+        if max_weights == 0:
+            return []
+
+        # Step 3: Create k payloads by "zipping" weight lists across all (u, v, r) groups
+        # Unlike Python's zip() which stops at the shortest iterable, we create k payloads
+        # where k is the maximum group size. Payload i contains element i from each group
+        # (if that group has an element at index i).
+        payloads = []
+        for weight_idx in range(max_weights):
+            payload: dict[str, Any] = {"edges": {source_class: {}}}
+            source_map = payload["edges"][source_class]
+            payload_original_edges = []
+
+            # Iterate through all (u, v, r) groups and take element at weight_idx
+            for uvr_key, weights_list in uvr_weights_map.items():
+                # Skip if this group doesn't have a weight at this index
+                if weight_idx >= len(weights_list):
+                    continue
+
+                source_id, target_id, edge_type_key = uvr_key
+                weight_attrs = weights_list[weight_idx]
+                original_edge = uvr_edges_map[uvr_key][weight_idx]
+
+                # Build nested structure
+                if source_id not in source_map:
+                    source_map[source_id] = {edge_type: {}}
+
+                if edge_type not in source_map[source_id]:
+                    source_map[source_id][edge_type] = {target_class: {}}
+
+                if target_class not in source_map[source_id][edge_type]:
+                    source_map[source_id][edge_type][target_class] = {}
+
+                target_map = source_map[source_id][edge_type][target_class]
+
+                # Add edge at this index from this (u, v, r) group
+                target_map[target_id] = weight_attrs
+                payload_original_edges.append(original_edge)
+
+            # Only add payload if it has edges (skip empty payloads)
+            if payload_original_edges:
+                payload["_original_edges"] = payload_original_edges
+                payloads.append(payload)
+
+        return payloads
+
+    def _extract_id(
+        self, doc: dict[str, Any], match_keys: list[str] | tuple[str, ...]
+    ) -> str | None:
+        """
+        Extract vertex ID from document based on match keys.
+
+        For composite keys, concatenates values with an underscore '_'.
+        Prefers '_key' if present.
+
+        Args:
+            doc: Document dictionary
+            match_keys: Keys used to identify the vertex
+
+        Returns:
+            str | None: The extracted ID or None if missing required fields
+        """
+        if not doc:
+            return None
+
+        # Try _key first (common in ArangoDB style docs)
+        if "_key" in doc and doc["_key"]:
+            return str(doc["_key"])
+
+        # If multiple match keys, create a composite ID
+        if len(match_keys) > 1:
+            try:
+                id_parts = [str(doc[key]) for key in match_keys]
+                return "_".join(id_parts)
+            except KeyError:
+                return None
+
+        # Single match key
+        if len(match_keys) == 1:
+            key = match_keys[0]
+            if key in doc and doc[key] is not None:
+                return str(doc[key])
+
+        return None
+
+    def _fallback_individual_edge_upsert(
+        self,
+        edges_data: list[tuple[dict, dict, dict]],
+        source_class: str,
+        target_class: str,
+        edge_type: str,
+        match_keys_source: tuple[str, ...],
+        match_keys_target: tuple[str, ...],
+    ) -> None:
+        """Fallback method for individual edge upserts.
+
+        Args:
+            edges_data: List of tuples (source_doc, target_doc, edge_props)
+            source_class: Source vertex type name
+            target_class: Target vertex type name
+            edge_type: Edge type name
+            match_keys_source: Keys for source vertex ID
+            match_keys_target: Keys for target vertex ID
+        """
+        for source_doc, target_doc, edge_props in edges_data:
+            try:
+                source_id = self._extract_id(source_doc, match_keys_source)
+                target_id = self._extract_id(target_doc, match_keys_target)
+
+                if source_id and target_id:
+                    clean_edge_props = self._clean_document(edge_props)
+                    # Serialize data for pyTigerGraph
+                    serialized_props = json.loads(
+                        json.dumps(clean_edge_props, default=_json_serializer)
+                    )
+                    self.conn.upsertEdge(
+                        source_class,
+                        source_id,
+                        edge_type,
+                        target_class,
+                        target_id,
+                        attributes=serialized_props,
+                    )
+            except Exception as e:
+                logger.error(f"Error upserting individual edge: {e}")
 
     def insert_edges_batch(
         self,
@@ -1841,8 +2185,8 @@ class TigerGraphConnection(Connection):
                 )
                 return
 
-            # Generate the edge upsert payload
-            payload = self._generate_edge_upsert_payload(
+            # Generate multiple edge upsert payloads (one per unique attribute combination)
+            payloads = self._generate_edge_upsert_payloads(
                 normalized_edges,
                 source_class,
                 target_class,
@@ -1851,9 +2195,7 @@ class TigerGraphConnection(Connection):
                 match_keys_tgt,
             )
 
-            # Check if payload has any edges
-            source_vertices = payload.get("edges", {}).get(source_class, {})
-            if not source_vertices:
+            if not payloads:
                 logger.warning(f"No valid edges to upsert for edge type {edge_type}")
                 return
 
@@ -1863,33 +2205,94 @@ class TigerGraphConnection(Connection):
             if not graph_name:
                 raise ValueError("Graph name (database) must be configured")
 
-            # Send the upsert request with username/password authentication
-            result = self._upsert_data(
-                payload,
-                host,
-                graph_name,
-                username=self.config.username,
-                password=self.config.password,
-            )
+            # Send each payload in batch
+            total_edges = 0
+            failed_payloads = []
+            for i, payload in enumerate(payloads):
+                edges_payload = payload.get("edges", {})
+                if not edges_payload or source_class not in edges_payload:
+                    continue
 
-            if result.get("error"):
-                logger.error(
-                    f"Error upserting edges of type {edge_type}: {result.get('message')}"
+                # Store original edges for fallback before removing metadata
+                original_edges = payload.pop("_original_edges", [])
+
+                # Send the batch upsert request
+                result = self._upsert_data(
+                    payload,
+                    host,
+                    graph_name,
+                    username=self.config.username,
+                    password=self.config.password,
                 )
-            else:
-                # Count edges in payload
-                edge_count = 0
-                for source_edges in source_vertices.values():
-                    if edge_type in source_edges:
-                        if target_class in source_edges[edge_type]:
-                            edge_count += len(source_edges[edge_type][target_class])
-                logger.debug(
-                    f"Upserted {edge_count} edges of type {edge_type}: {result}"
+
+                # Restore original edges for potential fallback
+                payload["_original_edges"] = original_edges
+
+                if result.get("error"):
+                    logger.error(
+                        f"Error upserting edges of type {edge_type} (payload {i + 1}/{len(payloads)}): "
+                        f"{result.get('message')}"
+                    )
+                    # Collect failed payload for fallback
+                    failed_payloads.append((payload, i))
+                else:
+                    # Count edges in this payload
+                    edge_count = 0
+                    for source_id_map in edges_payload[source_class].values():
+                        if edge_type in source_id_map:
+                            for target_type_map in source_id_map[edge_type].values():
+                                for attrs_or_list in target_type_map.values():
+                                    if isinstance(attrs_or_list, list):
+                                        edge_count += len(attrs_or_list)
+                                    else:
+                                        edge_count += 1
+                    total_edges += edge_count
+                    logger.debug(
+                        f"Upserted {edge_count} edges of type {edge_type} via batch "
+                        f"(payload {i + 1}/{len(payloads)}): {result}"
+                    )
+
+            # Handle failed payloads with individual upserts
+            if failed_payloads:
+                logger.warning(
+                    f"{len(failed_payloads)} payload(s) failed, falling back to individual upserts"
                 )
-                return
+                # Extract original edges from failed payloads for individual upsert
+                failed_edges = []
+                for payload, _ in failed_payloads:
+                    # Use the stored original edges for this payload
+                    original_edges = payload.get("_original_edges", [])
+                    failed_edges.extend(original_edges)
+
+                if failed_edges:
+                    logger.debug(
+                        f"Sending {len(failed_edges)} edges from failed payloads via individual upserts"
+                    )
+                    self._fallback_individual_edge_upsert(
+                        failed_edges,
+                        source_class,
+                        target_class,
+                        edge_type,
+                        match_keys_src,
+                        match_keys_tgt,
+                    )
+
+            logger.debug(
+                f"Total upserted {total_edges} edges of type {edge_type} across {len(payloads)} payloads"
+            )
+            return
 
         except Exception as e:
             logger.error(f"Error batch inserting edges: {e}")
+            # Fallback to individual operations
+            self._fallback_individual_edge_upsert(
+                normalized_edges,
+                source_class,
+                target_class,
+                edge_type,
+                match_keys_src,
+                match_keys_tgt,
+            )
 
     def _extract_id(self, doc, match_keys):
         """
