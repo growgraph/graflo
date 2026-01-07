@@ -2,20 +2,28 @@
 
 ## Quick Start - All Services
 
-To start all docker compose services at once:
+The easiest way to run all graph databases at once is using the convenience scripts:
 
+**Start all services:**
 ```shell
 ./start-all.sh
 ```
 
-To stop all services:
+This will start all available graph database services:
+- ArangoDB (port 8535)
+- Neo4j (port 7475)
+- TigerGraph (port 14241)
+- FalkorDB (port 3001)
+- Memgraph (port 7687)
+- NebulaGraph (port 9669)
+- PostgreSQL (port 5432)
 
+**Stop all services:**
 ```shell
 ./stop-all.sh
 ```
 
-To cleanup (remove containers, volumes, and optionally images):
-
+**Cleanup (remove containers, volumes, and optionally images):**
 ```shell
 ./cleanup-all.sh              # Remove containers and volumes
 ./cleanup-all.sh --images     # Also remove docker images
@@ -26,8 +34,17 @@ These scripts will automatically:
 - Detect the `SPEC` variable from each `.env` file (defaults to `graflo`)
 - Use the appropriate profile for each service
 - Handle services with or without `.env` files
+- Start services in the correct order (e.g., NebulaGraph requires multiple services)
 
 ## General instruction
+
+To run individual services, use:
+
+```shell
+docker compose --env-file .env up <container_spec> -d
+```
+
+**Note:** For convenience, you can also use `./start-all.sh` to start all services at once (see Quick Start section above).
 
 ```shell
 docker compose --env-file .env up <container_spec> -d
@@ -139,4 +156,19 @@ FalkorDB is a Redis-based graph database that supports OpenCypher.
 ```python
 from graflo.db.connection.onto import FalkordbConfig
 config = FalkordbConfig.from_docker_env()
+```
+
+## Memgraph
+
+Memgraph is a high-performance, in-memory graph database that supports OpenCypher and uses the Bolt protocol.
+
+**Connection Details:**
+- Bolt port: `7687` (default, configurable via `MEMGRAPH_PORT` in `.env`)
+- Uses Bolt protocol (bolt://) for connections
+- Optional authentication (configurable via `MEMGRAPH_USER` and `MEMGRAPH_PASSWORD` in `.env`)
+
+**Programmatic Connection:**
+```python
+from graflo.db.connection.onto import MemgraphConfig
+config = MemgraphConfig.from_docker_env()
 ```

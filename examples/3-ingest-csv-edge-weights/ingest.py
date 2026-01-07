@@ -8,7 +8,7 @@ import logging
 # Configure logging: INFO level for graflo module, WARNING for others
 logging.basicConfig(level=logging.WARNING, handlers=[logging.StreamHandler()])
 # Set graflo module to INFO level
-logging.getLogger("graflo").setLevel(logging.DEBUG)
+logging.getLogger("graflo").setLevel(logging.INFO)
 
 schema = Schema.from_dict(FileHandle.load("schema.yaml"))
 

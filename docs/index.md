@@ -1,6 +1,6 @@
 # GraFlo <img src="https://raw.githubusercontent.com/growgraph/graflo/main/docs/assets/favicon.ico" alt="graflo logo" style="height: 32px; width:32px;"/>
 
-graflo is a framework for transforming **tabular** data (CSV, SQL) and **hierarchical** data (JSON, XML) into property graphs and ingesting them into graph databases (ArangoDB, Neo4j, TigerGraph, FalkorDB). **Automatically infer schemas from normalized PostgreSQL databases (3NF)** with proper primary keys (PK) and foreign keys (FK) - uses intelligent heuristics to detect vertices and edges!
+graflo is a framework for transforming **tabular** data (CSV, SQL) and **hierarchical** data (JSON, XML) into property graphs and ingesting them into graph databases (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph). **Automatically infer schemas from normalized PostgreSQL databases (3NF)** with proper primary keys (PK) and foreign keys (FK) - uses intelligent heuristics to detect vertices and edges!
 
 ![Python](https://img.shields.io/badge/python-3.10-blue.svg) 
 [![PyPI version](https://badge.fury.io/py/graflo.svg)](https://badge.fury.io/py/graflo)
@@ -72,7 +72,7 @@ Resources define how data is transformed into a graph (semantic mapping). They w
     - Edge weight fields can specify types for improved type safety
     - Backward compatible: fields without types default to None (suitable for databases like ArangoDB)
 - **Parallel Processing**: Efficient processing with multi-threading
-- **Database Integration**: Seamless integration with Neo4j, ArangoDB, TigerGraph, and PostgreSQL (as source)
+- **Database Integration**: Seamless integration with Neo4j, ArangoDB, TigerGraph, FalkorDB, Memgraph, and PostgreSQL (as source)
 - **Advanced Filtering**: Powerful filtering capabilities for data transformation with server-side filtering support
 - **Blank Node Support**: Create intermediate vertices for complex relationships
 
@@ -96,7 +96,7 @@ Resources define how data is transformed into a graph (semantic mapping). They w
 ## Requirements
 
 - Python 3.10 or higher
-- Graph database (Neo4j, ArangoDB, TigerGraph, or FalkorDB) for storage
+- Graph database (Neo4j, ArangoDB, TigerGraph, FalkorDB, or Memgraph) for storage
 - Optional: PostgreSQL or other SQL databases for data sources (with automatic schema inference support)
 - Dependencies as specified in pyproject.toml
 
