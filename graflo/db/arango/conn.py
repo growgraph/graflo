@@ -498,8 +498,8 @@ class ArangoConnection(Connection):
 
     def delete_graph_structure(
         self,
-        vertex_types: tuple[str, ...] = (),
-        graph_names: tuple[str, ...] = (),
+        vertex_types: tuple[str, ...] | list[str] = (),
+        graph_names: tuple[str, ...] | list[str] = (),
         delete_all: bool = False,
     ) -> None:
         """Delete graph structure (vertex/edge classes and graphs) from ArangoDB.
@@ -595,9 +595,9 @@ class ArangoConnection(Connection):
 
     def upsert_docs_batch(
         self,
-        docs: list[dict[str, Any]] | str,
+        docs: list[dict[str, Any]],
         class_name: str,
-        match_keys: list[str] | None = None,
+        match_keys: list[str] | tuple[str, ...] = (),
         **kwargs: Any,
     ) -> None:
         """Upsert a batch of documents using AQL.
@@ -618,11 +618,12 @@ class ArangoConnection(Connection):
         update_keys = kwargs.pop("update_keys", None)
         filter_uniques = kwargs.pop("filter_uniques", True)
 
-        if isinstance(docs, list):
-            if filter_uniques:
-                docs = pick_unique_dict(docs)
-            docs = json.dumps(docs, default=json_serializer)
-        if match_keys is None:
+        if not docs:
+            return
+        if filter_uniques:
+            docs = pick_unique_dict(docs)
+        docs_json = json.dumps(docs, default=json_serializer)
+        if not match_keys:
             upsert_clause = ""
             update_clause = ""
         else:
@@ -640,7 +641,7 @@ class ArangoConnection(Connection):
 
         options = "OPTIONS {exclusive: true, ignoreErrors: true}"
 
-        q_update = f"""FOR doc in {docs}
+        q_update = f"""FOR doc in {docs_json}
                             {upsert_clause}
                             INSERT doc
                             {update_clause} 
@@ -650,16 +651,16 @@ class ArangoConnection(Connection):
 
     def insert_edges_batch(
         self,
-        docs_edges: list[Any] | None,
+        docs_edges: list[list[dict[str, Any]]] | list[Any] | None,
         source_class: str,
         target_class: str,
-        relation_name: str | None = None,
+        relation_name: str,
         match_keys_source: tuple[str, ...] = ("_key",),
         match_keys_target: tuple[str, ...] = ("_key",),
         filter_uniques: bool = True,
         head: int | None = None,
         **kwargs: Any,
-    ) -> str | None:
+    ) -> None:
         """Insert a batch of edges using AQL.
 
         Creates edges between source and target vertices, with support for
@@ -702,7 +703,7 @@ class ArangoConnection(Connection):
                 docs_edges = pick_unique_dict(docs_edges)
             docs_edges_str = json.dumps(docs_edges)
         else:
-            return ""
+            return
 
         if match_keys_source[0] == "_key":
             result_from = f'CONCAT("{source_class}/", edge[0]._key)'
@@ -776,16 +777,19 @@ class ArangoConnection(Connection):
             self.execute(q_update)
 
     def insert_return_batch(self, docs: list[dict[str, Any]], class_name: str) -> str:
-        """Insert documents and return their keys.
+        """Insert documents and return the AQL query string.
+
+        Note: ArangoDB-specific behavior - returns query string instead of executing.
+        This allows for deferred execution and is used by caster.py and tests.
 
         Args:
             docs: Documents to insert
             class_name: Collection to insert into
 
         Returns:
-            str: AQL query string for the operation
+            str: AQL query string for the operation (can be executed with execute())
         """
-        docs_str = json.dumps(docs)
+        docs_str = json.dumps(docs, default=json_serializer)
         query0 = f"""FOR doc in {docs_str}
               INSERT doc
               INTO {class_name}
@@ -798,8 +802,8 @@ class ArangoConnection(Connection):
         self,
         batch: list[dict[str, Any]],
         class_name: str,
-        match_keys: list[str],
-        keep_keys: list[str],
+        match_keys: list[str] | tuple[str, ...],
+        keep_keys: list[str] | tuple[str, ...] | None = None,
         flatten: bool = False,
         filters: None | Clause | list[Any] | dict[str, Any] = None,
     ) -> list[dict[str, Any]] | dict[int, list[dict[str, Any]]]:
@@ -834,10 +838,10 @@ class ArangoConnection(Connection):
                 rdata += [sub_item for sub_item in group]
             return rdata
         else:
-            rdata_dict = {}
+            rdata_dict: dict[int, list[dict[str, Any]]] = {}
             for item in get_data_from_cursor(cursor):
                 __i = item.pop("__i")
-                group = item.pop("_group")
+                group = item.pop("_group", [])
                 rdata_dict[__i] = group
             return rdata_dict
 
@@ -1040,8 +1044,8 @@ class ArangoConnection(Connection):
         self,
         batch: list[dict[str, Any]],
         class_name: str,
-        match_keys: list[str],
-        keep_keys: list[str],
+        match_keys: list[str] | tuple[str, ...],
+        keep_keys: list[str] | tuple[str, ...] | None = None,
         filters: None | Clause | list[Any] | dict[str, Any] = None,
     ) -> list[dict[str, Any]]:
         """Keep documents that don't exist in the database.

@@ -24,6 +24,7 @@ Example:
 """
 
 import logging
+from typing import Any
 
 from neo4j import GraphDatabase
 
@@ -204,7 +205,12 @@ class Neo4jConnection(Connection):
         """
         pass
 
-    def delete_graph_structure(self, vertex_types=(), graph_names=(), delete_all=False):
+    def delete_graph_structure(
+        self,
+        vertex_types: tuple[str, ...] | list[str] = (),
+        graph_names: tuple[str, ...] | list[str] = (),
+        delete_all: bool = False,
+    ) -> None:
         """Delete graph structure (nodes and relationships) from Neo4j.
 
         In Neo4j:
@@ -226,7 +232,7 @@ class Neo4jConnection(Connection):
             q = "MATCH (n) DELETE n"
             self.execute(q)
 
-    def init_db(self, schema: Schema, clean_start):
+    def init_db(self, schema: Schema, clean_start: bool) -> None:
         """Initialize Neo4j with the given schema.
 
         Checks if the database exists and creates it if it doesn't.
@@ -366,7 +372,7 @@ class Neo4jConnection(Connection):
 
     def insert_edges_batch(
         self,
-        docs_edges,
+        docs_edges: list[list[dict[str, Any]]] | list[Any] | None,
         source_class: str,
         target_class: str,
         relation_name: str,
@@ -374,8 +380,8 @@ class Neo4jConnection(Connection):
         match_keys_target: tuple[str, ...],
         filter_uniques: bool = True,
         head: int | None = None,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> None:
         """Insert a batch of relationships using Cypher.
 
         Creates relationships between source and target nodes, with support for
@@ -427,7 +433,9 @@ class Neo4jConnection(Connection):
         if not dry:
             self.execute(q, batch=docs_edges)
 
-    def insert_return_batch(self, docs, class_name):
+    def insert_return_batch(
+        self, docs: list[dict[str, Any]], class_name: str
+    ) -> list[dict[str, Any]] | str:
         """Insert nodes and return their properties.
 
         Note: Not implemented in Neo4j.
@@ -577,13 +585,13 @@ class Neo4jConnection(Connection):
 
     def fetch_present_documents(
         self,
-        batch,
-        class_name,
-        match_keys,
-        keep_keys,
-        flatten=False,
-        filters: list | dict | None = None,
-    ):
+        batch: list[dict[str, Any]],
+        class_name: str,
+        match_keys: list[str] | tuple[str, ...],
+        keep_keys: list[str] | tuple[str, ...] | None = None,
+        flatten: bool = False,
+        filters: list[Any] | dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         """Fetch nodes that exist in the database.
 
         Note: Not implemented in Neo4j.
@@ -627,12 +635,12 @@ class Neo4jConnection(Connection):
 
     def keep_absent_documents(
         self,
-        batch,
-        class_name,
-        match_keys,
-        keep_keys,
-        filters: list | dict | None = None,
-    ):
+        batch: list[dict[str, Any]],
+        class_name: str,
+        match_keys: list[str] | tuple[str, ...],
+        keep_keys: list[str] | tuple[str, ...] | None = None,
+        filters: list[Any] | dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         """Keep nodes that don't exist in the database.
 
         Note: Not implemented in Neo4j.

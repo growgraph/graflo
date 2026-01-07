@@ -34,3 +34,6 @@
 !pyproject.toml
 !mkdocs.yml
 !*.md
+!.pre-commit-config.yaml
+
+

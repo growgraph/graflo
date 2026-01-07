@@ -463,7 +463,7 @@ class TigerGraphConnection(Connection):
         """Close connection - pyTigerGraph handles cleanup automatically."""
         pass
 
-    def init_db(self, schema: Schema, clean_start=False):
+    def init_db(self, schema: Schema, clean_start: bool = False) -> None:
         """
         Initialize database with schema definition.
 
@@ -863,7 +863,9 @@ class TigerGraphConnection(Connection):
                     raise
         return vertex_names
 
-    def define_vertex_classes(self, vertex_config: VertexConfig):
+    def define_vertex_classes(  # type: ignore[override]
+        self, vertex_config: VertexConfig
+    ) -> None:
         """Define TigerGraph vertex types and associate them with the current graph.
 
         Flow per vertex type:
@@ -1743,16 +1745,16 @@ class TigerGraphConnection(Connection):
 
     def insert_edges_batch(
         self,
-        docs_edges,
+        docs_edges: list[list[dict[str, Any]]] | list[Any] | None,
         source_class: str,
         target_class: str,
         relation_name: str,
-        match_keys_source: tuple[str, ...] = ("_key",),
-        match_keys_target: tuple[str, ...] = ("_key",),
+        match_keys_source: tuple[str, ...],
+        match_keys_target: tuple[str, ...],
         filter_uniques: bool = True,
         head: int | None = None,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> None:
         """
         Batch insert/upsert edges using TigerGraph REST++ API.
 
@@ -1782,7 +1784,8 @@ class TigerGraphConnection(Connection):
         kwargs.pop("uniq_weight_collections", None)
         kwargs.pop("upsert_option", None)
         if dry:
-            logger.debug(f"Dry run: would insert {len(docs_edges)} edges")
+            if docs_edges is not None:
+                logger.debug(f"Dry run: would insert {len(docs_edges)} edges")
             return
 
         # Process edges list
@@ -1793,6 +1796,8 @@ class TigerGraphConnection(Connection):
                 docs_edges = pick_unique_dict(docs_edges)
 
         # Normalize edge data format - handle both tuple and dict formats
+        if docs_edges is None:
+            return
         normalized_edges = []
         for edge_item in docs_edges:
             try:
@@ -1881,7 +1886,7 @@ class TigerGraphConnection(Connection):
                 logger.debug(
                     f"Upserted {edge_count} edges of type {edge_type}: {result}"
                 )
-                return result
+                return
 
         except Exception as e:
             logger.error(f"Error batch inserting edges: {e}")
@@ -1910,7 +1915,9 @@ class TigerGraphConnection(Connection):
 
         return "_".join(id_parts) if id_parts else None
 
-    def insert_return_batch(self, docs, class_name):
+    def insert_return_batch(
+        self, docs: list[dict[str, Any]], class_name: str
+    ) -> list[dict[str, Any]] | str:
         """
         TigerGraph doesn't have INSERT...RETURN semantics like ArangoDB.
         """
@@ -1955,13 +1962,13 @@ class TigerGraphConnection(Connection):
 
     def fetch_docs(
         self,
-        class_name,
-        filters: list | dict | Clause | None = None,
+        class_name: str,
+        filters: list[Any] | dict[str, Any] | Clause | None = None,
         limit: int | None = None,
-        return_keys: list | None = None,
-        unset_keys: list | None = None,
-        **kwargs,
-    ):
+        return_keys: list[str] | None = None,
+        unset_keys: list[str] | None = None,
+        **kwargs: Any,
+    ) -> list[dict[str, Any]]:
         """
         Fetch documents (vertices) with filtering and projection using REST++ API.
 
@@ -2055,12 +2062,12 @@ class TigerGraphConnection(Connection):
         edge_type: str | None = None,
         to_type: str | None = None,
         to_id: str | None = None,
-        filters: list | dict | Clause | None = None,
+        filters: list[Any] | dict[str, Any] | Clause | None = None,
         limit: int | None = None,
-        return_keys: list | None = None,
-        unset_keys: list | None = None,
-        **kwargs,
-    ):
+        return_keys: list[str] | None = None,
+        unset_keys: list[str] | None = None,
+        **kwargs: Any,
+    ) -> list[dict[str, Any]]:
         """
         Fetch edges from TigerGraph using pyTigerGraph's getEdges method.
 
@@ -2197,20 +2204,25 @@ class TigerGraphConnection(Connection):
 
     def fetch_present_documents(
         self,
-        batch,
-        class_name,
-        match_keys,
-        keep_keys,
-        flatten=False,
-        filters: list | dict | None = None,
-    ):
+        batch: list[dict[str, Any]],
+        class_name: str,
+        match_keys: list[str] | tuple[str, ...],
+        keep_keys: list[str] | tuple[str, ...] | None = None,
+        flatten: bool = False,
+        filters: list[Any] | dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         """
         Check which documents from batch are present in the database.
         """
         try:
-            present_docs = {}
+            present_docs: list[dict[str, Any]] = []
+            keep_keys_list: list[str] | tuple[str, ...] = (
+                list(keep_keys) if keep_keys is not None else []
+            )
+            if isinstance(keep_keys_list, tuple):
+                keep_keys_list = list(keep_keys_list)
 
-            for i, doc in enumerate(batch):
+            for doc in batch:
                 vertex_id = self._extract_id(doc, match_keys)
                 if not vertex_id:
                     continue
@@ -2220,15 +2232,20 @@ class TigerGraphConnection(Connection):
                     if vertex_data and vertex_id in vertex_data:
                         # Extract requested keys
                         vertex_attrs = vertex_data[vertex_id].get("attributes", {})
-                        filtered_doc = {}
+                        filtered_doc: dict[str, Any] = {}
 
-                        for key in keep_keys:
-                            if key == "id":
-                                filtered_doc[key] = vertex_id
-                            elif key in vertex_attrs:
-                                filtered_doc[key] = vertex_attrs[key]
+                        if keep_keys_list:
+                            for key in keep_keys_list:
+                                if key == "id":
+                                    filtered_doc[key] = vertex_id
+                                elif key in vertex_attrs:
+                                    filtered_doc[key] = vertex_attrs[key]
+                        else:
+                            # If no keep_keys specified, return all attributes
+                            filtered_doc = vertex_attrs.copy()
+                            filtered_doc["id"] = vertex_id
 
-                        present_docs[i] = [filtered_doc]
+                        present_docs.append(filtered_doc)
 
                 except Exception:
                     # Vertex doesn't exist or error occurred
@@ -2238,7 +2255,7 @@ class TigerGraphConnection(Connection):
 
         except Exception as e:
             logger.error(f"Error fetching present documents: {e}")
-            return {}
+            return []
 
     def aggregate(
         self,
@@ -2268,16 +2285,16 @@ class TigerGraphConnection(Connection):
 
     def keep_absent_documents(
         self,
-        batch,
-        class_name,
-        match_keys,
-        keep_keys,
-        filters: list | dict | None = None,
-    ):
+        batch: list[dict[str, Any]],
+        class_name: str,
+        match_keys: list[str] | tuple[str, ...],
+        keep_keys: list[str] | tuple[str, ...] | None = None,
+        filters: list[Any] | dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         """
         Return documents from batch that are NOT present in database.
         """
-        present_docs_indices = self.fetch_present_documents(
+        present_docs = self.fetch_present_documents(
             batch=batch,
             class_name=class_name,
             match_keys=match_keys,
@@ -2286,10 +2303,32 @@ class TigerGraphConnection(Connection):
             filters=filters,
         )
 
-        absent_indices = sorted(
-            set(range(len(batch))) - set(present_docs_indices.keys())
+        # Create a set of IDs from present documents for efficient lookup
+        present_ids = set()
+        for present_doc in present_docs:
+            # Extract ID from present document (it should have 'id' key)
+            if "id" in present_doc:
+                present_ids.add(present_doc["id"])
+
+        # Find documents that are not present
+        absent_docs: list[dict[str, Any]] = []
+        keep_keys_list: list[str] | tuple[str, ...] = (
+            list(keep_keys) if keep_keys is not None else []
         )
-        return [batch[i] for i in absent_indices]
+        if isinstance(keep_keys_list, tuple):
+            keep_keys_list = list(keep_keys_list)
+
+        for doc in batch:
+            vertex_id = self._extract_id(doc, match_keys)
+            if not vertex_id or vertex_id not in present_ids:
+                if keep_keys_list:
+                    # Filter to keep only requested keys
+                    filtered_doc = {k: doc.get(k) for k in keep_keys_list if k in doc}
+                    absent_docs.append(filtered_doc)
+                else:
+                    absent_docs.append(doc)
+
+        return absent_docs
 
     def define_indexes(self, schema: Schema):
         """Define all indexes from schema."""

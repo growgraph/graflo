@@ -25,6 +25,7 @@ Example:
 """
 
 import logging
+from typing import Any
 from urllib.parse import urlparse
 
 from falkordb import FalkorDB
@@ -396,7 +397,12 @@ class FalkordbConnection(Connection):
         """
         pass
 
-    def delete_graph_structure(self, vertex_types=(), graph_names=(), delete_all=False):
+    def delete_graph_structure(
+        self,
+        vertex_types: tuple[str, ...] | list[str] = (),
+        graph_names: tuple[str, ...] | list[str] = (),
+        delete_all: bool = False,
+    ) -> None:
         """Delete graph structure (nodes and relationships) from FalkorDB.
 
         Args:
@@ -430,7 +436,7 @@ class FalkordbConnection(Connection):
             except Exception as e:
                 logger.warning(f"Failed to delete graph '{graph_name}': {e}")
 
-    def init_db(self, schema: Schema, clean_start: bool):
+    def init_db(self, schema: Schema, clean_start: bool) -> None:
         """Initialize FalkorDB with the given schema.
 
         Uses schema.general.name if database is not set in config.
@@ -469,8 +475,12 @@ class FalkordbConnection(Connection):
             raise
 
     def upsert_docs_batch(
-        self, docs: list[dict], class_name: str, match_keys: list[str], **kwargs
-    ):
+        self,
+        docs: list[dict[str, Any]],
+        class_name: str,
+        match_keys: list[str] | tuple[str, ...],
+        **kwargs: Any,
+    ) -> None:
         """Upsert a batch of nodes using Cypher MERGE.
 
         Args:
@@ -489,7 +499,10 @@ class FalkordbConnection(Connection):
             return
 
         # Sanitize documents: filter invalid keys/values, validate match_keys
-        sanitized_docs = self._sanitize_batch(docs, match_keys)
+        match_keys_list = (
+            list(match_keys) if isinstance(match_keys, tuple) else match_keys
+        )
+        sanitized_docs = self._sanitize_batch(docs, match_keys_list)
 
         if not sanitized_docs:
             return
@@ -510,7 +523,7 @@ class FalkordbConnection(Connection):
 
     def insert_edges_batch(
         self,
-        docs_edges: list,
+        docs_edges: list[list[dict[str, Any]]] | list[Any] | None,
         source_class: str,
         target_class: str,
         relation_name: str,
@@ -518,8 +531,8 @@ class FalkordbConnection(Connection):
         match_keys_target: tuple[str, ...],
         filter_uniques: bool = True,
         head: int | None = None,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> None:
         """Create relationships between existing nodes using Cypher MERGE.
 
         Args:
@@ -601,7 +614,9 @@ class FalkordbConnection(Connection):
         if not dry:
             self.execute(q, data=sanitized_edges)
 
-    def insert_return_batch(self, docs, class_name):
+    def insert_return_batch(
+        self, docs: list[dict[str, Any]], class_name: str
+    ) -> list[dict[str, Any]] | str:
         """Insert nodes and return their properties.
 
         Args:
@@ -791,13 +806,13 @@ class FalkordbConnection(Connection):
 
     def fetch_present_documents(
         self,
-        batch,
-        class_name,
-        match_keys,
-        keep_keys,
-        flatten=False,
-        filters: list | dict | None = None,
-    ):
+        batch: list[dict[str, Any]],
+        class_name: str,
+        match_keys: list[str] | tuple[str, ...],
+        keep_keys: list[str] | tuple[str, ...] | None = None,
+        flatten: bool = False,
+        filters: list[Any] | dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         """Fetch nodes that exist in the database.
 
         Args:
@@ -939,12 +954,12 @@ class FalkordbConnection(Connection):
 
     def keep_absent_documents(
         self,
-        batch,
-        class_name,
-        match_keys,
-        keep_keys,
-        filters: list | dict | None = None,
-    ):
+        batch: list[dict[str, Any]],
+        class_name: str,
+        match_keys: list[str] | tuple[str, ...],
+        keep_keys: list[str] | tuple[str, ...] | None = None,
+        filters: list[Any] | dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         """Keep documents that don't exist in the database.
 
         Args:

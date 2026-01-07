@@ -52,7 +52,7 @@ Example:
 
 import abc
 import logging
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from graflo.architecture.edge import Edge
 from graflo.architecture.schema import Schema
@@ -98,12 +98,15 @@ class Connection(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def execute(self, query, **kwargs):
+    def execute(self, query: str | Any, **kwargs: Any) -> Any:
         """Execute a database query.
 
         Args:
             query: Query to execute
             **kwargs: Additional query parameters
+
+        Returns:
+            Query result (database-specific)
         """
         pass
 
@@ -131,7 +134,12 @@ class Connection(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def delete_graph_structure(self, vertex_types=(), graph_names=(), delete_all=False):
+    def delete_graph_structure(
+        self,
+        vertex_types: tuple[str, ...] | list[str] = (),
+        graph_names: tuple[str, ...] | list[str] = (),
+        delete_all: bool = False,
+    ) -> None:
         """Delete graph structure (graphs, vertex types, edge types) from the database.
 
         This method deletes graphs and their associated vertex/edge types.
@@ -149,7 +157,7 @@ class Connection(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def init_db(self, schema: Schema, clean_start):
+    def init_db(self, schema: Schema, clean_start: bool) -> None:
         """Initialize the database with the given schema.
 
         Args:
@@ -159,7 +167,13 @@ class Connection(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def upsert_docs_batch(self, docs, class_name, match_keys, **kwargs):
+    def upsert_docs_batch(
+        self,
+        docs: list[dict[str, Any]],
+        class_name: str,
+        match_keys: list[str] | tuple[str, ...],
+        **kwargs: Any,
+    ) -> None:
         """Upsert a batch of documents.
 
         Args:
@@ -173,7 +187,7 @@ class Connection(abc.ABC):
     @abc.abstractmethod
     def insert_edges_batch(
         self,
-        docs_edges,
+        docs_edges: list[list[dict[str, Any]]] | list[Any] | None,
         source_class: str,
         target_class: str,
         relation_name: str,
@@ -181,8 +195,8 @@ class Connection(abc.ABC):
         match_keys_target: tuple[str, ...],
         filter_uniques: bool = True,
         head: int | None = None,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> None:
         """Insert a batch of edges.
 
         Args:
@@ -205,7 +219,9 @@ class Connection(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def insert_return_batch(self, docs, class_name):
+    def insert_return_batch(
+        self, docs: list[dict[str, Any]], class_name: str
+    ) -> list[dict[str, Any]] | str:
         """Insert documents and return the inserted documents.
 
         Args:
@@ -213,20 +229,22 @@ class Connection(abc.ABC):
             class_name: Name of the vertex type (or collection/label in database-specific terms)
 
         Returns:
-            list: Inserted documents
+            list | str: Inserted documents, or a query string (database-specific behavior).
+                Most implementations return a list of inserted documents. ArangoDB returns
+                an AQL query string for deferred execution.
         """
         pass
 
     @abc.abstractmethod
     def fetch_docs(
         self,
-        class_name,
-        filters,
-        limit,
-        return_keys,
-        unset_keys,
-        **kwargs,
-    ):
+        class_name: str,
+        filters: list[Any] | dict[str, Any] | None = None,
+        limit: int | None = None,
+        return_keys: list[str] | None = None,
+        unset_keys: list[str] | None = None,
+        **kwargs: Any,
+    ) -> list[dict[str, Any]]:
         """Fetch documents from a vertex type.
 
         Args:
@@ -250,12 +268,12 @@ class Connection(abc.ABC):
         edge_type: str | None = None,
         to_type: str | None = None,
         to_id: str | None = None,
-        filters: list | dict | None = None,
+        filters: list[Any] | dict[str, Any] | None = None,
         limit: int | None = None,
-        return_keys: list | None = None,
-        unset_keys: list | None = None,
-        **kwargs,
-    ):
+        return_keys: list[str] | None = None,
+        unset_keys: list[str] | None = None,
+        **kwargs: Any,
+    ) -> list[dict[str, Any]]:
         """Fetch edges from the database.
 
         Args:
@@ -278,13 +296,13 @@ class Connection(abc.ABC):
     @abc.abstractmethod
     def fetch_present_documents(
         self,
-        batch,
-        class_name,
-        match_keys,
-        keep_keys,
-        flatten=False,
-        filters: list | dict | None = None,
-    ):
+        batch: list[dict[str, Any]],
+        class_name: str,
+        match_keys: list[str] | tuple[str, ...],
+        keep_keys: list[str] | tuple[str, ...] | None = None,
+        flatten: bool = False,
+        filters: list[Any] | dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]] | dict[int, list[dict[str, Any]]]:
         """Fetch documents that exist in the database.
 
         Args:
@@ -292,23 +310,25 @@ class Connection(abc.ABC):
             class_name: Name of the collection
             match_keys: Keys to match
             keep_keys: Keys to keep in result
-            flatten: Whether to flatten the result
+            flatten: Whether to flatten the result. If True, returns a flat list.
+                If False, returns a dict mapping batch indices to matching documents.
             filters: Additional query filters
 
         Returns:
-            list: Documents that exist in the database
+            list | dict: Documents that exist in the database. Returns a list if
+                flatten=True, otherwise returns a dict mapping batch indices to documents.
         """
         pass
 
     @abc.abstractmethod
     def aggregate(
         self,
-        class_name,
+        class_name: str,
         aggregation_function: AggregationType,
         discriminant: str | None = None,
         aggregated_field: str | None = None,
-        filters: list | dict | None = None,
-    ):
+        filters: list[Any] | dict[str, Any] | None = None,
+    ) -> int | float | list[dict[str, Any]] | dict[str, int | float] | None:
         """Perform aggregation on a collection.
 
         Args:
@@ -319,19 +339,19 @@ class Connection(abc.ABC):
             filters: Query filters
 
         Returns:
-            dict: Aggregation results
+            Aggregation results (type depends on aggregation function)
         """
         pass
 
     @abc.abstractmethod
     def keep_absent_documents(
         self,
-        batch,
-        class_name,
-        match_keys,
-        keep_keys,
-        filters: list | dict | None = None,
-    ):
+        batch: list[dict[str, Any]],
+        class_name: str,
+        match_keys: list[str] | tuple[str, ...],
+        keep_keys: list[str] | tuple[str, ...] | None = None,
+        filters: list[Any] | dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         """Keep documents that don't exist in the database.
 
         Args:
@@ -364,14 +384,28 @@ class Connection(abc.ABC):
         """
         pass
 
-    # @abc.abstractmethod
-    # def define_vertex_classes(self, graph_config, vertex_config):
-    #     pass
-    #
-    # @abc.abstractmethod
-    # def define_edge_classes(self, graph_config):
-    #     pass
+    def define_vertex_classes(self, schema: Schema) -> None:
+        """Define vertex classes based on schema.
 
-    # @abc.abstractmethod
-    # def create_collection_if_absent(self, g, vcol, index, unique=True):
-    #     pass
+        This method is called from define_schema() to create vertex types/collections.
+        Most implementations take a Schema. Some implementations (like TigerGraph)
+        may override with a more specific signature (VertexConfig).
+
+        Default implementation is a no-op. Override in subclasses as needed.
+
+        Args:
+            schema: Schema containing vertex definitions
+        """
+        pass
+
+    def define_edge_classes(self, edges: list[Edge]) -> None:
+        """Define edge classes based on edge configurations.
+
+        This method is called from define_schema() to create edge types/collections.
+
+        Default implementation is a no-op. Override in subclasses as needed.
+
+        Args:
+            edges: List of edge configurations to create
+        """
+        pass
