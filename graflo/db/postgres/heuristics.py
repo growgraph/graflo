@@ -44,7 +44,7 @@ def create_patterns_from_postgres(
             schema_name=effective_schema,
             resource_name=table_name,
         )
-        patterns.patterns[table_name] = table_pattern
+        patterns.table_patterns[table_name] = table_pattern
         patterns.postgres_table_configs[table_name] = (
             config_key,
             effective_schema,
@@ -59,7 +59,7 @@ def create_patterns_from_postgres(
             schema_name=effective_schema,
             resource_name=table_name,
         )
-        patterns.patterns[table_name] = table_pattern
+        patterns.table_patterns[table_name] = table_pattern
         patterns.postgres_table_configs[table_name] = (
             config_key,
             effective_schema,

@@ -44,6 +44,7 @@ from graflo.architecture.onto import (
 )
 from graflo.architecture.util import project_dict
 from graflo.architecture.vertex import VertexConfig
+from graflo.onto import DBFlavor
 
 logger = logging.getLogger(__name__)
 
@@ -338,24 +339,52 @@ def render_edge(
                     a = project_dict(u, source_index)
                     b = project_dict(v, target_index)
 
+                    # For TigerGraph, extracted relations go to weight, not as relation key
+                    is_tigergraph = vertex_config.db_flavor == DBFlavor.TIGERGRAPH
+                    extracted_relation = None
+
+                    # 1. Try to extract relation from data context
                     if edge.relation_field is not None:
                         u_relation = u_.ctx.pop(edge.relation_field, None)
-
                         if u_relation is None:
                             v_relation = v_.ctx.pop(edge.relation_field, None)
                             if v_relation is not None:
                                 a, b = b, a
-                                relation = v_relation
+                                extracted_relation = v_relation
                         else:
-                            relation = u_relation
-                    elif edge.relation_from_key and len(target_lindex) > 1:
+                            extracted_relation = u_relation
+
+                    # 2. Try to extract relation from keys (fallback)
+                    if (
+                        extracted_relation is None
+                        and edge.relation_from_key
+                        and len(target_lindex) > 1
+                    ):
                         if source_min_level <= target_min_level:
                             if len(target_lindex) > 1:
-                                relation = target_lindex[-2]
+                                extracted_relation = target_lindex[-2]
                         elif len(source_lindex) > 1:
-                            relation = source_lindex[-2]
-                        if relation is not None:
-                            relation = relation.replace("-", "_")
+                            extracted_relation = source_lindex[-2]
+
+                        if extracted_relation is not None:
+                            extracted_relation = extracted_relation.replace("-", "_")
+
+                    # 3. Handle result
+                    if extracted_relation is not None:
+                        if is_tigergraph:
+                            # For TigerGraph, add extracted relation to weight
+                            # edge.relation_field is guaranteed to be set for TigerGraph
+                            # when extraction is requested (see Edge.finish_init)
+                            weight[edge.relation_field] = extracted_relation
+                            # Use the default relation from edge.relation (set in finish_init)
+                            relation = edge.relation
+                        else:
+                            # For other databases, use extracted relation as relation key
+                            relation = extracted_relation
+                    else:
+                        # No relation extracted, use edge.relation as-is
+                        relation = edge.relation
+
                     edges[relation] += [(a, b, weight)]
     return edges
 

@@ -38,6 +38,3 @@ edge_config:
     -   source: author
         target: researchField
         relation: belongsTo
-        indexes:
-        -   fields:
-            -   t_obs

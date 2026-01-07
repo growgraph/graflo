@@ -274,14 +274,15 @@ class Patterns(BaseDataclass):
     - postgres_tables: dict mapping table_name -> (config_key, schema_name, table_name)
 
     Attributes:
-        patterns: Dictionary mapping resource names to ResourcePattern instances
+        file_patterns: Dictionary mapping resource names to FilePattern instances
+        table_patterns: Dictionary mapping resource names to TablePattern instances
+        patterns: Property that merges file_patterns and table_patterns (for backward compatibility)
         postgres_configs: Dictionary mapping (config_key, schema_name) to PostgresConfig
         postgres_table_configs: Dictionary mapping resource_name to (config_key, schema_name, table_name)
     """
 
-    patterns: dict[str, TablePattern | FilePattern] = dataclasses.field(
-        default_factory=dict
-    )
+    file_patterns: dict[str, FilePattern] = dataclasses.field(default_factory=dict)
+    table_patterns: dict[str, TablePattern] = dataclasses.field(default_factory=dict)
     postgres_configs: dict[tuple[str, str | None], Any] = dataclasses.field(
         default_factory=dict, metadata={"exclude": True}
     )
@@ -299,6 +300,74 @@ class Patterns(BaseDataclass):
     _postgres_tables: dict[str, tuple[str, str | None, str]] | None = dataclasses.field(
         default=None, repr=False, compare=False, metadata={"exclude": True}
     )
+
+    @property
+    def patterns(self) -> dict[str, TablePattern | FilePattern]:
+        """Merged dictionary of all patterns (file and table) for backward compatibility.
+
+        Returns:
+            Dictionary mapping resource names to ResourcePattern instances
+        """
+        result: dict[str, TablePattern | FilePattern] = {}
+        result.update(self.file_patterns)
+        result.update(self.table_patterns)
+        return result
+
+    @classmethod
+    def from_dict(cls, data: dict):
+        """Create Patterns from dictionary, supporting both old and new YAML formats.
+
+        Supports two formats:
+        1. New format: Separate `file_patterns` and `table_patterns` fields
+        2. Old format: Unified `patterns` field with `__tag__` markers (for backward compatibility)
+
+        Args:
+            data: Dictionary containing patterns data
+
+        Returns:
+            Patterns: New Patterns instance with properly deserialized patterns
+        """
+        # Check if using new format (separate file_patterns/table_patterns)
+        if "file_patterns" in data or "table_patterns" in data:
+            # New format - let JSONWizard handle it directly (no union types!)
+            return super().from_dict(data)
+
+        # Old format - convert unified patterns dict to separate fields
+        patterns_data = data.get("patterns", {})
+        data_copy = {k: v for k, v in data.items() if k != "patterns"}
+
+        # Call parent from_dict (JSONWizard) to handle other fields
+        instance = super().from_dict(data_copy)
+
+        # Convert old format to new format
+        for pattern_name, pattern_dict in patterns_data.items():
+            if pattern_dict is None:
+                continue
+            # Check for tag to determine pattern type
+            tag = pattern_dict.get("__tag__")
+            if tag == "file":
+                pattern = FilePattern.from_dict(pattern_dict)
+                instance.file_patterns[pattern_name] = pattern
+            elif tag == "table":
+                pattern = TablePattern.from_dict(pattern_dict)
+                instance.table_patterns[pattern_name] = pattern
+            else:
+                # Try to infer from structure if no tag
+                if "table_name" in pattern_dict:
+                    pattern = TablePattern.from_dict(pattern_dict)
+                    instance.table_patterns[pattern_name] = pattern
+                elif "regex" in pattern_dict or "sub_path" in pattern_dict:
+                    pattern = FilePattern.from_dict(pattern_dict)
+                    instance.file_patterns[pattern_name] = pattern
+                else:
+                    raise ValueError(
+                        f"Unable to determine pattern type for '{pattern_name}'. "
+                        "Expected either '__tag__: file' or '__tag__: table', "
+                        "or pattern fields (table_name for TablePattern, "
+                        "regex/sub_path for FilePattern)"
+                    )
+
+        return instance
 
     def __post_init__(self):
         """Initialize Patterns from resource mappings and PostgreSQL configurations."""
@@ -320,7 +389,7 @@ class Patterns(BaseDataclass):
                         sub_path=file_path.parent,
                         resource_name=resource_name,
                     )
-                    self.patterns[resource_name] = pattern
+                    self.file_patterns[resource_name] = pattern
                 elif isinstance(resource_spec, tuple) and len(resource_spec) == 2:
                     # (config_key, table_name) tuple - create TablePattern
                     config_key, table_name = resource_spec
@@ -337,7 +406,7 @@ class Patterns(BaseDataclass):
                         schema_name=schema_name,
                         resource_name=resource_name,
                     )
-                    self.patterns[resource_name] = pattern
+                    self.table_patterns[resource_name] = pattern
                     # Store the config mapping
                     self.postgres_table_configs[resource_name] = (
                         config_key,
@@ -357,7 +426,7 @@ class Patterns(BaseDataclass):
                     schema_name=schema_name,
                     resource_name=table_name,
                 )
-                self.patterns[table_name] = pattern
+                self.table_patterns[table_name] = pattern
                 self.postgres_table_configs[table_name] = (
                     config_key,
                     schema_name,
@@ -371,7 +440,7 @@ class Patterns(BaseDataclass):
             name: Name of the pattern
             file_pattern: FilePattern instance
         """
-        self.patterns[name] = file_pattern
+        self.file_patterns[name] = file_pattern
 
     def add_table_pattern(self, name: str, table_pattern: TablePattern):
         """Add a table pattern to the collection.
@@ -380,7 +449,7 @@ class Patterns(BaseDataclass):
             name: Name of the pattern
             table_pattern: TablePattern instance
         """
-        self.patterns[name] = table_pattern
+        self.table_patterns[name] = table_pattern
 
     def get_postgres_config(self, resource_name: str) -> Any:
         """Get PostgreSQL connection config for a resource.
@@ -405,8 +474,10 @@ class Patterns(BaseDataclass):
         Returns:
             ResourceType enum value or None if not found
         """
-        if resource_name in self.patterns:
-            return self.patterns[resource_name].get_resource_type()
+        if resource_name in self.file_patterns:
+            return self.file_patterns[resource_name].get_resource_type()
+        if resource_name in self.table_patterns:
+            return self.table_patterns[resource_name].get_resource_type()
         return None
 
     def get_table_info(self, resource_name: str) -> tuple[str, str | None] | None:

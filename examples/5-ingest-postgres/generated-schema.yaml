@@ -41,8 +41,6 @@ edge_config:
             -   name: created_at
                 type: DATETIME
         relation: follows
-        graph_name: users_users_graph
-        database_name: users_users_edges
     -   source: users
         target: products
         weights:
@@ -54,8 +52,6 @@ edge_config:
             -   name: total_amount
                 type: FLOAT
         relation: purchases
-        graph_name: users_products_graph
-        database_name: users_products_edges
 resources:
 -   resource_name: products
     apply:
