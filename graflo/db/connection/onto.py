@@ -36,6 +36,7 @@ class DBType(StrEnum, metaclass=EnumMetaWithContains):
     NEO4J = "neo4j"
     TIGERGRAPH = "tigergraph"
     FALKORDB = "falkordb"
+    MEMGRAPH = "memgraph"
     NEBULA = "nebula"
 
     # Source databases (SQL, NoSQL)
@@ -58,6 +59,7 @@ SOURCE_DATABASES: set[DBType] = {
     DBType.NEO4J,  # Graph DBs can be sources
     DBType.TIGERGRAPH,  # Graph DBs can be sources
     DBType.FALKORDB,  # Graph DBs can be sources
+    DBType.MEMGRAPH,  # Graph DBs can be sources
     DBType.NEBULA,  # Graph DBs can be sources
     DBType.POSTGRES,  # SQL DBs
     DBType.MYSQL,
@@ -71,6 +73,7 @@ TARGET_DATABASES: set[DBType] = {
     DBType.NEO4J,
     DBType.TIGERGRAPH,
     DBType.FALKORDB,
+    DBType.MEMGRAPH,
     DBType.NEBULA,
 }
 
@@ -692,6 +695,88 @@ class FalkordbConfig(DBConfig):
         # Graph name (database in unified model)
         if "FALKORDB_DATABASE" in env_vars:
             config_data["database"] = env_vars["FALKORDB_DATABASE"]
+
+        return cls(**config_data)
+
+
+class MemgraphConfig(DBConfig):
+    """Configuration for Memgraph connections.
+
+    Memgraph is a high-performance, in-memory graph database that supports
+    OpenCypher query language. It uses the Bolt protocol for connections.
+
+    Memgraph structure: connection -> database -> nodes/relationships
+    Unified model: connection -> schema -> entities
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="MEMGRAPH_",
+        case_sensitive=False,
+    )
+
+    def _get_default_port(self) -> int:
+        """Get default Memgraph Bolt port."""
+        return 7687
+
+    def _get_effective_database(self) -> str | None:
+        """Memgraph uses a single database per instance."""
+        return self.database
+
+    def _get_effective_schema(self) -> str | None:
+        """Memgraph doesn't have a schema level (connection -> database -> nodes/relationships)."""
+        return None
+
+    @classmethod
+    def from_docker_env(cls, docker_dir: str | Path | None = None) -> "MemgraphConfig":
+        """Load Memgraph config from docker/memgraph/.env file.
+
+        The .env file structure may contain:
+        - MEMGRAPH_HOST: Hostname (defaults to localhost)
+        - MEMGRAPH_PORT: Port number (defaults to 7687)
+        - MEMGRAPH_USER: Username (optional)
+        - MEMGRAPH_PASSWORD: Password (optional)
+        - MEMGRAPH_DATABASE: Database name (optional)
+        """
+        if docker_dir is None:
+            docker_dir = (
+                Path(__file__).parent.parent.parent.parent / "docker" / "memgraph"
+            )
+        else:
+            docker_dir = Path(docker_dir)
+
+        env_file = docker_dir / ".env"
+        if not env_file.exists():
+            raise FileNotFoundError(f"Environment file not found: {env_file}")
+
+        # Load .env file manually
+        env_vars: Dict[str, str] = {}
+        with open(env_file, "r") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, value = line.split("=", 1)
+                    env_vars[key.strip()] = value.strip().strip('"').strip("'")
+
+        # Map environment variables to config
+        config_data: Dict[str, Any] = {}
+
+        # URI construction (Memgraph uses bolt:// protocol)
+        if "MEMGRAPH_URI" in env_vars:
+            config_data["uri"] = env_vars["MEMGRAPH_URI"]
+        else:
+            port = env_vars.get("MEMGRAPH_PORT", "7687")
+            hostname = env_vars.get("MEMGRAPH_HOST", "localhost")
+            config_data["uri"] = f"bolt://{hostname}:{port}"
+
+        # Authentication
+        if "MEMGRAPH_USER" in env_vars and env_vars["MEMGRAPH_USER"]:
+            config_data["username"] = env_vars["MEMGRAPH_USER"]
+        if "MEMGRAPH_PASSWORD" in env_vars and env_vars["MEMGRAPH_PASSWORD"]:
+            config_data["password"] = env_vars["MEMGRAPH_PASSWORD"]
+
+        # Database name
+        if "MEMGRAPH_DATABASE" in env_vars:
+            config_data["database"] = env_vars["MEMGRAPH_DATABASE"]
 
         return cls(**config_data)
 

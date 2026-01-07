@@ -28,6 +28,7 @@ from .conn import Connection, ConnectionType
 from .connection import DBConfig, DBType
 from .falkordb.conn import FalkordbConnection
 from .manager import ConnectionManager
+from .memgraph.conn import MemgraphConnection
 from .neo4j.conn import Neo4jConnection
 from .postgres.conn import PostgresConnection
 from .tigergraph.conn import TigerGraphConnection
@@ -40,6 +41,7 @@ __all__ = [
     "ConnectionManager",
     "ArangoConnection",
     "FalkordbConnection",
+    "MemgraphConnection",
     "Neo4jConnection",
     "PostgresConnection",
     "TigerGraphConnection",

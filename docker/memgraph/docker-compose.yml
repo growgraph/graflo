@@ -1,0 +1,12 @@
+services:
+    memgraph:
+        image: ${IMAGE_VERSION}
+        container_name: ${CONTAINER_NAME}
+        restart: "no"
+        profiles: ["${SPEC}.memgraph"]
+
+        ports:
+        -   "${MEMGRAPH_PORT}:7687"  # Memgraph Bolt protocol
+
+        volumes:
+        -   ${STORE_FOLDER}/data:/var/lib/memgraph

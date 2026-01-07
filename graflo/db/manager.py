@@ -26,6 +26,7 @@ Example:
 from graflo.db.arango.conn import ArangoConnection
 from graflo.db.connection.onto import DBConfig, DBType, TARGET_DATABASES
 from graflo.db.falkordb.conn import FalkordbConnection
+from graflo.db.memgraph.conn import MemgraphConnection
 from graflo.db.neo4j.conn import Neo4jConnection
 from graflo.db.tigergraph.conn import TigerGraphConnection
 
@@ -54,6 +55,7 @@ class ConnectionManager:
         DBType.NEO4J: Neo4jConnection,
         DBType.TIGERGRAPH: TigerGraphConnection,
         DBType.FALKORDB: FalkordbConnection,
+        DBType.MEMGRAPH: MemgraphConnection,
     }
 
     # Source database connections (INPUT) - to be implemented
