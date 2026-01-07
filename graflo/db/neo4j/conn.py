@@ -104,11 +104,29 @@ class Neo4jConnection(Connection):
 
         Args:
             name: Name of the database to create
+
+        Raises:
+            Exception: If database creation fails and it's not a Community Edition limitation
         """
         try:
             self.execute(f"CREATE DATABASE {name}")
             logger.info(f"Successfully created Neo4j database '{name}'")
         except Exception as e:
+            # Check if this is a Neo4j Community Edition limitation
+            error_str = str(e).lower()
+            if (
+                "unsupported administration command" in error_str
+                or "create database" in error_str
+            ):
+                # This is likely Neo4j Community Edition - don't raise, just log
+                logger.info(
+                    f"Neo4j Community Edition detected: Cannot create database '{name}'. "
+                    f"Community Edition only supports one database per instance. "
+                    f"Continuing with default database."
+                )
+                # Don't raise - allow operation to continue with default database
+                return
+            # For other errors, raise them
             raise e
 
     def delete_database(self, name: str):
@@ -252,7 +270,7 @@ class Neo4jConnection(Connection):
 
         # Check if database exists and create it if it doesn't
         # Note: This only works in Neo4j Enterprise Edition
-        # For Community Edition, we'll try to create it but it may fail gracefully
+        # For Community Edition, create_database will handle it gracefully
         # Community Edition only allows one database per instance
         try:
             # Try to check if database exists (Enterprise feature)
@@ -280,35 +298,19 @@ class Neo4jConnection(Connection):
                     logger.info(
                         f"Database '{db_name}' does not exist, attempting to create it..."
                     )
-                    try:
-                        self.create_database(db_name)
-                        logger.info(f"Successfully created database '{db_name}'")
-                    except Exception as create_error:
-                        logger.info(
-                            f"Neo4j Community Edition? Could not create database '{db_name}': {create_error}. "
-                            f"This may be Neo4j Community Edition which only supports one database per instance.",
-                            exc_info=True,
-                        )
-                        # Continue with default database for Community Edition
+                    # create_database handles Community Edition errors gracefully
+                    self.create_database(db_name)
             except Exception as show_error:
                 # If SHOW DATABASES fails (Community Edition or older versions), try to create anyway
                 logger.debug(
                     f"Could not check database existence (may be Community Edition): {show_error}"
                 )
-                try:
-                    self.create_database(db_name)
-                    logger.info(f"Successfully created database '{db_name}'")
-                except Exception as create_error:
-                    logger.info(
-                        f"Neo4j Community Edition? Could not create database '{db_name}': {create_error}. "
-                        f"This may be Neo4j Community Edition which only supports one database per instance. "
-                        f"Continuing with default database.",
-                        exc_info=True,
-                    )
-                    # Continue with default database for Community Edition
+                # create_database handles Community Edition errors gracefully
+                self.create_database(db_name)
         except Exception as e:
+            # Only log unexpected errors (create_database handles Community Edition gracefully)
             logger.error(
-                f"Error during database initialization for '{db_name}': {e}",
+                f"Unexpected error during database initialization for '{db_name}': {e}",
                 exc_info=True,
             )
             # Don't raise - allow operation to continue with default database

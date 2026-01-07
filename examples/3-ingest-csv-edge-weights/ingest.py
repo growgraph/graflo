@@ -15,6 +15,7 @@ schema = Schema.from_dict(FileHandle.load("schema.yaml"))
 # Load config from docker/neo4j/.env (recommended)
 # This automatically reads NEO4J_BOLT_PORT, NEO4J_AUTH, etc.
 conn_conf = Neo4jConfig.from_docker_env()
+# from graflo.db.connection.onto import TigergraphConfig
 # conn_conf = TigergraphConfig.from_docker_env()
 
 # Alternative: Create config directly or use environment variables
