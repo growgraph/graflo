@@ -43,7 +43,7 @@ def detect_separator(text: str) -> str:
     counts = {sep: text.count(sep) for sep in separators}
 
     if max(counts.values()) > 0:
-        return max(counts, key=counts.get)
+        return max(counts.keys(), key=lambda k: counts[k])
     return "_"  # Default separator
 
 

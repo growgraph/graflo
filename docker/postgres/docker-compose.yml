@@ -1,8 +1,9 @@
 services:
     postgres:
-        image: postgres:16-alpine
-        container_name: postgres
-        restart: unless-stopped
+        image: ${IMAGE_VERSION}
+        container_name: ${CONTAINER_NAME}
+        restart: "no"
+        profiles: ["${SPEC}.postgres"]
         ports:
         -   "${POSTGRES_PORT:-5432}:5432"
         environment:

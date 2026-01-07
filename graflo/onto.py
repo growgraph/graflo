@@ -22,6 +22,7 @@ Example:
 import dataclasses
 from copy import deepcopy
 from enum import EnumMeta
+from typing import Any
 from strenum import StrEnum
 from dataclass_wizard import JSONWizard, YAMLWizard
 from dataclass_wizard.enums import DateTimeTo
@@ -41,18 +42,17 @@ class MetaEnum(EnumMeta):
         >>> "invalid" in MyEnum  # False
     """
 
-    def __contains__(cls, item, **kwargs):
+    def __contains__(self: type[Any], obj: object) -> bool:
         """Check if an item is a valid member of the enum.
 
         Args:
             item: Value to check for membership
-            **kwargs: Additional keyword arguments
 
         Returns:
             bool: True if the item is a valid enum member, False otherwise
         """
         try:
-            cls(item, **kwargs)
+            self(obj)
         except ValueError:
             return False
         return True

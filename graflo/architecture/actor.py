@@ -831,7 +831,7 @@ class DescendActor(Actor):
             return [(None, doc)]
 
     def __call__(
-        self, ctx: ActionContext, lindex: LocationIndex, **kwargs: Any
+        self, ctx: ActionContext, lindex: LocationIndex, *nargs, **kwargs: Any
     ) -> ActionContext:
         """Process hierarchical data structure.
 
@@ -994,7 +994,11 @@ class ActorWrapper:
             for actor in all_actors
             if isinstance(actor, TransformActor) and actor.vertex is not None
         ]
-        self.target_vertices = {actor.vertex for actor in transform_actors_with_target}
+        self.target_vertices = {
+            actor.vertex
+            for actor in transform_actors_with_target
+            if actor.vertex is not None
+        }
 
         # Auto-set edge_greedy to False if there are at least 2 TransformActors with target_vertex
         if len(transform_actors_with_target) >= 2:

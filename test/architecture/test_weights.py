@@ -5,7 +5,6 @@ from graflo.architecture.actor import ActorWrapper
 from graflo.architecture.edge import WeightConfig
 from graflo.architecture.onto import ActionContext
 from graflo.architecture.vertex import Field, FieldType
-from graflo.plot.plotter import assemble_tree
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +14,14 @@ def test_act_openalex(resource_openalex_authors, vc_openalex, sample_openalex_au
     anw = ActorWrapper(*resource_openalex_authors)
     anw.finish_init(vertex_config=vc_openalex, transforms={})
     ctx = anw(ctx, doc=sample_openalex_authors)
-    assemble_tree(anw, Path("test/figs/openalex_authors.pdf"))
+    # Try to generate tree visualization if graphviz is available
+    try:
+        from graflo.plot.plotter import assemble_tree
+
+        assemble_tree(anw, Path("test/figs/openalex_authors.pdf"))
+    except ImportError:
+        # graphviz/pygraphviz not available, skip visualization
+        logger.debug("graphviz not available, skipping tree visualization")
     edge = ctx.acc_global[("author", "institution", None)][0]
     assert edge[-1] == {
         "updated_date": "2023-06-08",

@@ -19,7 +19,7 @@ import ast
 import dataclasses
 import json
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Union
 
 from graflo.architecture.onto import Index
 from graflo.filter.onto import Expression
@@ -57,13 +57,15 @@ if TYPE_CHECKING:
     # For type checking: after __post_init__, fields is always list[Field]
     # Using string literal to avoid forward reference issues
     _FieldsType = list["Field"]
-    # For type checking: after __post_init__, type is always FieldType | None
-    _FieldTypeType = FieldType | None
+    # For type checking: allow FieldType, str, or None at construction time
+    # Strings are converted to FieldType enum in __post_init__
+    _FieldTypeType = FieldType | str | None
 else:
     # For runtime: accept flexible input types, will be normalized in __post_init__
-    _FieldsType = list[str] | list["Field"] | list[dict]
+    # Use Union for runtime since we can't use | with string literals
+    _FieldsType = list[Union[str, "Field", dict]]
     # For runtime: accept FieldType, str, or None (strings converted in __post_init__)
-    _FieldTypeType = FieldType | str | None
+    _FieldTypeType = Union[FieldType, str, None]
 
 
 @dataclasses.dataclass

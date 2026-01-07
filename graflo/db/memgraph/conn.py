@@ -498,7 +498,7 @@ class MemgraphConnection(Connection):
                                 f"Could not create index on {edge.relation}.{field}: {e}"
                             )
 
-    def delete_graph_structure(
+    def delete_graph_structure(  # type: ignore[override]
         self,
         vertex_types: list[str] | None = None,
         edge_types: list[str] | None = None,
@@ -649,7 +649,7 @@ class MemgraphConnection(Connection):
             cursor.execute(q, {"batch": sanitized_docs})
             cursor.close()
 
-    def insert_edges_batch(
+    def insert_edges_batch(  # type: ignore[override]
         self,
         docs_edges: list[list[dict]],
         source_class: str,
@@ -867,7 +867,7 @@ class MemgraphConnection(Connection):
         cursor.close()
         return results
 
-    def fetch_edges(
+    def fetch_edges(  # type: ignore[override]
         self,
         source_class: str,
         target_class: str,
@@ -966,7 +966,7 @@ class MemgraphConnection(Connection):
         cursor.close()
         return results
 
-    def aggregate(
+    def aggregate(  # type: ignore[override]
         self,
         class_name: str,
         agg_type: AggregationType,

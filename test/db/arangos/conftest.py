@@ -20,7 +20,7 @@ def conn_conf():
     """Load ArangoDB config from docker/arango/.env file."""
     conn_conf = ArangoConfig.from_docker_env()
     # Override password from secret file if needed
-    cred_pass = FileHandle.load("docker.arango", "test.arango.secret")
+    cred_pass = FileHandle.load("docker.arango", "graflo.arango.secret")
     if cred_pass:
         conn_conf.password = cred_pass
     # Ensure database is set

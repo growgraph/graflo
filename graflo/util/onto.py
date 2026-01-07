@@ -110,8 +110,10 @@ class FilePattern(ResourcePattern):
 
         Ensures that sub_path is a Path object and is not None.
         """
-        if not isinstance(self.sub_path, pathlib.Path):
+        if self.sub_path is not None and not isinstance(self.sub_path, pathlib.Path):
             self.sub_path = pathlib.Path(self.sub_path)
+        elif self.sub_path is None:
+            self.sub_path = pathlib.Path("./")
         assert self.sub_path is not None
         # Validate date filtering parameters (note: date filtering for files is not yet implemented)
         if (self.date_filter or self.date_range_start) and not self.date_field:

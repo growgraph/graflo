@@ -1,5 +1,4 @@
 import logging
-from pathlib import Path
 
 from graflo.architecture.actor import (
     ActorWrapper,
@@ -9,7 +8,6 @@ from graflo.architecture.actor import (
 )
 from graflo.architecture.edge import EdgeConfig
 from graflo.architecture.onto import ActionContext, LocationIndex, VertexRep
-from graflo.plot.plotter import assemble_tree
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +20,6 @@ def test_descend(resource_descend, schema_vc_openalex):
     assert isinstance(anw.actor.descendants[0].actor, DescendActor)
     level, cname, label, edges = anw.fetch_actors(0, [])
     assert len(edges) == 3
-
-    assemble_tree(anw, Path("test/figs/test.pdf"))
 
 
 def test_edge(action_node_edge, schema_vc_openalex):
@@ -84,7 +80,6 @@ def test_edge_between_levels(
     anw = ActorWrapper(*resource_openalex_works)
     ec = EdgeConfig()
     anw.finish_init(vertex_config=schema_vc_openalex, transforms={}, edge_config=ec)
-    assemble_tree(anw, Path("test/figs/discriminate_edge.pdf"))
     ctx = anw(ctx, doc=sample_openalex)
     lindexes = list(ctx.acc_vertex["work"])
 

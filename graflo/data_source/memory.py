@@ -52,7 +52,13 @@ class InMemoryDataSource(AbstractDataSource):
                 raise ValueError(
                     "columns parameter is required when data is list[list]"
                 )
-            data = [{k: v for k, v in zip(self.columns, item)} for item in data]
+            # Type narrowing: we've confirmed data[0] is a list, so data is list[list]
+            # Create a properly typed list for iteration
+            data_list: list[list] = []
+            for item in data:
+                if isinstance(item, list):
+                    data_list.append(item)
+            data = [{k: v for k, v in zip(self.columns, item)} for item in data_list]
 
         # Create chunker using factory (only pass columns if it's a DataFrame)
         chunker_kwargs = {

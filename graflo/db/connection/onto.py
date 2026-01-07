@@ -1,5 +1,4 @@
 import abc
-from enum import EnumMeta
 from pathlib import Path
 from strenum import StrEnum
 from typing import Any, Dict, Type, TypeVar
@@ -9,23 +8,13 @@ from pydantic import Field, model_validator
 from pydantic import AliasChoices
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
-class EnumMetaWithContains(EnumMeta):
-    """Enhanced EnumMeta that supports 'in' operator checks."""
-
-    def __contains__(cls, item, **kwargs):
-        try:
-            cls(item, **kwargs)
-        except ValueError:
-            return False
-        return True
-
+from graflo.onto import MetaEnum
 
 # Type variable for DBConfig subclasses
 T = TypeVar("T", bound="DBConfig")
 
 
-class DBType(StrEnum, metaclass=EnumMetaWithContains):
+class DBType(StrEnum, metaclass=MetaEnum):
     """Enum representing different types of databases.
 
     Includes both graph databases and source databases (SQL, NoSQL, etc.).

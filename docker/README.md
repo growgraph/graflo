@@ -1,5 +1,32 @@
 # Running docker images of various graph databases
 
+## Quick Start - All Services
+
+To start all docker compose services at once:
+
+```shell
+./start-all.sh
+```
+
+To stop all services:
+
+```shell
+./stop-all.sh
+```
+
+To cleanup (remove containers, volumes, and optionally images):
+
+```shell
+./cleanup-all.sh              # Remove containers and volumes
+./cleanup-all.sh --images     # Also remove docker images
+./cleanup-all.sh --no-volumes # Remove containers only (keep volumes)
+```
+
+These scripts will automatically:
+- Detect the `SPEC` variable from each `.env` file (defaults to `graflo`)
+- Use the appropriate profile for each service
+- Handle services with or without `.env` files
+
 ## General instruction
 
 ```shell

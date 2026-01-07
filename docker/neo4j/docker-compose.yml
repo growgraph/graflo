@@ -2,15 +2,23 @@ services:
     neo4j:
         image: ${IMAGE_VERSION}
         restart: "no"
-        profiles: ["test.neo4j"]
+        profiles: ["${SPEC}.neo4j"]
         ports:
         -   "${NEO4J_PORT}:7474"
         -   "${NEO4J_BOLT_PORT}:7687"
         container_name: ${CONTAINER_NAME}
         volumes:
-        -   ${STORE_FOLDER}/data:/data
-        -   ${STORE_FOLDER}/plugins:/plugins
-        -   ${STORE_FOLDER}/logs:/logs
+        -   neo4j_data:/data
+        -   neo4j_plugins:/plugins
+        -   neo4j_logs:/logs
         environment:
         -   NEO4J_AUTH=${NEO4J_AUTH}
         -   NEO4J_PLUGINS=${NEO4J_PLUGINS}
+
+volumes:
+    neo4j_data:
+        driver: local
+    neo4j_plugins:
+        driver: local
+    neo4j_logs:
+        driver: local
