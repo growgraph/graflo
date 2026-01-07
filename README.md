@@ -1,6 +1,6 @@
 # GraFlo <img src="https://raw.githubusercontent.com/growgraph/graflo/main/docs/assets/favicon.ico" alt="graflo logo" style="height: 32px; width:32px;"/>
 
-A framework for transforming **tabular** (CSV, SQL) and **hierarchical** data (JSON, XML) into property graphs and ingesting them into graph databases (ArangoDB, Neo4j, **TigerGraph**, **FalkorDB**).
+A framework for transforming **tabular** (CSV, SQL) and **hierarchical** data (JSON, XML) into property graphs and ingesting them into graph databases (ArangoDB, Neo4j, **TigerGraph**, **FalkorDB**, **Memgraph**).
 
 > **⚠️ Package Renamed**: This package was formerly known as `graphcast`.
 
@@ -58,7 +58,7 @@ Resources are your data sources that can be:
     - Create Resource mappings from PostgreSQL tables automatically
     - Direct database access - ingest data without exporting to files first
 - **Parallel processing**: Use as many cores as you have
-- **Database support**: Ingest into ArangoDB, Neo4j, **TigerGraph**, and **FalkorDB** using the same API (database agnostic). Source data from PostgreSQL and other SQL databases.
+- **Database support**: Ingest into ArangoDB, Neo4j, **TigerGraph**, **FalkorDB**, and **Memgraph** using the same API (database agnostic). Source data from PostgreSQL and other SQL databases.
 - **Server-side filtering**: Efficient querying with server-side filtering support (TigerGraph REST++ API)
 
 ## Documentation
@@ -179,6 +179,18 @@ uv sync --dev
 ### Tests
 
 #### Test databases
+
+**Quick Start:** To start all test databases at once, use the convenience scripts from the [docker folder](./docker):
+
+```shell
+cd docker
+./start-all.sh    # Start all services
+./stop-all.sh      # Stop all services
+./cleanup-all.sh   # Remove containers and volumes
+```
+
+**Individual Services:** To start individual databases, navigate to each database folder and run:
+
 Spin up Arango from [arango docker folder](./docker/arango) by
 
 ```shell
@@ -197,10 +209,16 @@ TigerGraph from [tigergraph docker folder](./docker/tigergraph) by
 docker-compose --env-file .env up tigergraph
 ```
 
-and FalkorDB from [falkordb docker folder](./docker/falkordb) by
+FalkorDB from [falkordb docker folder](./docker/falkordb) by
 
 ```shell
 docker-compose --env-file .env up falkordb
+```
+
+and Memgraph from [memgraph docker folder](./docker/memgraph) by
+
+```shell
+docker-compose --env-file .env up memgraph
 ```
 
 To run unit tests

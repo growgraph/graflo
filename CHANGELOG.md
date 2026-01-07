@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.10] - 2026-01-07
+
+### Added
+- **Docker management scripts**: Added unified docker service management scripts
+  - `start-all.sh`: Start all docker compose services at once with automatic SPEC detection from `.env` files
+  - `stop-all.sh`: Stop all docker compose services with profile-based management
+  - `cleanup-all.sh`: Remove containers, volumes, and optionally images with flexible options
+  - Automatic detection of `SPEC` variable from each `.env` file (defaults to `graflo`)
+  - Profile-based service management for organized docker orchestration
+- **Memgraph documentation**: Added comprehensive Memgraph support documentation
+  - Added Memgraph to main README.md database support list
+  - Added Memgraph configuration examples to quickstart guide
+  - Added Memgraph to docker/README.md with connection details (Bolt port 7687)
+  - Added Memgraph to documentation reference index
+
+### Changed
+- **Improved connection typing and signatures**: Enhanced type hints and method signatures across all database connectors
+  - Improved type annotations for ArangoDB, Neo4j, TigerGraph, FalkorDB, and Memgraph connection classes
+  - Better IDE support and type checking for database connection methods
+  - Enhanced method signatures for better developer experience
+
 ## [1.3.9] - 2026-01-06
 
 ### Added

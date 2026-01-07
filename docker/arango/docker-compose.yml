@@ -2,13 +2,22 @@ services:
     arango:
         image: ${IMAGE_VERSION}
         restart: "no"
-        profiles: ["test.arango"]
+        profiles: ["${SPEC}.arango"]
         ports:
         -   "${ARANGO_PORT}:8529"
         container_name: ${CONTAINER_NAME}
         volumes:
-        -   ${PATH_TO_SECRET}:/tmp/secret
-        -   ${STORE_FOLDER}/arangodb3:/var/lib/arangodb3
-        -   ${STORE_FOLDER}/arangodb3-apps:/var/lib/arangodb3-apps
+        -   type: bind
+            source: ${PATH_TO_SECRET}
+            target: /tmp/secret
+            read_only: true
+        -   arango_data:/var/lib/arangodb3
+        -   arango_apps:/var/lib/arangodb3-apps
         environment:
         -   ARANGO_ROOT_PASSWORD_FILE=/tmp/secret
+
+volumes:
+    arango_data:
+        driver: local
+    arango_apps:
+        driver: local

@@ -9,4 +9,8 @@ services:
         -   "${MEMGRAPH_PORT}:7687"  # Memgraph Bolt protocol
 
         volumes:
-        -   ${STORE_FOLDER}/data:/var/lib/memgraph
+        -   memgraph_data:/var/lib/memgraph
+
+volumes:
+    memgraph_data:
+        driver: local

@@ -2,15 +2,23 @@ services:
     tigergraph:
         image: ${IMAGE_VERSION}
         restart: "no"
-        profiles: ["test.tigergraph"]
+        profiles: ["${SPEC}.tigergraph"]
         ports:
         -   "${TG_SSH}:22"
-        -   "${TG_REST}:9000"
-        -   "${TG_WEB}:14240"
+        -   "${TG_REST}:9000"  # REST++ API port
+        -   "${TG_WEB}:14240"  # GSQL port
         container_name: ${CONTAINER_NAME}
         volumes:
-        -   ${STORE_FOLDER}/data:/home/tigergraph/data
-        -   ${STORE_FOLDER}/config:/home/tigergraph/config
-        -   ${STORE_FOLDER}/logs:/home/tigergraph/log
+        -   tigergraph_data:/home/tigergraph/data
+        -   tigergraph_config:/home/tigergraph/config
+        -   tigergraph_logs:/home/tigergraph/log
         environment:
         -   ACCEPT_LICENSE=true
+
+volumes:
+    tigergraph_data:
+        driver: local
+    tigergraph_config:
+        driver: local
+    tigergraph_logs:
+        driver: local

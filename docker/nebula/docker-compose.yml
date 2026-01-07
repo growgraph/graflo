@@ -7,8 +7,8 @@ services:
         -   "${METAD_PORT}:9559"
         container_name: ${METAD_CONTAINER_NAME}
         volumes:
-        -   ${STORE_FOLDER}/metad/data:/data/meta
-        -   ${STORE_FOLDER}/metad/logs:/usr/local/nebula/logs
+        -   nebula_metad_data:/data/meta
+        -   nebula_metad_logs:/usr/local/nebula/logs
         networks:
         -   nebula-net
         hostname: nebula-metad
@@ -21,8 +21,8 @@ services:
         -   "${STORAGED_PORT}:9779"
         container_name: ${STORAGED_CONTAINER_NAME}
         volumes:
-        -   ${STORE_FOLDER}/storaged/data:/data/storage
-        -   ${STORE_FOLDER}/storaged/logs:/usr/local/nebula/logs
+        -   nebula_storaged_data:/data/storage
+        -   nebula_storaged_logs:/usr/local/nebula/logs
         networks:
         -   nebula-net
         depends_on:
@@ -46,7 +46,7 @@ services:
         -   "${NEBULA_PORT}:9669"
         container_name: ${CONTAINER_NAME}
         volumes:
-        -   ${STORE_FOLDER}/graphd/logs:/usr/local/nebula/logs
+        -   nebula_graphd_logs:/usr/local/nebula/logs
         networks:
         -   nebula-net
         depends_on:
@@ -84,3 +84,15 @@ services:
 networks:
     nebula-net:
         driver: bridge
+
+volumes:
+    nebula_metad_data:
+        driver: local
+    nebula_metad_logs:
+        driver: local
+    nebula_storaged_data:
+        driver: local
+    nebula_storaged_logs:
+        driver: local
+    nebula_graphd_logs:
+        driver: local

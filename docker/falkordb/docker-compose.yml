@@ -10,4 +10,8 @@ services:
         -   "${FALKORDB_BROWSER_PORT}:3000" # FalkorDB Browser UI
 
         volumes:
-        -   ${STORE_FOLDER}/data:/data
+        -   falkordb_data:/data
+
+volumes:
+    falkordb_data:
+        driver: local

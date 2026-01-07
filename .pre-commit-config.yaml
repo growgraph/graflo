@@ -1,47 +1,15 @@
 fail_fast: false
 
 repos:
+  # Python linting and formatting
 -   repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.12.10
-    hooks:
-    -   id: ruff
-        args: [--fix, --ignore, E722]
-    -   id: ruff-format
--   repo: https://github.com/syntaqx/git-hooks
-    rev: v0.0.18
-    hooks:
-    -   id: circleci-config-validate
-    -   id: go-fmt
-    -   id: go-test
-    -   id: go-mod-tidy
--   repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.11.12
+    rev: v0.14.10
     hooks:
     -   id: ruff-check
-        args: [--fix, --ignore, E722, --ignore, W293, --ignore, E501]
+        args: [--fix, --ignore, E722]
     -   id: ruff-format
--   repo: https://github.com/macisamuele/language-formatters-pre-commit-hooks
-    rev: v2.15.0
-    hooks:
-    -   id: pretty-format-yaml
-        args: [--autofix, --indent, '4', --preserve-quotes]
 
--   repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v6.0.0
-    hooks:
-    -   id: pretty-format-json
-        args: [--autofix, --indent, '4', --no-sort-keys]
-
--   repo: https://github.com/macisamuele/language-formatters-pre-commit-hooks
-    rev: v2.15.0
-    hooks:
-    -   id: pretty-format-toml
-        args: [--autofix]
--   repo: https://github.com/pappasam/toml-sort
-    rev: v0.24.2
-    hooks:
-    -   id: toml-sort
-        args: [-ia]
+  # Type checking
 -   repo: local
     hooks:
     -   id: ty
@@ -50,3 +18,29 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+
+  # YAML formatting
+-   repo: https://github.com/macisamuele/language-formatters-pre-commit-hooks
+    rev: v2.15.0
+    hooks:
+    -   id: pretty-format-yaml
+        args: [--autofix, --indent, '4', --preserve-quotes]
+
+  # JSON formatting
+-   repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+    -   id: pretty-format-json
+        args: [--autofix, --indent, '4', --no-sort-keys]
+
+  # TOML formatting and sorting
+-   repo: https://github.com/macisamuele/language-formatters-pre-commit-hooks
+    rev: v2.15.0
+    hooks:
+    -   id: pretty-format-toml
+        args: [--autofix]
+-   repo: https://github.com/pappasam/toml-sort
+    rev: v0.24.3
+    hooks:
+    -   id: toml-sort
+        args: [-ia]

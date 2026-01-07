@@ -8,7 +8,6 @@ import pytest
 from suthing import FileHandle
 
 from graflo.caster import Caster
-from graflo.plot.plotter import assemble_tree
 
 logger = logging.getLogger(__name__)
 
@@ -33,8 +32,17 @@ def cast(modes, schema_obj, current_path, level, reset, n_cores=1):
         output_dir = "test/figs"
         pathlib.Path(output_dir).mkdir(parents=True, exist_ok=True)
 
-        for r in schema.resources:
-            assemble_tree(r.root, f"{output_dir}/{mode}.resource-{r.resource_name}.pdf")
+        # Try to generate tree visualizations if graphviz is available
+        try:
+            from graflo.plot.plotter import assemble_tree
+
+            for r in schema.resources:
+                assemble_tree(
+                    r.root, f"{output_dir}/{mode}.resource-{r.resource_name}.pdf"
+                )
+        except ImportError:
+            # graphviz/pygraphviz not available, skip visualization
+            logger.debug("graphviz not available, skipping tree visualization")
         caster = Caster(schema, n_cores=n_cores)
 
         if level == 0:

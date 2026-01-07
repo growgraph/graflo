@@ -500,11 +500,10 @@ class MemgraphConnection(Connection):
 
     def delete_graph_structure(
         self,
-        vertex_types: list[str] | None = None,
-        edge_types: list[str] | None = None,
-        graph_names: list[str] | None = None,
+        vertex_types: tuple[str, ...] | list[str] = (),
+        graph_names: tuple[str, ...] | list[str] = (),
         delete_all: bool = False,
-    ):
+    ) -> None:
         """Delete graph structure (nodes and relationships).
 
         Parameters
@@ -527,8 +526,12 @@ class MemgraphConnection(Connection):
             logger.info("Deleted all nodes and relationships")
             return
 
-        if vertex_types:
-            for label in vertex_types:
+        # Convert tuple to list if needed
+        vertex_types_list = (
+            list(vertex_types) if isinstance(vertex_types, tuple) else vertex_types
+        )
+        if vertex_types_list:
+            for label in vertex_types_list:
                 try:
                     cursor = self.conn.cursor()
                     cursor.execute(f"MATCH (n:{label}) DETACH DELETE n")
@@ -537,7 +540,7 @@ class MemgraphConnection(Connection):
                 except Exception as e:
                     logger.warning(f"Failed to delete nodes with label '{label}': {e}")
 
-    def init_db(self, schema: Schema, clean_start: bool):
+    def init_db(self, schema: Schema, clean_start: bool) -> None:
         """Initialize Memgraph with the given schema.
 
         Parameters
@@ -559,8 +562,12 @@ class MemgraphConnection(Connection):
                 logger.warning(f"Error clearing data on clean_start: {e}")
 
     def upsert_docs_batch(
-        self, docs: list[dict], class_name: str, match_keys: list[str], **kwargs
-    ):
+        self,
+        docs: list[dict[str, Any]],
+        class_name: str,
+        match_keys: list[str] | tuple[str, ...],
+        **kwargs: Any,
+    ) -> None:
         """Upsert a batch of nodes using Cypher MERGE.
 
         Performs atomic upsert (update-or-insert) operations on a batch of
@@ -619,8 +626,12 @@ class MemgraphConnection(Connection):
         if not docs:
             return
 
+        # Convert tuple to list if needed
+        match_keys_list = (
+            list(match_keys) if isinstance(match_keys, tuple) else match_keys
+        )
         # Sanitize documents
-        sanitized_docs = self._sanitize_batch(docs, match_keys)
+        sanitized_docs = self._sanitize_batch(docs, match_keys_list)
 
         if not sanitized_docs:
             return
@@ -637,7 +648,7 @@ class MemgraphConnection(Connection):
         cursor.close()
 
         # Build the MERGE clause with match keys
-        index_str = ", ".join([f"{k}: row.{k}" for k in match_keys])
+        index_str = ", ".join([f"{k}: row.{k}" for k in match_keys_list])
         q = f"""
             UNWIND $batch AS row
             MERGE (n:{class_name} {{ {index_str} }})
@@ -651,18 +662,16 @@ class MemgraphConnection(Connection):
 
     def insert_edges_batch(
         self,
-        docs_edges: list[list[dict]],
+        docs_edges: list[list[dict[str, Any]]] | list[Any] | None,
         source_class: str,
         target_class: str,
         relation_name: str,
-        collection_name: str | None = None,
-        match_keys_source: tuple[str, ...] = ("_key",),
-        match_keys_target: tuple[str, ...] = ("_key",),
+        match_keys_source: tuple[str, ...],
+        match_keys_target: tuple[str, ...],
         filter_uniques: bool = True,
-        uniq_weight_fields: list[str] | None = None,
-        uniq_weight_collections: list[str] | None = None,
-        **kwargs,
-    ):
+        head: int | None = None,
+        **kwargs: Any,
+    ) -> None:
         """Insert a batch of edges using Cypher MERGE.
 
         Creates relationships between existing nodes by matching source and
@@ -724,6 +733,10 @@ class MemgraphConnection(Connection):
 
         if not docs_edges:
             return
+
+        # Handle head limit if specified
+        if head is not None and head > 0:
+            docs_edges = docs_edges[:head]
 
         # Build batch data
         batch = []
@@ -869,99 +882,112 @@ class MemgraphConnection(Connection):
 
     def fetch_edges(
         self,
-        source_class: str,
-        target_class: str,
-        relation_name: str,
-        match_keys_source: tuple[str, ...] = ("_key",),
-        match_keys_target: tuple[str, ...] = ("_key",),
-        filters: list | dict | None = None,
+        from_type: str,
+        from_id: str,
+        edge_type: str | None = None,
+        to_type: str | None = None,
+        to_id: str | None = None,
+        filters: list[Any] | dict[str, Any] | None = None,
         limit: int | None = None,
-        **kwargs,
-    ) -> list[dict]:
-        """Fetch relationships from the database with optional filtering.
+        return_keys: list[str] | None = None,
+        unset_keys: list[str] | None = None,
+        **kwargs: Any,
+    ) -> list[dict[str, Any]]:
+        """Fetch edges from Memgraph using Cypher.
 
-        Retrieves relationships of the specified type between source and target
-        node labels. Returns source/target identifiers along with relationship
-        properties.
+        Retrieves relationships starting from a specific node, optionally filtered
+        by edge type, target node type, and target node ID.
 
-        Parameters
-        ----------
-        source_class : str
-            Label of source nodes (e.g., "Person")
-        target_class : str
-            Label of target nodes (e.g., "Company")
-        relation_name : str
-            Relationship type to fetch (e.g., "WORKS_AT")
-        match_keys_source : tuple[str, ...]
-            Property keys to return for source node identification.
-            Default: ("_key",)
-        match_keys_target : tuple[str, ...]
-            Property keys to return for target node identification.
-            Default: ("_key",)
-        filters : list | dict, optional
-            Query filters applied to relationship properties.
-            Example: ``["==", "engineer", "role"]``
-        limit : int, optional
-            Maximum number of results to return. If None or <= 0, returns all.
-        **kwargs
-            Additional options (currently unused)
+        Args:
+            from_type: Source node label (e.g., "Person")
+            from_id: Source node ID (property value, typically "id" or "_key")
+            edge_type: Optional relationship type to filter by (e.g., "WORKS_AT")
+            to_type: Optional target node label to filter by
+            to_id: Optional target node ID to filter by
+            filters: Additional query filters applied to relationship properties
+            limit: Maximum number of edges to return
+            return_keys: Keys to return (projection) - not fully supported
+            unset_keys: Keys to exclude (projection) - not fully supported
+            **kwargs: Additional options
 
-        Returns
-        -------
-        list[dict]
-            List of dictionaries containing:
-            - ``source_<key>``: Source node identifier properties
-            - ``target_<key>``: Target node identifier properties
-            - ``props``: Relationship property dictionary
-
-        Examples
-        --------
-        Fetch all WORKS_AT relationships::
-
-            edges = db.fetch_edges(
-                source_class="Person",
-                target_class="Company",
-                relation_name="WORKS_AT",
-                match_keys_source=("id",),
-                match_keys_target=("id",),
-            )
-            # Returns: [{"source_id": "alice", "target_id": "acme", "props": {...}}, ...]
-
-        Fetch with filter::
-
-            edges = db.fetch_edges(
-                source_class="Person",
-                target_class="Company",
-                relation_name="WORKS_AT",
-                filters=["==", "engineer", "role"],
-                limit=10
-            )
+        Returns:
+            list: List of fetched edges as dictionaries
         """
         assert self.conn is not None, "Connection is closed"
 
-        q = f"MATCH (s:{source_class})-[r:{relation_name}]->(t:{target_class})"
+        # Build Cypher query starting from the source node
+        # Use id property (common in Memgraph) or _key if needed
+        q = f"MATCH (s:{from_type} {{id: $from_id}})"
 
+        # Build relationship pattern
+        if edge_type:
+            rel_pattern = f"-[r:{edge_type}]->"
+        else:
+            rel_pattern = "-[r]->"
+
+        # Build target node match
+        if to_type:
+            target_match = f"(t:{to_type})"
+        else:
+            target_match = "(t)"
+
+        q += f" {rel_pattern} {target_match}"
+
+        # Build WHERE clauses
+        where_clauses = []
+        if to_id:
+            where_clauses.append("t.id = $to_id")
+
+        # Add relationship property filters
         if filters is not None:
             ff = Expression.from_dict(filters)
             filter_str = ff(doc_name="r", kind=ExpressionFlavor.NEO4J)
-            q += f" WHERE {filter_str}"
+            where_clauses.append(filter_str)
 
-        # Build return with source/target keys
-        source_keys = ", ".join([f"s.{k} AS source_{k}" for k in match_keys_source])
-        target_keys = ", ".join([f"t.{k} AS target_{k}" for k in match_keys_target])
-        q += f" RETURN {source_keys}, {target_keys}, properties(r) AS props"
+        if where_clauses:
+            q += f" WHERE {' AND '.join(where_clauses)}"
+
+        # Build RETURN clause
+        # Default: return relationship properties and basic node info
+        if return_keys:
+            # If return_keys specified, try to return those fields
+            return_fields = []
+            for key in return_keys:
+                if key.startswith("from_") or key.startswith("source_"):
+                    return_fields.append(
+                        f"s.{key.replace('from_', '').replace('source_', '')} AS {key}"
+                    )
+                elif key.startswith("to_") or key.startswith("target_"):
+                    return_fields.append(
+                        f"t.{key.replace('to_', '').replace('target_', '')} AS {key}"
+                    )
+                else:
+                    return_fields.append(f"r.{key} AS {key}")
+            q += f" RETURN {', '.join(return_fields)}"
+        else:
+            # Default: return relationship properties and node IDs
+            q += " RETURN properties(r) AS props, s.id AS from_id, t.id AS to_id"
 
         if limit is not None and limit > 0:
             q += f" LIMIT {limit}"
 
+        # Execute query with parameters
+        params: dict[str, Any] = {"from_id": from_id}
+        if to_id:
+            params["to_id"] = to_id
+
         cursor = self.conn.cursor()
-        cursor.execute(q)
+        cursor.execute(q, params)
         columns = [desc[0] for desc in cursor.description] if cursor.description else []
         results = []
         for row in cursor.fetchall():
             result = {}
             for i, col in enumerate(columns):
                 result[col] = row[i]
+            # Apply unset_keys if specified
+            if unset_keys:
+                for key in unset_keys:
+                    result.pop(key, None)
             results.append(result)
         cursor.close()
         return results
@@ -969,12 +995,11 @@ class MemgraphConnection(Connection):
     def aggregate(
         self,
         class_name: str,
-        agg_type: AggregationType,
+        aggregation_function: AggregationType,
         discriminant: str | None = None,
         aggregated_field: str | None = None,
-        filters: list | dict | None = None,
-        **kwargs,
-    ) -> int | float | list | dict[str, int] | None:
+        filters: list[Any] | dict[str, Any] | None = None,
+    ) -> int | float | list[dict[str, Any]] | dict[str, int | float] | None:
         """Perform aggregation operations on nodes.
 
         Computes aggregate statistics over nodes matching the specified label
@@ -985,7 +1010,7 @@ class MemgraphConnection(Connection):
         ----------
         class_name : str
             Node label to aggregate (e.g., "Person", "Product")
-        agg_type : AggregationType
+        aggregation_function : AggregationType
             Type of aggregation to perform:
             - COUNT: Count matching nodes (with optional GROUP BY)
             - MAX: Maximum value of a field
@@ -1063,7 +1088,7 @@ class MemgraphConnection(Connection):
 
         q = f"MATCH (n:{class_name}){filter_clause}"
 
-        if agg_type == AggregationType.COUNT:
+        if aggregation_function == AggregationType.COUNT:
             if discriminant:
                 q += f" RETURN n.{discriminant} AS key, count(*) AS count"
                 cursor = self.conn.cursor()
@@ -1073,23 +1098,23 @@ class MemgraphConnection(Connection):
                 return {row[0]: row[1] for row in rows}
             else:
                 q += " RETURN count(n)"
-        elif agg_type == AggregationType.MAX:
+        elif aggregation_function == AggregationType.MAX:
             q += f" RETURN max(n.{aggregated_field})"
-        elif agg_type == AggregationType.MIN:
+        elif aggregation_function == AggregationType.MIN:
             q += f" RETURN min(n.{aggregated_field})"
-        elif agg_type == AggregationType.AVERAGE:
+        elif aggregation_function == AggregationType.AVERAGE:
             q += f" RETURN avg(n.{aggregated_field})"
-        elif agg_type == AggregationType.SORTED_UNIQUE:
+        elif aggregation_function == AggregationType.SORTED_UNIQUE:
             q += f" RETURN DISTINCT n.{aggregated_field} ORDER BY n.{aggregated_field}"
         else:
-            raise ValueError(f"Unsupported aggregation type: {agg_type}")
+            raise ValueError(f"Unsupported aggregation type: {aggregation_function}")
 
         cursor = self.conn.cursor()
         cursor.execute(q)
         rows = cursor.fetchall()
         cursor.close()
 
-        if agg_type == AggregationType.SORTED_UNIQUE:
+        if aggregation_function == AggregationType.SORTED_UNIQUE:
             return [row[0] for row in rows]
         return rows[0][0] if rows else None
 
@@ -1106,7 +1131,9 @@ class MemgraphConnection(Connection):
         """
         pass
 
-    def insert_return_batch(self, docs: list[dict], class_name: str) -> list[dict]:
+    def insert_return_batch(
+        self, docs: list[dict[str, Any]], class_name: str
+    ) -> list[dict[str, Any]] | str:
         """Insert nodes and return their properties.
 
         Parameters
@@ -1118,8 +1145,8 @@ class MemgraphConnection(Connection):
 
         Returns
         -------
-        list[dict]
-            Inserted documents with their properties
+        list[dict] | str
+            Inserted documents with their properties, or query string
 
         Raises
         ------
@@ -1130,13 +1157,13 @@ class MemgraphConnection(Connection):
 
     def fetch_present_documents(
         self,
-        batch: list[dict],
+        batch: list[dict[str, Any]],
         class_name: str,
-        match_keys: list[str],
-        keep_keys: list[str],
+        match_keys: list[str] | tuple[str, ...],
+        keep_keys: list[str] | tuple[str, ...] | None = None,
         flatten: bool = False,
-        filters: list | dict | None = None,
-    ) -> list[dict]:
+        filters: list[Any] | dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         """Fetch nodes that exist in the database.
 
         Parameters
@@ -1198,12 +1225,12 @@ class MemgraphConnection(Connection):
 
     def keep_absent_documents(
         self,
-        batch: list[dict],
+        batch: list[dict[str, Any]],
         class_name: str,
-        match_keys: list[str],
-        keep_keys: list[str],
-        filters: list | dict | None = None,
-    ) -> list[dict]:
+        match_keys: list[str] | tuple[str, ...],
+        keep_keys: list[str] | tuple[str, ...] | None = None,
+        filters: list[Any] | dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         """Keep documents that don't exist in the database.
 
         Parameters

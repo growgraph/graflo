@@ -1,17 +1,11 @@
 """Tests for Vertex and Field classes with typed fields."""
 
 import logging
-from typing import cast
 
 import pytest
 
-from graflo.architecture.onto import Index
 from graflo.architecture.vertex import Field, FieldType, Vertex, VertexConfig
 from graflo.onto import DBFlavor
-
-# Type aliases for flexible input types that Vertex accepts
-_FieldsInput = list[str] | list[Field] | list[dict]
-_IndexesInput = list[Index] | list[dict]
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +81,7 @@ def test_field_dict_membership():
 
 def test_vertex_with_string_fields_backward_compatible():
     """Test Vertex creation with list of strings (backward compatible)."""
-    vertex = Vertex(name="user", fields=cast(_FieldsInput, ["id", "name", "email"]))
+    vertex = Vertex(name="user", fields=["id", "name", "email"])  # type: ignore[arg-type]
 
     assert len(vertex.fields) == 3
     assert all(isinstance(f, Field) for f in vertex.fields)
@@ -106,7 +100,7 @@ def test_vertex_with_string_fields_backward_compatible():
 
 def test_vertex_with_string_fields_dict_compatibility():
     """Test that field_names property works for dict lookups (critical for backward compatibility)."""
-    vertex = Vertex(name="user", fields=cast(_FieldsInput, ["id", "name"]))
+    vertex = Vertex(name="user", fields=["id", "name"])  # type: ignore[arg-type]
     test_dict = {"id": 1, "name": "John", "other": "ignored"}
 
     # This is the clean usage pattern from actor_util.py
@@ -139,7 +133,7 @@ def test_vertex_with_dict_fields():
         {"name": "name", "type": "STRING"},
         {"name": "email"},  # No type specified, defaults to None
     ]
-    vertex = Vertex(name="user", fields=cast(_FieldsInput, fields))
+    vertex = Vertex(name="user", fields=fields)  # type: ignore[arg-type]
 
     assert len(vertex.fields) == 3
     assert vertex.fields[0].name == "id"
@@ -156,7 +150,7 @@ def test_vertex_mixed_field_inputs():
         Field(name="name", type="STRING"),  # Field object
         {"name": "email", "type": "STRING"},  # dict
     ]
-    vertex = Vertex(name="user", fields=cast(_FieldsInput, fields))
+    vertex = Vertex(name="user", fields=fields)  # type: ignore[arg-type]
 
     assert len(vertex.fields) == 3
     assert all(isinstance(f, Field) for f in vertex.fields)
@@ -170,7 +164,7 @@ def test_vertex_mixed_field_inputs():
 
 def test_vertex_config_fields_backward_compatible():
     """Test VertexConfig.fields_names() method returns names (backward compatible)."""
-    vertex = Vertex(name="user", fields=cast(_FieldsInput, ["id", "name", "email"]))
+    vertex = Vertex(name="user", fields=["id", "name", "email"])  # type: ignore[arg-type]
     config = VertexConfig(vertices=[vertex])
 
     # fields_names() returns names (strings) for backward compatibility
@@ -260,13 +254,10 @@ def test_vertex_with_custom_indexes():
     """Test vertex with custom indexes that reference fields."""
     vertex = Vertex(
         name="user",
-        fields=cast(_FieldsInput, ["id", "name", "email"]),
-        indexes=cast(
-            _IndexesInput,
-            [
-                {"fields": ["id", "email"]},
-            ],
-        ),
+        fields=["id", "name", "email"],  # type: ignore[arg-type]
+        indexes=[  # type: ignore[arg-type]
+            {"fields": ["id", "email"]},
+        ],
     )
 
     # Index fields should be added to vertex fields if missing
@@ -288,7 +279,7 @@ def test_invalid_field_type_in_dict():
     with pytest.raises(ValueError, match="not allowed"):
         Vertex(
             name="user",
-            fields=cast(_FieldsInput, [{"name": "test", "type": "INVALID"}]),
+            fields=[{"name": "test", "type": "INVALID"}],  # type: ignore[arg-type]
         )
 
 
@@ -307,15 +298,12 @@ def test_get_fields_with_defaults_tigergraph():
     # Create vertex with some fields that have None type
     vertex = Vertex(
         name="user",
-        fields=cast(
-            _FieldsInput,
-            [
-                Field(name="id", type="INT"),  # Already has type
-                Field(name="name"),  # None type
-                Field(name="email", type="STRING"),  # Already has type
-                "address",  # String field (will be Field with None type)
-            ],
-        ),
+        fields=[  # type: ignore[arg-type]
+            Field(name="id", type="INT"),  # Already has type
+            Field(name="name"),  # None type
+            Field(name="email", type="STRING"),  # Already has type
+            "address",  # String field (will be Field with None type)
+        ],
     )
 
     vertex.finish_init(DBFlavor.TIGERGRAPH)

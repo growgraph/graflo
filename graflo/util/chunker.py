@@ -32,7 +32,7 @@ import json
 import logging
 import pathlib
 import re
-from contextlib import contextmanager
+from contextlib import nullcontext
 from pathlib import Path
 from shutil import copyfileobj
 from typing import Any, Callable, TextIO, TypeVar
@@ -205,7 +205,7 @@ class FileChunker(AbstractChunker):
                 encoding=self.encoding,
             )
         else:
-            self.file_obj = open(
+            self.file_obj = open(  # type: ignore[assignment]
                 self.filename.absolute().as_posix(),
                 f"r{self.mode}",
                 encoding=self.encoding,
@@ -686,19 +686,6 @@ force_list_wos = (
 )
 
 
-@contextmanager
-def nullcontext(enter_result=None):
-    """Context manager that does nothing.
-
-    Args:
-        enter_result: Value to return when entering the context
-
-    Yields:
-        The enter_result value
-    """
-    yield enter_result
-
-
 def gunzip_file(fname_in, fname_out):
     """Decompress a gzipped file.
 
@@ -792,7 +779,7 @@ def convert(
         if isinstance(  # type: ignore
             source, pathlib.Path
         )
-        else nullcontext() as fp
+        else nullcontext() as fp  # type: ignore[assignment]
     ):
         if pattern is not None:
             fp = FPSmart(fp, pattern)
