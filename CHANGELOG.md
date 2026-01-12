@@ -5,6 +5,57 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.11] - 2026-01-12
+
+### Added
+- **TigerGraph Version 4+ Compatibility Enhancements**: Improved support for TigerGraph 4.1+ and 4.2.x versions
+  - **Automatic Version Detection**: Connection now auto-detects TigerGraph version and adjusts behavior accordingly
+    - Parses version from various formats returned by `getVersion()` API
+    - Supports manual version override via `TigergraphConfig.version` field
+    - Handles version strings like "release_4.2.2_09-29-2025", "4.2.1", "v4.2.1"
+  - **REST API URL Compatibility**: Automatic URL construction based on TigerGraph version
+    - TigerGraph 4.2.2+: Uses direct REST API endpoints (no prefix)
+    - TigerGraph 4.2.1 and older: Adds `/restpp` prefix to REST API URLs
+    - Fixes production deployment issues with TigerGraph 4.2.1
+  - **Token-Based Authentication (Recommended)**: Enhanced token authentication support
+    - Automatic API token generation from secrets using `getToken()`
+    - Bearer token authentication for REST API calls (prioritized over Basic Auth)
+    - Stores and reuses tokens for the connection lifetime
+    - Token expiration logging for monitoring
+    - Fallback to HTTP Basic Auth if token generation fails
+  - **Python 3.11+ Exception Compatibility**: Added `@_wrap_tg_exception` decorator
+    - Handles `TigerGraphException` objects that lack `add_note()` method (required by Python 3.11+)
+    - Wraps exceptions as `RuntimeError` to avoid attribute errors
+    - Applied to all key methods: `init_db()`, `create_database()`, `delete_database()`, `_define_schema_local()`, `define_schema()`, `define_indexes()`, `execute()`, `upsert_docs_batch()`
+    - Future-proofs for Python 3.11+ while maintaining Python 3.10 compatibility
+
+### Changed
+- **TigerGraph Port Configuration for Version 4+**: Updated default ports to align with TigerGraph 4.1+ architecture
+  - **Port 9000 (REST++)**: Marked as internal-only in TG 4.1+ (not publicly accessible)
+  - **Port 14240 (GSQL Server)**: Now the primary interface for all API requests in TG 4.1+
+  - Changed default `port` from 9000 → 14240 in `TigergraphConfig._get_default_port()`
+  - Both `restppPort` and `gsPort` now default to 14240 for TigerGraph 4+ compatibility
+  - Docker configurations with custom port mappings continue to work via explicit port settings
+  - Added comprehensive documentation about port architecture changes in TG 4+
+- **Enhanced TigerGraph Documentation**: Added extensive TigerGraph 4+ integration guide
+  - Created `docs/tigergraph_v4_guide.md` with comprehensive TG 4+ usage examples
+  - Port configuration best practices for vanilla TG 4+ and Docker deployments
+  - Token authentication setup and benefits
+  - Version compatibility details and migration guide
+  - Environment variable configuration examples
+  - Troubleshooting guide for common issues
+  - Enhanced class docstrings in `TigerGraphConnection` and `TigergraphConfig` with usage examples
+
+### Documentation
+- Added comprehensive TigerGraph 4+ integration guide covering:
+  - Port configuration changes (9000 → 14240)
+  - Token-based authentication (recommended approach)
+  - Version compatibility and auto-detection
+  - Migration from older TigerGraph versions
+  - Best practices for production deployments
+  - Environment variable configuration
+  - Troubleshooting common connection issues
+
 ## [1.3.10] - 2026-01-07
 
 ### Added

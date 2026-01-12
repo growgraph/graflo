@@ -1,0 +1,14 @@
+CREATE OR REPLACE QUERY triples() FOR GRAPH companies {
+
+TYPEDEF TUPLE <VERTEX u, EDGE relation, VERTEX v> TRIPLE;
+  ListAccum<TRIPLE> @@triple_list;
+
+  Seed = {company.*};
+
+  S1 = SELECT t
+       FROM Seed:s -(relates:e)-> company:t
+       ACCUM @@triple_list += TRIPLE(s, e, t);
+
+
+  PRINT @@triple_list;
+}

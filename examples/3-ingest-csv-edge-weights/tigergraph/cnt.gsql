@@ -1,0 +1,11 @@
+CREATE OR REPLACE QUERY cnt() FOR GRAPH companies {
+  SumAccum<INT> @@edge_count;
+
+  Seed = {company.*};
+
+  S1 = SELECT t
+       FROM Seed:s -(relates:e)-> company:t
+       ACCUM @@edge_count += 1;
+
+  PRINT @@edge_count;
+}

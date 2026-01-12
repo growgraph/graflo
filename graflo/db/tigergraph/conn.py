@@ -58,6 +58,29 @@ _json_serializer = json_serializer
 logger = logging.getLogger(__name__)
 
 
+def _wrap_tg_exception(func):
+    """Decorator to wrap TigerGraph exceptions for Python 3.11+ compatibility.
+
+    Python 3.11+ exception handling tries to call add_note() on exceptions,
+    but pyTigerGraph's TigerGraphException doesn't always support this.
+    This wrapper catches such exceptions and re-raises them as RuntimeError
+    to avoid the 'add_note' attribute error.
+    """
+
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            # Check if exception is from pyTigerGraph and lacks add_note
+            if type(e).__name__ == "TigerGraphException" and not hasattr(e, "add_note"):
+                # Re-wrap as RuntimeError to avoid add_note issues
+                raise RuntimeError(f"TigerGraph error: {e}") from e
+            # For all other exceptions, re-raise as-is
+            raise
+
+    return wrapper
+
+
 class TigerGraphConnection(Connection):
     """
     TigerGraph database connection implementation.
@@ -67,7 +90,39 @@ class TigerGraphConnection(Connection):
     2. Schema must be defined explicitly before data insertion
     3. No automatic vertex/edge class creation - vertices and edges must be pre-defined
     4. Different query syntax and execution model
-    5. Token-based authentication for some operations
+    5. Token-based authentication recommended for TigerGraph 4+
+
+    Authentication (recommended for TG 4+):
+        Token-based authentication using secrets is the most robust and recommended
+        approach for TigerGraph 4+. Provide a 'secret' in your TigergraphConfig to
+        enable automatic token generation and usage.
+
+        Example:
+            >>> config = TigergraphConfig(
+            ...     uri="http://localhost:14240",
+            ...     username="tigergraph",
+            ...     password="tigergraph",
+            ...     secret="your_secret_here",  # Recommended for TG 4+
+            ...     database="my_graph"
+            ... )
+            >>> conn = TigerGraphConnection(config)
+
+    Port Configuration for TigerGraph 4+:
+        TigerGraph 4.1+ uses port 14240 (GSQL server) as the primary interface.
+        Port 9000 (REST++) is for internal use only in TG 4.1+.
+
+        Default behavior: Both restppPort and gsPort default to 14240 for TG 4+ compatibility.
+
+        For custom Docker deployments with port mapping, explicitly set both ports:
+            >>> config = TigergraphConfig(
+            ...     uri="http://localhost:9001",  # Custom REST++ port
+            ...     gs_port=14241,                 # Custom GSQL port
+            ... )
+
+    Version Compatibility:
+        - TigerGraph 4.2.2+: Direct REST API endpoints (no /restpp prefix)
+        - TigerGraph 4.2.1 and older: REST API with /restpp prefix
+        - Version is auto-detected, or can be manually specified in config
     """
 
     flavor = DBFlavor.TIGERGRAPH
@@ -75,14 +130,12 @@ class TigerGraphConnection(Connection):
     def __init__(self, config: TigergraphConfig):
         super().__init__()
         self.config = config
-        # Store base URLs for REST++ and GSQL endpoints
-        self.restpp_url = f"{config.url_without_port}:{config.port}"
-        self.gsql_url = f"{config.url_without_port}:{config.gs_port}"
 
         # Initialize pyTigerGraph connection for most operations
         # Use type narrowing to help type checker understand non-None values
-        # PyTigerGraphConnection has defaults for all parameters, so None values are acceptable
-        restpp_port: int | str = config.port if config.port is not None else "9000"
+        # For TigerGraph 4+, both ports typically route through the GSQL server (14240)
+        # Port 9000 (REST++) is internal-only in TG 4.1+
+        restpp_port: int | str = config.port if config.port is not None else "14240"
         gs_port: int | str = config.gs_port if config.gs_port is not None else "14240"
         graphname: str = (
             config.database if config.database is not None else "DefaultGraph"
@@ -106,25 +159,131 @@ class TigerGraphConnection(Connection):
         self.conn = PyTigerGraphConnection(**conn_kwargs)
 
         # Get authentication token if secret is provided
+        # Token-based auth is the recommended approach for TigerGraph 4+
+        self.api_token: str | None = None
         if config.secret:
             try:
-                self.conn.getToken(config.secret)
+                token = self.conn.getToken(config.secret)
+                # getToken returns tuple (token, expiration) or just token
+                if isinstance(token, tuple):
+                    self.api_token = token[0]
+                    logger.info(
+                        f"Successfully obtained API token (expires: {token[1]})"
+                    )
+                else:
+                    self.api_token = token
+                    logger.info("Successfully obtained API token")
             except Exception as e:
                 logger.warning(f"Failed to get authentication token: {e}")
+                logger.warning("Falling back to username/password authentication")
+
+        # Detect TigerGraph version for compatibility
+        self.tg_version: str | None = None
+        self._use_restpp_prefix = False  # Default for 4.2.2+
+
+        # Check if version is manually configured first
+        if hasattr(config, "version") and config.version:
+            version_str = config.version
+            logger.info(f"Using manually configured TigerGraph version: {version_str}")
+        else:
+            # Auto-detect version
+            try:
+                version_info = self.conn.getVersion()
+                # getVersion() can return different formats:
+                # - list: [{"version": "release_4.2.2_..."}, ...]
+                # - dict: {"version": "release_4.2.2_..."} or {"api": [{"version": "4.2.2"}]}
+                # - str: "4.2.2"
+                version_str = None
+
+                if isinstance(version_info, list) and len(version_info) > 0:
+                    first_item = version_info[0]
+                    if isinstance(first_item, dict) and "version" in first_item:
+                        version_str = str(first_item["version"])
+                    else:
+                        version_str = str(first_item)
+                elif isinstance(version_info, dict):
+                    # Try different dict structures
+                    if "version" in version_info:
+                        version_str = str(version_info["version"])
+                    elif "api" in version_info and isinstance(
+                        version_info["api"], list
+                    ):
+                        if (
+                            len(version_info["api"]) > 0
+                            and "version" in version_info["api"][0]
+                        ):
+                            version_str = str(version_info["api"][0]["version"])
+                elif isinstance(version_info, str):
+                    version_str = version_info
+            except Exception as e:
+                logger.warning(
+                    f"Failed to detect TigerGraph version: {e}. "
+                    f"Defaulting to 4.2.2+ behavior (no /restpp prefix)"
+                )
+                version_str = None
+
+        # Parse version string if we have one
+        if version_str:
+            # Extract version from strings like "release_4.2.2_09-29-2025" or "4.2.1" or "v4.2.1"
+            import re
+
+            version_match = re.search(r"(\d+)\.(\d+)\.(\d+)", version_str)
+            if version_match:
+                major = int(version_match.group(1))
+                minor = int(version_match.group(2))
+                patch = int(version_match.group(3))
+                self.tg_version = f"{major}.{minor}.{patch}"
+
+                # Version 4.2.1 and older need /restpp prefix
+                if (major, minor, patch) < (4, 2, 2):
+                    self._use_restpp_prefix = True
+                    logger.info(
+                        f"TigerGraph version {self.tg_version} detected, "
+                        f"using /restpp prefix for REST API"
+                    )
+                else:
+                    logger.info(
+                        f"TigerGraph version {self.tg_version} detected, "
+                        f"using direct REST API endpoints"
+                    )
+            else:
+                logger.warning(
+                    f"Could not extract version number from '{version_str}'. "
+                    f"Defaulting to 4.2.2+ behavior (no /restpp prefix)"
+                )
+
+        # Store base URLs for REST++ and GSQL endpoints
+        # For version 4.2.1 and older, include /restpp in the path
+        base_url = f"{config.url_without_port}:{config.port}"
+        if self._use_restpp_prefix:
+            self.restpp_url = f"{base_url}/restpp"
+        else:
+            self.restpp_url = base_url
+        self.gsql_url = f"{config.url_without_port}:{config.gs_port}"
 
     def _get_auth_headers(self) -> dict[str, str]:
-        """Get HTTP Basic Auth headers if credentials are available.
+        """Get authentication headers for REST API calls.
+
+        Prioritizes token-based authentication over Basic Auth:
+        1. If API token is available (from secret), use Bearer token (recommended for TG 4+)
+        2. Otherwise, fall back to HTTP Basic Auth with username/password
 
         Returns:
-            Dictionary with Authorization header if credentials exist
+            Dictionary with Authorization header
         """
         headers = {}
-        if self.config.username and self.config.password:
+
+        # Prefer token-based authentication (recommended for TigerGraph 4+)
+        if self.api_token:
+            headers["Authorization"] = f"Bearer {self.api_token}"
+        elif self.config.username and self.config.password:
+            # Fallback to HTTP Basic Auth
             import base64
 
             credentials = f"{self.config.username}:{self.config.password}"
             encoded_credentials = base64.b64encode(credentials.encode()).decode()
             headers["Authorization"] = f"Basic {encoded_credentials}"
+
         return headers
 
     def _call_restpp_api(
@@ -274,6 +433,7 @@ class TigerGraphConnection(Connection):
             # (other errors might indicate connection issues, not missing graph)
             return False
 
+    @_wrap_tg_exception
     def create_database(
         self,
         name: str,
@@ -334,6 +494,7 @@ class TigerGraphConnection(Connection):
             logger.error(f"Error creating graph '{name}' via GSQL: {e}")
             raise
 
+    @_wrap_tg_exception
     def delete_database(self, name: str):
         """
         Delete a TigerGraph database (graph).
@@ -533,6 +694,7 @@ class TigerGraphConnection(Connection):
         except Exception as e:
             logger.error(f"Error deleting database '{name}': {e}")
 
+    @_wrap_tg_exception
     def execute(self, query, **kwargs):
         """
         Execute GSQL query or installed query based on content.
@@ -770,6 +932,7 @@ class TigerGraphConnection(Connection):
             # No trailing comma needed
             return f"ADD DIRECTED EDGE {edge.relation} (\n{from_to_line}\n    )"
 
+    @_wrap_tg_exception
     def _define_schema_local(self, schema: Schema) -> None:
         """Define TigerGraph schema locally for the current graph using a SCHEMA_CHANGE job.
 
@@ -921,6 +1084,7 @@ class TigerGraphConnection(Connection):
             logger.error(f"GSQL command was: {full_gsql}")
             raise
 
+    @_wrap_tg_exception
     def init_db(self, schema: Schema, clean_start: bool = False) -> None:
         """
         Initialize database with schema definition.
@@ -1010,6 +1174,7 @@ class TigerGraphConnection(Connection):
                     )
             raise
 
+    @_wrap_tg_exception
     def define_schema(self, schema: Schema):
         """
         Define TigerGraph schema locally for the current graph.
@@ -1811,6 +1976,7 @@ class TigerGraphConnection(Connection):
             logger.error(f"An unexpected error occurred: {err}")
             return {"error": True, "message": str(err)}
 
+    @_wrap_tg_exception
     def upsert_docs_batch(self, docs, class_name, match_keys, **kwargs):
         """
         Batch upsert documents as vertices using TigerGraph REST++ API.
@@ -2733,6 +2899,7 @@ class TigerGraphConnection(Connection):
 
         return absent_docs
 
+    @_wrap_tg_exception
     def define_indexes(self, schema: Schema):
         """Define all indexes from schema."""
         try:
