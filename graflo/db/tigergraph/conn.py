@@ -128,16 +128,22 @@ class TigerGraphConnection(Connection):
     5. Token-based authentication recommended for TigerGraph 4+
 
     Authentication (recommended for TG 4+):
+        For best results, provide BOTH username/password AND secret:
+        - username/password: Required for initial connection and GSQL operations
+        - secret: Generates token that works for both GSQL and REST API operations
+
         Token-based authentication using secrets is the most robust and recommended
-        approach for TigerGraph 4+. Provide a 'secret' in your TigergraphConfig to
-        enable automatic token generation and usage.
+        approach for TigerGraph 4+. The connection will:
+        1. Use username/password for initial connection
+        2. Generate a token from the secret
+        3. Use the token for both GSQL operations (via pyTigerGraph) and REST API calls
 
         Example:
             >>> config = TigergraphConfig(
             ...     uri="http://localhost:14240",
-            ...     username="tigergraph",
-            ...     password="tigergraph",
-            ...     secret="your_secret_here",  # Recommended for TG 4+
+            ...     username="tigergraph",      # Required for initial connection
+            ...     password="tigergraph",      # Required for initial connection
+            ...     secret="your_secret_here",  # Generates token for GSQL + REST API
             ...     database="my_graph"
             ... )
             >>> conn = TigerGraphConnection(config)
@@ -196,10 +202,15 @@ class TigerGraphConnection(Connection):
 
         # Get authentication token if secret is provided
         # Token-based auth is the recommended approach for TigerGraph 4+
+        # IMPORTANT: You should provide BOTH username/password AND secret:
+        # - username/password: Used for initial connection and GSQL operations
+        # - secret: Generates token that works for both GSQL and REST API operations
         self.api_token: str | None = None
         if config.secret:
             try:
-                token = self.conn.getToken(config.secret)
+                # Explicitly set setToken=True for TigerGraph 4.2.1+ compatibility
+                # This ensures the token is set on the connection object before any operations
+                token = self.conn.getToken(config.secret, setToken=True)
                 # getToken returns tuple (token, expiration) or just token
                 if isinstance(token, tuple):
                     self.api_token = token[0]
@@ -210,18 +221,33 @@ class TigerGraphConnection(Connection):
                     self.api_token = token
                     logger.info("Successfully obtained API token")
                 # Explicitly set token on connection object for TigerGraph 4.2.1 compatibility
-                # This ensures pyTigerGraph internal calls use the same token
+                # This ensures pyTigerGraph internal calls (including GSQL) use the same token
                 if self.api_token:
+                    # Set token via all available methods to ensure compatibility
                     if hasattr(self.conn, "apiToken"):
                         self.conn.apiToken = self.api_token  # type: ignore[attr-defined]
                     if hasattr(self.conn, "token"):
                         self.conn.token = self.api_token  # type: ignore[attr-defined]
                     if hasattr(self.conn, "setToken"):
                         self.conn.setToken(self.api_token)  # type: ignore[attr-defined]
+                    # Verify token is set (for debugging)
+                    if hasattr(self.conn, "apiToken"):
+                        actual_token = getattr(self.conn, "apiToken", None)
+                        if actual_token != self.api_token:
+                            logger.warning(
+                                "Token mismatch detected. Expected token set, "
+                                "but connection has different token."
+                            )
+                        else:
+                            logger.debug("Token successfully set on connection object")
             except Exception as e:
                 # Log and fall back to username/password authentication
                 logger.warning(f"Failed to get authentication token: {e}")
                 logger.warning("Falling back to username/password authentication")
+                logger.warning(
+                    "Note: For best results, provide both username/password AND secret. "
+                    "Username/password is used for GSQL operations, secret generates token for REST API."
+                )
 
         # Detect TigerGraph version for compatibility
         self.tg_version: str | None = None
