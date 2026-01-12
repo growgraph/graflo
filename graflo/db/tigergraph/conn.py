@@ -191,6 +191,15 @@ class TigerGraphConnection(Connection):
                 else:
                     self.api_token = token
                     logger.info("Successfully obtained API token")
+                # Explicitly set token on connection object for TigerGraph 4.2.1 compatibility
+                # This ensures pyTigerGraph internal calls use the same token
+                if self.api_token:
+                    if hasattr(self.conn, "apiToken"):
+                        self.conn.apiToken = self.api_token  # type: ignore[attr-defined]
+                    if hasattr(self.conn, "token"):
+                        self.conn.token = self.api_token  # type: ignore[attr-defined]
+                    if hasattr(self.conn, "setToken"):
+                        self.conn.setToken(self.api_token)  # type: ignore[attr-defined]
             except Exception as e:
                 # Catch TigerGraphException that may lack add_note() method (Python 3.11+ compatibility)
                 # Check exception type name to avoid import issues
@@ -1962,43 +1971,34 @@ class TigerGraphConnection(Connection):
     def _upsert_data(
         self,
         payload: dict[str, Any],
-        host: str,
-        graph_name: str,
-        username: str | None = None,
-        password: str | None = None,
     ) -> dict[str, Any]:
         """
         Sends the generated JSON payload to the TigerGraph REST++ upsert endpoint.
 
         Args:
             payload: The JSON payload in TigerGraph REST++ format
-            host: Base host URL (e.g., "http://localhost:9000")
-            graph_name: Name of the graph
-            username: Optional username for authentication
-            password: Optional password for authentication
 
         Returns:
             Dictionary containing the response from TigerGraph
         """
-        url = f"{host}/graph/{graph_name}"
+        graph_name = self.config.database
+        if not graph_name:
+            raise ValueError("Graph name (database) must be configured")
 
-        headers = {
-            "Content-Type": "application/json",
-        }
+        # Use restpp_url which handles version-specific prefixes (e.g., /restpp for 4.2.1)
+        url = f"{self.restpp_url}/graph/{graph_name}"
+
+        # Use centralized auth headers (supports Bearer token for 4.2.1+)
+        headers = self._get_auth_headers()
+        headers["Content-Type"] = "application/json"
 
         logger.debug(f"Attempting batch upsert to: {url}")
 
         try:
-            # Use HTTP Basic Auth if username and password are provided
-            auth = None
-            if username and password:
-                auth = (username, password)
-
             response = requests.post(
                 url,
                 headers=headers,
                 data=json.dumps(payload, default=_json_serializer),
-                auth=auth,
                 # Increase timeout for large batches
                 timeout=120,
                 verify=self.ssl_verify,
@@ -2051,20 +2051,8 @@ class TigerGraphConnection(Connection):
                 logger.warning(f"No valid vertices to upsert for {class_name}")
                 return
 
-            # Build REST++ endpoint URL
-            host = f"{self.config.url_without_port}:{self.config.port}"
-            graph_name = self.config.database
-            if not graph_name:
-                raise ValueError("Graph name (database) must be configured")
-
-            # Send the upsert request with username/password authentication
-            result = self._upsert_data(
-                payload,
-                host,
-                graph_name,
-                username=self.config.username,
-                password=self.config.password,
-            )
+            # Send the upsert request
+            result = self._upsert_data(payload)
 
             if result.get("error"):
                 logger.error(
@@ -2415,12 +2403,6 @@ class TigerGraphConnection(Connection):
                 logger.warning(f"No valid edges to upsert for edge type {edge_type}")
                 return
 
-            # Build REST++ endpoint URL
-            host = f"{self.config.url_without_port}:{self.config.port}"
-            graph_name = self.config.database
-            if not graph_name:
-                raise ValueError("Graph name (database) must be configured")
-
             # Send each payload in batch
             total_edges = 0
             failed_payloads = []
@@ -2433,13 +2415,7 @@ class TigerGraphConnection(Connection):
                 original_edges = payload.pop("_original_edges", [])
 
                 # Send the batch upsert request
-                result = self._upsert_data(
-                    payload,
-                    host,
-                    graph_name,
-                    username=self.config.username,
-                    password=self.config.password,
-                )
+                result = self._upsert_data(payload)
 
                 # Restore original edges for potential fallback
                 payload["_original_edges"] = original_edges
