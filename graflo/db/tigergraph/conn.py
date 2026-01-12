@@ -58,41 +58,32 @@ _json_serializer = json_serializer
 logger = logging.getLogger(__name__)
 
 
-# Monkey-patch TigerGraphException to add add_note() method for Python 3.11+ compatibility
-try:
-    from pyTigerGraph import TigerGraphException
+# Universal monkey-patch: Add add_note() to base Exception class for Python 3.10 compatibility
+# This ensures all exceptions (HTTPError, TigerGraphException, etc.) have add_note()
+# Python 3.11+ already has this, but Python 3.10 doesn't
+if not hasattr(Exception, "add_note"):
 
-    if not hasattr(TigerGraphException, "add_note"):
+    def add_note(self, note: str) -> None:
+        """Add a note to the exception (Python 3.11+ compatibility shim for Python 3.10)."""
+        if not hasattr(self, "_notes"):
+            self._notes = []
+        self._notes.append(note)
 
-        def add_note(self, note: str) -> None:
-            """Add a note to the exception (Python 3.11+ compatibility)."""
-            if not hasattr(self, "_notes"):
-                self._notes = []
-            self._notes.append(note)
-
-        TigerGraphException.add_note = add_note  # type: ignore[attr-defined]
-except (ImportError, AttributeError):
-    pass  # Fall back to exception handler approach
+    Exception.add_note = add_note  # type: ignore[attr-defined, assignment]
 
 
 def _wrap_tg_exception(func):
-    """Decorator to wrap TigerGraph exceptions for Python 3.11+ compatibility.
+    """Decorator to wrap TigerGraph exceptions for compatibility.
 
-    Python 3.11+ exception handling tries to call add_note() on exceptions,
-    but pyTigerGraph's TigerGraphException doesn't always support this.
-    This wrapper catches such exceptions and re-raises them as RuntimeError
-    to avoid the 'add_note' attribute error.
+    This decorator is kept for backward compatibility but is no longer strictly
+    necessary since we've monkey-patched Exception.add_note() universally.
     """
 
     def wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
-        except Exception as e:
-            # Check if exception is from pyTigerGraph and lacks add_note
-            if type(e).__name__ == "TigerGraphException" and not hasattr(e, "add_note"):
-                # Re-wrap as RuntimeError to avoid add_note issues
-                raise RuntimeError(f"TigerGraph error: {e}") from e
-            # For all other exceptions, re-raise as-is
+        except Exception:
+            # Re-raise all exceptions as-is (add_note is now available on all exceptions)
             raise
 
     return wrapper
@@ -201,19 +192,9 @@ class TigerGraphConnection(Connection):
                     if hasattr(self.conn, "setToken"):
                         self.conn.setToken(self.api_token)  # type: ignore[attr-defined]
             except Exception as e:
-                # Catch TigerGraphException that may lack add_note() method (Python 3.11+ compatibility)
-                # Check exception type name to avoid import issues
-                exc_type_name = type(e).__name__
-                if exc_type_name == "TigerGraphException" and not hasattr(
-                    e, "add_note"
-                ):
-                    # Wrap to avoid add_note() AttributeError in Python 3.11+
-                    logger.warning(f"Failed to get authentication token: {e}")
-                    logger.warning("Falling back to username/password authentication")
-                else:
-                    # For other exceptions, log and continue
-                    logger.warning(f"Failed to get authentication token: {e}")
-                    logger.warning("Falling back to username/password authentication")
+                # Log and fall back to username/password authentication
+                logger.warning(f"Failed to get authentication token: {e}")
+                logger.warning("Falling back to username/password authentication")
 
         # Detect TigerGraph version for compatibility
         self.tg_version: str | None = None
@@ -254,19 +235,10 @@ class TigerGraphConnection(Connection):
                 elif isinstance(version_info, str):
                     version_str = version_info
             except Exception as e:
-                # Catch TigerGraphException that may lack add_note() method
-                if type(e).__name__ == "TigerGraphException" and not hasattr(
-                    e, "add_note"
-                ):
-                    logger.warning(
-                        f"Failed to detect TigerGraph version: {e}. "
-                        f"Defaulting to 4.2.2+ behavior (no /restpp prefix)"
-                    )
-                else:
-                    logger.warning(
-                        f"Failed to detect TigerGraph version: {e}. "
-                        f"Defaulting to 4.2.2+ behavior (no /restpp prefix)"
-                    )
+                logger.warning(
+                    f"Failed to detect TigerGraph version: {e}. "
+                    f"Defaulting to 4.2.2+ behavior (no /restpp prefix)"
+                )
                 version_str = None
 
         # Parse version string if we have one
