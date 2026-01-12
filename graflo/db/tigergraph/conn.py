@@ -58,32 +58,59 @@ _json_serializer = json_serializer
 logger = logging.getLogger(__name__)
 
 
-# Universal monkey-patch: Add add_note() to base Exception class for Python 3.10 compatibility
-# This ensures all exceptions (HTTPError, TigerGraphException, etc.) have add_note()
+# Monkey-patch specific exception classes to add add_note() for Python 3.10 compatibility
 # Python 3.11+ already has this, but Python 3.10 doesn't
-if not hasattr(Exception, "add_note"):
+# We patch specific classes since the base Exception class is immutable
+def _add_note_shim(self, note: str) -> None:
+    """Add a note to the exception (Python 3.11+ compatibility shim for Python 3.10)."""
+    if not hasattr(self, "_notes"):
+        self._notes = []
+    self._notes.append(note)
 
-    def add_note(self, note: str) -> None:
-        """Add a note to the exception (Python 3.11+ compatibility shim for Python 3.10)."""
-        if not hasattr(self, "_notes"):
-            self._notes = []
-        self._notes.append(note)
 
-    Exception.add_note = add_note  # type: ignore[attr-defined, assignment]
+def _patch_exception_class(cls: type[Exception]) -> None:
+    """Patch an exception class to add add_note() if it doesn't exist."""
+    if not hasattr(cls, "add_note"):
+        cls.add_note = _add_note_shim  # type: ignore[attr-defined, assignment]
+
+
+# Patch requests exceptions (HTTPError, ConnectionError, Timeout, RequestException)
+try:
+    from requests.exceptions import (
+        HTTPError,
+        ConnectionError,
+        Timeout,
+        RequestException,
+    )
+
+    _patch_exception_class(HTTPError)
+    _patch_exception_class(ConnectionError)
+    _patch_exception_class(Timeout)
+    _patch_exception_class(RequestException)
+except (ImportError, AttributeError):
+    pass
+
+# Patch TigerGraphException
+try:
+    from pyTigerGraph import TigerGraphException
+
+    _patch_exception_class(TigerGraphException)
+except (ImportError, AttributeError):
+    pass
 
 
 def _wrap_tg_exception(func):
     """Decorator to wrap TigerGraph exceptions for compatibility.
 
     This decorator is kept for backward compatibility but is no longer strictly
-    necessary since we've monkey-patched Exception.add_note() universally.
+    necessary since we've monkey-patched the specific exception classes.
     """
 
     def wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
         except Exception:
-            # Re-raise all exceptions as-is (add_note is now available on all exceptions)
+            # Re-raise all exceptions as-is (add_note is available on patched exceptions)
             raise
 
     return wrapper
