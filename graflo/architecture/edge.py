@@ -263,6 +263,8 @@ class Edge(BaseDataclass):
                 # Initialize weights if not already present
                 if self.weights is None:
                     self.weights = WeightConfig()
+                # Type assertion: weights is guaranteed to be WeightConfig after assignment
+                assert self.weights is not None, "weights should be initialized"
                 # Check if the field already exists in direct weights
                 if self.relation_field not in self.weights.direct_names:
                     # Add the relation field with STRING type for TigerGraph

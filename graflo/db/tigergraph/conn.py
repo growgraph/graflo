@@ -58,6 +58,23 @@ _json_serializer = json_serializer
 logger = logging.getLogger(__name__)
 
 
+# Monkey-patch TigerGraphException to add add_note() method for Python 3.11+ compatibility
+try:
+    from pyTigerGraph import TigerGraphException
+
+    if not hasattr(TigerGraphException, "add_note"):
+
+        def add_note(self, note: str) -> None:
+            """Add a note to the exception (Python 3.11+ compatibility)."""
+            if not hasattr(self, "_notes"):
+                self._notes = []
+            self._notes.append(note)
+
+        TigerGraphException.add_note = add_note  # type: ignore[attr-defined]
+except (ImportError, AttributeError):
+    pass  # Fall back to exception handler approach
+
+
 def _wrap_tg_exception(func):
     """Decorator to wrap TigerGraph exceptions for Python 3.11+ compatibility.
 
@@ -130,6 +147,7 @@ class TigerGraphConnection(Connection):
     def __init__(self, config: TigergraphConfig):
         super().__init__()
         self.config = config
+        self.ssl_verify = getattr(config, "ssl_verify", True)
 
         # Initialize pyTigerGraph connection for most operations
         # Use type narrowing to help type checker understand non-None values
@@ -174,8 +192,19 @@ class TigerGraphConnection(Connection):
                     self.api_token = token
                     logger.info("Successfully obtained API token")
             except Exception as e:
-                logger.warning(f"Failed to get authentication token: {e}")
-                logger.warning("Falling back to username/password authentication")
+                # Catch TigerGraphException that may lack add_note() method (Python 3.11+ compatibility)
+                # Check exception type name to avoid import issues
+                exc_type_name = type(e).__name__
+                if exc_type_name == "TigerGraphException" and not hasattr(
+                    e, "add_note"
+                ):
+                    # Wrap to avoid add_note() AttributeError in Python 3.11+
+                    logger.warning(f"Failed to get authentication token: {e}")
+                    logger.warning("Falling back to username/password authentication")
+                else:
+                    # For other exceptions, log and continue
+                    logger.warning(f"Failed to get authentication token: {e}")
+                    logger.warning("Falling back to username/password authentication")
 
         # Detect TigerGraph version for compatibility
         self.tg_version: str | None = None
@@ -216,10 +245,19 @@ class TigerGraphConnection(Connection):
                 elif isinstance(version_info, str):
                     version_str = version_info
             except Exception as e:
-                logger.warning(
-                    f"Failed to detect TigerGraph version: {e}. "
-                    f"Defaulting to 4.2.2+ behavior (no /restpp prefix)"
-                )
+                # Catch TigerGraphException that may lack add_note() method
+                if type(e).__name__ == "TigerGraphException" and not hasattr(
+                    e, "add_note"
+                ):
+                    logger.warning(
+                        f"Failed to detect TigerGraph version: {e}. "
+                        f"Defaulting to 4.2.2+ behavior (no /restpp prefix)"
+                    )
+                else:
+                    logger.warning(
+                        f"Failed to detect TigerGraph version: {e}. "
+                        f"Defaulting to 4.2.2+ behavior (no /restpp prefix)"
+                    )
                 version_str = None
 
         # Parse version string if we have one
@@ -316,7 +354,11 @@ class TigerGraphConnection(Connection):
         try:
             if method.upper() == "GET":
                 response = requests.get(
-                    url, headers=headers, params=params, timeout=120
+                    url,
+                    headers=headers,
+                    params=params,
+                    timeout=120,
+                    verify=self.ssl_verify,
                 )
             elif method.upper() == "POST":
                 response = requests.post(
@@ -325,10 +367,15 @@ class TigerGraphConnection(Connection):
                     data=json.dumps(data, default=_json_serializer) if data else None,
                     params=params,
                     timeout=120,
+                    verify=self.ssl_verify,
                 )
             elif method.upper() == "DELETE":
                 response = requests.delete(
-                    url, headers=headers, params=params, timeout=120
+                    url,
+                    headers=headers,
+                    params=params,
+                    timeout=120,
+                    verify=self.ssl_verify,
                 )
             else:
                 raise ValueError(f"Unsupported HTTP method: {method}")
@@ -856,6 +903,8 @@ class TigerGraphConnection(Connection):
 
             edge.weights = WeightConfig()
 
+        # Type assertion: weights is guaranteed to be WeightConfig after assignment
+        assert edge.weights is not None, "weights should be initialized"
         # Get existing weight field names
         existing_weight_names = set()
         if edge.weights.direct:
@@ -1952,6 +2001,7 @@ class TigerGraphConnection(Connection):
                 auth=auth,
                 # Increase timeout for large batches
                 timeout=120,
+                verify=self.ssl_verify,
             )
             response.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
 
