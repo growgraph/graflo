@@ -8,13 +8,14 @@ import logging
 # Configure logging: INFO level for graflo module, WARNING for others
 logging.basicConfig(level=logging.WARNING, handlers=[logging.StreamHandler()])
 # Set graflo module to INFO level
-logging.getLogger("graflo").setLevel(logging.INFO)
+logging.getLogger("graflo").setLevel(logging.DEBUG)
 
 schema = Schema.from_dict(FileHandle.load("schema.yaml"))
 
 # Load config from docker/neo4j/.env (recommended)
 # This automatically reads NEO4J_BOLT_PORT, NEO4J_AUTH, etc.
 conn_conf = Neo4jConfig.from_docker_env()
+
 # from graflo.db.connection.onto import TigergraphConfig
 # conn_conf = TigergraphConfig.from_docker_env()
 

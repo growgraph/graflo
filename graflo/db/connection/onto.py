@@ -521,21 +521,72 @@ class Neo4jConfig(DBConfig):
 
 
 class TigergraphConfig(DBConfig):
-    """Configuration for TigerGraph connections."""
+    """Configuration for TigerGraph connections.
+
+    Authentication (Recommended for TigerGraph 4+):
+        Token-based authentication using secrets is the most robust and recommended
+        approach for TigerGraph 4+. This provides better security than username/password
+        authentication and is the officially recommended method.
+
+        To use token authentication:
+        1. Create a secret in TigerGraph: CREATE SECRET mysecret
+        2. Provide the secret in this config
+        3. The connection will automatically generate and use tokens
+
+        Example:
+            >>> config = TigergraphConfig(
+            ...     uri="http://localhost:14240",
+            ...     username="tigergraph",
+            ...     password="tigergraph",
+            ...     secret="mysecret",  # Recommended!
+            ...     database="my_graph"
+            ... )
+
+    Port Configuration for TigerGraph 4+:
+        TigerGraph 4.1+ uses port 14240 (GSQL server) as the primary interface.
+        Port 9000 (REST++) is for internal use only in TG 4.1+.
+
+        For vanilla TigerGraph 4+ installations, you typically only need port 14240.
+        Both restppPort and gsPort default to 14240 for TG 4+ compatibility.
+
+        For custom Docker deployments with port mapping, override the ports:
+            >>> config = TigergraphConfig(
+            ...     uri="http://localhost:9001",  # Custom mapped REST++ port
+            ...     gs_port=14241,                 # Custom mapped GSQL port
+            ... )
+    """
 
     model_config = SettingsConfigDict(
         env_prefix="TIGERGRAPH_",
         case_sensitive=False,
     )
 
-    gs_port: int | None = Field(default=None, description="TigerGraph GSQL port")
+    gs_port: int | None = Field(
+        default=None, description="TigerGraph GSQL port (default: 14240 for TG 4+)"
+    )
     secret: str | None = Field(
-        default=None, description="TigerGraph secret for token authentication"
+        default=None,
+        description="TigerGraph secret for token authentication (RECOMMENDED for TG 4+). "
+        "Enables secure token-based authentication instead of basic username/password.",
+    )
+    version: str | None = Field(
+        default=None,
+        description="TigerGraph version (e.g., '4.2.1'). If not provided, will be auto-detected. "
+        "Versions < 4.2.2 use /restpp prefix in REST API URLs",
     )
 
     def _get_default_port(self) -> int:
-        """Get default TigerGraph REST++ port."""
-        return 9000
+        """Get default TigerGraph REST++ port.
+
+        Note: TigerGraph 4.1+ uses port 14240 (GSQL server) as the primary interface.
+        Port 9000 (REST++) is for internal use only in TG 4.1+.
+        However, pyTigerGraph's connection object still needs this port configured
+        for backward compatibility with older TG versions.
+
+        For TigerGraph 4+, it's recommended to explicitly set both port and gs_port
+        to the publicly accessible GSQL port (typically 14240).
+        """
+        return 14240  # Default to GSQL port for TG 4+ compatibility
 
     def _get_effective_database(self) -> str | None:
         """TigerGraph doesn't have a database level (connection -> schema -> vertices/edges)."""
