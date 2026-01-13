@@ -92,8 +92,8 @@ def test_schema_creation(conn_conf, test_graph_name, schema_obj):
         # getVertexTypes() and getEdgeTypes() require graph context via _ensure_graph_context
         with db_client._ensure_graph_context(test_graph_name):
             # Verify schema was created
-            vertex_types = db_client.conn.getVertexTypes(force=True)
-            edge_types = db_client.conn.getEdgeTypes(force=True)
+            vertex_types = db_client._get_vertex_types()
+            edge_types = db_client._get_edge_types()
 
             # Check expected types exist
             assert len(vertex_types) > 0, "No vertex types created"

@@ -32,7 +32,7 @@ from typing import Any, cast
 import requests
 from requests import exceptions as requests_exceptions
 
-from pyTigerGraph import TigerGraphConnection as PyTigerGraphConnection
+# Removed pyTigerGraph dependency - using direct REST API calls instead
 
 
 from graflo.architecture.edge import Edge
@@ -90,13 +90,7 @@ try:
 except (ImportError, AttributeError):
     pass
 
-# Patch TigerGraphException
-try:
-    from pyTigerGraph import TigerGraphException
-
-    _patch_exception_class(TigerGraphException)
-except (ImportError, AttributeError):
-    pass
+# Removed pyTigerGraph dependency - no longer need TigerGraphException patching
 
 
 def _wrap_tg_exception(func):
@@ -136,7 +130,7 @@ class TigerGraphConnection(Connection):
         approach for TigerGraph 4+. The connection will:
         1. Use username/password for initial connection
         2. Generate a token from the secret
-        3. Use the token for both GSQL operations (via pyTigerGraph) and REST API calls
+        3. Use the token for both GSQL operations (via REST API) and REST API calls
 
         Example:
             >>> config = TigergraphConfig(
@@ -152,17 +146,16 @@ class TigerGraphConnection(Connection):
         TigerGraph 4.1+ uses port 14240 (GSQL server) as the primary interface.
         Port 9000 (REST++) is for internal use only in TG 4.1+.
 
-        Default behavior: Both restppPort and gsPort default to 14240 for TG 4+ compatibility.
+        Standard ports:
+        - Port 14240: GSQL server (primary interface for all API requests)
+        - Port 9000: REST++ (internal-only in TG 4.1+)
 
-        For custom Docker deployments with port mapping, explicitly set both ports:
-            >>> config = TigergraphConfig(
-            ...     uri="http://localhost:9001",  # Custom REST++ port
-            ...     gs_port=14241,                 # Custom GSQL port
-            ... )
+        For custom Docker deployments with port mapping, ports are configured via
+        environment variables (e.g., TG_WEB, TG_REST) and loaded automatically
+        when using TigergraphConfig.from_docker_env().
 
     Version Compatibility:
-        - TigerGraph 4.2.2+: Direct REST API endpoints (no /restpp prefix)
-        - TigerGraph 4.2.1 and older: REST API with /restpp prefix
+        - All TigerGraph versions use /restpp prefix for REST++ endpoints
         - Version is auto-detected, or can be manually specified in config
     """
 
@@ -173,83 +166,24 @@ class TigerGraphConnection(Connection):
         self.config = config
         self.ssl_verify = getattr(config, "ssl_verify", True)
 
-        # Initialize pyTigerGraph connection for most operations
-        # Use type narrowing to help type checker understand non-None values
-        # For TigerGraph 4+, both ports typically route through the GSQL server (14240)
+        # Store connection configuration (no longer using pyTigerGraph)
+        # For TigerGraph 4+, both ports typically route through the GSQL server
         # Port 9000 (REST++) is internal-only in TG 4.1+
-        restpp_port: int | str = config.port if config.port is not None else "14240"
-        gs_port: int | str = config.gs_port if config.gs_port is not None else "14240"
-        graphname: str = (
+        self.graphname: str = (
             config.database if config.database is not None else "DefaultGraph"
         )
-        username: str = config.username if config.username is not None else "tigergraph"
-        password: str = config.password if config.password is not None else "tigergraph"
-        cert_path: str | None = getattr(config, "certPath", None)
 
-        # Build connection kwargs, only include certPath if it's not None
-        conn_kwargs: dict[str, Any] = {
-            "host": config.url_without_port,
-            "restppPort": restpp_port,
-            "gsPort": gs_port,
-            "graphname": graphname,
-            "username": username,
-            "password": password,
-        }
-        if cert_path is not None:
-            conn_kwargs["certPath"] = cert_path
+        # Initialize URLs (ports come from config, no hardcoded defaults)
+        # Set GSQL URL first as it's needed for token generation
+        if config.gs_port is None:
+            raise ValueError(
+                "gs_port must be set in TigergraphConfig. "
+                "Standard ports: 14240 (GSQL), 9000 (REST++)."
+            )
+        gs_port: int | str = config.gs_port
+        self.gsql_url = f"{config.url_without_port}:{gs_port}"
 
-        self.conn = PyTigerGraphConnection(**conn_kwargs)
-
-        # Get authentication token if secret is provided
-        # Token-based auth is the recommended approach for TigerGraph 4+
-        # IMPORTANT: You should provide BOTH username/password AND secret:
-        # - username/password: Used for initial connection and GSQL operations
-        # - secret: Generates token that works for both GSQL and REST API operations
-        self.api_token: str | None = None
-        if config.secret:
-            try:
-                # Explicitly set setToken=True for TigerGraph 4.2.1+ compatibility
-                # This ensures the token is set on the connection object before any operations
-                token = self.conn.getToken(config.secret, setToken=True)
-                # getToken returns tuple (token, expiration) or just token
-                if isinstance(token, tuple):
-                    self.api_token = token[0]
-                    logger.info(
-                        f"Successfully obtained API token (expires: {token[1]})"
-                    )
-                else:
-                    self.api_token = token
-                    logger.info("Successfully obtained API token")
-                # Explicitly set token on connection object for TigerGraph 4.2.1 compatibility
-                # This ensures pyTigerGraph internal calls (including GSQL) use the same token
-                if self.api_token:
-                    # Set token via all available methods to ensure compatibility
-                    if hasattr(self.conn, "apiToken"):
-                        self.conn.apiToken = self.api_token  # type: ignore[attr-defined]
-                    if hasattr(self.conn, "token"):
-                        self.conn.token = self.api_token  # type: ignore[attr-defined]
-                    if hasattr(self.conn, "setToken"):
-                        self.conn.setToken(self.api_token)  # type: ignore[attr-defined]
-                    # Verify token is set (for debugging)
-                    if hasattr(self.conn, "apiToken"):
-                        actual_token = getattr(self.conn, "apiToken", None)
-                        if actual_token != self.api_token:
-                            logger.warning(
-                                "Token mismatch detected. Expected token set, "
-                                "but connection has different token."
-                            )
-                        else:
-                            logger.debug("Token successfully set on connection object")
-            except Exception as e:
-                # Log and fall back to username/password authentication
-                logger.warning(f"Failed to get authentication token: {e}")
-                logger.warning("Falling back to username/password authentication")
-                logger.warning(
-                    "Note: For best results, provide both username/password AND secret. "
-                    "Username/password is used for GSQL operations, secret generates token for REST API."
-                )
-
-        # Detect TigerGraph version for compatibility
+        # Detect TigerGraph version for compatibility (needed before token generation)
         self.tg_version: str | None = None
         self._use_restpp_prefix = False  # Default for 4.2.2+
 
@@ -258,35 +192,9 @@ class TigerGraphConnection(Connection):
             version_str = config.version
             logger.info(f"Using manually configured TigerGraph version: {version_str}")
         else:
-            # Auto-detect version
+            # Auto-detect version using REST API
             try:
-                version_info = self.conn.getVersion()
-                # getVersion() can return different formats:
-                # - list: [{"version": "release_4.2.2_..."}, ...]
-                # - dict: {"version": "release_4.2.2_..."} or {"api": [{"version": "4.2.2"}]}
-                # - str: "4.2.2"
-                version_str = None
-
-                if isinstance(version_info, list) and len(version_info) > 0:
-                    first_item = version_info[0]
-                    if isinstance(first_item, dict) and "version" in first_item:
-                        version_str = str(first_item["version"])
-                    else:
-                        version_str = str(first_item)
-                elif isinstance(version_info, dict):
-                    # Try different dict structures
-                    if "version" in version_info:
-                        version_str = str(version_info["version"])
-                    elif "api" in version_info and isinstance(
-                        version_info["api"], list
-                    ):
-                        if (
-                            len(version_info["api"]) > 0
-                            and "version" in version_info["api"][0]
-                        ):
-                            version_str = str(version_info["api"][0]["version"])
-                elif isinstance(version_info, str):
-                    version_str = version_info
+                version_str = self._get_version()
             except Exception as e:
                 logger.warning(
                     f"Failed to detect TigerGraph version: {e}. "
@@ -306,57 +214,528 @@ class TigerGraphConnection(Connection):
                 patch = int(version_match.group(3))
                 self.tg_version = f"{major}.{minor}.{patch}"
 
-                # Version 4.2.1 and older need /restpp prefix
-                if (major, minor, patch) < (4, 2, 2):
-                    self._use_restpp_prefix = True
-                    logger.info(
-                        f"TigerGraph version {self.tg_version} detected, "
-                        f"using /restpp prefix for REST API"
-                    )
-                else:
-                    logger.info(
-                        f"TigerGraph version {self.tg_version} detected, "
-                        f"using direct REST API endpoints"
-                    )
+                # All TigerGraph versions use /restpp prefix for REST++ endpoints
+                # Even 4.2.2+ requires /restpp prefix (despite some documentation suggesting otherwise)
+                self._use_restpp_prefix = True
+                logger.info(
+                    f"TigerGraph version {self.tg_version} detected, "
+                    f"using /restpp prefix for REST API"
+                )
             else:
                 logger.warning(
                     f"Could not extract version number from '{version_str}'. "
-                    f"Defaulting to 4.2.2+ behavior (no /restpp prefix)"
+                    f"Defaulting to using /restpp prefix for REST API"
                 )
+                self._use_restpp_prefix = True
 
         # Store base URLs for REST++ and GSQL endpoints
-        # For version 4.2.1 and older, include /restpp in the path
-        base_url = f"{config.url_without_port}:{config.port}"
-        if self._use_restpp_prefix:
-            self.restpp_url = f"{base_url}/restpp"
-        else:
-            self.restpp_url = base_url
-        self.gsql_url = f"{config.url_without_port}:{config.gs_port}"
+        # For TigerGraph 4.1+, REST++ endpoints use the GSQL port with /restpp prefix
+        # Port 9000 is internal-only in TG 4.1+, so we use the same port as GSQL
+        # Use the GSQL port we already determined to ensure consistency
+        base_url = f"{config.url_without_port}:{gs_port}"
+        # Always use /restpp prefix for REST++ endpoints (required for all TG versions)
+        self.restpp_url = f"{base_url}/restpp"
 
-    def _get_auth_headers(self) -> dict[str, str]:
+        # Get authentication token if secret is provided
+        # Token-based auth is the recommended approach for TigerGraph 4+
+        # IMPORTANT: You should provide BOTH username/password AND secret:
+        # - username/password: Used for initial connection and GSQL operations
+        # - secret: Generates token that works for both GSQL and REST API operations
+        self.api_token: str | None = None
+        if config.secret:
+            try:
+                token, expiration = self._get_token_from_secret(
+                    config.secret, self.graphname
+                )
+                self.api_token = token
+                if expiration:
+                    logger.info(
+                        f"Successfully obtained API token (expires: {expiration})"
+                    )
+                else:
+                    logger.info("Successfully obtained API token")
+            except Exception as e:
+                # Log and fall back to username/password authentication
+                logger.warning(f"Failed to get authentication token: {e}")
+                logger.warning("Falling back to username/password authentication")
+                logger.warning(
+                    "Note: For best results, provide both username/password AND secret. "
+                    "Username/password is used for GSQL operations, secret generates token for REST API."
+                )
+
+    def _get_auth_headers(self, use_basic_auth: bool = False) -> dict[str, str]:
         """Get authentication headers for REST API calls.
 
-        Prioritizes token-based authentication over Basic Auth:
+        Args:
+            use_basic_auth: If True, always use Basic Auth (required for GSQL endpoints).
+                           If False, prioritize token-based auth for REST++ endpoints.
+
+        Prioritizes token-based authentication over Basic Auth for REST++ endpoints:
         1. If API token is available (from secret), use Bearer token (recommended for TG 4+)
         2. Otherwise, fall back to HTTP Basic Auth with username/password
+
+        For GSQL endpoints, always use Basic Auth as they don't support Bearer tokens.
 
         Returns:
             Dictionary with Authorization header
         """
         headers = {}
 
-        # Prefer token-based authentication (recommended for TigerGraph 4+)
-        if self.api_token:
-            headers["Authorization"] = f"Bearer {self.api_token}"
-        elif self.config.username and self.config.password:
-            # Fallback to HTTP Basic Auth
-            import base64
+        # GSQL endpoints require Basic Auth, not Bearer tokens
+        if use_basic_auth or not self.api_token:
+            # Use default username "tigergraph" if username is None but password is set
+            username = self.config.username if self.config.username else "tigergraph"
+            password = self.config.password
 
-            credentials = f"{self.config.username}:{self.config.password}"
-            encoded_credentials = base64.b64encode(credentials.encode()).decode()
-            headers["Authorization"] = f"Basic {encoded_credentials}"
+            if password:
+                import base64
+
+                credentials = f"{username}:{password}"
+                encoded_credentials = base64.b64encode(credentials.encode()).decode()
+                headers["Authorization"] = f"Basic {encoded_credentials}"
+            else:
+                logger.warning(
+                    f"No password configured for Basic Auth. "
+                    f"Username: {username}, Password: {password}"
+                )
+        else:
+            # Use Bearer token for REST++ endpoints
+            headers["Authorization"] = f"Bearer {self.api_token}"
 
         return headers
+
+    def _get_token_from_secret(
+        self, secret: str, graph_name: str, lifetime: int = 3600 * 24 * 30
+    ) -> tuple[str, str | None]:
+        """
+        Generate authentication token from secret using TigerGraph REST API.
+
+        For TigerGraph 4.0-4.2.1, uses POST /gsql/v1/auth/token endpoint.
+
+        Args:
+            secret: Secret string created via CREATE SECRET in GSQL
+            graph_name: Name of the graph
+            lifetime: Token lifetime in seconds (default: 30 days)
+
+        Returns:
+            Tuple of (token, expiration_timestamp) or (token, None) if expiration not provided
+        """
+        url = f"{self.gsql_url}/gsql/v1/auth/token"
+        headers = {
+            "Content-Type": "application/json",
+            **self._get_auth_headers(use_basic_auth=True),
+        }
+
+        payload = {
+            "secret": secret,
+            "graph": graph_name,
+            "lifetime": lifetime,
+        }
+
+        try:
+            response = requests.post(
+                url,
+                headers=headers,
+                data=json.dumps(payload),
+                timeout=30,
+                verify=self.ssl_verify,
+            )
+            response.raise_for_status()
+            result = response.json()
+
+            # Extract token and expiration from response
+            # Response format: {"token": "...", "expiration": "..."} or {"token": "..."}
+            token = result.get("token")
+            expiration = result.get("expiration")
+
+            if token:
+                return (token, expiration)
+            else:
+                raise ValueError(f"No token in response: {result}")
+        except Exception as e:
+            logger.error(f"Failed to get token from secret: {e}")
+            raise
+
+    def _get_version(self) -> str | None:
+        """
+        Get TigerGraph version using REST API.
+
+        Uses GET /version endpoint which returns version information.
+
+        Returns:
+            Version string (e.g., "4.2.1") or None if detection fails
+        """
+        # Try /version endpoint first (works for REST++ port)
+        # Use GSQL port for version detection (standard port 14240)
+        if self.config.gs_port is None:
+            raise ValueError("gs_port must be set in config for version detection")
+        base_url = f"{self.config.url_without_port}:{self.config.gs_port}"
+        url = f"{base_url}/version"
+
+        headers = self._get_auth_headers(use_basic_auth=True)
+
+        try:
+            response = requests.get(
+                url, headers=headers, timeout=10, verify=self.ssl_verify
+            )
+            response.raise_for_status()
+            result = response.json()
+
+            # Parse version from response message
+            # Format: "TigerGraph RESTPP: --- Version --- product release_4.2.1_..."
+            message = result.get("message", "")
+            import re
+
+            version_match = re.search(r"release_(\d+)\.(\d+)\.(\d+)", message)
+            if version_match:
+                return f"{version_match.group(1)}.{version_match.group(2)}.{version_match.group(3)}"
+
+            # Try alternative format
+            version_match = re.search(r"(\d+)\.(\d+)\.(\d+)", message)
+            if version_match:
+                return f"{version_match.group(1)}.{version_match.group(2)}.{version_match.group(3)}"
+
+            return None
+        except Exception as e:
+            logger.debug(f"Failed to get version from /version endpoint: {e}")
+            # Try GSQL endpoint as fallback
+            try:
+                gsql_url = f"{self.gsql_url}/gsql/v1/version"
+                gsql_headers = self._get_auth_headers(use_basic_auth=True)
+                response = requests.get(
+                    gsql_url, headers=gsql_headers, timeout=10, verify=self.ssl_verify
+                )
+                response.raise_for_status()
+                result = response.json()
+                # Parse similar to above
+                message = str(result)
+                import re
+
+                version_match = re.search(r"release_(\d+)\.(\d+)\.(\d+)", message)
+                if version_match:
+                    return f"{version_match.group(1)}.{version_match.group(2)}.{version_match.group(3)}"
+            except Exception as e2:
+                logger.debug(f"Failed to get version from GSQL endpoint: {e2}")
+            return None
+
+    def _execute_gsql(self, gsql_command: str) -> str:
+        """
+        Execute GSQL command using REST API.
+
+        For TigerGraph 4.0-4.2.1, uses POST /gsql/v1/statements endpoint.
+
+        Note: GSQL endpoints require Basic Auth (username/password), not Bearer tokens.
+
+        Args:
+            gsql_command: GSQL command string to execute
+
+        Returns:
+            Response string from GSQL execution
+        """
+        url = f"{self.gsql_url}/gsql/v1/statements"
+        auth_headers = self._get_auth_headers(use_basic_auth=True)
+        headers = {
+            "Content-Type": "text/plain",
+            **auth_headers,
+        }
+
+        # Debug: Log if Authorization header is missing
+        if "Authorization" not in headers:
+            logger.error(
+                f"No Authorization header generated. "
+                f"Username: {self.config.username}, Password: {'***' if self.config.password else None}"
+            )
+
+        try:
+            response = requests.post(
+                url,
+                headers=headers,
+                data=gsql_command,
+                timeout=120,
+                verify=self.ssl_verify,
+            )
+            response.raise_for_status()
+
+            # Try to parse JSON response, fallback to text
+            try:
+                result = response.json()
+                # Extract message or result from JSON response
+                if isinstance(result, dict):
+                    return result.get("message", str(result))
+                return str(result)
+            except ValueError:
+                # Not JSON, return text
+                return response.text
+        except requests_exceptions.HTTPError as e:
+            error_msg = str(e)
+            # Try to extract error message from response
+            try:
+                error_details = e.response.json() if e.response else {}
+                error_msg = error_details.get("message", error_msg)
+            except Exception:
+                pass
+            raise RuntimeError(f"GSQL execution failed: {error_msg}") from e
+
+    def _get_vertex_types(self, graph_name: str | None = None) -> list[str]:
+        """
+        Get list of vertex types using GSQL.
+
+        Args:
+            graph_name: Name of the graph (defaults to self.graphname)
+
+        Returns:
+            List of vertex type names
+        """
+        graph_name = graph_name or self.graphname
+        try:
+            result = self._execute_gsql(f"USE GRAPH {graph_name}\nSHOW VERTEX *")
+            # Parse GSQL output using the proper parser
+            if isinstance(result, str):
+                return self._parse_show_output(result, "VERTEX")
+            return []
+        except Exception as e:
+            logger.debug(f"Failed to get vertex types via GSQL: {e}")
+            return []
+
+    def _get_edge_types(self, graph_name: str | None = None) -> list[str]:
+        """
+        Get list of edge types using GSQL.
+
+        Args:
+            graph_name: Name of the graph (defaults to self.graphname)
+
+        Returns:
+            List of edge type names
+        """
+        graph_name = graph_name or self.graphname
+        try:
+            result = self._execute_gsql(f"USE GRAPH {graph_name}\nSHOW EDGE *")
+            # Parse GSQL output using the proper parser
+            if isinstance(result, str):
+                # _parse_show_edge_output returns list of tuples (edge_name, is_directed)
+                # Extract just the edge names
+                edge_tuples = self._parse_show_edge_output(result)
+                return [edge_name for edge_name, _ in edge_tuples]
+            return []
+        except Exception as e:
+            logger.debug(f"Failed to get edge types via GSQL: {e}")
+            return []
+
+    def _get_installed_queries(self, graph_name: str | None = None) -> list[str]:
+        """
+        Get list of installed queries using GSQL.
+
+        Args:
+            graph_name: Name of the graph (defaults to self.graphname)
+
+        Returns:
+            List of query names
+        """
+        graph_name = graph_name or self.graphname
+        try:
+            result = self._execute_gsql(f"USE GRAPH {graph_name}\nSHOW QUERY *")
+            # Parse GSQL output to extract query names
+            queries = []
+            if isinstance(result, str):
+                lines = result.split("\n")
+                for line in lines:
+                    line = line.strip()
+                    if line and not line.startswith("#") and not line.startswith("USE"):
+                        # Query names are typically on their own lines
+                        if line and not line.startswith("---"):
+                            queries.append(line)
+            return queries if queries else []
+        except Exception as e:
+            logger.debug(f"Failed to get installed queries via GSQL: {e}")
+            return []
+
+    def _run_installed_query(
+        self, query_name: str, graph_name: str | None = None, **kwargs: Any
+    ) -> dict[str, Any] | list[dict]:
+        """
+        Run an installed query using REST API.
+
+        Args:
+            query_name: Name of the installed query
+            graph_name: Name of the graph (defaults to self.graphname)
+            **kwargs: Query parameters
+
+        Returns:
+            Query result (dict or list)
+        """
+        graph_name = graph_name or self.graphname
+        endpoint = f"/query/{graph_name}/{query_name}"
+        return self._call_restpp_api(endpoint, method="POST", data=kwargs)
+
+    def _upsert_vertex(
+        self,
+        vertex_type: str,
+        vertex_id: str,
+        attributes: dict[str, Any],
+        graph_name: str | None = None,
+    ) -> dict[str, Any] | list[dict]:
+        """
+        Upsert a single vertex using REST API.
+
+        Args:
+            vertex_type: Vertex type name
+            vertex_id: Vertex ID
+            attributes: Vertex attributes
+            graph_name: Name of the graph (defaults to self.graphname)
+
+        Returns:
+            Response from API
+        """
+        graph_name = graph_name or self.graphname
+        endpoint = f"/graph/{graph_name}/vertices/{vertex_type}/{quote(str(vertex_id))}"
+        return self._call_restpp_api(endpoint, method="POST", data=attributes)
+
+    def _upsert_edge(
+        self,
+        source_type: str,
+        source_id: str,
+        edge_type: str,
+        target_type: str,
+        target_id: str,
+        attributes: dict[str, Any] | None = None,
+        graph_name: str | None = None,
+    ) -> dict[str, Any] | list[dict]:
+        """
+        Upsert a single edge using REST API.
+
+        Args:
+            source_type: Source vertex type
+            source_id: Source vertex ID
+            edge_type: Edge type name
+            target_type: Target vertex type
+            target_id: Target vertex ID
+            attributes: Edge attributes (optional)
+            graph_name: Name of the graph (defaults to self.graphname)
+
+        Returns:
+            Response from API
+        """
+        graph_name = graph_name or self.graphname
+        endpoint = (
+            f"/graph/{graph_name}/edges/{edge_type}/"
+            f"{source_type}/{quote(str(source_id))}/"
+            f"{target_type}/{quote(str(target_id))}"
+        )
+        data = attributes if attributes else {}
+        return self._call_restpp_api(endpoint, method="POST", data=data)
+
+    def _get_edges(
+        self,
+        source_type: str,
+        source_id: str,
+        edge_type: str | None = None,
+        graph_name: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """
+        Get edges from a vertex using REST API.
+
+        Args:
+            source_type: Source vertex type
+            source_id: Source vertex ID
+            edge_type: Edge type to filter by (optional)
+            graph_name: Name of the graph (defaults to self.graphname)
+
+        Returns:
+            List of edge dictionaries
+        """
+        graph_name = graph_name or self.graphname
+        if edge_type:
+            endpoint = (
+                f"/graph/{graph_name}/edges/{edge_type}/"
+                f"{source_type}/{quote(str(source_id))}"
+            )
+        else:
+            # Get all edges from this vertex
+            endpoint = f"/graph/{graph_name}/vertices/{source_type}/{quote(str(source_id))}/edges"
+        result = self._call_restpp_api(endpoint, method="GET")
+        # Parse response format
+        if isinstance(result, dict) and "edges" in result:
+            return result["edges"]
+        elif isinstance(result, list):
+            return result
+        else:
+            return []
+
+    def _get_vertices_by_id(
+        self, vertex_type: str, vertex_id: str, graph_name: str | None = None
+    ) -> dict[str, dict[str, Any]]:
+        """
+        Get vertex by ID using REST API.
+
+        Args:
+            vertex_type: Vertex type name
+            vertex_id: Vertex ID
+            graph_name: Name of the graph (defaults to self.graphname)
+
+        Returns:
+            Dictionary mapping vertex_id to vertex data
+        """
+        graph_name = graph_name or self.graphname
+        endpoint = f"/graph/{graph_name}/vertices/{vertex_type}/{quote(str(vertex_id))}"
+        result = self._call_restpp_api(endpoint, method="GET")
+        # Parse response format to match expected format
+        # Returns {vertex_id: {"attributes": {...}}}
+        if isinstance(result, dict):
+            if "results" in result:
+                # REST API format
+                results = result["results"]
+                if results and isinstance(results, list) and len(results) > 0:
+                    vertex_data = results[0]
+                    return {
+                        vertex_id: {"attributes": vertex_data.get("attributes", {})}
+                    }
+            elif vertex_id in result:
+                return {vertex_id: result[vertex_id]}
+            else:
+                # Try to extract vertex data
+                return {vertex_id: {"attributes": result.get("attributes", {})}}
+        return {}
+
+    def _get_vertex_count(self, vertex_type: str, graph_name: str | None = None) -> int:
+        """
+        Get vertex count using REST API.
+
+        Args:
+            vertex_type: Vertex type name
+            graph_name: Name of the graph (defaults to self.graphname)
+
+        Returns:
+            Number of vertices
+        """
+        graph_name = graph_name or self.graphname
+        endpoint = f"/graph/{graph_name}/vertices/{vertex_type}"
+        params = {"limit": "1", "count": "true"}
+        result = self._call_restpp_api(endpoint, method="GET", params=params)
+        # Parse count from response
+        if isinstance(result, dict):
+            return result.get("count", 0)
+        return 0
+
+    def _delete_vertices(
+        self, vertex_type: str, where: str | None = None, graph_name: str | None = None
+    ) -> dict[str, Any] | list[dict]:
+        """
+        Delete vertices using REST API.
+
+        Args:
+            vertex_type: Vertex type name
+            where: WHERE clause for filtering (optional)
+            graph_name: Name of the graph (defaults to self.graphname)
+
+        Returns:
+            Response from API
+        """
+        graph_name = graph_name or self.graphname
+        endpoint = f"/graph/{graph_name}/vertices/{vertex_type}"
+        params = {}
+        if where:
+            params["filter"] = where
+        return self._call_restpp_api(endpoint, method="DELETE", params=params)
 
     def _call_restpp_api(
         self,
@@ -509,8 +888,7 @@ class TigerGraphConnection(Connection):
         """
         Context manager that ensures graph context for metadata operations.
 
-        Updates conn.graphname for PyTigerGraph metadata operations that rely on it
-        (e.g., getVertexTypes(), getEdgeTypes()).
+        Stores graph name for operations that need it.
 
         Args:
             graph_name: Name of the graph to use. If None, uses self.config.database.
@@ -524,14 +902,14 @@ class TigerGraphConnection(Connection):
                 "Graph name must be provided via graph_name parameter or config.database"
             )
 
-        old_graphname = self.conn.graphname
-        self.conn.graphname = graph_name
+        old_graphname = self.graphname
+        self.graphname = graph_name
 
         try:
             yield graph_name
         finally:
             # Restore original graphname
-            self.conn.graphname = old_graphname
+            self.graphname = old_graphname
 
     def graph_exists(self, name: str) -> bool:
         """
@@ -548,7 +926,7 @@ class TigerGraphConnection(Connection):
             bool: True if the graph exists, False otherwise
         """
         try:
-            result = self.conn.gsql(f"USE GRAPH {name}")
+            result = self._execute_gsql(f"USE GRAPH {name}")
             result_str = str(result).lower()
 
             # If the graph doesn't exist, USE GRAPH returns an error message
@@ -591,7 +969,7 @@ class TigerGraphConnection(Connection):
         This method creates a graph with explicitly attached vertices and edges.
         Example: CREATE GRAPH researchGraph (author, paper, wrote)
 
-        This method uses the pyTigerGraph gsql() method to execute GSQL commands
+        This method uses direct REST API calls to execute GSQL commands
         that create and use the graph. Supported in TigerGraph version 4.2.2+.
 
         Args:
@@ -600,8 +978,12 @@ class TigerGraphConnection(Connection):
             edge_names: Optional list of edge type names to attach to the graph
 
         Raises:
-            Exception: If graph creation fails
+            RuntimeError: If graph already exists or creation fails
         """
+        # Check if graph already exists first
+        if self.graph_exists(name):
+            raise RuntimeError(f"Graph '{name}' already exists")
+
         try:
             # Build the list of types to include in CREATE GRAPH
             all_types = []
@@ -618,23 +1000,43 @@ class TigerGraphConnection(Connection):
                 # Fallback to empty graph if no types provided
                 gsql_commands = f"CREATE GRAPH {name}()\nUSE GRAPH {name}"
 
-            # Execute using pyTigerGraph's gsql method which handles authentication
+            # Execute using direct GSQL REST API which handles authentication
             logger.debug(f"Creating graph '{name}' via GSQL: {gsql_commands}")
             try:
-                result = self.conn.gsql(gsql_commands)
+                result = self._execute_gsql(gsql_commands)
                 logger.info(
                     f"Successfully created graph '{name}' with types {all_types}: {result}"
                 )
+                # Verify the result doesn't indicate the graph already existed
+                result_str = str(result).lower()
+                if (
+                    "already exists" in result_str
+                    or "duplicate" in result_str
+                    or "graph already exists" in result_str
+                ):
+                    raise RuntimeError(f"Graph '{name}' already exists")
                 return result
+            except RuntimeError:
+                # Re-raise RuntimeError as-is (already handled)
+                raise
             except Exception as e:
                 error_msg = str(e).lower()
-                # Check if graph already exists (might be acceptable)
-                if "already exists" in error_msg or "duplicate" in error_msg:
-                    logger.info(f"Graph '{name}' may already exist: {e}")
-                    return str(e)
+                # Check if graph already exists - raise exception in this case
+                # TigerGraph may return various error messages for existing graphs
+                if (
+                    "already exists" in error_msg
+                    or "duplicate" in error_msg
+                    or "graph already exists" in error_msg
+                    or "already exist" in error_msg
+                ):
+                    logger.warning(f"Graph '{name}' already exists: {e}")
+                    raise RuntimeError(f"Graph '{name}' already exists") from e
                 logger.error(f"Failed to create graph '{name}': {e}")
                 raise
 
+        except RuntimeError:
+            # Re-raise RuntimeError as-is
+            raise
         except Exception as e:
             logger.error(f"Error creating graph '{name}' via GSQL: {e}")
             raise
@@ -667,7 +1069,7 @@ class TigerGraphConnection(Connection):
                 with self._ensure_graph_context(name):
                     # Get all installed queries for this graph
                     try:
-                        queries = self.conn.getInstalledQueries()
+                        queries = self._get_installed_queries()
                         if queries:
                             logger.info(
                                 f"Dropping {len(queries)} queries from graph '{name}'"
@@ -676,7 +1078,7 @@ class TigerGraphConnection(Connection):
                                 try:
                                     # Try DROP QUERY with IF EXISTS to avoid errors
                                     drop_query_cmd = f"USE GRAPH {name}\nDROP QUERY {query_name} IF EXISTS"
-                                    self.conn.gsql(drop_query_cmd)
+                                    self._execute_gsql(drop_query_cmd)
                                     logger.debug(
                                         f"Dropped query '{query_name}' from graph '{name}'"
                                     )
@@ -687,7 +1089,7 @@ class TigerGraphConnection(Connection):
                                         drop_query_cmd = (
                                             f"USE GRAPH {name}\nDROP QUERY {query_name}"
                                         )
-                                        self.conn.gsql(drop_query_cmd)
+                                        self._execute_gsql(drop_query_cmd)
                                         logger.debug(
                                             f"Dropped query '{query_name}' from graph '{name}'"
                                         )
@@ -709,7 +1111,7 @@ class TigerGraphConnection(Connection):
                 try:
                     # Try to drop queries using GSQL directly
                     list_queries_cmd = f"USE GRAPH {name}\nSHOW QUERY *"
-                    result = self.conn.gsql(list_queries_cmd)
+                    result = self._execute_gsql(list_queries_cmd)
                     # Parse result to get query names and drop them
                     # This is a fallback if getInstalledQueries() doesn't work
                 except Exception as e:
@@ -723,10 +1125,10 @@ class TigerGraphConnection(Connection):
                 with self._ensure_graph_context(name):
                     # Clear all vertices to remove dependencies
                     try:
-                        vertex_types = self.conn.getVertexTypes(force=True)
+                        vertex_types = self._get_vertex_types()
                         for v_type in vertex_types:
                             try:
-                                self.conn.delVertices(v_type)
+                                self._delete_vertices(v_type)
                                 logger.debug(
                                     f"Cleared vertices of type '{v_type}' from graph '{name}'"
                                 )
@@ -742,7 +1144,7 @@ class TigerGraphConnection(Connection):
             try:
                 # Use the graph first to ensure we're working with the right graph
                 drop_command = f"USE GRAPH {name}\nDROP GRAPH {name}"
-                result = self.conn.gsql(drop_command)
+                result = self._execute_gsql(drop_command)
                 logger.info(f"Successfully dropped graph '{name}': {result}")
                 return result
             except Exception as e:
@@ -768,7 +1170,7 @@ class TigerGraphConnection(Connection):
                 with self._ensure_graph_context(name):
                     # Disassociate edge types from graph (but don't drop them globally)
                     try:
-                        edge_types = self.conn.getEdgeTypes(force=True)
+                        edge_types = self._get_edge_types()
                     except Exception:
                         edge_types = []
 
@@ -777,7 +1179,7 @@ class TigerGraphConnection(Connection):
                         # ALTER GRAPH requires USE GRAPH context
                         try:
                             drop_edge_cmd = f"USE GRAPH {name}\nALTER GRAPH {name} DROP DIRECTED EDGE {e_type}"
-                            self.conn.gsql(drop_edge_cmd)
+                            self._execute_gsql(drop_edge_cmd)
                             logger.debug(
                                 f"Disassociated edge type '{e_type}' from graph '{name}'"
                             )
@@ -789,7 +1191,7 @@ class TigerGraphConnection(Connection):
 
                     # Disassociate vertex types from graph (but don't drop them globally)
                     try:
-                        vertex_types = self.conn.getVertexTypes(force=True)
+                        vertex_types = self._get_vertex_types()
                     except Exception:
                         vertex_types = []
 
@@ -797,7 +1199,7 @@ class TigerGraphConnection(Connection):
                         # Only clear data from this graph's vertices, don't drop vertex type globally
                         # Clear data first to avoid dependency issues
                         try:
-                            self.conn.delVertices(v_type)
+                            self._delete_vertices(v_type)
                             logger.debug(
                                 f"Cleared vertices of type '{v_type}' from graph '{name}'"
                             )
@@ -809,7 +1211,7 @@ class TigerGraphConnection(Connection):
                         # ALTER GRAPH requires USE GRAPH context
                         try:
                             drop_vertex_cmd = f"USE GRAPH {name}\nALTER GRAPH {name} DROP VERTEX {v_type}"
-                            self.conn.gsql(drop_vertex_cmd)
+                            self._execute_gsql(drop_vertex_cmd)
                             logger.debug(
                                 f"Disassociated vertex type '{v_type}' from graph '{name}'"
                             )
@@ -826,9 +1228,9 @@ class TigerGraphConnection(Connection):
             # Fallback 2: Clear all data (if any remain)
             try:
                 with self._ensure_graph_context(name):
-                    vertex_types = self.conn.getVertexTypes()
+                    vertex_types = self._get_vertex_types()
                     for v_type in vertex_types:
-                        result = self.conn.delVertices(v_type)
+                        result = self._delete_vertices(v_type)
                         logger.debug(f"Cleared vertices of type {v_type}: {result}")
                     logger.info(f"Cleared all data from graph '{name}'")
             except Exception as e2:
@@ -849,17 +1251,17 @@ class TigerGraphConnection(Connection):
             if query.strip().upper().startswith("RUN "):
                 # Extract query name and parameters
                 query_name = query.strip()[4:].split("(")[0].strip()
-                result = self.conn.runInstalledQuery(query_name, **kwargs)
+                result = self._run_installed_query(query_name, **kwargs)
             else:
                 # Execute as raw GSQL
-                result = self.conn.gsql(query)
+                result = self._execute_gsql(query)
             return result
         except Exception as e:
             logger.error(f"Error executing query '{query}': {e}")
             raise
 
     def close(self):
-        """Close connection - pyTigerGraph handles cleanup automatically."""
+        """Close connection - no cleanup needed (using direct REST API calls)."""
         pass
 
     def _get_vertex_add_statement(
@@ -1116,7 +1518,7 @@ class TigerGraphConnection(Connection):
         # First, try to drop the job if it exists (ignore errors if it doesn't)
         try:
             drop_job_cmd = f"USE GRAPH {graph_name}\nDROP JOB {job_name}"
-            self.conn.gsql(drop_job_cmd)
+            self._execute_gsql(drop_job_cmd)
             logger.debug(f"Dropped existing schema change job '{job_name}'")
         except Exception as e:
             err_str = str(e).lower()
@@ -1141,7 +1543,7 @@ class TigerGraphConnection(Connection):
         logger.info(f"Applying local schema change for graph '{graph_name}'")
         logger.info(f"GSQL command:\n{full_gsql}")
         try:
-            result = self.conn.gsql(full_gsql)
+            result = self._execute_gsql(full_gsql)
             logger.debug(f"Schema change result: {result}")
 
             # Check if result indicates an error - be more lenient with error detection
@@ -1168,8 +1570,8 @@ class TigerGraphConnection(Connection):
             time.sleep(1.0)  # Increased wait time
 
             with self._ensure_graph_context(graph_name):
-                vertex_types = self.conn.getVertexTypes(force=True)
-                edge_types = self.conn.getEdgeTypes(force=True)
+                vertex_types = self._get_vertex_types()
+                edge_types = self._get_edge_types()
 
                 # Use vertex_dbname instead of v.name to match what TigerGraph actually creates
                 # vertex_dbname returns dbname if set, otherwise None - fallback to v.name if None
@@ -1365,7 +1767,7 @@ class TigerGraphConnection(Connection):
         ]
 
         logger.info(f"Adding vertices locally to graph '{graph_name}'")
-        self.conn.gsql("\n".join(gsql_commands))
+        self._execute_gsql("\n".join(gsql_commands))
 
     def define_edge_classes(self, edges: list[Edge]):
         """Define TigerGraph edge types locally for the current graph.
@@ -1400,7 +1802,7 @@ class TigerGraphConnection(Connection):
         ]
 
         logger.info(f"Adding edges locally to graph '{graph_name}'")
-        self.conn.gsql("\n".join(gsql_commands))
+        self._execute_gsql("\n".join(gsql_commands))
 
     def _format_vertex_fields(self, vertex: Vertex) -> str:
         """
@@ -1590,7 +1992,7 @@ class TigerGraphConnection(Connection):
             # Step 1: Drop existing job if it exists (ignore errors)
             try:
                 drop_job_cmd = f"USE GRAPH {graph_name}\nDROP JOB {job_name}"
-                self.conn.gsql(drop_job_cmd)
+                self._execute_gsql(drop_job_cmd)
                 logger.debug(f"Dropped existing job '{job_name}'")
             except Exception as e:
                 err_str = str(e).lower()
@@ -1609,7 +2011,7 @@ class TigerGraphConnection(Connection):
 
             logger.debug(f"Executing GSQL (create job): {create_job_cmd}")
             try:
-                result = self.conn.gsql(create_job_cmd)
+                result = self._execute_gsql(create_job_cmd)
                 logger.debug(f"Created schema change job '{job_name}': {result}")
             except Exception as e:
                 err = str(e).lower()
@@ -1631,7 +2033,7 @@ class TigerGraphConnection(Connection):
 
             logger.debug(f"Executing GSQL (run job): {run_job_cmd}")
             try:
-                result = self.conn.gsql(run_job_cmd)
+                result = self._execute_gsql(run_job_cmd)
                 logger.debug(
                     f"Ran schema change job '{job_name}', created index '{index_name}' on {obj_name}: {result}"
                 )
@@ -1655,47 +2057,34 @@ class TigerGraphConnection(Connection):
 
     def _parse_show_output(self, result_str: str, prefix: str) -> list[str]:
         """
-        Generic parser for SHOW * output commands.
+        Parse SHOW * output to extract type names.
 
-        Extracts names from lines matching the pattern: "- PREFIX name(...)"
+        Looks for lines matching: "- PREFIX name(" or "PREFIX name("
 
         Args:
             result_str: String output from SHOW * GSQL command
-            prefix: The prefix to look for (e.g., "VERTEX", "GRAPH", "JOB")
+            prefix: The prefix to look for (e.g., "VERTEX", "EDGE")
 
         Returns:
             List of extracted names
         """
-        names = []
-        lines = result_str.split("\n")
+        import re
 
-        for line in lines:
+        names = []
+        # Pattern: "- VERTEX name(" or "VERTEX name("
+        # Match lines that contain the prefix followed by a word (the name) and then "("
+        pattern = rf"(?:^|\s)-?\s*{re.escape(prefix)}\s+(\w+)\s*\("
+
+        for line in result_str.split("\n"):
             line = line.strip()
-            # Skip empty lines and headers
-            if not line or line.startswith("*"):
+            if not line:
                 continue
 
-            # Remove leading "- " if present
-            if line.startswith("- "):
-                line = line[2:].strip()
-
-            # Look for prefix pattern
-            prefix_upper = prefix.upper()
-            if line.upper().startswith(f"{prefix_upper} "):
-                # Extract name (after prefix and before opening parenthesis or whitespace)
-                after_prefix = line[len(prefix_upper) + 1 :].strip()
-                # Name is the first word (before space or parenthesis)
-                if "(" in after_prefix:
-                    name = after_prefix.split("(")[0].strip()
-                else:
-                    # No parenthesis, take the first word
-                    name = (
-                        after_prefix.split()[0].strip()
-                        if after_prefix.split()
-                        else None
-                    )
-
-                if name:
+            # Use regex to find matches
+            match = re.search(pattern, line, re.IGNORECASE)
+            if match:
+                name = match.group(1)
+                if name and name not in names:
                     names.append(name)
 
         return names
@@ -1713,38 +2102,33 @@ class TigerGraphConnection(Connection):
         Returns:
             List of tuples (edge_name, is_directed)
         """
-        edge_types = []
-        lines = result_str.split("\n")
+        import re
 
-        for line in lines:
+        edge_types = []
+        # Pattern for DIRECTED EDGE: "- DIRECTED EDGE name("
+        directed_pattern = r"(?:^|\s)-?\s*DIRECTED\s+EDGE\s+(\w+)\s*\("
+        # Pattern for UNDIRECTED EDGE: "- UNDIRECTED EDGE name("
+        undirected_pattern = r"(?:^|\s)-?\s*UNDIRECTED\s+EDGE\s+(\w+)\s*\("
+
+        for line in result_str.split("\n"):
             line = line.strip()
-            # Skip empty lines and headers
-            if not line or line.startswith("*"):
+            if not line:
                 continue
 
-            # Remove leading "- " if present
-            if line.startswith("- "):
-                line = line[2:].strip()
+            # Check for DIRECTED EDGE
+            match = re.search(directed_pattern, line, re.IGNORECASE)
+            if match:
+                edge_name = match.group(1)
+                if edge_name:
+                    edge_types.append((edge_name, True))
+                continue
 
-            # Look for "DIRECTED EDGE" or "UNDIRECTED EDGE" pattern
-            is_directed = None
-            prefix = None
-            if "DIRECTED EDGE" in line.upper():
-                prefix = "DIRECTED EDGE "
-                is_directed = True
-            elif "UNDIRECTED EDGE" in line.upper():
-                prefix = "UNDIRECTED EDGE "
-                is_directed = False
-
-            if prefix:
-                idx = line.upper().find(prefix)
-                if idx >= 0:
-                    after_prefix = line[idx + len(prefix) :].strip()
-                    # Extract name before opening parenthesis
-                    if "(" in after_prefix:
-                        edge_name = after_prefix.split("(")[0].strip()
-                        if edge_name:
-                            edge_types.append((edge_name, is_directed))
+            # Check for UNDIRECTED EDGE
+            match = re.search(undirected_pattern, line, re.IGNORECASE)
+            if match:
+                edge_name = match.group(1)
+                if edge_name:
+                    edge_types.append((edge_name, False))
 
         return edge_types
 
@@ -1820,7 +2204,7 @@ class TigerGraphConnection(Connection):
                     try:
                         # Use GSQL to list all graphs
                         show_graphs_cmd = "SHOW GRAPH *"
-                        result = self.conn.gsql(show_graphs_cmd)
+                        result = self._execute_gsql(show_graphs_cmd)
                         result_str = str(result)
 
                         # Parse graph names using helper method
@@ -1854,7 +2238,7 @@ class TigerGraphConnection(Connection):
                 try:
                     # Use GSQL to list all global edge types (not graph-scoped)
                     show_edges_cmd = "SHOW EDGE *"
-                    result = self.conn.gsql(show_edges_cmd)
+                    result = self._execute_gsql(show_edges_cmd)
                     result_str = str(result)
 
                     # Parse edge types using helper method
@@ -1868,7 +2252,7 @@ class TigerGraphConnection(Connection):
                             # DROP EDGE works for both directed and undirected edges
                             drop_edge_cmd = f"DROP EDGE {e_type}"
                             logger.debug(f"Executing: {drop_edge_cmd}")
-                            result = self.conn.gsql(drop_edge_cmd)
+                            result = self._execute_gsql(drop_edge_cmd)
                             logger.info(
                                 f"Successfully dropped edge type '{e_type}': {result}"
                             )
@@ -1894,7 +2278,7 @@ class TigerGraphConnection(Connection):
                 try:
                     # Use GSQL to list all global vertex types (not graph-scoped)
                     show_vertices_cmd = "SHOW VERTEX *"
-                    result = self.conn.gsql(show_vertices_cmd)
+                    result = self._execute_gsql(show_vertices_cmd)
                     result_str = str(result)
 
                     # Parse vertex types using helper method
@@ -1907,7 +2291,7 @@ class TigerGraphConnection(Connection):
                         try:
                             # Clear data first to avoid dependency issues
                             try:
-                                result = self.conn.delVertices(v_type)
+                                result = self._delete_vertices(v_type)
                                 logger.debug(
                                     f"Cleared data from vertex type '{v_type}': {result}"
                                 )
@@ -1919,7 +2303,7 @@ class TigerGraphConnection(Connection):
                             # Drop vertex type
                             drop_vertex_cmd = f"DROP VERTEX {v_type}"
                             logger.debug(f"Executing: {drop_vertex_cmd}")
-                            result = self.conn.gsql(drop_vertex_cmd)
+                            result = self._execute_gsql(drop_vertex_cmd)
                             logger.info(
                                 f"Successfully dropped vertex type '{v_type}': {result}"
                             )
@@ -1944,7 +2328,7 @@ class TigerGraphConnection(Connection):
                 try:
                     # Use GSQL to list all global jobs
                     show_jobs_cmd = "SHOW JOB *"
-                    result = self.conn.gsql(show_jobs_cmd)
+                    result = self._execute_gsql(show_jobs_cmd)
                     result_str = str(result)
 
                     # Parse job names using helper method
@@ -1958,7 +2342,7 @@ class TigerGraphConnection(Connection):
                             # DROP JOB works for all job types
                             drop_job_cmd = f"DROP JOB {job_name}"
                             logger.debug(f"Executing: {drop_job_cmd}")
-                            result = self.conn.gsql(drop_job_cmd)
+                            result = self._execute_gsql(drop_job_cmd)
                             logger.info(
                                 f"Successfully dropped job '{job_name}': {result}"
                             )
@@ -1988,7 +2372,7 @@ class TigerGraphConnection(Connection):
                 with self._ensure_graph_context():
                     for class_name in cnames:
                         try:
-                            result = self.conn.delVertices(class_name)
+                            result = self._delete_vertices(class_name)
                             logger.debug(
                                 f"Deleted vertices from {class_name}: {result}"
                             )
@@ -2210,12 +2594,12 @@ class TigerGraphConnection(Connection):
                 vertex_id = self._extract_id(doc, match_keys)
                 if vertex_id:
                     clean_doc = self._clean_document(doc)
-                    # Serialize datetime objects before passing to pyTigerGraph
-                    # pyTigerGraph's upsertVertex expects JSON-serializable data
+                    # Serialize datetime objects before passing to REST API
+                    # REST API expects JSON-serializable data
                     serialized_doc = json.loads(
                         json.dumps(clean_doc, default=_json_serializer)
                     )
-                    self.conn.upsertVertex(class_name, vertex_id, serialized_doc)
+                    self._upsert_vertex(class_name, vertex_id, serialized_doc)
             except Exception as e:
                 logger.error(f"Error upserting individual vertex {vertex_id}: {e}")
 
@@ -2407,17 +2791,17 @@ class TigerGraphConnection(Connection):
 
                 if source_id and target_id:
                     clean_edge_props = self._clean_document(edge_props)
-                    # Serialize data for pyTigerGraph
+                    # Serialize data for REST API
                     serialized_props = json.loads(
                         json.dumps(clean_edge_props, default=_json_serializer)
                     )
-                    self.conn.upsertEdge(
+                    self._upsert_edge(
                         source_class,
                         source_id,
                         edge_type,
                         target_class,
                         target_id,
-                        attributes=serialized_props,
+                        serialized_props,
                     )
             except Exception as e:
                 logger.error(f"Error upserting individual edge: {e}")
@@ -2795,19 +3179,19 @@ class TigerGraphConnection(Connection):
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
         """
-        Fetch edges from TigerGraph using pyTigerGraph's getEdges method.
+        Fetch edges from TigerGraph using REST API.
 
         In TigerGraph, you must know at least one vertex ID before you can fetch edges.
-        Uses pyTigerGraph's getEdges method which handles special characters in vertex IDs.
+        Uses REST API which handles special characters in vertex IDs.
 
         Args:
             from_type: Source vertex type (required)
             from_id: Source vertex ID (required)
             edge_type: Optional edge type to filter by
-            to_type: Optional target vertex type to filter by (not used in pyTigerGraph)
-            to_id: Optional target vertex ID to filter by (not used in pyTigerGraph)
-            filters: Additional query filters (not supported by pyTigerGraph getEdges)
-            limit: Maximum number of edges to return (not supported by pyTigerGraph getEdges)
+            to_type: Optional target vertex type to filter by (not used in REST API)
+            to_id: Optional target vertex ID to filter by (not used in REST API)
+            filters: Additional query filters (not supported by REST API)
+            limit: Maximum number of edges to return (not supported by REST API)
             return_keys: Keys to return (projection)
             unset_keys: Keys to exclude (projection)
             **kwargs: Additional parameters
@@ -2821,26 +3205,23 @@ class TigerGraphConnection(Connection):
                     "from_type and from_id are required for fetching edges in TigerGraph"
                 )
 
-            # Use pyTigerGraph's getEdges method
-            # Signature: getEdges(sourceVertexType, sourceVertexId, edgeType=None)
+            # Use REST API to get edges
             # Returns: list of edge dictionaries
             logger.debug(
-                f"Fetching edges using pyTigerGraph: from_type={from_type}, from_id={from_id}, edge_type={edge_type}"
+                f"Fetching edges using REST API: from_type={from_type}, from_id={from_id}, edge_type={edge_type}"
             )
 
-            # Handle None edge_type by passing empty string (default behavior)
-            edge_type_str = edge_type if edge_type is not None else ""
-            edges = self.conn.getEdges(from_type, from_id, edge_type_str, fmt="py")
+            # Handle None edge_type
+            edge_type_str = edge_type if edge_type is not None else None
+            edges = self._get_edges(from_type, from_id, edge_type_str)
 
-            # Parse pyTigerGraph response format
-            # getEdges returns list of dicts with format like:
+            # Parse REST API response format
+            # Returns list of dicts with format like:
             # [{"e_type": "...", "from": {...}, "to": {...}, "attributes": {...}}, ...]
             # Type annotation: result is list[dict[str, Any]]
-            # getEdges can return dict, str, or DataFrame, but with fmt="py" it returns dict
             if isinstance(edges, list):
                 # Type narrowing: after isinstance check, we know it's a list
-                # Use cast to help type checker understand the elements are dicts
-                result = cast(list[dict[str, Any]], edges)
+                result = edges
             elif isinstance(edges, dict):
                 # If it's a single dict, wrap it in a list
                 result = [cast(dict[str, Any], edges)]
@@ -2848,7 +3229,7 @@ class TigerGraphConnection(Connection):
                 # Fallback for unexpected types
                 result: list[dict[str, Any]] = []
 
-            # Apply limit if specified (client-side since pyTigerGraph doesn't support it)
+            # Apply limit if specified (client-side since REST API doesn't support it)
             if limit is not None and limit > 0:
                 result = result[:limit]
 
@@ -2869,7 +3250,7 @@ class TigerGraphConnection(Connection):
             return result
 
         except Exception as e:
-            logger.error(f"Error fetching edges via pyTigerGraph: {e}")
+            logger.error(f"Error fetching edges via REST API: {e}")
             raise
 
     def _parse_restpp_response(
@@ -2954,7 +3335,7 @@ class TigerGraphConnection(Connection):
                     continue
 
                 try:
-                    vertex_data = self.conn.getVerticesById(class_name, vertex_id)
+                    vertex_data = self._get_vertices_by_id(class_name, vertex_id)
                     if vertex_data and vertex_id in vertex_data:
                         # Extract requested keys
                         vertex_attrs = vertex_data[vertex_id].get("attributes", {})
@@ -2997,7 +3378,7 @@ class TigerGraphConnection(Connection):
         try:
             if aggregation_function == AggregationType.COUNT and discriminant is None:
                 # Simple vertex count
-                count = self.conn.getVertexCount(class_name)
+                count = self._get_vertex_count(class_name)
                 return [{"_value": count}]
             else:
                 # Complex aggregations require custom GSQL queries
@@ -3092,7 +3473,7 @@ class TigerGraphConnection(Connection):
                 if vertex_type:
                     vertex_types = [vertex_type]
                 else:
-                    vertex_types = self.conn.getVertexTypes(force=True)
+                    vertex_types = self._get_vertex_types()
 
                 for v_type in vertex_types:
                     try:

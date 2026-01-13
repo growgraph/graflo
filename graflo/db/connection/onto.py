@@ -546,14 +546,13 @@ class TigergraphConfig(DBConfig):
         TigerGraph 4.1+ uses port 14240 (GSQL server) as the primary interface.
         Port 9000 (REST++) is for internal use only in TG 4.1+.
 
-        For vanilla TigerGraph 4+ installations, you typically only need port 14240.
-        Both restppPort and gsPort default to 14240 for TG 4+ compatibility.
+        Standard ports:
+        - Port 14240: GSQL server (primary interface for all API requests)
+        - Port 9000: REST++ (internal-only in TG 4.1+)
 
-        For custom Docker deployments with port mapping, override the ports:
-            >>> config = TigergraphConfig(
-            ...     uri="http://localhost:9001",  # Custom mapped REST++ port
-            ...     gs_port=14241,                 # Custom mapped GSQL port
-            ... )
+        For custom Docker deployments with port mapping, ports are configured via
+        environment variables (e.g., TG_WEB, TG_REST) and loaded automatically
+        when using TigergraphConfig.from_docker_env().
     """
 
     model_config = SettingsConfigDict(
@@ -562,7 +561,7 @@ class TigergraphConfig(DBConfig):
     )
 
     gs_port: int | None = Field(
-        default=None, description="TigerGraph GSQL port (default: 14240 for TG 4+)"
+        default=None, description="TigerGraph GSQL port (standard: 14240 for TG 4+)"
     )
     secret: str | None = Field(
         default=None,
@@ -586,13 +585,15 @@ class TigergraphConfig(DBConfig):
 
         Note: TigerGraph 4.1+ uses port 14240 (GSQL server) as the primary interface.
         Port 9000 (REST++) is for internal use only in TG 4.1+.
-        However, pyTigerGraph's connection object still needs this port configured
-        for backward compatibility with older TG versions.
 
-        For TigerGraph 4+, it's recommended to explicitly set both port and gs_port
-        to the publicly accessible GSQL port (typically 14240).
+        Standard ports:
+        - Port 14240: GSQL server (primary interface)
+        - Port 9000: REST++ (internal-only in TG 4.1+)
+
+        This method is kept for backward compatibility but should not be relied upon.
+        Ports should be explicitly configured in TigergraphConfig.
         """
-        return 14240  # Default to GSQL port for TG 4+ compatibility
+        return 14240  # Standard GSQL port for TG 4+
 
     def _get_effective_database(self) -> str | None:
         """TigerGraph doesn't have a database level (connection -> schema -> vertices/edges)."""
@@ -607,11 +608,14 @@ class TigergraphConfig(DBConfig):
         return self.schema_name
 
     def __init__(self, **data):
-        """Initialize TigerGraph config."""
+        """Initialize TigerGraph config.
+
+        Note: gs_port should be explicitly set. Standard ports:
+        - 14240: GSQL server (primary interface)
+        - 9000: REST++ (internal-only in TG 4.1+)
+        """
         super().__init__(**data)
-        # Set default gs_port if not provided
-        if self.gs_port is None:
-            self.gs_port = 14240
+        # No default values - ports must be explicitly configured
 
     @classmethod
     def from_docker_env(
@@ -640,22 +644,52 @@ class TigergraphConfig(DBConfig):
 
         # Map environment variables to config
         config_data: Dict[str, Any] = {}
-        if "TG_REST" in env_vars or "TIGERGRAPH_PORT" in env_vars:
-            port = env_vars.get("TG_REST") or env_vars.get("TIGERGRAPH_PORT")
-            hostname = env_vars.get("TIGERGRAPH_HOSTNAME", "localhost")
-            protocol = env_vars.get("TIGERGRAPH_PROTOCOL", "http")
-            config_data["uri"] = f"{protocol}://{hostname}:{port}"
 
-        if "TG_WEB" in env_vars or "TIGERGRAPH_GS_PORT" in env_vars:
-            gs_port = env_vars.get("TG_WEB") or env_vars.get("TIGERGRAPH_GS_PORT")
-            config_data["gs_port"] = int(gs_port) if gs_port else None
+        # For TigerGraph 4+, use GSQL port (TG_WEB) for both REST++ and GSQL
+        # TG_REST (port 9000) is internal-only in TG 4.1+
+        gs_port = env_vars.get("TG_WEB") or env_vars.get("TIGERGRAPH_GS_PORT")
+        rest_port = env_vars.get("TG_REST") or env_vars.get("TIGERGRAPH_PORT")
 
+        # Prefer GSQL port for TigerGraph 4+ compatibility
+        # Standard ports: 14240 (GSQL), 9000 (REST++)
+        # Docker may map these to different external ports (e.g., 14241, 9001)
+        if gs_port:
+            port = gs_port
+            config_data["gs_port"] = int(gs_port)
+        elif rest_port:
+            port = rest_port
+            # If only REST port is provided, use it for both (Docker mapping scenario)
+            config_data["gs_port"] = int(rest_port)
+        else:
+            raise ValueError(
+                "Either TG_WEB or TG_REST must be set in .env file. "
+                "Standard ports: 14240 (GSQL), 9000 (REST++)."
+            )
+
+        hostname = env_vars.get("TIGERGRAPH_HOSTNAME", "localhost")
+        protocol = env_vars.get("TIGERGRAPH_PROTOCOL", "http")
+        config_data["uri"] = f"{protocol}://{hostname}:{port}"
+
+        # Set default username if not provided
         if "TIGERGRAPH_USERNAME" in env_vars:
             config_data["username"] = env_vars["TIGERGRAPH_USERNAME"]
+        else:
+            config_data["username"] = "tigergraph"  # Default username
+
+        # Set password from env vars or use default
         if "TIGERGRAPH_PASSWORD" in env_vars or "GSQL_PASSWORD" in env_vars:
             config_data["password"] = env_vars.get(
                 "TIGERGRAPH_PASSWORD"
             ) or env_vars.get("GSQL_PASSWORD")
+        else:
+            # Check environment variable as fallback, default to "tigergraph"
+            import os
+
+            config_data["password"] = (
+                os.environ.get("GSQL_PASSWORD")
+                or os.environ.get("TIGERGRAPH_PASSWORD")
+                or "tigergraph"
+            )
         if "TIGERGRAPH_DATABASE" in env_vars:
             config_data["database"] = env_vars["TIGERGRAPH_DATABASE"]
 
