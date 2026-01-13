@@ -58,24 +58,59 @@ _json_serializer = json_serializer
 logger = logging.getLogger(__name__)
 
 
-def _wrap_tg_exception(func):
-    """Decorator to wrap TigerGraph exceptions for Python 3.11+ compatibility.
+# Monkey-patch specific exception classes to add add_note() for Python 3.10 compatibility
+# Python 3.11+ already has this, but Python 3.10 doesn't
+# We patch specific classes since the base Exception class is immutable
+def _add_note_shim(self, note: str) -> None:
+    """Add a note to the exception (Python 3.11+ compatibility shim for Python 3.10)."""
+    if not hasattr(self, "_notes"):
+        self._notes = []
+    self._notes.append(note)
 
-    Python 3.11+ exception handling tries to call add_note() on exceptions,
-    but pyTigerGraph's TigerGraphException doesn't always support this.
-    This wrapper catches such exceptions and re-raises them as RuntimeError
-    to avoid the 'add_note' attribute error.
+
+def _patch_exception_class(cls: type[Exception]) -> None:
+    """Patch an exception class to add add_note() if it doesn't exist."""
+    if not hasattr(cls, "add_note"):
+        cls.add_note = _add_note_shim  # type: ignore[attr-defined, assignment]
+
+
+# Patch requests exceptions (HTTPError, ConnectionError, Timeout, RequestException)
+try:
+    from requests.exceptions import (
+        HTTPError,
+        ConnectionError,
+        Timeout,
+        RequestException,
+    )
+
+    _patch_exception_class(HTTPError)
+    _patch_exception_class(ConnectionError)
+    _patch_exception_class(Timeout)
+    _patch_exception_class(RequestException)
+except (ImportError, AttributeError):
+    pass
+
+# Patch TigerGraphException
+try:
+    from pyTigerGraph import TigerGraphException
+
+    _patch_exception_class(TigerGraphException)
+except (ImportError, AttributeError):
+    pass
+
+
+def _wrap_tg_exception(func):
+    """Decorator to wrap TigerGraph exceptions for compatibility.
+
+    This decorator is kept for backward compatibility but is no longer strictly
+    necessary since we've monkey-patched the specific exception classes.
     """
 
     def wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
-        except Exception as e:
-            # Check if exception is from pyTigerGraph and lacks add_note
-            if type(e).__name__ == "TigerGraphException" and not hasattr(e, "add_note"):
-                # Re-wrap as RuntimeError to avoid add_note issues
-                raise RuntimeError(f"TigerGraph error: {e}") from e
-            # For all other exceptions, re-raise as-is
+        except Exception:
+            # Re-raise all exceptions as-is (add_note is available on patched exceptions)
             raise
 
     return wrapper
@@ -93,16 +128,22 @@ class TigerGraphConnection(Connection):
     5. Token-based authentication recommended for TigerGraph 4+
 
     Authentication (recommended for TG 4+):
+        For best results, provide BOTH username/password AND secret:
+        - username/password: Required for initial connection and GSQL operations
+        - secret: Generates token that works for both GSQL and REST API operations
+
         Token-based authentication using secrets is the most robust and recommended
-        approach for TigerGraph 4+. Provide a 'secret' in your TigergraphConfig to
-        enable automatic token generation and usage.
+        approach for TigerGraph 4+. The connection will:
+        1. Use username/password for initial connection
+        2. Generate a token from the secret
+        3. Use the token for both GSQL operations (via pyTigerGraph) and REST API calls
 
         Example:
             >>> config = TigergraphConfig(
             ...     uri="http://localhost:14240",
-            ...     username="tigergraph",
-            ...     password="tigergraph",
-            ...     secret="your_secret_here",  # Recommended for TG 4+
+            ...     username="tigergraph",      # Required for initial connection
+            ...     password="tigergraph",      # Required for initial connection
+            ...     secret="your_secret_here",  # Generates token for GSQL + REST API
             ...     database="my_graph"
             ... )
             >>> conn = TigerGraphConnection(config)
@@ -130,6 +171,7 @@ class TigerGraphConnection(Connection):
     def __init__(self, config: TigergraphConfig):
         super().__init__()
         self.config = config
+        self.ssl_verify = getattr(config, "ssl_verify", True)
 
         # Initialize pyTigerGraph connection for most operations
         # Use type narrowing to help type checker understand non-None values
@@ -160,10 +202,15 @@ class TigerGraphConnection(Connection):
 
         # Get authentication token if secret is provided
         # Token-based auth is the recommended approach for TigerGraph 4+
+        # IMPORTANT: You should provide BOTH username/password AND secret:
+        # - username/password: Used for initial connection and GSQL operations
+        # - secret: Generates token that works for both GSQL and REST API operations
         self.api_token: str | None = None
         if config.secret:
             try:
-                token = self.conn.getToken(config.secret)
+                # Explicitly set setToken=True for TigerGraph 4.2.1+ compatibility
+                # This ensures the token is set on the connection object before any operations
+                token = self.conn.getToken(config.secret, setToken=True)
                 # getToken returns tuple (token, expiration) or just token
                 if isinstance(token, tuple):
                     self.api_token = token[0]
@@ -173,9 +220,34 @@ class TigerGraphConnection(Connection):
                 else:
                     self.api_token = token
                     logger.info("Successfully obtained API token")
+                # Explicitly set token on connection object for TigerGraph 4.2.1 compatibility
+                # This ensures pyTigerGraph internal calls (including GSQL) use the same token
+                if self.api_token:
+                    # Set token via all available methods to ensure compatibility
+                    if hasattr(self.conn, "apiToken"):
+                        self.conn.apiToken = self.api_token  # type: ignore[attr-defined]
+                    if hasattr(self.conn, "token"):
+                        self.conn.token = self.api_token  # type: ignore[attr-defined]
+                    if hasattr(self.conn, "setToken"):
+                        self.conn.setToken(self.api_token)  # type: ignore[attr-defined]
+                    # Verify token is set (for debugging)
+                    if hasattr(self.conn, "apiToken"):
+                        actual_token = getattr(self.conn, "apiToken", None)
+                        if actual_token != self.api_token:
+                            logger.warning(
+                                "Token mismatch detected. Expected token set, "
+                                "but connection has different token."
+                            )
+                        else:
+                            logger.debug("Token successfully set on connection object")
             except Exception as e:
+                # Log and fall back to username/password authentication
                 logger.warning(f"Failed to get authentication token: {e}")
                 logger.warning("Falling back to username/password authentication")
+                logger.warning(
+                    "Note: For best results, provide both username/password AND secret. "
+                    "Username/password is used for GSQL operations, secret generates token for REST API."
+                )
 
         # Detect TigerGraph version for compatibility
         self.tg_version: str | None = None
@@ -316,7 +388,11 @@ class TigerGraphConnection(Connection):
         try:
             if method.upper() == "GET":
                 response = requests.get(
-                    url, headers=headers, params=params, timeout=120
+                    url,
+                    headers=headers,
+                    params=params,
+                    timeout=120,
+                    verify=self.ssl_verify,
                 )
             elif method.upper() == "POST":
                 response = requests.post(
@@ -325,10 +401,15 @@ class TigerGraphConnection(Connection):
                     data=json.dumps(data, default=_json_serializer) if data else None,
                     params=params,
                     timeout=120,
+                    verify=self.ssl_verify,
                 )
             elif method.upper() == "DELETE":
                 response = requests.delete(
-                    url, headers=headers, params=params, timeout=120
+                    url,
+                    headers=headers,
+                    params=params,
+                    timeout=120,
+                    verify=self.ssl_verify,
                 )
             else:
                 raise ValueError(f"Unsupported HTTP method: {method}")
@@ -856,6 +937,8 @@ class TigerGraphConnection(Connection):
 
             edge.weights = WeightConfig()
 
+        # Type assertion: weights is guaranteed to be WeightConfig after assignment
+        assert edge.weights is not None, "weights should be initialized"
         # Get existing weight field names
         existing_weight_names = set()
         if edge.weights.direct:
@@ -1913,45 +1996,37 @@ class TigerGraphConnection(Connection):
     def _upsert_data(
         self,
         payload: dict[str, Any],
-        host: str,
-        graph_name: str,
-        username: str | None = None,
-        password: str | None = None,
     ) -> dict[str, Any]:
         """
         Sends the generated JSON payload to the TigerGraph REST++ upsert endpoint.
 
         Args:
             payload: The JSON payload in TigerGraph REST++ format
-            host: Base host URL (e.g., "http://localhost:9000")
-            graph_name: Name of the graph
-            username: Optional username for authentication
-            password: Optional password for authentication
 
         Returns:
             Dictionary containing the response from TigerGraph
         """
-        url = f"{host}/graph/{graph_name}"
+        graph_name = self.config.database
+        if not graph_name:
+            raise ValueError("Graph name (database) must be configured")
 
-        headers = {
-            "Content-Type": "application/json",
-        }
+        # Use restpp_url which handles version-specific prefixes (e.g., /restpp for 4.2.1)
+        url = f"{self.restpp_url}/graph/{graph_name}"
+
+        # Use centralized auth headers (supports Bearer token for 4.2.1+)
+        headers = self._get_auth_headers()
+        headers["Content-Type"] = "application/json"
 
         logger.debug(f"Attempting batch upsert to: {url}")
 
         try:
-            # Use HTTP Basic Auth if username and password are provided
-            auth = None
-            if username and password:
-                auth = (username, password)
-
             response = requests.post(
                 url,
                 headers=headers,
                 data=json.dumps(payload, default=_json_serializer),
-                auth=auth,
                 # Increase timeout for large batches
                 timeout=120,
+                verify=self.ssl_verify,
             )
             response.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
 
@@ -2001,20 +2076,8 @@ class TigerGraphConnection(Connection):
                 logger.warning(f"No valid vertices to upsert for {class_name}")
                 return
 
-            # Build REST++ endpoint URL
-            host = f"{self.config.url_without_port}:{self.config.port}"
-            graph_name = self.config.database
-            if not graph_name:
-                raise ValueError("Graph name (database) must be configured")
-
-            # Send the upsert request with username/password authentication
-            result = self._upsert_data(
-                payload,
-                host,
-                graph_name,
-                username=self.config.username,
-                password=self.config.password,
-            )
+            # Send the upsert request
+            result = self._upsert_data(payload)
 
             if result.get("error"):
                 logger.error(
@@ -2365,12 +2428,6 @@ class TigerGraphConnection(Connection):
                 logger.warning(f"No valid edges to upsert for edge type {edge_type}")
                 return
 
-            # Build REST++ endpoint URL
-            host = f"{self.config.url_without_port}:{self.config.port}"
-            graph_name = self.config.database
-            if not graph_name:
-                raise ValueError("Graph name (database) must be configured")
-
             # Send each payload in batch
             total_edges = 0
             failed_payloads = []
@@ -2383,13 +2440,7 @@ class TigerGraphConnection(Connection):
                 original_edges = payload.pop("_original_edges", [])
 
                 # Send the batch upsert request
-                result = self._upsert_data(
-                    payload,
-                    host,
-                    graph_name,
-                    username=self.config.username,
-                    password=self.config.password,
-                )
+                result = self._upsert_data(payload)
 
                 # Restore original edges for potential fallback
                 payload["_original_edges"] = original_edges

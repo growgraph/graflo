@@ -574,6 +574,12 @@ class TigergraphConfig(DBConfig):
         description="TigerGraph version (e.g., '4.2.1'). If not provided, will be auto-detected. "
         "Versions < 4.2.2 use /restpp prefix in REST API URLs",
     )
+    ssl_verify: bool = Field(
+        default=True,
+        description="Whether to verify SSL certificates. Set to False to disable SSL verification "
+        "for cases where certificate hostname doesn't match (e.g., internal deployments with self-signed certs). "
+        "WARNING: Disabling SSL verification reduces security and should only be used in trusted environments.",
+    )
 
     def _get_default_port(self) -> int:
         """Get default TigerGraph REST++ port.
