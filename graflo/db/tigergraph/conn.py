@@ -418,6 +418,70 @@ class TigerGraphConnection(Connection):
             return response.json()
 
         except requests_exceptions.HTTPError as errh:
+            # For TigerGraph 4.2.1, if token auth fails with 401/REST-10018, try Basic Auth fallback
+            if (
+                errh.response.status_code == 401
+                and self.api_token
+                and self.config.username
+                and self.config.password
+                and "REST-10018" in str(errh)
+            ):
+                logger.warning(
+                    "Token authentication failed with REST-10018, "
+                    "falling back to Basic Auth for TigerGraph 4.2.1 compatibility"
+                )
+                # Retry with Basic Auth
+                import base64
+
+                credentials = f"{self.config.username}:{self.config.password}"
+                encoded_credentials = base64.b64encode(credentials.encode()).decode()
+                headers["Authorization"] = f"Basic {encoded_credentials}"
+                try:
+                    if method.upper() == "GET":
+                        response = requests.get(
+                            url,
+                            headers=headers,
+                            params=params,
+                            timeout=120,
+                            verify=self.ssl_verify,
+                        )
+                    elif method.upper() == "POST":
+                        response = requests.post(
+                            url,
+                            headers=headers,
+                            data=json.dumps(data, default=_json_serializer)
+                            if data
+                            else None,
+                            params=params,
+                            timeout=120,
+                            verify=self.ssl_verify,
+                        )
+                    elif method.upper() == "DELETE":
+                        response = requests.delete(
+                            url,
+                            headers=headers,
+                            params=params,
+                            timeout=120,
+                            verify=self.ssl_verify,
+                        )
+                    else:
+                        raise ValueError(f"Unsupported HTTP method: {method}")
+                    response.raise_for_status()
+                    logger.info("Successfully authenticated using Basic Auth fallback")
+                    return response.json()
+                except requests_exceptions.HTTPError as errh2:
+                    logger.error(f"HTTP Error (after Basic Auth fallback): {errh2}")
+                    error_response = {"error": True, "message": str(errh2)}
+                    try:
+                        error_json = response.json()
+                        if isinstance(error_json, dict):
+                            error_response.update(error_json)
+                        else:
+                            error_response["details"] = response.text
+                    except Exception:
+                        error_response["details"] = response.text
+                    return error_response
+
             logger.error(f"HTTP Error: {errh}")
             error_response = {"error": True, "message": str(errh)}
             try:
@@ -2034,6 +2098,48 @@ class TigerGraphConnection(Connection):
             return response.json()
 
         except requests_exceptions.HTTPError as errh:
+            # For TigerGraph 4.2.1, if token auth fails with 401/REST-10018, try Basic Auth fallback
+            if (
+                errh.response.status_code == 401
+                and self.api_token
+                and self.config.username
+                and self.config.password
+                and "REST-10018" in str(errh)
+            ):
+                logger.warning(
+                    "Token authentication failed with REST-10018, "
+                    "falling back to Basic Auth for TigerGraph 4.2.1 compatibility"
+                )
+                # Retry with Basic Auth
+                import base64
+
+                credentials = f"{self.config.username}:{self.config.password}"
+                encoded_credentials = base64.b64encode(credentials.encode()).decode()
+                headers["Authorization"] = f"Basic {encoded_credentials}"
+                try:
+                    response = requests.post(
+                        url,
+                        headers=headers,
+                        data=json.dumps(payload, default=_json_serializer),
+                        timeout=120,
+                        verify=self.ssl_verify,
+                    )
+                    response.raise_for_status()
+                    logger.info("Successfully authenticated using Basic Auth fallback")
+                    return response.json()
+                except requests_exceptions.HTTPError as errh2:
+                    logger.error(f"HTTP Error (after Basic Auth fallback): {errh2}")
+                    error_details = ""
+                    try:
+                        error_details = response.text
+                    except Exception:
+                        pass
+                    return {
+                        "error": True,
+                        "message": str(errh2),
+                        "details": error_details,
+                    }
+
             logger.error(f"HTTP Error: {errh}")
             error_details = ""
             try:
