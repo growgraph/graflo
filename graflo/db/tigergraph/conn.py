@@ -26,6 +26,7 @@ Example:
 import contextlib
 import json
 import logging
+from pathlib import Path
 from typing import Any
 
 
@@ -108,6 +109,73 @@ def _wrap_tg_exception(func):
             raise
 
     return wrapper
+
+
+def _validate_tigergraph_schema_name(name: str, name_type: str) -> None:
+    """
+    Validate a TigerGraph schema name (graph, vertex, or edge) against reserved words
+    and invalid characters.
+
+    Args:
+        name: The schema name to validate
+        name_type: Type of schema name ("graph", "vertex", or "edge")
+
+    Raises:
+        ValueError: If the name contains reserved words, forbidden prefixes, or invalid characters
+    """
+    if not name:
+        raise ValueError(f"{name_type.capitalize()} name cannot be empty")
+
+    # Load reserved words from JSON file
+    json_path = Path(__file__).parent / "reserved_words.json"
+    try:
+        with open(json_path, "r") as f:
+            reserved_data = json.load(f)
+    except FileNotFoundError:
+        logger.warning(
+            f"Could not find reserved_words.json at {json_path}, skipping validation"
+        )
+        return
+    except json.JSONDecodeError as e:
+        logger.warning(f"Could not parse reserved_words.json: {e}, skipping validation")
+        return
+
+    reserved_words = set()
+    reserved_words.update(
+        reserved_data.get("reserved_words", {}).get("gsql_keywords", [])
+    )
+    reserved_words.update(
+        reserved_data.get("reserved_words", {}).get("cpp_keywords", [])
+    )
+
+    # Check for reserved words (case-insensitive)
+    name_upper = name.upper()
+    if name_upper in reserved_words:
+        raise ValueError(
+            f"{name_type.capitalize()} name '{name}' is a TigerGraph reserved word. "
+            f"Reserved words cannot be used as identifiers. "
+            f"Please choose a different name."
+        )
+
+    # Check for forbidden prefixes
+    forbidden_prefixes = reserved_data.get("forbidden_prefixes", [])
+    for prefix in forbidden_prefixes:
+        if name.startswith(prefix):
+            raise ValueError(
+                f"{name_type.capitalize()} name '{name}' starts with forbidden prefix '{prefix}'. "
+                f"Please choose a different name."
+            )
+
+    # Check for invalid characters
+    invalid_chars = reserved_data.get("invalid_characters", {}).get("characters", [])
+    found_chars = [char for char in invalid_chars if char in name]
+    if found_chars:
+        raise ValueError(
+            f"{name_type.capitalize()} name '{name}' contains invalid characters: {found_chars}. "
+            f"TigerGraph identifiers should use alphanumeric characters and underscores only. "
+            f"Special characters (especially hyphens and dots) are problematic for REST API endpoints. "
+            f"Please choose a different name."
+        )
 
 
 class TigerGraphConnection(Connection):
@@ -1823,6 +1891,9 @@ class TigerGraphConnection(Connection):
         if not graph_name:
             raise ValueError("Graph name (database) must be configured")
 
+        # Validate graph name
+        _validate_tigergraph_schema_name(graph_name, "graph")
+
         vertex_config = schema.vertex_config
         edge_config = schema.edge_config
 
@@ -1830,6 +1901,8 @@ class TigerGraphConnection(Connection):
 
         # Vertices
         for vertex in vertex_config.vertices:
+            # Validate vertex name
+            _validate_tigergraph_schema_name(vertex.name, "vertex")
             stmt = self._get_vertex_add_statement(vertex, vertex_config)
             schema_change_stmts.append(stmt)
 
@@ -1837,6 +1910,8 @@ class TigerGraphConnection(Connection):
         edges_to_create = list(edge_config.edges_list(include_aux=True))
         for edge in edges_to_create:
             edge.finish_init(vertex_config)
+            # Validate edge name
+            _validate_tigergraph_schema_name(edge.relation, "edge")
             stmt = self._get_edge_add_statement(edge)
             schema_change_stmts.append(stmt)
 
@@ -1844,125 +1919,219 @@ class TigerGraphConnection(Connection):
             logger.debug(f"No schema changes to apply for graph '{graph_name}'")
             return
 
-        job_name = f"schema_change_{graph_name}"
+        # Estimate the size of the GSQL command to determine if we need to split it
+        # Large SCHEMA_CHANGE JOBs (>30k chars) can cause parser failures with misleading errors
+        # like "Missing return statement" (which is actually a parser size limit issue)
+        # We'll split into batches of approximately 20k characters per job
+        MAX_JOB_SIZE = 20000  # characters per job (conservative limit)
 
-        # First, try to drop the job if it exists (ignore errors if it doesn't)
-        try:
-            drop_job_cmd = f"USE GRAPH {graph_name}\nDROP JOB {job_name}"
-            self._execute_gsql(drop_job_cmd)
-            logger.debug(f"Dropped existing schema change job '{job_name}'")
-        except Exception as e:
-            err_str = str(e).lower()
-            # Ignore errors if job doesn't exist
-            if "not found" in err_str or "could not be found" in err_str:
-                logger.debug(
-                    f"Schema change job '{job_name}' does not exist, skipping drop"
+        # Calculate accurate size estimation
+        # Actual format:
+        #   USE GRAPH {graph_name}
+        #   CREATE SCHEMA_CHANGE JOB {job_name} FOR GRAPH {graph_name} {
+        #       stmt1;
+        #       stmt2;
+        #       ...
+        #   }
+        #   RUN SCHEMA_CHANGE JOB {job_name}
+        #
+        # For N statements:
+        #   - Base overhead: USE GRAPH line + CREATE line + closing brace + RUN line + newlines
+        #   - Statement overhead: first gets "    " + ";" (5 chars), others get ";\n    " (5 chars each)
+        #   - Total: base + sum(len(stmt)) + 5*N
+
+        # Use worst-case job name length (multi-batch format) for conservative estimation
+        worst_case_job_name = (
+            f"schema_change_{graph_name}_batch_999"  # Use large number for worst case
+        )
+        base_template = (
+            f"USE GRAPH {graph_name}\n"
+            f"CREATE SCHEMA_CHANGE JOB {worst_case_job_name} FOR GRAPH {graph_name} {{\n"
+            f"}}\n"
+            f"RUN SCHEMA_CHANGE JOB {worst_case_job_name}"
+        )
+        base_overhead = len(base_template)
+
+        # Each statement adds 5 characters: first gets "    " (4) + ";" (1),
+        # subsequent get ";\n    " (5) between statements, final ";" (1) is included
+        # For N statements: 4 (first indent) + (N-1)*5 (separators) + 1 (final semicolon) = 5*N
+        num_statements = len(schema_change_stmts)
+        total_stmt_size = sum(len(stmt) for stmt in schema_change_stmts)
+        estimated_size = base_overhead + total_stmt_size + 5 * num_statements
+
+        if estimated_size <= MAX_JOB_SIZE:
+            # Small enough for a single job
+            batches = [schema_change_stmts]
+            logger.info(
+                f"Applying schema change as single job (estimated size: {estimated_size} chars)"
+            )
+        else:
+            # Split into multiple batches
+            # Calculate how many statements per batch
+            # For a batch of M statements: base_overhead + sum(len(stmt)) + 5*M <= MAX_JOB_SIZE
+            # So: sum(len(stmt)) + 5*M <= MAX_JOB_SIZE - base_overhead
+            # If avg_stmt_size = sum(len(stmt)) / M, then: M * (avg_stmt_size + 5) <= MAX_JOB_SIZE - base_overhead
+            avg_stmt_size = (
+                total_stmt_size / num_statements if num_statements > 0 else 0
+            )
+            available_space = MAX_JOB_SIZE - base_overhead
+            stmts_per_batch = max(1, int(available_space / (avg_stmt_size + 5)))
+
+            batches = []
+            for i in range(0, len(schema_change_stmts), stmts_per_batch):
+                batches.append(schema_change_stmts[i : i + stmts_per_batch])
+
+            logger.info(
+                f"Large schema detected (estimated size: {estimated_size} chars). "
+                f"Splitting into {len(batches)} batches of ~{stmts_per_batch} statements each."
+            )
+
+        # Execute batches sequentially
+        for batch_idx, batch_stmts in enumerate(batches):
+            job_name = (
+                f"schema_change_{graph_name}_batch_{batch_idx}"
+                if len(batches) > 1
+                else f"schema_change_{graph_name}"
+            )
+
+            # First, try to drop the job if it exists (ignore errors if it doesn't)
+            try:
+                drop_job_cmd = f"USE GRAPH {graph_name}\nDROP JOB {job_name}"
+                self._execute_gsql(drop_job_cmd)
+                logger.debug(f"Dropped existing schema change job '{job_name}'")
+            except Exception as e:
+                err_str = str(e).lower()
+                # Ignore errors if job doesn't exist
+                if "not found" in err_str or "could not be found" in err_str:
+                    logger.debug(
+                        f"Schema change job '{job_name}' does not exist, skipping drop"
+                    )
+                else:
+                    logger.debug(f"Could not drop schema change job '{job_name}': {e}")
+
+            # Create and run SCHEMA_CHANGE job for this batch
+            gsql_commands = [
+                f"USE GRAPH {graph_name}",
+                f"CREATE SCHEMA_CHANGE JOB {job_name} FOR GRAPH {graph_name} {{",
+                "    " + ";\n    ".join(batch_stmts) + ";",
+                "}",
+                f"RUN SCHEMA_CHANGE JOB {job_name}",
+            ]
+
+            full_gsql = "\n".join(gsql_commands)
+            actual_size = len(full_gsql)
+
+            # Safety check: warn if actual size exceeds limit (indicates estimation error)
+            if actual_size > MAX_JOB_SIZE:
+                logger.warning(
+                    f"Batch {batch_idx + 1} actual size ({actual_size} chars) exceeds limit ({MAX_JOB_SIZE} chars). "
+                    f"This may cause parser errors. Consider reducing MAX_JOB_SIZE or improving estimation."
                 )
+
+            logger.info(
+                f"Applying schema change batch {batch_idx + 1}/{len(batches)} for graph '{graph_name}' "
+                f"({len(batch_stmts)} statements, {actual_size} chars)"
+            )
+            if actual_size < 5000:  # Only log full command if it's reasonably small
+                logger.debug(f"GSQL command:\n{full_gsql}")
             else:
-                logger.debug(f"Could not drop schema change job '{job_name}': {e}")
+                logger.debug(f"GSQL command size: {actual_size} characters")
 
-        # Combine into a single SCHEMA_CHANGE job
-        gsql_commands = [
-            f"USE GRAPH {graph_name}",
-            f"CREATE SCHEMA_CHANGE JOB {job_name} FOR GRAPH {graph_name} {{",
-            "    " + ";\n    ".join(schema_change_stmts) + ";",
-            "}",
-            f"RUN SCHEMA_CHANGE JOB {job_name}",
-        ]
+            try:
+                result = self._execute_gsql(full_gsql)
+                logger.debug(f"Schema change batch {batch_idx + 1} result: {result}")
 
-        full_gsql = "\n".join(gsql_commands)
-        logger.info(f"Applying local schema change for graph '{graph_name}'")
-        logger.info(f"GSQL command:\n{full_gsql}")
-        try:
-            result = self._execute_gsql(full_gsql)
-            logger.debug(f"Schema change result: {result}")
+                # Check if result indicates an error - be more lenient with error detection
+                result_str = str(result) if result else ""
+                # Only treat as error if result explicitly contains error indicators
+                if (
+                    result
+                    and result_str
+                    and (
+                        "Encountered" in result_str
+                        or "syntax error" in result_str.lower()
+                        or "parse error" in result_str.lower()
+                        or "missing return statement" in result_str.lower()
+                    )
+                ):
+                    # "Missing return statement" is a misleading error - it's actually a parser size limit
+                    # SCHEMA_CHANGE JOB doesn't require RETURN statements, so this indicates parser failure
+                    if "missing return statement" in result_str.lower():
+                        error_msg = (
+                            f"Schema change job batch {batch_idx + 1} failed with parser error. "
+                            f"This is likely due to the GSQL command size ({actual_size} chars) exceeding "
+                            f"TigerGraph's parser limit (~30-40K chars). The 'Missing return statement' error "
+                            f"is misleading - SCHEMA_CHANGE JOB doesn't require RETURN statements. "
+                            f"Original error: {result}"
+                        )
+                    else:
+                        error_msg = f"Schema change job batch {batch_idx + 1} reported an error: {result}"
 
-            # Check if result indicates an error - be more lenient with error detection
-            result_str = str(result) if result else ""
-            # Only treat as error if result explicitly contains error indicators
-            if (
-                result
-                and result_str
-                and (
-                    "Encountered" in result_str
-                    or "syntax error" in result_str.lower()
-                    or "parse error" in result_str.lower()
+                    logger.error(error_msg)
+                    logger.error(
+                        f"GSQL command that failed (first 1000 chars):\n{full_gsql[:1000]}..."
+                    )
+                    raise RuntimeError(error_msg)
+            except Exception as e:
+                logger.error(
+                    f"Failed to execute schema change batch {batch_idx + 1}: {e}"
                 )
-            ):
-                error_msg = f"Schema change job reported a syntax/parse error: {result}"
+                raise
+
+        # Verify that the schema was actually created by checking vertex and edge types
+        # Wait a moment for schema changes to propagate (after all batches)
+        import time
+
+        time.sleep(1.0)  # Increased wait time
+
+        with self._ensure_graph_context(graph_name):
+            vertex_types = self._get_vertex_types()
+            edge_types = self._get_edge_types()
+
+            # Use vertex_dbname instead of v.name to match what TigerGraph actually creates
+            # vertex_dbname returns dbname if set, otherwise None - fallback to v.name if None
+            expected_vertex_types = set()
+            for v in vertex_config.vertices:
+                try:
+                    dbname = vertex_config.vertex_dbname(v.name)
+                    # If dbname is None, use vertex name
+                    expected_name = dbname if dbname is not None else v.name
+                except (KeyError, AttributeError):
+                    # Fallback to vertex name if vertex_dbname fails
+                    expected_name = v.name
+                expected_vertex_types.add(expected_name)
+
+            expected_edge_types = {e.relation for e in edges_to_create if e.relation}
+
+            # Convert to sets for case-insensitive comparison
+            # TigerGraph may capitalize vertex names, so compare case-insensitively
+            vertex_types_lower = {vt.lower() for vt in vertex_types}
+            expected_vertex_types_lower = {evt.lower() for evt in expected_vertex_types}
+
+            missing_vertices_lower = expected_vertex_types_lower - vertex_types_lower
+            # Convert back to original case for error message
+            missing_vertices = {
+                evt
+                for evt in expected_vertex_types
+                if evt.lower() in missing_vertices_lower
+            }
+
+            missing_edges = expected_edge_types - set(edge_types)
+
+            if missing_vertices or missing_edges:
+                error_msg = (
+                    f"Schema change job completed but types were not created correctly. "
+                    f"Missing vertex types: {missing_vertices}, "
+                    f"Missing edge types: {missing_edges}. "
+                    f"Created vertex types: {vertex_types}, "
+                    f"Created edge types: {edge_types}."
+                )
                 logger.error(error_msg)
-                logger.error(f"GSQL command that failed: {full_gsql}")
                 raise RuntimeError(error_msg)
 
-            # Verify that the schema was actually created by checking vertex and edge types
-            # Wait a moment for schema changes to propagate
-            import time
-
-            time.sleep(1.0)  # Increased wait time
-
-            with self._ensure_graph_context(graph_name):
-                vertex_types = self._get_vertex_types()
-                edge_types = self._get_edge_types()
-
-                # Use vertex_dbname instead of v.name to match what TigerGraph actually creates
-                # vertex_dbname returns dbname if set, otherwise None - fallback to v.name if None
-                expected_vertex_types = set()
-                for v in vertex_config.vertices:
-                    try:
-                        dbname = vertex_config.vertex_dbname(v.name)
-                        # If dbname is None, use vertex name
-                        expected_name = dbname if dbname is not None else v.name
-                    except (KeyError, AttributeError):
-                        # Fallback to vertex name if vertex_dbname fails
-                        expected_name = v.name
-                    expected_vertex_types.add(expected_name)
-
-                expected_edge_types = {
-                    e.relation for e in edges_to_create if e.relation
-                }
-
-                # Convert to sets for case-insensitive comparison
-                # TigerGraph may capitalize vertex names, so compare case-insensitively
-                vertex_types_lower = {vt.lower() for vt in vertex_types}
-                expected_vertex_types_lower = {
-                    evt.lower() for evt in expected_vertex_types
-                }
-
-                missing_vertices_lower = (
-                    expected_vertex_types_lower - vertex_types_lower
-                )
-                # Convert back to original case for error message
-                missing_vertices = {
-                    evt
-                    for evt in expected_vertex_types
-                    if evt.lower() in missing_vertices_lower
-                }
-
-                missing_edges = expected_edge_types - set(edge_types)
-
-                if missing_vertices or missing_edges:
-                    error_msg = (
-                        f"Schema change job completed but types were not created correctly. "
-                        f"Missing vertex types: {missing_vertices}, "
-                        f"Missing edge types: {missing_edges}. "
-                        f"Created vertex types: {vertex_types}, "
-                        f"Created edge types: {edge_types}. "
-                        f"GSQL result: {result}"
-                    )
-                    logger.error(error_msg)
-                    logger.error(f"GSQL command that failed: {full_gsql}")
-                    raise RuntimeError(error_msg)
-
-                logger.info(
-                    f"Schema verified: {len(vertex_types)} vertex types, {len(edge_types)} edge types created"
-                )
-        except RuntimeError:
-            # Re-raise RuntimeError as-is
-            raise
-        except Exception as e:
-            logger.error(f"Failed to apply local schema change: {e}")
-            logger.error(f"GSQL command was: {full_gsql}")
-            raise
+            logger.info(
+                f"Schema verified: {len(vertex_types)} vertex types, {len(edge_types)} edge types created"
+            )
 
     @_wrap_tg_exception
     def init_db(self, schema: Schema, clean_start: bool = False) -> None:
@@ -1987,6 +2156,9 @@ class TigerGraphConnection(Connection):
             # Update config for subsequent operations
             self.config.database = graph_name
             logger.info(f"Using schema name '{graph_name}' from schema.general.name")
+
+        # Validate graph name
+        _validate_tigergraph_schema_name(graph_name, "graph")
 
         try:
             if clean_start:

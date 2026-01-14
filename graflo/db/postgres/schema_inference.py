@@ -15,6 +15,7 @@ from graflo.architecture.vertex import Field, FieldType, Vertex, VertexConfig
 from graflo.onto import DBFlavor
 
 from ...architecture.onto_sql import EdgeTableInfo, SchemaIntrospectionResult
+from ..util import load_reserved_words, sanitize_attribute_name
 from .conn import PostgresConnection
 from .types import PostgresTypeMapper
 
@@ -42,6 +43,8 @@ class PostgresSchemaInferencer:
         self.db_flavor = db_flavor
         self.type_mapper = PostgresTypeMapper()
         self.conn = conn
+        # Load reserved words for the target database flavor
+        self.reserved_words = load_reserved_words(db_flavor)
 
     def infer_vertex_config(
         self, introspection_result: SchemaIntrospectionResult
@@ -324,6 +327,83 @@ class PostgresSchemaInferencer:
 
         return EdgeConfig(edges=edges)
 
+    def _sanitize_schema_attributes(self, schema: Schema) -> Schema:
+        """Sanitize attribute names in the schema to avoid reserved words.
+
+        This method modifies Field names in vertices and edges to ensure they
+        don't conflict with reserved words for the target database flavor.
+        The sanitization is deterministic: the same input always produces the same output.
+
+        Args:
+            schema: The schema to sanitize
+
+        Returns:
+            Schema with sanitized attribute names
+        """
+        if not self.reserved_words:
+            # No reserved words to check, return schema as-is
+            return schema
+
+        # Track name mappings to ensure consistency
+        name_mappings: dict[str, str] = {}
+
+        # Sanitize vertex field names
+        for vertex in schema.vertex_config.vertices:
+            for field in vertex.fields:
+                original_name = field.name
+                if original_name not in name_mappings:
+                    sanitized_name = sanitize_attribute_name(
+                        original_name, self.reserved_words
+                    )
+                    if sanitized_name != original_name:
+                        name_mappings[original_name] = sanitized_name
+                        logger.debug(
+                            f"Sanitizing field name '{original_name}' -> '{sanitized_name}' "
+                            f"in vertex '{vertex.name}'"
+                        )
+                    else:
+                        name_mappings[original_name] = original_name
+                else:
+                    sanitized_name = name_mappings[original_name]
+
+                # Update field name if it changed
+                if sanitized_name != original_name:
+                    field.name = sanitized_name
+
+            # Update index field references if they were sanitized
+            for index in vertex.indexes:
+                updated_fields = []
+                for field_name in index.fields:
+                    sanitized_field_name = name_mappings.get(field_name, field_name)
+                    updated_fields.append(sanitized_field_name)
+                index.fields = updated_fields
+
+        # Sanitize edge weight field names
+        for edge in schema.edge_config.edges:
+            if edge.weights and edge.weights.direct:
+                for weight_field in edge.weights.direct:
+                    original_name = weight_field.name
+                    if original_name not in name_mappings:
+                        sanitized_name = sanitize_attribute_name(
+                            original_name, self.reserved_words
+                        )
+                        if sanitized_name != original_name:
+                            name_mappings[original_name] = sanitized_name
+                            logger.debug(
+                                f"Sanitizing weight field name '{original_name}' -> "
+                                f"'{sanitized_name}' in edge '{edge.source}' -> '{edge.target}'"
+                            )
+                        else:
+                            name_mappings[original_name] = original_name
+                    else:
+                        sanitized_name = name_mappings[original_name]
+
+                    # Update weight field name if it changed
+                    if sanitized_name != original_name:
+                        weight_field.name = sanitized_name
+
+        return schema
+
     def infer_schema(
         self,
         introspection_result: SchemaIntrospectionResult,
@@ -355,13 +435,16 @@ class PostgresSchemaInferencer:
         # Create schema metadata
         metadata = SchemaMetadata(name=schema_name)
 
-        # Create schema (resources will be added separately)
+        # Create schema (resources will be created separately)
         schema = Schema(
             general=metadata,
             vertex_config=vertex_config,
             edge_config=edge_config,
             resources=[],  # Resources will be created separately
         )
+
+        # Sanitize attribute names to avoid reserved words
+        schema = self._sanitize_schema_attributes(schema)
 
         logger.info(
             f"Successfully inferred schema '{schema_name}' with "
