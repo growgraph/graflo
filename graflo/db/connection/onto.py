@@ -215,6 +215,32 @@ class DBConfig(BaseSettings, abc.ABC):
         return self
 
     @model_validator(mode="after")
+    def _extract_port_from_uri(self):
+        """Extract port from URI and set it as gs_port for TigerGraph (if applicable).
+
+        For TigerGraph 4+, gs_port is the primary port. If URI has a port but gs_port
+        is not set, automatically extract and set gs_port from URI port.
+        This simplifies configuration - users can just provide URI with port.
+        """
+        # Only apply to configs that have gs_port field (TigerGraph)
+        if not hasattr(self, "gs_port"):
+            return self
+
+        if self.uri and self.gs_port is None:
+            uri_port = self.port  # Get port from URI (property from base class)
+            if uri_port:
+                try:
+                    self.gs_port = int(uri_port)
+                    logger.debug(
+                        f"Automatically set gs_port={self.gs_port} from URI port"
+                    )
+                except (ValueError, TypeError):
+                    # Port couldn't be converted to int, skip auto-setting
+                    pass
+
+        return self
+
+    @model_validator(mode="after")
     def _check_port_conflicts(self):
         """Check for port conflicts between URI and separate port fields.
 
@@ -738,7 +764,10 @@ class TigergraphConfig(DBConfig):
     def __init__(self, **data):
         """Initialize TigerGraph config.
 
-        Note: gs_port should be explicitly set. Standard ports:
+        Note: For TigerGraph 4+, gs_port is the primary port (14240).
+        If URI is provided with a port, it will be automatically set as gs_port
+        by the _extract_port_from_uri validator.
+        Standard ports:
         - 14240: GSQL server (primary interface)
         - 9000: REST++ (internal-only in TG 4.1+)
 
@@ -746,7 +775,7 @@ class TigergraphConfig(DBConfig):
         and a warning will be issued.
         """
         super().__init__(**data)
-        # No default values - ports must be explicitly configured
+        # Port extraction from URI is handled by _extract_port_from_uri validator
         # Port conflicts are handled by _check_port_conflicts validator in base class
 
     @classmethod

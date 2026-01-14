@@ -175,12 +175,24 @@ class TigerGraphConnection(Connection):
 
         # Initialize URLs (ports come from config, no hardcoded defaults)
         # Set GSQL URL first as it's needed for token generation
-        if config.gs_port is None:
+        # For TigerGraph 4+, gs_port is the primary port (extracted from URI if not explicitly set)
+        # Fall back to port from URI if gs_port is not set
+        gs_port: int | str | None = config.gs_port
+        if gs_port is None:
+            # Try to get port from URI
+            uri_port = config.port
+            if uri_port:
+                try:
+                    gs_port = int(uri_port)
+                    logger.debug(f"Using port {gs_port} from URI for GSQL endpoint")
+                except (ValueError, TypeError):
+                    pass
+
+        if gs_port is None:
             raise ValueError(
-                "gs_port must be set in TigergraphConfig. "
+                "gs_port or URI with port must be set in TigergraphConfig. "
                 "Standard ports: 14240 (GSQL), 9000 (REST++)."
             )
-        gs_port: int | str = config.gs_port
         self.gsql_url = f"{config.url_without_port}:{gs_port}"
 
         # Detect TigerGraph version for compatibility (needed before token generation)
