@@ -419,6 +419,8 @@ class TigerGraphConnection(Connection):
             )
 
         last_error: Exception | None = None
+        all_404_errors = True  # Track if all failures were 404 errors
+
         for url, payload, _is_milliseconds in endpoints_to_try:
             try:
                 # Remove None values from payload
@@ -483,6 +485,10 @@ class TigerGraphConnection(Connection):
                     raise ValueError(f"No token in response: {result}")
 
             except requests.exceptions.HTTPError as e:
+                # Track if this was a 404 error
+                if e.response.status_code != 404:
+                    all_404_errors = False
+
                 # If 404 and we have more endpoints to try, continue
                 if e.response.status_code == 404 and len(endpoints_to_try) > 1:
                     logger.debug(
@@ -497,12 +503,88 @@ class TigerGraphConnection(Connection):
                 last_error = e
                 continue
             except Exception as e:
+                all_404_errors = False  # Non-HTTP errors are not 404s
                 logger.debug(f"Error trying {url}: {e}")
                 last_error = e
                 continue
 
-        # All endpoints failed
+        # All graph-specific endpoints failed
+        # If all failures were 404 errors and we have a graph_name, try generating a global token
+        # This handles cases where the graph doesn't exist yet (e.g., "DefaultGraph" at init time)
+        # For TigerGraph 4.2.1, /gsql/v1/tokens requires the graph to exist, but /gsql/v1/auth/token
+        # can generate a global token without a graph parameter
+        if all_404_errors and graph_name is not None and last_error:
+            logger.debug(
+                f"All graph-specific token attempts failed with 404. "
+                f"Graph '{graph_name}' may not exist yet. "
+                f"Trying to generate a global token (without graph parameter)..."
+            )
+
+            # Try generating a global token using /gsql/v1/auth/token (works for TG 4.0-4.2.1)
+            global_token_endpoints = [
+                (
+                    f"{self.gsql_url}/gsql/v1/auth/token",
+                    {
+                        "secret": secret,
+                        "lifetime": lifetime,  # In seconds
+                        # No graph parameter = global token
+                    },
+                    False,  # lifetime in seconds
+                )
+            ]
+
+            # Also try /gsql/v1/tokens without graph parameter (for TG 4.2.2+)
+            global_token_endpoints.append(
+                (
+                    f"{self.gsql_url}/gsql/v1/tokens",
+                    {
+                        "secret": secret,
+                        "lifetime": lifetime * 1000,  # In milliseconds
+                        # No graph parameter = global token
+                    },
+                    True,  # lifetime in milliseconds
+                )
+            )
+
+            for url, payload, _is_milliseconds in global_token_endpoints:
+                try:
+                    clean_payload = {k: v for k, v in payload.items() if v is not None}
+
+                    response = requests.post(
+                        url,
+                        headers=headers,
+                        json=clean_payload,
+                        timeout=30,
+                        verify=self.ssl_verify,
+                    )
+
+                    response.raise_for_status()
+                    result = response.json()
+
+                    if result.get("error") is True:
+                        error_msg = result.get("message", "Unknown error")
+                        logger.debug(f"Global token generation failed: {error_msg}")
+                        continue
+
+                    token = result.get("token")
+                    expiration = result.get("expiration")
+
+                    if token:
+                        logger.info(
+                            f"Successfully obtained global token from {url} "
+                            f"(graph '{graph_name}' may not exist yet, using global token). "
+                            f"Expiration: {expiration or 'not provided'}"
+                        )
+                        return (token, expiration)
+
+                except Exception as e:
+                    logger.debug(f"Error trying global token endpoint {url}: {e}")
+                    continue
+
+        # All endpoints failed (including global token fallback)
         error_msg = f"Failed to get token from secret after trying {len(endpoints_to_try)} endpoint(s)"
+        if all_404_errors and graph_name:
+            error_msg += f" (all returned 404, graph '{graph_name}' may not exist yet)"
         if last_error:
             error_msg += f": {last_error}"
         logger.error(error_msg)
