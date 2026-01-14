@@ -23,7 +23,7 @@ def test_create_vertex_index(conn_conf, schema_obj, test_graph_name):
     # Note: We use dbnames (Author, ResearchField) not vertex names (author, researchField)
     with ConnectionManager(connection_config=conn_conf) as db_client:
         # Verify vertex types exist (using dbnames)
-        vertex_types = db_client.conn.getVertexTypes(force=True)
+        vertex_types = db_client._get_vertex_types()
         assert "Author" in vertex_types, "Vertex type 'Author' not found"
         assert "ResearchField" in vertex_types, "Vertex type 'ResearchField' not found"
 
@@ -38,21 +38,21 @@ def test_create_vertex_index(conn_conf, schema_obj, test_graph_name):
 
         # Clean up: drop job if it exists (ignore errors)
         try:
-            db_client.conn.gsql(drop_job_cmd)
+            db_client._execute_gsql(drop_job_cmd)
         except Exception:
             pass
 
         try:
             # Create the job
-            db_client.conn.gsql(create_job_cmd)
+            db_client._execute_gsql(create_job_cmd)
 
             # Run the job
-            db_client.conn.gsql(run_job_cmd)
+            db_client._execute_gsql(run_job_cmd)
 
         except Exception as e:
             # Clean up on failure
             try:
-                db_client.conn.gsql(drop_job_cmd)
+                db_client._execute_gsql(drop_job_cmd)
             except Exception:
                 pass
             pytest.fail(f"Failed to create or run schema change job: {e}")

@@ -1,12 +1,14 @@
 """Database utilities for graph operations.
 
 This module provides utility functions for working with database operations,
-including cursor handling and data serialization.
+including cursor handling, data serialization, and schema management.
 
 Key Functions:
     - get_data_from_cursor: Retrieve data from a cursor with optional limit
     - serialize_value: Serialize non-serializable values (datetime, Decimal, etc.)
     - serialize_document: Serialize all values in a document dictionary
+    - load_reserved_words: Load reserved words for a database flavor
+    - sanitize_attribute_name: Sanitize attribute names to avoid reserved words
 
 Example:
     >>> # ArangoDB-specific AQL query (collection is ArangoDB terminology)
@@ -15,9 +17,23 @@ Example:
     >>> # Serialize datetime objects in a document
     >>> doc = {"id": 1, "created_at": datetime.now()}
     >>> serialized = serialize_document(doc)
+    >>> # Sanitize reserved words
+    >>> from graflo.onto import DBFlavor
+    >>> reserved = load_reserved_words(DBFlavor.TIGERGRAPH)
+    >>> sanitized = sanitize_attribute_name("SELECT", reserved)
 """
 
+from __future__ import annotations
+
+import json
+import logging
+from pathlib import Path
+
 from arango.exceptions import CursorNextError
+
+from graflo.onto import DBFlavor
+
+logger = logging.getLogger(__name__)
 
 
 def get_data_from_cursor(cursor, limit=None):
@@ -162,3 +178,115 @@ def json_serializer(obj):
         if not isinstance(obj, (list, dict)):
             raise TypeError(f"Type {type(obj)} not serializable")
     return serialized
+
+
+def load_reserved_words(db_flavor: DBFlavor) -> set[str]:
+    """Load reserved words for a given database flavor.
+
+    Args:
+        db_flavor: The database flavor to load reserved words for
+
+    Returns:
+        Set of reserved words (uppercase) for the database flavor.
+        Returns empty set if no reserved words file exists or for unsupported flavors.
+    """
+    if db_flavor != DBFlavor.TIGERGRAPH:
+        # Currently only TigerGraph has reserved words defined
+        return set()
+
+    # Load TigerGraph reserved words
+    json_path = Path(__file__).parent / "tigergraph" / "reserved_words.json"
+    try:
+        with open(json_path, "r") as f:
+            reserved_data = json.load(f)
+    except FileNotFoundError:
+        logger.warning(
+            f"Could not find reserved_words.json at {json_path}, "
+            f"no reserved word sanitization will be performed"
+        )
+        return set()
+    except json.JSONDecodeError as e:
+        logger.warning(
+            f"Could not parse reserved_words.json: {e}, "
+            f"no reserved word sanitization will be performed"
+        )
+        return set()
+
+    reserved_words = set()
+    reserved_words.update(
+        reserved_data.get("reserved_words", {}).get("gsql_keywords", [])
+    )
+    reserved_words.update(
+        reserved_data.get("reserved_words", {}).get("cpp_keywords", [])
+    )
+
+    # Return uppercase set for case-insensitive comparison
+    return {word.upper() for word in reserved_words}
+
+
+def sanitize_attribute_name(
+    name: str, reserved_words: set[str], suffix: str = "_attr"
+) -> str:
+    """Sanitize an attribute name to avoid reserved words.
+
+    This function deterministically replaces reserved attribute names with
+    modified versions. The algorithm:
+    1. Checks if the name (case-insensitive) is in the reserved words set
+    2. If reserved, appends a suffix (default: "_attr")
+    3. If the modified name is still reserved, appends a numeric suffix
+       incrementally until a non-reserved name is found
+
+    The algorithm is deterministic: the same input always produces the same output.
+
+    Args:
+        name: The attribute name to sanitize
+        reserved_words: Set of reserved words (uppercase) to avoid
+        suffix: Suffix to append if name is reserved (default: "_attr")
+
+    Returns:
+        Sanitized attribute name that is not in the reserved words set
+
+    Examples:
+        >>> reserved = {"SELECT", "FROM", "WHERE"}
+        >>> sanitize_attribute_name("name", reserved)
+        'name'
+        >>> sanitize_attribute_name("SELECT", reserved)
+        'SELECT_attr'
+        >>> sanitize_attribute_name("SELECT_attr", reserved)
+        'SELECT_attr_1'
+    """
+    if not name:
+        return name
+
+    if not reserved_words:
+        return name
+
+    name_upper = name.upper()
+
+    # If name is not reserved, return as-is
+    if name_upper not in reserved_words:
+        return name
+
+    # Name is reserved, try appending suffix
+    candidate = f"{name}{suffix}"
+    candidate_upper = candidate.upper()
+
+    # If candidate is not reserved, use it
+    if candidate_upper not in reserved_words:
+        return candidate
+
+    # Candidate is also reserved, append numeric suffix
+    counter = 1
+    while True:
+        candidate = f"{name}{suffix}_{counter}"
+        candidate_upper = candidate.upper()
+        if candidate_upper not in reserved_words:
+            return candidate
+        counter += 1
+        # Safety check to avoid infinite loop (should never happen in practice)
+        if counter > 1000:
+            logger.warning(
+                f"Could not find non-reserved name for '{name}' after 1000 attempts, "
+                f"returning '{candidate}'"
+            )
+            return candidate

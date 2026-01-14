@@ -468,6 +468,7 @@ class TestConcurrency:
 
         assert len(errors) == 0
 
+    @pytest.mark.slow
     def test_mixed_read_write_load(self, conn_conf, test_graph_name, clean_db):
         """Mixed concurrent read/write workload."""
         _ = clean_db
