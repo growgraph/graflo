@@ -4,7 +4,7 @@ A framework for transforming **tabular** (CSV, SQL) and **hierarchical** data (J
 
 > **⚠️ Package Renamed**: This package was formerly known as `graphcast`.
 
-![Python](https://img.shields.io/badge/python-3.10-blue.svg) 
+![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg) 
 [![PyPI version](https://badge.fury.io/py/graflo.svg)](https://badge.fury.io/py/graflo)
 [![PyPI Downloads](https://static.pepy.tech/badge/graflo)](https://pepy.tech/projects/graflo)
 [![License: BSL](https://img.shields.io/badge/license-BSL--1.1-green)](https://github.com/growgraph/graflo/blob/main/LICENSE)
@@ -227,9 +227,11 @@ To run unit tests
 pytest test
 ```
 
+> **Note**: Tests require external database containers (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph) to be running. CI builds intentionally skip test execution. Tests must be run locally with the required database images started (see [Test databases](#test-databases) section above).
+
 ## Requirements
 
-- Python 3.10+
+- Python 3.11+ (Python 3.11 and 3.12 are officially supported)
 - python-arango
 - sqlalchemy>=2.0.0 (for PostgreSQL and SQL data sources)
 

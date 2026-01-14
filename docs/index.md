@@ -2,7 +2,7 @@
 
 graflo is a framework for transforming **tabular** data (CSV, SQL) and **hierarchical** data (JSON, XML) into property graphs and ingesting them into graph databases (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph). **Automatically infer schemas from normalized PostgreSQL databases (3NF)** with proper primary keys (PK) and foreign keys (FK) - uses intelligent heuristics to detect vertices and edges!
 
-![Python](https://img.shields.io/badge/python-3.10-blue.svg) 
+![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg) 
 [![PyPI version](https://badge.fury.io/py/graflo.svg)](https://badge.fury.io/py/graflo)
 [![PyPI Downloads](https://static.pepy.tech/badge/graflo)](https://pepy.tech/projects/graflo)
 [![License: BSL](https://img.shields.io/badge/license-BSL--1.1-green)](https://github.com/growgraph/graflo/blob/main/LICENSE)
@@ -95,7 +95,7 @@ Resources define how data is transformed into a graph (semantic mapping). They w
 
 ## Requirements
 
-- Python 3.10 or higher
+- Python 3.11 or higher (Python 3.11 and 3.12 are officially supported)
 - Graph database (Neo4j, ArangoDB, TigerGraph, FalkorDB, or Memgraph) for storage
 - Optional: PostgreSQL or other SQL databases for data sources (with automatic schema inference support)
 - Dependencies as specified in pyproject.toml
