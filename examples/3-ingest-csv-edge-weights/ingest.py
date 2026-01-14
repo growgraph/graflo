@@ -17,6 +17,7 @@ schema = Schema.from_dict(FileHandle.load("schema.yaml"))
 conn_conf = Neo4jConfig.from_docker_env()
 
 # from graflo.db.connection.onto import TigergraphConfig
+#
 # conn_conf = TigergraphConfig.from_docker_env()
 
 # Alternative: Create config directly or use environment variables

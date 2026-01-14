@@ -195,3 +195,68 @@ class TestTigergraphConfigFromEnv:
         assert lake_config.username == "lake_tg"
         assert lake_config.password == "lake_tg_pass"
         assert lake_config.database == "lake_tg_db"
+
+    def test_uri_without_scheme(self, monkeypatch):
+        """Test that URIs without scheme (host:port format) are handled correctly."""
+        # Set URI without scheme
+        monkeypatch.setenv("TIGERGRAPH_URI", "localhost:14240")
+        monkeypatch.setenv("TIGERGRAPH_USERNAME", "testuser")
+
+        config = TigergraphConfig.from_env()
+
+        # Should normalize to include scheme
+        assert config.uri == "http://localhost:14240"
+        assert config.port == "14240"
+        assert config.hostname == "localhost"
+        assert config.protocol == "http"
+
+    def test_port_conflict_warning(self, monkeypatch):
+        """Test that port conflicts between URI and gs_port generate a warning."""
+        import warnings
+
+        # Set both URI with port and gs_port with different value
+        monkeypatch.setenv("TIGERGRAPH_URI", "http://localhost:14240")
+        monkeypatch.setenv("TIGERGRAPH_GS_PORT", "9000")
+        monkeypatch.setenv("TIGERGRAPH_USERNAME", "testuser")
+
+        # Capture warnings
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            config = TigergraphConfig.from_env()
+
+            # Should have a warning about port conflict
+            assert len(w) > 0
+            assert any("Port conflict" in str(warning.message) for warning in w)
+            assert any("14240" in str(warning.message) for warning in w)
+            assert any("9000" in str(warning.message) for warning in w)
+
+        # Port from URI should be preferred
+        assert config.uri == "http://localhost:14240"
+        assert config.port == "14240"
+        # gs_port should be updated to match URI port
+        assert config.gs_port == 14240
+
+    def test_port_no_conflict_when_matching(self, monkeypatch):
+        """Test that no warning is generated when URI port matches gs_port."""
+        import warnings
+
+        # Set both URI with port and gs_port with same value
+        monkeypatch.setenv("TIGERGRAPH_URI", "http://localhost:14240")
+        monkeypatch.setenv("TIGERGRAPH_GS_PORT", "14240")
+        monkeypatch.setenv("TIGERGRAPH_USERNAME", "testuser")
+
+        # Capture warnings
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            config = TigergraphConfig.from_env()
+
+            # Should have no port conflict warnings
+            port_conflict_warnings = [
+                warning for warning in w if "Port conflict" in str(warning.message)
+            ]
+            assert len(port_conflict_warnings) == 0
+
+        # Both should match
+        assert config.uri == "http://localhost:14240"
+        assert config.port == "14240"
+        assert config.gs_port == 14240

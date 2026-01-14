@@ -1,4 +1,6 @@
 import abc
+import logging
+import warnings
 from pathlib import Path
 from strenum import StrEnum
 from typing import Any, Dict, Type, TypeVar
@@ -9,6 +11,8 @@ from pydantic import AliasChoices
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from graflo.onto import MetaEnum
+
+logger = logging.getLogger(__name__)
 
 # Type variable for DBConfig subclasses
 T = TypeVar("T", bound="DBConfig")
@@ -126,24 +130,148 @@ class DBConfig(BaseSettings, abc.ABC):
         return self._get_effective_schema()
 
     @model_validator(mode="after")
-    def _add_default_port_to_uri(self):
-        """Add default port to URI if missing."""
+    def _normalize_uri(self):
+        """Normalize URI: handle URIs without scheme and add default port if missing."""
         if self.uri is None:
             return self
 
+        # Valid URL schemes (common database protocols)
+        valid_schemes = {
+            "http",
+            "https",
+            "bolt",
+            "bolt+s",
+            "bolt+ssc",
+            "neo4j",
+            "neo4j+s",
+            "neo4j+ssc",
+            "mongodb",
+            "postgresql",
+            "postgres",
+            "mysql",
+            "nebula",
+            "redis",  # FalkorDB uses redis:// protocol
+            "rediss",  # Redis with SSL
+        }
+
+        # Try to parse as-is first
         parsed = urlparse(self.uri)
-        if parsed.port is not None:
+
+        # Check if parsed scheme is actually a valid scheme or if it's a hostname
+        # urlparse treats "localhost:14240" as scheme="localhost", path="14240"
+        # We need to detect this case
+        has_valid_scheme = parsed.scheme.lower() in valid_schemes
+        has_netloc = bool(parsed.netloc)
+
+        # If scheme doesn't look like a valid scheme and we have a colon, treat as host:port
+        if not has_valid_scheme and ":" in self.uri and not self.uri.startswith("//"):
+            # Check if it looks like host:port format
+            parts = self.uri.split(":", 1)
+            if len(parts) == 2:
+                potential_host = parts[0]
+                port_and_rest = parts[1]
+                # Extract port (may have path/query after it)
+                port_part = port_and_rest.split("/")[0].split("?")[0].split("#")[0]
+                try:
+                    # Validate port is numeric
+                    int(port_part)
+                    # If hostname doesn't look like a scheme (contains dots, is localhost, etc.)
+                    # or if the parsed scheme is not in valid schemes, treat as host:port
+                    if (
+                        "." in potential_host
+                        or potential_host.lower() in {"localhost", "127.0.0.1"}
+                        or not has_valid_scheme
+                    ):
+                        # Reconstruct as proper URI with default scheme
+                        default_scheme = "http"  # Default to http for most DBs
+                        rest = port_and_rest[len(port_part) :]  # Everything after port
+                        self.uri = (
+                            f"{default_scheme}://{potential_host}:{port_part}{rest}"
+                        )
+                        parsed = urlparse(self.uri)
+                except ValueError:
+                    # Not a valid port, treat as regular URI - add scheme if needed
+                    if not has_valid_scheme:
+                        default_scheme = "http"
+                        self.uri = f"{default_scheme}://{self.uri}"
+                        parsed = urlparse(self.uri)
+        elif not has_valid_scheme and not has_netloc:
+            # No valid scheme and no netloc - add default scheme
+            default_scheme = "http"
+            self.uri = f"{default_scheme}://{self.uri}"
+            parsed = urlparse(self.uri)
+
+        # Add default port if missing
+        if parsed.port is None:
+            default_port = self._get_default_port()
+            if parsed.scheme and parsed.hostname:
+                # Reconstruct URI with port
+                port_part = f":{default_port}" if default_port else ""
+                path_part = parsed.path or ""
+                query_part = f"?{parsed.query}" if parsed.query else ""
+                fragment_part = f"#{parsed.fragment}" if parsed.fragment else ""
+                self.uri = f"{parsed.scheme}://{parsed.hostname}{port_part}{path_part}{query_part}{fragment_part}"
+
+        return self
+
+    @model_validator(mode="after")
+    def _check_port_conflicts(self):
+        """Check for port conflicts between URI and separate port fields.
+
+        If port is provided both in URI and as a separate field, warn and prefer URI port.
+        This ensures consistency and avoids confusion.
+        """
+        if self.uri is None:
             return self
 
-        # Add default port
-        default_port = self._get_default_port()
-        if parsed.scheme and parsed.hostname:
-            # Reconstruct URI with port
-            port_part = f":{default_port}" if default_port else ""
-            path_part = parsed.path or ""
-            query_part = f"?{parsed.query}" if parsed.query else ""
-            fragment_part = f"#{parsed.fragment}" if parsed.fragment else ""
-            self.uri = f"{parsed.scheme}://{parsed.hostname}{port_part}{path_part}{query_part}{fragment_part}"
+        uri_port = self.port  # Get port from URI
+        if uri_port is None:
+            return self
+
+        # Check for port fields in subclasses
+        # Get model fields to check for port-related fields
+        port_fields = []
+
+        # Check for specific port fields that might exist in subclasses
+        # Use getattr with None default to avoid AttributeError
+        if hasattr(self, "gs_port"):
+            gs_port_val = getattr(self, "gs_port", None)
+            if gs_port_val is not None:
+                port_fields.append(("gs_port", gs_port_val))
+
+        if hasattr(self, "bolt_port"):
+            bolt_port_val = getattr(self, "bolt_port", None)
+            if bolt_port_val is not None:
+                port_fields.append(("bolt_port", bolt_port_val))
+
+        # Check each port field for conflicts
+        port_conflicts = []
+        for field_name, field_port in port_fields:
+            # Compare as strings to handle int vs str differences
+            if str(field_port) != str(uri_port):
+                port_conflicts.append((field_name, field_port, uri_port))
+
+        # Warn about conflicts and prefer URI port
+        if port_conflicts:
+            conflict_msgs = [
+                f"{field_name}={field_port} (URI has port={uri_port})"
+                for field_name, field_port, _ in port_conflicts
+            ]
+            warning_msg = (
+                f"Port conflict detected: Port specified both in URI ({uri_port}) "
+                f"and as separate field(s): {', '.join(conflict_msgs)}. "
+                f"Using port from URI ({uri_port}). Consider removing the separate port field(s)."
+            )
+            warnings.warn(warning_msg, UserWarning, stacklevel=2)
+            logger.warning(warning_msg)
+
+            # Update port fields to match URI port (prefer URI)
+            for field_name, _, _ in port_conflicts:
+                try:
+                    setattr(self, field_name, int(uri_port))
+                except (ValueError, AttributeError):
+                    # Field might be read-only or not settable, that's okay
+                    pass
 
         return self
 
@@ -613,9 +741,13 @@ class TigergraphConfig(DBConfig):
         Note: gs_port should be explicitly set. Standard ports:
         - 14240: GSQL server (primary interface)
         - 9000: REST++ (internal-only in TG 4.1+)
+
+        If port is provided both in URI and as gs_port, the port from URI will be used
+        and a warning will be issued.
         """
         super().__init__(**data)
         # No default values - ports must be explicitly configured
+        # Port conflicts are handled by _check_port_conflicts validator in base class
 
     @classmethod
     def from_docker_env(

@@ -26,7 +26,7 @@ Example:
 import contextlib
 import json
 import logging
-from typing import Any, cast
+from typing import Any
 
 
 import requests
@@ -241,19 +241,24 @@ class TigerGraphConnection(Connection):
         # IMPORTANT: You should provide BOTH username/password AND secret:
         # - username/password: Used for initial connection and GSQL operations
         # - secret: Generates token that works for both GSQL and REST API operations
+        # Use graph-specific token (is_global=False) for better security
         self.api_token: str | None = None
         if config.secret:
             try:
                 token, expiration = self._get_token_from_secret(
-                    config.secret, self.graphname
+                    config.secret,
+                    self.graphname,  # Pass graph name for graph-specific token
                 )
                 self.api_token = token
                 if expiration:
                     logger.info(
-                        f"Successfully obtained API token (expires: {expiration})"
+                        f"Successfully obtained API token for graph '{self.graphname}' "
+                        f"(expires: {expiration})"
                     )
                 else:
-                    logger.info("Successfully obtained API token")
+                    logger.info(
+                        f"Successfully obtained API token for graph '{self.graphname}'"
+                    )
             except Exception as e:
                 # Log and fall back to username/password authentication
                 logger.warning(f"Failed to get authentication token: {e}")
@@ -305,118 +310,317 @@ class TigerGraphConnection(Connection):
         return headers
 
     def _get_token_from_secret(
-        self, secret: str, graph_name: str, lifetime: int = 3600 * 24 * 30
+        self, secret: str, graph_name: str | None = None, lifetime: int = 3600 * 24 * 30
     ) -> tuple[str, str | None]:
         """
         Generate authentication token from secret using TigerGraph REST API.
 
-        For TigerGraph 4.0-4.2.1, uses POST /gsql/v1/auth/token endpoint.
+        Implements robust token generation with fallback logic for different TG 4.x versions:
+        - TigerGraph 4.2.2+: POST /gsql/v1/tokens (lifetime in milliseconds)
+        - TigerGraph 4.0-4.2.1: POST /gsql/v1/auth/token (lifetime in seconds)
+
+        Based on pyTigerGraph's token generation mechanism with version-specific endpoint handling.
 
         Args:
             secret: Secret string created via CREATE SECRET in GSQL
-            graph_name: Name of the graph
+            graph_name: Name of the graph (None for global token)
             lifetime: Token lifetime in seconds (default: 30 days)
 
         Returns:
             Tuple of (token, expiration_timestamp) or (token, None) if expiration not provided
+
+        Raises:
+            RuntimeError: If token generation fails after all retry attempts
         """
-        url = f"{self.gsql_url}/gsql/v1/auth/token"
+        auth_headers = self._get_auth_headers(use_basic_auth=True)
         headers = {
             "Content-Type": "application/json",
-            **self._get_auth_headers(use_basic_auth=True),
+            **auth_headers,
         }
 
-        payload = {
-            "secret": secret,
-            "graph": graph_name,
-            "lifetime": lifetime,
-        }
+        # Determine which endpoint to try based on version
+        # For TG 4.2.2+, use /gsql/v1/tokens (lifetime in milliseconds)
+        # For TG 4.0-4.2.1, use /gsql/v1/auth/token (lifetime in seconds)
+        use_new_endpoint = False
+        if self.tg_version:
+            import re
 
-        try:
-            response = requests.post(
-                url,
-                headers=headers,
-                data=json.dumps(payload),
-                timeout=30,
-                verify=self.ssl_verify,
+            version_match = re.search(r"(\d+)\.(\d+)\.(\d+)", self.tg_version)
+            if version_match:
+                major = int(version_match.group(1))
+                minor = int(version_match.group(2))
+                patch = int(version_match.group(3))
+                # Use new endpoint for 4.2.2+
+                use_new_endpoint = (major, minor, patch) >= (4, 2, 2)
+
+        # Try endpoints in order: new endpoint first (if version >= 4.2.2), then fallback
+        endpoints_to_try = []
+        if use_new_endpoint:
+            # Try new endpoint first for 4.2.2+
+            endpoints_to_try.append(
+                (
+                    f"{self.gsql_url}/gsql/v1/tokens",
+                    {
+                        "secret": secret,
+                        "graph": graph_name,
+                        "lifetime": lifetime * 1000,  # Convert to milliseconds
+                    },
+                    True,  # lifetime in milliseconds
+                )
             )
-            response.raise_for_status()
-            result = response.json()
+            # Fallback to old endpoint if new one fails
+            endpoints_to_try.append(
+                (
+                    f"{self.gsql_url}/gsql/v1/auth/token",
+                    {
+                        "secret": secret,
+                        "graph": graph_name,
+                        "lifetime": lifetime,  # In seconds
+                    },
+                    False,  # lifetime in seconds
+                )
+            )
+        else:
+            # For older versions or unknown version, try old endpoint first
+            endpoints_to_try.append(
+                (
+                    f"{self.gsql_url}/gsql/v1/auth/token",
+                    {
+                        "secret": secret,
+                        "graph": graph_name,
+                        "lifetime": lifetime,  # In seconds
+                    },
+                    False,  # lifetime in seconds
+                )
+            )
+            # Fallback to new endpoint (in case version detection was wrong)
+            endpoints_to_try.append(
+                (
+                    f"{self.gsql_url}/gsql/v1/tokens",
+                    {
+                        "secret": secret,
+                        "graph": graph_name,
+                        "lifetime": lifetime * 1000,  # Convert to milliseconds
+                    },
+                    True,  # lifetime in milliseconds
+                )
+            )
 
-            # Extract token and expiration from response
-            # Response format: {"token": "...", "expiration": "..."} or {"token": "..."}
-            token = result.get("token")
-            expiration = result.get("expiration")
+        last_error: Exception | None = None
+        for url, payload, _is_milliseconds in endpoints_to_try:
+            try:
+                # Remove None values from payload
+                clean_payload = {k: v for k, v in payload.items() if v is not None}
 
-            if token:
-                return (token, expiration)
-            else:
-                raise ValueError(f"No token in response: {result}")
-        except Exception as e:
-            logger.error(f"Failed to get token from secret: {e}")
-            raise
+                response = requests.post(
+                    url,
+                    headers=headers,
+                    json=clean_payload,  # Use json parameter instead of data
+                    timeout=30,
+                    verify=self.ssl_verify,
+                )
+
+                # Check for 404 - might indicate wrong endpoint or port issue
+                if response.status_code == 404:
+                    # Try port fallback (similar to pyTigerGraph's _req method)
+                    # If using wrong port, try GSQL port
+                    if (
+                        "/gsql" in url
+                        and self.config.port is not None
+                        and self.config.gs_port is not None
+                        and self.config.port != self.config.gs_port
+                    ):
+                        logger.debug(f"404 on {url}, trying GSQL port fallback...")
+                        # Replace port in URL with GSQL port
+                        fallback_url = url.replace(
+                            f":{self.config.port}", f":{self.config.gs_port}"
+                        )
+                        try:
+                            response = requests.post(
+                                fallback_url,
+                                headers=headers,
+                                json=clean_payload,
+                                timeout=30,
+                                verify=self.ssl_verify,
+                            )
+                            if response.status_code == 200:
+                                url = fallback_url  # Update URL for logging
+                        except Exception:
+                            pass  # Continue to next endpoint
+
+                response.raise_for_status()
+                result = response.json()
+
+                # Parse response (both endpoints return similar format)
+                # Format: {"token": "...", "expiration": "...", "error": false, "message": "..."}
+                # or {"token": "..."} for older versions
+                if result.get("error") is True:
+                    error_msg = result.get("message", "Unknown error")
+                    raise RuntimeError(f"Token generation failed: {error_msg}")
+
+                token = result.get("token")
+                expiration = result.get("expiration")
+
+                if token:
+                    logger.debug(
+                        f"Successfully obtained token from {url} "
+                        f"(expiration: {expiration or 'not provided'})"
+                    )
+                    return (token, expiration)
+                else:
+                    raise ValueError(f"No token in response: {result}")
+
+            except requests.exceptions.HTTPError as e:
+                # If 404 and we have more endpoints to try, continue
+                if e.response.status_code == 404 and len(endpoints_to_try) > 1:
+                    logger.debug(
+                        f"Endpoint {url} returned 404, trying next endpoint..."
+                    )
+                    last_error = e
+                    continue
+                # For other HTTP errors, log and try next endpoint if available
+                logger.debug(
+                    f"HTTP error {e.response.status_code} on {url}: {e.response.text}"
+                )
+                last_error = e
+                continue
+            except Exception as e:
+                logger.debug(f"Error trying {url}: {e}")
+                last_error = e
+                continue
+
+        # All endpoints failed
+        error_msg = f"Failed to get token from secret after trying {len(endpoints_to_try)} endpoint(s)"
+        if last_error:
+            error_msg += f": {last_error}"
+        logger.error(error_msg)
+        raise RuntimeError(error_msg)
 
     def _get_version(self) -> str | None:
         """
         Get TigerGraph version using REST API.
 
-        Uses GET /version endpoint which returns version information.
+        Tries multiple endpoints in order:
+        1. GET /gsql/v1/version (GSQL server, port 14240) - primary for TG 4+
+        2. GET /version (REST++ server, port 9000) - fallback for older versions
+
+        Note: The /version endpoint does NOT exist on GSQL port (14240).
+        It only exists on REST++ port (9000) for older versions.
 
         Returns:
             Version string (e.g., "4.2.1") or None if detection fails
         """
-        # Try /version endpoint first (works for REST++ port)
-        # Use GSQL port for version detection (standard port 14240)
+        import re
+
         if self.config.gs_port is None:
             raise ValueError("gs_port must be set in config for version detection")
-        base_url = f"{self.config.url_without_port}:{self.config.gs_port}"
-        url = f"{base_url}/version"
 
+        # Try GSQL endpoint first (primary for TigerGraph 4+)
+        # Note: /gsql/v1/version exists on GSQL port, but /version does NOT
+        # Response format: plain text like "GSQL version: 4.2.2\n"
+        gsql_url = f"{self.gsql_url}/gsql/v1/version"
         headers = self._get_auth_headers(use_basic_auth=True)
 
         try:
             response = requests.get(
-                url, headers=headers, timeout=10, verify=self.ssl_verify
+                gsql_url, headers=headers, timeout=10, verify=self.ssl_verify
             )
             response.raise_for_status()
-            result = response.json()
 
-            # Parse version from response message
-            # Format: "TigerGraph RESTPP: --- Version --- product release_4.2.1_..."
-            message = result.get("message", "")
-            import re
+            if not response.text.strip():
+                # Empty response
+                logger.debug("GSQL version endpoint returned empty response")
+                raise ValueError("Empty response from GSQL version endpoint")
 
-            version_match = re.search(r"release_(\d+)\.(\d+)\.(\d+)", message)
+            # GSQL /gsql/v1/version returns plain text, not JSON
+            # Format: "GSQL version: 4.2.2\n" or similar
+            response_text = response.text.strip()
+
+            # Try to parse version from text response
+            # Format: "GSQL version: 4.2.2" or "version: 4.2.2" or "4.2.2"
+            version_match = re.search(
+                r"version:\s*(\d+)\.(\d+)\.(\d+)", response_text, re.IGNORECASE
+            )
             if version_match:
-                return f"{version_match.group(1)}.{version_match.group(2)}.{version_match.group(3)}"
-
-            # Try alternative format
-            version_match = re.search(r"(\d+)\.(\d+)\.(\d+)", message)
-            if version_match:
-                return f"{version_match.group(1)}.{version_match.group(2)}.{version_match.group(3)}"
-
-            return None
-        except Exception as e:
-            logger.debug(f"Failed to get version from /version endpoint: {e}")
-            # Try GSQL endpoint as fallback
-            try:
-                gsql_url = f"{self.gsql_url}/gsql/v1/version"
-                gsql_headers = self._get_auth_headers(use_basic_auth=True)
-                response = requests.get(
-                    gsql_url, headers=gsql_headers, timeout=10, verify=self.ssl_verify
+                version_str = f"{version_match.group(1)}.{version_match.group(2)}.{version_match.group(3)}"
+                logger.debug(
+                    f"Detected TigerGraph version: {version_str} from GSQL endpoint (text format)"
                 )
-                response.raise_for_status()
-                result = response.json()
-                # Parse similar to above
-                message = str(result)
-                import re
+                return version_str
 
+            # Try alternative: just look for version number pattern
+            version_match = re.search(r"(\d+)\.(\d+)\.(\d+)", response_text)
+            if version_match:
+                version_str = f"{version_match.group(1)}.{version_match.group(2)}.{version_match.group(3)}"
+                logger.debug(
+                    f"Detected TigerGraph version: {version_str} from GSQL endpoint (text format)"
+                )
+                return version_str
+
+            # If text parsing failed, try JSON as fallback (some versions might return JSON)
+            try:
+                result = response.json()
+                message = result.get("message", "")
+                if message:
+                    version_match = re.search(r"release_(\d+)\.(\d+)\.(\d+)", message)
+                    if version_match:
+                        version_str = f"{version_match.group(1)}.{version_match.group(2)}.{version_match.group(3)}"
+                        logger.debug(
+                            f"Detected TigerGraph version: {version_str} from GSQL endpoint (JSON format)"
+                        )
+                        return version_str
+            except ValueError:
+                # Not JSON, that's fine - we already tried text parsing
+                pass
+
+        except Exception as e:
+            logger.debug(f"Failed to get version from GSQL endpoint: {e}")
+
+        # Fallback: Try REST++ /version endpoint (for older versions or if GSQL endpoint fails)
+        # Note: /version only exists on REST++ port (9000), not GSQL port (14240)
+        try:
+            # Use REST++ port if different from GSQL port
+            restpp_port = self.config.port if self.config.port else self.config.gs_port
+            if restpp_port is None:
+                return None
+
+            restpp_url = f"{self.config.url_without_port}:{restpp_port}/version"
+            headers = self._get_auth_headers(use_basic_auth=True)
+
+            response = requests.get(
+                restpp_url, headers=headers, timeout=10, verify=self.ssl_verify
+            )
+            response.raise_for_status()
+
+            # Check content type and response
+            if not response.text.strip():
+                logger.debug("REST++ version endpoint returned empty response")
+                return None
+
+            try:
+                result = response.json()
+            except ValueError:
+                logger.debug(
+                    f"REST++ version endpoint returned non-JSON response: "
+                    f"status={response.status_code}, text={response.text[:200]}"
+                )
+                return None
+
+            # Parse version from REST++ response
+            message = result.get("message", "")
+            if message:
                 version_match = re.search(r"release_(\d+)\.(\d+)\.(\d+)", message)
                 if version_match:
-                    return f"{version_match.group(1)}.{version_match.group(2)}.{version_match.group(3)}"
-            except Exception as e2:
-                logger.debug(f"Failed to get version from GSQL endpoint: {e2}")
-            return None
+                    version_str = f"{version_match.group(1)}.{version_match.group(2)}.{version_match.group(3)}"
+                    logger.debug(
+                        f"Detected TigerGraph version: {version_str} from REST++ endpoint"
+                    )
+                    return version_str
+
+        except Exception as e:
+            logger.debug(f"Failed to get version from REST++ endpoint: {e}")
+
+        return None
 
     def _execute_gsql(self, gsql_command: str) -> str:
         """
@@ -634,32 +838,65 @@ class TigerGraphConnection(Connection):
         """
         Get edges from a vertex using REST API.
 
+        Based on pyTigerGraph's getEdges() implementation.
+        Uses GET /graph/{graph}/edges/{source_vertex_type}/{source_vertex_id} endpoint.
+
         Args:
             source_type: Source vertex type
             source_id: Source vertex ID
-            edge_type: Edge type to filter by (optional)
+            edge_type: Edge type to filter by (optional, filtered client-side)
             graph_name: Name of the graph (defaults to self.graphname)
 
         Returns:
             List of edge dictionaries
         """
         graph_name = graph_name or self.graphname
+
+        # Use the correct endpoint format matching pyTigerGraph's _prep_get_edges:
+        # GET /graph/{graph}/edges/{source_type}/{source_id}
+        # If edge_type is specified, append it: /graph/{graph}/edges/{source_type}/{source_id}/{edge_type}
         if edge_type:
+            endpoint = f"/graph/{graph_name}/edges/{source_type}/{quote(str(source_id))}/{edge_type}"
+        else:
             endpoint = (
-                f"/graph/{graph_name}/edges/{edge_type}/"
-                f"{source_type}/{quote(str(source_id))}"
+                f"/graph/{graph_name}/edges/{source_type}/{quote(str(source_id))}"
             )
-        else:
-            # Get all edges from this vertex
-            endpoint = f"/graph/{graph_name}/vertices/{source_type}/{quote(str(source_id))}/edges"
+
         result = self._call_restpp_api(endpoint, method="GET")
-        # Parse response format
-        if isinstance(result, dict) and "edges" in result:
-            return result["edges"]
+
+        # Parse REST++ API response format
+        # Response format: {"version": {...}, "error": false, "message": "", "results": [...]}
+        if isinstance(result, dict):
+            # Check for error first
+            if result.get("error") is True:
+                error_msg = result.get("message", "Unknown error")
+                logger.error(f"Error fetching edges: {error_msg}")
+                return []
+
+            # Extract results array
+            if "results" in result:
+                edges = result["results"]
+            else:
+                logger.debug(
+                    f"Unexpected response format from edges endpoint: {result.keys()}"
+                )
+                return []
         elif isinstance(result, list):
-            return result
+            edges = result
         else:
+            logger.debug(
+                f"Unexpected response type from edges endpoint: {type(result)}"
+            )
             return []
+
+        # Filter by edge_type if specified (client-side filtering)
+        # REST API endpoint doesn't support edge_type filtering directly
+        if edge_type and isinstance(edges, list):
+            edges = [
+                e for e in edges if isinstance(e, dict) and e.get("e_type") == edge_type
+            ]
+
+        return edges
 
     def _get_vertices_by_id(
         self, vertex_type: str, vertex_id: str, graph_name: str | None = None
@@ -3216,18 +3453,109 @@ class TigerGraphConnection(Connection):
             edges = self._get_edges(from_type, from_id, edge_type_str)
 
             # Parse REST API response format
-            # Returns list of dicts with format like:
-            # [{"e_type": "...", "from": {...}, "to": {...}, "attributes": {...}}, ...]
-            # Type annotation: result is list[dict[str, Any]]
+            # _get_edges() returns list of edge dicts from REST++ API
+            # Format: [{"e_type": "...", "from_id": "...", "to_id": "...", "attributes": {...}}, ...]
+            # The REST API returns edges in a flat format with e_type, from_id, to_id, attributes
             if isinstance(edges, list):
-                # Type narrowing: after isinstance check, we know it's a list
-                result = edges
+                # Process each edge to normalize format
+                result = []
+                for edge in edges:
+                    if isinstance(edge, dict):
+                        # Normalize edge format - REST API returns flat structure
+                        normalized_edge = {}
+
+                        # Extract edge type (rename e_type to edge_type for consistency)
+                        normalized_edge["edge_type"] = edge.get(
+                            "e_type", edge.get("edge_type", "")
+                        )
+
+                        # Extract from/to IDs and types
+                        normalized_edge["from_id"] = edge.get("from_id", "")
+                        normalized_edge["from_type"] = edge.get("from_type", "")
+                        normalized_edge["to_id"] = edge.get("to_id", "")
+                        normalized_edge["to_type"] = edge.get("to_type", "")
+
+                        # Handle nested "from"/"to" objects if present (some API versions)
+                        if "from" in edge and isinstance(edge["from"], dict):
+                            normalized_edge["from_id"] = edge["from"].get(
+                                "id",
+                                edge["from"].get("v_id", normalized_edge["from_id"]),
+                            )
+                            normalized_edge["from_type"] = edge["from"].get(
+                                "type",
+                                edge["from"].get(
+                                    "v_type", normalized_edge["from_type"]
+                                ),
+                            )
+
+                        if "to" in edge and isinstance(edge["to"], dict):
+                            normalized_edge["to_id"] = edge["to"].get(
+                                "id", edge["to"].get("v_id", normalized_edge["to_id"])
+                            )
+                            normalized_edge["to_type"] = edge["to"].get(
+                                "type",
+                                edge["to"].get("v_type", normalized_edge["to_type"]),
+                            )
+
+                        # Extract attributes and merge into normalized edge
+                        attributes = edge.get("attributes", {})
+                        if attributes:
+                            normalized_edge.update(attributes)
+                        else:
+                            # If no attributes key, include all other fields as attributes
+                            for k, v in edge.items():
+                                if k not in (
+                                    "e_type",
+                                    "edge_type",
+                                    "from",
+                                    "to",
+                                    "from_id",
+                                    "to_id",
+                                    "from_type",
+                                    "to_type",
+                                    "directed",
+                                ):
+                                    normalized_edge[k] = v
+
+                        result.append(normalized_edge)
             elif isinstance(edges, dict):
-                # If it's a single dict, wrap it in a list
-                result = [cast(dict[str, Any], edges)]
+                # Single edge dict - normalize and wrap in list
+                normalized_edge = {}
+                normalized_edge["edge_type"] = edges.get(
+                    "e_type", edges.get("edge_type", "")
+                )
+                normalized_edge["from_id"] = edges.get("from_id", "")
+                normalized_edge["to_id"] = edges.get("to_id", "")
+
+                if "from" in edges and isinstance(edges["from"], dict):
+                    normalized_edge["from_id"] = edges["from"].get(
+                        "id", edges["from"].get("v_id", normalized_edge["from_id"])
+                    )
+                if "to" in edges and isinstance(edges["to"], dict):
+                    normalized_edge["to_id"] = edges["to"].get(
+                        "id", edges["to"].get("v_id", normalized_edge["to_id"])
+                    )
+
+                attributes = edges.get("attributes", {})
+                if attributes:
+                    normalized_edge.update(attributes)
+                else:
+                    for k, v in edges.items():
+                        if k not in (
+                            "e_type",
+                            "edge_type",
+                            "from",
+                            "to",
+                            "from_id",
+                            "to_id",
+                        ):
+                            normalized_edge[k] = v
+
+                result = [normalized_edge]
             else:
                 # Fallback for unexpected types
                 result: list[dict[str, Any]] = []
+                logger.debug(f"Unexpected edges type: {type(edges)}")
 
             # Apply limit if specified (client-side since REST API doesn't support it)
             if limit is not None and limit > 0:
