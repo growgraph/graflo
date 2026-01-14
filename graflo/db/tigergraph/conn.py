@@ -59,11 +59,11 @@ _json_serializer = json_serializer
 logger = logging.getLogger(__name__)
 
 
-# Monkey-patch specific exception classes to add add_note() for Python 3.10 compatibility
-# Python 3.11+ already has this, but Python 3.10 doesn't
+# Monkey-patch specific exception classes to add add_note() if missing
+# Python 3.11+ has this on Exception, but some third-party exception classes may not
 # We patch specific classes since the base Exception class is immutable
 def _add_note_shim(self, note: str) -> None:
-    """Add a note to the exception (Python 3.11+ compatibility shim for Python 3.10)."""
+    """Add a note to the exception (compatibility shim for exceptions without add_note())."""
     if not hasattr(self, "_notes"):
         self._notes = []
     self._notes.append(note)
