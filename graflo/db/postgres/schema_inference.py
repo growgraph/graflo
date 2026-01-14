@@ -7,6 +7,7 @@ This module provides functionality to infer graflo Schema objects from PostgreSQ
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from graflo.architecture.edge import Edge, EdgeConfig, WeightConfig
 from graflo.architecture.onto import Index, IndexType
@@ -18,6 +19,9 @@ from ...architecture.onto_sql import EdgeTableInfo, SchemaIntrospectionResult
 from ..util import load_reserved_words, sanitize_attribute_name
 from .conn import PostgresConnection
 from .types import PostgresTypeMapper
+
+if TYPE_CHECKING:
+    from graflo.architecture.resource import Resource
 
 logger = logging.getLogger(__name__)
 
@@ -328,43 +332,89 @@ class PostgresSchemaInferencer:
         return EdgeConfig(edges=edges)
 
     def _sanitize_schema_attributes(self, schema: Schema) -> Schema:
-        """Sanitize attribute names in the schema to avoid reserved words.
+        """Sanitize attribute names and vertex names in the schema to avoid reserved words.
 
-        This method modifies Field names in vertices and edges to ensure they
-        don't conflict with reserved words for the target database flavor.
+        This method modifies:
+        - Field names in vertices and edges
+        - Vertex names themselves
+        - Edge source/target/by references to vertices
+        - Resource apply lists that reference vertices
+
         The sanitization is deterministic: the same input always produces the same output.
 
         Args:
             schema: The schema to sanitize
 
         Returns:
-            Schema with sanitized attribute names
+            Schema with sanitized attribute names and vertex names
         """
         if not self.reserved_words:
             # No reserved words to check, return schema as-is
             return schema
 
-        # Track name mappings to ensure consistency
-        name_mappings: dict[str, str] = {}
+        # Track name mappings for attributes (fields/weights)
+        attribute_mappings: dict[str, str] = {}
+        # Track name mappings for vertex names (separate from attributes)
+        vertex_mappings: dict[str, str] = {}
 
-        # Sanitize vertex field names
+        # First pass: Sanitize vertex names
+        for vertex in schema.vertex_config.vertices:
+            original_vertex_name = vertex.name
+            if original_vertex_name not in vertex_mappings:
+                sanitized_vertex_name = sanitize_attribute_name(
+                    original_vertex_name, self.reserved_words, suffix="_vertex"
+                )
+                if sanitized_vertex_name != original_vertex_name:
+                    vertex_mappings[original_vertex_name] = sanitized_vertex_name
+                    logger.debug(
+                        f"Sanitizing vertex name '{original_vertex_name}' -> '{sanitized_vertex_name}'"
+                    )
+                else:
+                    vertex_mappings[original_vertex_name] = original_vertex_name
+            else:
+                sanitized_vertex_name = vertex_mappings[original_vertex_name]
+
+            # Update vertex name if it changed
+            if sanitized_vertex_name != original_vertex_name:
+                vertex.name = sanitized_vertex_name
+                # Also update dbname if it matches the original name (default behavior)
+                if vertex.dbname == original_vertex_name or vertex.dbname is None:
+                    vertex.dbname = sanitized_vertex_name
+
+        # Rebuild VertexConfig's internal _vertices_map after renaming vertices
+        schema.vertex_config._vertices_map = {
+            vertex.name: vertex for vertex in schema.vertex_config.vertices
+        }
+
+        # Update blank_vertices references if they were sanitized
+        schema.vertex_config.blank_vertices = [
+            vertex_mappings.get(v, v) for v in schema.vertex_config.blank_vertices
+        ]
+
+        # Update force_types keys if they were sanitized
+        schema.vertex_config.force_types = {
+            vertex_mappings.get(k, k): v
+            for k, v in schema.vertex_config.force_types.items()
+        }
+
+        # Second pass: Sanitize vertex field names
         for vertex in schema.vertex_config.vertices:
             for field in vertex.fields:
                 original_name = field.name
-                if original_name not in name_mappings:
+                if original_name not in attribute_mappings:
                     sanitized_name = sanitize_attribute_name(
                         original_name, self.reserved_words
                     )
                     if sanitized_name != original_name:
-                        name_mappings[original_name] = sanitized_name
+                        attribute_mappings[original_name] = sanitized_name
                         logger.debug(
                             f"Sanitizing field name '{original_name}' -> '{sanitized_name}' "
                             f"in vertex '{vertex.name}'"
                         )
                     else:
-                        name_mappings[original_name] = original_name
+                        attribute_mappings[original_name] = original_name
                 else:
-                    sanitized_name = name_mappings[original_name]
+                    sanitized_name = attribute_mappings[original_name]
 
                 # Update field name if it changed
                 if sanitized_name != original_name:
@@ -374,35 +424,169 @@ class PostgresSchemaInferencer:
             for index in vertex.indexes:
                 updated_fields = []
                 for field_name in index.fields:
-                    sanitized_field_name = name_mappings.get(field_name, field_name)
+                    sanitized_field_name = attribute_mappings.get(
+                        field_name, field_name
+                    )
                     updated_fields.append(sanitized_field_name)
                 index.fields = updated_fields
 
-        # Sanitize edge weight field names
+        # Third pass: Update edge references to sanitized vertex names
         for edge in schema.edge_config.edges:
+            # Update source vertex reference
+            if edge.source in vertex_mappings:
+                edge.source = vertex_mappings[edge.source]
+                logger.debug(
+                    f"Updated edge source reference '{edge.source}' (sanitized vertex name)"
+                )
+
+            # Update target vertex reference
+            if edge.target in vertex_mappings:
+                edge.target = vertex_mappings[edge.target]
+                logger.debug(
+                    f"Updated edge target reference '{edge.target}' (sanitized vertex name)"
+                )
+
+            # Update 'by' vertex reference for indirect edges
+            # Note: edge.by might be a vertex name or a dbname (if finish_init was already called)
+            # We check both the direct mapping and reverse lookup via dbname
+            if edge.by is not None:
+                if edge.by in vertex_mappings:
+                    # edge.by is a vertex name that needs sanitization
+                    edge.by = vertex_mappings[edge.by]
+                    logger.debug(
+                        f"Updated edge 'by' reference to '{edge.by}' (sanitized vertex name)"
+                    )
+                else:
+                    # edge.by might be a dbname - try to find the vertex that has this dbname
+                    # and check if its name was sanitized
+                    try:
+                        vertex = schema.vertex_config._get_vertex_by_name_or_dbname(
+                            edge.by
+                        )
+                        vertex_name = vertex.name
+                        if vertex_name in vertex_mappings:
+                            # This vertex was sanitized, update edge.by to use sanitized name
+                            # (finish_init will convert it back to dbname)
+                            edge.by = vertex_mappings[vertex_name]
+                            logger.debug(
+                                f"Updated edge 'by' reference from dbname '{edge.by}' "
+                                f"to sanitized vertex name '{vertex_mappings[vertex_name]}'"
+                            )
+                    except (KeyError, AttributeError):
+                        # edge.by is neither a vertex name nor a dbname we recognize
+                        # This shouldn't happen in normal operation, but we'll skip it
+                        pass
+
+            # Sanitize edge weight field names
             if edge.weights and edge.weights.direct:
                 for weight_field in edge.weights.direct:
                     original_name = weight_field.name
-                    if original_name not in name_mappings:
+                    if original_name not in attribute_mappings:
                         sanitized_name = sanitize_attribute_name(
                             original_name, self.reserved_words
                         )
                         if sanitized_name != original_name:
-                            name_mappings[original_name] = sanitized_name
+                            attribute_mappings[original_name] = sanitized_name
                             logger.debug(
                                 f"Sanitizing weight field name '{original_name}' -> "
                                 f"'{sanitized_name}' in edge '{edge.source}' -> '{edge.target}'"
                             )
                         else:
-                            name_mappings[original_name] = original_name
+                            attribute_mappings[original_name] = original_name
                     else:
-                        sanitized_name = name_mappings[original_name]
+                        sanitized_name = attribute_mappings[original_name]
 
                     # Update weight field name if it changed
                     if sanitized_name != original_name:
                         weight_field.name = sanitized_name
 
+        # Fourth pass: Re-initialize edges after vertex name sanitization
+        # This ensures edge._source, edge._target, and edge.by are correctly set
+        # with the sanitized vertex names
+        schema.edge_config.finish_init(schema.vertex_config)
+
+        # Fifth pass: Update resource apply lists that reference vertices
+        for resource in schema.resources:
+            self._sanitize_resource_vertex_references(resource, vertex_mappings)
+
         return schema
+
+    def _sanitize_resource_vertex_references(
+        self, resource: Resource, vertex_mappings: dict[str, str]
+    ) -> None:
+        """Sanitize vertex name references in a resource's apply list.
+
+        Resources can reference vertices in their apply list through:
+        - {"vertex": vertex_name} for VertexActor
+        - {"target_vertex": vertex_name, ...} for mapping actors
+        - {"source": vertex_name, "target": vertex_name} for EdgeActor
+        - Nested structures in tree_likes resources
+
+        Args:
+            resource: The resource to sanitize
+            vertex_mappings: Dictionary mapping original vertex names to sanitized names
+        """
+        if not hasattr(resource, "apply") or not resource.apply:
+            return
+
+        def sanitize_apply_item(item):
+            """Recursively sanitize vertex references in apply items."""
+            if isinstance(item, dict):
+                # Handle vertex references in dictionaries
+                sanitized_item = {}
+                for key, value in item.items():
+                    if key == "vertex" and isinstance(value, str):
+                        # {"vertex": vertex_name}
+                        sanitized_item[key] = vertex_mappings.get(value, value)
+                        if value != sanitized_item[key]:
+                            logger.debug(
+                                f"Updated resource '{resource.resource_name}' apply item: "
+                                f"'{key}': '{value}' -> '{sanitized_item[key]}'"
+                            )
+                    elif key == "target_vertex" and isinstance(value, str):
+                        # {"target_vertex": vertex_name, ...}
+                        sanitized_item[key] = vertex_mappings.get(value, value)
+                        if value != sanitized_item[key]:
+                            logger.debug(
+                                f"Updated resource '{resource.resource_name}' apply item: "
+                                f"'{key}': '{value}' -> '{sanitized_item[key]}'"
+                            )
+                    elif key in ("source", "target") and isinstance(value, str):
+                        # {"source": vertex_name, "target": vertex_name} for EdgeActor
+                        sanitized_item[key] = vertex_mappings.get(value, value)
+                        if value != sanitized_item[key]:
+                            logger.debug(
+                                f"Updated resource '{resource.resource_name}' apply item: "
+                                f"'{key}': '{value}' -> '{sanitized_item[key]}'"
+                            )
+                    elif key == "name" and isinstance(value, str):
+                        # Keep transform names as-is
+                        sanitized_item[key] = value
+                    elif key == "children" and isinstance(value, list):
+                        # Recursively sanitize children in tree_likes resources
+                        sanitized_item[key] = [
+                            sanitize_apply_item(child) for child in value
+                        ]
+                    elif isinstance(value, dict):
+                        # Recursively sanitize nested dictionaries
+                        sanitized_item[key] = sanitize_apply_item(value)
+                    elif isinstance(value, list):
+                        # Recursively sanitize lists
+                        sanitized_item[key] = [
+                            sanitize_apply_item(subitem) for subitem in value
+                        ]
+                    else:
+                        sanitized_item[key] = value
+                return sanitized_item
+            elif isinstance(item, list):
+                # Recursively sanitize lists
+                return [sanitize_apply_item(subitem) for subitem in item]
+            else:
+                # Return non-dict/list items as-is
+                return item
+
+        # Sanitize the entire apply list
+        resource.apply = [sanitize_apply_item(item) for item in resource.apply]
 
     def infer_schema(
         self,

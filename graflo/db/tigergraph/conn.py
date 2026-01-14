@@ -1922,8 +1922,8 @@ class TigerGraphConnection(Connection):
         # Estimate the size of the GSQL command to determine if we need to split it
         # Large SCHEMA_CHANGE JOBs (>30k chars) can cause parser failures with misleading errors
         # like "Missing return statement" (which is actually a parser size limit issue)
-        # We'll split into batches of approximately 20k characters per job
-        MAX_JOB_SIZE = 20000  # characters per job (conservative limit)
+        # We'll split into batches based on configurable max_job_size (default: 1000)
+        MAX_JOB_SIZE = self.config.max_job_size
 
         # Calculate accurate size estimation
         # Actual format:
@@ -2041,8 +2041,24 @@ class TigerGraphConnection(Connection):
                 result = self._execute_gsql(full_gsql)
                 logger.debug(f"Schema change batch {batch_idx + 1} result: {result}")
 
-                # Check if result indicates an error - be more lenient with error detection
+                # Check if result indicates success - should contain "Local schema change succeeded." near the end
                 result_str = str(result) if result else ""
+                if result_str:
+                    # Check for success message near the end (last 500 characters to handle long outputs)
+                    result_tail = (
+                        result_str[-500:] if len(result_str) > 500 else result_str
+                    )
+                    if "Local schema change succeeded." not in result_tail:
+                        error_msg = (
+                            f"Schema change job batch {batch_idx + 1} did not report success. "
+                            f"Expected 'Local schema change succeeded.' near the end of the result. "
+                            f"Result (last 500 chars): {result_tail}"
+                        )
+                        logger.error(error_msg)
+                        logger.error(f"Full result: {result_str}")
+                        raise RuntimeError(error_msg)
+
+                # Check if result indicates an error - be more lenient with error detection
                 # Only treat as error if result explicitly contains error indicators
                 if (
                     result

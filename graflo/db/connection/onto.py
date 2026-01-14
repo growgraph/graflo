@@ -733,6 +733,12 @@ class TigergraphConfig(DBConfig):
         "for cases where certificate hostname doesn't match (e.g., internal deployments with self-signed certs). "
         "WARNING: Disabling SSL verification reduces security and should only be used in trusted environments.",
     )
+    max_job_size: int = Field(
+        default=1000,
+        description="Maximum size (in characters) for a single SCHEMA_CHANGE JOB. "
+        "Large jobs (>30k chars) can cause parser failures. The schema change will be split "
+        "into multiple batches if the estimated size exceeds this limit. Default: 1000.",
+    )
 
     def _get_default_port(self) -> int:
         """Get default TigerGraph REST++ port.
