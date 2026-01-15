@@ -26,6 +26,7 @@ Example:
 import contextlib
 import json
 import logging
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -1880,6 +1881,102 @@ class TigerGraphConnection(Connection):
             # No trailing comma needed
             return f"ADD DIRECTED EDGE {edge.relation} (\n{from_to_line}\n    )"
 
+    def _get_edge_group_create_statement(self, edges: list[Edge]) -> str:
+        """Generate ADD DIRECTED EDGE statement for a group of edges with the same relation.
+
+        TigerGraph requires edges of the same type to be created in a single statement
+        with multiple FROM/TO pairs separated by |.
+
+        Args:
+            edges: List of Edge objects with the same relation (edge type)
+
+        Returns:
+            str: GSQL ADD DIRECTED EDGE statement with multiple FROM/TO pairs
+        """
+        if not edges:
+            raise ValueError("Cannot create edge statement from empty edge list")
+
+        # Use the first edge to determine attributes and discriminator
+        # (all edges of the same relation should have the same schema)
+        first_edge = edges[0]
+        relation = first_edge.relation
+
+        # Collect indexed fields for discriminator (same logic as _get_edge_add_statement)
+        indexed_field_names = set()
+        for index in first_edge.indexes:
+            for field_name in index.fields:
+                if field_name not in ["_from", "_to"]:
+                    indexed_field_names.add(field_name)
+
+        if (
+            first_edge.relation_field
+            and first_edge.relation_field not in indexed_field_names
+        ):
+            indexed_field_names.add(first_edge.relation_field)
+
+        # Ensure indexed fields are in weights (same logic as _get_edge_add_statement)
+        if first_edge.weights is None:
+            from graflo.architecture.edge import WeightConfig
+
+            first_edge.weights = WeightConfig()
+
+        assert first_edge.weights is not None, "weights should be initialized"
+        existing_weight_names = set()
+        if first_edge.weights.direct:
+            existing_weight_names = {field.name for field in first_edge.weights.direct}
+
+        for field_name in indexed_field_names:
+            if field_name not in existing_weight_names:
+                from graflo.architecture.edge import Field
+
+                first_edge.weights.direct.append(
+                    Field(name=field_name, type=FieldType.STRING)
+                )
+
+        # Format edge attributes, excluding discriminator fields
+        edge_attrs = self._format_edge_attributes(
+            first_edge, exclude_fields=indexed_field_names
+        )
+
+        # Get field types for discriminator fields
+        field_types = {}
+        if first_edge.weights and first_edge.weights.direct:
+            for field in first_edge.weights.direct:
+                field_types[field.name] = self._get_tigergraph_type(field.type)
+
+        # Build FROM/TO pairs for all edges, separated by |
+        from_to_lines = []
+        for edge in edges:
+            # Build FROM/TO line: "FROM A, TO B" or "FROM A, TO B, DISCRIMINATOR(...)"
+            from_to_parts = [f"FROM {edge._source}", f"TO {edge._target}"]
+
+            # Add discriminator if needed (same for all edges of the same relation)
+            if indexed_field_names:
+                discriminator_parts = []
+                for field_name in sorted(indexed_field_names):
+                    field_type = field_types.get(field_name, "STRING")
+                    discriminator_parts.append(f"{field_name} {field_type}")
+
+                discriminator_str = f"DISCRIMINATOR({', '.join(discriminator_parts)})"
+                from_to_parts.append(discriminator_str)
+
+            # Combine FROM/TO and discriminator with commas on one line
+            from_to_line = ", ".join(from_to_parts)
+            from_to_lines.append(f"    {from_to_line}")
+
+        # Join all FROM/TO pairs with |
+        all_from_to = " |\n".join(from_to_lines)
+
+        # Build the complete statement
+        if edge_attrs:
+            # Has attributes - add comma after FROM/TO section
+            return (
+                f"ADD DIRECTED EDGE {relation} (\n{all_from_to},\n{edge_attrs}\n    )"
+            )
+        else:
+            # No attributes - FROM/TO section is the last thing
+            return f"ADD DIRECTED EDGE {relation} (\n{all_from_to}\n    )"
+
     @_wrap_tg_exception
     def _define_schema_local(self, schema: Schema) -> None:
         """Define TigerGraph schema locally for the current graph using a SCHEMA_CHANGE job.
@@ -1906,13 +2003,22 @@ class TigerGraphConnection(Connection):
             stmt = self._get_vertex_add_statement(vertex, vertex_config)
             schema_change_stmts.append(stmt)
 
-        # Edges
+        # Edges - group by relation since TigerGraph requires edges of the same type
+        # to be created in a single statement with multiple FROM/TO pairs
         edges_to_create = list(edge_config.edges_list(include_aux=True))
         for edge in edges_to_create:
             edge.finish_init(vertex_config)
             # Validate edge name
             _validate_tigergraph_schema_name(edge.relation, "edge")
-            stmt = self._get_edge_add_statement(edge)
+
+        # Group edges by relation
+        edges_by_relation: dict[str, list[Edge]] = defaultdict(list)
+        for edge in edges_to_create:
+            edges_by_relation[edge.relation].append(edge)
+
+        # Create one statement per relation with all FROM/TO pairs
+        for relation, edge_group in edges_by_relation.items():
+            stmt = self._get_edge_group_create_statement(edge_group)
             schema_change_stmts.append(stmt)
 
         if not schema_change_stmts:
