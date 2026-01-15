@@ -357,45 +357,17 @@ class PostgresSchemaInferencer:
         # Track name mappings for vertex names (separate from attributes)
         vertex_mappings: dict[str, str] = {}
 
-        # First pass: Sanitize vertex names
+        # First pass: Sanitize vertex dbnames
         for vertex in schema.vertex_config.vertices:
-            original_vertex_name = vertex.name
-            if original_vertex_name not in vertex_mappings:
+            if vertex.dbname not in vertex_mappings:
                 sanitized_vertex_name = sanitize_attribute_name(
-                    original_vertex_name, self.reserved_words, suffix="_vertex"
+                    vertex.dbname, self.reserved_words, suffix="_vertex"
                 )
-                if sanitized_vertex_name != original_vertex_name:
-                    vertex_mappings[original_vertex_name] = sanitized_vertex_name
+                if sanitized_vertex_name != vertex.dbname:
                     logger.debug(
-                        f"Sanitizing vertex name '{original_vertex_name}' -> '{sanitized_vertex_name}'"
+                        f"Sanitizing vertex name '{vertex.dbname}' -> '{sanitized_vertex_name}'"
                     )
-                else:
-                    vertex_mappings[original_vertex_name] = original_vertex_name
-            else:
-                sanitized_vertex_name = vertex_mappings[original_vertex_name]
-
-            # Update vertex name if it changed
-            if sanitized_vertex_name != original_vertex_name:
-                vertex.name = sanitized_vertex_name
-                # Also update dbname if it matches the original name (default behavior)
-                if vertex.dbname == original_vertex_name or vertex.dbname is None:
                     vertex.dbname = sanitized_vertex_name
-
-        # Rebuild VertexConfig's internal _vertices_map after renaming vertices
-        schema.vertex_config._vertices_map = {
-            vertex.name: vertex for vertex in schema.vertex_config.vertices
-        }
-
-        # Update blank_vertices references if they were sanitized
-        schema.vertex_config.blank_vertices = [
-            vertex_mappings.get(v, v) for v in schema.vertex_config.blank_vertices
-        ]
-
-        # Update force_types keys if they were sanitized
-        schema.vertex_config.force_types = {
-            vertex_mappings.get(k, k): v
-            for k, v in schema.vertex_config.force_types.items()
-        }
 
         # Second pass: Sanitize vertex field names
         for vertex in schema.vertex_config.vertices:
