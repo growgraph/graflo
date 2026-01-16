@@ -26,6 +26,7 @@ Example:
 import contextlib
 import json
 import logging
+import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -864,29 +865,71 @@ class TigerGraphConnection(Connection):
             logger.debug(f"Failed to get vertex types via GSQL: {e}")
             return []
 
-    def _get_edge_types(self, graph_name: str | None = None) -> list[str]:
+    def _parse_show_edge_output_with_vertices(
+        self, output: str
+    ) -> dict[str, list[tuple[str, str]]]:
         """
-        Get list of edge types using GSQL.
+        Parse SHOW EDGE * output (compact TigerGraph format).
+
+        Returns:
+            dict mapping edge_name -> list of (source_vertex, target_vertex)
+        """
+        edge_map: dict[str, list[tuple[str, str]]] = defaultdict(list)
+
+        # Match lines like:
+        # - DIRECTED EDGE contains(FROM Author, TO ResearchField|FROM ResearchField, TO ResearchField)
+        edge_line_pattern = re.compile(
+            r"-\s+(?:DIRECTED|UNDIRECTED)\s+EDGE\s+(\w+)\(([^)]+)\)"
+        )
+
+        # Match FROM X, TO Y
+        from_to_pattern = re.compile(r"FROM\s+(\w+)\s*,\s*TO\s+(\w+)")
+
+        for line in output.splitlines():
+            line = line.strip()
+            if not line.startswith("-"):
+                continue
+
+            edge_match = edge_line_pattern.search(line)
+            if not edge_match:
+                continue
+
+            edge_name = edge_match.group(1)
+            endpoints_blob = edge_match.group(2)
+
+            # Split multiple vertex pairs
+            for endpoint in endpoints_blob.split("|"):
+                ft_match = from_to_pattern.search(endpoint)
+                if ft_match:
+                    source, target = ft_match.groups()
+                    edge_map[edge_name].append((source, target))
+
+        return dict(edge_map)
+
+    def _get_edge_types(
+        self, graph_name: str | None = None
+    ) -> dict[str, list[tuple[str, str]]]:
+        """
+        Get edge types and their (source, target) vertex pairs using GSQL.
 
         Args:
             graph_name: Name of the graph (defaults to self.graphname)
 
         Returns:
-            List of edge type names
+            Dict mapping edge_type -> list of (source_vertex, target_vertex)
         """
         graph_name = graph_name or self.graphname
         try:
             result = self._execute_gsql(f"USE GRAPH {graph_name}\nSHOW EDGE *")
-            # Parse GSQL output using the proper parser
+
             if isinstance(result, str):
-                # _parse_show_edge_output returns list of tuples (edge_name, is_directed)
-                # Extract just the edge names
-                edge_tuples = self._parse_show_edge_output(result)
-                return [edge_name for edge_name, _ in edge_tuples]
-            return []
+                return self._parse_show_edge_output_with_vertices(result)
+
+            return {}
+
         except Exception as e:
-            logger.debug(f"Failed to get edge types via GSQL: {e}")
-            return []
+            logger.error(f"Failed to get edge types via GSQL: {e}")
+            return {}
 
     def _get_installed_queries(self, graph_name: str | None = None) -> list[str]:
         """

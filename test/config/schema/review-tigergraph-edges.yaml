@@ -37,4 +37,7 @@ edge_config:
     edges:
     -   source: author
         target: researchField
-        relation: belongsTo
+        relation: contains
+    -   source: researchField
+        target: researchField
+        relation: contains
