@@ -101,3 +101,44 @@ def test_schema_creation(conn_conf, test_graph_name, schema_obj):
 
             print(f"Created vertex types: {vertex_types}")
             print(f"Created edge types: {edge_types}")
+
+
+def test_schema_creation_edges(conn_conf, test_graph_name, schema_obj):
+    """Test creating schema using init_db (follows ArangoDB pattern).
+
+    Pattern: init_db creates graph, defines schema, then defines indexes.
+    Uses schema.general.name as the graph name (from test_graph fixture).
+
+    Note: In TigerGraph, vertex and edge types are global and shared between graphs.
+    The test verifies that types are created and associated with the test graph.
+    The test verifies that types are created and associated with the test graph.
+    """
+    schema_obj = schema_obj("review-tigergraph-edges")
+    # Set graph name in schema.general.name; conn_conf.database is set by fixture
+    schema_obj.general.name = test_graph_name
+
+    with ConnectionManager(connection_config=conn_conf) as db_client:
+        # init_db will: create graph, define schema, define indexes
+        # Graph name comes from schema.general.name
+        db_client.init_db(schema_obj, clean_start=True)
+
+    with ConnectionManager(connection_config=conn_conf) as db_client:
+        # Verify graph exists (using name from schema.general.name)
+        assert db_client.graph_exists(test_graph_name)
+
+        # Use the graph context to verify schema
+        # getVertexTypes() and getEdgeTypes() require graph context via _ensure_graph_context
+        with db_client._ensure_graph_context(test_graph_name):
+            # Verify schema was created
+            vertex_types = db_client._get_vertex_types()
+            edge_types = db_client._get_edge_types()
+
+            # Check expected types exist
+            assert len(vertex_types) > 0, "No vertex types created"
+            assert len(edge_types) == 1, "No edge types created"
+            assert len(edge_types["contains"]) == 2, (
+                "Should have to edges for relation `contains`"
+            )
+
+            print(f"Created vertex types: {vertex_types}")
+            print(f"Created edge types: {edge_types}")
