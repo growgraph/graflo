@@ -1,0 +1,53 @@
+general:
+    name: tigergraph-sanitize-edges
+resources:
+-   resource_name: parcels
+    apply:
+    -   vertex: parcel
+    -   map:
+            parcel_id: id
+-   resource_name: boxes
+    apply:
+    -   vertex: box
+    -   map:
+            box_id: id
+-   resource_name: containers
+    apply:
+    -   vertex: container
+    -   map:
+            container_name: name
+vertex_config:
+    db_flavor: tigergraph
+    vertices:
+    -   name: parcel
+        fields:
+        -   name: id
+            type: INT
+        indexes:
+        -   fields:
+            -   id
+    -   name: box
+        fields:
+        -   name: id
+            type: INT
+        indexes:
+        -   fields:
+            -   id
+    -   name: container
+        fields:
+        -   name
+        indexes:
+        -   fields:
+            -   name
+edge_config:
+    edges:
+    -   source: box
+        target: parcel
+        relation: contains
+    -   source: box
+        target: box
+        relation: contains
+    -   source: container
+        target: box
+        relation: contains
+

@@ -7,7 +7,9 @@ This module provides functionality to infer graflo Schema objects from PostgreSQ
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from typing import TYPE_CHECKING
+
 
 from graflo.architecture.edge import Edge, EdgeConfig, WeightConfig
 from graflo.architecture.onto import Index, IndexType
@@ -355,19 +357,17 @@ class PostgresSchemaInferencer:
         # Track name mappings for attributes (fields/weights)
         attribute_mappings: dict[str, str] = {}
         # Track name mappings for vertex names (separate from attributes)
-        vertex_mappings: dict[str, str] = {}
 
         # First pass: Sanitize vertex dbnames
         for vertex in schema.vertex_config.vertices:
-            if vertex.dbname not in vertex_mappings:
-                sanitized_vertex_name = sanitize_attribute_name(
-                    vertex.dbname, self.reserved_words, suffix="_vertex"
+            sanitized_vertex_name = sanitize_attribute_name(
+                vertex.dbname, self.reserved_words, suffix="_vertex"
+            )
+            if sanitized_vertex_name != vertex.dbname:
+                logger.debug(
+                    f"Sanitizing vertex name '{vertex.dbname}' -> '{sanitized_vertex_name}'"
                 )
-                if sanitized_vertex_name != vertex.dbname:
-                    logger.debug(
-                        f"Sanitizing vertex name '{vertex.dbname}' -> '{sanitized_vertex_name}'"
-                    )
-                    vertex.dbname = sanitized_vertex_name
+                vertex.dbname = sanitized_vertex_name
 
         # Second pass: Sanitize vertex field names
         for vertex in schema.vertex_config.vertices:
@@ -402,163 +402,354 @@ class PostgresSchemaInferencer:
                     updated_fields.append(sanitized_field_name)
                 index.fields = updated_fields
 
-        # Third pass: Update edge references to sanitized vertex names
-        for edge in schema.edge_config.edges:
-            # Update source vertex reference
-            if edge.source in vertex_mappings:
-                edge.source = vertex_mappings[edge.source]
-                logger.debug(
-                    f"Updated edge source reference '{edge.source}' (sanitized vertex name)"
-                )
+        # Third pass: Normalize edge indexes for TigerGraph
+        # TigerGraph requires that edges with the same relation have consistent source and target indexes
+        # 1) group edges by relation
+        # 2) check that for each group specified by relation the sources have the same index
+        # and separately the targets have the same index
+        # 3) if this is not the case, identify the most popular index
+        # 4) for vertices that don't comply with the chose source/target index, we want to prepare a mapping
+        # and rename relevant fields indexes
+        field_index_mappings: dict[
+            str, dict[str, str]
+        ] = {}  # vertex_name -> {old_field: new_field}
 
-            # Update target vertex reference
-            if edge.target in vertex_mappings:
-                edge.target = vertex_mappings[edge.target]
-                logger.debug(
-                    f"Updated edge target reference '{edge.target}' (sanitized vertex name)"
-                )
+        if schema.vertex_config.db_flavor == DBFlavor.TIGERGRAPH:
+            # Group edges by relation
+            edges_by_relation: dict[str | None, list[Edge]] = {}
+            for edge in schema.edge_config.edges:
+                relation = edge.relation
+                if relation not in edges_by_relation:
+                    edges_by_relation[relation] = []
+                edges_by_relation[relation].append(edge)
 
-            # Update 'by' vertex reference for indirect edges
-            # Note: edge.by might be a vertex name or a dbname (if finish_init was already called)
-            # We check both the direct mapping and reverse lookup via dbname
-            if edge.by is not None:
-                if edge.by in vertex_mappings:
-                    # edge.by is a vertex name that needs sanitization
-                    edge.by = vertex_mappings[edge.by]
-                    logger.debug(
-                        f"Updated edge 'by' reference to '{edge.by}' (sanitized vertex name)"
+            # Process each relation group
+            for relation, relation_edges in edges_by_relation.items():
+                if len(relation_edges) <= 1:
+                    # Only one edge with this relation, no normalization needed
+                    continue
+
+                # Collect all vertex/index pairs using a list to capture all occurrences
+                # This handles cases where a vertex appears multiple times in edges for the same relation
+                source_vertex_indexes: list[tuple[str, tuple[str, ...]]] = []
+                target_vertex_indexes: list[tuple[str, tuple[str, ...]]] = []
+
+                for edge in relation_edges:
+                    source_vertex = edge.source
+                    target_vertex = edge.target
+
+                    # Get primary index for source vertex
+                    source_index = schema.vertex_config.index(source_vertex)
+                    source_vertex_indexes.append(
+                        (source_vertex, tuple(source_index.fields))
                     )
-                else:
-                    # edge.by might be a dbname - try to find the vertex that has this dbname
-                    # and check if its name was sanitized
-                    try:
-                        vertex = schema.vertex_config._get_vertex_by_name_or_dbname(
-                            edge.by
-                        )
-                        vertex_name = vertex.name
-                        if vertex_name in vertex_mappings:
-                            # This vertex was sanitized, update edge.by to use sanitized name
-                            # (finish_init will convert it back to dbname)
-                            edge.by = vertex_mappings[vertex_name]
-                            logger.debug(
-                                f"Updated edge 'by' reference from dbname '{edge.by}' "
-                                f"to sanitized vertex name '{vertex_mappings[vertex_name]}'"
-                            )
-                    except (KeyError, AttributeError):
-                        # edge.by is neither a vertex name nor a dbname we recognize
-                        # This shouldn't happen in normal operation, but we'll skip it
-                        pass
 
-            # Sanitize edge weight field names
-            if edge.weights and edge.weights.direct:
-                for weight_field in edge.weights.direct:
-                    original_name = weight_field.name
-                    if original_name not in attribute_mappings:
-                        sanitized_name = sanitize_attribute_name(
-                            original_name, self.reserved_words
-                        )
-                        if sanitized_name != original_name:
-                            attribute_mappings[original_name] = sanitized_name
-                            logger.debug(
-                                f"Sanitizing weight field name '{original_name}' -> "
-                                f"'{sanitized_name}' in edge '{edge.source}' -> '{edge.target}'"
-                            )
-                        else:
-                            attribute_mappings[original_name] = original_name
-                    else:
-                        sanitized_name = attribute_mappings[original_name]
+                    # Get primary index for target vertex
+                    target_index = schema.vertex_config.index(target_vertex)
+                    target_vertex_indexes.append(
+                        (target_vertex, tuple(target_index.fields))
+                    )
 
-                    # Update weight field name if it changed
-                    if sanitized_name != original_name:
-                        weight_field.name = sanitized_name
+                # Normalize source indexes
+                self._normalize_vertex_indexes(
+                    source_vertex_indexes,
+                    relation,
+                    schema,
+                    field_index_mappings,
+                    "source",
+                )
 
-        # Fourth pass: Re-initialize edges after vertex name sanitization
-        # This ensures edge._source, edge._target, and edge.by are correctly set
-        # with the sanitized vertex names
-        schema.edge_config.finish_init(schema.vertex_config)
+                # Normalize target indexes
+                self._normalize_vertex_indexes(
+                    target_vertex_indexes,
+                    relation,
+                    schema,
+                    field_index_mappings,
+                    "target",
+                )
 
-        # Fifth pass: Update resource apply lists that reference vertices
-        for resource in schema.resources:
-            self._sanitize_resource_vertex_references(resource, vertex_mappings)
+        # Fourth pass: the field maps from edge/relation normalization should be applied to resources:
+        # new transforms should be added mapping old index names to those identified in the previous step
+        if field_index_mappings:
+            for resource in schema.resources:
+                self._apply_field_index_mappings_to_resource(
+                    resource, field_index_mappings
+                )
 
         return schema
 
-    def _sanitize_resource_vertex_references(
-        self, resource: Resource, vertex_mappings: dict[str, str]
+    def _normalize_vertex_indexes(
+        self,
+        vertex_indexes: list[tuple[str, tuple[str, ...]]],
+        relation: str | None,
+        schema: Schema,
+        field_index_mappings: dict[str, dict[str, str]],
+        role: str,  # "source" or "target" for logging
     ) -> None:
-        """Sanitize vertex name references in a resource's apply list.
+        """Normalize vertex indexes to use the most popular index pattern.
 
-        Resources can reference vertices in their apply list through:
-        - {"vertex": vertex_name} for VertexActor
-        - {"target_vertex": vertex_name, ...} for mapping actors
-        - {"source": vertex_name, "target": vertex_name} for EdgeActor
-        - Nested structures in tree_likes resources
+        For vertices that don't match the most popular index, this method:
+        1. Creates field mappings (old_field -> new_field)
+        2. Updates vertex indexes to match the most popular pattern
+        3. Adds new fields to vertices if needed
+        4. Removes old fields that are being replaced
 
         Args:
-            resource: The resource to sanitize
-            vertex_mappings: Dictionary mapping original vertex names to sanitized names
+            vertex_indexes: List of (vertex_name, index_fields_tuple) pairs
+            relation: Relation name for logging
+            schema: Schema to update
+            field_index_mappings: Dictionary to update with field mappings
+            role: "source" or "target" for logging purposes
         """
-        if not hasattr(resource, "apply") or not resource.apply:
+        if not vertex_indexes:
             return
 
-        def sanitize_apply_item(item):
-            """Recursively sanitize vertex references in apply items."""
-            if isinstance(item, dict):
-                # Handle vertex references in dictionaries
-                sanitized_item = {}
-                for key, value in item.items():
-                    if key == "vertex" and isinstance(value, str):
-                        # {"vertex": vertex_name}
-                        sanitized_item[key] = vertex_mappings.get(value, value)
-                        if value != sanitized_item[key]:
-                            logger.debug(
-                                f"Updated resource '{resource.resource_name}' apply item: "
-                                f"'{key}': '{value}' -> '{sanitized_item[key]}'"
-                            )
-                    elif key == "target_vertex" and isinstance(value, str):
-                        # {"target_vertex": vertex_name, ...}
-                        sanitized_item[key] = vertex_mappings.get(value, value)
-                        if value != sanitized_item[key]:
-                            logger.debug(
-                                f"Updated resource '{resource.resource_name}' apply item: "
-                                f"'{key}': '{value}' -> '{sanitized_item[key]}'"
-                            )
-                    elif key in ("source", "target") and isinstance(value, str):
-                        # {"source": vertex_name, "target": vertex_name} for EdgeActor
-                        sanitized_item[key] = vertex_mappings.get(value, value)
-                        if value != sanitized_item[key]:
-                            logger.debug(
-                                f"Updated resource '{resource.resource_name}' apply item: "
-                                f"'{key}': '{value}' -> '{sanitized_item[key]}'"
-                            )
-                    elif key == "name" and isinstance(value, str):
-                        # Keep transform names as-is
-                        sanitized_item[key] = value
-                    elif key == "children" and isinstance(value, list):
-                        # Recursively sanitize children in tree_likes resources
-                        sanitized_item[key] = [
-                            sanitize_apply_item(child) for child in value
-                        ]
-                    elif isinstance(value, dict):
-                        # Recursively sanitize nested dictionaries
-                        sanitized_item[key] = sanitize_apply_item(value)
-                    elif isinstance(value, list):
-                        # Recursively sanitize lists
-                        sanitized_item[key] = [
-                            sanitize_apply_item(subitem) for subitem in value
-                        ]
-                    else:
-                        sanitized_item[key] = value
-                return sanitized_item
-            elif isinstance(item, list):
-                # Recursively sanitize lists
-                return [sanitize_apply_item(subitem) for subitem in item]
-            else:
-                # Return non-dict/list items as-is
-                return item
+        # Extract unique vertex/index pairs (a vertex might appear multiple times)
+        vertex_index_dict: dict[str, tuple[str, ...]] = {}
+        for vertex_name, index_fields in vertex_indexes:
+            # Only store first occurrence - we'll normalize all vertices together
+            if vertex_name not in vertex_index_dict:
+                vertex_index_dict[vertex_name] = index_fields
 
-        # Sanitize the entire apply list
-        resource.apply = [sanitize_apply_item(item) for item in resource.apply]
+        # Check if all indexes are consistent
+        indexes_list = list(vertex_index_dict.values())
+        indexes_set = set(indexes_list)
+        indexes_consistent = len(indexes_set) == 1
+
+        if indexes_consistent:
+            # All indexes are the same, no normalization needed
+            return
+
+        # Find most popular index
+        index_counter = Counter(indexes_list)
+        most_popular_index = index_counter.most_common(1)[0][0]
+
+        # Normalize vertices that don't match
+        for vertex_name, index_fields in vertex_index_dict.items():
+            if index_fields == most_popular_index:
+                continue
+
+            # Initialize mappings for this vertex if needed
+            if vertex_name not in field_index_mappings:
+                field_index_mappings[vertex_name] = {}
+
+            # Map old fields to new fields
+            old_fields = list(index_fields)
+            new_fields = list(most_popular_index)
+
+            # Create field-to-field mapping
+            # If lengths match, map positionally; otherwise map first field to first field
+            if len(old_fields) == len(new_fields):
+                for old_field, new_field in zip(old_fields, new_fields):
+                    if old_field != new_field:
+                        # Update existing mapping if it exists, otherwise create new one
+                        field_index_mappings[vertex_name][old_field] = new_field
+            else:
+                # If lengths don't match, map the first field
+                if old_fields and new_fields:
+                    if old_fields[0] != new_fields[0]:
+                        field_index_mappings[vertex_name][old_fields[0]] = new_fields[0]
+
+            # Update vertex index and fields
+            vertex = schema.vertex_config[vertex_name]
+            existing_field_names = {f.name for f in vertex.fields}
+
+            # Add new fields that don't exist
+            for new_field in most_popular_index:
+                if new_field not in existing_field_names:
+                    vertex.fields.append(Field(name=new_field, type=None))
+                    existing_field_names.add(new_field)
+
+            # Remove old fields that are being replaced (not in new index)
+            fields_to_remove = [
+                f
+                for f in vertex.fields
+                if f.name in old_fields and f.name not in new_fields
+            ]
+            for field_to_remove in fields_to_remove:
+                vertex.fields.remove(field_to_remove)
+
+            # Update vertex index to match the most popular one
+            vertex.indexes[0].fields = list(most_popular_index)
+
+            logger.debug(
+                f"Normalizing {role} index for vertex '{vertex_name}' in relation '{relation}': "
+                f"{old_fields} -> {new_fields}"
+            )
+
+    def _apply_field_index_mappings_to_resource(
+        self, resource: Resource, field_index_mappings: dict[str, dict[str, str]]
+    ) -> None:
+        """Apply field index mappings to TransformActor instances in a resource.
+
+        For vertices that had their indexes normalized, this method updates TransformActor
+        instances to map old field names to new field names in their Transform.map attribute.
+        Only updates TransformActors where the vertex is confirmed to be created at that level
+        (via VertexActor).
+
+        Args:
+            resource: The resource to update
+            field_index_mappings: Dictionary mapping vertex names to field mappings
+                                 (old_field -> new_field)
+        """
+        from graflo.architecture.actor import (
+            ActorWrapper,
+            DescendActor,
+            TransformActor,
+            VertexActor,
+        )
+
+        def collect_vertices_at_level(wrappers: list[ActorWrapper]) -> set[str]:
+            """Collect vertices created by VertexActor instances at the current level only.
+
+            Does not recurse into nested structures - only collects vertices from
+            the immediate level.
+
+            Args:
+                wrappers: List of ActorWrapper instances
+
+            Returns:
+                set[str]: Set of vertex names created at this level
+            """
+            vertices = set()
+            for wrapper in wrappers:
+                if isinstance(wrapper.actor, VertexActor):
+                    vertices.add(wrapper.actor.name)
+            return vertices
+
+        def update_transform_actor_maps(
+            wrapper: ActorWrapper, parent_vertices: set[str] | None = None
+        ) -> set[str]:
+            """Recursively update TransformActor instances with field index mappings.
+
+            Args:
+                wrapper: ActorWrapper instance to process
+                parent_vertices: Set of vertices available from parent levels (for nested structures)
+
+            Returns:
+                set[str]: Set of all vertices available at this level (including parent)
+            """
+            if parent_vertices is None:
+                parent_vertices = set()
+
+            # Collect vertices created at this level
+            current_level_vertices = set()
+            if isinstance(wrapper.actor, VertexActor):
+                current_level_vertices.add(wrapper.actor.name)
+
+            # All available vertices = current level + parent levels
+            all_available_vertices = current_level_vertices | parent_vertices
+
+            # Process TransformActor if present
+            if isinstance(wrapper.actor, TransformActor):
+                transform_actor: TransformActor = wrapper.actor
+
+                def apply_mappings_to_transform(
+                    mappings: dict[str, str],
+                    vertex_name: str,
+                    actor: TransformActor,
+                ) -> None:
+                    """Apply field mappings to TransformActor's transform.map attribute.
+
+                    Args:
+                        mappings: Dictionary mapping old field names to new field names
+                        vertex_name: Name of the vertex these mappings belong to (for logging)
+                        actor: The TransformActor instance to update
+                    """
+                    transform = actor.t
+                    if transform.map:
+                        # Update existing map: replace values and keys that match old field names
+                        # First, update values
+                        for map_key, map_value in transform.map.items():
+                            if isinstance(map_value, str) and map_value in mappings:
+                                transform.map[map_key] = mappings[map_value]
+
+                        # if the terminal attr not in the map - add it
+                        for k, v in mappings.items():
+                            if v not in transform.map.values():
+                                transform.map[k] = v
+                    else:
+                        # Create new map with all mappings
+                        transform.map = mappings.copy()
+
+                    # Update Transform object IO to reflect map edits
+                    actor.t._init_io_from_map(force_init=True)
+
+                    logger.debug(
+                        f"Updated TransformActor map in resource '{resource.resource_name}' "
+                        f"for vertex '{vertex_name}': {mappings}"
+                    )
+
+                target_vertex = transform_actor.vertex
+
+                if isinstance(target_vertex, str):
+                    # TransformActor has explicit target_vertex
+                    if (
+                        target_vertex in field_index_mappings
+                        and target_vertex in all_available_vertices
+                    ):
+                        mappings = field_index_mappings[target_vertex]
+                        if mappings:
+                            apply_mappings_to_transform(
+                                mappings, target_vertex, transform_actor
+                            )
+                        else:
+                            logger.debug(
+                                f"Skipping TransformActor for vertex '{target_vertex}' "
+                                f"in resource '{resource.resource_name}': no mappings needed"
+                            )
+                    else:
+                        logger.debug(
+                            f"Skipping TransformActor for vertex '{target_vertex}' "
+                            f"in resource '{resource.resource_name}': vertex not created at this level"
+                        )
+                else:
+                    # TransformActor has no target_vertex
+                    # Apply mappings from all available vertices (parent and current level)
+                    # since transformed fields will be attributed to those vertices
+                    applied_any = False
+                    for vertex in all_available_vertices:
+                        if vertex in field_index_mappings:
+                            mappings = field_index_mappings[vertex]
+                            if mappings:
+                                apply_mappings_to_transform(
+                                    mappings, vertex, transform_actor
+                                )
+                                applied_any = True
+
+                    if not applied_any:
+                        logger.debug(
+                            f"Skipping TransformActor without target_vertex "
+                            f"in resource '{resource.resource_name}': "
+                            f"no mappings found for available vertices {all_available_vertices}"
+                        )
+
+            # Recursively process nested structures (DescendActor)
+            if isinstance(wrapper.actor, DescendActor):
+                # Collect vertices from all descendants at this level
+                descendant_vertices = collect_vertices_at_level(
+                    wrapper.actor.descendants
+                )
+                all_available_vertices |= descendant_vertices
+
+                # Recursively process each descendant
+                for descendant_wrapper in wrapper.actor.descendants:
+                    nested_vertices = update_transform_actor_maps(
+                        descendant_wrapper, parent_vertices=all_available_vertices
+                    )
+                    # Merge nested vertices into available vertices
+                    all_available_vertices |= nested_vertices
+
+            return all_available_vertices
+
+        # Process the root ActorWrapper if it exists
+        if hasattr(resource, "root") and resource.root is not None:
+            update_transform_actor_maps(resource.root)
+        else:
+            logger.warning(
+                f"Resource '{resource.resource_name}' does not have a root ActorWrapper. "
+                f"Skipping field index mapping updates."
+            )
 
     def infer_schema(
         self,

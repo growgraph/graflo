@@ -20,71 +20,23 @@ import logging
 
 import pytest
 
-from graflo.architecture.edge import Edge, EdgeConfig, WeightConfig
-from graflo.architecture.resource import Resource
-from graflo.architecture.schema import Schema, SchemaMetadata
-from graflo.architecture.vertex import Field, FieldType, Vertex, VertexConfig
 from graflo.db.postgres.schema_inference import PostgresSchemaInferencer
 from graflo.onto import DBFlavor
+from test.conftest import fetch_schema_obj
 
 logger = logging.getLogger(__name__)
 
 
 @pytest.fixture
 def schema_with_reserved_words():
-    """Create a Schema object with reserved words for testing."""
-    # Create vertices with reserved words
-    package_vertex = Vertex(
-        name="package",
-        fields=[
-            Field(name="id", type=FieldType.INT),
-            Field(name="SELECT", type=FieldType.STRING),  # Reserved word
-            Field(name="FROM", type=FieldType.STRING),  # Reserved word
-            Field(name="WHERE", type=FieldType.STRING),  # Reserved word
-            Field(name="name", type=FieldType.STRING),
-        ],
-    )
+    schema_o = fetch_schema_obj("tigergraph-sanitize")
+    return schema_o
 
-    users_vertex = Vertex(
-        name="users",
-        fields=[
-            Field(name="id", type=FieldType.INT),
-            Field(name="name", type=FieldType.STRING),
-        ],
-    )
 
-    vertex_config = VertexConfig(
-        vertices=[package_vertex, users_vertex], db_flavor=DBFlavor.TIGERGRAPH
-    )
-
-    # Create edge with reserved word attributes
-    package_users_edge = Edge(
-        source="package",
-        target="users",
-        weights=WeightConfig(
-            direct=[
-                Field(name="SELECT", type=FieldType.STRING),  # Reserved word
-                Field(name="FROM", type=FieldType.STRING),  # Reserved word
-            ]
-        ),
-    )
-
-    edge_config = EdgeConfig(edges=[package_users_edge])
-
-    # Create resource with vertex reference
-    package_resource = Resource(
-        resource_name="package",
-        apply=[{"vertex": "package"}],  # Will be sanitized
-    )
-
-    schema = Schema(
-        general=SchemaMetadata(name="test_schema"),
-        vertex_config=vertex_config,
-        edge_config=edge_config,
-        resources=[package_resource],
-    )
-
-    return schema
+@pytest.fixture
+def schema_with_incompatible_edges():
+    schema_o = fetch_schema_obj("tigergraph-sanitize-edges")
+    return schema_o
 
 
 def test_vertex_name_sanitization_for_tigergraph(schema_with_reserved_words):
@@ -98,9 +50,34 @@ def test_vertex_name_sanitization_for_tigergraph(schema_with_reserved_words):
     sanitized_schema = inferencer._sanitize_schema_attributes(schema)
 
     vertex_dbnames = [v.dbname for v in sanitized_schema.vertex_config.vertices]
-    assert "package_vertex" in vertex_dbnames, (
+    assert "Package_vertex" in vertex_dbnames, (
         f"Expected 'package_vertex' in vertices after sanitization, got {vertex_dbnames}"
     )
     assert "package" not in vertex_dbnames, (
         f"Original reserved word 'package' should not be in vertices, got {vertex_dbnames}"
     )
+
+
+def test_edges_sanitization_for_tigergraph(schema_with_incompatible_edges):
+    """Test that vertex names with reserved words are sanitized for TigerGraph."""
+    schema = schema_with_incompatible_edges
+
+    # Create inferencer with TigerGraph flavor
+    inferencer = PostgresSchemaInferencer(db_flavor=DBFlavor.TIGERGRAPH)
+
+    # Sanitize the schema
+    sanitized_schema = inferencer._sanitize_schema_attributes(schema)
+
+    # sanitized_schema.to_yaml_file(
+    #     os.path.join(
+    #         os.path.dirname(__file__),
+    #         "../../config/schema/tigergraph-sanitize-edges.corrected.yaml",
+    #     )
+    # )
+
+    assert sanitized_schema.resources[-1].root.actor.descendants[0].actor.t.map == {
+        "container_name": "id"
+    }
+
+    assert sanitized_schema.vertex_config.vertices[-1].fields[0].name == "id"
+    assert sanitized_schema.vertex_config.vertices[-1].indexes[0].fields[0] == "id"
