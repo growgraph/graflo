@@ -2,7 +2,9 @@ from pathlib import Path
 
 from graflo.db import PostgresConnection
 from graflo.db.connection.onto import PostgresConfig
-from graflo.db.postgres.heuristics import logger
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def load_schema_from_sql_file(

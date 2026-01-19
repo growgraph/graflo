@@ -108,7 +108,8 @@ The `ingest()` method takes:
 You can ingest data directly from PostgreSQL tables. First, infer the schema from your PostgreSQL database:
 
 ```python
-from graflo.db.postgres import PostgresConnection, infer_schema_from_postgres, create_patterns_from_postgres
+from graflo.db.postgres import PostgresConnection
+from graflo.db.inferencer import infer_schema_from_postgres, create_patterns_from_postgres
 from graflo.db.connection.onto import PostgresConfig
 
 # Connect to PostgreSQL

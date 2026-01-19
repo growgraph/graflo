@@ -20,9 +20,10 @@ import logging
 
 import pytest
 
-from graflo.db.postgres.schema_inference import PostgresSchemaInferencer
 from graflo.onto import DBFlavor
 from test.conftest import fetch_schema_obj
+from graflo.db.sanitizer import SchemaSanitizer
+
 
 logger = logging.getLogger(__name__)
 
@@ -43,11 +44,9 @@ def test_vertex_name_sanitization_for_tigergraph(schema_with_reserved_words):
     """Test that vertex names with reserved words are sanitized for TigerGraph."""
     schema = schema_with_reserved_words
 
-    # Create inferencer with TigerGraph flavor
-    inferencer = PostgresSchemaInferencer(db_flavor=DBFlavor.TIGERGRAPH)
+    sanitizer = SchemaSanitizer(DBFlavor.TIGERGRAPH)
 
-    # Sanitize the schema
-    sanitized_schema = inferencer._sanitize_schema_attributes(schema)
+    sanitized_schema = sanitizer.sanitize(schema)
 
     vertex_dbnames = [v.dbname for v in sanitized_schema.vertex_config.vertices]
     assert "Package_vertex" in vertex_dbnames, (
@@ -62,11 +61,9 @@ def test_edges_sanitization_for_tigergraph(schema_with_incompatible_edges):
     """Test that vertex names with reserved words are sanitized for TigerGraph."""
     schema = schema_with_incompatible_edges
 
-    # Create inferencer with TigerGraph flavor
-    inferencer = PostgresSchemaInferencer(db_flavor=DBFlavor.TIGERGRAPH)
+    sanitizer = SchemaSanitizer(DBFlavor.TIGERGRAPH)
 
-    # Sanitize the schema
-    sanitized_schema = inferencer._sanitize_schema_attributes(schema)
+    sanitized_schema = sanitizer.sanitize(schema)
 
     # sanitized_schema.to_yaml_file(
     #     os.path.join(

@@ -262,7 +262,8 @@ Automatically generate a graflo Schema from your PostgreSQL database. This is th
 5. **Creates Resources**: Resource definitions are generated for each table with appropriate actors (VertexActor for vertex tables, EdgeActor for edge tables). Foreign keys are mapped to vertex matching keys.
 
 ```python
-from graflo.db.postgres import infer_schema_from_postgres
+
+from graflo.db.inferencer import infer_schema_from_postgres
 from graflo.onto import DBFlavor
 from graflo.db.connection.onto import ArangoConfig, Neo4jConfig, TigergraphConfig, FalkordbConfig
 from graflo.db import DBType
@@ -283,7 +284,7 @@ db_flavor = (
 schema = infer_schema_from_postgres(
     postgres_conn,
     schema_name="public",  # PostgreSQL schema name
-    db_flavor=db_flavor     # Target graph database flavor
+    db_flavor=db_flavor  # Target graph database flavor
 )
 ```
 
@@ -327,7 +328,8 @@ logger.info(f"Inferred schema saved to {schema_output_file}")
 Create `Patterns` that map PostgreSQL tables to resources:
 
 ```python
-from graflo.db.postgres import create_patterns_from_postgres
+
+from graflo.db.inferencer import create_patterns_from_postgres
 
 # Create patterns from PostgreSQL tables
 patterns = create_patterns_from_postgres(
@@ -402,9 +404,8 @@ from graflo.onto import DBFlavor
 from graflo.db import DBType
 from graflo.db.postgres import (
     PostgresConnection,
-    create_patterns_from_postgres,
-    infer_schema_from_postgres,
 )
+from graflo.db.inferencer import infer_schema_from_postgres, create_patterns_from_postgres
 from graflo.db.connection.onto import ArangoConfig, PostgresConfig
 
 logger = logging.getLogger(__name__)
@@ -419,6 +420,7 @@ postgres_conn = PostgresConnection(postgres_conf)
 # Step 3: Connect to target graph database
 # You can try different databases by uncommenting the desired config:
 from graflo.db.connection.onto import ArangoConfig, Neo4jConfig, TigergraphConfig, FalkordbConfig
+
 target_config = ArangoConfig.from_docker_env()  # or Neo4jConfig, TigergraphConfig, FalkordbConfig
 
 # Step 4: Infer Schema from PostgreSQL database structure
