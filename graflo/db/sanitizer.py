@@ -41,6 +41,10 @@ class SchemaSanitizer:
         """
         self.db_flavor = db_flavor
         self.reserved_words = load_reserved_words(db_flavor)
+        self.attribute_mappings: dict[str, str] = {}
+        self.vertex_mappings: dict[str, str] = {}
+        # Track relation name mappings
+        self.relation_mappings: dict[str, str] = {}
 
     def sanitize(self, schema: Schema) -> Schema:
         """Sanitize attribute names and vertex names in the schema to avoid reserved words.
@@ -63,9 +67,6 @@ class SchemaSanitizer:
             # No reserved words to check, return schema as-is
             return schema
 
-        # Track name mappings for attributes (fields/weights)
-        attribute_mappings: dict[str, str] = {}
-
         # First pass: Sanitize vertex dbnames
         for vertex in schema.vertex_config.vertices:
             sanitized_vertex_name = sanitize_attribute_name(
@@ -75,26 +76,27 @@ class SchemaSanitizer:
                 logger.debug(
                     f"Sanitizing vertex name '{vertex.dbname}' -> '{sanitized_vertex_name}'"
                 )
+                self.vertex_mappings[vertex.dbname] = sanitized_vertex_name
                 vertex.dbname = sanitized_vertex_name
 
         # Second pass: Sanitize vertex field names
         for vertex in schema.vertex_config.vertices:
             for field in vertex.fields:
                 original_name = field.name
-                if original_name not in attribute_mappings:
+                if original_name not in self.attribute_mappings:
                     sanitized_name = sanitize_attribute_name(
                         original_name, self.reserved_words
                     )
                     if sanitized_name != original_name:
-                        attribute_mappings[original_name] = sanitized_name
+                        self.attribute_mappings[original_name] = sanitized_name
                         logger.debug(
                             f"Sanitizing field name '{original_name}' -> '{sanitized_name}' "
                             f"in vertex '{vertex.name}'"
                         )
                     else:
-                        attribute_mappings[original_name] = original_name
+                        self.attribute_mappings[original_name] = original_name
                 else:
-                    sanitized_name = attribute_mappings[original_name]
+                    sanitized_name = self.attribute_mappings[original_name]
 
                 # Update field name if it changed
                 if sanitized_name != original_name:
@@ -104,11 +106,58 @@ class SchemaSanitizer:
             for index in vertex.indexes:
                 updated_fields = []
                 for field_name in index.fields:
-                    sanitized_field_name = attribute_mappings.get(
+                    sanitized_field_name = self.attribute_mappings.get(
                         field_name, field_name
                     )
                     updated_fields.append(sanitized_field_name)
                 index.fields = updated_fields
+
+        vertex_names = {vertex.dbname for vertex in schema.vertex_config.vertices}
+
+        for edge in schema.edge_config.edges:
+            if edge.relation is None:
+                continue
+
+            original_relation = edge.relation
+            new_relation_name = original_relation
+
+            # First, sanitize for reserved words
+            sanitized_relation = sanitize_attribute_name(
+                original_relation, self.reserved_words, suffix="_relation"
+            )
+            if sanitized_relation != original_relation:
+                new_relation_name = sanitized_relation
+                logger.debug(
+                    f"Sanitizing relation name '{original_relation}' -> '{sanitized_relation}' "
+                    f"to avoid reserved word"
+                )
+
+            # Then, check for collision with vertex names
+            if new_relation_name in vertex_names:
+                # Collision detected - rename relation
+                new_relation_name = f"{new_relation_name}_relation"
+
+                # Ensure the new name doesn't collide either
+                counter = 1
+                while new_relation_name in vertex_names:
+                    new_relation_name = f"{edge.relation}_relation{counter}"
+                    counter += 1
+
+                logger.debug(
+                    f"Renaming relation '{sanitized_relation if sanitized_relation != original_relation else original_relation}' "
+                    f"to '{new_relation_name}' to avoid collision with vertex name"
+                )
+
+            # Update the edge relation if it changed
+            if new_relation_name != original_relation:
+                self.relation_mappings[original_relation] = new_relation_name
+                edge.relation = new_relation_name
+
+        if self.relation_mappings:
+            logger.info(
+                f"Renamed {len(self.relation_mappings)} relation(s) due to reserved words or vertex collisions: "
+                f"{self.relation_mappings}"
+            )
 
         # Third pass: Normalize edge indexes for TigerGraph
         # TigerGraph requires that edges with the same relation have consistent source and target indexes

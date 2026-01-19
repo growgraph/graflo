@@ -72,7 +72,7 @@ class InferenceManager:
             list[Resource]: List of Resources for PostgreSQL tables
         """
         return self.mapper.map_tables_to_resources(
-            introspection_result, schema.vertex_config, schema.edge_config
+            introspection_result, schema.vertex_config, self.sanitizer
         )
 
     def infer_complete_schema(self, schema_name: str | None = None) -> Schema:
