@@ -1,8 +1,53 @@
+edge_config:
+    edges:
+    -   relation: follows
+        source: users
+        target: users
+        weights:
+            direct:
+            -   name: created_at
+                type: DATETIME
+    -   relation: purchases
+        source: users
+        target: products
+        weights:
+            direct:
+            -   name: purchase_date
+                type: DATETIME
+            -   name: quantity
+                type: INT
+            -   name: total_amount
+                type: FLOAT
 general:
-    name: public
+    name: accounting
+resources:
+-   apply:
+    -   vertex: products
+    resource_name: products
+-   apply:
+    -   vertex: users
+    resource_name: users
+-   apply:
+    -   map:
+            follower_id: id
+        target_vertex: users
+    -   map:
+            followed_id: id
+        target_vertex: users
+    resource_name: follows
+-   apply:
+    -   map:
+            user_id: id
+        target_vertex: users
+    -   map:
+            product_id: id
+        target_vertex: products
+    resource_name: purchases
+transforms: {}
 vertex_config:
+    db_flavor: tigergraph
     vertices:
-    -   name: products
+    -   dbname: products
         fields:
         -   name: id
             type: INT
@@ -17,8 +62,8 @@ vertex_config:
         indexes:
         -   fields:
             -   id
-        dbname: products
-    -   name: users
+        name: products
+    -   dbname: users
         fields:
         -   name: id
             type: INT
@@ -31,48 +76,4 @@ vertex_config:
         indexes:
         -   fields:
             -   id
-        dbname: users
-edge_config:
-    edges:
-    -   source: users
-        target: users
-        weights:
-            direct:
-            -   name: created_at
-                type: DATETIME
-        relation: follows
-    -   source: users
-        target: products
-        weights:
-            direct:
-            -   name: purchase_date
-                type: DATETIME
-            -   name: quantity
-                type: INT
-            -   name: total_amount
-                type: FLOAT
-        relation: purchases
-resources:
--   resource_name: products
-    apply:
-    -   vertex: products
--   resource_name: users
-    apply:
-    -   vertex: users
--   resource_name: follows
-    apply:
-    -   target_vertex: users
-        map:
-            follower_id: id
-    -   target_vertex: users
-        map:
-            followed_id: id
--   resource_name: purchases
-    apply:
-    -   target_vertex: users
-        map:
-            user_id: id
-    -   target_vertex: products
-        map:
-            product_id: id
-transforms: {}
+        name: users

@@ -13,15 +13,17 @@ Prerequisites:
 
 import logging
 from pathlib import Path
-import yaml
+from suthing import FileHandle
 
 from graflo.onto import DBFlavor
 from graflo.db import DBType
 from graflo import Caster
 from graflo.db.postgres import (
     PostgresConnection,
-    create_patterns_from_postgres,
+)
+from graflo.db.inferencer import (
     infer_schema_from_postgres,
+    create_patterns_from_postgres,
 )
 from graflo.db.postgres.util import load_schema_from_sql_file
 from graflo.db.connection.onto import PostgresConfig, TigergraphConfig
@@ -103,15 +105,13 @@ with PostgresConnection(postgres_conf) as postgres_conn:
         postgres_conn, schema_name="public", db_flavor=db_flavor
     )
 
+
+schema.general.name = "accounting"
 # Step 3.5: Dump inferred schema to YAML file
 schema_output_file = Path(__file__).parent / "generated-schema.yaml"
 
 # Convert schema to dict (enums are automatically converted to strings by BaseDataclass.to_dict())
-schema_dict = schema.to_dict()
-
-# Write to YAML file
-with open(schema_output_file, "w") as f:
-    yaml.safe_dump(schema_dict, f, default_flow_style=False, sort_keys=False)
+FileHandle.dump(schema.to_dict(), schema_output_file)
 
 logger.info(f"Inferred schema saved to {schema_output_file}")
 

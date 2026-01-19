@@ -7,7 +7,7 @@ This module tests the schema inference capabilities, including:
 - Resource creation
 """
 
-from graflo.db.postgres import infer_schema_from_postgres
+from graflo.db import infer_schema_from_postgres
 
 
 def test_infer_schema_from_postgres(postgres_conn, load_mock_schema):

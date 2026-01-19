@@ -143,7 +143,7 @@ caster.ingest(
 
 ```python
 from graflo.db.postgres import PostgresConnection
-from graflo.db.postgres.heuristics import infer_schema_from_postgres
+from graflo.db.inferencer import infer_schema_from_postgres
 from graflo.db.connection.onto import PostgresConfig
 from graflo import Caster
 from graflo.onto import DBFlavor

@@ -32,12 +32,16 @@ from .memgraph.conn import MemgraphConnection
 from .neo4j.conn import Neo4jConnection
 from .postgres.conn import PostgresConnection
 from .tigergraph.conn import TigerGraphConnection
+from .inferencer import infer_schema_from_postgres, create_patterns_from_postgres
+
 
 __all__ = [
     "Connection",
     "ConnectionType",
+    "create_patterns_from_postgres",
     "DBType",
     "DBConfig",
+    "infer_schema_from_postgres",
     "ConnectionManager",
     "ArangoConnection",
     "FalkordbConnection",

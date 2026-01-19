@@ -2042,7 +2042,7 @@ class TigerGraphConnection(Connection):
         # Vertices
         for vertex in vertex_config.vertices:
             # Validate vertex name
-            _validate_tigergraph_schema_name(vertex.name, "vertex")
+            _validate_tigergraph_schema_name(vertex.dbname, "vertex")
             stmt = self._get_vertex_add_statement(vertex, vertex_config)
             schema_change_stmts.append(stmt)
 

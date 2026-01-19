@@ -10,7 +10,7 @@ Key Components:
     - PostgresResourceMapper: Maps PostgreSQL tables to graflo Resources
 
 Example:
-    >>> from graflo.db.postgres.heuristics import infer_schema_from_postgres    >>> from graflo.db.postgres import PostgresConnection
+    >>> from graflo.db.inferencer import infer_schema_from_postgres    >>>     >>> from graflo.db.postgres import PostgresConnection
     >>> from graflo.db.connection.onto import PostgresConfig
     >>> config = PostgresConfig.from_docker_env()
     >>> conn = PostgresConnection(config)
@@ -19,11 +19,6 @@ Example:
 """
 
 from .conn import PostgresConnection
-from .heuristics import (
-    create_patterns_from_postgres,
-    create_resources_from_postgres,
-    infer_schema_from_postgres,
-)
 from .resource_mapping import PostgresResourceMapper
 from .schema_inference import PostgresSchemaInferencer
 
@@ -31,7 +26,4 @@ __all__ = [
     "PostgresConnection",
     "PostgresSchemaInferencer",
     "PostgresResourceMapper",
-    "infer_schema_from_postgres",
-    "create_resources_from_postgres",
-    "create_patterns_from_postgres",
 ]

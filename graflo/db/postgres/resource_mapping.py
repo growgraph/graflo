@@ -6,10 +6,9 @@ to graflo Resource objects that can be used for data ingestion.
 
 import logging
 
-from graflo.architecture.edge import EdgeConfig
 from graflo.architecture.resource import Resource
 from graflo.architecture.vertex import VertexConfig
-
+from ..sanitizer import SchemaSanitizer
 from .conn import EdgeTableInfo, SchemaIntrospectionResult
 from .fuzzy_matcher import FuzzyMatchCache
 from .inference_utils import (
@@ -224,7 +223,7 @@ class PostgresResourceMapper:
         self,
         introspection_result: SchemaIntrospectionResult,
         vertex_config: VertexConfig,
-        edge_config: EdgeConfig,
+        sanitizer: SchemaSanitizer,
     ) -> list[Resource]:
         """Map all PostgreSQL tables to Resources.
 
@@ -234,7 +233,7 @@ class PostgresResourceMapper:
         Args:
             introspection_result: Result from PostgresConnection.introspect_schema()
             vertex_config: Inferred vertex configuration
-            edge_config: Inferred edge configuration
+            sanitizer: carries mappiings
 
         Returns:
             list[Resource]: List of Resources for all tables
@@ -257,6 +256,7 @@ class PostgresResourceMapper:
         edge_tables = introspection_result.edge_tables
         for edge_table_info in edge_tables:
             try:
+                # NB: use sanitizer sanitizer.relation_mappings
                 resource = self.create_edge_resource(
                     edge_table_info, vertex_config, match_cache
                 )
