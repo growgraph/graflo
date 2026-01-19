@@ -1,0 +1,40 @@
+general:
+    name: tigergraph-sanitize
+resources:
+-   resource_name: package
+    apply:
+    -   vertex: package
+vertex_config:
+    db_flavor: tigergraph
+    vertices:
+    -   name: package
+        dbname: Package
+        fields:
+        -   name: id
+            type: INT
+        -   name: SELECT
+            type: STRING
+        -   name: FROM
+            type: STRING
+        -   name: WHERE
+            type: STRING
+        -   name: name
+            type: STRING
+        indexes:
+        -   fields:
+            -   id
+    -   name: users
+        dbname: Users
+        fields:
+        -   name: id
+            type: INT
+        -   name: name
+            type: STRING
+        indexes:
+        -   fields:
+            -   id
+edge_config:
+    edges:
+    -   source: package
+        target: users
+

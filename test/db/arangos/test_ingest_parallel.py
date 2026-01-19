@@ -8,10 +8,6 @@ def modes():
     return [
         "kg",
         "ibes",
-        # "wos_json",
-        # "lake_odds",
-        # "wos_csv",
-        # "ticker",
     ]
 
 

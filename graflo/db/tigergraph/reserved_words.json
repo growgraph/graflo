@@ -211,6 +211,7 @@
             "OPERATOR",
             "OR",
             "OR_EQ",
+            "PACKAGE",
             "PRIVATE",
             "PROTECTED",
             "PUBLIC",
