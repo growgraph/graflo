@@ -50,4 +50,9 @@ edge_config:
     -   source: container
         target: box
         relation: contains
-
+    -   source: container
+        target: container
+        relation: package
+    -   source: container
+        target: container
+        relation: box

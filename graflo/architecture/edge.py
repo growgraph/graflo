@@ -190,7 +190,12 @@ class Edge(BaseDataclass):
 
     # relation represents Class in neo4j, for arango it becomes a weight
     relation: str | None = None
-    # field that contains Class or relation
+    _relation_dbname: str | None = dataclasses.field(
+        default=None,
+        repr=False,
+        metadata={"dump": False},
+    )
+
     relation_field: str | None = None
     relation_from_key: bool = False
 
@@ -218,6 +223,14 @@ class Edge(BaseDataclass):
 
         self._source: str | None = None
         self._target: str | None = None
+
+    @property
+    def relation_dbname(self) -> str | None:
+        return self._relation_dbname or self.relation
+
+    @relation_dbname.setter
+    def relation_dbname(self, value: str | None):
+        self._relation_dbname = value
 
     def finish_init(self, vertex_config: VertexConfig):
         """Complete edge initialization with vertex configuration.
@@ -251,6 +264,9 @@ class Edge(BaseDataclass):
             # Use default relation name for TigerGraph
             # TigerGraph requires all edges to have a named type (relation)
             self.relation = DEFAULT_TIGERGRAPH_RELATION
+            # Ensure dbname follows logical relation by default
+            if self.relation_dbname is None:
+                self.relation_dbname = self.relation
 
         # TigerGraph: add relation field to weights if relation_field or relation_from_key is set
         # This ensures the relation value is included as a typed property in the edge schema

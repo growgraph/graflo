@@ -22,6 +22,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+VERTEX_SUFFIX = "vertex"
+RELATION_SUFFIX = "relation"
+
 
 class SchemaSanitizer:
     """Sanitizes schema attributes to avoid reserved words and normalize indexes.
@@ -43,8 +46,6 @@ class SchemaSanitizer:
         self.reserved_words = load_reserved_words(db_flavor)
         self.attribute_mappings: dict[str, str] = {}
         self.vertex_mappings: dict[str, str] = {}
-        # Track relation name mappings
-        self.relation_mappings: dict[str, str] = {}
 
     def sanitize(self, schema: Schema) -> Schema:
         """Sanitize attribute names and vertex names in the schema to avoid reserved words.
@@ -70,7 +71,7 @@ class SchemaSanitizer:
         # First pass: Sanitize vertex dbnames
         for vertex in schema.vertex_config.vertices:
             sanitized_vertex_name = sanitize_attribute_name(
-                vertex.dbname, self.reserved_words, suffix="_vertex"
+                vertex.dbname, self.reserved_words, suffix=f"_{VERTEX_SUFFIX}"
             )
             if sanitized_vertex_name != vertex.dbname:
                 logger.debug(
@@ -115,49 +116,33 @@ class SchemaSanitizer:
         vertex_names = {vertex.dbname for vertex in schema.vertex_config.vertices}
 
         for edge in schema.edge_config.edges:
-            if edge.relation is None:
+            if not edge.relation:
                 continue
 
-            original_relation = edge.relation
-            new_relation_name = original_relation
+            original = edge.relation_dbname
 
-            # First, sanitize for reserved words
-            sanitized_relation = sanitize_attribute_name(
-                original_relation, self.reserved_words, suffix="_relation"
+            # First pass: sanitize against reserved words
+            sanitized = sanitize_attribute_name(
+                original,
+                self.reserved_words,
+                suffix=f"_{RELATION_SUFFIX}",
             )
-            if sanitized_relation != original_relation:
-                new_relation_name = sanitized_relation
-                logger.debug(
-                    f"Sanitizing relation name '{original_relation}' -> '{sanitized_relation}' "
-                    f"to avoid reserved word"
-                )
 
-            # Then, check for collision with vertex names
-            if new_relation_name in vertex_names:
-                # Collision detected - rename relation
-                new_relation_name = f"{new_relation_name}_relation"
-
-                # Ensure the new name doesn't collide either
+            # Second pass: avoid collision with vertex names
+            if sanitized in vertex_names:
+                base = f"{sanitized}_{RELATION_SUFFIX}"
+                candidate = base
                 counter = 1
-                while new_relation_name in vertex_names:
-                    new_relation_name = f"{edge.relation}_relation{counter}"
+
+                while candidate in vertex_names:
+                    candidate = f"{base}_{counter}"
                     counter += 1
 
-                logger.debug(
-                    f"Renaming relation '{sanitized_relation if sanitized_relation != original_relation else original_relation}' "
-                    f"to '{new_relation_name}' to avoid collision with vertex name"
-                )
+                sanitized = candidate
 
-            # Update the edge relation if it changed
-            if new_relation_name != original_relation:
-                self.relation_mappings[original_relation] = new_relation_name
-                edge.relation = new_relation_name
-
-        if self.relation_mappings:
-            logger.info(
-                f"Renamed {len(self.relation_mappings)} relation(s) due to reserved words or vertex collisions: "
-                f"{self.relation_mappings}"
-            )
+            # Update only if needed
+            if sanitized != original:
+                edge.relation_dbname = sanitized
 
         # Third pass: Normalize edge indexes for TigerGraph
         # TigerGraph requires that edges with the same relation have consistent source and target indexes
@@ -175,7 +160,12 @@ class SchemaSanitizer:
             # Group edges by relation
             edges_by_relation: dict[str | None, list[Edge]] = {}
             for edge in schema.edge_config.edges:
-                relation = edge.relation
+                # Use sanitized dbname when grouping by relation for TigerGraph
+                relation = (
+                    edge.relation_dbname
+                    if edge.relation_dbname is not None
+                    else edge.relation
+                )
                 if relation not in edges_by_relation:
                     edges_by_relation[relation] = []
                 edges_by_relation[relation].append(edge)

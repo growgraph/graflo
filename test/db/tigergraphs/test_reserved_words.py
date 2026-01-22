@@ -78,3 +78,5 @@ def test_edges_sanitization_for_tigergraph(schema_with_incompatible_edges):
 
     assert sanitized_schema.vertex_config.vertices[-1].fields[0].name == "id"
     assert sanitized_schema.vertex_config.vertices[-1].indexes[0].fields[0] == "id"
+    assert sanitized_schema.edge_config.edges[-2].relation_dbname == "package_relation"
+    assert sanitized_schema.edge_config.edges[-1].relation_dbname == "box_relation"

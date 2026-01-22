@@ -1881,6 +1881,9 @@ class TigerGraphConnection(Connection):
             for field in edge.weights.direct:
                 field_types[field.name] = self._get_tigergraph_type(field.type)
 
+        # Use sanitized dbname for schema names when available
+        relation_db = edge.relation_dbname
+
         # Build FROM/TO line with discriminator
         from_to_parts = [
             f"        FROM {edge._source}",
@@ -1897,11 +1900,11 @@ class TigerGraphConnection(Connection):
             discriminator_str = f"DISCRIMINATOR({', '.join(discriminator_parts)})"
             from_to_parts.append(f"        {discriminator_str}")
             logger.info(
-                f"Added discriminator for edge {edge.relation}: {', '.join(discriminator_parts)}"
+                f"Added discriminator for edge {relation_db}: {', '.join(discriminator_parts)}"
             )
         else:
             logger.debug(
-                f"No indexed fields found for edge {edge.relation}. "
+                f"No indexed fields found for edge {relation_db}. "
                 f"Indexes: {[idx.fields for idx in edge.indexes]}, "
                 f"relation_field: {edge.relation_field}"
             )
@@ -1914,7 +1917,7 @@ class TigerGraphConnection(Connection):
             # Has attributes - add comma after FROM/TO line (which may include discriminator)
             # edge_attrs already has proper indentation, so we just need to add it after a comma
             return (
-                f"ADD DIRECTED EDGE {edge.relation} (\n"
+                f"ADD DIRECTED EDGE {relation_db} (\n"
                 f"{from_to_line},\n"
                 f"{edge_attrs}\n"
                 f"    )"
@@ -1922,7 +1925,7 @@ class TigerGraphConnection(Connection):
         else:
             # No attributes - FROM/TO line (which may include discriminator) is the last thing
             # No trailing comma needed
-            return f"ADD DIRECTED EDGE {edge.relation} (\n{from_to_line}\n    )"
+            return f"ADD DIRECTED EDGE {relation_db} (\n{from_to_line}\n    )"
 
     def _get_edge_group_create_statement(self, edges: list[Edge]) -> str:
         """Generate ADD DIRECTED EDGE statement for a group of edges with the same relation.
@@ -1942,7 +1945,7 @@ class TigerGraphConnection(Connection):
         # Use the first edge to determine attributes and discriminator
         # (all edges of the same relation should have the same schema)
         first_edge = edges[0]
-        relation = first_edge.relation
+        relation = first_edge.relation_dbname
 
         # Collect indexed fields for discriminator (same logic as _get_edge_add_statement)
         indexed_field_names = set()
@@ -2051,13 +2054,15 @@ class TigerGraphConnection(Connection):
         edges_to_create = list(edge_config.edges_list(include_aux=True))
         for edge in edges_to_create:
             edge.finish_init(vertex_config)
-            # Validate edge name
-            _validate_tigergraph_schema_name(edge.relation, "edge")
+            # Validate edge name using sanitized dbname when available
+            edge_dbname = edge.relation_dbname
+            _validate_tigergraph_schema_name(edge_dbname, "edge")
 
         # Group edges by relation
         edges_by_relation: dict[str, list[Edge]] = defaultdict(list)
         for edge in edges_to_create:
-            edges_by_relation[edge.relation].append(edge)
+            key = edge.relation_dbname
+            edges_by_relation[key].append(edge)
 
         # Create one statement per relation with all FROM/TO pairs
         for relation, edge_group in edges_by_relation.items():
@@ -2580,8 +2585,9 @@ class TigerGraphConnection(Connection):
         """
         for edge in edges:
             if edge.indexes:
+                edge_db = edge.relation_dbname
                 logger.info(
-                    f"Skipping {len(edge.indexes)} index(es) on edge '{edge.relation}': "
+                    f"Skipping {len(edge.indexes)} index(es) on edge '{edge_db}': "
                     f"TigerGraph does not support indexes on edge attributes. "
                     f"Only vertex indexes are supported."
                 )
