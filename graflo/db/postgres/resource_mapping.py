@@ -256,7 +256,6 @@ class PostgresResourceMapper:
         edge_tables = introspection_result.edge_tables
         for edge_table_info in edge_tables:
             try:
-                # NB: use sanitizer sanitizer.relation_mappings
                 resource = self.create_edge_resource(
                     edge_table_info, vertex_config, match_cache
                 )
