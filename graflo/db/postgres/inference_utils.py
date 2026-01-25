@@ -6,7 +6,7 @@ from PostgreSQL table and column names using heuristics and fuzzy matching.
 
 from typing import Any
 
-from .fuzzy_matcher import FuzzyMatchCache, FuzzyMatcher
+from graflo.hq.fuzzy_matcher import FuzzyMatcher
 
 
 def fuzzy_match_fragment(
@@ -102,13 +102,13 @@ def _extract_key_fragments(
 
 def _match_vertices_from_table_fragments(
     table_fragments: list[str],
-    match_cache: FuzzyMatchCache,
+    matcher: FuzzyMatcher,
 ) -> tuple[int | None, int | None, str | None, str | None, set[str]]:
     """Match vertices from table name fragments using left-to-right and right-to-left strategy.
 
     Args:
         table_fragments: List of fragments from table name
-        match_cache: Fuzzy match cache for vertex matching
+        matcher: Fuzzy matcher for vertex matching
 
     Returns:
         Tuple of (source_match_idx, target_match_idx, source_vertex, target_vertex, matched_vertices_set)
@@ -121,7 +121,7 @@ def _match_vertices_from_table_fragments(
 
     # Match source starting from the left
     for i, fragment in enumerate(table_fragments):
-        matched = match_cache.get_match(fragment)
+        matched = matcher.get_match(fragment)
         if matched and matched not in matched_vertices_set:
             source_match_idx = i
             source_vertex = matched
@@ -135,7 +135,7 @@ def _match_vertices_from_table_fragments(
         -1,
     ):
         fragment = table_fragments[i]
-        matched = match_cache.get_match(fragment)
+        matched = matcher.get_match(fragment)
         if matched:
             target_match_idx = i
             target_vertex = matched
@@ -153,7 +153,7 @@ def _match_vertices_from_table_fragments(
 
 def _match_vertices_from_key_fragments(
     key_fragments: list[str],
-    match_cache: FuzzyMatchCache,
+    matcher: FuzzyMatcher,
     matched_vertices_set: set[str],
     source_vertex: str | None,
     target_vertex: str | None,
@@ -162,7 +162,7 @@ def _match_vertices_from_key_fragments(
 
     Args:
         key_fragments: List of fragments extracted from key columns
-        match_cache: Fuzzy match cache for vertex matching
+        matcher: Fuzzy matcher for vertex matching
         matched_vertices_set: Set of already matched vertices (will be updated)
         source_vertex: Source vertex matched from table name (if any)
         target_vertex: Target vertex matched from table name (if any)
@@ -181,7 +181,7 @@ def _match_vertices_from_key_fragments(
 
     # Match key fragments
     for fragment in key_fragments:
-        matched = match_cache.get_match(fragment)
+        matched = matcher.get_match(fragment)
         if matched:
             if matched not in matched_vertices_set:
                 matched_vertices.append(matched)
@@ -386,7 +386,7 @@ def infer_edge_vertices_from_table_name(
     pk_columns: list[str],
     fk_columns: list[dict[str, Any]],
     vertex_table_names: list[str] | None = None,
-    match_cache: FuzzyMatchCache | None = None,
+    matcher: FuzzyMatcher | None = None,
 ) -> tuple[str | None, str | None, str | None]:
     """Infer source and target vertex names from table name and structure.
 
@@ -402,7 +402,7 @@ def infer_edge_vertices_from_table_name(
         pk_columns: List of primary key column names
         fk_columns: List of foreign key dictionaries with 'column' and 'references_table' keys
         vertex_table_names: Optional list of known vertex table names for fuzzy matching
-        match_cache: Optional pre-computed fuzzy match cache for better performance
+        matcher: Optional pre-computed fuzzy matcher for better performance (with caching enabled)
 
     Returns:
         Tuple of (source_table, target_table, relation_name) or (None, None, None) if cannot infer
@@ -410,9 +410,9 @@ def infer_edge_vertices_from_table_name(
     if vertex_table_names is None:
         vertex_table_names = []
 
-    # Use cache if provided, otherwise create a temporary one
-    if match_cache is None:
-        match_cache = FuzzyMatchCache(vertex_table_names)
+    # Use matcher if provided, otherwise create a temporary one
+    if matcher is None:
+        matcher = FuzzyMatcher(vertex_table_names, threshold=0.6, enable_cache=True)
 
     # Step 1: Detect separator and split table name
     separator = detect_separator(table_name)
@@ -428,11 +428,11 @@ def infer_edge_vertices_from_table_name(
         source_vertex,
         target_vertex,
         matched_vertices_set,
-    ) = _match_vertices_from_table_fragments(table_fragments, match_cache)
+    ) = _match_vertices_from_table_fragments(table_fragments, matcher)
 
     # Step 4: Match vertices from key fragments
     matched_vertices, key_matched_vertices = _match_vertices_from_key_fragments(
-        key_fragments, match_cache, matched_vertices_set, source_vertex, target_vertex
+        key_fragments, matcher, matched_vertices_set, source_vertex, target_vertex
     )
 
     # Step 5: Extract FK vertex names
@@ -459,14 +459,14 @@ def infer_edge_vertices_from_table_name(
 
 def _match_fragments_excluding_suffixes(
     fragments: list[str],
-    match_cache: FuzzyMatchCache,
+    matcher: FuzzyMatcher,
     common_suffixes: set[str],
 ) -> str | None:
     """Match fragments to vertices, excluding common suffixes.
 
     Args:
         fragments: List of fragments to match
-        match_cache: Fuzzy match cache for vertex matching
+        matcher: Fuzzy matcher for vertex matching
         common_suffixes: Set of common suffix strings to skip
 
     Returns:
@@ -478,7 +478,7 @@ def _match_fragments_excluding_suffixes(
         if fragment_lower in common_suffixes:
             continue
 
-        matched = match_cache.get_match(fragment)
+        matched = matcher.get_match(fragment)
         if matched:
             return matched
     return None
@@ -487,7 +487,7 @@ def _match_fragments_excluding_suffixes(
 def _try_match_without_suffix(
     fragments: list[str],
     separator: str,
-    match_cache: FuzzyMatchCache,
+    matcher: FuzzyMatcher,
     common_suffixes: set[str],
 ) -> str | None:
     """Try matching fragments after removing common suffix.
@@ -495,7 +495,7 @@ def _try_match_without_suffix(
     Args:
         fragments: List of fragments
         separator: Separator character
-        match_cache: Fuzzy match cache for vertex matching
+        matcher: Fuzzy matcher for vertex matching
         common_suffixes: Set of common suffix strings
 
     Returns:
@@ -506,7 +506,7 @@ def _try_match_without_suffix(
         if last_fragment in common_suffixes:
             # Try matching the remaining fragments
             remaining = separator.join(fragments[:-1])
-            matched = match_cache.get_match(remaining)
+            matched = matcher.get_match(remaining)
             if matched:
                 return matched
     return None
@@ -548,7 +548,7 @@ def _try_exact_match_with_suffix_removal(
 def infer_vertex_from_column_name(
     column_name: str,
     vertex_table_names: list[str] | None = None,
-    match_cache: FuzzyMatchCache | None = None,
+    matcher: FuzzyMatcher | None = None,
 ) -> str | None:
     """Infer vertex table name from a column name using robust pattern matching.
 
@@ -562,7 +562,7 @@ def infer_vertex_from_column_name(
     Args:
         column_name: Name of the column
         vertex_table_names: Optional list of known vertex table names for fuzzy matching
-        match_cache: Optional pre-computed fuzzy match cache for better performance
+        matcher: Optional pre-computed fuzzy matcher for better performance (with caching enabled)
 
     Returns:
         Inferred vertex table name or None if cannot infer
@@ -570,9 +570,9 @@ def infer_vertex_from_column_name(
     if vertex_table_names is None:
         vertex_table_names = []
 
-    # Use cache if provided, otherwise create a temporary one
-    if match_cache is None:
-        match_cache = FuzzyMatchCache(vertex_table_names)
+    # Use matcher if provided, otherwise create a temporary one
+    if matcher is None:
+        matcher = FuzzyMatcher(vertex_table_names, threshold=0.6, enable_cache=True)
 
     if not column_name:
         return None
@@ -581,7 +581,7 @@ def infer_vertex_from_column_name(
     common_suffixes = {"id", "fk", "key", "pk", "ref", "reference"}
 
     # Step 1: Try matching full column name first
-    matched = match_cache.get_match(column_name)
+    matched = matcher.get_match(column_name)
     if matched:
         return matched
 
@@ -593,16 +593,12 @@ def infer_vertex_from_column_name(
         return None
 
     # Step 3: Try matching fragments (excluding common suffixes)
-    matched = _match_fragments_excluding_suffixes(
-        fragments, match_cache, common_suffixes
-    )
+    matched = _match_fragments_excluding_suffixes(fragments, matcher, common_suffixes)
     if matched:
         return matched
 
     # Step 4: Try removing common suffix and matching again
-    matched = _try_match_without_suffix(
-        fragments, separator, match_cache, common_suffixes
-    )
+    matched = _try_match_without_suffix(fragments, separator, matcher, common_suffixes)
     if matched:
         return matched
 

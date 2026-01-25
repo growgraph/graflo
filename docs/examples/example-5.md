@@ -265,7 +265,7 @@ Automatically generate a graflo Schema from your PostgreSQL database. This is th
 
 from graflo.hq import GraphEngine
 from graflo.onto import DBFlavor
-from graflo.db.connection.onto import ArangoConfig, Neo4jConfig, TigergraphConfig, FalkordbConfig
+from graflo.db.connection.onto import ArangoConfig, Neo4jConfig, TigergraphConfig, FalkordbConfig, PostgresConfig
 from graflo.db import DBType
 
 # Connect to target graph database to determine flavor
@@ -281,9 +281,11 @@ db_flavor = (
 )
 
 # Create GraphEngine and infer schema automatically
+# Connection is automatically managed inside infer_schema()
+postgres_conf = PostgresConfig.from_docker_env()
 engine = GraphEngine(target_db_flavor=db_flavor)
 schema = engine.infer_schema(
-    postgres_conn,
+    postgres_conf,
     schema_name="public",  # PostgreSQL schema name
 )
 ```
@@ -405,9 +407,6 @@ import yaml
 from graflo import Caster
 from graflo.onto import DBFlavor
 from graflo.db import DBType
-from graflo.db.postgres import (
-    PostgresConnection,
-)
 from graflo.hq import GraphEngine
 from graflo.db.connection.onto import ArangoConfig, PostgresConfig
 
@@ -415,7 +414,6 @@ logger = logging.getLogger(__name__)
 
 # Step 1: Connect to PostgreSQL (source database)
 postgres_conf = PostgresConfig.from_docker_env()
-postgres_conn = PostgresConnection(postgres_conf)
 
 # Step 2: Initialize database with mock schema if needed
 # (Implementation details omitted - see full example in examples/5-ingest-postgres/ingest.py)
@@ -427,6 +425,7 @@ from graflo.db.connection.onto import ArangoConfig, Neo4jConfig, TigergraphConfi
 target_config = ArangoConfig.from_docker_env()  # or Neo4jConfig, TigergraphConfig, FalkordbConfig
 
 # Step 4: Infer Schema from PostgreSQL database structure
+# Connection is automatically managed inside infer_schema()
 db_type = target_config.connection_type
 db_flavor = (
     DBFlavor(db_type.value)
@@ -437,7 +436,7 @@ db_flavor = (
 # Create GraphEngine and infer schema
 engine = GraphEngine(target_db_flavor=db_flavor)
 schema = engine.infer_schema(
-    postgres_conn,
+    postgres_conf,
     schema_name="public",
 )
 
@@ -715,8 +714,10 @@ After inference, you can modify the schema:
 
 ```python
 # Create GraphEngine and infer schema
+# Connection is automatically managed inside infer_schema()
+postgres_conf = PostgresConfig.from_docker_env()
 engine = GraphEngine()
-schema = engine.infer_schema(postgres_conn, schema_name="public")
+schema = engine.infer_schema(postgres_conf, schema_name="public")
 
 # Modify schema as needed
 # Add custom transforms, filters, or additional edges

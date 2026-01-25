@@ -17,9 +17,6 @@ from suthing import FileHandle
 
 from graflo.onto import DBFlavor
 from graflo.db import DBType
-from graflo.db.postgres import (
-    PostgresConnection,
-)
 from graflo.hq import GraphEngine, IngestionParams
 from graflo.db.postgres.util import load_schema_from_sql_file
 from graflo.db.connection.onto import PostgresConfig, TigergraphConfig
@@ -29,7 +26,7 @@ logger = logging.getLogger(__name__)
 # Configure logging: INFO level for graflo module, WARNING for others
 logging.basicConfig(level=logging.WARNING, handlers=[logging.StreamHandler()])
 # Set graflo module to INFO level
-logging.getLogger("graflo").setLevel(logging.INFO)
+logging.getLogger("graflo").setLevel(logging.DEBUG)
 
 # Step 1: Connect to PostgreSQL (source database)
 # Load PostgreSQL config from docker/postgres/.env (recommended)
@@ -100,9 +97,12 @@ engine = GraphEngine(
 # This automatically detects vertex-like and edge-like tables based on:
 # - Vertex tables: Have a primary key and descriptive columns
 # - Edge tables: Have 2+ foreign keys (representing relationships)
-# Connection is automatically closed when exiting the context
-with PostgresConnection(postgres_conf) as postgres_conn:
-    schema = engine.infer_schema(postgres_conn, schema_name="public")
+# Connection is automatically managed inside infer_schema()
+# Optionally specify fuzzy_threshold (0.0 to 1.0) to control fuzzy matching sensitivity:
+# - Higher values (e.g., 0.9) = stricter matching, fewer matches
+# - Lower values (e.g., 0.7) = more lenient matching, more matches
+# Default is 0.8
+schema = engine.infer_schema(postgres_conf, schema_name="public", fuzzy_threshold=0.8)
 
 schema.general.name = "accounting"
 # Step 3.5: Dump inferred schema to YAML file

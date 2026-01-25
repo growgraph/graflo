@@ -12,7 +12,7 @@ from graflo.db.postgres.inference_utils import (
     infer_edge_vertices_from_table_name,
     split_by_separator,
 )
-from graflo.db.postgres.fuzzy_matcher import FuzzyMatchCache
+from graflo.hq.fuzzy_matcher import FuzzyMatcher
 
 
 class TestRelationIdentification:
@@ -475,7 +475,7 @@ class TestHelperFunctions:
         """Test matching vertices from table name fragments."""
         table_fragments = ["rel", "user", "purchases", "product"]
         vertex_names = ["user", "product"]
-        match_cache = FuzzyMatchCache(vertex_names)
+        matcher = FuzzyMatcher(vertex_names, threshold=0.6, enable_cache=True)
 
         (
             source_idx,
@@ -483,7 +483,7 @@ class TestHelperFunctions:
             source_vertex,
             target_vertex,
             matched_set,
-        ) = _match_vertices_from_table_fragments(table_fragments, match_cache)
+        ) = _match_vertices_from_table_fragments(table_fragments, matcher)
 
         # Should match source from left (user at index 1)
         assert source_idx == 1
@@ -499,7 +499,7 @@ class TestHelperFunctions:
         """Test matching vertices when source and target are the same."""
         table_fragments = ["user", "follows", "user"]
         vertex_names = ["user"]
-        match_cache = FuzzyMatchCache(vertex_names)
+        matcher = FuzzyMatcher(vertex_names, threshold=0.6, enable_cache=True)
 
         (
             source_idx,
@@ -507,7 +507,7 @@ class TestHelperFunctions:
             source_vertex,
             target_vertex,
             matched_set,
-        ) = _match_vertices_from_table_fragments(table_fragments, match_cache)
+        ) = _match_vertices_from_table_fragments(table_fragments, matcher)
 
         # Should match source from left
         assert source_idx == 0
@@ -521,11 +521,11 @@ class TestHelperFunctions:
         """Test matching vertices from key fragments."""
         key_fragments = ["cluster", "host", "id"]
         vertex_names = ["cluster", "host"]
-        match_cache = FuzzyMatchCache(vertex_names)
+        matcher = FuzzyMatcher(vertex_names, threshold=0.6, enable_cache=True)
         matched_set = set()
 
         matched_vertices, key_matched = _match_vertices_from_key_fragments(
-            key_fragments, match_cache, matched_set, None, None
+            key_fragments, matcher, matched_set, None, None
         )
 
         # Should match cluster and host
@@ -540,11 +540,11 @@ class TestHelperFunctions:
         """Test matching when some vertices already matched from table name."""
         key_fragments = ["cluster", "host"]
         vertex_names = ["cluster", "host", "user"]
-        match_cache = FuzzyMatchCache(vertex_names)
+        matcher = FuzzyMatcher(vertex_names, threshold=0.6, enable_cache=True)
         matched_set = {"user"}  # Already matched from table name
 
         matched_vertices, key_matched = _match_vertices_from_key_fragments(
-            key_fragments, match_cache, matched_set, "user", None
+            key_fragments, matcher, matched_set, "user", None
         )
 
         # Should include user (from table name) and cluster/host (from keys)

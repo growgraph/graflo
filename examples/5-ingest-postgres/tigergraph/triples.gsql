@@ -1,22 +1,17 @@
-CREATE OR REPLACE QUERY checkAll() FOR GRAPH public {
+CREATE OR REPLACE QUERY triples() FOR GRAPH accounting {
 
-TYPEDEF TUPLE <STRING u, STRING relation, STRING v> TRIPLE;
+TYPEDEF TUPLE <VERTEX u, EDGE relation, VERTEX v> TRIPLE;
   ListAccum<TRIPLE> @@triple_list;
 
-  /* 2. Start with users */
   Seed = {users.*};
 
-  /* 3. Capture follows (User -> User) */
   S1 = SELECT t
        FROM Seed:s -(follows:e)-> users:t
-       ACCUM @@triple_list += TRIPLE(s.name, "follows", t.name);
+       ACCUM @@triple_list += TRIPLE(s, e, t);
 
-  /* 4. Capture purchases (User -> Product) */
   S2 = SELECT t
        FROM Seed:s -(purchases:e)-> products:t
-       ACCUM @@triple_list += TRIPLE(s.name, "purchases", t.name);
+       ACCUM @@triple_list += TRIPLE(s, e, t);
 
-  /* 5. Print only the list */
-  PRINT
   PRINT @@triple_list;
 }

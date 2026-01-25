@@ -8,7 +8,7 @@ from difflib import SequenceMatcher
 
 
 class FuzzyMatcher:
-    """Improved fuzzy matcher with multiple matching strategies.
+    """Improved fuzzy matcher with multiple matching strategies and optional caching.
 
     Uses a combination of matching techniques:
     1. Exact matching (case-insensitive)
@@ -16,20 +16,30 @@ class FuzzyMatcher:
     3. Sequence similarity (difflib)
     4. Prefix/suffix matching
     5. Common pattern matching (handles id, fk, etc.)
+
+    Supports optional caching to improve performance when processing multiple fragments.
     """
 
-    def __init__(self, vertex_names: list[str], threshold: float = 0.6):
+    def __init__(
+        self, vertex_names: list[str], threshold: float = 0.8, enable_cache: bool = True
+    ):
         """Initialize the fuzzy matcher.
 
         Args:
             vertex_names: List of vertex table names to match against
             threshold: Similarity threshold (0.0 to 1.0)
+            enable_cache: Whether to enable result caching (default: True)
         """
         self.vertex_names = vertex_names
         self.threshold = threshold
+        self._enable_cache = enable_cache
         # Pre-compute lowercase versions for efficiency
         self._vertex_lower_map = {vn.lower(): vn for vn in vertex_names}
         self._vertex_lower_list = list(self._vertex_lower_map.keys())
+        # Initialize cache if enabled
+        self._cache: dict[str, str | None] = {}
+        if enable_cache:
+            self._build_cache()
 
     def match(self, fragment: str) -> tuple[str | None, float]:
         """Match a fragment against vertex names using multiple strategies.
@@ -45,9 +55,22 @@ class FuzzyMatcher:
 
         fragment_lower = fragment.lower()
 
+        # Check cache first if enabled
+        if self._enable_cache and fragment_lower in self._cache:
+            cached_match = self._cache[fragment_lower]
+            if cached_match is not None:
+                return (
+                    cached_match,
+                    1.0,
+                )  # Cached matches are treated as high confidence
+            return (None, 0.0)
+
         # Strategy 1: Exact match (highest priority, returns immediately)
         if fragment_lower in self._vertex_lower_map:
-            return (self._vertex_lower_map[fragment_lower], 1.0)
+            result = (self._vertex_lower_map[fragment_lower], 1.0)
+            if self._enable_cache:
+                self._cache[fragment_lower] = result[0]
+            return result
 
         best_match = None
         best_score = 0.0
@@ -74,7 +97,14 @@ class FuzzyMatcher:
 
         # Return match only if above threshold
         if best_score >= self.threshold:
-            return (best_match, best_score)
+            result = (best_match, best_score)
+            if self._enable_cache:
+                self._cache[fragment_lower] = best_match
+            return result
+
+        # Cache miss result
+        if self._enable_cache:
+            self._cache[fragment_lower] = None
         return (None, 0.0)
 
     def _substring_match(self, fragment_lower: str) -> tuple[str | None, float]:
@@ -214,27 +244,6 @@ class FuzzyMatcher:
 
         return (best_match, best_score)
 
-
-class FuzzyMatchCache:
-    """Cache for fuzzy matching fragments to vertex names.
-
-    Pre-computes fuzzy matches for all fragments to avoid redundant computations.
-    This significantly improves performance when processing multiple tables.
-    """
-
-    def __init__(self, vertex_names: list[str], threshold: float = 0.6):
-        """Initialize the fuzzy match cache.
-
-        Args:
-            vertex_names: List of vertex table names to match against
-            threshold: Similarity threshold (0.0 to 1.0)
-        """
-        self.vertex_names = vertex_names
-        self.threshold = threshold
-        self._matcher = FuzzyMatcher(vertex_names, threshold)
-        self._cache: dict[str, str | None] = {}
-        self._build_cache()
-
     def _build_cache(self) -> None:
         """Pre-compute fuzzy matches for common patterns."""
         # Pre-compute exact matches (case-insensitive)
@@ -249,21 +258,16 @@ class FuzzyMatchCache:
     def get_match(self, fragment: str) -> str | None:
         """Get cached fuzzy match for a fragment, computing if not cached.
 
+        Convenience method that returns only the match (not the score).
+        Uses caching when enabled.
+
         Args:
             fragment: Fragment to match
 
         Returns:
             Best matching vertex name or None if no match above threshold
         """
-        fragment_lower = fragment.lower()
-
-        # Check cache first
-        if fragment_lower in self._cache:
-            return self._cache[fragment_lower]
-
-        # Compute match if not cached using improved matcher
-        match, _ = self._matcher.match(fragment)
-        self._cache[fragment_lower] = match
+        match, _ = self.match(fragment)
         return match
 
     def batch_match(self, fragments: list[str]) -> dict[str, str | None]:
