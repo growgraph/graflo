@@ -129,7 +129,7 @@ patterns.add_file_pattern(
     FilePattern(regex="\Sjson$", sub_path=pathlib.Path("."), resource_name="work")
 )
 
-from graflo.caster import IngestionParams
+from graflo.hq.caster import IngestionParams
 
 ingestion_params = IngestionParams(
     clean_start=True,  # Wipe existing database before ingestion

@@ -83,7 +83,7 @@ registry = DataSourceRegistry()
 registry.register(api_source, resource_name="users")
 
 # Create caster and ingest
-from graflo.caster import IngestionParams
+from graflo.hq.caster import IngestionParams
 
 caster = Caster(schema)
 # Load config from file
@@ -216,7 +216,7 @@ file_source = DataSourceFactory.create_file_data_source(path="users_backup.json"
 registry.register(file_source, resource_name="users")
 
 # Both will be processed and combined
-from graflo.caster import IngestionParams
+from graflo.hq.caster import IngestionParams
 
 ingestion_params = IngestionParams()  # Use default parameters
 

@@ -115,7 +115,7 @@ patterns.add_file_pattern(
     FilePattern(regex="^relations.*\.csv$", sub_path=pathlib.Path("."), resource_name="people")
 )
 
-from graflo.caster import IngestionParams
+from graflo.hq.caster import IngestionParams
 
 caster = Caster(schema)
 

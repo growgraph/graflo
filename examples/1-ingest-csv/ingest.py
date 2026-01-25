@@ -3,7 +3,7 @@ from suthing import FileHandle
 from graflo import Caster, Patterns, Schema
 from graflo.util.onto import FilePattern
 from graflo.db.connection.onto import ArangoConfig
-from graflo.caster import IngestionParams
+from graflo.hq.caster import IngestionParams
 
 schema = Schema.from_dict(FileHandle.load("schema.yaml"))
 

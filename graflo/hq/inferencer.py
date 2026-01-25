@@ -1,9 +1,8 @@
 from graflo import Schema
-from graflo.util.onto import Patterns, TablePattern
 from graflo.architecture import Resource
 from graflo.db import PostgresConnection
 from graflo.db.postgres import PostgresSchemaInferencer, PostgresResourceMapper
-from graflo.db.sanitizer import SchemaSanitizer
+from graflo.hq.sanitizer import SchemaSanitizer
 from graflo.onto import DBFlavor
 import logging
 
@@ -126,81 +125,3 @@ class InferenceManager:
 
         # Create resources
         return self.create_resources(introspection_result, schema)
-
-
-def infer_schema_from_postgres(
-    conn: PostgresConnection,
-    schema_name: str | None = None,
-    db_flavor: DBFlavor = DBFlavor.ARANGO,
-) -> Schema:
-    """Convenience function to infer a graflo Schema from PostgreSQL database.
-
-    Args:
-        conn: PostgresConnection instance
-        schema_name: Schema name to introspect (defaults to config schema_name or 'public')
-        db_flavor: Target database flavor (defaults to ARANGO)
-
-    Returns:
-        Schema: Inferred schema with vertices, edges, and resources
-    """
-    manager = InferenceManager(conn, target_db_flavor=db_flavor)
-    return manager.infer_complete_schema(schema_name=schema_name)
-
-
-def create_patterns_from_postgres(
-    conn: PostgresConnection, schema_name: str | None = None
-) -> Patterns:
-    """Create Patterns from PostgreSQL tables.
-
-    Args:
-        conn: PostgresConnection instance
-        schema_name: Schema name to introspect
-
-    Returns:
-        Patterns: Patterns object with TablePattern instances for all tables
-    """
-
-    # Introspect the schema
-    introspection_result = conn.introspect_schema(schema_name=schema_name)
-
-    # Create patterns
-    patterns = Patterns()
-
-    # Get schema name
-    effective_schema = schema_name or introspection_result.schema_name
-
-    # Store the connection config
-    config_key = "default"
-    patterns.postgres_configs[(config_key, effective_schema)] = conn.config
-
-    # Add patterns for vertex tables
-    for table_info in introspection_result.vertex_tables:
-        table_name = table_info.name
-        table_pattern = TablePattern(
-            table_name=table_name,
-            schema_name=effective_schema,
-            resource_name=table_name,
-        )
-        patterns.table_patterns[table_name] = table_pattern
-        patterns.postgres_table_configs[table_name] = (
-            config_key,
-            effective_schema,
-            table_name,
-        )
-
-    # Add patterns for edge tables
-    for table_info in introspection_result.edge_tables:
-        table_name = table_info.name
-        table_pattern = TablePattern(
-            table_name=table_name,
-            schema_name=effective_schema,
-            resource_name=table_name,
-        )
-        patterns.table_patterns[table_name] = table_pattern
-        patterns.postgres_table_configs[table_name] = (
-            config_key,
-            effective_schema,
-            table_name,
-        )
-
-    return patterns

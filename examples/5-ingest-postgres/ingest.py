@@ -17,17 +17,12 @@ from suthing import FileHandle
 
 from graflo.onto import DBFlavor
 from graflo.db import DBType
-from graflo import Caster
 from graflo.db.postgres import (
     PostgresConnection,
 )
-from graflo.db.inferencer import (
-    infer_schema_from_postgres,
-    create_patterns_from_postgres,
-)
+from graflo.hq import GraphEngine, IngestionParams
 from graflo.db.postgres.util import load_schema_from_sql_file
 from graflo.db.connection.onto import PostgresConfig, TigergraphConfig
-from graflo.caster import IngestionParams
 
 logger = logging.getLogger(__name__)
 
@@ -95,16 +90,19 @@ else:
     logger.warning(f"Mock schema file not found: {schema_file}")
     logger.warning("Assuming PostgreSQL database is already initialized")
 
-# Step 3: Infer Schema from PostgreSQL database structure
+# Step 3: Create GraphEngine to orchestrate schema inference, pattern creation, and ingestion
+# GraphEngine coordinates all operations: schema inference, pattern mapping, and data ingestion
+engine = GraphEngine(
+    target_db_flavor=db_flavor, ingestion_params=IngestionParams(clean_start=True)
+)
+
+# Step 3.1: Infer Schema from PostgreSQL database structure
 # This automatically detects vertex-like and edge-like tables based on:
 # - Vertex tables: Have a primary key and descriptive columns
 # - Edge tables: Have 2+ foreign keys (representing relationships)
 # Connection is automatically closed when exiting the context
 with PostgresConnection(postgres_conf) as postgres_conn:
-    schema = infer_schema_from_postgres(
-        postgres_conn, schema_name="public", db_flavor=db_flavor
-    )
-
+    schema = engine.infer_schema(postgres_conn, schema_name="public")
 
 schema.general.name = "accounting"
 # Step 3.5: Dump inferred schema to YAML file
@@ -119,15 +117,14 @@ logger.info(f"Inferred schema saved to {schema_output_file}")
 # This maps PostgreSQL tables to resource patterns that Caster can use
 # Connection is automatically closed when exiting the context
 with PostgresConnection(postgres_conf) as postgres_conn:
-    patterns = create_patterns_from_postgres(postgres_conn, schema_name="public")
+    patterns = engine.create_patterns(postgres_conn, schema_name="public")
 
-# Step 5: Create Caster and ingest data
-# Note: caster.ingest() will create its own PostgreSQL connections per table internally
-
-caster = Caster(schema)
-ingestion_params = IngestionParams(clean_start=True)
-caster.ingest(
-    output_config=conn_conf, patterns=patterns, ingestion_params=ingestion_params
+# Step 5: Ingest data using GraphEngine
+# Note: ingestion will create its own PostgreSQL connections per table internally
+engine.ingest(
+    schema=schema,
+    output_config=conn_conf,
+    patterns=patterns,
 )
 
 print("\n" + "=" * 80)

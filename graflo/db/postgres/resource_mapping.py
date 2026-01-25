@@ -8,7 +8,7 @@ import logging
 
 from graflo.architecture.resource import Resource
 from graflo.architecture.vertex import VertexConfig
-from ..sanitizer import SchemaSanitizer
+from graflo.hq.sanitizer import SchemaSanitizer
 from .conn import EdgeTableInfo, SchemaIntrospectionResult
 from .fuzzy_matcher import FuzzyMatchCache
 from .inference_utils import (

@@ -10,11 +10,13 @@ Key Components:
     - PostgresResourceMapper: Maps PostgreSQL tables to graflo Resources
 
 Example:
-    >>> from graflo.db.inferencer import infer_schema_from_postgres    >>>     >>> from graflo.db.postgres import PostgresConnection
+    >>> from graflo.hq import GraphEngine
+    >>> from graflo.db.postgres import PostgresConnection
     >>> from graflo.db.connection.onto import PostgresConfig
     >>> config = PostgresConfig.from_docker_env()
     >>> conn = PostgresConnection(config)
-    >>> schema = infer_schema_from_postgres(conn, schema_name="public")
+    >>> engine = GraphEngine()
+    >>> schema = engine.infer_schema(conn, schema_name="public")
     >>> conn.close()
 """
 

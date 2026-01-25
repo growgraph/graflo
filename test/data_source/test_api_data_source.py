@@ -5,7 +5,7 @@ from os.path import dirname, realpath
 
 import pytest
 
-from graflo.caster import Caster
+from graflo.hq.caster import Caster
 from graflo.data_source import (
     APIConfig,
     APIDataSource,

@@ -10,7 +10,7 @@ from suthing import FileHandle, equals
 
 from graflo.architecture.schema import Schema
 from graflo.architecture.util import cast_graph_name_to_triple
-from graflo.caster import Caster
+from graflo.hq.caster import Caster
 from graflo.util.misc import sorted_dicts
 from graflo.util.onto import Patterns, FilePattern
 
@@ -71,7 +71,7 @@ def ingest_atomic(conn_conf, current_path, test_db_name, schema_o, mode, n_cores
         )
         patterns.add_file_pattern(resource_name, file_pattern)
 
-    from graflo.caster import IngestionParams
+    from graflo.hq.caster import IngestionParams
 
     caster = Caster(schema_o)
     ingestion_params = IngestionParams(n_cores=n_cores, clean_start=True)

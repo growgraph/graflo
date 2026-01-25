@@ -1,20 +1,22 @@
 """Tests for PostgreSQL schema inference functionality.
 
 This module tests the schema inference capabilities, including:
-- infer_schema_from_postgres() convenience function
+- GraphEngine.infer_schema_from_postgres() method
 - Vertex and edge detection
 - Field type mapping
 - Resource creation
 """
 
-from graflo.db import infer_schema_from_postgres
+from graflo.hq import GraphEngine
+from graflo.onto import DBFlavor
 
 
 def test_infer_schema_from_postgres(postgres_conn, load_mock_schema):
     """Test that infer_schema_from_postgres correctly infers schema from PostgreSQL."""
     _ = load_mock_schema  # Ensure schema is loaded
 
-    schema = infer_schema_from_postgres(postgres_conn, schema_name="public")
+    engine = GraphEngine(target_db_flavor=DBFlavor.ARANGO)
+    schema = engine.infer_schema(postgres_conn, schema_name="public")
 
     # Verify schema structure
     assert schema is not None
@@ -179,7 +181,8 @@ def test_infer_schema_with_pg_catalog_fallback(postgres_conn, load_mock_schema):
 
     try:
         # Test that infer_schema_from_postgres works with pg_catalog fallback
-        schema = infer_schema_from_postgres(postgres_conn, schema_name="public")
+        engine = GraphEngine(target_db_flavor=DBFlavor.ARANGO)
+        schema = engine.infer_schema(postgres_conn, schema_name="public")
 
         # Verify schema structure
         assert schema is not None, "Schema should be inferred"

@@ -160,7 +160,7 @@ source = DataSourceFactory.create_sql_data_source(config)
 
 ```python
 from graflo import Caster, DataSourceRegistry
-from graflo.caster import IngestionParams
+from graflo.hq.caster import IngestionParams
 
 registry = DataSourceRegistry()
 registry.register(file_source, resource_name="users")

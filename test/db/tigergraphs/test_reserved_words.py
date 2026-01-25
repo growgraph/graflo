@@ -22,7 +22,7 @@ import pytest
 
 from graflo.onto import DBFlavor
 from test.conftest import fetch_schema_obj
-from graflo.db.sanitizer import SchemaSanitizer
+from graflo.hq.sanitizer import SchemaSanitizer
 
 
 logger = logging.getLogger(__name__)
