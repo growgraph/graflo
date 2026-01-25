@@ -7,16 +7,18 @@ This module tests the schema inference capabilities, including:
 - Resource creation
 """
 
+from unittest.mock import patch
+
 from graflo.hq import GraphEngine
 from graflo.onto import DBFlavor
 
 
-def test_infer_schema_from_postgres(postgres_conn, load_mock_schema):
+def test_infer_schema_from_postgres(conn_conf, load_mock_schema):
     """Test that infer_schema_from_postgres correctly infers schema from PostgreSQL."""
     _ = load_mock_schema  # Ensure schema is loaded
 
     engine = GraphEngine(target_db_flavor=DBFlavor.ARANGO)
-    schema = engine.infer_schema(postgres_conn, schema_name="public")
+    schema = engine.infer_schema(conn_conf, schema_name="public")
 
     # Verify schema structure
     assert schema is not None
@@ -164,7 +166,7 @@ def test_infer_schema_from_postgres(postgres_conn, load_mock_schema):
     print("=" * 80)
 
 
-def test_infer_schema_with_pg_catalog_fallback(postgres_conn, load_mock_schema):
+def test_infer_schema_with_pg_catalog_fallback(conn_conf, load_mock_schema):
     """Test that schema inference works correctly when using pg_catalog fallback methods.
 
     This test simulates a scenario where information_schema is unavailable or unreliable,
@@ -176,13 +178,15 @@ def test_infer_schema_with_pg_catalog_fallback(postgres_conn, load_mock_schema):
 
     # Mock the _check_information_schema_reliable method to return False
     # This forces the use of pg_catalog fallback throughout the introspection process
-    original_check = postgres_conn._check_information_schema_reliable
-    postgres_conn._check_information_schema_reliable = lambda schema_name: False
+    # Since infer_schema() creates its own connection, we need to patch the class method
+    from graflo.db.postgres import PostgresConnection
 
-    try:
+    with patch.object(
+        PostgresConnection, "_check_information_schema_reliable", return_value=False
+    ):
         # Test that infer_schema_from_postgres works with pg_catalog fallback
         engine = GraphEngine(target_db_flavor=DBFlavor.ARANGO)
-        schema = engine.infer_schema(postgres_conn, schema_name="public")
+        schema = engine.infer_schema(conn_conf, schema_name="public")
 
         # Verify schema structure
         assert schema is not None, "Schema should be inferred"
@@ -346,7 +350,3 @@ def test_infer_schema_with_pg_catalog_fallback(postgres_conn, load_mock_schema):
             print(f"  - {r.name} (actors: {', '.join(actor_types)})")
 
         print("=" * 80)
-
-    finally:
-        # Restore original method
-        postgres_conn._check_information_schema_reliable = original_check

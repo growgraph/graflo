@@ -48,22 +48,27 @@ class GraphEngine:
 
     def infer_schema(
         self,
-        postgres_conn: PostgresConnection,
+        postgres_config: PostgresConfig,
         schema_name: str | None = None,
+        fuzzy_threshold: float = 0.8,
     ) -> Schema:
         """Infer a graflo Schema from PostgreSQL database.
 
         Args:
-            postgres_conn: PostgresConnection instance
+            postgres_config: PostgresConfig instance
             schema_name: Schema name to introspect (defaults to config schema_name or 'public')
+            fuzzy_threshold: Similarity threshold for fuzzy matching (0.0 to 1.0, default 0.8)
 
         Returns:
             Schema: Inferred schema with vertices, edges, and resources
         """
-        inferencer = InferenceManager(
-            conn=postgres_conn, target_db_flavor=self.target_db_flavor
-        )
-        return inferencer.infer_complete_schema(schema_name=schema_name)
+        with PostgresConnection(postgres_config) as postgres_conn:
+            inferencer = InferenceManager(
+                conn=postgres_conn,
+                target_db_flavor=self.target_db_flavor,
+                fuzzy_threshold=fuzzy_threshold,
+            )
+            return inferencer.infer_complete_schema(schema_name=schema_name)
 
     def create_patterns(
         self,

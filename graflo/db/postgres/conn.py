@@ -34,8 +34,9 @@ from graflo.architecture.onto_sql import (
 )
 from graflo.db.connection.onto import PostgresConfig
 
+from graflo.hq.fuzzy_matcher import FuzzyMatcher
+
 from .inference_utils import (
-    FuzzyMatchCache,
     infer_edge_vertices_from_table_name,
     infer_vertex_from_column_name,
 )
@@ -747,8 +748,9 @@ class PostgresConnection:
             vertex_tables = self.detect_vertex_tables(schema_name)
             vertex_table_names = [vt.name for vt in vertex_tables]
 
-        # Create fuzzy match cache once for all tables (significant performance improvement)
-        match_cache = FuzzyMatchCache(vertex_table_names)
+        # Create fuzzy matcher once for all tables (significant performance improvement)
+        # Caching is enabled by default for better performance
+        matcher = FuzzyMatcher(vertex_table_names, threshold=0.6, enable_cache=True)
 
         tables = self.get_tables(schema_name)
         edge_tables = []
@@ -819,7 +821,7 @@ class PostgresConnection:
                     for fk in fk_infos
                 ]
                 _, _, relation_name = infer_edge_vertices_from_table_name(
-                    table_name, pk_columns, fk_dicts, vertex_table_names, match_cache
+                    table_name, pk_columns, fk_dicts, vertex_table_names, matcher
                 )
             # If we have 2 or more primary keys, try to infer from table name and structure
             elif len(pk_columns) >= 2:
@@ -839,7 +841,7 @@ class PostgresConnection:
                         pk_columns,
                         fk_dicts,
                         vertex_table_names,
-                        match_cache,
+                        matcher,
                     )
                 )
 
@@ -882,10 +884,10 @@ class PostgresConnection:
                     )
                     # Use robust inference logic to extract vertex names from column names
                     source_table = infer_vertex_from_column_name(
-                        source_column, vertex_table_names, match_cache
+                        source_column, vertex_table_names, matcher
                     )
                     target_table = infer_vertex_from_column_name(
-                        target_column, vertex_table_names, match_cache
+                        target_column, vertex_table_names, matcher
                     )
 
             # Only add if we have source and target information

@@ -16,12 +16,14 @@ class InferenceManager:
         self,
         conn: PostgresConnection,
         target_db_flavor: DBFlavor = DBFlavor.ARANGO,
+        fuzzy_threshold: float = 0.8,
     ):
         """Initialize the PostgreSQL inference manager.
 
         Args:
             conn: PostgresConnection instance
             target_db_flavor: Target database flavor for schema sanitization
+            fuzzy_threshold: Similarity threshold for fuzzy matching (0.0 to 1.0, default 0.8)
         """
         self.target_db_flavor = target_db_flavor
         self.sanitizer = SchemaSanitizer(target_db_flavor)
@@ -29,7 +31,7 @@ class InferenceManager:
         self.inferencer = PostgresSchemaInferencer(
             db_flavor=target_db_flavor, conn=conn
         )
-        self.mapper = PostgresResourceMapper()
+        self.mapper = PostgresResourceMapper(fuzzy_threshold=fuzzy_threshold)
 
     def introspect(self, schema_name: str | None = None):
         """Introspect PostgreSQL schema.
@@ -71,7 +73,9 @@ class InferenceManager:
             list[Resource]: List of Resources for PostgreSQL tables
         """
         return self.mapper.map_tables_to_resources(
-            introspection_result, schema.vertex_config, self.sanitizer
+            introspection_result,
+            schema.vertex_config,
+            fuzzy_threshold=self.mapper.fuzzy_threshold,
         )
 
     def infer_complete_schema(self, schema_name: str | None = None) -> Schema:

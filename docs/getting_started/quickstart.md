@@ -108,17 +108,16 @@ The `ingest()` method takes:
 You can ingest data directly from PostgreSQL tables. First, infer the schema from your PostgreSQL database:
 
 ```python
-from graflo.db.postgres import PostgresConnection
 from graflo.hq import GraphEngine
 from graflo.db.connection.onto import PostgresConfig
 
 # Connect to PostgreSQL
 pg_config = PostgresConfig.from_docker_env()  # Or from_env(), or create directly
-pg_conn = PostgresConnection(pg_config)
 
 # Create GraphEngine and infer schema from PostgreSQL (automatically detects vertices and edges)
+# Connection is automatically managed inside infer_schema()
 engine = GraphEngine()
-schema = engine.infer_schema(pg_conn, schema_name="public")
+schema = engine.infer_schema(pg_config, schema_name="public")
 
 # Create patterns from PostgreSQL tables
 engine = GraphEngine()

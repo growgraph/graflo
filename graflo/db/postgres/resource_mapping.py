@@ -8,9 +8,8 @@ import logging
 
 from graflo.architecture.resource import Resource
 from graflo.architecture.vertex import VertexConfig
-from graflo.hq.sanitizer import SchemaSanitizer
 from .conn import EdgeTableInfo, SchemaIntrospectionResult
-from .fuzzy_matcher import FuzzyMatchCache
+from graflo.hq.fuzzy_matcher import FuzzyMatcher
 from .inference_utils import (
     detect_separator,
     split_by_separator,
@@ -25,6 +24,14 @@ class PostgresResourceMapper:
     This class creates Resource objects that map PostgreSQL tables to graph vertices
     and edges, enabling ingestion of relational data into graph databases.
     """
+
+    def __init__(self, fuzzy_threshold: float = 0.8):
+        """Initialize the resource mapper.
+
+        Args:
+            fuzzy_threshold: Similarity threshold for fuzzy matching (0.0 to 1.0, default 0.8)
+        """
+        self.fuzzy_threshold = fuzzy_threshold
 
     def create_vertex_resource(self, table_name: str, vertex_name: str) -> Resource:
         """Create a Resource for a vertex table.
@@ -55,14 +62,14 @@ class PostgresResourceMapper:
         self,
         edge_table_info: EdgeTableInfo,
         vertex_config: VertexConfig,
-        match_cache: FuzzyMatchCache | None = None,
+        matcher: FuzzyMatcher,
     ) -> Resource:
         """Create a Resource for an edge table.
 
         Args:
             edge_table_info: Edge table information from introspection
             vertex_config: Vertex configuration for source/target validation
-            match_cache: Optional fuzzy match cache for better performance
+            matcher: Optional fuzzy matcher for better performance (with caching enabled)
 
         Returns:
             Resource: Resource configured to ingest edge data
@@ -101,12 +108,17 @@ class PostgresResourceMapper:
 
         # Use heuristics to infer PK field names from column names
         # This handles cases like "bla_user" -> "user" vertex -> use "id" or matched field
-        vertex_names = list(vertex_config.vertex_set)
         source_pk_field = self._infer_pk_field_from_column(
-            source_column, source_table, source_pk_fields, vertex_names, match_cache
+            source_column,
+            source_table,
+            source_pk_fields,
+            matcher,
         )
         target_pk_field = self._infer_pk_field_from_column(
-            target_column, target_table, target_pk_fields, vertex_names, match_cache
+            target_column,
+            target_table,
+            target_pk_fields,
+            matcher,
         )
 
         # Create apply list using source_vertex and target_vertex pattern
@@ -145,13 +157,12 @@ class PostgresResourceMapper:
 
         return resource
 
-    @staticmethod
     def _infer_pk_field_from_column(
+        self,
         column_name: str,
         vertex_name: str,
         pk_fields: list[str],
-        vertex_names: list[str],
-        match_cache: FuzzyMatchCache | None = None,
+        matcher: FuzzyMatcher,
     ) -> str:
         """Infer primary key field name from column name using heuristics.
 
@@ -173,8 +184,7 @@ class PostgresResourceMapper:
             column_name: Name of the column (e.g., "user_id", "bla_user", "bla_user_2")
             vertex_name: Name of the target vertex (already known from edge table info)
             pk_fields: List of primary key field names for the vertex
-            vertex_names: List of all vertex names for fuzzy matching
-            match_cache: Optional fuzzy match cache for better performance
+            matcher: Optional fuzzy matcher for better performance (with caching enabled)
 
         Returns:
             Primary key field name (defaults to first PK field or "id" if no match)
@@ -187,14 +197,7 @@ class PostgresResourceMapper:
         # This confirms that the column is indeed related to this vertex
         for fragment in fragments:
             # Fuzzy match fragment to vertex names
-            if match_cache:
-                matched_vertex = match_cache.get_match(fragment)
-            else:
-                # Fallback: create temporary matcher if cache not provided
-                from .fuzzy_matcher import FuzzyMatcher
-
-                matcher = FuzzyMatcher(vertex_names)
-                matched_vertex, _ = matcher.match(fragment)
+            matched_vertex = matcher.get_match(fragment)
 
             # If we found a match to our target vertex, use its PK field
             if matched_vertex == vertex_name:
@@ -223,7 +226,7 @@ class PostgresResourceMapper:
         self,
         introspection_result: SchemaIntrospectionResult,
         vertex_config: VertexConfig,
-        sanitizer: SchemaSanitizer,
+        fuzzy_threshold: float | None = None,
     ) -> list[Resource]:
         """Map all PostgreSQL tables to Resources.
 
@@ -234,15 +237,20 @@ class PostgresResourceMapper:
             introspection_result: Result from PostgresConnection.introspect_schema()
             vertex_config: Inferred vertex configuration
             sanitizer: carries mappiings
+            fuzzy_threshold: Similarity threshold for fuzzy matching (0.0 to 1.0)
 
         Returns:
             list[Resource]: List of Resources for all tables
         """
         resources = []
 
-        # Create fuzzy match cache once for all edge tables (significant performance improvement)
+        # Create fuzzy matcher once for all edge tables (significant performance improvement)
+        # Caching is enabled by default for better performance
         vertex_names = list(vertex_config.vertex_set)
-        match_cache = FuzzyMatchCache(vertex_names)
+        threshold = (
+            fuzzy_threshold if fuzzy_threshold is not None else self.fuzzy_threshold
+        )
+        matcher = FuzzyMatcher(vertex_names, threshold, enable_cache=True)
 
         # Map vertex tables to resources
         vertex_tables = introspection_result.vertex_tables
@@ -257,7 +265,7 @@ class PostgresResourceMapper:
         for edge_table_info in edge_tables:
             try:
                 resource = self.create_edge_resource(
-                    edge_table_info, vertex_config, match_cache
+                    edge_table_info, vertex_config, matcher
                 )
                 resources.append(resource)
             except ValueError as e:
