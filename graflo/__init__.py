@@ -20,7 +20,7 @@ Example:
 """
 
 from .architecture import Index, Schema
-from .caster import Caster
+from graflo.hq.caster import Caster
 from .data_source import (
     APIConfig,
     APIDataSource,

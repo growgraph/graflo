@@ -122,7 +122,7 @@ patterns.add_file_pattern(
 
 schema.fetch_resource()
 
-from graflo.caster import IngestionParams
+from graflo.hq.caster import IngestionParams
 
 caster = Caster(schema)
 
@@ -143,7 +143,7 @@ caster.ingest(
 
 ```python
 from graflo.db.postgres import PostgresConnection
-from graflo.db.inferencer import infer_schema_from_postgres
+from graflo.hq import GraphEngine
 from graflo.db.connection.onto import PostgresConfig
 from graflo import Caster
 from graflo.onto import DBFlavor
@@ -152,11 +152,11 @@ from graflo.onto import DBFlavor
 postgres_config = PostgresConfig.from_docker_env()  # or PostgresConfig.from_env()
 postgres_conn = PostgresConnection(postgres_config)
 
-# Infer schema from PostgreSQL 3NF database
-schema = infer_schema_from_postgres(
+# Create GraphEngine and infer schema from PostgreSQL 3NF database
+engine = GraphEngine(target_db_flavor=DBFlavor.ARANGO)
+schema = engine.infer_schema(
     postgres_conn,
     schema_name="public",  # PostgreSQL schema name
-    db_flavor=DBFlavor.ARANGO  # Target graph database flavor
 )
 
 # Close PostgreSQL connection

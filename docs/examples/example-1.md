@@ -116,7 +116,7 @@ patterns.add_file_pattern(
 #     }
 # )
 
-from graflo.caster import IngestionParams
+from graflo.hq.caster import IngestionParams
 
 caster = Caster(schema)
 

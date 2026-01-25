@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.3] - 2026-01-25
+
+### Added
+- **SchemaSanitizer for TigerGraph**: Added comprehensive schema sanitization for TigerGraph compatibility
+  - `SchemaSanitizer` class in `graflo.hq.sanitizer` module for sanitizing schema attributes
+  - Sanitizes vertex names and field names to avoid reserved words (appends `_vertex` suffix for vertex names, `_attr` for attributes)
+  - Sanitizes edge relation names to avoid reserved words and collisions with vertex names (appends `_relation` suffix)
+  - Normalizes vertex indexes for TigerGraph: ensures edges with the same relation have consistent source and target indexes
+  - Automatically applies field index mappings to resources when indexes are normalized
+  - Handles field name transformations in TransformActor instances to maintain data consistency
+- **Vertex `dbname` field**: Added `dbname` field to `Vertex` class for database-specific vertex name mapping
+  - Allows specifying a different database name than the logical vertex name
+  - Used by SchemaSanitizer to store sanitized vertex names for TigerGraph compatibility
+- **Edge `relation_dbname` property**: Added `relation_dbname` property to `Edge` class for database-specific relation name mapping
+  - Returns sanitized relation name if set, otherwise falls back to `relation` field
+  - Used by SchemaSanitizer to store sanitized relation names for TigerGraph compatibility
+  - Supports setter for updating the database-specific relation name
+- **GraphEngine orchestrator**: Added `GraphEngine` class as the main orchestrator for graph database operations
+  - Coordinates schema inference, pattern creation, and data ingestion workflows
+  - Provides unified interface: `infer_schema()`, `create_patterns()`, and `ingest()` methods
+  - Integrates `InferenceManager`, `ResourceMapper`, and `Caster` components
+  - Supports target database flavor configuration for schema sanitization
+  - Located in `graflo.hq.graph_engine` module
+
 ## [1.4.0] - 2026-01-15
 
 ### Removed

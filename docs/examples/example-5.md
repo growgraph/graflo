@@ -64,7 +64,7 @@ The example uses a PostgreSQL database with a typical 3NF (Third Normal Form) sc
 
 ## Automatic Schema Inference
 
-The `infer_schema_from_postgres()` function automatically analyzes your PostgreSQL database and creates a complete graflo Schema. This process involves several sophisticated steps:
+The `GraphEngine.infer_schema_from_postgres()` method automatically analyzes your PostgreSQL database and creates a complete graflo Schema. This process involves several sophisticated steps:
 
 ### How Schema Inference Works
 
@@ -249,7 +249,7 @@ Make sure the corresponding database container is running before starting ingest
 
 Automatically generate a graflo Schema from your PostgreSQL database. This is the core of the automatic inference process:
 
-**What `infer_schema_from_postgres()` does:**
+**What `GraphEngine.infer_schema_from_postgres()` does:**
 
 1. **Queries PostgreSQL Information Schema**: The function queries PostgreSQL's information schema to discover all tables in the specified schema. It retrieves column information (names, types, constraints), identifies primary keys and foreign keys, and understands table relationships.
 
@@ -263,7 +263,7 @@ Automatically generate a graflo Schema from your PostgreSQL database. This is th
 
 ```python
 
-from graflo.db.inferencer import infer_schema_from_postgres
+from graflo.hq import GraphEngine
 from graflo.onto import DBFlavor
 from graflo.db.connection.onto import ArangoConfig, Neo4jConfig, TigergraphConfig, FalkordbConfig
 from graflo.db import DBType
@@ -280,11 +280,11 @@ db_flavor = (
     else DBFlavor.ARANGO
 )
 
-# Infer schema automatically
-schema = infer_schema_from_postgres(
+# Create GraphEngine and infer schema automatically
+engine = GraphEngine(target_db_flavor=db_flavor)
+schema = engine.infer_schema(
     postgres_conn,
     schema_name="public",  # PostgreSQL schema name
-    db_flavor=db_flavor  # Target graph database flavor
 )
 ```
 
@@ -329,11 +329,14 @@ Create `Patterns` that map PostgreSQL tables to resources:
 
 ```python
 
-from graflo.db.inferencer import create_patterns_from_postgres
+from graflo.hq import GraphEngine
+
+# Create GraphEngine instance
+engine = GraphEngine()
 
 # Create patterns from PostgreSQL tables
-patterns = create_patterns_from_postgres(
-    postgres_conn,
+patterns = engine.create_patterns(
+    postgres_conf,
     schema_name="public"
 )
 ```
@@ -374,7 +377,7 @@ from graflo import Caster
 caster = Caster(schema)
 
 # Ingest data from PostgreSQL into graph database
-from graflo.caster import IngestionParams
+from graflo.hq.caster import IngestionParams
 
 ingestion_params = IngestionParams(
     clean_start=True,  # Clear existing data first
@@ -382,7 +385,7 @@ ingestion_params = IngestionParams(
 
 caster.ingest(
     output_config=target_config,  # Target graph database config
-    patterns=patterns,             # PostgreSQL table patterns
+    patterns=patterns,  # PostgreSQL table patterns
     ingestion_params=ingestion_params,
 )
 
@@ -405,7 +408,7 @@ from graflo.db import DBType
 from graflo.db.postgres import (
     PostgresConnection,
 )
-from graflo.db.inferencer import infer_schema_from_postgres, create_patterns_from_postgres
+from graflo.hq import GraphEngine
 from graflo.db.connection.onto import ArangoConfig, PostgresConfig
 
 logger = logging.getLogger(__name__)
@@ -431,10 +434,11 @@ db_flavor = (
     else DBFlavor.ARANGO
 )
 
-schema = infer_schema_from_postgres(
+# Create GraphEngine and infer schema
+engine = GraphEngine(target_db_flavor=db_flavor)
+schema = engine.infer_schema(
     postgres_conn,
     schema_name="public",
-    db_flavor=db_flavor
 )
 
 # Step 5: Save inferred schema to YAML (optional)
@@ -444,10 +448,11 @@ with open(schema_output_file, "w") as f:
 logger.info(f"Inferred schema saved to {schema_output_file}")
 
 # Step 6: Create Patterns from PostgreSQL tables
-patterns = create_patterns_from_postgres(postgres_conn, schema_name="public")
+engine = GraphEngine()
+patterns = engine.create_patterns(postgres_conf, schema_name="public")
 
 # Step 7: Create Caster and ingest data
-from graflo.caster import IngestionParams
+from graflo.hq.caster import IngestionParams
 
 caster = Caster(schema)
 
@@ -709,8 +714,9 @@ This pattern is particularly useful for:
 After inference, you can modify the schema:
 
 ```python
-# Infer schema
-schema = infer_schema_from_postgres(postgres_conn, schema_name="public")
+# Create GraphEngine and infer schema
+engine = GraphEngine()
+schema = engine.infer_schema(postgres_conn, schema_name="public")
 
 # Modify schema as needed
 # Add custom transforms, filters, or additional edges

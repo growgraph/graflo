@@ -7,7 +7,7 @@ from test.conftest import verify
 import pytest
 from suthing import FileHandle
 
-from graflo.caster import Caster
+from graflo.hq.caster import Caster
 
 logger = logging.getLogger(__name__)
 

@@ -137,7 +137,7 @@ def ingest(
     schema.fetch_resource()
 
     # Create ingestion params with CLI arguments
-    from graflo.caster import IngestionParams
+    from graflo.hq.caster import IngestionParams
 
     ingestion_params = IngestionParams(
         n_cores=n_cores,

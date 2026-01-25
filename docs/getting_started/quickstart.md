@@ -76,7 +76,7 @@ patterns = Patterns(
     }
 )
 
-from graflo.caster import IngestionParams
+from graflo.hq.caster import IngestionParams
 
 ingestion_params = IngestionParams(
     clean_start=False,  # Set to True to wipe existing database
@@ -109,18 +109,20 @@ You can ingest data directly from PostgreSQL tables. First, infer the schema fro
 
 ```python
 from graflo.db.postgres import PostgresConnection
-from graflo.db.inferencer import infer_schema_from_postgres, create_patterns_from_postgres
+from graflo.hq import GraphEngine
 from graflo.db.connection.onto import PostgresConfig
 
 # Connect to PostgreSQL
 pg_config = PostgresConfig.from_docker_env()  # Or from_env(), or create directly
 pg_conn = PostgresConnection(pg_config)
 
-# Infer schema from PostgreSQL (automatically detects vertices and edges)
-schema = infer_schema_from_postgres(pg_conn, schema_name="public")
+# Create GraphEngine and infer schema from PostgreSQL (automatically detects vertices and edges)
+engine = GraphEngine()
+schema = engine.infer_schema(pg_conn, schema_name="public")
 
 # Create patterns from PostgreSQL tables
-patterns = create_patterns_from_postgres(pg_conn, schema_name="public")
+engine = GraphEngine()
+patterns = engine.create_patterns(pg_config, schema_name="public")
 
 # Or create patterns manually
 from graflo.util.onto import Patterns, TablePattern
@@ -141,7 +143,7 @@ from graflo.db.connection.onto import ArangoConfig
 arango_config = ArangoConfig.from_docker_env()  # Target graph database
 caster = Caster(schema)
 
-from graflo.caster import IngestionParams
+from graflo.hq.caster import IngestionParams
 
 ingestion_params = IngestionParams(
     clean_start=False,  # Set to True to wipe existing database
@@ -187,7 +189,7 @@ registry = DataSourceRegistry()
 registry.register(api_source, resource_name="users")
 
 # Ingest
-from graflo.caster import IngestionParams
+from graflo.hq.caster import IngestionParams
 
 caster = Caster(schema)
 
