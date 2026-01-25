@@ -1,7 +1,8 @@
 from suthing import FileHandle
 from graflo import Caster, Patterns, Schema
-from graflo.db.connection.onto import Neo4jConfig
 from graflo.hq.caster import IngestionParams
+from graflo.db.connection.onto import Neo4jConfig
+
 import logging
 
 

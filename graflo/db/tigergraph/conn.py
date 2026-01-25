@@ -933,7 +933,10 @@ class TigerGraphConnection(Connection):
 
     def _get_installed_queries(self, graph_name: str | None = None) -> list[str]:
         """
-        Get list of installed queries using GSQL.
+        Get list of installed queries using REST API.
+
+        Uses the /endpoints endpoint with dynamic=true to get all installed query endpoints,
+        then extracts query names from the endpoint paths.
 
         Args:
             graph_name: Name of the graph (defaults to self.graphname)
@@ -943,20 +946,37 @@ class TigerGraphConnection(Connection):
         """
         graph_name = graph_name or self.graphname
         try:
-            result = self._execute_gsql(f"USE GRAPH {graph_name}\nSHOW QUERY *")
-            # Parse GSQL output to extract query names
+            # Use REST API endpoint to get dynamic endpoints (installed queries)
+            # Format: GET /endpoints?dynamic=true
+            endpoint = "/endpoints"
+            params = {"dynamic": "true"}
+            result = self._call_restpp_api(endpoint, method="GET", params=params)
+
+            # Parse the response to extract query names
+            # The response is a dict where keys are endpoint paths like:
+            # "POST /query/{graph_name}/{query_name}" or "GET /query/{graph_name}/{query_name}"
             queries = []
-            if isinstance(result, str):
-                lines = result.split("\n")
-                for line in lines:
-                    line = line.strip()
-                    if line and not line.startswith("#") and not line.startswith("USE"):
-                        # Query names are typically on their own lines
-                        if line and not line.startswith("---"):
-                            queries.append(line)
-            return queries if queries else []
+            if isinstance(result, dict):
+                query_prefix = f"/query/{graph_name}/"
+                for endpoint_path in result.keys():
+                    # Extract query name from endpoint path
+                    # Format: "POST /query/{graph_name}/{query_name}" or "GET /query/{graph_name}/{query_name}"
+                    if query_prefix in endpoint_path:
+                        # Extract the query name after the graph name
+                        # Handle both "POST /query/..." and "/query/..." formats
+                        idx = endpoint_path.find(query_prefix)
+                        if idx >= 0:
+                            query_part = endpoint_path[idx + len(query_prefix) :]
+                            # Extract query name (everything up to first space, newline, or end)
+                            query_name = query_part.split()[0] if query_part else ""
+                            # Remove any trailing slashes or special characters
+                            query_name = query_name.rstrip("/").strip()
+                            if query_name and query_name not in queries:
+                                queries.append(query_name)
+
+            return queries
         except Exception as e:
-            logger.debug(f"Failed to get installed queries via GSQL: {e}")
+            logger.debug(f"Failed to get installed queries via REST API: {e}")
             return []
 
     def _run_installed_query(
@@ -1489,11 +1509,9 @@ class TigerGraphConnection(Connection):
         """
         Delete a TigerGraph database (graph).
 
-        This method attempts to drop the graph using GSQL DROP GRAPH.
-        If that fails (e.g., dependencies), it will:
-          1) Remove associations and drop all edge types
-          2) Drop all vertex types
-          3) Clear remaining data as a last resort
+        This method attempts to drop the graph using a clean teardown sequence:
+          1) Drop all queries associated with the graph
+          2) Drop the graph itself
 
         Args:
             name: Name of the graph to delete
@@ -1505,184 +1523,77 @@ class TigerGraphConnection(Connection):
         try:
             logger.debug(f"Attempting to drop graph '{name}'")
 
-            # First, try to drop all queries associated with the graph
-            # Try multiple approaches to ensure queries are dropped
-            queries_dropped = False
-            try:
-                with self._ensure_graph_context(name):
-                    # Get all installed queries for this graph
-                    try:
-                        queries = self._get_installed_queries()
-                        if queries:
-                            logger.info(
-                                f"Dropping {len(queries)} queries from graph '{name}'"
-                            )
-                            for query_name in queries:
-                                try:
-                                    # Try DROP QUERY with IF EXISTS to avoid errors
-                                    drop_query_cmd = f"USE GRAPH {name}\nDROP QUERY {query_name} IF EXISTS"
-                                    self._execute_gsql(drop_query_cmd)
-                                    logger.debug(
-                                        f"Dropped query '{query_name}' from graph '{name}'"
-                                    )
-                                    queries_dropped = True
-                                except Exception:
-                                    # Try without IF EXISTS for older TigerGraph versions
+            # The order matters for a clean teardown
+            cleanup_script = f"""
+                USE GRAPH {name}
+                DROP QUERY *
+                USE GLOBAL
+                DROP GRAPH {name}
+            """
+            result = self._execute_gsql(cleanup_script)
+            logger.info(f"Successfully dropped graph '{name}': {result}")
+            return result
+        except Exception as e:
+            error_str = str(e).lower()
+            # If the clean teardown fails, try fallback approaches
+            if (
+                "depends on" in error_str
+                or "query" in error_str
+                or "not exist" in error_str
+            ):
+                logger.warning(
+                    f"Clean teardown failed for graph '{name}': {e}. "
+                    f"Attempting fallback cleanup."
+                )
+                # Fallback: Try to drop queries individually, then drop graph
+                try:
+                    with self._ensure_graph_context(name):
+                        try:
+                            queries = self._get_installed_queries()
+                            if queries:
+                                logger.info(
+                                    f"Dropping {len(queries)} queries from graph '{name}'"
+                                )
+                                for query_name in queries:
                                     try:
-                                        drop_query_cmd = (
-                                            f"USE GRAPH {name}\nDROP QUERY {query_name}"
-                                        )
+                                        drop_query_cmd = f"USE GRAPH {name}\nDROP QUERY {query_name} IF EXISTS"
                                         self._execute_gsql(drop_query_cmd)
                                         logger.debug(
                                             f"Dropped query '{query_name}' from graph '{name}'"
                                         )
-                                        queries_dropped = True
-                                    except Exception as qe2:
-                                        logger.warning(
-                                            f"Could not drop query '{query_name}' from graph '{name}': {qe2}"
-                                        )
-                    except Exception as e:
-                        logger.debug(f"Could not list queries for graph '{name}': {e}")
-            except Exception as e:
-                logger.debug(
-                    f"Could not access graph '{name}' to drop queries: {e}. "
-                    f"Graph may not exist or queries may not be accessible."
-                )
+                                    except Exception:
+                                        # Try without IF EXISTS for older TigerGraph versions
+                                        try:
+                                            drop_query_cmd = f"USE GRAPH {name}\nDROP QUERY {query_name}"
+                                            self._execute_gsql(drop_query_cmd)
+                                        except Exception as qe2:
+                                            logger.debug(
+                                                f"Could not drop query '{query_name}': {qe2}"
+                                            )
+                        except Exception as e2:
+                            logger.debug(
+                                f"Could not list queries for graph '{name}': {e2}"
+                            )
 
-            # If we couldn't drop queries through the API, try direct GSQL
-            if not queries_dropped:
-                try:
-                    # Try to drop queries using GSQL directly
-                    list_queries_cmd = f"USE GRAPH {name}\nSHOW QUERY *"
-                    result = self._execute_gsql(list_queries_cmd)
-                    # Parse result to get query names and drop them
-                    # This is a fallback if getInstalledQueries() doesn't work
-                except Exception as e:
-                    logger.debug(
-                        f"Could not list queries via GSQL for graph '{name}': {e}"
+                    # Now try to drop the graph
+                    drop_command = f"USE GLOBAL\nDROP GRAPH {name}"
+                    result = self._execute_gsql(drop_command)
+                    logger.info(
+                        f"Successfully dropped graph '{name}' via fallback: {result}"
                     )
-
-            # Now try to drop the graph
-            # First, try to clear all data from the graph to avoid dependency issues
-            try:
-                with self._ensure_graph_context(name):
-                    # Clear all vertices to remove dependencies
-                    try:
-                        vertex_types = self._get_vertex_types()
-                        for v_type in vertex_types:
-                            try:
-                                self._delete_vertices(v_type)
-                                logger.debug(
-                                    f"Cleared vertices of type '{v_type}' from graph '{name}'"
-                                )
-                            except Exception as ve:
-                                logger.debug(
-                                    f"Could not clear vertices '{v_type}': {ve}"
-                                )
-                    except Exception as e:
-                        logger.debug(f"Could not clear vertices: {e}")
-            except Exception as e:
-                logger.debug(f"Could not access graph context to clear data: {e}")
-
-            try:
-                # Use the graph first to ensure we're working with the right graph
-                drop_command = f"USE GRAPH {name}\nDROP GRAPH {name}"
-                result = self._execute_gsql(drop_command)
-                logger.info(f"Successfully dropped graph '{name}': {result}")
-                return result
-            except Exception as e:
-                error_str = str(e).lower()
-                # If graph has dependencies (queries, etc.), try to continue anyway
-                # The graph structure might still be partially cleaned
-                if "depends on" in error_str or "query" in error_str:
+                    return result
+                except Exception as fallback_error:
                     logger.warning(
-                        f"Could not fully drop graph '{name}' due to dependencies: {e}. "
-                        f"Attempting to continue - graph may be partially cleaned."
+                        f"Fallback cleanup also failed for graph '{name}': {fallback_error}. "
+                        f"Graph may be partially cleaned or may not exist."
                     )
                     # Don't raise - allow the process to continue
                     # The schema creation will handle existing types
                     return None
-                else:
-                    error_msg = f"Could not drop graph '{name}'. Error: {e}"
-                    logger.error(error_msg)
-                    raise RuntimeError(error_msg) from e
-
-            # Fallback 1: Attempt to disassociate edge and vertex types from graph
-            # DO NOT drop global vertex/edge types as they might be used by other graphs
-            try:
-                with self._ensure_graph_context(name):
-                    # Disassociate edge types from graph (but don't drop them globally)
-                    try:
-                        edge_types = self._get_edge_types()
-                    except Exception:
-                        edge_types = []
-
-                    for e_type in edge_types:
-                        # Only disassociate from graph, don't drop globally
-                        # ALTER GRAPH requires USE GRAPH context
-                        try:
-                            drop_edge_cmd = f"USE GRAPH {name}\nALTER GRAPH {name} DROP DIRECTED EDGE {e_type}"
-                            self._execute_gsql(drop_edge_cmd)
-                            logger.debug(
-                                f"Disassociated edge type '{e_type}' from graph '{name}'"
-                            )
-                        except Exception as e:
-                            logger.debug(
-                                f"Could not disassociate edge type '{e_type}' from graph '{name}': {e}"
-                            )
-                            # Continue - edge might not be associated or graph might not exist
-
-                    # Disassociate vertex types from graph (but don't drop them globally)
-                    try:
-                        vertex_types = self._get_vertex_types()
-                    except Exception:
-                        vertex_types = []
-
-                    for v_type in vertex_types:
-                        # Only clear data from this graph's vertices, don't drop vertex type globally
-                        # Clear data first to avoid dependency issues
-                        try:
-                            self._delete_vertices(v_type)
-                            logger.debug(
-                                f"Cleared vertices of type '{v_type}' from graph '{name}'"
-                            )
-                        except Exception as e:
-                            logger.debug(
-                                f"Could not clear vertices of type '{v_type}' from graph '{name}': {e}"
-                            )
-                        # Disassociate from graph (best-effort)
-                        # ALTER GRAPH requires USE GRAPH context
-                        try:
-                            drop_vertex_cmd = f"USE GRAPH {name}\nALTER GRAPH {name} DROP VERTEX {v_type}"
-                            self._execute_gsql(drop_vertex_cmd)
-                            logger.debug(
-                                f"Disassociated vertex type '{v_type}' from graph '{name}'"
-                            )
-                        except Exception as e:
-                            logger.debug(
-                                f"Could not disassociate vertex type '{v_type}' from graph '{name}': {e}"
-                            )
-                            # Continue - vertex might not be associated or graph might not exist
-            except Exception as e3:
-                logger.warning(
-                    f"Could not disassociate schema types from graph '{name}': {e3}. Proceeding to data clear."
-                )
-
-            # Fallback 2: Clear all data (if any remain)
-            try:
-                with self._ensure_graph_context(name):
-                    vertex_types = self._get_vertex_types()
-                    for v_type in vertex_types:
-                        result = self._delete_vertices(v_type)
-                        logger.debug(f"Cleared vertices of type {v_type}: {result}")
-                    logger.info(f"Cleared all data from graph '{name}'")
-            except Exception as e2:
-                logger.warning(
-                    f"Could not clear data from graph '{name}': {e2}. Graph may not exist."
-                )
-
-        except Exception as e:
-            logger.error(f"Error deleting database '{name}': {e}")
+            else:
+                error_msg = f"Could not drop graph '{name}'. Error: {e}"
+                logger.error(error_msg)
+                raise RuntimeError(error_msg) from e
 
     @_wrap_tg_exception
     def execute(self, query, **kwargs):
