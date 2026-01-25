@@ -336,7 +336,7 @@ engine = GraphEngine()
 
 # Create patterns from PostgreSQL tables
 patterns = engine.create_patterns(
-    postgres_conn,
+    postgres_conf,
     schema_name="public"
 )
 ```
@@ -449,7 +449,7 @@ logger.info(f"Inferred schema saved to {schema_output_file}")
 
 # Step 6: Create Patterns from PostgreSQL tables
 engine = GraphEngine()
-patterns = engine.create_patterns(postgres_conn, schema_name="public")
+patterns = engine.create_patterns(postgres_conf, schema_name="public")
 
 # Step 7: Create Caster and ingest data
 from graflo.hq.caster import IngestionParams

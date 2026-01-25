@@ -115,9 +115,8 @@ logger.info(f"Inferred schema saved to {schema_output_file}")
 
 # Step 4: Create Patterns from PostgreSQL tables
 # This maps PostgreSQL tables to resource patterns that Caster can use
-# Connection is automatically closed when exiting the context
-with PostgresConnection(postgres_conf) as postgres_conn:
-    patterns = engine.create_patterns(postgres_conn, schema_name="public")
+# Connection is automatically managed inside create_patterns()
+patterns = engine.create_patterns(postgres_conf, schema_name="public")
 
 # Step 5: Ingest data using GraphEngine
 # Note: ingestion will create its own PostgreSQL connections per table internally

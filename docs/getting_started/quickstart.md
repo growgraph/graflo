@@ -122,7 +122,7 @@ schema = engine.infer_schema(pg_conn, schema_name="public")
 
 # Create patterns from PostgreSQL tables
 engine = GraphEngine()
-patterns = engine.create_patterns(pg_conn, schema_name="public")
+patterns = engine.create_patterns(pg_config, schema_name="public")
 
 # Or create patterns manually
 from graflo.util.onto import Patterns, TablePattern

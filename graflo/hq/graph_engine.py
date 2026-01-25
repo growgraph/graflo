@@ -9,7 +9,7 @@ import logging
 
 from graflo import Schema
 from graflo.db import PostgresConnection
-from graflo.db.connection.onto import DBConfig
+from graflo.db.connection.onto import DBConfig, PostgresConfig
 from graflo.hq.caster import Caster, IngestionParams
 from graflo.hq.inferencer import InferenceManager
 from graflo.hq.resource_mapper import ResourceMapper
@@ -67,21 +67,22 @@ class GraphEngine:
 
     def create_patterns(
         self,
-        postgres_conn: PostgresConnection,
+        postgres_config: PostgresConfig,
         schema_name: str | None = None,
     ) -> Patterns:
         """Create Patterns from PostgreSQL tables.
 
         Args:
-            postgres_conn: PostgresConnection instance
+            postgres_config: PostgresConfig instance
             schema_name: Schema name to introspect
 
         Returns:
             Patterns: Patterns object with TablePattern instances for all tables
         """
-        return self.resource_mapper.create_patterns_from_postgres(
-            conn=postgres_conn, schema_name=schema_name
-        )
+        with PostgresConnection(postgres_config) as postgres_conn:
+            return self.resource_mapper.create_patterns_from_postgres(
+                conn=postgres_conn, schema_name=schema_name
+            )
 
     def ingest(
         self,
