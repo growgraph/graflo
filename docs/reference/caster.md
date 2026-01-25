@@ -1,3 +1,0 @@
-# `graflo.caster`
-
-::: graflo.caster
