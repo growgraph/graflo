@@ -2182,7 +2182,9 @@ class TigerGraphConnection(Connection):
                     expected_name = v.name
                 expected_vertex_types.add(expected_name)
 
-            expected_edge_types = {e.relation for e in edges_to_create if e.relation}
+            expected_edge_types = {
+                e.relation_dbname for e in edges_to_create if e.relation
+            }
 
             # Convert to sets for case-insensitive comparison
             # TigerGraph may capitalize vertex names, so compare case-insensitively
