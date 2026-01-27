@@ -15,8 +15,6 @@ import logging
 from pathlib import Path
 from suthing import FileHandle
 
-from graflo.onto import DBFlavor
-from graflo.db import DBType
 from graflo.hq import GraphEngine, IngestionParams
 from graflo.db.postgres.util import load_schema_from_sql_file
 from graflo.db.connection.onto import PostgresConfig, TigergraphConfig
@@ -62,14 +60,9 @@ postgres_conf = PostgresConfig.from_docker_env()
 conn_conf = TigergraphConfig.from_docker_env()  # TigerGraph
 # conn_conf = FalkordbConfig.from_docker_env()    # FalkorDB
 
-# Determine db_flavor from target config
+# Determine db_type from target config
 db_type = conn_conf.connection_type
-# Map DBType to DBFlavor (they have the same values)
-db_flavor = (
-    DBFlavor(db_type.value)
-    if db_type in (DBType.ARANGO, DBType.NEO4J, DBType.TIGERGRAPH)
-    else DBFlavor.ARANGO
-)
+
 
 # Step 1.5: Initialize PostgreSQL database with mock schema if needed
 # This ensures the database has the required tables (users, products, purchases, follows)
@@ -88,10 +81,8 @@ else:
     logger.warning("Assuming PostgreSQL database is already initialized")
 
 # Step 3: Create GraphEngine to orchestrate schema inference, pattern creation, and ingestion
-# GraphEngine coordinates all operations: schema inference, pattern mapping, and data ingestion
-engine = GraphEngine(
-    target_db_flavor=db_flavor, ingestion_params=IngestionParams(clean_start=True)
-)
+# GraphEngine coordinates all operations: schema inference, pattern mapping, schema definition, and data ingestion
+engine = GraphEngine(target_db_flavor=db_type)
 
 # Step 3.1: Infer Schema from PostgreSQL database structure
 # This automatically detects vertex-like and edge-like tables based on:
@@ -118,12 +109,18 @@ logger.info(f"Inferred schema saved to {schema_output_file}")
 # Connection is automatically managed inside create_patterns()
 patterns = engine.create_patterns(postgres_conf, schema_name="public")
 
-# Step 5: Ingest data using GraphEngine
+# Step 4.5 & 5: Define schema and ingest data in one operation
+# This creates/initializes the database schema and then ingests data
+# Some databases don't require explicit schema definition, but this ensures proper initialization
 # Note: ingestion will create its own PostgreSQL connections per table internally
-engine.ingest(
+engine.define_and_ingest(
     schema=schema,
     output_config=conn_conf,
     patterns=patterns,
+    ingestion_params=IngestionParams(
+        clean_start=False
+    ),  # clean_start handled by define_and_ingest
+    clean_start=True,  # Clean existing data before defining schema
 )
 
 print("\n" + "=" * 80)

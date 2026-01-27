@@ -10,7 +10,7 @@ package for working with graph databases. It provides:
 - Action context for graph transformations
 
 The module is designed to be database-agnostic, supporting both ArangoDB and Neo4j through
-the DBFlavor enum. It provides a unified interface for working with graph data structures
+the DBType enum. It provides a unified interface for working with graph data structures
 while allowing for database-specific optimizations and features.
 
 Key Components:
@@ -36,7 +36,8 @@ from typing import Any, TypeAlias
 
 from dataclass_wizard import JSONWizard, YAMLWizard
 
-from graflo.onto import BaseDataclass, BaseEnum, DBFlavor
+from graflo.onto import DBType
+from graflo.onto import BaseDataclass, BaseEnum
 from graflo.util.transform import pick_unique_dict
 
 # type for vertex or edge name (index)
@@ -154,7 +155,7 @@ class Index(BaseDataclass):
         """Iterate over the indexed fields."""
         return iter(self.fields)
 
-    def db_form(self, db_type: DBFlavor) -> dict:
+    def db_form(self, db_type: DBType) -> dict:
         """Convert index configuration to database-specific format.
 
         Args:
@@ -167,14 +168,11 @@ class Index(BaseDataclass):
             ValueError: If db_type is not supported
         """
         r = self.to_dict()
-        if db_type == DBFlavor.ARANGO:
+        if db_type == DBType.ARANGO:
             _ = r.pop("name")
             _ = r.pop("exclude_edge_endpoints")
-        elif db_type == DBFlavor.NEO4J:
-            pass
         else:
-            raise ValueError(f"Unknown db_type {db_type}")
-
+            pass
         return r
 
 

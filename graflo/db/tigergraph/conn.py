@@ -50,7 +50,8 @@ from graflo.db.tigergraph.onto import (
 )
 from graflo.db.util import json_serializer
 from graflo.filter.onto import Clause, Expression
-from graflo.onto import AggregationType, DBFlavor, ExpressionFlavor
+from graflo.onto import AggregationType, ExpressionFlavor
+from graflo.onto import DBType
 from graflo.util.transform import pick_unique_dict
 from urllib.parse import quote
 
@@ -229,7 +230,7 @@ class TigerGraphConnection(Connection):
         - Version is auto-detected, or can be manually specified in config
     """
 
-    flavor = DBFlavor.TIGERGRAPH
+    flavor = DBType.TIGERGRAPH
 
     def __init__(self, config: TigergraphConfig):
         super().__init__()
@@ -1934,6 +1935,105 @@ class TigerGraphConnection(Connection):
             # No attributes - FROM/TO section is the last thing
             return f"ADD DIRECTED EDGE {relation} (\n{all_from_to}\n    )"
 
+    def _batch_schema_statements(
+        self, schema_change_stmts: list[str], graph_name: str, max_job_size: int
+    ) -> list[list[str]]:
+        """Batch schema change statements into groups that fit within max_job_size.
+
+        Intelligently merges small statements together while ensuring no batch
+        exceeds the maximum job size limit.
+
+        Args:
+            schema_change_stmts: List of schema change statements to batch
+            graph_name: Name of the graph (used for size estimation)
+            max_job_size: Maximum size in characters for a single job
+
+        Returns:
+            List of batches, where each batch is a list of statements
+        """
+        if not schema_change_stmts:
+            return []
+
+        # Calculate base overhead for a job
+        # Use worst-case job name length (multi-batch format) for conservative estimation
+        worst_case_job_name = (
+            f"schema_change_{graph_name}_batch_999"  # Use large number for worst case
+        )
+        base_template = (
+            f"USE GRAPH {graph_name}\n"
+            f"CREATE SCHEMA_CHANGE JOB {worst_case_job_name} FOR GRAPH {graph_name} {{\n"
+            f"}}\n"
+            f"RUN SCHEMA_CHANGE JOB {worst_case_job_name}"
+        )
+        base_overhead = len(base_template)
+
+        # Each statement adds 5 characters: first gets "    " (4) + ";" (1),
+        # subsequent get ";\n    " (5) between statements, final ";" (1) is included
+        # For N statements: 4 (first indent) + (N-1)*5 (separators) + 1 (final semicolon) = 5*N
+
+        def estimate_batch_size(stmts: list[str]) -> int:
+            """Estimate the total size of a batch of statements."""
+            if not stmts:
+                return base_overhead
+            total_stmt_size = sum(len(stmt) for stmt in stmts)
+            return base_overhead + total_stmt_size + 5 * len(stmts)
+
+        # Calculate total estimated size for all statements
+        num_statements = len(schema_change_stmts)
+        total_stmt_size = sum(len(stmt) for stmt in schema_change_stmts)
+        estimated_size = base_overhead + total_stmt_size + 5 * num_statements
+
+        # If everything fits in one batch, return single batch
+        if estimated_size <= max_job_size:
+            logger.info(
+                f"Applying schema change as single job (estimated size: {estimated_size} chars)"
+            )
+            return [schema_change_stmts]
+
+        # Need to split into multiple batches
+        # Strategy: Use a greedy bin-packing approach that merges small statements
+        # Start by creating batches, trying to pack as many statements as possible
+        # into each batch without exceeding max_job_size
+
+        batches: list[list[str]] = []
+
+        # Sort statements by size (smallest first) to help pack efficiently
+        # We'll process them in order and try to add to existing batches
+        stmt_with_size = [(stmt, len(stmt)) for stmt in schema_change_stmts]
+        stmt_with_size.sort(key=lambda x: x[1])  # Sort by statement size
+
+        for stmt, stmt_size in stmt_with_size:
+            # Calculate overhead for adding this statement: 5 chars (indent + semicolon)
+            stmt_overhead = 5
+
+            # Try to add to an existing batch
+            added = False
+            for batch in batches:
+                current_batch_size = estimate_batch_size(batch)
+                # Check if adding this statement would exceed the limit
+                if current_batch_size + stmt_size + stmt_overhead <= max_job_size:
+                    batch.append(stmt)
+                    added = True
+                    break
+
+            # If couldn't add to existing batch, create a new one
+            if not added:
+                # Check if statement itself is too large
+                single_stmt_size = estimate_batch_size([stmt])
+                if single_stmt_size > max_job_size:
+                    logger.warning(
+                        f"Statement exceeds max_job_size ({single_stmt_size} > {max_job_size}). "
+                        f"Will attempt to execute anyway, but may fail."
+                    )
+                batches.append([stmt])
+
+        logger.info(
+            f"Large schema detected (estimated size: {estimated_size} chars). "
+            f"Splitting into {len(batches)} batches."
+        )
+
+        return batches
+
     @_wrap_tg_exception
     def _define_schema_local(self, schema: Schema) -> None:
         """Define TigerGraph schema locally for the current graph using a SCHEMA_CHANGE job.
@@ -1951,14 +2051,15 @@ class TigerGraphConnection(Connection):
         vertex_config = schema.vertex_config
         edge_config = schema.edge_config
 
-        schema_change_stmts = []
+        vertex_stmts = []
+        edge_stmts = []
 
         # Vertices
         for vertex in vertex_config.vertices:
             # Validate vertex name
             _validate_tigergraph_schema_name(vertex.dbname, "vertex")
             stmt = self._get_vertex_add_statement(vertex, vertex_config)
-            schema_change_stmts.append(stmt)
+            vertex_stmts.append(stmt)
 
         # Edges - group by relation since TigerGraph requires edges of the same type
         # to be created in a single statement with multiple FROM/TO pairs
@@ -1978,78 +2079,32 @@ class TigerGraphConnection(Connection):
         # Create one statement per relation with all FROM/TO pairs
         for relation, edge_group in edges_by_relation.items():
             stmt = self._get_edge_group_create_statement(edge_group)
-            schema_change_stmts.append(stmt)
+            edge_stmts.append(stmt)
 
-        if not schema_change_stmts:
+        if not vertex_stmts and not edge_stmts:
             logger.debug(f"No schema changes to apply for graph '{graph_name}'")
             return
 
         # Estimate the size of the GSQL command to determine if we need to split it
         # Large SCHEMA_CHANGE JOBs (>30k chars) can cause parser failures with misleading errors
         # like "Missing return statement" (which is actually a parser size limit issue)
-        # We'll split into batches based on configurable max_job_size (default: 1000)
-        MAX_JOB_SIZE = self.config.max_job_size
-
-        # Calculate accurate size estimation
-        # Actual format:
-        #   USE GRAPH {graph_name}
-        #   CREATE SCHEMA_CHANGE JOB {job_name} FOR GRAPH {graph_name} {
-        #       stmt1;
-        #       stmt2;
-        #       ...
-        #   }
-        #   RUN SCHEMA_CHANGE JOB {job_name}
-        #
-        # For N statements:
-        #   - Base overhead: USE GRAPH line + CREATE line + closing brace + RUN line + newlines
-        #   - Statement overhead: first gets "    " + ";" (5 chars), others get ";\n    " (5 chars each)
-        #   - Total: base + sum(len(stmt)) + 5*N
-
-        # Use worst-case job name length (multi-batch format) for conservative estimation
-        worst_case_job_name = (
-            f"schema_change_{graph_name}_batch_999"  # Use large number for worst case
+        # We'll split into batches based on configurable max_job_size
+        # Batch vertices and edges separately, then concatenate
+        vertex_batches = (
+            self._batch_schema_statements(
+                vertex_stmts, graph_name, self.config.max_job_size
+            )
+            if vertex_stmts
+            else []
         )
-        base_template = (
-            f"USE GRAPH {graph_name}\n"
-            f"CREATE SCHEMA_CHANGE JOB {worst_case_job_name} FOR GRAPH {graph_name} {{\n"
-            f"}}\n"
-            f"RUN SCHEMA_CHANGE JOB {worst_case_job_name}"
+        edge_batches = (
+            self._batch_schema_statements(
+                edge_stmts, graph_name, self.config.max_job_size
+            )
+            if edge_stmts
+            else []
         )
-        base_overhead = len(base_template)
-
-        # Each statement adds 5 characters: first gets "    " (4) + ";" (1),
-        # subsequent get ";\n    " (5) between statements, final ";" (1) is included
-        # For N statements: 4 (first indent) + (N-1)*5 (separators) + 1 (final semicolon) = 5*N
-        num_statements = len(schema_change_stmts)
-        total_stmt_size = sum(len(stmt) for stmt in schema_change_stmts)
-        estimated_size = base_overhead + total_stmt_size + 5 * num_statements
-
-        if estimated_size <= MAX_JOB_SIZE:
-            # Small enough for a single job
-            batches = [schema_change_stmts]
-            logger.info(
-                f"Applying schema change as single job (estimated size: {estimated_size} chars)"
-            )
-        else:
-            # Split into multiple batches
-            # Calculate how many statements per batch
-            # For a batch of M statements: base_overhead + sum(len(stmt)) + 5*M <= MAX_JOB_SIZE
-            # So: sum(len(stmt)) + 5*M <= MAX_JOB_SIZE - base_overhead
-            # If avg_stmt_size = sum(len(stmt)) / M, then: M * (avg_stmt_size + 5) <= MAX_JOB_SIZE - base_overhead
-            avg_stmt_size = (
-                total_stmt_size / num_statements if num_statements > 0 else 0
-            )
-            available_space = MAX_JOB_SIZE - base_overhead
-            stmts_per_batch = max(1, int(available_space / (avg_stmt_size + 5)))
-
-            batches = []
-            for i in range(0, len(schema_change_stmts), stmts_per_batch):
-                batches.append(schema_change_stmts[i : i + stmts_per_batch])
-
-            logger.info(
-                f"Large schema detected (estimated size: {estimated_size} chars). "
-                f"Splitting into {len(batches)} batches of ~{stmts_per_batch} statements each."
-            )
+        batches = vertex_batches + edge_batches
 
         # Execute batches sequentially
         for batch_idx, batch_stmts in enumerate(batches):
@@ -2087,10 +2142,10 @@ class TigerGraphConnection(Connection):
             actual_size = len(full_gsql)
 
             # Safety check: warn if actual size exceeds limit (indicates estimation error)
-            if actual_size > MAX_JOB_SIZE:
+            if actual_size > self.config.max_job_size:
                 logger.warning(
-                    f"Batch {batch_idx + 1} actual size ({actual_size} chars) exceeds limit ({MAX_JOB_SIZE} chars). "
-                    f"This may cause parser errors. Consider reducing MAX_JOB_SIZE or improving estimation."
+                    f"Batch {batch_idx + 1} actual size ({actual_size} chars) exceeds limit ({self.config.max_job_size} chars). "
+                    f"This may cause parser errors. Consider reducing max_job_size or improving estimation."
                 )
 
             logger.info(
@@ -2182,7 +2237,9 @@ class TigerGraphConnection(Connection):
                     expected_name = v.name
                 expected_vertex_types.add(expected_name)
 
-            expected_edge_types = {e.relation for e in edges_to_create if e.relation}
+            expected_edge_types = {
+                e.relation_dbname for e in edges_to_create if e.relation
+            }
 
             # Convert to sets for case-insensitive comparison
             # TigerGraph may capitalize vertex names, so compare case-insensitively
@@ -3012,7 +3069,7 @@ class TigerGraphConnection(Connection):
                 # 4. Format attributes for TigerGraph REST++ API
                 # TigerGraph requires attribute values to be wrapped in {"value": ...}
                 formatted_attributes = {
-                    k: {"value": v} for k, v in clean_record.items()
+                    k: {"value": v} for k, v in clean_record.items() if v
                 }
 
                 # 5. Add the record attributes to the map using the composite ID as the key
@@ -3158,8 +3215,6 @@ class TigerGraphConnection(Connection):
                 logger.error(
                     f"Error upserting vertices to {class_name}: {result.get('message')}"
                 )
-                # Fallback to individual operations
-                self._fallback_individual_upsert(docs, class_name, match_keys)
             else:
                 num_vertices = len(payload["vertices"][class_name])
                 logger.debug(
@@ -3169,24 +3224,6 @@ class TigerGraphConnection(Connection):
 
         except Exception as e:
             logger.error(f"Error upserting vertices to {class_name}: {e}")
-            # Fallback to individual operations
-            self._fallback_individual_upsert(docs, class_name, match_keys)
-
-    def _fallback_individual_upsert(self, docs, class_name, match_keys):
-        """Fallback method for individual vertex upserts."""
-        for doc in docs:
-            try:
-                vertex_id = self._extract_id(doc, match_keys)
-                if vertex_id:
-                    clean_doc = self._clean_document(doc)
-                    # Serialize datetime objects before passing to REST API
-                    # REST API expects JSON-serializable data
-                    serialized_doc = json.loads(
-                        json.dumps(clean_doc, default=_json_serializer)
-                    )
-                    self._upsert_vertex(class_name, vertex_id, serialized_doc)
-            except Exception as e:
-                logger.error(f"Error upserting individual vertex {vertex_id}: {e}")
 
     def _generate_edge_upsert_payloads(
         self,
@@ -3244,7 +3281,7 @@ class TigerGraphConnection(Connection):
                 # Clean and format edge attributes
                 clean_edge_props = self._clean_document(edge_props)
                 formatted_attributes = {
-                    k: {"value": v} for k, v in clean_edge_props.items()
+                    k: {"value": v} for k, v in clean_edge_props.items() if v
                 }
 
                 # Group by (source_id, target_id, edge_type)

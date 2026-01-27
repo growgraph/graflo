@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import pathlib
@@ -52,8 +53,10 @@ def cast(modes, schema_obj, current_path, level, reset, n_cores=1):
                 f"{mode}.{ext}.gz",
             )
 
-            caster.process_resource(
-                resource_instance=pathlib.Path(fname), resource_name=resource_name
+            asyncio.run(
+                caster.process_resource(
+                    resource_instance=pathlib.Path(fname), resource_name=resource_name
+                )
             )
         else:
             data_obj = FileHandle.load(
@@ -62,12 +65,16 @@ def cast(modes, schema_obj, current_path, level, reset, n_cores=1):
             )
 
             if level == 1:
-                caster.process_resource(
-                    resource_instance=data_obj, resource_name=resource_name
+                asyncio.run(
+                    caster.process_resource(
+                        resource_instance=data_obj, resource_name=resource_name
+                    )
                 )
             elif level == 2:
                 data = caster.normalize_resource(data_obj)
-                graph = caster.cast_normal_resource(data, resource_name=resource_name)
+                graph = asyncio.run(
+                    caster.cast_normal_resource(data, resource_name=resource_name)
+                )
 
                 graph.pick_unique()
 

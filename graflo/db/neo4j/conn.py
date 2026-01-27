@@ -34,7 +34,9 @@ from graflo.architecture.schema import Schema
 from graflo.architecture.vertex import VertexConfig
 from graflo.db.conn import Connection
 from graflo.filter.onto import Expression
-from graflo.onto import AggregationType, DBFlavor, ExpressionFlavor
+from graflo.onto import AggregationType, ExpressionFlavor
+from graflo.onto import DBType
+
 
 from ..connection.onto import Neo4jConfig
 
@@ -53,7 +55,7 @@ class Neo4jConnection(Connection):
         conn: Neo4j session instance
     """
 
-    flavor = DBFlavor.NEO4J
+    flavor = DBType.NEO4J
 
     def __init__(self, config: Neo4jConfig):
         """Initialize Neo4j connection.
@@ -474,7 +476,7 @@ class Neo4jConnection(Connection):
         """
         if filters is not None:
             ff = Expression.from_dict(filters)
-            filter_clause = f"WHERE {ff(doc_name='n', kind=DBFlavor.NEO4J)}"
+            filter_clause = f"WHERE {ff(doc_name='n', kind=DBType.NEO4J)}"
         else:
             filter_clause = ""
 

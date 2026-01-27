@@ -14,13 +14,10 @@ Example:
     >>> caster.ingest(path="data/", conn_conf=db_config)
 """
 
+import asyncio
 import logging
-import multiprocessing as mp
-import queue
 import re
 import sys
-from concurrent.futures import ThreadPoolExecutor
-from functools import partial
 from pathlib import Path
 from typing import Any, cast
 
@@ -28,6 +25,7 @@ import pandas as pd
 from pydantic import BaseModel
 from suthing import Timer
 
+from graflo.architecture.edge import Edge
 from graflo.architecture.onto import EncodingType, GraphContainer
 from graflo.architecture.schema import Schema
 from graflo.data_source import (
@@ -36,8 +34,8 @@ from graflo.data_source import (
     DataSourceRegistry,
 )
 from graflo.data_source.sql import SQLConfig, SQLDataSource
-from graflo.db import DBType, ConnectionManager, DBConfig
-from graflo.onto import DBFlavor
+from graflo.db import ConnectionManager
+from graflo.db.connection.onto import DBConfig
 from graflo.util.chunker import ChunkerType
 from graflo.util.onto import FilePattern, Patterns, ResourceType, TablePattern
 
@@ -55,6 +53,9 @@ class IngestionParams(BaseModel):
         dry: Whether to perform a dry run (no database changes)
         init_only: Whether to only initialize the database without ingestion
         limit_files: Optional limit on number of files to process
+        max_concurrent_db_ops: Maximum number of concurrent database operations (for vertices/edges).
+            If None, uses n_cores. Set to 1 to prevent deadlocks in databases that don't handle
+            concurrent transactions well (e.g., Neo4j). Database-independent setting.
     """
 
     clean_start: bool = False
@@ -64,6 +65,7 @@ class IngestionParams(BaseModel):
     dry: bool = False
     init_only: bool = False
     limit_files: int | None = None
+    max_concurrent_db_ops: int | None = None
 
 
 class Caster:
@@ -144,7 +146,7 @@ class Caster:
 
         return files
 
-    def cast_normal_resource(
+    async def cast_normal_resource(
         self, data, resource_name: str | None = None
     ) -> GraphContainer:
         """Cast data into a graph container using a resource.
@@ -158,18 +160,19 @@ class Caster:
         """
         rr = self.schema.fetch_resource(resource_name)
 
-        with ThreadPoolExecutor(max_workers=self.ingestion_params.n_cores) as executor:
-            docs = list(
-                executor.map(
-                    lambda doc: rr(doc),
-                    data,
-                )
-            )
+        # Process documents in parallel using asyncio
+        semaphore = asyncio.Semaphore(self.ingestion_params.n_cores)
+
+        async def process_doc(doc):
+            async with semaphore:
+                return await asyncio.to_thread(rr, doc)
+
+        docs = await asyncio.gather(*[process_doc(doc) for doc in data])
 
         graph = GraphContainer.from_docs_list(docs)
         return graph
 
-    def process_batch(
+    async def process_batch(
         self,
         batch,
         resource_name: str | None,
@@ -182,12 +185,12 @@ class Caster:
             resource_name: Optional name of the resource to use
             conn_conf: Optional database connection configuration
         """
-        gc = self.cast_normal_resource(batch, resource_name=resource_name)
+        gc = await self.cast_normal_resource(batch, resource_name=resource_name)
 
         if conn_conf is not None:
-            self.push_db(gc=gc, conn_conf=conn_conf, resource_name=resource_name)
+            await self.push_db(gc=gc, conn_conf=conn_conf, resource_name=resource_name)
 
-    def process_data_source(
+    async def process_data_source(
         self,
         data_source: AbstractDataSource,
         resource_name: str | None = None,
@@ -211,11 +214,11 @@ class Caster:
         for batch in data_source.iter_batches(
             batch_size=self.ingestion_params.batch_size, limit=limit
         ):
-            self.process_batch(
+            await self.process_batch(
                 batch, resource_name=actual_resource_name, conn_conf=conn_conf
             )
 
-    def process_resource(
+    async def process_resource(
         self,
         resource_instance: (
             Path | str | list[dict] | list[list] | pd.DataFrame | dict[str, Any]
@@ -281,13 +284,13 @@ class Caster:
         data_source.resource_name = resource_name
 
         # Process using the data source
-        self.process_data_source(
+        await self.process_data_source(
             data_source=data_source,
             resource_name=resource_name,
             conn_conf=conn_conf,
         )
 
-    def push_db(
+    async def push_db(
         self,
         gc: GraphContainer,
         conn_conf: DBConfig,
@@ -302,105 +305,181 @@ class Caster:
         """
         vc = self.schema.vertex_config
         resource = self.schema.fetch_resource(resource_name)
-        with ConnectionManager(connection_config=conn_conf) as db_client:
-            for vcol, data in gc.vertices.items():
-                # blank nodes: push and get back their keys  {"_key": ...}
-                if vcol in vc.blank_vertices:
-                    query0 = db_client.insert_return_batch(data, vc.vertex_dbname(vcol))
-                    cursor = db_client.execute(query0)
-                    gc.vertices[vcol] = [item for item in cursor]
-                else:
-                    db_client.upsert_docs_batch(
-                        data,
-                        vc.vertex_dbname(vcol),
-                        vc.index(vcol),
-                        update_keys="doc",
-                        filter_uniques=True,
-                        dry=self.ingestion_params.dry,
+
+        # Push vertices in parallel (with configurable concurrency control to prevent deadlocks)
+        # Some databases can deadlock when multiple transactions modify the same nodes
+        # Use a semaphore to limit concurrent operations based on max_concurrent_db_ops
+        max_concurrent = (
+            self.ingestion_params.max_concurrent_db_ops
+            if self.ingestion_params.max_concurrent_db_ops is not None
+            else self.ingestion_params.n_cores
+        )
+        vertex_semaphore = asyncio.Semaphore(max_concurrent)
+
+        async def push_vertex(vcol: str, data: list[dict]):
+            async with vertex_semaphore:
+
+                def _push_vertex_sync():
+                    with ConnectionManager(connection_config=conn_conf) as db_client:
+                        # blank nodes: push and get back their keys  {"_key": ...}
+                        if vcol in vc.blank_vertices:
+                            query0 = db_client.insert_return_batch(
+                                data, vc.vertex_dbname(vcol)
+                            )
+                            cursor = db_client.execute(query0)
+                            return vcol, [item for item in cursor]
+                        else:
+                            db_client.upsert_docs_batch(
+                                data,
+                                vc.vertex_dbname(vcol),
+                                vc.index(vcol),
+                                update_keys="doc",
+                                filter_uniques=True,
+                                dry=self.ingestion_params.dry,
+                            )
+                            return vcol, None
+
+                return await asyncio.to_thread(_push_vertex_sync)
+
+        # Process all vertices in parallel (with semaphore limiting concurrency for Neo4j)
+        vertex_results = await asyncio.gather(
+            *[push_vertex(vcol, data) for vcol, data in gc.vertices.items()]
+        )
+
+        # Update blank vertices with returned keys
+        for vcol, result in vertex_results:
+            if result is not None:
+                gc.vertices[vcol] = result
+
+        # update edge misc with blank node edges
+        for vcol in vc.blank_vertices:
+            for edge_id, edge in self.schema.edge_config.edges_items():
+                vfrom, vto, relation = edge_id
+                if vcol == vfrom or vcol == vto:
+                    if edge_id not in gc.edges:
+                        gc.edges[edge_id] = []
+                    gc.edges[edge_id].extend(
+                        [
+                            (x, y, {})
+                            for x, y in zip(gc.vertices[vfrom], gc.vertices[vto])
+                        ]
                     )
 
-            # update edge misc with blank node edges
-            for vcol in vc.blank_vertices:
-                for edge_id, edge in self.schema.edge_config.edges_items():
-                    vfrom, vto, relation = edge_id
-                    if vcol == vfrom or vcol == vto:
-                        if edge_id not in gc.edges:
-                            gc.edges[edge_id] = []
-                        gc.edges[edge_id].extend(
-                            [
-                                (x, y, {})
-                                for x, y in zip(gc.vertices[vfrom], gc.vertices[vto])
-                            ]
-                        )
+        # Process extra weights
+        async def process_extra_weights():
+            def _process_extra_weights_sync():
+                with ConnectionManager(connection_config=conn_conf) as db_client:
+                    # currently works only on item level
+                    for edge in resource.extra_weights:
+                        if edge.weights is None:
+                            continue
+                        for weight in edge.weights.vertices:
+                            if weight.name in vc.vertex_set:
+                                index_fields = vc.index(weight.name)
 
-        with ConnectionManager(connection_config=conn_conf) as db_client:
-            # currently works only on item level
-            for edge in resource.extra_weights:
-                if edge.weights is None:
-                    continue
-                for weight in edge.weights.vertices:
-                    if weight.name in vc.vertex_set:
-                        index_fields = vc.index(weight.name)
+                                if (
+                                    not self.ingestion_params.dry
+                                    and weight.name in gc.vertices
+                                ):
+                                    weights_per_item = (
+                                        db_client.fetch_present_documents(
+                                            class_name=vc.vertex_dbname(weight.name),
+                                            batch=gc.vertices[weight.name],
+                                            match_keys=index_fields.fields,
+                                            keep_keys=weight.fields,
+                                        )
+                                    )
 
-                        if not self.ingestion_params.dry and weight.name in gc.vertices:
-                            weights_per_item = db_client.fetch_present_documents(
-                                class_name=vc.vertex_dbname(weight.name),
-                                batch=gc.vertices[weight.name],
-                                match_keys=index_fields.fields,
-                                keep_keys=weight.fields,
-                            )
+                                    for j, item in enumerate(gc.linear):
+                                        weights = weights_per_item[j]
 
-                            for j, item in enumerate(gc.linear):
-                                weights = weights_per_item[j]
+                                        for ee in item[edge.edge_id]:
+                                            weight_collection_attached = {
+                                                weight.cfield(k): v
+                                                for k, v in weights[0].items()
+                                            }
+                                            ee.update(weight_collection_attached)
+                            else:
+                                logger.error(f"{weight.name} not a valid vertex")
 
-                                for ee in item[edge.edge_id]:
-                                    weight_collection_attached = {
-                                        weight.cfield(k): v
-                                        for k, v in weights[0].items()
-                                    }
-                                    ee.update(weight_collection_attached)
-                    else:
-                        logger.error(f"{weight.name} not a valid vertex")
+            await asyncio.to_thread(_process_extra_weights_sync)
 
-        with ConnectionManager(connection_config=conn_conf) as db_client:
-            for edge_id, edge in self.schema.edge_config.edges_items():
-                for ee in gc.loop_over_relations(edge_id):
-                    _, _, relation = ee
-                    if not self.ingestion_params.dry:
-                        data = gc.edges[ee]
-                        db_client.insert_edges_batch(
-                            docs_edges=data,
-                            source_class=vc.vertex_dbname(edge.source),
-                            target_class=vc.vertex_dbname(edge.target),
-                            relation_name=relation,
-                            match_keys_source=vc.index(edge.source).fields,
-                            match_keys_target=vc.index(edge.target).fields,
-                            filter_uniques=False,
-                            dry=self.ingestion_params.dry,
-                            collection_name=edge.database_name,
-                        )
+        await process_extra_weights()
 
-    def process_with_queue(self, tasks: mp.Queue, conn_conf: DBConfig | None = None):
+        # Push edges in parallel (with configurable concurrency control to prevent deadlocks)
+        # Some databases can deadlock when multiple transactions modify the same nodes/relationships
+        # Use a semaphore to limit concurrent operations based on max_concurrent_db_ops
+        edge_semaphore = asyncio.Semaphore(max_concurrent)
+
+        async def push_edge(edge_id: tuple, edge: Edge):
+            async with edge_semaphore:
+
+                def _push_edge_sync():
+                    with ConnectionManager(connection_config=conn_conf) as db_client:
+                        for ee in gc.loop_over_relations(edge_id):
+                            _, _, relation = ee
+                            if not self.ingestion_params.dry:
+                                data = gc.edges[ee]
+                                db_client.insert_edges_batch(
+                                    docs_edges=data,
+                                    source_class=vc.vertex_dbname(edge.source),
+                                    target_class=vc.vertex_dbname(edge.target),
+                                    relation_name=relation,
+                                    match_keys_source=vc.index(edge.source).fields,
+                                    match_keys_target=vc.index(edge.target).fields,
+                                    filter_uniques=False,
+                                    dry=self.ingestion_params.dry,
+                                    collection_name=edge.database_name,
+                                )
+
+                await asyncio.to_thread(_push_edge_sync)
+
+        # Process all edges in parallel (with semaphore limiting concurrency for Neo4j)
+        await asyncio.gather(
+            *[
+                push_edge(edge_id, edge)
+                for edge_id, edge in self.schema.edge_config.edges_items()
+            ]
+        )
+
+    async def process_with_queue(
+        self, tasks: asyncio.Queue, conn_conf: DBConfig | None = None
+    ):
         """Process tasks from a queue.
 
         Args:
-            tasks: Queue of tasks to process
+            tasks: Async queue of tasks to process
             conn_conf: Optional database connection configuration
         """
+        # Sentinel value to signal completion
+        SENTINEL = None
+
         while True:
             try:
-                task = tasks.get_nowait()
+                # Get task from queue (will wait if queue is empty)
+                task = await tasks.get()
+
+                # Check for sentinel value
+                if task is SENTINEL:
+                    tasks.task_done()
+                    break
+
                 # Support both (Path, str) tuples and DataSource instances
                 if isinstance(task, tuple) and len(task) == 2:
                     filepath, resource_name = task
-                    self.process_resource(
+                    await self.process_resource(
                         resource_instance=filepath,
                         resource_name=resource_name,
                         conn_conf=conn_conf,
                     )
                 elif isinstance(task, AbstractDataSource):
-                    self.process_data_source(data_source=task, conn_conf=conn_conf)
-            except queue.Empty:
+                    await self.process_data_source(
+                        data_source=task, conn_conf=conn_conf
+                    )
+                tasks.task_done()
+            except Exception as e:
+                logger.error(f"Error processing task: {e}", exc_info=True)
+                tasks.task_done()
                 break
 
     @staticmethod
@@ -431,13 +510,16 @@ class Caster:
         rows_dressed = [{k: v for k, v in zip(columns, item)} for item in _data]
         return rows_dressed
 
-    def ingest_data_sources(
+    async def ingest_data_sources(
         self,
         data_source_registry: DataSourceRegistry,
         conn_conf: DBConfig,
         ingestion_params: IngestionParams | None = None,
     ):
         """Ingest data from data sources in a registry.
+
+        Note: Schema definition should be handled separately via GraphEngine.define_schema()
+        before calling this method.
 
         Args:
             data_source_registry: Registry containing data sources mapped to resources
@@ -451,23 +533,6 @@ class Caster:
         # Update ingestion params (may override defaults set in __init__)
         self.ingestion_params = ingestion_params
         init_only = ingestion_params.init_only
-
-        # If effective_schema is not set, use schema.general.name as fallback
-        if conn_conf.can_be_target() and conn_conf.effective_schema is None:
-            schema_name = self.schema.general.name
-            # Map to the appropriate field based on DB type
-            if conn_conf.connection_type == DBType.TIGERGRAPH:
-                # TigerGraph uses 'schema_name' field
-                conn_conf.schema_name = schema_name
-            else:
-                # ArangoDB, Neo4j use 'database' field (which maps to effective_schema)
-                conn_conf.database = schema_name
-
-        # init_db() now handles database/schema creation automatically
-        # It checks if the database exists and creates it if needed
-        # Uses schema.general.name if database is not set in config
-        with ConnectionManager(connection_config=conn_conf) as db_client:
-            db_client.init_db(self.schema, self.ingestion_params.clean_start)
 
         if init_only:
             logger.info("ingest execution bound to init")
@@ -485,53 +550,29 @@ class Caster:
 
         with Timer() as klepsidra:
             if self.ingestion_params.n_cores > 1:
-                queue_tasks: mp.Queue = mp.Queue()
+                # Use asyncio for parallel processing
+                queue_tasks: asyncio.Queue = asyncio.Queue()
                 for item in tasks:
-                    queue_tasks.put(item)
+                    await queue_tasks.put(item)
 
-                func = partial(
-                    self.process_with_queue,
-                    conn_conf=conn_conf,
-                )
-                assert mp.get_start_method() == "fork", (
-                    "Requires 'forking' operating system"
-                )
+                # Add sentinel values to signal workers to stop
+                for _ in range(self.ingestion_params.n_cores):
+                    await queue_tasks.put(None)
 
-                processes = []
+                # Create worker tasks
+                worker_tasks = [
+                    self.process_with_queue(queue_tasks, conn_conf=conn_conf)
+                    for _ in range(self.ingestion_params.n_cores)
+                ]
 
-                for w in range(self.ingestion_params.n_cores):
-                    p = mp.Process(target=func, args=(queue_tasks,))
-                    processes.append(p)
-                    p.start()
-                    for p in processes:
-                        p.join()
+                # Run all workers in parallel
+                await asyncio.gather(*worker_tasks)
             else:
                 for data_source in tasks:
-                    self.process_data_source(
+                    await self.process_data_source(
                         data_source=data_source, conn_conf=conn_conf
                     )
         logger.info(f"Processing took {klepsidra.elapsed:.1f} sec")
-
-    @staticmethod
-    def _get_db_flavor_from_config(output_config: DBConfig) -> DBFlavor:
-        """Convert DBConfig connection type to DBFlavor.
-
-        Args:
-            output_config: Database configuration
-
-        Returns:
-            DBFlavor enum value corresponding to the database type
-        """
-        db_type = output_config.connection_type
-        if db_type == DBType.ARANGO:
-            return DBFlavor.ARANGO
-        elif db_type == DBType.NEO4J:
-            return DBFlavor.NEO4J
-        elif db_type == DBType.TIGERGRAPH:
-            return DBFlavor.TIGERGRAPH
-        else:
-            # Default to ARANGO for unknown types
-            return DBFlavor.ARANGO
 
     def _register_file_sources(
         self,
@@ -720,7 +761,7 @@ class Caster:
         ingestion_params = ingestion_params or IngestionParams()
 
         # Initialize vertex config with correct field types based on database type
-        db_flavor = self._get_db_flavor_from_config(output_config)
+        db_flavor = output_config.connection_type
         self.schema.vertex_config.db_flavor = db_flavor
         self.schema.vertex_config.finish_init()
         # Initialize edge config after vertex config is fully initialized
@@ -730,8 +771,10 @@ class Caster:
         registry = self._build_registry_from_patterns(patterns, ingestion_params)
 
         # Ingest data sources
-        self.ingest_data_sources(
-            data_source_registry=registry,
-            conn_conf=output_config,
-            ingestion_params=ingestion_params,
+        asyncio.run(
+            self.ingest_data_sources(
+                data_source_registry=registry,
+                conn_conf=output_config,
+                ingestion_params=ingestion_params,
+            )
         )

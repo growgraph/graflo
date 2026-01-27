@@ -264,26 +264,20 @@ Automatically generate a graflo Schema from your PostgreSQL database. This is th
 ```python
 
 from graflo.hq import GraphEngine
-from graflo.onto import DBFlavor
+from graflo.onto import DBType
 from graflo.db.connection.onto import ArangoConfig, Neo4jConfig, TigergraphConfig, FalkordbConfig, PostgresConfig
-from graflo.db import DBType
 
-# Connect to target graph database to determine flavor
+# Connect to target graph database to determine database type
 # Choose one of: ArangoConfig, Neo4jConfig, TigergraphConfig, or FalkordbConfig
 target_config = ArangoConfig.from_docker_env()  # or Neo4jConfig, TigergraphConfig, FalkordbConfig
 
-# Determine db_flavor from target config
+# Get database type from target config
 db_type = target_config.connection_type
-db_flavor = (
-    DBFlavor(db_type.value)
-    if db_type in (DBType.ARANGO, DBType.NEO4J, DBType.TIGERGRAPH, DBType.FALKORDB)
-    else DBFlavor.ARANGO
-)
 
 # Create GraphEngine and infer schema automatically
 # Connection is automatically managed inside infer_schema()
 postgres_conf = PostgresConfig.from_docker_env()
-engine = GraphEngine(target_db_flavor=db_flavor)
+engine = GraphEngine(target_db_flavor=db_type)
 schema = engine.infer_schema(
     postgres_conf,
     schema_name="public",  # PostgreSQL schema name
@@ -373,26 +367,22 @@ Finally, ingest the data from PostgreSQL into your target graph database. This i
 5. **Graph Database Storage**: Data is written to the target graph database (ArangoDB/Neo4j/TigerGraph) using database-specific APIs for optimal performance. The system handles duplicates and updates based on indexes.
 
 ```python
-from graflo import Caster
-
-# Create Caster with inferred schema
-caster = Caster(schema)
-
-# Ingest data from PostgreSQL into graph database
+from graflo.hq import GraphEngine
 from graflo.hq.caster import IngestionParams
 
+# Use GraphEngine for schema definition and ingestion
+engine = GraphEngine()
 ingestion_params = IngestionParams(
     clean_start=True,  # Clear existing data first
 )
 
-caster.ingest(
+engine.define_and_ingest(
+    schema=schema,
     output_config=target_config,  # Target graph database config
     patterns=patterns,  # PostgreSQL table patterns
     ingestion_params=ingestion_params,
+    clean_start=True,  # Clear existing data first
 )
-
-# Cleanup
-postgres_conn.close()
 ```
 
 ## Complete Example
@@ -404,11 +394,10 @@ import logging
 from pathlib import Path
 import yaml
 
-from graflo import Caster
-from graflo.onto import DBFlavor
-from graflo.db import DBType
+from graflo.onto import DBType
 from graflo.hq import GraphEngine
 from graflo.db.connection.onto import ArangoConfig, PostgresConfig
+from graflo.hq.caster import IngestionParams
 
 logger = logging.getLogger(__name__)
 
@@ -427,14 +416,9 @@ target_config = ArangoConfig.from_docker_env()  # or Neo4jConfig, TigergraphConf
 # Step 4: Infer Schema from PostgreSQL database structure
 # Connection is automatically managed inside infer_schema()
 db_type = target_config.connection_type
-db_flavor = (
-    DBFlavor(db_type.value)
-    if db_type in (DBType.ARANGO, DBType.NEO4J, DBType.TIGERGRAPH)
-    else DBFlavor.ARANGO
-)
 
 # Create GraphEngine and infer schema
-engine = GraphEngine(target_db_flavor=db_flavor)
+engine = GraphEngine(target_db_flavor=db_type)
 schema = engine.infer_schema(
     postgres_conf,
     schema_name="public",
@@ -450,23 +434,19 @@ logger.info(f"Inferred schema saved to {schema_output_file}")
 engine = GraphEngine()
 patterns = engine.create_patterns(postgres_conf, schema_name="public")
 
-# Step 7: Create Caster and ingest data
-from graflo.hq.caster import IngestionParams
-
-caster = Caster(schema)
-
+# Step 7: Define schema and ingest data
 ingestion_params = IngestionParams(
     clean_start=True,  # Clear existing data first
 )
 
-caster.ingest(
+# Use GraphEngine to define schema and ingest data
+engine.define_and_ingest(
+    schema=schema,
     output_config=target_config,
     patterns=patterns,
     ingestion_params=ingestion_params,
+    clean_start=True,  # Clear existing data first
 )
-
-# Cleanup
-postgres_conn.close()
 
 print("\n" + "=" * 80)
 print("Ingestion complete!")

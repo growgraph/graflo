@@ -49,6 +49,13 @@ Resources define how data is transformed into a graph (semantic mapping). They w
 - **Table-like processing**: CSV files, SQL tables, API responses
 - **JSON-like processing**: JSON files, nested data structures, hierarchical API responses
 
+### GraphEngine
+The `GraphEngine` orchestrates graph database operations, providing a unified interface for:
+- Schema inference from PostgreSQL databases
+- Schema definition in target graph databases (moved from Caster)
+- Pattern creation from data sources
+- Data ingestion with async support
+
 ## Key Features
 
 - **🚀 PostgreSQL Schema Inference**: **Automatically generate schemas from normalized PostgreSQL databases (3NF)** - No manual schema definition needed!
@@ -71,6 +78,7 @@ Resources define how data is transformed into a graph (semantic mapping). They w
     - Vertex fields support types (INT, FLOAT, STRING, DATETIME, BOOL) for better validation
     - Edge weight fields can specify types for improved type safety
     - Backward compatible: fields without types default to None (suitable for databases like ArangoDB)
+- **Async Ingestion**: Efficient async/await-based ingestion pipeline for better performance
 - **Parallel Processing**: Efficient processing with multi-threading
 - **Database Integration**: Seamless integration with Neo4j, ArangoDB, TigerGraph, FalkorDB, Memgraph, and PostgreSQL (as source)
 - **Advanced Filtering**: Powerful filtering capabilities for data transformation with server-side filtering support

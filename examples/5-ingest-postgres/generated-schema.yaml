@@ -45,7 +45,8 @@ resources:
     resource_name: purchases
 transforms: {}
 vertex_config:
-    db_flavor: tigergraph
+    db_flavor: !!python/object/apply:graflo.onto.DBType
+    -   tigergraph
     vertices:
     -   dbname: products
         fields:

@@ -27,9 +27,10 @@ from os.path import dirname, join, realpath
 import click
 from suthing import FileHandle
 
-from graflo import Caster, DataSourceRegistry, Patterns, Schema
+from graflo import DataSourceRegistry, Patterns, Schema, DBType
 from graflo.db.connection.onto import DBConfig
 from graflo.data_source import DataSourceFactory
+from graflo.hq import GraphEngine
 
 logger = logging.getLogger(__name__)
 
@@ -136,17 +137,39 @@ def ingest(
 
     schema.fetch_resource()
 
+    # Determine DB type from connection config
+    db_type = conn_conf.connection_type
+    # Ensure it's a graph database (target database)
+    if db_type not in (
+        DBType.ARANGO,
+        DBType.NEO4J,
+        DBType.TIGERGRAPH,
+        DBType.FALKORDB,
+        DBType.MEMGRAPH,
+        DBType.NEBULA,
+    ):
+        db_type = DBType.ARANGO  # Default to ARANGO for non-graph databases
+
+    # Create GraphEngine for the full workflow
+    engine = GraphEngine(target_db_flavor=db_type)
+
     # Create ingestion params with CLI arguments
     from graflo.hq.caster import IngestionParams
 
     ingestion_params = IngestionParams(
         n_cores=n_cores,
+        batch_size=batch_size,
+        init_only=init_only,
+        limit_files=limit_files,
     )
 
-    caster = Caster(
-        schema,
-        ingestion_params=ingestion_params,
-    )
+    # Define schema first (if clean_start is requested)
+    if fresh_start:
+        engine.define_schema(
+            schema=schema,
+            output_config=conn_conf,
+            clean_start=True,
+        )
 
     # Validate that either source_path or data_source_config_path is provided
     if data_source_config_path is None and source_path is None:
@@ -174,25 +197,20 @@ def ingest(
                 )
                 registry.register(data_source, resource_name=resource_name)
 
-        # Update ingestion params with runtime options
-        ingestion_params.clean_start = fresh_start
-        ingestion_params.batch_size = batch_size
-        ingestion_params.init_only = init_only
+        # For data source registry, we need to use Caster directly
+        # since GraphEngine.ingest() uses patterns, not registry
+        from graflo.hq.caster import Caster
 
+        caster = Caster(schema=schema, ingestion_params=ingestion_params)
         caster.ingest_data_sources(
             data_source_registry=registry,
             conn_conf=conn_conf,
             ingestion_params=ingestion_params,
         )
     else:
-        # Fall back to file-based ingestion
-        # Update ingestion params with runtime options
-        ingestion_params.clean_start = fresh_start
-        ingestion_params.batch_size = batch_size
-        ingestion_params.init_only = init_only
-        ingestion_params.limit_files = limit_files
-
-        caster.ingest(
+        # Fall back to file-based ingestion using GraphEngine
+        engine.ingest(
+            schema=schema,
             output_config=conn_conf,
             patterns=patterns,
             ingestion_params=ingestion_params,

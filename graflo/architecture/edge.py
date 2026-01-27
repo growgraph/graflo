@@ -2,7 +2,7 @@
 
 This module provides classes and utilities for managing edges in graph databases.
 It handles edge configuration, weight management, indexing, and relationship operations.
-The module supports both ArangoDB and Neo4j through the DBFlavor enum.
+The module supports both ArangoDB and Neo4j through the DBType enum.
 
 Key Components:
     - Edge: Represents an edge with its source, target, and configuration
@@ -28,7 +28,8 @@ from graflo.architecture.onto import (
     Weight,
 )
 from graflo.architecture.vertex import Field, FieldType, VertexConfig, _FieldsType
-from graflo.onto import DBFlavor
+from graflo.onto import DBType
+
 
 # Default relation name for TigerGraph edges when relation is not specified
 DEFAULT_TIGERGRAPH_RELATION = "relates"
@@ -249,7 +250,7 @@ class Edge(BaseDataclass):
         self._target = vertex_config.vertex_dbname(self.target)
 
         # ArangoDB-specific: set graph_name and database_name only for ArangoDB
-        if vertex_config.db_flavor == DBFlavor.ARANGO:
+        if vertex_config.db_flavor == DBType.ARANGO:
             graph_name = [
                 vertex_config.vertex_dbname(self.source),
                 vertex_config.vertex_dbname(self.target),
@@ -260,7 +261,7 @@ class Edge(BaseDataclass):
             self.database_name = "_".join(graph_name + ["edges"])
 
         # TigerGraph requires named edge types (relations), so assign default if missing
-        if vertex_config.db_flavor == DBFlavor.TIGERGRAPH and self.relation is None:
+        if vertex_config.db_flavor == DBType.TIGERGRAPH and self.relation is None:
             # Use default relation name for TigerGraph
             # TigerGraph requires all edges to have a named type (relation)
             self.relation = DEFAULT_TIGERGRAPH_RELATION
@@ -270,7 +271,7 @@ class Edge(BaseDataclass):
 
         # TigerGraph: add relation field to weights if relation_field or relation_from_key is set
         # This ensures the relation value is included as a typed property in the edge schema
-        if vertex_config.db_flavor == DBFlavor.TIGERGRAPH:
+        if vertex_config.db_flavor == DBType.TIGERGRAPH:
             if self.relation_field is None and self.relation_from_key:
                 # relation_from_key is True but relation_field not set, default to standard name
                 self.relation_field = DEFAULT_TIGERGRAPH_RELATION_WEIGHTNAME
@@ -336,7 +337,7 @@ class Edge(BaseDataclass):
                 fields = vc.index(index.name).fields
             index_fields += [f"{index.name}@{x}" for x in fields]
 
-        if not index.exclude_edge_endpoints and vc.db_flavor == DBFlavor.ARANGO:
+        if not index.exclude_edge_endpoints and vc.db_flavor == DBType.ARANGO:
             if all([item not in index_fields for item in ["_from", "_to"]]):
                 index_fields = ["_from", "_to"] + index_fields
 

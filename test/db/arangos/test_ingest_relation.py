@@ -1,9 +1,7 @@
-from pathlib import Path
+from test.conftest import ingest_atomic
 from test.db.arangos.conftest import verify_from_db
 
-from suthing import FileHandle
-
-from graflo import Caster, ConnectionManager
+from graflo import ConnectionManager
 
 
 def test_ingest(
@@ -14,22 +12,17 @@ def test_ingest(
     test_db_name,
     reset,
 ):
+    m = "oa-institution"
     _ = create_db
-    schema_o = schema_obj("oa.institution")
-    j_resource = FileHandle.load(Path(current_path) / "data/json/oa.institution.json")
+    schema_o = schema_obj(m)
 
-    conn_conf.database = test_db_name
-
-    with ConnectionManager(connection_config=conn_conf) as db_client:
-        db_client.init_db(schema_o, clean_start=True)
-    caster = Caster(schema_o)
-    caster.process_resource(j_resource, "institutions", conn_conf=conn_conf)
+    ingest_atomic(conn_conf, current_path, test_db_name, schema_o, mode=m)
 
     verify_from_db(
         conn_conf,
         current_path,
         test_db_name,
-        mode="oa_relation",
+        mode=m,
         reset=reset,
     )
 

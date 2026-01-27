@@ -2,7 +2,7 @@
 
 This module provides classes and utilities for managing vertices in graph databases.
 It handles vertex configuration, field management, indexing, and filtering operations.
-The module supports both ArangoDB and Neo4j through the DBFlavor enum.
+The module supports both ArangoDB and Neo4j through the DBType enum.
 
 Key Components:
     - Vertex: Represents a vertex with its fields and indexes
@@ -23,7 +23,8 @@ from typing import TYPE_CHECKING, Union
 
 from graflo.architecture.onto import Index
 from graflo.filter.onto import Expression
-from graflo.onto import BaseDataclass, BaseEnum, DBFlavor
+from graflo.onto import DBType
+from graflo.onto import BaseDataclass, BaseEnum
 
 logger = logging.getLogger(__name__)
 
@@ -314,7 +315,7 @@ class Vertex(BaseDataclass):
                     self.fields.append(Field(name=field_name, type=None))
                     seen_names.add(field_name)
 
-    def finish_init(self, db_flavor: DBFlavor):
+    def finish_init(self, db_flavor: DBType):
         """Complete initialization of vertex with database-specific field types.
 
         Args:
@@ -322,7 +323,7 @@ class Vertex(BaseDataclass):
         """
         self.fields = [
             Field(name=f.name, type=FieldType.STRING)
-            if f.type is None and db_flavor == DBFlavor.TIGERGRAPH
+            if f.type is None and db_flavor == DBType.TIGERGRAPH
             else f
             for f in self.fields
         ]
@@ -345,7 +346,7 @@ class VertexConfig(BaseDataclass):
     vertices: list[Vertex]
     blank_vertices: list[str] = dataclasses.field(default_factory=list)
     force_types: dict[str, list] = dataclasses.field(default_factory=dict)
-    db_flavor: DBFlavor = DBFlavor.ARANGO
+    db_flavor: DBType = DBType.ARANGO
 
     def __post_init__(self):
         """Initialize the vertex configuration.

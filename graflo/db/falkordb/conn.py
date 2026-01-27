@@ -38,7 +38,9 @@ from graflo.architecture.vertex import VertexConfig
 from graflo.db.conn import Connection
 from graflo.db.util import serialize_value
 from graflo.filter.onto import Expression
-from graflo.onto import AggregationType, DBFlavor, ExpressionFlavor
+from graflo.onto import AggregationType, ExpressionFlavor
+from graflo.onto import DBType
+
 
 from ..connection.onto import FalkordbConfig
 
@@ -60,7 +62,7 @@ class FalkordbConnection(Connection):
         _graph_name: Name of the currently selected graph
     """
 
-    flavor = DBFlavor.FALKORDB
+    flavor = DBType.FALKORDB
 
     # Type annotations for instance attributes
     client: FalkorDB | None
@@ -654,7 +656,7 @@ class FalkordbConnection(Connection):
         if filters is not None:
             ff = Expression.from_dict(filters)
             # Use NEO4J flavor since FalkorDB uses OpenCypher
-            filter_clause = f"WHERE {ff(doc_name='n', kind=DBFlavor.NEO4J)}"
+            filter_clause = f"WHERE {ff(doc_name='n', kind=DBType.NEO4J)}"
         else:
             filter_clause = ""
 
@@ -877,7 +879,7 @@ class FalkordbConnection(Connection):
         # Build filter clause
         if filters is not None:
             ff = Expression.from_dict(filters)
-            filter_clause = f"WHERE {ff(doc_name='n', kind=DBFlavor.NEO4J)}"
+            filter_clause = f"WHERE {ff(doc_name='n', kind=DBType.NEO4J)}"
         else:
             filter_clause = ""
 

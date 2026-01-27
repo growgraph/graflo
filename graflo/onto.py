@@ -7,7 +7,6 @@ database-specific configurations.
 Key Components:
     - BaseEnum: Base class for string-based enumerations with flexible membership testing
     - BaseDataclass: Base class for dataclasses with JSON/YAML serialization support
-    - DBFlavor: Enum for supported database types (ArangoDB, Neo4j)
     - ExpressionFlavor: Enum for expression language types
     - AggregationType: Enum for supported aggregation operations
 
@@ -95,28 +94,6 @@ def _register_yaml_representer():
 
 # Register the representer at module import time (after BaseEnum is defined)
 _register_yaml_representer()
-
-
-class DBFlavor(BaseEnum):
-    """Supported database types.
-
-    This enum defines the supported graph database types in the system.
-
-    Attributes:
-        ARANGO: ArangoDB database
-        NEO4J: Neo4j database
-        TIGERGRAPH: TigerGraph database
-        FALKORDB: FalkorDB database (Redis-based graph database using Cypher)
-        MEMGRAPH: Memgraph database (in-memory graph database using Cypher)
-        NEBULA: NebulaGraph database
-    """
-
-    ARANGO = "arango"
-    NEO4J = "neo4j"
-    TIGERGRAPH = "tigergraph"
-    FALKORDB = "falkordb"
-    MEMGRAPH = "memgraph"
-    NEBULA = "nebula"
 
 
 class ExpressionFlavor(BaseEnum):
@@ -321,3 +298,24 @@ class BaseDataclass(JSONWizard, JSONWizard.Meta, YAMLWizard):
             list[str]: List of public field names
         """
         return [k for k in cls.__annotations__ if not k.startswith("_")]
+
+
+class DBType(StrEnum, metaclass=MetaEnum):
+    """Enum representing different types of databases.
+
+    Includes both graph databases and source databases (SQL, NoSQL, etc.).
+    """
+
+    # Graph databases
+    ARANGO = "arango"
+    NEO4J = "neo4j"
+    TIGERGRAPH = "tigergraph"
+    FALKORDB = "falkordb"
+    MEMGRAPH = "memgraph"
+    NEBULA = "nebula"
+
+    # Source databases (SQL, NoSQL)
+    POSTGRES = "postgres"
+    MYSQL = "mysql"
+    MONGODB = "mongodb"
+    SQLITE = "sqlite"

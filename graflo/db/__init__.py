@@ -25,7 +25,7 @@ Example:
 
 from .arango.conn import ArangoConnection
 from .conn import Connection, ConnectionType
-from .connection import DBConfig, DBType
+from .connection import DBConfig
 from .falkordb.conn import FalkordbConnection
 from .manager import ConnectionManager
 from .memgraph.conn import MemgraphConnection
@@ -37,7 +37,6 @@ from .tigergraph.conn import TigerGraphConnection
 __all__ = [
     "Connection",
     "ConnectionType",
-    "DBType",
     "DBConfig",
     "ConnectionManager",
     "ArangoConnection",

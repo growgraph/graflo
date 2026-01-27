@@ -14,9 +14,9 @@ from graflo.architecture.edge import Edge, EdgeConfig, WeightConfig
 from graflo.architecture.onto import Index, IndexType
 from graflo.architecture.schema import Schema, SchemaMetadata
 from graflo.architecture.vertex import Field, FieldType, Vertex, VertexConfig
-from graflo.onto import DBFlavor
+from graflo.onto import DBType
 
-from ...architecture.onto_sql import EdgeTableInfo, SchemaIntrospectionResult
+from graflo.architecture.onto_sql import EdgeTableInfo, SchemaIntrospectionResult
 from .conn import PostgresConnection
 from .types import PostgresTypeMapper
 
@@ -35,7 +35,7 @@ class PostgresSchemaInferencer:
 
     def __init__(
         self,
-        db_flavor: DBFlavor = DBFlavor.ARANGO,
+        db_flavor: DBType = DBType.ARANGO,
         conn: PostgresConnection | None = None,
     ):
         """Initialize the schema inferencer.

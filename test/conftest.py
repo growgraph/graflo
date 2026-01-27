@@ -10,7 +10,6 @@ from suthing import FileHandle, equals
 
 from graflo.architecture.schema import Schema
 from graflo.architecture.util import cast_graph_name_to_triple
-from graflo.hq.caster import Caster
 from graflo.util.misc import sorted_dicts
 from graflo.util.onto import Patterns, FilePattern
 
@@ -71,11 +70,26 @@ def ingest_atomic(conn_conf, current_path, test_db_name, schema_o, mode, n_cores
         )
         patterns.add_file_pattern(resource_name, file_pattern)
 
+    # Determine DB flavor from connection config
+    from graflo.hq import GraphEngine
     from graflo.hq.caster import IngestionParams
 
-    caster = Caster(schema_o)
-    ingestion_params = IngestionParams(n_cores=n_cores, clean_start=True)
-    caster.ingest(
+    db_type = conn_conf.connection_type
+
+    # Use GraphEngine for the full workflow
+    engine = GraphEngine(target_db_flavor=db_type)
+
+    # Define schema first (with clean_start=True)
+    engine.define_schema(
+        schema=schema_o,
+        output_config=conn_conf,
+        clean_start=True,
+    )
+
+    # Then ingest data
+    ingestion_params = IngestionParams(n_cores=n_cores, clean_start=False)
+    engine.ingest(
+        schema=schema_o,
         output_config=conn_conf,
         patterns=patterns,
         ingestion_params=ingestion_params,

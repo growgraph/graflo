@@ -44,7 +44,8 @@ from graflo.architecture.onto import (
 )
 from graflo.architecture.util import project_dict
 from graflo.architecture.vertex import VertexConfig
-from graflo.onto import DBFlavor
+from graflo.onto import DBType
+
 
 logger = logging.getLogger(__name__)
 
@@ -340,7 +341,7 @@ def render_edge(
                     b = project_dict(v, target_index)
 
                     # For TigerGraph, extracted relations go to weight, not as relation key
-                    is_tigergraph = vertex_config.db_flavor == DBFlavor.TIGERGRAPH
+                    is_tigergraph = vertex_config.db_flavor == DBType.TIGERGRAPH
                     extracted_relation = None
 
                     # 1. Try to extract relation from data context

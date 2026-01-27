@@ -1,6 +1,5 @@
-from .onto import DBConfig, DBType
+from .onto import DBConfig
 
 __all__ = [
     "DBConfig",
-    "DBType",
 ]

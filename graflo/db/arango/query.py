@@ -22,7 +22,7 @@ from os.path import join
 from arango import ArangoClient
 
 from graflo.filter.onto import Expression
-from graflo.onto import DBFlavor
+from graflo.onto import DBType
 
 logger = logging.getLogger(__name__)
 
@@ -166,7 +166,7 @@ def fetch_fields_query(
 
     if filters is not None:
         ff = Expression.from_dict(filters)
-        extrac_filter_clause = f" && {ff(doc_name='_cdoc', kind=DBFlavor.ARANGO)}"
+        extrac_filter_clause = f" && {ff(doc_name='_cdoc', kind=DBType.ARANGO)}"
     else:
         extrac_filter_clause = ""
 
