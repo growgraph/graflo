@@ -27,11 +27,10 @@ from os.path import dirname, join, realpath
 import click
 from suthing import FileHandle
 
-from graflo import DataSourceRegistry, Patterns, Schema
-from graflo.db.connection.onto import DBConfig, DBType
+from graflo import DataSourceRegistry, Patterns, Schema, DBType
+from graflo.db.connection.onto import DBConfig
 from graflo.data_source import DataSourceFactory
 from graflo.hq import GraphEngine
-from graflo.onto import DBFlavor
 
 logger = logging.getLogger(__name__)
 
@@ -138,24 +137,21 @@ def ingest(
 
     schema.fetch_resource()
 
-    # Determine DB flavor from connection config
+    # Determine DB type from connection config
     db_type = conn_conf.connection_type
-    # Map DBType to DBFlavor (they have the same values for graph databases)
-    db_flavor = (
-        DBFlavor(db_type.value)
-        if db_type
-        in (
-            DBType.ARANGO,
-            DBType.NEO4J,
-            DBType.TIGERGRAPH,
-            DBType.FALKORDB,
-            DBType.MEMGRAPH,
-        )
-        else DBFlavor.ARANGO
-    )
+    # Ensure it's a graph database (target database)
+    if db_type not in (
+        DBType.ARANGO,
+        DBType.NEO4J,
+        DBType.TIGERGRAPH,
+        DBType.FALKORDB,
+        DBType.MEMGRAPH,
+        DBType.NEBULA,
+    ):
+        db_type = DBType.ARANGO  # Default to ARANGO for non-graph databases
 
     # Create GraphEngine for the full workflow
-    engine = GraphEngine(target_db_flavor=db_flavor)
+    engine = GraphEngine(target_db_flavor=db_type)
 
     # Create ingestion params with CLI arguments
     from graflo.hq.caster import IngestionParams

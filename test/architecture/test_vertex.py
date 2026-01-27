@@ -5,7 +5,7 @@ import logging
 import pytest
 
 from graflo.architecture.vertex import Field, FieldType, Vertex, VertexConfig
-from graflo.onto import DBFlavor
+from graflo.onto import DBType
 
 logger = logging.getLogger(__name__)
 
@@ -306,7 +306,7 @@ def test_get_fields_with_defaults_tigergraph():
         ],
     )
 
-    vertex.finish_init(DBFlavor.TIGERGRAPH)
+    vertex.finish_init(DBType.TIGERGRAPH)
     # For TigerGraph, None types should default to STRING
     fields = vertex.get_fields()
     assert len(fields) == 4
@@ -375,7 +375,7 @@ def test_vertex_config_fields_with_db_flavor():
     assert fields[1].type is None  # Preserved
 
     # Set db_flavor and call finish_init on config
-    config.db_flavor = DBFlavor.TIGERGRAPH
+    config.db_flavor = DBType.TIGERGRAPH
     config.finish_init()
     # With TigerGraph, should get fields with defaults applied
     fields = config.fields("user")

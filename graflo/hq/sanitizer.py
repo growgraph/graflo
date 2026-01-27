@@ -14,7 +14,7 @@ from collections import defaultdict
 from graflo.architecture.edge import Edge
 from graflo.architecture.schema import Schema
 from graflo.architecture.vertex import Field
-from graflo.onto import DBFlavor
+from graflo.onto import DBType
 
 from graflo.db.util import load_reserved_words, sanitize_attribute_name
 
@@ -37,7 +37,7 @@ class SchemaSanitizer:
     - Applying field index mappings to resources
     """
 
-    def __init__(self, db_flavor: DBFlavor):
+    def __init__(self, db_flavor: DBType):
         """Initialize the schema sanitizer.
 
         Args:
@@ -149,7 +149,7 @@ class SchemaSanitizer:
             str, dict[str, str]
         ] = {}  # vertex_name -> {old_field: new_field}
 
-        if schema.vertex_config.db_flavor == DBFlavor.TIGERGRAPH:
+        if schema.vertex_config.db_flavor == DBType.TIGERGRAPH:
             # Group edges by relation
             edges_by_relation: dict[str | None, list[Edge]] = {}
             for edge in schema.edge_config.edges:

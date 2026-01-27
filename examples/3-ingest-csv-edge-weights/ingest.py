@@ -1,7 +1,8 @@
 from suthing import FileHandle
-from graflo import Caster, Patterns, Schema
-from graflo.hq.caster import IngestionParams
+from graflo import Patterns, Schema
 from graflo.db.connection.onto import Neo4jConfig
+from graflo.hq import GraphEngine
+from graflo.hq.caster import IngestionParams
 
 import logging
 
@@ -32,6 +33,9 @@ conn_conf = Neo4jConfig.from_docker_env()
 #     bolt_port=7688
 # )
 
+# Determine DB type from connection config
+db_type = conn_conf.connection_type
+
 # Load patterns from YAML file (same pattern as Schema)
 patterns = Patterns.from_dict(FileHandle.load("patterns.yaml"))
 
@@ -44,10 +48,12 @@ patterns = Patterns.from_dict(FileHandle.load("patterns.yaml"))
 #     FilePattern(regex="^relations.*\.csv$", sub_path=pathlib.Path("."), resource_name="relations")
 # )
 
-caster = Caster(schema)
-
-
+# Create GraphEngine and define schema + ingest in one operation
+engine = GraphEngine(target_db_flavor=db_type)
 ingestion_params = IngestionParams(clean_start=True)
-caster.ingest(
-    output_config=conn_conf, patterns=patterns, ingestion_params=ingestion_params
+engine.define_and_ingest(
+    schema=schema,
+    output_config=conn_conf,
+    patterns=patterns,
+    ingestion_params=ingestion_params,
 )

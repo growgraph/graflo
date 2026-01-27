@@ -20,7 +20,7 @@ import logging
 
 import pytest
 
-from graflo.onto import DBFlavor
+from graflo.onto import DBType
 from test.conftest import fetch_schema_obj
 from graflo.hq.sanitizer import SchemaSanitizer
 
@@ -44,7 +44,7 @@ def test_vertex_name_sanitization_for_tigergraph(schema_with_reserved_words):
     """Test that vertex names with reserved words are sanitized for TigerGraph."""
     schema = schema_with_reserved_words
 
-    sanitizer = SchemaSanitizer(DBFlavor.TIGERGRAPH)
+    sanitizer = SchemaSanitizer(DBType.TIGERGRAPH)
 
     sanitized_schema = sanitizer.sanitize(schema)
 
@@ -61,7 +61,7 @@ def test_edges_sanitization_for_tigergraph(schema_with_incompatible_edges):
     """Test that vertex names with reserved words are sanitized for TigerGraph."""
     schema = schema_with_incompatible_edges
 
-    sanitizer = SchemaSanitizer(DBFlavor.TIGERGRAPH)
+    sanitizer = SchemaSanitizer(DBType.TIGERGRAPH)
 
     sanitized_schema = sanitizer.sanitize(schema)
 

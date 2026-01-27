@@ -42,8 +42,10 @@ from graflo.db.arango.util import render_filters
 from graflo.db.conn import Connection
 from graflo.db.util import get_data_from_cursor, json_serializer
 from graflo.filter.onto import Clause
-from graflo.onto import AggregationType, DBFlavor
+from graflo.onto import AggregationType
 from graflo.util.transform import pick_unique_dict
+from graflo.onto import DBType
+
 
 from ..connection.onto import ArangoConfig
 
@@ -385,7 +387,7 @@ class ArangoConnection(Connection):
         Returns:
             IndexHandle: Handle to the created index, or None if index type is not supported
         """
-        data = index.db_form(DBFlavor.ARANGO)
+        data = index.db_form(DBType.ARANGO)
         ih: Any | None = None
         if index.type == IndexType.PERSISTENT:
             ih = general_collection.add_index(data)

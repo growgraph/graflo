@@ -88,7 +88,9 @@ from graflo.architecture.schema import Schema
 from graflo.architecture.vertex import VertexConfig
 from graflo.db.conn import Connection
 from graflo.filter.onto import Expression
-from graflo.onto import AggregationType, DBFlavor, ExpressionFlavor
+from graflo.onto import AggregationType, ExpressionFlavor
+from graflo.onto import DBType
+
 
 from ..connection.onto import MemgraphConfig
 
@@ -152,8 +154,8 @@ class MemgraphConnection(Connection):
 
     Attributes
     ----------
-    flavor : DBFlavor
-        Database type identifier (DBFlavor.MEMGRAPH)
+    flavor : DBType
+        Database type identifier (DBType.MEMGRAPH)
     config : MemgraphConfig
         Connection configuration (URI, credentials)
     conn : mgclient.Connection
@@ -171,7 +173,7 @@ class MemgraphConnection(Connection):
             conn.close()
     """
 
-    flavor = DBFlavor.MEMGRAPH
+    flavor = DBType.MEMGRAPH
 
     # Type annotations for instance attributes
     conn: mgclient.Connection | None

@@ -71,28 +71,24 @@ def ingest_atomic(conn_conf, current_path, test_db_name, schema_o, mode, n_cores
         patterns.add_file_pattern(resource_name, file_pattern)
 
     # Determine DB flavor from connection config
-    from graflo.db.connection.onto import DBType
+    from graflo.onto import DBType
     from graflo.hq import GraphEngine
     from graflo.hq.caster import IngestionParams
-    from graflo.onto import DBFlavor
 
     db_type = conn_conf.connection_type
-    # Map DBType to DBFlavor (they have the same values for graph databases)
-    db_flavor = (
-        DBFlavor(db_type.value)
-        if db_type
-        in (
-            DBType.ARANGO,
-            DBType.NEO4J,
-            DBType.TIGERGRAPH,
-            DBType.FALKORDB,
-            DBType.MEMGRAPH,
-        )
-        else DBFlavor.ARANGO
-    )
+    # Ensure it's a graph database (default to ARANGO if not)
+    if db_type not in (
+        DBType.ARANGO,
+        DBType.NEO4J,
+        DBType.TIGERGRAPH,
+        DBType.FALKORDB,
+        DBType.MEMGRAPH,
+        DBType.NEBULA,
+    ):
+        db_type = DBType.ARANGO
 
     # Use GraphEngine for the full workflow
-    engine = GraphEngine(target_db_flavor=db_flavor)
+    engine = GraphEngine(target_db_flavor=db_type)
 
     # Define schema first (with clean_start=True)
     engine.define_schema(

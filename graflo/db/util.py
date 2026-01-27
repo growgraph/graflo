@@ -11,15 +11,14 @@ Key Functions:
     - sanitize_attribute_name: Sanitize attribute names to avoid reserved words
 
 Example:
-    >>> # ArangoDB-specific AQL query (collection is ArangoDB terminology)
+    >>> from graflo.onto import DBType    >>> # ArangoDB-specific AQL query (collection is ArangoDB terminology)
     >>> cursor = db.execute("FOR doc IN vertex_class RETURN doc")
     >>> batch = get_data_from_cursor(cursor, limit=100)
     >>> # Serialize datetime objects in a document
     >>> doc = {"id": 1, "created_at": datetime.now()}
     >>> serialized = serialize_document(doc)
     >>> # Sanitize reserved words
-    >>> from graflo.onto import DBFlavor
-    >>> reserved = load_reserved_words(DBFlavor.TIGERGRAPH)
+    >>> reserved = load_reserved_words(DBType.TIGERGRAPH)
     >>> sanitized = sanitize_attribute_name("SELECT", reserved)
 """
 
@@ -31,7 +30,7 @@ from pathlib import Path
 
 from arango.exceptions import CursorNextError
 
-from graflo.onto import DBFlavor
+from graflo.db.connection.onto import DBType
 
 logger = logging.getLogger(__name__)
 
@@ -180,7 +179,7 @@ def json_serializer(obj):
     return serialized
 
 
-def load_reserved_words(db_flavor: DBFlavor) -> set[str]:
+def load_reserved_words(db_flavor: DBType) -> set[str]:
     """Load reserved words for a given database flavor.
 
     Args:
@@ -190,7 +189,7 @@ def load_reserved_words(db_flavor: DBFlavor) -> set[str]:
         Set of reserved words (uppercase) for the database flavor.
         Returns empty set if no reserved words file exists or for unsupported flavors.
     """
-    if db_flavor != DBFlavor.TIGERGRAPH:
+    if db_flavor != DBType.TIGERGRAPH:
         # Currently only TigerGraph has reserved words defined
         return set()
 

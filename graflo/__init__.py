@@ -38,7 +38,7 @@ from .data_source import (
 )
 from .db import ConnectionManager, ConnectionType
 from .filter.onto import ComparisonOperator, LogicalOperator
-from .onto import AggregationType
+from .onto import AggregationType, DBType
 from .util.onto import FilePattern, Patterns, ResourcePattern, TablePattern
 
 __all__ = [
@@ -53,6 +53,7 @@ __all__ = [
     "DataSourceFactory",
     "DataSourceRegistry",
     "DataSourceType",
+    "DBType",
     "FileDataSource",
     "FilePattern",
     "Index",

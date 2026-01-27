@@ -264,9 +264,8 @@ Automatically generate a graflo Schema from your PostgreSQL database. This is th
 ```python
 
 from graflo.hq import GraphEngine
-from graflo.onto import DBFlavor
+from graflo.onto import DBFlavor, DBType
 from graflo.db.connection.onto import ArangoConfig, Neo4jConfig, TigergraphConfig, FalkordbConfig, PostgresConfig
-from graflo.db import DBType
 
 # Connect to target graph database to determine flavor
 # Choose one of: ArangoConfig, Neo4jConfig, TigergraphConfig, or FalkordbConfig

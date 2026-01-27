@@ -24,7 +24,8 @@ Example:
 """
 
 from graflo.db.arango.conn import ArangoConnection
-from graflo.db.connection.onto import DBConfig, DBType, TARGET_DATABASES
+from graflo.db.connection.onto import DBConfig, TARGET_DATABASES
+from graflo.onto import DBType
 from graflo.db.falkordb.conn import FalkordbConnection
 from graflo.db.memgraph.conn import MemgraphConnection
 from graflo.db.neo4j.conn import Neo4jConnection

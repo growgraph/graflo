@@ -10,14 +10,14 @@ This module tests the schema inference capabilities, including:
 from unittest.mock import patch
 
 from graflo.hq import GraphEngine
-from graflo.onto import DBFlavor
+from graflo.onto import DBType
 
 
 def test_infer_schema_from_postgres(conn_conf, load_mock_schema):
     """Test that infer_schema_from_postgres correctly infers schema from PostgreSQL."""
     _ = load_mock_schema  # Ensure schema is loaded
 
-    engine = GraphEngine(target_db_flavor=DBFlavor.ARANGO)
+    engine = GraphEngine(target_db_flavor=DBType.ARANGO)
     schema = engine.infer_schema(conn_conf, schema_name="public")
 
     # Verify schema structure
@@ -185,7 +185,7 @@ def test_infer_schema_with_pg_catalog_fallback(conn_conf, load_mock_schema):
         PostgresConnection, "_check_information_schema_reliable", return_value=False
     ):
         # Test that infer_schema_from_postgres works with pg_catalog fallback
-        engine = GraphEngine(target_db_flavor=DBFlavor.ARANGO)
+        engine = GraphEngine(target_db_flavor=DBType.ARANGO)
         schema = engine.infer_schema(conn_conf, schema_name="public")
 
         # Verify schema structure

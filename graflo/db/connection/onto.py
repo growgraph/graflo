@@ -2,7 +2,6 @@ import abc
 import logging
 import warnings
 from pathlib import Path
-from strenum import StrEnum
 from typing import Any, Dict, Type, TypeVar
 from urllib.parse import urlparse
 
@@ -10,41 +9,12 @@ from pydantic import Field, model_validator
 from pydantic import AliasChoices
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from graflo.onto import MetaEnum
+from graflo.onto import DBType
 
 logger = logging.getLogger(__name__)
 
 # Type variable for DBConfig subclasses
 T = TypeVar("T", bound="DBConfig")
-
-
-class DBType(StrEnum, metaclass=MetaEnum):
-    """Enum representing different types of databases.
-
-    Includes both graph databases and source databases (SQL, NoSQL, etc.).
-    """
-
-    # Graph databases
-    ARANGO = "arango"
-    NEO4J = "neo4j"
-    TIGERGRAPH = "tigergraph"
-    FALKORDB = "falkordb"
-    MEMGRAPH = "memgraph"
-    NEBULA = "nebula"
-
-    # Source databases (SQL, NoSQL)
-    POSTGRES = "postgres"
-    MYSQL = "mysql"
-    MONGODB = "mongodb"
-    SQLITE = "sqlite"
-
-    @property
-    def config_class(self) -> Type["DBConfig"]:
-        """Get the appropriate config class for this database type."""
-        from .config_mapping import DB_TYPE_MAPPING
-
-        return DB_TYPE_MAPPING[self]
-
 
 # Databases that can be used as sources (INPUT)
 SOURCE_DATABASES: set[DBType] = {
@@ -411,7 +381,9 @@ class DBConfig(BaseSettings, abc.ABC):
                     config_data["uri"] = f"{protocol}://{hostname}"
 
         # Get the appropriate config class and initialize it
-        config_class = conn_type.config_class
+        from .config_mapping import get_config_class
+
+        config_class = get_config_class(conn_type)
         return config_class(**config_data)
 
     @classmethod

@@ -1,8 +1,9 @@
 import pathlib
 from suthing import FileHandle
-from graflo import Caster, Patterns, Schema
+from graflo import Patterns, Schema
 from graflo.util.onto import FilePattern
 from graflo.db.connection.onto import ArangoConfig
+from graflo.hq import GraphEngine
 from graflo.hq.caster import IngestionParams
 
 schema = Schema.from_dict(FileHandle.load("schema.yaml"))
@@ -21,6 +22,9 @@ conn_conf = ArangoConfig.from_docker_env()
 #     password="123",
 #     database="_system",
 # )
+
+# Determine DB type from connection config
+db_type = conn_conf.connection_type
 
 # Create Patterns with file patterns
 patterns = Patterns()
@@ -45,10 +49,12 @@ patterns.add_file_pattern(
 #     }
 # )
 
-caster = Caster(schema)
-
-
+# Create GraphEngine and define schema + ingest in one operation
+engine = GraphEngine(target_db_flavor=db_type)
 ingestion_params = IngestionParams(clean_start=True)
-caster.ingest(
-    output_config=conn_conf, patterns=patterns, ingestion_params=ingestion_params
+engine.define_and_ingest(
+    schema=schema,
+    output_config=conn_conf,
+    patterns=patterns,
+    ingestion_params=ingestion_params,
 )

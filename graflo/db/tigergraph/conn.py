@@ -50,7 +50,8 @@ from graflo.db.tigergraph.onto import (
 )
 from graflo.db.util import json_serializer
 from graflo.filter.onto import Clause, Expression
-from graflo.onto import AggregationType, DBFlavor, ExpressionFlavor
+from graflo.onto import AggregationType, ExpressionFlavor
+from graflo.onto import DBType
 from graflo.util.transform import pick_unique_dict
 from urllib.parse import quote
 
@@ -229,7 +230,7 @@ class TigerGraphConnection(Connection):
         - Version is auto-detected, or can be manually specified in config
     """
 
-    flavor = DBFlavor.TIGERGRAPH
+    flavor = DBType.TIGERGRAPH
 
     def __init__(self, config: TigergraphConfig):
         super().__init__()

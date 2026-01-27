@@ -1,9 +1,9 @@
 from graflo import Schema
+from graflo.onto import DBType
 from graflo.architecture import Resource
 from graflo.db import PostgresConnection
 from graflo.db.postgres import PostgresSchemaInferencer, PostgresResourceMapper
 from graflo.hq.sanitizer import SchemaSanitizer
-from graflo.onto import DBFlavor
 import logging
 
 logger = logging.getLogger(__name__)
@@ -15,7 +15,7 @@ class InferenceManager:
     def __init__(
         self,
         conn: PostgresConnection,
-        target_db_flavor: DBFlavor = DBFlavor.ARANGO,
+        target_db_flavor: DBType = DBType.ARANGO,
         fuzzy_threshold: float = 0.8,
     ):
         """Initialize the PostgreSQL inference manager.

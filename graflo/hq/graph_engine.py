@@ -8,12 +8,12 @@ and data ingestion.
 import logging
 
 from graflo import Schema
+from graflo.onto import DBType
 from graflo.db import ConnectionManager, PostgresConnection
-from graflo.db.connection.onto import DBConfig, DBType, PostgresConfig
+from graflo.db.connection.onto import DBConfig, PostgresConfig
 from graflo.hq.caster import Caster, IngestionParams
 from graflo.hq.inferencer import InferenceManager
 from graflo.hq.resource_mapper import ResourceMapper
-from graflo.onto import DBFlavor
 from graflo.util.onto import Patterns
 
 logger = logging.getLogger(__name__)
@@ -38,7 +38,7 @@ class GraphEngine:
 
     def __init__(
         self,
-        target_db_flavor: DBFlavor = DBFlavor.ARANGO,
+        target_db_flavor: DBType = DBType.ARANGO,
     ):
         """Initialize the GraphEngine.
 
@@ -124,6 +124,58 @@ class GraphEngine:
         # It checks if the database exists and creates it if needed
         with ConnectionManager(connection_config=output_config) as db_client:
             db_client.init_db(schema, clean_start)
+
+    def define_and_ingest(
+        self,
+        schema: Schema,
+        output_config: DBConfig,
+        patterns: "Patterns | None" = None,
+        ingestion_params: IngestionParams | None = None,
+        clean_start: bool | None = None,
+    ) -> None:
+        """Define schema and ingest data into the graph database in one operation.
+
+        This is a convenience method that chains define_schema() and ingest().
+        It's the recommended way to set up and populate a graph database.
+
+        Args:
+            schema: Schema configuration for the graph
+            output_config: Target database connection configuration
+            patterns: Patterns instance mapping resources to data sources.
+                If None, defaults to empty Patterns()
+            ingestion_params: IngestionParams instance with ingestion configuration.
+                If None, uses default IngestionParams()
+            clean_start: Whether to clean the database before defining schema.
+                If None, uses ingestion_params.clean_start if provided, otherwise False.
+                Note: If clean_start is True, ingestion_params.clean_start will be
+                set to False to avoid double-cleaning.
+        """
+        ingestion_params = ingestion_params or IngestionParams()
+
+        # Determine clean_start value: explicit parameter > ingestion_params > False
+        if clean_start is None:
+            clean_start = ingestion_params.clean_start
+
+        # Define schema first
+        self.define_schema(
+            schema=schema,
+            output_config=output_config,
+            clean_start=clean_start,
+        )
+
+        # If we cleaned during schema definition, don't clean again during ingestion
+        if clean_start:
+            ingestion_params = IngestionParams(
+                **{**ingestion_params.model_dump(), "clean_start": False}
+            )
+
+        # Then ingest data
+        self.ingest(
+            schema=schema,
+            output_config=output_config,
+            patterns=patterns,
+            ingestion_params=ingestion_params,
+        )
 
     def ingest(
         self,

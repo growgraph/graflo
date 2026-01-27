@@ -36,8 +36,8 @@ from graflo.data_source import (
     DataSourceRegistry,
 )
 from graflo.data_source.sql import SQLConfig, SQLDataSource
-from graflo.db import DBType, ConnectionManager, DBConfig
-from graflo.onto import DBFlavor
+from graflo.db import ConnectionManager
+from graflo.db.connection.onto import DBConfig
 from graflo.util.chunker import ChunkerType
 from graflo.util.onto import FilePattern, Patterns, ResourceType, TablePattern
 
@@ -498,27 +498,6 @@ class Caster:
                     )
         logger.info(f"Processing took {klepsidra.elapsed:.1f} sec")
 
-    @staticmethod
-    def _get_db_flavor_from_config(output_config: DBConfig) -> DBFlavor:
-        """Convert DBConfig connection type to DBFlavor.
-
-        Args:
-            output_config: Database configuration
-
-        Returns:
-            DBFlavor enum value corresponding to the database type
-        """
-        db_type = output_config.connection_type
-        if db_type == DBType.ARANGO:
-            return DBFlavor.ARANGO
-        elif db_type == DBType.NEO4J:
-            return DBFlavor.NEO4J
-        elif db_type == DBType.TIGERGRAPH:
-            return DBFlavor.TIGERGRAPH
-        else:
-            # Default to ARANGO for unknown types
-            return DBFlavor.ARANGO
-
     def _register_file_sources(
         self,
         registry: DataSourceRegistry,
@@ -706,7 +685,7 @@ class Caster:
         ingestion_params = ingestion_params or IngestionParams()
 
         # Initialize vertex config with correct field types based on database type
-        db_flavor = self._get_db_flavor_from_config(output_config)
+        db_flavor = output_config.connection_type
         self.schema.vertex_config.db_flavor = db_flavor
         self.schema.vertex_config.finish_init()
         # Initialize edge config after vertex config is fully initialized
