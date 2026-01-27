@@ -88,10 +88,8 @@ else:
     logger.warning("Assuming PostgreSQL database is already initialized")
 
 # Step 3: Create GraphEngine to orchestrate schema inference, pattern creation, and ingestion
-# GraphEngine coordinates all operations: schema inference, pattern mapping, and data ingestion
-engine = GraphEngine(
-    target_db_flavor=db_flavor, ingestion_params=IngestionParams(clean_start=True)
-)
+# GraphEngine coordinates all operations: schema inference, pattern mapping, schema definition, and data ingestion
+engine = GraphEngine(target_db_flavor=db_flavor)
 
 # Step 3.1: Infer Schema from PostgreSQL database structure
 # This automatically detects vertex-like and edge-like tables based on:
@@ -118,12 +116,22 @@ logger.info(f"Inferred schema saved to {schema_output_file}")
 # Connection is automatically managed inside create_patterns()
 patterns = engine.create_patterns(postgres_conf, schema_name="public")
 
+# Step 4.5: Define schema in target database
+# This creates/initializes the database schema (if necessary)
+# Some databases don't require explicit schema definition, but this ensures proper initialization
+engine.define_schema(
+    schema=schema,
+    output_config=conn_conf,
+    clean_start=True,  # Clean existing data before defining schema
+)
+
 # Step 5: Ingest data using GraphEngine
 # Note: ingestion will create its own PostgreSQL connections per table internally
 engine.ingest(
     schema=schema,
     output_config=conn_conf,
     patterns=patterns,
+    ingestion_params=IngestionParams(clean_start=False),  # Schema already defined above
 )
 
 print("\n" + "=" * 80)

@@ -439,6 +439,9 @@ class Caster:
     ):
         """Ingest data from data sources in a registry.
 
+        Note: Schema definition should be handled separately via GraphEngine.define_schema()
+        before calling this method.
+
         Args:
             data_source_registry: Registry containing data sources mapped to resources
             conn_conf: Database connection configuration
@@ -451,23 +454,6 @@ class Caster:
         # Update ingestion params (may override defaults set in __init__)
         self.ingestion_params = ingestion_params
         init_only = ingestion_params.init_only
-
-        # If effective_schema is not set, use schema.general.name as fallback
-        if conn_conf.can_be_target() and conn_conf.effective_schema is None:
-            schema_name = self.schema.general.name
-            # Map to the appropriate field based on DB type
-            if conn_conf.connection_type == DBType.TIGERGRAPH:
-                # TigerGraph uses 'schema_name' field
-                conn_conf.schema_name = schema_name
-            else:
-                # ArangoDB, Neo4j use 'database' field (which maps to effective_schema)
-                conn_conf.database = schema_name
-
-        # init_db() now handles database/schema creation automatically
-        # It checks if the database exists and creates it if needed
-        # Uses schema.general.name if database is not set in config
-        with ConnectionManager(connection_config=conn_conf) as db_client:
-            db_client.init_db(self.schema, self.ingestion_params.clean_start)
 
         if init_only:
             logger.info("ingest execution bound to init")
