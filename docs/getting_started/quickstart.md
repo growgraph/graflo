@@ -10,7 +10,7 @@ This guide will help you get started with graflo by showing you how to transform
 - `DataSource` defines where data comes from (files, APIs, SQL databases, in-memory objects).
 - Class `Patterns` manages the mapping of resources to their physical data sources (files or PostgreSQL tables). It efficiently handles PostgreSQL connections by grouping tables that share the same connection configuration. 
 - `DataSourceRegistry` maps DataSources to Resources (many DataSources can map to the same Resource).
-1- Database backend configurations use Pydantic `BaseSettings` with environment variable support. Use `ArangoConfig`, `Neo4jConfig`, `TigergraphConfig`, `FalkordbConfig`, `MemgraphConfig`, or `PostgresConfig` directly, or load from docker `.env` files using `from_docker_env()`. All configs inherit from `DBConfig` and support unified `database`/`schema_name` structure with `effective_database` and `effective_schema` properties for database-agnostic access. If `effective_schema` is not set, `Caster` automatically uses `Schema.general.name` as fallback.
+1- Database backend configurations use Pydantic `BaseSettings` with environment variable support. Use `ArangoConfig`, `Neo4jConfig`, `TigergraphConfig`, `FalkordbConfig`, `MemgraphConfig`, or `PostgresConfig` directly, or load from docker `.env` files using `from_docker_env()`. All configs inherit from `DBConfig` and support unified `database`/`schema_name` structure with `effective_database` and `effective_schema` properties for database-agnostic access. If `effective_schema` is not set, `GraphEngine.define_schema()` automatically uses `Schema.general.name` as fallback.
 
 ## Basic Example
 
@@ -77,16 +77,32 @@ patterns = Patterns(
 )
 
 from graflo.hq.caster import IngestionParams
+from graflo.hq import GraphEngine
 
+# Option 1: Use GraphEngine for schema definition and ingestion (recommended)
+engine = GraphEngine()
 ingestion_params = IngestionParams(
     clean_start=False,  # Set to True to wipe existing database
 )
 
-caster.ingest(
+engine.define_and_ingest(
+    schema=schema,
     output_config=conn_conf,  # Target database config
     patterns=patterns,  # Source data patterns
     ingestion_params=ingestion_params,
+    clean_start=False,  # Set to True to wipe existing database
 )
+
+# Option 2: Use Caster directly (schema must be defined separately)
+# engine = GraphEngine()
+# engine.define_schema(schema=schema, output_config=conn_conf, clean_start=False)
+# 
+# caster = Caster(schema)
+# caster.ingest(
+#     output_config=conn_conf,
+#     patterns=patterns,
+#     ingestion_params=ingestion_params,
+# )
 ```
 
 Here `schema` defines the graph and the mapping the sources to vertices and edges (refer to [Schema](../concepts/index.md#schema) for details on schema and its components).
@@ -138,23 +154,23 @@ patterns = Patterns(
 
 # Ingest
 from graflo.db.connection.onto import ArangoConfig
+from graflo.hq import GraphEngine
 
 arango_config = ArangoConfig.from_docker_env()  # Target graph database
-caster = Caster(schema)
 
-from graflo.hq.caster import IngestionParams
-
+# Use GraphEngine for schema definition and ingestion
+engine = GraphEngine()
 ingestion_params = IngestionParams(
     clean_start=False,  # Set to True to wipe existing database
 )
 
-caster.ingest(
+engine.define_and_ingest(
+    schema=schema,
     output_config=arango_config,  # Target graph database
     patterns=patterns,  # Source PostgreSQL tables
     ingestion_params=ingestion_params,
+    clean_start=False,  # Set to True to wipe existing database
 )
-
-pg_conn.close()
 ```
 
 ## Using API Data Sources
@@ -189,9 +205,18 @@ registry.register(api_source, resource_name="users")
 
 # Ingest
 from graflo.hq.caster import IngestionParams
+from graflo.hq import GraphEngine
 
+# Define schema first (required before ingestion)
+engine = GraphEngine()
+engine.define_schema(
+    schema=schema,
+    output_config=conn_conf,
+    clean_start=False,
+)
+
+# Then ingest using Caster
 caster = Caster(schema)
-
 ingestion_params = IngestionParams()  # Use default parameters
 
 caster.ingest_data_sources(

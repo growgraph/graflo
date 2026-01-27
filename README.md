@@ -57,6 +57,7 @@ Resources are your data sources that can be:
     - Infer edge configurations from foreign key relationships
     - Create Resource mappings from PostgreSQL tables automatically
     - Direct database access - ingest data without exporting to files first
+- **Async ingestion**: Efficient async/await-based ingestion pipeline for better performance
 - **Parallel processing**: Use as many cores as you have
 - **Database support**: Ingest into ArangoDB, Neo4j, **TigerGraph**, **FalkorDB**, and **Memgraph** using the same API (database agnostic). Source data from PostgreSQL and other SQL databases.
 - **Server-side filtering**: Efficient querying with server-side filtering support (TigerGraph REST++ API)
@@ -123,46 +124,65 @@ patterns.add_file_pattern(
 schema.fetch_resource()
 
 from graflo.hq.caster import IngestionParams
+from graflo.hq import GraphEngine
 
-caster = Caster(schema)
-
+# Option 1: Use GraphEngine for schema definition and ingestion (recommended)
+engine = GraphEngine()
 ingestion_params = IngestionParams(
     clean_start=False,  # Set to True to wipe existing database
     # max_items=1000,  # Optional: limit number of items to process
     # batch_size=10000,  # Optional: customize batch size
 )
 
-caster.ingest(
+engine.define_and_ingest(
+    schema=schema,
     output_config=conn_conf,  # Target database config
     patterns=patterns,  # Source data patterns
     ingestion_params=ingestion_params,
+    clean_start=False,  # Set to True to wipe existing database
 )
+
+# Option 2: Use Caster directly (schema must be defined separately)
+# from graflo.hq import GraphEngine
+# engine = GraphEngine()
+# engine.define_schema(schema=schema, output_config=conn_conf, clean_start=False)
+# 
+# caster = Caster(schema)
+# caster.ingest(
+#     output_config=conn_conf,
+#     patterns=patterns,
+#     ingestion_params=ingestion_params,
+# )
 ```
 
 ### PostgreSQL Schema Inference
 
 ```python
-from graflo.db.postgres import PostgresConnection
 from graflo.hq import GraphEngine
-from graflo.db.connection.onto import PostgresConfig
+from graflo.db.connection.onto import PostgresConfig, ArangoConfig
 from graflo import Caster
-from graflo.onto import DBFlavor
+from graflo.onto import DBType
 
 # Connect to PostgreSQL
 postgres_config = PostgresConfig.from_docker_env()  # or PostgresConfig.from_env()
-postgres_conn = PostgresConnection(postgres_config)
 
 # Create GraphEngine and infer schema from PostgreSQL 3NF database
-engine = GraphEngine(target_db_flavor=DBFlavor.ARANGO)
+# Connection is automatically managed inside infer_schema()
+engine = GraphEngine(target_db_flavor=DBType.ARANGO)
 schema = engine.infer_schema(
-    postgres_conn,
+    postgres_config,
     schema_name="public",  # PostgreSQL schema name
 )
 
-# Close PostgreSQL connection
-postgres_conn.close()
+# Define schema in target database (optional, can also use define_and_ingest)
+target_config = ArangoConfig.from_docker_env()
+engine.define_schema(
+    schema=schema,
+    output_config=target_config,
+    clean_start=False,
+)
 
-# Use the inferred schema with Caster
+# Use the inferred schema with Caster for ingestion
 caster = Caster(schema)
 # ... continue with ingestion
 ```

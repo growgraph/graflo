@@ -1,5 +1,6 @@
 """Tests for API data source implementation."""
 
+import asyncio
 import logging
 from os.path import dirname, realpath
 
@@ -54,7 +55,9 @@ def test_api_data_source_basic(
 
     # Create caster and process
     caster = Caster(schema, n_cores=1)
-    caster.process_data_source(data_source=api_source, resource_name=resource_name)
+    asyncio.run(
+        caster.process_data_source(data_source=api_source, resource_name=resource_name)
+    )
 
     # Verify we got data
     # Note: This is a basic test - full verification would require database connection
@@ -89,9 +92,11 @@ def test_api_data_source_via_process_resource(
         },
     }
 
-    caster.process_resource(
-        resource_instance=resource_config,
-        resource_name=resource_name,
+    asyncio.run(
+        caster.process_resource(
+            resource_instance=resource_config,
+            resource_name=resource_name,
+        )
     )
 
     # Test passes if no exceptions are raised
