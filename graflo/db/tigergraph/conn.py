@@ -3014,7 +3014,7 @@ class TigerGraphConnection(Connection):
                 # 4. Format attributes for TigerGraph REST++ API
                 # TigerGraph requires attribute values to be wrapped in {"value": ...}
                 formatted_attributes = {
-                    k: {"value": v} for k, v in clean_record.items() if v is not None
+                    k: {"value": v} for k, v in clean_record.items() if v
                 }
 
                 # 5. Add the record attributes to the map using the composite ID as the key
@@ -3226,7 +3226,7 @@ class TigerGraphConnection(Connection):
                 # Clean and format edge attributes
                 clean_edge_props = self._clean_document(edge_props)
                 formatted_attributes = {
-                    k: {"value": v} for k, v in clean_edge_props.items()
+                    k: {"value": v} for k, v in clean_edge_props.items() if v
                 }
 
                 # Group by (source_id, target_id, edge_type)
