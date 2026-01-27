@@ -3014,7 +3014,7 @@ class TigerGraphConnection(Connection):
                 # 4. Format attributes for TigerGraph REST++ API
                 # TigerGraph requires attribute values to be wrapped in {"value": ...}
                 formatted_attributes = {
-                    k: {"value": v} for k, v in clean_record.items()
+                    k: {"value": v} for k, v in clean_record.items() if v is not None
                 }
 
                 # 5. Add the record attributes to the map using the composite ID as the key
@@ -3160,8 +3160,6 @@ class TigerGraphConnection(Connection):
                 logger.error(
                     f"Error upserting vertices to {class_name}: {result.get('message')}"
                 )
-                # Fallback to individual operations
-                self._fallback_individual_upsert(docs, class_name, match_keys)
             else:
                 num_vertices = len(payload["vertices"][class_name])
                 logger.debug(
@@ -3171,24 +3169,6 @@ class TigerGraphConnection(Connection):
 
         except Exception as e:
             logger.error(f"Error upserting vertices to {class_name}: {e}")
-            # Fallback to individual operations
-            self._fallback_individual_upsert(docs, class_name, match_keys)
-
-    def _fallback_individual_upsert(self, docs, class_name, match_keys):
-        """Fallback method for individual vertex upserts."""
-        for doc in docs:
-            try:
-                vertex_id = self._extract_id(doc, match_keys)
-                if vertex_id:
-                    clean_doc = self._clean_document(doc)
-                    # Serialize datetime objects before passing to REST API
-                    # REST API expects JSON-serializable data
-                    serialized_doc = json.loads(
-                        json.dumps(clean_doc, default=_json_serializer)
-                    )
-                    self._upsert_vertex(class_name, vertex_id, serialized_doc)
-            except Exception as e:
-                logger.error(f"Error upserting individual vertex {vertex_id}: {e}")
 
     def _generate_edge_upsert_payloads(
         self,
