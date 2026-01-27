@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 from collections import Counter
 from typing import TYPE_CHECKING
+from collections import defaultdict
 
 from graflo.architecture.edge import Edge
 from graflo.architecture.schema import Schema
@@ -44,7 +45,9 @@ class SchemaSanitizer:
         """
         self.db_flavor = db_flavor
         self.reserved_words = load_reserved_words(db_flavor)
-        self.attribute_mappings: dict[str, str] = {}
+        self.vertex_attribute_mappings: defaultdict[str, dict[str, str]] = defaultdict(
+            dict
+        )
         self.vertex_mappings: dict[str, str] = {}
 
     def sanitize(self, schema: Schema) -> Schema:
@@ -84,34 +87,24 @@ class SchemaSanitizer:
         for vertex in schema.vertex_config.vertices:
             for field in vertex.fields:
                 original_name = field.name
-                if original_name not in self.attribute_mappings:
-                    sanitized_name = sanitize_attribute_name(
-                        original_name, self.reserved_words
-                    )
-                    if sanitized_name != original_name:
-                        self.attribute_mappings[original_name] = sanitized_name
-                        logger.debug(
-                            f"Sanitizing field name '{original_name}' -> '{sanitized_name}' "
-                            f"in vertex '{vertex.name}'"
-                        )
-                    else:
-                        self.attribute_mappings[original_name] = original_name
-                else:
-                    sanitized_name = self.attribute_mappings[original_name]
-
-                # Update field name if it changed
+                sanitized_name = sanitize_attribute_name(
+                    original_name, self.reserved_words
+                )
                 if sanitized_name != original_name:
+                    self.vertex_attribute_mappings[vertex.name][original_name] = (
+                        sanitized_name
+                    )
+                    logger.debug(
+                        f"Sanitizing field name '{original_name}' -> '{sanitized_name}' "
+                        f"in vertex '{vertex.name}'"
+                    )
                     field.name = sanitized_name
 
-            # Update index field references if they were sanitized
             for index in vertex.indexes:
-                updated_fields = []
-                for field_name in index.fields:
-                    sanitized_field_name = self.attribute_mappings.get(
-                        field_name, field_name
-                    )
-                    updated_fields.append(sanitized_field_name)
-                index.fields = updated_fields
+                index.fields = [
+                    self.vertex_attribute_mappings[vertex.name].get(item, item)
+                    for item in index.fields
+                ]
 
         vertex_names = {vertex.dbname for vertex in schema.vertex_config.vertices}
 

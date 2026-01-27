@@ -72,9 +72,11 @@ class InferenceManager:
         Returns:
             list[Resource]: List of Resources for PostgreSQL tables
         """
-        return self.mapper.map_tables_to_resources(
+        return self.mapper.create_resources_from_tables(
             introspection_result,
             schema.vertex_config,
+            schema.edge_config,
+            vertex_attribute_mappings=self.sanitizer.vertex_attribute_mappings,
             fuzzy_threshold=self.mapper.fuzzy_threshold,
         )
 
