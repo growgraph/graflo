@@ -46,7 +46,8 @@ class IngestionParams(BaseModel):
     """Parameters for controlling the ingestion process.
 
     Attributes:
-        clean_start: Whether to clean the database before ingestion
+        clear_data: If True, remove all existing graph data before ingestion without
+            changing the schema.
         n_cores: Number of CPU cores/threads to use for parallel processing
         max_items: Maximum number of items to process per resource (applies to all data sources)
         batch_size: Size of batches for processing
@@ -58,7 +59,7 @@ class IngestionParams(BaseModel):
             concurrent transactions well (e.g., Neo4j). Database-independent setting.
     """
 
-    clean_start: bool = False
+    clear_data: bool = False
     n_cores: int = 1
     max_items: int | None = None
     batch_size: int = 10000
@@ -93,7 +94,7 @@ class Caster:
             ingestion_params: IngestionParams instance with ingestion configuration.
                 If None, creates IngestionParams from kwargs or uses defaults
             **kwargs: Additional configuration options (for backward compatibility):
-                - clean_start: Whether to clean the database before ingestion
+                - clear_data: Whether to clear existing data before ingestion
                 - n_cores: Number of CPU cores/threads to use for parallel processing
                 - max_items: Maximum number of items to process
                 - batch_size: Size of batches for processing
@@ -737,7 +738,7 @@ class Caster:
 
     def ingest(
         self,
-        output_config: DBConfig,
+        target_db_config: DBConfig,
         patterns: "Patterns | None" = None,
         ingestion_params: IngestionParams | None = None,
     ):
@@ -750,7 +751,7 @@ class Caster:
         - IngestionParams: Parameters controlling the ingestion process
 
         Args:
-            output_config: Target database connection configuration (for writing graph)
+            target_db_config: Target database connection configuration (for writing graph)
             patterns: Patterns instance mapping resources to data sources
                 If None, defaults to empty Patterns()
             ingestion_params: IngestionParams instance with ingestion configuration.
@@ -761,7 +762,7 @@ class Caster:
         ingestion_params = ingestion_params or IngestionParams()
 
         # Initialize vertex config with correct field types based on database type
-        db_flavor = output_config.connection_type
+        db_flavor = target_db_config.connection_type
         self.schema.vertex_config.db_flavor = db_flavor
         self.schema.vertex_config.finish_init()
         # Initialize edge config after vertex config is fully initialized
@@ -774,7 +775,7 @@ class Caster:
         asyncio.run(
             self.ingest_data_sources(
                 data_source_registry=registry,
-                conn_conf=output_config,
+                conn_conf=target_db_config,
                 ingestion_params=ingestion_params,
             )
         )

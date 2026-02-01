@@ -82,7 +82,7 @@ def test_schema_creation(conn_conf, test_graph_name, schema_obj):
     with ConnectionManager(connection_config=conn_conf) as db_client:
         # init_db will: create graph, define schema, define indexes
         # Graph name comes from schema.general.name
-        db_client.init_db(schema_obj, clean_start=True)
+        db_client.init_db(schema_obj, recreate_schema=True)
 
     with ConnectionManager(connection_config=conn_conf) as db_client:
         # Verify graph exists (using name from schema.general.name)
@@ -120,7 +120,7 @@ def test_schema_creation_edges(conn_conf, test_graph_name, schema_obj):
     with ConnectionManager(connection_config=conn_conf) as db_client:
         # init_db will: create graph, define schema, define indexes
         # Graph name comes from schema.general.name
-        db_client.init_db(schema_obj, clean_start=True)
+        db_client.init_db(schema_obj, recreate_schema=True)
 
     with ConnectionManager(connection_config=conn_conf) as db_client:
         # Verify graph exists (using name from schema.general.name)

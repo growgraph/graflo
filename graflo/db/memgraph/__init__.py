@@ -17,7 +17,7 @@ Example:
     >>> from graflo.db.connection import MemgraphConfig
     >>> config = MemgraphConfig(uri="bolt://localhost:7687")
     >>> conn = MemgraphConnection(config)
-    >>> conn.init_db(schema, clean_start=True)
+    >>> conn.init_db(schema, recreate_schema=True)
 """
 
 from .conn import MemgraphConnection

@@ -214,11 +214,11 @@ from graflo.hq.caster import IngestionParams
 caster = Caster(schema)
 
 ingestion_params = IngestionParams(
-    clean_start=True,  # Wipe existing database before ingestion
+    recreate_schema=True,  # Wipe existing schema before defining and ingesting
 )
 
 caster.ingest(
-    output_config=conn_conf,  # Target database config
+    target_db_config=conn_conf,  # Target database config
     patterns=patterns,  # Source data patterns
     ingestion_params=ingestion_params,
 )

@@ -117,10 +117,8 @@ engine.define_and_ingest(
     schema=schema,
     target_db_config=conn_conf,
     patterns=patterns,
-    ingestion_params=IngestionParams(
-        clean_start=False
-    ),  # clean_start handled by define_and_ingest
-    clean_start=True,  # Clean existing data before defining schema
+    ingestion_params=IngestionParams(clear_data=False),
+    recreate_schema=True,  # Drop existing schema and define new one before ingesting
 )
 
 print("\n" + "=" * 80)

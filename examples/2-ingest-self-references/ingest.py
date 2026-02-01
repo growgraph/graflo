@@ -42,7 +42,7 @@ patterns.add_file_pattern(
 
 # Create GraphEngine and define schema + ingest in one operation
 engine = GraphEngine(target_db_flavor=db_type)
-ingestion_params = IngestionParams(clean_start=True)
+ingestion_params = IngestionParams(clear_data=True)
 engine.define_and_ingest(
     schema=schema,
     target_db_config=conn_conf,

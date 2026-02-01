@@ -86,7 +86,7 @@ import mgclient  # type: ignore[import-untyped]
 from graflo.architecture.edge import Edge
 from graflo.architecture.schema import Schema
 from graflo.architecture.vertex import VertexConfig
-from graflo.db.conn import Connection
+from graflo.db.conn import Connection, SchemaExistsError
 from graflo.filter.onto import Expression
 from graflo.onto import AggregationType, ExpressionFlavor
 from graflo.onto import DBType
@@ -542,26 +542,55 @@ class MemgraphConnection(Connection):
                 except Exception as e:
                     logger.warning(f"Failed to delete nodes with label '{label}': {e}")
 
-    def init_db(self, schema: Schema, clean_start: bool) -> None:
+    def init_db(self, schema: Schema, recreate_schema: bool) -> None:
         """Initialize Memgraph with the given schema.
+
+        If the database already has nodes and recreate_schema is False, raises
+        SchemaExistsError and the script halts.
 
         Parameters
         ----------
         schema : Schema
             Schema containing graph structure definitions
-        clean_start : bool
-            If True, delete all existing data before initialization
+        recreate_schema : bool
+            If True, delete all existing data before initialization.
+            If False and database has nodes, raises SchemaExistsError.
         """
         assert self.conn is not None, "Connection is closed"
 
         self._database_name = schema.general.name
         logger.info(f"Initialized Memgraph with schema '{self._database_name}'")
 
-        if clean_start:
+        # Check if database already has nodes (schema/graph exists)
+        cursor = self.conn.cursor()
+        cursor.execute("MATCH (n) RETURN count(n) AS c")
+        row = cursor.fetchone()
+        cursor.close()
+        count = 0
+        if row is not None:
+            count = (
+                row[0]
+                if isinstance(row, (list, tuple))
+                else getattr(row, "c", row.get("c", 0) if hasattr(row, "get") else 0)
+            )
+        if count > 0 and not recreate_schema:
+            raise SchemaExistsError(
+                f"Schema/graph already exists ({count} nodes). "
+                "Set recreate_schema=True to replace, or use clear_data=True before ingestion."
+            )
+
+        if recreate_schema:
             try:
                 self.delete_graph_structure(delete_all=True)
             except Exception as e:
-                logger.warning(f"Error clearing data on clean_start: {e}")
+                logger.warning(f"Error clearing data on recreate_schema: {e}")
+
+    def clear_data(self, schema: Schema) -> None:
+        """Remove all data from the graph without dropping the schema.
+
+        Deletes all nodes and relationships; labels (schema) remain.
+        """
+        self.delete_graph_structure(delete_all=True)
 
     def upsert_docs_batch(
         self,

@@ -373,7 +373,7 @@ from graflo.hq.caster import IngestionParams
 # Use GraphEngine for schema definition and ingestion
 engine = GraphEngine()
 ingestion_params = IngestionParams(
-    clean_start=True,  # Clear existing data first
+    recreate_schema=True,  # Drop existing schema and define new one before ingesting
 )
 
 engine.define_and_ingest(
@@ -381,7 +381,7 @@ engine.define_and_ingest(
     target_db_config=target_config,  # Target graph database config
     patterns=patterns,  # PostgreSQL table patterns
     ingestion_params=ingestion_params,
-    clean_start=True,  # Clear existing data first
+    recreate_schema=True,  # Drop existing schema and define new one before ingesting
 )
 ```
 
@@ -436,7 +436,7 @@ patterns = engine.create_patterns(postgres_conf, schema_name="public")
 
 # Step 7: Define schema and ingest data
 ingestion_params = IngestionParams(
-    clean_start=True,  # Clear existing data first
+    recreate_schema=True,  # Drop existing schema and define new one before ingesting
 )
 
 # Use GraphEngine to define schema and ingest data
@@ -445,7 +445,7 @@ engine.define_and_ingest(
     target_db_config=target_config,
     patterns=patterns,
     ingestion_params=ingestion_params,
-    clean_start=True,  # Clear existing data first
+    recreate_schema=True,  # Drop existing schema and define new one before ingesting
 )
 
 print("\n" + "=" * 80)

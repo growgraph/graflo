@@ -19,7 +19,7 @@ Key Features:
 
 Example:
     >>> conn = ArangoConnection(config)
-    >>> conn.init_db(schema, clean_start=True)
+    >>> conn.init_db(schema, recreate_schema=True)
     >>> conn.upsert_docs_batch(docs, "users", match_keys=["email"])
 """
 
@@ -39,7 +39,7 @@ from graflo.architecture.schema import Schema
 from graflo.architecture.vertex import VertexConfig
 from graflo.db.arango.query import fetch_fields_query
 from graflo.db.arango.util import render_filters
-from graflo.db.conn import Connection
+from graflo.db.conn import Connection, SchemaExistsError
 from graflo.db.util import get_data_from_cursor, json_serializer
 from graflo.filter.onto import Clause
 from graflo.onto import AggregationType
@@ -187,15 +187,19 @@ class ArangoConnection(Connection):
         # self.conn.close()
         pass
 
-    def init_db(self, schema: Schema, clean_start: bool) -> None:
+    def init_db(self, schema: Schema, recreate_schema: bool) -> None:
         """Initialize ArangoDB with the given schema.
 
         Checks if the database exists and creates it if it doesn't.
         Uses schema.general.name if database is not set in config.
 
+        If the schema/graph already exists and recreate_schema is False, raises
+        SchemaExistsError and the script halts.
+
         Args:
             schema: Schema containing graph structure definitions
-            clean_start: If True, delete all existing vertex and edge classes before initialization
+            recreate_schema: If True, drop existing vertex/edge classes and define new ones.
+                If False and any collections or graphs exist, raises SchemaExistsError.
         """
         # Determine database name: use config.database if set, otherwise use schema.general.name
         db_name = self.config.database
@@ -248,13 +252,31 @@ class ArangoConnection(Connection):
             raise
 
         try:
-            if clean_start:
+            # Check if schema/graph already exists (any non-system collection or graph)
+            graphs_result = self.conn.graphs()
+            collections_result = self.conn.collections()
+            has_graphs = isinstance(graphs_result, list) and len(graphs_result) > 0
+            non_system = []
+            if isinstance(collections_result, list):
+                for c in collections_result:
+                    if isinstance(c, dict):
+                        name_value = cast(dict[str, Any], c).get("name")
+                        if isinstance(name_value, str) and name_value[0] != "_":
+                            non_system.append(name_value)
+            has_collections = len(non_system) > 0
+            if (has_graphs or has_collections) and not recreate_schema:
+                raise SchemaExistsError(
+                    f"Schema/graph already exists in database '{db_name}'. "
+                    "Set recreate_schema=True to replace, or use clear_data=True before ingestion."
+                )
+
+            if recreate_schema:
                 try:
                     self.delete_graph_structure((), (), delete_all=True)
                     logger.debug(f"Cleaned database '{db_name}' for fresh start")
                 except Exception as clean_error:
                     logger.warning(
-                        f"Error during clean_start for database '{db_name}': {clean_error}",
+                        f"Error during recreate_schema for database '{db_name}': {clean_error}",
                         exc_info=True,
                     )
                     # Continue - may be first run or already clean
@@ -278,12 +300,31 @@ class ArangoConnection(Connection):
                     exc_info=True,
                 )
                 raise
+        except SchemaExistsError:
+            raise
         except Exception as e:
             logger.error(
                 f"Error during database schema initialization for '{db_name}': {e}",
                 exc_info=True,
             )
             raise
+
+    def clear_data(self, schema: Schema) -> None:
+        """Remove all data from collections without dropping the schema.
+
+        Truncates vertex and edge collections that belong to the schema.
+        """
+        vc = schema.vertex_config
+        for v in vc.vertex_set:
+            cname = vc.vertex_dbname(v)
+            if self.conn.has_collection(cname):
+                self.conn.collection(cname).truncate()
+                logger.debug(f"Truncated vertex collection '{cname}'")
+        for edge in schema.edge_config.edges_list(include_aux=True):
+            cname = edge.database_name
+            if cname and self.conn.has_collection(cname):
+                self.conn.collection(cname).truncate()
+                logger.debug(f"Truncated edge collection '{cname}'")
 
     def define_schema(self, schema: Schema) -> None:
         """Define ArangoDB collections based on schema.

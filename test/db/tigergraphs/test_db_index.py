@@ -9,7 +9,7 @@ def test_create_vertex_index(conn_conf, schema_obj, test_graph_name):
 
     with ConnectionManager(connection_config=conn_conf) as db_client:
         # Initialize database with schema
-        db_client.init_db(schema_obj, clean_start=True)
+        db_client.init_db(schema_obj, recreate_schema=True)
 
         # Define vertex indexes (indexes should be created in init_db, but call explicitly)
         db_client.define_vertex_indices(schema_obj.vertex_config)

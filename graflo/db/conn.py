@@ -63,6 +63,14 @@ logger = logging.getLogger(__name__)
 ConnectionType = TypeVar("ConnectionType", bound="Connection")
 
 
+class SchemaExistsError(RuntimeError):
+    """Raised when schema/graph already exists and recreate_schema is False.
+
+    Set recreate_schema=True to replace the existing schema, or use clear_data=True
+    before ingestion to only clear data without touching the schema.
+    """
+
+
 class Connection(abc.ABC):
     """Abstract base class for database connections.
 
@@ -157,12 +165,25 @@ class Connection(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def init_db(self, schema: Schema, clean_start: bool) -> None:
+    def init_db(self, schema: Schema, recreate_schema: bool) -> None:
         """Initialize the database with the given schema.
+
+        If the schema/graph already exists and recreate_schema is False, raises
+        SchemaExistsError and the script halts.
 
         Args:
             schema: Schema to initialize the database with
-            clean_start: Whether to clean existing data
+            recreate_schema: If True, drop existing schema and define new one.
+                If False and schema/graph already exists, raises SchemaExistsError.
+        """
+        pass
+
+    @abc.abstractmethod
+    def clear_data(self, schema: Schema) -> None:
+        """Remove all data from the graph without dropping or changing the schema.
+
+        Args:
+            schema: Schema describing the graph (used to identify collections/labels).
         """
         pass
 

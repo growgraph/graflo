@@ -163,12 +163,12 @@ def ingest(
         limit_files=limit_files,
     )
 
-    # Define schema first (if clean_start is requested)
+    # Define schema first (if recreate_schema is requested)
     if fresh_start:
         engine.define_schema(
             schema=schema,
-            output_config=conn_conf,
-            clean_start=True,
+            target_db_config=conn_conf,
+            recreate_schema=True,
         )
 
     # Validate that either source_path or data_source_config_path is provided
@@ -211,7 +211,7 @@ def ingest(
         # Fall back to file-based ingestion using GraphEngine
         engine.ingest(
             schema=schema,
-            output_config=conn_conf,
+            target_db_config=conn_conf,
             patterns=patterns,
             ingestion_params=ingestion_params,
         )

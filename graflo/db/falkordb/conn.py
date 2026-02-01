@@ -20,7 +20,7 @@ Key Features:
 
 Example:
     >>> conn = FalkordbConnection(config)
-    >>> conn.init_db(schema, clean_start=True)
+    >>> conn.init_db(schema, recreate_schema=True)
     >>> conn.upsert_docs_batch(docs, "Person", match_keys=["id"])
 """
 
@@ -35,7 +35,7 @@ from graflo.architecture.edge import Edge
 from graflo.architecture.onto import Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.vertex import VertexConfig
-from graflo.db.conn import Connection
+from graflo.db.conn import Connection, SchemaExistsError
 from graflo.db.util import serialize_value
 from graflo.filter.onto import Expression
 from graflo.onto import AggregationType, ExpressionFlavor
@@ -438,14 +438,18 @@ class FalkordbConnection(Connection):
             except Exception as e:
                 logger.warning(f"Failed to delete graph '{graph_name}': {e}")
 
-    def init_db(self, schema: Schema, clean_start: bool) -> None:
+    def init_db(self, schema: Schema, recreate_schema: bool) -> None:
         """Initialize FalkorDB with the given schema.
 
         Uses schema.general.name if database is not set in config.
 
+        If the graph already has nodes and recreate_schema is False, raises
+        SchemaExistsError and the script halts.
+
         Args:
             schema: Schema containing graph structure definitions
-            clean_start: If True, delete all existing data before initialization
+            recreate_schema: If True, delete all existing data before initialization.
+                If False and graph has nodes, raises SchemaExistsError.
         """
         # Determine graph name: use config.database if set, otherwise use schema.general.name
         graph_name = self.config.database
@@ -459,12 +463,36 @@ class FalkordbConnection(Connection):
         self._graph_name = graph_name
         logger.info(f"Initialized FalkorDB graph '{graph_name}'")
 
-        if clean_start:
+        # Check if graph already has nodes (schema/graph exists)
+        try:
+            result = self.execute("MATCH (n) RETURN count(n) AS c")
+            count = 0
+            if hasattr(result, "data") and result.data():
+                count = result.data()[0].get("c", 0) or 0
+            elif result is not None and hasattr(result, "__iter__"):
+                for record in result:
+                    count = (
+                        record.get("c", 0)
+                        if hasattr(record, "get")
+                        else getattr(record, "c", 0)
+                    ) or 0
+                    break
+            if count > 0 and not recreate_schema:
+                raise SchemaExistsError(
+                    f"Schema/graph already exists in graph '{graph_name}' ({count} nodes). "
+                    "Set recreate_schema=True to replace, or use clear_data=True before ingestion."
+                )
+        except SchemaExistsError:
+            raise
+        except Exception as e:
+            logger.debug(f"Could not check graph node count: {e}")
+
+        if recreate_schema:
             try:
                 self.delete_graph_structure(delete_all=True)
                 logger.debug(f"Cleaned graph '{graph_name}' for fresh start")
             except Exception as e:
-                logger.debug(f"Clean start note for graph '{graph_name}': {e}")
+                logger.debug(f"Recreate schema note for graph '{graph_name}': {e}")
 
         try:
             self.define_indexes(schema)
@@ -475,6 +503,13 @@ class FalkordbConnection(Connection):
                 exc_info=True,
             )
             raise
+
+    def clear_data(self, schema: Schema) -> None:
+        """Remove all data from the graph without dropping the schema.
+
+        Deletes all nodes and relationships; labels (schema) remain.
+        """
+        self.delete_graph_structure(delete_all=True)
 
     def upsert_docs_batch(
         self,

@@ -170,7 +170,7 @@ caster = Caster(schema)
 
 ingestion_params = IngestionParams(
     batch_size=1000,  # Process 1000 items per batch
-    clean_start=False,  # Set to True to wipe existing database
+    recreate_schema=False,  # Set to True to drop and redefine schema
 )
 
 caster.ingest_data_sources(
