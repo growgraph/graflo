@@ -19,7 +19,7 @@ Key Features:
 
 Example:
     >>> conn = TigerGraphConnection(config)
-    >>> conn.init_db(schema, clean_start=True)
+    >>> conn.init_db(schema, recreate_schema=True)
     >>> conn.upsert_docs_batch(docs, "User", match_keys=["email"])
 """
 
@@ -42,7 +42,7 @@ from graflo.architecture.edge import Edge
 from graflo.architecture.onto import Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.vertex import FieldType, Vertex, VertexConfig
-from graflo.db.conn import Connection
+from graflo.db.conn import Connection, SchemaExistsError
 from graflo.db.connection.onto import TigergraphConfig
 from graflo.db.tigergraph.onto import (
     TIGERGRAPH_TYPE_ALIASES,
@@ -2272,15 +2272,19 @@ class TigerGraphConnection(Connection):
             )
 
     @_wrap_tg_exception
-    def init_db(self, schema: Schema, clean_start: bool = False) -> None:
+    def init_db(self, schema: Schema, recreate_schema: bool = False) -> None:
         """
         Initialize database with schema definition.
 
+        If the graph already exists and recreate_schema is False, raises
+        SchemaExistsError and the script halts.
+
         Follows the same pattern as ArangoDB:
-        1. Clean if needed
-        2. Create graph if not exists
-        3. Define schema locally within the graph
-        4. Define indexes
+        1. Halt if graph exists and recreate_schema is False
+        2. Clean (drop graph) if recreate_schema
+        3. Create graph if not exists
+        4. Define schema locally within the graph
+        5. Define indexes
 
         If any step fails, the graph will be cleaned up gracefully.
         """
@@ -2299,14 +2303,20 @@ class TigerGraphConnection(Connection):
         _validate_tigergraph_schema_name(graph_name, "graph")
 
         try:
-            if clean_start:
+            if self.graph_exists(graph_name) and not recreate_schema:
+                raise SchemaExistsError(
+                    f"Schema/graph already exists: graph '{graph_name}'. "
+                    "Set recreate_schema=True to replace, or use clear_data=True before ingestion."
+                )
+
+            if recreate_schema:
                 try:
                     # Only delete the current graph
                     self.delete_database(graph_name)
                     logger.debug(f"Cleaned graph '{graph_name}' for fresh start")
                 except Exception as clean_error:
                     logger.warning(
-                        f"Error during clean_start for graph '{graph_name}': {clean_error}",
+                        f"Error during recreate_schema for graph '{graph_name}': {clean_error}",
                         exc_info=True,
                     )
 
@@ -3025,6 +3035,16 @@ class TigerGraphConnection(Connection):
 
         except Exception as e:
             logger.error(f"Error in delete_graph_structure: {e}")
+
+    def clear_data(self, schema: Schema) -> None:
+        """Remove all data from the graph without dropping the schema.
+
+        Deletes vertices (and their edges) for all vertex types in the schema.
+        """
+        vc = schema.vertex_config
+        vertex_types = tuple(vc.vertex_dbname(v) for v in vc.vertex_set)
+        if vertex_types:
+            self.delete_graph_structure(vertex_types=vertex_types)
 
     def _generate_upsert_payload(
         self, data: list[dict[str, Any]], vname: str, vindex: tuple[str, ...]

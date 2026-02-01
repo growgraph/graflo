@@ -56,12 +56,12 @@ patterns.add_file_pattern(
 # Create GraphEngine and define schema + ingest in one operation
 engine = GraphEngine(target_db_flavor=db_type)
 ingestion_params = IngestionParams(
-    clean_start=True,
     # max_items=5,
 )
 engine.define_and_ingest(
     schema=schema,
-    output_config=conn_conf,  # Target database config
+    target_db_config=conn_conf,  # Target database config
     patterns=patterns,  # Source data patterns
     ingestion_params=ingestion_params,
+    recreate_schema=True,  # Wipe existing schema before defining and ingesting
 )

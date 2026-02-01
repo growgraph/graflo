@@ -15,7 +15,7 @@ Key Features:
 Example:
     >>> from graflo.db.manager import ConnectionManager
     >>> with ConnectionManager(config) as conn:
-    ...     conn.init_db(schema, clean_start=True)
+    ...     conn.init_db(schema, recreate_schema=True)
     ...     conn.upsert_docs_batch(docs, "users")
 """
 

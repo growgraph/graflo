@@ -82,24 +82,24 @@ from graflo.hq import GraphEngine
 # Option 1: Use GraphEngine for schema definition and ingestion (recommended)
 engine = GraphEngine()
 ingestion_params = IngestionParams(
-    clean_start=False,  # Set to True to wipe existing database
+    recreate_schema=False,  # Set to True to drop and redefine schema (script halts if schema exists)
 )
 
 engine.define_and_ingest(
     schema=schema,
-    output_config=conn_conf,  # Target database config
+    target_db_config=conn_conf,  # Target database config
     patterns=patterns,  # Source data patterns
     ingestion_params=ingestion_params,
-    clean_start=False,  # Set to True to wipe existing database
+    recreate_schema=False,  # Set to True to drop and redefine schema (script halts if schema exists)
 )
 
 # Option 2: Use Caster directly (schema must be defined separately)
 # engine = GraphEngine()
-# engine.define_schema(schema=schema, output_config=conn_conf, clean_start=False)
+# engine.define_schema(schema=schema, target_db_config=conn_conf, recreate_schema=False)
 # 
 # caster = Caster(schema)
 # caster.ingest(
-#     output_config=conn_conf,
+#     target_db_config=conn_conf,
 #     patterns=patterns,
 #     ingestion_params=ingestion_params,
 # )
@@ -112,7 +112,7 @@ The `Patterns` class maps resource names (from `Schema`) to their physical data 
 - **TablePattern**: For PostgreSQL table resources with connection configuration
 
 The `ingest()` method takes:
-- `output_config`: Target graph database configuration (where to write the graph)
+- `target_db_config`: Target graph database configuration (where to write the graph)
 - `patterns`: Source data patterns (where to read data from - files or database tables)
 
 ## 🚀 Using PostgreSQL Tables as Data Sources
@@ -161,15 +161,15 @@ arango_config = ArangoConfig.from_docker_env()  # Target graph database
 # Use GraphEngine for schema definition and ingestion
 engine = GraphEngine()
 ingestion_params = IngestionParams(
-    clean_start=False,  # Set to True to wipe existing database
+    recreate_schema=False,  # Set to True to drop and redefine schema (script halts if schema exists)
 )
 
 engine.define_and_ingest(
     schema=schema,
-    output_config=arango_config,  # Target graph database
+    target_db_config=arango_config,  # Target graph database
     patterns=patterns,  # Source PostgreSQL tables
     ingestion_params=ingestion_params,
-    clean_start=False,  # Set to True to wipe existing database
+    recreate_schema=False,  # Set to True to drop and redefine schema (script halts if schema exists)
 )
 ```
 
@@ -211,8 +211,8 @@ from graflo.hq import GraphEngine
 engine = GraphEngine()
 engine.define_schema(
     schema=schema,
-    output_config=conn_conf,
-    clean_start=False,
+    target_db_config=conn_conf,
+    recreate_schema=False,
 )
 
 # Then ingest using Caster

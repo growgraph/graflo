@@ -15,7 +15,7 @@ def modes():
 
 def init_db(m, conn_conf, schema, current_path, reset):
     with ConnectionManager(connection_config=conn_conf) as db_client:
-        db_client.init_db(schema, clean_start=True)
+        db_client.init_db(schema, recreate_schema=True)
         ixs = db_client.fetch_indexes()
 
     ixs = {k: v for k, v in ixs.items() if not k.startswith("_")}

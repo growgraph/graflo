@@ -37,7 +37,7 @@ dependencies = [
   "neo4j>=5.22.0,<6",
   "networkx~=3.3",
   "pandas-stubs==2.3.0.250703",
-  "pandas>=2.0.3,<3",
+  "pandas>=2.0.3,<4",
   "psycopg2-binary>=2.9.11",
   "pydantic-settings>=2.12.0",
   "pydantic>=2.12.5",
@@ -46,8 +46,7 @@ dependencies = [
   "redis>=5.0.0",
   "requests>=2.31.0",
   "sqlalchemy>=2.0.0",
-  "strenum>=0.4.15",
-  "suthing>=0.5.0",
+  "suthing>=0.5.1",
   "urllib3>=2.0.0",
   "xmltodict>=0.14.2,<0.15"
 ]
@@ -55,7 +54,7 @@ description = "A framework for transforming tabular (CSV, SQL) and hierarchical 
 name = "graflo"
 readme = "README.md"
 requires-python = ">=3.11"
-version = "1.4.4"
+version = "1.4.5"
 
 [project.optional-dependencies]
 plot = [
@@ -67,6 +66,9 @@ ingest = "graflo.cli.ingest:ingest"
 manage_dbs = "graflo.cli.manage_dbs:manage_dbs"
 plot_schema = "graflo.cli.plot_schema:plot_schema"
 xml2json = "graflo.cli.plot_schema:xml2json"
+
+[project.urls]
+Homepage = "https://github.com/growgraph/graflo"
 
 [tool.hatch.build.targets.sdist]
 include = ["graflo"]

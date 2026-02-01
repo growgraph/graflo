@@ -19,7 +19,7 @@ Key Features:
 
 Example:
     >>> conn = Neo4jConnection(config)
-    >>> conn.init_db(schema, clean_start=True)
+    >>> conn.init_db(schema, recreate_schema=True)
     >>> conn.upsert_docs_batch(docs, "User", match_keys=["email"])
 """
 
@@ -32,7 +32,7 @@ from graflo.architecture.edge import Edge
 from graflo.architecture.onto import Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.vertex import VertexConfig
-from graflo.db.conn import Connection
+from graflo.db.conn import Connection, SchemaExistsError
 from graflo.filter.onto import Expression
 from graflo.onto import AggregationType, ExpressionFlavor
 from graflo.onto import DBType
@@ -252,16 +252,20 @@ class Neo4jConnection(Connection):
             q = "MATCH (n) DELETE n"
             self.execute(q)
 
-    def init_db(self, schema: Schema, clean_start: bool) -> None:
+    def init_db(self, schema: Schema, recreate_schema: bool) -> None:
         """Initialize Neo4j with the given schema.
 
         Checks if the database exists and creates it if it doesn't.
         Uses schema.general.name if database is not set in config.
         Note: Database creation is only supported in Neo4j Enterprise Edition.
 
+        If the database already has nodes and recreate_schema is False, raises
+        SchemaExistsError and the script halts.
+
         Args:
             schema: Schema containing graph structure definitions
-            clean_start: If True, delete all existing data before initialization
+            recreate_schema: If True, delete all existing data before initialization.
+                If False and database has nodes, raises SchemaExistsError.
         """
         # Determine database name: use config.database if set, otherwise use schema.general.name
         db_name = self.config.database
@@ -321,13 +325,34 @@ class Neo4jConnection(Connection):
             )
 
         try:
-            if clean_start:
+            # Check if database already has nodes (schema/graph exists)
+            result = self.execute("MATCH (n) RETURN count(n) AS c")
+            count = 0
+            if hasattr(result, "data"):
+                data = result.data()
+                if data:
+                    first = data[0]
+                    count = first.get("c", 0) or 0
+            if count == 0 and hasattr(result, "__iter__"):
+                for record in result:
+                    if hasattr(record, "get"):
+                        count = record.get("c", 0) or 0
+                    else:
+                        count = getattr(record, "c", 0) or 0
+                    break
+            if count > 0 and not recreate_schema:
+                raise SchemaExistsError(
+                    f"Schema/graph already exists in database '{db_name}' ({count} nodes). "
+                    "Set recreate_schema=True to replace, or use clear_data=True before ingestion."
+                )
+
+            if recreate_schema:
                 try:
                     self.delete_database("")
                     logger.debug(f"Cleaned database '{db_name}' for fresh start")
                 except Exception as clean_error:
                     logger.warning(
-                        f"Error during clean_start for database '{db_name}': {clean_error}",
+                        f"Error during recreate_schema for database '{db_name}': {clean_error}",
                         exc_info=True,
                     )
                     # Continue - may be first run or already clean
@@ -341,12 +366,21 @@ class Neo4jConnection(Connection):
                     exc_info=True,
                 )
                 raise
+        except SchemaExistsError:
+            raise
         except Exception as e:
             logger.error(
                 f"Error during database schema initialization for '{db_name}': {e}",
                 exc_info=True,
             )
             raise
+
+    def clear_data(self, schema: Schema) -> None:
+        """Remove all data from the graph without dropping the schema.
+
+        Deletes all nodes and relationships; labels (schema) remain.
+        """
+        self.delete_graph_structure((), (), delete_all=True)
 
     def upsert_docs_batch(self, docs, class_name, match_keys, **kwargs):
         """Upsert a batch of nodes using Cypher.

@@ -79,18 +79,18 @@ def ingest_atomic(conn_conf, current_path, test_db_name, schema_o, mode, n_cores
     # Use GraphEngine for the full workflow
     engine = GraphEngine(target_db_flavor=db_type)
 
-    # Define schema first (with clean_start=True)
+    # Define schema first (with recreate_schema=True)
     engine.define_schema(
         schema=schema_o,
-        output_config=conn_conf,
-        clean_start=True,
+        target_db_config=conn_conf,
+        recreate_schema=True,
     )
 
     # Then ingest data
-    ingestion_params = IngestionParams(n_cores=n_cores, clean_start=False)
+    ingestion_params = IngestionParams(n_cores=n_cores, clear_data=False)
     engine.ingest(
         schema=schema_o,
-        output_config=conn_conf,
+        target_db_config=conn_conf,
         patterns=patterns,
         ingestion_params=ingestion_params,
     )

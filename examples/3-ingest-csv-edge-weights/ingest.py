@@ -50,10 +50,10 @@ patterns = Patterns.from_dict(FileHandle.load("patterns.yaml"))
 
 # Create GraphEngine and define schema + ingest in one operation
 engine = GraphEngine(target_db_flavor=db_type)
-ingestion_params = IngestionParams(clean_start=True)
+ingestion_params = IngestionParams(clear_data=True)
 engine.define_and_ingest(
     schema=schema,
-    output_config=conn_conf,
+    target_db_config=conn_conf,
     patterns=patterns,
     ingestion_params=ingestion_params,
 )

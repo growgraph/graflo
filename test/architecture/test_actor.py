@@ -5,6 +5,7 @@ from graflo.architecture.actor import (
     DescendActor,
     EdgeActor,
     TransformActor,
+    VertexActor,
 )
 from graflo.architecture.edge import EdgeConfig
 from graflo.architecture.onto import ActionContext, LocationIndex, VertexRep
@@ -133,3 +134,56 @@ def test_resource_deb_compact(resource_deb_compact, data_deb, schema_vc_deb):
         ("package", "package", "suggests"): 2,
         ("package", "package", "breaks"): 1,
     }
+
+
+def test_find_descendants_by_vertex_name(resource_descend, schema_vc_openalex):
+    """find_descendants returns VertexActors whose name is in the given set."""
+    anw = ActorWrapper(**resource_descend)
+    anw.finish_init(vertex_config=schema_vc_openalex)
+    # Tree: DescendActor -> [DescendActor(apply with name "a"), VertexActor("work")]
+    by_name_work = anw.find_descendants(actor_type=VertexActor, name={"work"})
+    assert len(by_name_work) == 1
+    assert (
+        isinstance(by_name_work[0].actor, VertexActor)
+        and by_name_work[0].actor.name == "work"
+    )
+    by_name_empty = anw.find_descendants(actor_type=VertexActor, name={"nonexistent"})
+    assert len(by_name_empty) == 0
+
+
+def test_find_descendants_by_type_and_predicate(
+    resource_openalex_works, schema_vc_openalex
+):
+    """find_descendants with actor_type and custom predicate works on nested tree."""
+    anw = ActorWrapper(*resource_openalex_works)
+    anw.finish_init(vertex_config=schema_vc_openalex, transforms={})
+    all_vertex_work = anw.find_descendants(actor_type=VertexActor, name={"work"})
+    assert len(all_vertex_work) == 2  # top-level and under referenced_works
+    assert all(
+        isinstance(w.actor, VertexActor) and w.actor.name == "work"
+        for w in all_vertex_work
+    )
+    all_transform = anw.find_descendants(actor_type=TransformActor)
+    assert len(all_transform) == 3  # keep_suffix_id variants and under referenced_works
+    by_predicate = anw.find_descendants(
+        predicate=lambda w: isinstance(w.actor, VertexActor) and w.actor.name == "work"
+    )
+    assert by_predicate == all_vertex_work
+
+
+def test_find_descendants_transform_by_target_vertex(
+    resource_collision, vertex_config_collision
+):
+    """find_descendants returns TransformActors whose target_vertex is in the given set."""
+    anw = ActorWrapper(*resource_collision)
+    anw.finish_init(vertex_config=vertex_config_collision, transforms={})
+    by_vertex = anw.find_descendants(actor_type=TransformActor, vertex={"person"})
+    assert len(by_vertex) == 1
+    assert (
+        isinstance(by_vertex[0].actor, TransformActor)
+        and by_vertex[0].actor.vertex == "person"
+    )
+    by_vertex_empty = anw.find_descendants(
+        actor_type=TransformActor, vertex={"nonexistent"}
+    )
+    assert len(by_vertex_empty) == 0

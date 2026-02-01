@@ -121,12 +121,12 @@ from graflo.hq.caster import IngestionParams
 caster = Caster(schema)
 
 ingestion_params = IngestionParams(
-    clean_start=False,  # Set to True to wipe existing database
+    recreate_schema=False,  # Set to True to drop and redefine schema (script halts if schema exists)
     # max_items=1000,  # Optional: limit number of items to process
 )
 
 caster.ingest(
-    output_config=conn_conf,  # Target database config
+    target_db_config=conn_conf,  # Target database config
     patterns=patterns,  # Source data patterns
     ingestion_params=ingestion_params,
 )

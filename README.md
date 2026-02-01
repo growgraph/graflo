@@ -129,27 +129,27 @@ from graflo.hq import GraphEngine
 # Option 1: Use GraphEngine for schema definition and ingestion (recommended)
 engine = GraphEngine()
 ingestion_params = IngestionParams(
-    clean_start=False,  # Set to True to wipe existing database
+    recreate_schema=False,  # Set to True to drop and redefine schema (script halts if schema exists)
     # max_items=1000,  # Optional: limit number of items to process
     # batch_size=10000,  # Optional: customize batch size
 )
 
 engine.define_and_ingest(
     schema=schema,
-    output_config=conn_conf,  # Target database config
+    target_db_config=conn_conf,  # Target database config
     patterns=patterns,  # Source data patterns
     ingestion_params=ingestion_params,
-    clean_start=False,  # Set to True to wipe existing database
+    recreate_schema=False,  # Set to True to drop and redefine schema (script halts if schema exists)
 )
 
 # Option 2: Use Caster directly (schema must be defined separately)
 # from graflo.hq import GraphEngine
 # engine = GraphEngine()
-# engine.define_schema(schema=schema, output_config=conn_conf, clean_start=False)
+# engine.define_schema(schema=schema, target_db_config=conn_conf, recreate_schema=False)
 # 
 # caster = Caster(schema)
 # caster.ingest(
-#     output_config=conn_conf,
+#     target_db_config=conn_conf,
 #     patterns=patterns,
 #     ingestion_params=ingestion_params,
 # )
@@ -178,8 +178,8 @@ schema = engine.infer_schema(
 target_config = ArangoConfig.from_docker_env()
 engine.define_schema(
     schema=schema,
-    output_config=target_config,
-    clean_start=False,
+    target_db_config=target_config,
+    recreate_schema=False,
 )
 
 # Use the inferred schema with Caster for ingestion

@@ -17,7 +17,7 @@ Example:
     >>> from graflo.db.connection import FalkordbConfig
     >>> config = FalkordbConfig(uri="redis://localhost:6379", database="mygraph")
     >>> conn = FalkordbConnection(config)
-    >>> conn.init_db(schema, clean_start=True)
+    >>> conn.init_db(schema, recreate_schema=True)
 """
 
 from .conn import FalkordbConnection

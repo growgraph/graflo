@@ -528,6 +528,22 @@ class VertexConfig(BaseDataclass):
         else:
             return []
 
+    def remove_vertices(self, names: set[str]) -> None:
+        """Remove vertices by name.
+
+        Removes vertices from the configuration and from blank_vertices
+        when present. Mutates the instance in place.
+
+        Args:
+            names: Set of vertex names to remove
+        """
+        if not names:
+            return
+        self.vertices[:] = [v for v in self.vertices if v.name not in names]
+        for n in names:
+            self._vertices_map.pop(n, None)
+        self.blank_vertices[:] = [b for b in self.blank_vertices if b not in names]
+
     def update_vertex(self, v: Vertex):
         """Update vertex configuration.
 
