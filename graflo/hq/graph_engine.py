@@ -53,6 +53,7 @@ class GraphEngine:
         postgres_config: PostgresConfig,
         schema_name: str | None = None,
         fuzzy_threshold: float = 0.8,
+        discard_disconnected_vertices: bool = False,
     ) -> Schema:
         """Infer a graflo Schema from PostgreSQL database.
 
@@ -60,6 +61,8 @@ class GraphEngine:
             postgres_config: PostgresConfig instance
             schema_name: Schema name to introspect (defaults to config schema_name or 'public')
             fuzzy_threshold: Similarity threshold for fuzzy matching (0.0 to 1.0, default 0.8)
+            discard_disconnected_vertices: If True, remove vertices that do not take part in
+                any relation (and resources/actors that reference them). Default False.
 
         Returns:
             Schema: Inferred schema with vertices, edges, and resources
@@ -70,7 +73,10 @@ class GraphEngine:
                 target_db_flavor=self.target_db_flavor,
                 fuzzy_threshold=fuzzy_threshold,
             )
-            return inferencer.infer_complete_schema(schema_name=schema_name)
+            schema = inferencer.infer_complete_schema(schema_name=schema_name)
+        if discard_disconnected_vertices:
+            schema.remove_disconnected_vertices()
+        return schema
 
     def create_patterns(
         self,

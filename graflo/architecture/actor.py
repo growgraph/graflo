@@ -27,7 +27,7 @@ from collections import defaultdict
 from functools import reduce
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Type
+from typing import Any, Callable, Generic, Type, TypeVar
 
 from graflo.architecture.actor_util import (
     add_blank_collections,
@@ -916,8 +916,10 @@ _NodeTypePriority: MappingProxyType[Type[Actor], int] = MappingProxyType(
     }
 )
 
+A = TypeVar("A", bound=Actor)
 
-class ActorWrapper:
+
+class ActorWrapper(Generic[A]):
     """Wrapper class for managing actor instances.
 
     This class provides a unified interface for creating and managing different types
@@ -1278,3 +1280,81 @@ class ActorWrapper:
             for descendant in self.actor.descendants:
                 actors.extend(descendant.collect_actors())
         return actors
+
+    def find_descendants(
+        self,
+        predicate: Callable[[ActorWrapper[Any]], bool] | None = None,
+        *,
+        actor_type: type[A] | None = None,
+        **attr_in: Any,
+    ) -> list[ActorWrapper]:
+        """Find all descendant ActorWrappers matching the given criteria.
+
+        Traverses the actor tree and returns every ActorWrapper whose wrapped
+        actor matches. You can use a custom predicate, or filter by actor type
+        and attribute membership in sets.
+
+        Args:
+            predicate: Optional callable(ActorWrapper) -> bool. If given, only
+                descendants for which predicate returns True are included.
+            actor_type: If given, only descendants whose wrapped actor is an
+                instance of this type are included (e.g. VertexActor,
+                TransformActor).
+            **attr_in: Attribute filters. Each key is an attribute name on the
+                wrapped actor; the value must be a set. A descendant is included
+                only if getattr(actor, key, None) is in that set. Examples:
+                name={"user", "product"} for VertexActor,
+                vertex={"target_a", "target_b"} for TransformActor (target_vertex).
+
+        Returns:
+            list[ActorWrapper]: All matching descendants in the tree.
+
+        Example:
+            >>> # All VertexActor descendants with name in {"user", "product"}
+            >>> wrappers.find_descendants(actor_type=VertexActor, name={"user", "product"})
+            >>> # All TransformActor descendants with target_vertex in a set
+            >>> wrappers.find_descendants(actor_type=TransformActor, vertex={"a", "b"})
+            >>> # Custom predicate
+            >>> wrappers.find_descendants(predicate=lambda w: isinstance(w.actor, VertexActor) and w.actor.name == "user")
+        """
+        if predicate is None:
+
+            def _predicate(w: ActorWrapper) -> bool:
+                if actor_type is not None and not isinstance(w.actor, actor_type):
+                    return False
+                for attr, allowed in attr_in.items():
+                    if allowed is None:
+                        continue
+                    val = getattr(w.actor, attr, None)
+                    if val not in allowed:
+                        return False
+                return True
+
+            predicate = _predicate
+
+        result: list[ActorWrapper] = []
+        if isinstance(self.actor, DescendActor):
+            for d in self.actor.descendants:
+                if predicate(d):
+                    result.append(d)
+                result.extend(d.find_descendants(predicate=predicate))
+        return result
+
+    def remove_descendants_if(self, predicate: Callable[[ActorWrapper], bool]) -> None:
+        """Remove descendants for which predicate returns True.
+
+        Mutates the tree in place: for each DescendActor, filters its
+        descendants to exclude wrappers matching the predicate, after
+        recursing into each descendant. Use with find_descendants to
+        remove actors that reference disconnected vertices.
+
+        Args:
+            predicate: Callable(ActorWrapper) -> bool. Descendants for
+                which this returns True are removed from the tree.
+        """
+        if isinstance(self.actor, DescendActor):
+            for d in list(self.actor.descendants):
+                d.remove_descendants_if(predicate=predicate)
+            self.actor._descendants[:] = [
+                d for d in self.actor.descendants if not predicate(d)
+            ]

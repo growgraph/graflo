@@ -386,3 +386,19 @@ def test_vertex_config_fields_with_db_flavor():
     # fields_names() returns strings
     field_names = config.fields_names("user")
     assert field_names == ["id", "name"]
+
+
+def test_vertex_config_remove_vertices():
+    """Test VertexConfig.remove_vertices removes vertices and updates blank_vertices."""
+    v1 = Vertex.from_dict({"name": "a", "fields": ["id"]})
+    v2 = Vertex.from_dict({"name": "b", "fields": ["id"]})
+    v3 = Vertex.from_dict({"name": "c", "fields": ["id"]})
+    config = VertexConfig(
+        vertices=[v1, v2, v3],
+        blank_vertices=["b"],
+    )
+    assert config.vertex_set == {"a", "b", "c"}
+    config.remove_vertices({"b", "c"})
+    assert config.vertex_set == {"a"}
+    assert config.vertices[0].name == "a"
+    assert config.blank_vertices == []

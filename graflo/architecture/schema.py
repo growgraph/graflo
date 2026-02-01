@@ -31,6 +31,7 @@ import dataclasses
 import logging
 from collections import Counter
 
+from graflo.architecture.actor import EdgeActor, TransformActor, VertexActor
 from graflo.architecture.edge import EdgeConfig
 from graflo.architecture.resource import Resource
 from graflo.architecture.transform import ProtoTransform
@@ -133,3 +134,57 @@ class Schema(BaseDataclass):
             else:
                 raise ValueError("Empty resource container 😕")
         return _current_resource
+
+    def remove_disconnected_vertices(self) -> None:
+        """Remove vertices that do not take part in any relation (disconnected).
+
+        Builds the set of vertex names that appear as source or target of any
+        edge, then removes from VertexConfig all other vertices. For each
+        resource, finds actors that reference disconnected vertices (via
+        find_descendants) and removes them from the actor tree. Resources
+        whose root actor references only disconnected vertices are removed.
+
+        Mutates this schema in place.
+        """
+        connected = self.edge_config.vertices
+        disconnected = self.vertex_config.vertex_set - connected
+        if not disconnected:
+            return
+
+        self.vertex_config.remove_vertices(disconnected)
+
+        def mentions_disconnected(wrapper):
+            actor = wrapper.actor
+            if isinstance(actor, VertexActor):
+                return actor.name in disconnected
+            if isinstance(actor, TransformActor):
+                return actor.vertex is not None and actor.vertex in disconnected
+            if isinstance(actor, EdgeActor):
+                return (
+                    actor.edge.source in disconnected
+                    or actor.edge.target in disconnected
+                )
+            return False
+
+        to_drop: list[Resource] = []
+        for resource in self.resources:
+            root = resource.root
+            to_remove = set(
+                root.find_descendants(actor_type=VertexActor, name=disconnected)
+                + root.find_descendants(actor_type=TransformActor, vertex=disconnected)
+                + root.find_descendants(
+                    predicate=lambda w: isinstance(w.actor, EdgeActor)
+                    and (
+                        w.actor.edge.source in disconnected
+                        or w.actor.edge.target in disconnected
+                    ),
+                )
+            )
+            if mentions_disconnected(root):
+                to_drop.append(resource)
+                continue
+            root.remove_descendants_if(lambda w: w in to_remove)
+
+        for r in to_drop:
+            self.resources.remove(r)
+            self._resources.pop(r.name, None)
