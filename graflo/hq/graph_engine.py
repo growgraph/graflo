@@ -9,6 +9,7 @@ import logging
 
 from graflo import Schema
 from graflo.onto import DBType
+from graflo.architecture.onto_sql import SchemaIntrospectionResult
 from graflo.db import ConnectionManager, PostgresConnection
 from graflo.db.connection.onto import DBConfig, PostgresConfig
 from graflo.hq.caster import Caster, IngestionParams
@@ -47,6 +48,28 @@ class GraphEngine:
         """
         self.target_db_flavor = target_db_flavor
         self.resource_mapper = ResourceMapper()
+
+    def introspect(
+        self,
+        postgres_config: PostgresConfig,
+        schema_name: str | None = None,
+    ) -> SchemaIntrospectionResult:
+        """Introspect PostgreSQL schema and return a serializable result.
+
+        Args:
+            postgres_config: PostgresConfig instance
+            schema_name: Schema name to introspect (defaults to config schema_name or 'public')
+
+        Returns:
+            SchemaIntrospectionResult: Introspection result (vertex_tables, edge_tables,
+                raw_tables, schema_name) suitable for serialization.
+        """
+        with PostgresConnection(postgres_config) as postgres_conn:
+            inferencer = InferenceManager(
+                conn=postgres_conn,
+                target_db_flavor=self.target_db_flavor,
+            )
+            return inferencer.introspect(schema_name=schema_name)
 
     def infer_schema(
         self,

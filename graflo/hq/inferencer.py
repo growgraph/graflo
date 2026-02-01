@@ -5,6 +5,7 @@ from graflo.db import PostgresConnection
 from graflo.db.postgres import PostgresSchemaInferencer, PostgresResourceMapper
 from graflo.hq.sanitizer import SchemaSanitizer
 import logging
+from graflo.architecture.onto_sql import SchemaIntrospectionResult
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ class InferenceManager:
         )
         self.mapper = PostgresResourceMapper(fuzzy_threshold=fuzzy_threshold)
 
-    def introspect(self, schema_name: str | None = None):
+    def introspect(self, schema_name: str | None = None) -> SchemaIntrospectionResult:
         """Introspect PostgreSQL schema.
 
         Args:

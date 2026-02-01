@@ -23,6 +23,7 @@ import logging
 from typing import Any
 
 import psycopg2
+from psycopg2 import sql
 from psycopg2.extras import RealDictCursor
 
 from graflo.architecture.onto_sql import (
@@ -30,6 +31,7 @@ from graflo.architecture.onto_sql import (
     ForeignKeyInfo,
     VertexTableInfo,
     EdgeTableInfo,
+    RawTableInfo,
     SchemaIntrospectionResult,
 )
 from graflo.db.connection.onto import PostgresConfig
@@ -284,7 +286,8 @@ class PostgresConnection:
                 pg_catalog.format_type(a.atttypid, a.atttypmod) as type,
                 CASE WHEN a.attnotnull THEN 'NO' ELSE 'YES' END as is_nullable,
                 pg_catalog.pg_get_expr(d.adbin, d.adrelid) as column_default,
-                COALESCE(dsc.description, '') as description
+                COALESCE(dsc.description, '') as description,
+                a.attnum as ordinal_position
             FROM pg_catalog.pg_attribute a
             JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
             JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
@@ -365,7 +368,8 @@ class PostgresConnection:
                     c.character_maximum_length,
                     c.is_nullable,
                     c.column_default,
-                    COALESCE(d.description, '') as description
+                    COALESCE(d.description, '') as description,
+                    c.ordinal_position as ordinal_position
                 FROM information_schema.columns c
                 LEFT JOIN pg_catalog.pg_statio_all_tables st
                     ON st.schemaname = c.table_schema
@@ -493,6 +497,61 @@ class PostgresConnection:
         # Fallback to pg_catalog
         return self._get_primary_keys_pg_catalog(table_name, schema_name)
 
+    def _get_unique_columns_pg_catalog(
+        self, table_name: str, schema_name: str
+    ) -> list[str]:
+        """Get columns in UNIQUE constraints using pg_catalog (fallback method)."""
+        query = """
+            SELECT a.attname
+            FROM pg_catalog.pg_constraint con
+            JOIN pg_catalog.pg_class c ON c.oid = con.conrelid
+            JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+            JOIN pg_catalog.pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = ANY(con.conkey)
+            WHERE n.nspname = %s
+              AND c.relname = %s
+              AND con.contype = 'u'
+              AND a.attnum > 0
+              AND NOT a.attisdropped
+            ORDER BY array_position(con.conkey, a.attnum);
+        """
+        with self.conn.cursor() as cursor:
+            cursor.execute(query, (schema_name, table_name))
+            return list(dict.fromkeys(row[0] for row in cursor.fetchall()))
+
+    def get_unique_columns(
+        self, table_name: str, schema_name: str | None = None
+    ) -> list[str]:
+        """Get column names that participate in any UNIQUE constraint.
+
+        Tries information_schema first, falls back to pg_catalog if needed.
+        """
+        if schema_name is None:
+            schema_name = self.config.schema_name or "public"
+
+        try:
+            query = """
+                SELECT kcu.column_name
+                FROM information_schema.table_constraints tc
+                JOIN information_schema.key_column_usage kcu
+                    ON tc.constraint_name = kcu.constraint_name
+                    AND tc.table_schema = kcu.table_schema
+                WHERE tc.constraint_type = 'UNIQUE'
+                  AND tc.table_schema = %s
+                  AND tc.table_name = %s
+                ORDER BY kcu.ordinal_position;
+            """
+            with self.conn.cursor() as cursor:
+                cursor.execute(query, (schema_name, table_name))
+                results = list(dict.fromkeys(row[0] for row in cursor.fetchall()))
+                if results and self._check_information_schema_reliable(schema_name):
+                    return results
+        except Exception as e:
+            logger.debug(
+                f"information_schema query failed for unique columns: {e}, "
+                "falling back to pg_catalog"
+            )
+        return self._get_unique_columns_pg_catalog(table_name, schema_name)
+
     def _get_foreign_keys_pg_catalog(
         self, table_name: str, schema_name: str
     ) -> list[dict[str, Any]]:
@@ -591,6 +650,52 @@ class PostgresConnection:
         # Fallback to pg_catalog
         return self._get_foreign_keys_pg_catalog(table_name, schema_name)
 
+    def get_table_row_count_estimate(
+        self, table_name: str, schema_name: str | None = None
+    ) -> int | None:
+        """Return approximate row count from pg_class.reltuples (updated by ANALYZE).
+
+        Avoids full table scan; may be stale until next ANALYZE.
+        """
+        if schema_name is None:
+            schema_name = self.config.schema_name or "public"
+        query = """
+            SELECT c.reltuples::bigint AS estimate
+            FROM pg_catalog.pg_class c
+            JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = %s AND c.relname = %s AND c.relkind = 'r';
+        """
+        with self.conn.cursor() as cursor:
+            cursor.execute(query, (schema_name, table_name))
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            val = row[0]
+            return int(val) if val is not None else None
+
+    def get_table_sample_rows(
+        self,
+        table_name: str,
+        schema_name: str | None = None,
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Return first `limit` rows from the table (no ORDER BY for speed)."""
+        if schema_name is None:
+            schema_name = self.config.schema_name or "public"
+        query = sql.SQL("SELECT * FROM {}.{} LIMIT %s").format(
+            sql.Identifier(schema_name),
+            sql.Identifier(table_name),
+        )
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute(query, (limit,))
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.debug(
+                f"Could not fetch sample rows for '{schema_name}.{table_name}': {e}"
+            )
+            return []
+
     def _is_edge_like_table(
         self, table_name: str, pk_columns: list[str], fk_columns: list[dict[str, Any]]
     ) -> bool:
@@ -683,8 +788,10 @@ class PostgresConnection:
 
             # If table has descriptive columns, consider it vertex-like
             if descriptive_columns:
-                # Mark primary key columns and convert to ColumnInfo
+                # Mark primary key and unique columns and convert to ColumnInfo
                 pk_set = set(pk_columns)
+                unique_columns = self.get_unique_columns(table_name, schema_name)
+                unique_set = set(unique_columns)
                 column_infos = []
                 for col in all_columns:
                     column_infos.append(
@@ -695,6 +802,8 @@ class PostgresConnection:
                             is_nullable=col.get("is_nullable", "YES"),
                             column_default=col.get("column_default"),
                             is_pk=col["name"] in pk_set,
+                            is_unique=col["name"] in unique_set,
+                            ordinal_position=col.get("ordinal_position"),
                         )
                     )
 
@@ -770,8 +879,10 @@ class PostgresConnection:
 
             all_columns = self.get_table_columns(table_name, schema_name)
 
-            # Mark primary key columns and convert to ColumnInfo
+            # Mark primary key and unique columns and convert to ColumnInfo
             pk_set = set(pk_columns)
+            unique_columns = self.get_unique_columns(table_name, schema_name)
+            unique_set = set(unique_columns)
             column_infos = []
             for col in all_columns:
                 column_infos.append(
@@ -782,6 +893,8 @@ class PostgresConnection:
                         is_nullable=col.get("is_nullable", "YES"),
                         column_default=col.get("column_default"),
                         is_pk=col["name"] in pk_set,
+                        is_unique=col["name"] in unique_set,
+                        ordinal_position=col.get("ordinal_position"),
                     )
                 )
 
@@ -915,6 +1028,70 @@ class PostgresConnection:
 
         return edge_tables
 
+    def _build_raw_tables(self, schema_name: str) -> list[RawTableInfo]:
+        """Build raw table metadata for all tables in the schema."""
+        tables = self.get_tables(schema_name)
+        raw_tables = []
+        for table_info in tables:
+            table_name = table_info["table_name"]
+            pk_columns = self.get_primary_keys(table_name, schema_name)
+            fk_columns = self.get_foreign_keys(table_name, schema_name)
+            unique_columns = self.get_unique_columns(table_name, schema_name)
+            all_columns = self.get_table_columns(table_name, schema_name)
+            row_count_estimate = self.get_table_row_count_estimate(
+                table_name, schema_name
+            )
+            sample_rows = self.get_table_sample_rows(table_name, schema_name, limit=5)
+
+            pk_set = set(pk_columns)
+            unique_set = set(unique_columns)
+            # Per-column sample values: list of values from first 5 rows (stringified)
+            column_names = [c["name"] for c in all_columns]
+            sample_by_col: dict[str, list[str]] = {c: [] for c in column_names}
+            for row in sample_rows:
+                for col_name in column_names:
+                    if col_name in row and len(sample_by_col[col_name]) < 5:
+                        v = row[col_name]
+                        sample_by_col[col_name].append("NULL" if v is None else str(v))
+
+            column_infos = []
+            for col in all_columns:
+                column_infos.append(
+                    ColumnInfo(
+                        name=col["name"],
+                        type=col["type"],
+                        description=col.get("description", ""),
+                        is_nullable=col.get("is_nullable", "YES"),
+                        column_default=col.get("column_default"),
+                        is_pk=col["name"] in pk_set,
+                        is_unique=col["name"] in unique_set,
+                        ordinal_position=col.get("ordinal_position"),
+                        sample_values=sample_by_col.get(col["name"], [])[:5],
+                    )
+                )
+
+            fk_infos = [
+                ForeignKeyInfo(
+                    column=fk["column"],
+                    references_table=fk["references_table"],
+                    references_column=fk.get("references_column"),
+                    constraint_name=fk.get("constraint_name"),
+                )
+                for fk in fk_columns
+            ]
+
+            raw_tables.append(
+                RawTableInfo(
+                    name=table_name,
+                    schema_name=schema_name,
+                    columns=column_infos,
+                    primary_key=pk_columns,
+                    foreign_keys=fk_infos,
+                    row_count_estimate=row_count_estimate,
+                )
+            )
+        return raw_tables
+
     def introspect_schema(
         self, schema_name: str | None = None
     ) -> SchemaIntrospectionResult:
@@ -936,10 +1113,12 @@ class PostgresConnection:
 
         vertex_tables = self.detect_vertex_tables(schema_name)
         edge_tables = self.detect_edge_tables(schema_name)
+        raw_tables = self._build_raw_tables(schema_name)
 
         result = SchemaIntrospectionResult(
             vertex_tables=vertex_tables,
             edge_tables=edge_tables,
+            raw_tables=raw_tables,
             schema_name=schema_name,
         )
 
