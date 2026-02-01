@@ -54,7 +54,7 @@ description = "A framework for transforming tabular (CSV, SQL) and hierarchical 
 name = "graflo"
 readme = "README.md"
 requires-python = ">=3.11"
-version = "1.4.4"
+version = "1.4.5"
 
 [project.optional-dependencies]
 plot = [
