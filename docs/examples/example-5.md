@@ -378,7 +378,7 @@ ingestion_params = IngestionParams(
 
 engine.define_and_ingest(
     schema=schema,
-    output_config=target_config,  # Target graph database config
+    target_db_config=target_config,  # Target graph database config
     patterns=patterns,  # PostgreSQL table patterns
     ingestion_params=ingestion_params,
     clean_start=True,  # Clear existing data first
@@ -442,7 +442,7 @@ ingestion_params = IngestionParams(
 # Use GraphEngine to define schema and ingest data
 engine.define_and_ingest(
     schema=schema,
-    output_config=target_config,
+    target_db_config=target_config,
     patterns=patterns,
     ingestion_params=ingestion_params,
     clean_start=True,  # Clear existing data first

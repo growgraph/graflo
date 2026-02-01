@@ -136,7 +136,7 @@ ingestion_params = IngestionParams(
 
 engine.define_and_ingest(
     schema=schema,
-    output_config=conn_conf,  # Target database config
+    target_db_config=conn_conf,  # Target database config
     patterns=patterns,  # Source data patterns
     ingestion_params=ingestion_params,
     clean_start=False,  # Set to True to wipe existing database

@@ -134,7 +134,7 @@ class GraphEngine:
     def define_and_ingest(
         self,
         schema: Schema,
-        output_config: DBConfig,
+        target_db_config: DBConfig,
         patterns: "Patterns | None" = None,
         ingestion_params: IngestionParams | None = None,
         clean_start: bool | None = None,
@@ -146,7 +146,7 @@ class GraphEngine:
 
         Args:
             schema: Schema configuration for the graph
-            output_config: Target database connection configuration
+            target_db_config: Target database connection configuration
             patterns: Patterns instance mapping resources to data sources.
                 If None, defaults to empty Patterns()
             ingestion_params: IngestionParams instance with ingestion configuration.
@@ -165,7 +165,7 @@ class GraphEngine:
         # Define schema first
         self.define_schema(
             schema=schema,
-            output_config=output_config,
+            output_config=target_db_config,
             clean_start=clean_start,
         )
 
@@ -178,7 +178,7 @@ class GraphEngine:
         # Then ingest data
         self.ingest(
             schema=schema,
-            output_config=output_config,
+            output_config=target_db_config,
             patterns=patterns,
             ingestion_params=ingestion_params,
         )

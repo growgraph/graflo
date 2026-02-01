@@ -115,7 +115,7 @@ patterns = engine.create_patterns(postgres_conf, schema_name="public")
 # Note: ingestion will create its own PostgreSQL connections per table internally
 engine.define_and_ingest(
     schema=schema,
-    output_config=conn_conf,
+    target_db_config=conn_conf,
     patterns=patterns,
     ingestion_params=IngestionParams(
         clean_start=False
