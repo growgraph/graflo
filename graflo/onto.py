@@ -95,18 +95,20 @@ class ExpressionFlavor(BaseEnum):
     """Supported expression language types for filter/query rendering.
 
     Uses the actual query language names: AQL (ArangoDB), CYPHER (Neo4j,
-    FalkorDB, Memgraph), GSQL (TigerGraph), PYTHON for in-memory evaluation.
+    FalkorDB, Memgraph), GSQL (TigerGraph), SQL for WHERE clauses, PYTHON for in-memory evaluation.
 
     Attributes:
         AQL: ArangoDB AQL expressions
         CYPHER: OpenCypher expressions (Neo4j, FalkorDB, Memgraph)
         GSQL: TigerGraph GSQL expressions (including REST++ filter format)
+        SQL: SQL WHERE clause fragments (column names, single-quoted values)
         PYTHON: Python expression evaluation
     """
 
     AQL = "aql"
     CYPHER = "cypher"
     GSQL = "gsql"
+    SQL = "sql"
     PYTHON = "python"
 
 

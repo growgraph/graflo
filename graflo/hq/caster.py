@@ -28,6 +28,12 @@ from suthing import Timer
 from graflo.architecture.edge import Edge
 from graflo.architecture.onto import EncodingType, GraphContainer
 from graflo.architecture.schema import Schema
+from graflo.filter.onto import (
+    ComparisonOperator,
+    FilterExpression,
+    LogicalOperator,
+)
+from graflo.onto import ExpressionFlavor
 from graflo.data_source import (
     AbstractDataSource,
     DataSourceFactory,
@@ -57,6 +63,12 @@ class IngestionParams(BaseModel):
         max_concurrent_db_ops: Maximum number of concurrent database operations (for vertices/edges).
             If None, uses n_cores. Set to 1 to prevent deadlocks in databases that don't handle
             concurrent transactions well (e.g., Neo4j). Database-independent setting.
+        datetime_after: Inclusive lower bound for datetime filtering (ISO format).
+            Rows with date_column >= datetime_after are included. Used with SQL/table sources.
+        datetime_before: Exclusive upper bound for datetime filtering (ISO format).
+            Rows with date_column < datetime_before are included. Range is [datetime_after, datetime_before).
+        datetime_column: Default column name for datetime filtering when the pattern does not
+            specify date_field. Per-table override: set date_field on TablePattern (or FilePattern).
     """
 
     clear_data: bool = False
@@ -67,6 +79,9 @@ class IngestionParams(BaseModel):
     init_only: bool = False
     limit_files: int | None = None
     max_concurrent_db_ops: int | None = None
+    datetime_after: str | None = None
+    datetime_before: str | None = None
+    datetime_column: str | None = None
 
 
 class Caster:
@@ -105,6 +120,46 @@ class Caster:
             ingestion_params = IngestionParams(**kwargs)
         self.ingestion_params = ingestion_params
         self.schema = schema
+
+    @staticmethod
+    def _datetime_range_where_sql(
+        datetime_after: str | None,
+        datetime_before: str | None,
+        date_column: str,
+    ) -> str:
+        """Build SQL WHERE fragment for [datetime_after, datetime_before) via FilterExpression.
+
+        Returns empty string if both bounds are None; otherwise uses column with >= and <.
+        """
+        if not datetime_after and not datetime_before:
+            return ""
+        parts: list[FilterExpression] = []
+        if datetime_after is not None:
+            parts.append(
+                FilterExpression(
+                    kind="leaf",
+                    field=date_column,
+                    cmp_operator=ComparisonOperator.GE,
+                    value=[datetime_after],
+                )
+            )
+        if datetime_before is not None:
+            parts.append(
+                FilterExpression(
+                    kind="leaf",
+                    field=date_column,
+                    cmp_operator=ComparisonOperator.LT,
+                    value=[datetime_before],
+                )
+            )
+        if len(parts) == 1:
+            return cast(str, parts[0](kind=ExpressionFlavor.SQL))
+        expr = FilterExpression(
+            kind="composite",
+            operator=LogicalOperator.AND,
+            deps=parts,
+        )
+        return cast(str, expr(kind=ExpressionFlavor.SQL))
 
     @staticmethod
     def discover_files(
@@ -646,9 +701,30 @@ class Caster:
         try:
             # Build base query
             query = f'SELECT * FROM "{effective_schema}"."{table_name}"'
-            where_clause = pattern.build_where_clause()
-            if where_clause:
-                query += f" WHERE {where_clause}"
+            where_parts: list[str] = []
+            pattern_where = pattern.build_where_clause()
+            if pattern_where:
+                where_parts.append(pattern_where)
+            # Ingestion datetime range [datetime_after, datetime_before)
+            date_column = pattern.date_field or ingestion_params.datetime_column
+            if (
+                ingestion_params.datetime_after or ingestion_params.datetime_before
+            ) and date_column:
+                datetime_where = Caster._datetime_range_where_sql(
+                    ingestion_params.datetime_after,
+                    ingestion_params.datetime_before,
+                    date_column,
+                )
+                if datetime_where:
+                    where_parts.append(datetime_where)
+            elif ingestion_params.datetime_after or ingestion_params.datetime_before:
+                logger.warning(
+                    "datetime_after/datetime_before set but no date column: "
+                    "set TablePattern.date_field or IngestionParams.datetime_column for resource %s",
+                    resource_name,
+                )
+            if where_parts:
+                query += " WHERE " + " AND ".join(where_parts)
 
             # Get SQLAlchemy connection string from PostgresConfig
             connection_string = postgres_config.to_sqlalchemy_connection_string()

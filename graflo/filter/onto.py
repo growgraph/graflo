@@ -238,6 +238,9 @@ class FilterExpression(ConfigBaseModel):
                 field_types = kwargs.get("field_types")
                 return self._cast_restpp(field_types=field_types)
             return self._cast_tigergraph(doc_name)
+        elif kind == ExpressionFlavor.SQL:
+            assert self.cmp_operator is not None
+            return self._cast_sql()
         elif kind == ExpressionFlavor.PYTHON:
             return self._cast_python(**kwargs)
         raise ValueError(f"kind {kind} not implemented")
@@ -252,6 +255,7 @@ class FilterExpression(ConfigBaseModel):
             ExpressionFlavor.AQL,
             ExpressionFlavor.CYPHER,
             ExpressionFlavor.GSQL,
+            ExpressionFlavor.SQL,
         ):
             return self._cast_generic(doc_name=doc_name, kind=kind)
         elif kind == ExpressionFlavor.PYTHON:
@@ -302,6 +306,34 @@ class FilterExpression(ConfigBaseModel):
         if self.field is not None:
             lemma = f"{doc_name}.{self.field} {lemma}"
         return lemma
+
+    def _cast_sql(self) -> str:
+        """Render leaf as SQL WHERE fragment: \"column\" op value (strings/dates single-quoted)."""
+        if not self.field:
+            return ""
+        if self.cmp_operator == ComparisonOperator.EQ:
+            op_str = "="
+        elif self.cmp_operator == ComparisonOperator.NEQ:
+            op_str = "!="
+        elif self.cmp_operator in (
+            ComparisonOperator.GT,
+            ComparisonOperator.LT,
+            ComparisonOperator.GE,
+            ComparisonOperator.LE,
+        ):
+            op_str = str(self.cmp_operator)
+        else:
+            op_str = str(self.cmp_operator)
+        value = self.value[0] if self.value else None
+        if value is None:
+            value_str = "null"
+        elif isinstance(value, (int, float)):
+            value_str = str(value)
+        else:
+            # Strings and ISO datetimes: single-quoted for SQL
+            value_str = str(value).replace("'", "''")
+            value_str = f"'{value_str}'"
+        return f'"{self.field}" {op_str} {value_str}'
 
     def _cast_restpp(self, field_types: dict[str, Any] | None = None) -> str:
         if not self.field:

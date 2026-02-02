@@ -1,7 +1,11 @@
 import pytest
 import yaml
 
-from graflo.filter.onto import FilterExpression, LogicalOperator
+from graflo.filter.onto import (
+    ComparisonOperator,
+    FilterExpression,
+    LogicalOperator,
+)
 from graflo.onto import ExpressionFlavor
 
 
@@ -133,3 +137,41 @@ def test_filter_neq(clause_volume):
 
     doc = {"name": "Volume", "value": -1.0}
     assert not m(kind=ExpressionFlavor.PYTHON, **doc)
+
+
+def test_filter_expression_sql_leaf():
+    """FilterExpression renders leaf to SQL WHERE fragment (ExpressionFlavor.SQL)."""
+    leaf = FilterExpression(
+        kind="leaf",
+        field="created_at",
+        cmp_operator=ComparisonOperator.GE,
+        value=["2020-01-01T00:00:00"],
+    )
+    out = leaf(kind=ExpressionFlavor.SQL)
+    assert out == "\"created_at\" >= '2020-01-01T00:00:00'"
+
+
+def test_filter_expression_sql_composite_and():
+    """FilterExpression AND composite renders to SQL with AND."""
+    ge = FilterExpression(
+        kind="leaf",
+        field="dt",
+        cmp_operator=ComparisonOperator.GE,
+        value=["2020-01-01"],
+    )
+    lt = FilterExpression(
+        kind="leaf",
+        field="dt",
+        cmp_operator=ComparisonOperator.LT,
+        value=["2020-12-31"],
+    )
+    expr = FilterExpression(
+        kind="composite",
+        operator=LogicalOperator.AND,
+        deps=[ge, lt],
+    )
+    out = expr(kind=ExpressionFlavor.SQL)
+    assert isinstance(out, str)
+    assert "\"dt\" >= '2020-01-01'" in out
+    assert "\"dt\" < '2020-12-31'" in out
+    assert " AND " in out
