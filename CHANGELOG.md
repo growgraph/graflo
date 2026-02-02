@@ -5,10 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.4.6] - 2026-02-02
+## [1.5.0] - 2026-02-02
 
 ### Added
-...
+- **Ingestion date range**: `IngestionParams` supports `datetime_after`, `datetime_before`, and `datetime_column` so ingestion can be restricted to a date range
+  - Use with `GraphEngine.create_patterns(..., datetime_columns={...})` for per-resource datetime columns, or set `IngestionParams.datetime_column` for a single default column
+  - Rows are included when the datetime column value is in `[datetime_after, datetime_before)` (inclusive lower, exclusive upper)
+  - Applies to SQL/PostgreSQL table ingestion; enables sampling or incremental loads by time window
 
 ### Changed
 - **Configs use Pydantic**: Schema and all schema-related configs now use Pydantic `BaseModel` (via `ConfigBaseModel`) instead of dataclasses

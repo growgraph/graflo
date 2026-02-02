@@ -31,46 +31,46 @@ edge_config:
 general:
     name: accounting
 resources:
--   apply:
-    -   vertex: products
-    edge_greedy: true
+-   edge_greedy: true
     encoding: utf-8
     extra_weights: []
     merge_collections: []
+    pipeline:
+    -   vertex: products
     resource_name: products
     types: {}
--   apply:
-    -   vertex: users
-    edge_greedy: true
+-   edge_greedy: true
     encoding: utf-8
     extra_weights: []
     merge_collections: []
+    pipeline:
+    -   vertex: users
     resource_name: users
     types: {}
--   apply:
+-   edge_greedy: true
+    encoding: utf-8
+    extra_weights: []
+    merge_collections: []
+    pipeline:
     -   map:
             follower_id: id
         target_vertex: users
     -   map:
             followed_id: id
         target_vertex: users
-    edge_greedy: true
+    resource_name: follows
+    types: {}
+-   edge_greedy: true
     encoding: utf-8
     extra_weights: []
     merge_collections: []
-    resource_name: follows
-    types: {}
--   apply:
+    pipeline:
     -   map:
             user_id: id
         target_vertex: users
     -   map:
             product_id: id
         target_vertex: products
-    edge_greedy: true
-    encoding: utf-8
-    extra_weights: []
-    merge_collections: []
     resource_name: purchases
     types: {}
 transforms: {}

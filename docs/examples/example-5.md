@@ -337,11 +337,31 @@ patterns = engine.create_patterns(
 )
 ```
 
+**Optional: datetime columns for date-range filtering**
+
+To restrict ingestion to a time window, pass `datetime_columns`: a mapping from resource (table) name to the name of the datetime column used for filtering. Use this together with `IngestionParams(datetime_after=..., datetime_before=...)` in the ingestion step:
+
+```python
+# Optional: map each table to its datetime column for date-range filtering
+datetime_columns = {
+    "purchases": "purchase_date",
+    "users": "created_at",
+    "products": "created_at",
+    "follows": "created_at",
+}
+patterns = engine.create_patterns(
+    postgres_conf,
+    schema_name="public",
+    datetime_columns=datetime_columns,
+)
+```
+
 This creates `TablePattern` instances for each table, which:
 
 - Map table names to resource names (e.g., `users` table → `users` resource)
 - Store PostgreSQL connection configuration
 - Enable the Caster to query data directly from PostgreSQL using SQL
+- Optionally store a `date_field` for date-range filtering when `datetime_columns` is provided
 
 **How Patterns Work:**
 
@@ -366,6 +386,15 @@ Finally, ingest the data from PostgreSQL into your target graph database. This i
 
 5. **Graph Database Storage**: Data is written to the target graph database (ArangoDB/Neo4j/TigerGraph) using database-specific APIs for optimal performance. The system handles duplicates and updates based on indexes.
 
+**Restricting ingestion by date range**
+
+You can limit which rows are ingested by providing a date range in `IngestionParams`. Use `datetime_after` and `datetime_before` (ISO-format strings); only rows whose datetime column value falls in `[datetime_after, datetime_before)` are included. This requires either:
+
+- Passing `datetime_columns` when creating patterns (see Step 5), or  
+- Setting `datetime_column` in `IngestionParams` as a single default column for all resources.
+
+Example:
+
 ```python
 from graflo.hq import GraphEngine
 from graflo.hq.caster import IngestionParams
@@ -374,6 +403,11 @@ from graflo.hq.caster import IngestionParams
 engine = GraphEngine()
 ingestion_params = IngestionParams(
     clear_data=True,  # Clear existing data before ingesting
+    # Optional: ingest only rows in this date range (requires datetime_columns in create_patterns
+    # or datetime_column below)
+    # datetime_after="2020-01-01",
+    # datetime_before="2021-01-01",
+    # datetime_column="created_at",  # default column when a pattern has no date_field
 )
 
 engine.define_and_ingest(

@@ -162,6 +162,8 @@ arango_config = ArangoConfig.from_docker_env()  # Target graph database
 engine = GraphEngine()
 ingestion_params = IngestionParams(
     recreate_schema=False,  # Set to True to drop and redefine schema (script halts if schema exists)
+    # Optional: restrict to a date range with datetime_after, datetime_before, datetime_column
+    # (use with create_patterns(..., datetime_columns={...}) for per-table columns)
 )
 
 engine.define_and_ingest(
