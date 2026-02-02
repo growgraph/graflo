@@ -32,7 +32,7 @@ from pydantic import (
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.onto import Index
-from graflo.filter.onto import Clause
+from graflo.filter.onto import FilterExpression
 from graflo.onto import DBType
 from graflo.onto import BaseEnum
 
@@ -84,8 +84,14 @@ class Field(ConfigBaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str
-    type: FieldType | None = None
+    name: str = PydanticField(
+        ...,
+        description="Name of the field (e.g. column or attribute name).",
+    )
+    type: FieldType | None = PydanticField(
+        default=None,
+        description="Optional field type for databases that require it (e.g. TigerGraph: INT, STRING). None for schema-agnostic backends.",
+    )
 
     @field_validator("type", mode="before")
     @classmethod
@@ -208,13 +214,26 @@ class Vertex(ConfigBaseModel):
     # Allow extra keys when loading from YAML (e.g. transforms, other runtime keys)
     model_config = ConfigDict(extra="ignore")
 
-    name: str
-    fields: list[Field] = PydanticField(default_factory=list)
-    indexes: list[Index] = PydanticField(default_factory=list)
-    filters: list[Any] = PydanticField(
-        default_factory=list
-    )  # items become Clause via convert_to_expressions
-    dbname: str | None = None
+    name: str = PydanticField(
+        ...,
+        description="Name of the vertex type (e.g. user, post, company).",
+    )
+    fields: list[Field] = PydanticField(
+        default_factory=list,
+        description="List of fields (names, Field objects, or dicts). Normalized to Field objects.",
+    )
+    indexes: list[Index] = PydanticField(
+        default_factory=list,
+        description="List of index definitions for this vertex. Defaults to primary index on all fields if empty.",
+    )
+    filters: list[FilterExpression] = PydanticField(
+        default_factory=list,
+        description="Filter expressions (logical formulae) applied when querying this vertex.",
+    )
+    dbname: str | None = PydanticField(
+        default=None,
+        description="Optional database collection/table name. Defaults to vertex name if not set.",
+    )
 
     @field_validator("fields", mode="before")
     @classmethod
@@ -241,12 +260,16 @@ class Vertex(ConfigBaseModel):
     def convert_to_expressions(cls, v: Any) -> Any:
         if not isinstance(v, list):
             return v
-        result: list[Any] = []
+        result: list[FilterExpression] = []
         for item in v:
-            if isinstance(item, dict):
-                result.append(Clause.from_dict(item))
-            else:
+            if isinstance(item, FilterExpression):
                 result.append(item)
+            elif isinstance(item, (dict, list)):
+                result.append(FilterExpression.from_dict(item))
+            else:
+                raise ValueError(
+                    "each filter must be a FilterExpression instance or a dict/list (parsed as FilterExpression)"
+                )
         return result
 
     @model_validator(mode="after")
@@ -309,10 +332,22 @@ class VertexConfig(ConfigBaseModel):
     # Allow extra keys when loading from YAML (e.g. vertex_config wrapper key)
     model_config = ConfigDict(extra="ignore")
 
-    vertices: list[Vertex]
-    blank_vertices: list[str] = PydanticField(default_factory=list)
-    force_types: dict[str, list] = PydanticField(default_factory=dict)
-    db_flavor: DBType = DBType.ARANGO
+    vertices: list[Vertex] = PydanticField(
+        ...,
+        description="List of vertex type definitions (name, fields, indexes, filters).",
+    )
+    blank_vertices: list[str] = PydanticField(
+        default_factory=list,
+        description="Vertex names that may be created without explicit data (e.g. placeholders).",
+    )
+    force_types: dict[str, list] = PydanticField(
+        default_factory=dict,
+        description="Override mapping: vertex name -> list of field type names for type inference.",
+    )
+    db_flavor: DBType = PydanticField(
+        default=DBType.ARANGO,
+        description="Database flavor (ARANGO, NEO4J, TIGERGRAPH) for schema and index generation.",
+    )
 
     _vertices_map: dict[str, Vertex] | None = PrivateAttr(default=None)
     _vertex_numeric_fields_map: dict[str, object] | None = PrivateAttr(default=None)
@@ -482,14 +517,14 @@ class VertexConfig(ConfigBaseModel):
                 f" {vertex_name} was not defined in config"
             )
 
-    def filters(self, vertex_name) -> list[Clause]:
+    def filters(self, vertex_name) -> list[FilterExpression]:
         """Get filter clauses for a vertex.
 
         Args:
             vertex_name: Name of the vertex
 
         Returns:
-            list[Clause]: List of filter clauses
+            list[FilterExpression]: List of filter expressions
         """
         m = self._get_vertices_map()
         if vertex_name in m:

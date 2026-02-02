@@ -41,7 +41,7 @@ from graflo.db.arango.query import fetch_fields_query
 from graflo.db.arango.util import render_filters
 from graflo.db.conn import Connection, SchemaExistsError
 from graflo.db.util import get_data_from_cursor, json_serializer
-from graflo.filter.onto import Clause
+from graflo.filter.onto import FilterExpression
 from graflo.onto import AggregationType
 from graflo.util.transform import pick_unique_dict
 from graflo.onto import DBType
@@ -856,7 +856,7 @@ class ArangoConnection(Connection):
         match_keys: list[str] | tuple[str, ...],
         keep_keys: list[str] | tuple[str, ...] | None = None,
         flatten: bool = False,
-        filters: None | Clause | list[Any] | dict[str, Any] = None,
+        filters: None | FilterExpression | list[Any] | dict[str, Any] = None,
     ) -> list[dict[str, Any]] | dict[int, list[dict[str, Any]]]:
         """Fetch documents that exist in the database.
 
@@ -899,7 +899,7 @@ class ArangoConnection(Connection):
     def fetch_docs(
         self,
         class_name: str,
-        filters: None | Clause | list[Any] | dict[str, Any] = None,
+        filters: None | FilterExpression | list[Any] | dict[str, Any] = None,
         limit: int | None = None,
         return_keys: list[str] | None = None,
         unset_keys: list[str] | None = None,
@@ -954,7 +954,7 @@ class ArangoConnection(Connection):
         edge_type: str | None = None,
         to_type: str | None = None,
         to_id: str | None = None,
-        filters: list[Any] | dict[str, Any] | Clause | None = None,
+        filters: list[Any] | dict[str, Any] | FilterExpression | None = None,
         limit: int | None = None,
         return_keys: list[str] | None = None,
         unset_keys: list[str] | None = None,
@@ -1040,7 +1040,7 @@ class ArangoConnection(Connection):
         aggregation_function: AggregationType,
         discriminant: str | None = None,
         aggregated_field: str | None = None,
-        filters: None | Clause | list[Any] | dict[str, Any] = None,
+        filters: None | FilterExpression | list[Any] | dict[str, Any] = None,
     ) -> list[dict[str, Any]]:
         """Perform aggregation on a collection.
 
@@ -1097,7 +1097,7 @@ class ArangoConnection(Connection):
         class_name: str,
         match_keys: list[str] | tuple[str, ...],
         keep_keys: list[str] | tuple[str, ...] | None = None,
-        filters: None | Clause | list[Any] | dict[str, Any] = None,
+        filters: None | FilterExpression | list[Any] | dict[str, Any] = None,
     ) -> list[dict[str, Any]]:
         """Keep documents that don't exist in the database.
 

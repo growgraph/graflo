@@ -98,9 +98,18 @@ class ABCFields(ConfigBaseModel):
         fields: List of field names
     """
 
-    name: str | None = None
-    fields: list[str] = Field(default_factory=list)
-    keep_vertex_name: bool = True
+    name: str | None = Field(
+        default=None,
+        description="Optional name of the entity (e.g. vertex name for composite field prefix).",
+    )
+    fields: list[str] = Field(
+        default_factory=list,
+        description="List of field names for this entity.",
+    )
+    keep_vertex_name: bool = Field(
+        default=True,
+        description="If True, composite field names use entity@field format; otherwise use field only.",
+    )
 
     def cfield(self, x: str) -> str:
         """Creates a composite field name by combining the entity name with a field name.
@@ -122,8 +131,14 @@ class Weight(ABCFields):
         filter: Dictionary of filter conditions for weights
     """
 
-    map: dict = Field(default_factory=dict)
-    filter: dict = Field(default_factory=dict)
+    map: dict = Field(
+        default_factory=dict,
+        description="Mapping of field values to weight values for vertex-based edge attributes.",
+    )
+    filter: dict = Field(
+        default_factory=dict,
+        description="Filter conditions applied when resolving vertex-based weights.",
+    )
 
 
 class Index(ConfigBaseModel):
@@ -139,13 +154,34 @@ class Index(ConfigBaseModel):
         exclude_edge_endpoints: Whether to exclude edge endpoints from index
     """
 
-    name: str | None = None
-    fields: list[str] = Field(default_factory=list)
-    unique: bool = True
-    type: IndexType = IndexType.PERSISTENT
-    deduplicate: bool = True
-    sparse: bool = False
-    exclude_edge_endpoints: bool = False
+    name: str | None = Field(
+        default=None,
+        description="Optional index name. For edges, can reference a vertex name for composite fields.",
+    )
+    fields: list[str] = Field(
+        default_factory=list,
+        description="List of field names included in this index.",
+    )
+    unique: bool = Field(
+        default=True,
+        description="If True, index enforces uniqueness on the field combination.",
+    )
+    type: IndexType = Field(
+        default=IndexType.PERSISTENT,
+        description="Index type (PERSISTENT, HASH, SKIPLIST, FULLTEXT).",
+    )
+    deduplicate: bool = Field(
+        default=True,
+        description="Whether to deduplicate index entries (e.g. ArangoDB).",
+    )
+    sparse: bool = Field(
+        default=False,
+        description="If True, create a sparse index (exclude null/missing values).",
+    )
+    exclude_edge_endpoints: bool = Field(
+        default=False,
+        description="If True, do not add _from/_to to edge index (e.g. ArangoDB).",
+    )
 
     def __iter__(self):
         """Iterate over the indexed fields."""

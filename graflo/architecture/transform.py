@@ -78,12 +78,30 @@ class ProtoTransform(ConfigBaseModel):
         _foo: Internal reference to the transform function
     """
 
-    name: str | None = None
-    module: str | None = None
-    params: dict[str, Any] = Field(default_factory=dict)
-    foo: str | None = None
-    input: tuple[str, ...] = Field(default_factory=tuple)
-    output: tuple[str, ...] = Field(default_factory=tuple)
+    name: str | None = Field(
+        default=None,
+        description="Optional name for this transform (e.g. for reference in schema.transforms).",
+    )
+    module: str | None = Field(
+        default=None,
+        description="Python module path containing the transform function (e.g. my_package.transforms).",
+    )
+    params: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Extra parameters passed to the transform function at runtime.",
+    )
+    foo: str | None = Field(
+        default=None,
+        description="Name of the callable in module to use as the transform function.",
+    )
+    input: tuple[str, ...] = Field(
+        default_factory=tuple,
+        description="Input field names passed to the transform function.",
+    )
+    output: tuple[str, ...] = Field(
+        default_factory=tuple,
+        description="Output field names produced by the transform (defaults to input if unset).",
+    )
 
     _foo: Any = PrivateAttr(default=None)
 
@@ -149,11 +167,23 @@ class Transform(ProtoTransform):
         functional_transform: Whether this is a functional transform
     """
 
-    fields: tuple[str, ...] = Field(default_factory=tuple)
-    map: dict[str, str] = Field(default_factory=dict)
-    switch: dict[str, Any] = Field(default_factory=dict)
+    fields: tuple[str, ...] = Field(
+        default_factory=tuple,
+        description="Field names for declarative transform (used to derive input when input unset).",
+    )
+    map: dict[str, str] = Field(
+        default_factory=dict,
+        description="Mapping of output_key -> input_key for pure field renaming (no function).",
+    )
+    switch: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Switch/case-style mapping for conditional field values (key -> output spec).",
+    )
 
-    functional_transform: bool = False
+    functional_transform: bool = Field(
+        default=False,
+        description="True when a callable (module.foo) is set; False for pure map/switch transforms.",
+    )
 
     @model_validator(mode="before")
     @classmethod

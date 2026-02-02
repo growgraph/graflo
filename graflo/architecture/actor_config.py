@@ -17,6 +17,7 @@ from typing import Annotated, Any, Literal, cast
 from pydantic import Field, TypeAdapter, model_validator
 
 from graflo.architecture.base import ConfigBaseModel
+from graflo.architecture.edge import EdgeBase
 
 logger = logging.getLogger(__name__)
 
@@ -179,42 +180,20 @@ class TransformActorConfig(ConfigBaseModel):
         return data
 
 
-class EdgeActorConfig(ConfigBaseModel):
-    """Configuration for an EdgeActor. Supports 'from'/'to' and 'source'/'target'."""
+class EdgeActorConfig(EdgeBase):
+    """Configuration for an EdgeActor. Extends EdgeBase; supports 'from'/'to' and 'source'/'target'."""
 
     type: Literal["edge"] = Field(
         default="edge", description="Actor type discriminator"
     )
     source: str = Field(..., alias="from", description="Source vertex type name")
     target: str = Field(..., alias="to", description="Target vertex type name")
-    match_source: str | None = Field(
-        default=None, description="Field for matching source vertices"
-    )
-    match_target: str | None = Field(
-        default=None, description="Field for matching target vertices"
-    )
     weights: dict[str, list[str]] | None = Field(
         default=None, description="Weight configuration"
     )
     indexes: list[dict[str, Any]] | None = Field(
         default=None, description="Index configuration"
     )
-    relation: str | None = Field(
-        default=None, description="Relation name (e.g. for Neo4j)"
-    )
-    relation_field: str | None = Field(
-        default=None, description="Field to extract relation from"
-    )
-    relation_from_key: bool = Field(
-        default=False, description="Extract relation from location key"
-    )
-    exclude_target: str | None = Field(
-        default=None, description="Exclude target from edge rendering"
-    )
-    exclude_source: str | None = Field(
-        default=None, description="Exclude source from edge rendering"
-    )
-    match: str | None = Field(default=None, description="Match discriminant")
 
     @model_validator(mode="before")
     @classmethod

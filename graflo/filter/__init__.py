@@ -6,12 +6,11 @@ that can be translated into different database query languages (AQL, Cypher, Pyt
 Key Components:
     - LogicalOperator: Logical operations (AND, OR, NOT, IMPLICATION)
     - ComparisonOperator: Comparison operations (==, !=, >, <, etc.)
-    - Clause: Filter clause implementation
-    - Expression: Filter expression factory
+    - FilterExpression: Filter expression (leaf or composite logical formulae)
 
 Example:
-    >>> from graflo.filter import Expression
-    >>> expr = Expression.from_dict({
+    >>> from graflo.filter.onto import FilterExpression
+    >>> expr = FilterExpression.from_dict({
     ...     "AND": [
     ...         {"field": "age", "cmp_operator": ">=", "value": 18},
     ...         {"field": "status", "cmp_operator": "==", "value": "active"}

@@ -1,7 +1,7 @@
 import pytest
 import yaml
 
-from graflo.filter.onto import Clause, Expression, LogicalOperator
+from graflo.filter.onto import FilterExpression, LogicalOperator
 from graflo.onto import ExpressionFlavor
 
 
@@ -77,20 +77,20 @@ def filter_implication(clause_open, clause_b):
 
 
 def test_python_clause(clause_open):
-    lc = Clause(**clause_open)  # kind=leaf inferred from operator (str)
+    lc = FilterExpression(**clause_open)  # kind=leaf inferred from operator (str)
     doc = {"name": "Open"}
     assert lc(**doc, kind=ExpressionFlavor.PYTHON)
 
 
 def test_condition_b(clause_b):
-    m = Clause(**clause_b)  # kind=leaf inferred from operator (str)
+    m = FilterExpression(**clause_b)  # kind=leaf inferred from operator (str)
     doc = {"value": -1}
     assert m(value=1, kind=ExpressionFlavor.PYTHON)
     assert not m(kind=ExpressionFlavor.PYTHON, **doc)
 
 
 def test_clause_a(clause_a):
-    m = Expression.from_dict(clause_a)
+    m = FilterExpression.from_dict(clause_a)
 
     doc = {"name": "Open", "value": 5.0}
     assert m(kind=ExpressionFlavor.PYTHON, **doc)
@@ -100,7 +100,7 @@ def test_clause_a(clause_a):
 
 
 def test_clause_ab(clause_ab):
-    m = Expression.from_dict(clause_ab)
+    m = FilterExpression.from_dict(clause_ab)
 
     doc = {"name": "Open", "value": 5.0}
     assert m(kind=ExpressionFlavor.PYTHON, **doc)
@@ -116,7 +116,7 @@ def test_clause_ab(clause_ab):
 
 
 def test_filter_implication(filter_implication):
-    m = Expression.from_dict(filter_implication)
+    m = FilterExpression.from_dict(filter_implication)
 
     doc = {"name": "Open", "value": -1.0}
     assert not m(kind=ExpressionFlavor.PYTHON, **doc)
@@ -126,7 +126,7 @@ def test_filter_implication(filter_implication):
 
 
 def test_filter_neq(clause_volume):
-    m = Expression.from_dict(clause_volume)
+    m = FilterExpression.from_dict(clause_volume)
 
     doc = {"name": "Open", "value": -1.0}
     assert m(kind=ExpressionFlavor.PYTHON, **doc)

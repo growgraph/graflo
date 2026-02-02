@@ -87,7 +87,7 @@ from graflo.architecture.edge import Edge
 from graflo.architecture.schema import Schema
 from graflo.architecture.vertex import VertexConfig
 from graflo.db.conn import Connection, SchemaExistsError
-from graflo.filter.onto import Expression
+from graflo.filter.onto import FilterExpression
 from graflo.onto import AggregationType
 from graflo.onto import DBType
 
@@ -876,7 +876,7 @@ class MemgraphConnection(Connection):
         q = f"MATCH (n:{class_name})"
 
         if filters is not None:
-            ff = Expression.from_dict(filters)
+            ff = FilterExpression.from_dict(filters)
             filter_str = ff(doc_name="n", kind=self.expression_flavor())
             q += f" WHERE {filter_str}"
 
@@ -971,7 +971,7 @@ class MemgraphConnection(Connection):
 
         # Add relationship property filters
         if filters is not None:
-            ff = Expression.from_dict(filters)
+            ff = FilterExpression.from_dict(filters)
             filter_str = ff(doc_name="r", kind=self.expression_flavor())
             where_clauses.append(filter_str)
 
@@ -1113,7 +1113,7 @@ class MemgraphConnection(Connection):
         # Build filter clause
         filter_clause = ""
         if filters is not None:
-            ff = Expression.from_dict(filters)
+            ff = FilterExpression.from_dict(filters)
             filter_str = ff(doc_name="n", kind=self.expression_flavor())
             filter_clause = f" WHERE {filter_str}"
 

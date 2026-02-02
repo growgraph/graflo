@@ -16,7 +16,7 @@ Example:
 import logging
 
 from graflo.architecture.edge import Edge
-from graflo.filter.onto import Clause
+from graflo.filter.onto import FilterExpression
 from graflo.onto import ExpressionFlavor
 
 logger = logging.getLogger(__name__)
@@ -60,7 +60,9 @@ def define_extra_edges(g: Edge):
     return query0
 
 
-def render_filters(filters: None | list | dict | Clause = None, doc_name="d") -> str:
+def render_filters(
+    filters: None | list | dict | FilterExpression = None, doc_name="d"
+) -> str:
     """Convert filter expressions to AQL filter clauses.
 
     This function converts filter expressions into AQL filter clauses that
@@ -79,8 +81,8 @@ def render_filters(filters: None | list | dict | Clause = None, doc_name="d") ->
         >>> # Returns: "FILTER user.field == 'value' && user.age > 18"
     """
     if filters is not None:
-        if not isinstance(filters, Clause):
-            ff = Clause.from_dict(filters)
+        if not isinstance(filters, FilterExpression):
+            ff = FilterExpression.from_dict(filters)
         else:
             ff = filters
         literal_condition = ff(doc_name=doc_name, kind=ExpressionFlavor.AQL)

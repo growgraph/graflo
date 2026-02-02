@@ -5,6 +5,7 @@ It handles edge configuration, weight management, indexing, and relationship ope
 The module supports both ArangoDB and Neo4j through the DBType enum.
 
 Key Components:
+    - EdgeBase: Shared base for edge-like configs (Edge and EdgeActorConfig)
     - Edge: Represents an edge with its source, target, and configuration
     - EdgeConfig: Manages collections of edges and their configurations
     - WeightConfig: Configuration for edge weights and relationships
@@ -87,8 +88,14 @@ class WeightConfig(ConfigBaseModel):
         ... ])
     """
 
-    vertices: list[Weight] = PydanticField(default_factory=list)
-    direct: list[Field] = PydanticField(default_factory=list)
+    vertices: list[Weight] = PydanticField(
+        default_factory=list,
+        description="List of weight definitions for vertex-based edge attributes.",
+    )
+    direct: list[Field] = PydanticField(
+        default_factory=list,
+        description="Direct edge attributes (field names, Field objects, or dicts). Normalized to Field objects.",
+    )
 
     @field_validator("direct", mode="before")
     @classmethod
@@ -107,7 +114,56 @@ class WeightConfig(ConfigBaseModel):
         return [field.name for field in self.direct]
 
 
-class Edge(ConfigBaseModel):
+class EdgeBase(ConfigBaseModel):
+    """Shared base for edge-like configs (Edge schema and EdgeActorConfig).
+
+    Holds the common scalar fields so Edge and EdgeActorConfig stay in sync
+    without duplication.
+    """
+
+    source: str = PydanticField(
+        ...,
+        description="Source vertex type name (e.g. user, company).",
+    )
+    target: str = PydanticField(
+        ...,
+        description="Target vertex type name (e.g. post, company).",
+    )
+    match_source: str | None = PydanticField(
+        default=None,
+        description="Field used to match source vertices when creating edges.",
+    )
+    match_target: str | None = PydanticField(
+        default=None,
+        description="Field used to match target vertices when creating edges.",
+    )
+    relation: str | None = PydanticField(
+        default=None,
+        description="Relation/edge type name (e.g. Neo4j relationship type). For ArangoDB used as weight.",
+    )
+    relation_field: str | None = PydanticField(
+        default=None,
+        description="Field name to store or read relation type (e.g. for TigerGraph).",
+    )
+    relation_from_key: bool = PydanticField(
+        default=False,
+        description="If True, derive relation value from the location key during ingestion.",
+    )
+    exclude_source: str | None = PydanticField(
+        default=None,
+        description="Exclude source vertices matching this field from edge creation.",
+    )
+    exclude_target: str | None = PydanticField(
+        default=None,
+        description="Exclude target vertices matching this field from edge creation.",
+    )
+    match: str | None = PydanticField(
+        default=None,
+        description="Match discriminant for edge creation.",
+    )
+
+
+class Edge(EdgeBase):
     """Represents an edge in the graph database.
 
     An edge connects two vertices and can have various configurations for
@@ -130,35 +186,44 @@ class Edge(ConfigBaseModel):
                        For ArangoDB, this corresponds to the edge collection name.
     """
 
-    source: str
-    target: str
-    indexes: list[Index] = PydanticField(default_factory=list, alias="index")
-    weights: WeightConfig | None = None
+    indexes: list[Index] = PydanticField(
+        default_factory=list,
+        alias="index",
+        description="List of index definitions for this edge. Alias: index.",
+    )
+    weights: WeightConfig | None = PydanticField(
+        default=None,
+        description="Optional edge weight/attribute configuration (direct fields and vertex-based weights).",
+    )
 
-    # relation represents Class in neo4j, for arango it becomes a weight
-    relation: str | None = None
     _relation_dbname: str | None = PrivateAttr(default=None)
 
-    relation_field: str | None = None
-    relation_from_key: bool = False
+    purpose: str | None = PydanticField(
+        default=None,
+        description="Optional purpose label for utility edge collections between same vertex types.",
+    )
 
-    # used to create extra utility collections between the same type of vertices (A, B)
-    purpose: str | None = None
+    type: EdgeType = PydanticField(
+        default=EdgeType.DIRECT,
+        description="Edge type: DIRECT (created during ingestion) or INDIRECT (pre-existing collection).",
+    )
 
-    match_source: str | None = None
-    match_target: str | None = None
-    exclude_source: str | None = None
-    exclude_target: str | None = None
-    match: str | None = None
+    aux: bool = PydanticField(
+        default=False,
+        description="If True, edge is initialized in DB but not used by graflo ingestion.",
+    )
 
-    type: EdgeType = EdgeType.DIRECT
-
-    aux: bool = False  # aux=True edges are init in the db but not considered by graflo
-
-    by: str | None = None
-    graph_name: str | None = None  # ArangoDB-specific: graph name (set in finish_init)
-    database_name: str | None = (
-        None  # ArangoDB-specific: edge collection name (set in finish_init)
+    by: str | None = PydanticField(
+        default=None,
+        description="For INDIRECT edges: vertex type name used to define the edge (set to dbname in finish_init).",
+    )
+    graph_name: str | None = PydanticField(
+        default=None,
+        description="ArangoDB graph name (set in finish_init).",
+    )
+    database_name: str | None = PydanticField(
+        default=None,
+        description="ArangoDB edge collection name (set in finish_init).",
     )
 
     _source: str | None = PrivateAttr(default=None)
@@ -314,7 +379,10 @@ class EdgeConfig(ConfigBaseModel):
         edges: List of edge configurations
     """
 
-    edges: list[Edge] = PydanticField(default_factory=list)
+    edges: list[Edge] = PydanticField(
+        default_factory=list,
+        description="List of edge definitions (source, target, weights, indexes, relation, etc.).",
+    )
     _edges_map: dict[EdgeId, Edge] = PrivateAttr()
 
     @model_validator(mode="after")

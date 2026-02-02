@@ -7,10 +7,10 @@ It includes classes for logical operators, comparison operators, and filter clau
 Key Components:
     - LogicalOperator: Enum for logical operations (AND, OR, NOT, IMPLICATION)
     - ComparisonOperator: Enum for comparison operations (==, !=, >, <, etc.)
-    - Clause: Unified filter clause (discriminated: kind="leaf" or kind="composite")
+    - FilterExpression: Unified filter expression (discriminated: kind="leaf" or kind="composite")
 
 Example:
-    >>> expr = Clause.from_dict({
+    >>> expr = FilterExpression.from_dict({
     ...     "AND": [
     ...         {"field": "age", "cmp_operator": ">=", "value": 18},
     ...         {"field": "status", "cmp_operator": "==", "value": "active"}
@@ -92,8 +92,8 @@ class ComparisonOperator(BaseEnum):
     IN = "IN"
 
 
-class Clause(ConfigBaseModel):
-    """Unified filter clause (discriminated: leaf or composite).
+class FilterExpression(ConfigBaseModel):
+    """Unified filter expression (discriminated: leaf or composite).
 
     - kind="leaf": single field comparison (field, cmp_operator, value, optional unary_op).
     - kind="composite": logical combination (operator AND/OR/NOT/IF_THEN, deps).
@@ -111,7 +111,7 @@ class Clause(ConfigBaseModel):
 
     # Composite fields (used when kind="composite")
     operator: LogicalOperator | None = None  # AND, OR, NOT, IF_THEN
-    deps: list[Clause] = Field(default_factory=list)
+    deps: list[FilterExpression] = Field(default_factory=list)
 
     @field_validator("value", mode="before")
     @classmethod
@@ -140,33 +140,33 @@ class Clause(ConfigBaseModel):
         return data
 
     @model_validator(mode="after")
-    def check_discriminated_shape(self) -> Clause:
+    def check_discriminated_shape(self) -> FilterExpression:
         """Enforce exactly one shape per kind."""
         if self.kind == "leaf":
             if self.operator is not None or self.deps:
-                raise ValueError("leaf clause must not have operator or deps")
+                raise ValueError("leaf expression must not have operator or deps")
         else:
             if self.operator is None:
-                raise ValueError("composite clause must have operator")
+                raise ValueError("composite expression must have operator")
         return self
 
     @field_validator("deps", mode="before")
     @classmethod
     def parse_deps(cls, v: list[Any]) -> list[Any]:
-        """Parse dict/list items into Clause instances."""
+        """Parse dict/list items into FilterExpression instances."""
         if not isinstance(v, list):
             return v
         result = []
         for item in v:
             if isinstance(item, (dict, list)):
-                result.append(Clause.from_dict(item))
+                result.append(FilterExpression.from_dict(item))
             else:
                 result.append(item)
         return result
 
     @classmethod
-    def from_list(cls, current: list[Any]) -> Clause:
-        """Build a leaf clause from list form [cmp_operator, value, field?, unary_op?]."""
+    def from_list(cls, current: list[Any]) -> FilterExpression:
+        """Build a leaf expression from list form [cmp_operator, value, field?, unary_op?]."""
         cmp_operator = current[0]
         value = current[1]
         field = current[2] if len(current) > 2 else None
@@ -181,9 +181,9 @@ class Clause(ConfigBaseModel):
 
     @classmethod
     def from_dict(cls, current: dict[str, Any] | list[Any]) -> Self:  # type: ignore[override]
-        """Create a filter clause from a dictionary or list.
+        """Create a filter expression from a dictionary or list.
 
-        Returns Clause (leaf or composite). LSP-compliant: return type is Self.
+        Returns FilterExpression (leaf or composite). LSP-compliant: return type is Self.
         """
         if isinstance(current, list):
             if current[0] in ComparisonOperator:
@@ -193,8 +193,8 @@ class Clause(ConfigBaseModel):
         elif isinstance(current, dict):
             k = list(current.keys())[0]
             if k in LogicalOperator:
-                clauses = [cls.from_dict(v) for v in current[k]]
-                return cls(kind="composite", operator=LogicalOperator(k), deps=clauses)
+                deps = [cls.from_dict(v) for v in current[k]]
+                return cls(kind="composite", operator=LogicalOperator(k), deps=deps)
             else:
                 # Leaf from dict: map YAML "operator" -> unary_op
                 unary_op = current.get("operator")
@@ -213,7 +213,7 @@ class Clause(ConfigBaseModel):
         kind: ExpressionFlavor = ExpressionFlavor.AQL,
         **kwargs,
     ) -> str | bool:
-        """Render or evaluate the clause in the target language."""
+        """Render or evaluate the expression in the target language."""
         if self.kind == "leaf":
             return self._call_leaf(doc_name=doc_name, kind=kind, **kwargs)
         return self._call_composite(doc_name=doc_name, kind=kind, **kwargs)
@@ -381,8 +381,3 @@ class Clause(ConfigBaseModel):
         return OperatorMapping[self.operator](
             [dep(kind=kind, **kwargs) for dep in self.deps]
         )
-
-
-# Backward compatibility
-Expression = Clause
-LeafClause = Clause
