@@ -15,18 +15,31 @@ Example:
     >>> field_names = config.fields_names("user")  # Returns list[str]
 """
 
+from __future__ import annotations
+
 import ast
-import dataclasses
 import json
 import logging
-from typing import TYPE_CHECKING, Union
+from typing import Any
 
+from pydantic import (
+    ConfigDict,
+    Field as PydanticField,
+    PrivateAttr,
+    field_validator,
+    model_validator,
+)
+
+from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.onto import Index
-from graflo.filter.onto import Expression
+from graflo.filter.onto import Clause
 from graflo.onto import DBType
-from graflo.onto import BaseDataclass, BaseEnum
+from graflo.onto import BaseEnum
 
 logger = logging.getLogger(__name__)
+
+# Type accepted for fields before normalization (for use by Edge/WeightConfig)
+FieldsInputType = list[str] | list["Field"] | list[dict[str, Any]]
 
 
 class FieldType(BaseEnum):
@@ -54,23 +67,7 @@ class FieldType(BaseEnum):
     DATETIME = "DATETIME"
 
 
-if TYPE_CHECKING:
-    # For type checking: after __post_init__, fields is always list[Field]
-    # Using string literal to avoid forward reference issues
-    _FieldsType = list["Field"]
-    # For type checking: allow FieldType, str, or None at construction time
-    # Strings are converted to FieldType enum in __post_init__
-    _FieldTypeType = FieldType | str | None
-else:
-    # For runtime: accept flexible input types, will be normalized in __post_init__
-    # Use Union for runtime since we can't use | with string literals
-    _FieldsType = list[Union[str, "Field", dict]]
-    # For runtime: accept FieldType, str, or None (strings converted in __post_init__)
-    _FieldTypeType = Union[FieldType, str, None]
-
-
-@dataclasses.dataclass
-class Field(BaseDataclass):
+class Field(ConfigBaseModel):
     """Represents a typed field in a vertex.
 
     Field objects behave like strings for backward compatibility. They can be used
@@ -80,45 +77,37 @@ class Field(BaseDataclass):
     Attributes:
         name: Name of the field
         type: Optional type of the field. Can be FieldType enum, str, or None at construction.
-              Strings are converted to FieldType enum in __post_init__.
-              After initialization, this is always FieldType | None (type checker sees this).
+              Strings are converted to FieldType enum by the validator.
               None is allowed (most databases like ArangoDB don't require types).
               Defaults to None.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     name: str
-    type: _FieldTypeType = None
+    type: FieldType | None = None
 
-    def __post_init__(self):
-        """Validate and normalize type if specified.
-
-        This method handles type normalization AFTER a Field object has been created.
-        It converts string types to FieldType enum and validates the type.
-        This is separate from _normalize_fields() which handles the creation of Field
-        objects from various input formats (str/dict/Field).
-        """
-        if self.type is not None:
-            # Convert string to FieldType enum if it's a string
-            if isinstance(self.type, str):
-                type_upper = self.type.upper()
-                # Validate and convert to FieldType enum
-                if type_upper not in FieldType:
-                    allowed_types = sorted(ft.value for ft in FieldType)
-                    raise ValueError(
-                        f"Field type '{self.type}' is not allowed. "
-                        f"Allowed types are: {', '.join(allowed_types)}"
-                    )
-                self.type = FieldType(type_upper)
-            # If it's already a FieldType, validate it's a valid enum member
-            elif isinstance(self.type, FieldType):
-                # Already a FieldType enum, no conversion needed
-                pass
-            else:
+    @field_validator("type", mode="before")
+    @classmethod
+    def normalize_type(cls, v: Any) -> FieldType | None:
+        if v is None:
+            return None
+        if isinstance(v, FieldType):
+            return v
+        if isinstance(v, str):
+            type_upper = v.upper()
+            if type_upper not in FieldType:
                 allowed_types = sorted(ft.value for ft in FieldType)
                 raise ValueError(
-                    f"Field type must be FieldType enum, str, or None, got {type(self.type)}. "
+                    f"Field type '{v}' is not allowed. "
                     f"Allowed types are: {', '.join(allowed_types)}"
                 )
+            return FieldType(type_upper)
+        allowed_types = sorted(ft.value for ft in FieldType)
+        raise ValueError(
+            f"Field type must be FieldType enum, str, or None, got {type(v)}. "
+            f"Allowed types are: {', '.join(allowed_types)}"
+        )
 
     def __str__(self) -> str:
         """Return field name as string for backward compatibility."""
@@ -134,7 +123,7 @@ class Field(BaseDataclass):
         """Hash by name only, allowing Field objects to work in sets and as dict keys."""
         return hash(self.name)
 
-    def __eq__(self, other) -> bool:
+    def __eq__(self, other: object) -> bool:
         """Compare equal to strings with same name, or other Field objects with same name."""
         if isinstance(other, Field):
             return self.name == other.name
@@ -142,16 +131,48 @@ class Field(BaseDataclass):
             return self.name == other
         return False
 
-    def __ne__(self, other) -> bool:
+    def __ne__(self, other: object) -> bool:
         """Compare not equal."""
         return not self.__eq__(other)
 
-    # Field objects are hashable (via __hash__) and comparable to strings (via __eq__)
-    # This allows them to work in sets, as dict keys, and in membership tests
+
+def _parse_string_to_dict(field_str: str) -> dict | None:
+    """Parse a string that might be a JSON or Python dict representation."""
+    try:
+        parsed = json.loads(field_str)
+        return parsed if isinstance(parsed, dict) else None
+    except json.JSONDecodeError:
+        pass
+    try:
+        parsed = ast.literal_eval(field_str)
+        return parsed if isinstance(parsed, dict) else None
+    except (ValueError, SyntaxError):
+        return None
 
 
-@dataclasses.dataclass
-class Vertex(BaseDataclass):
+def _dict_to_field(field_dict: dict[str, Any]) -> Field:
+    """Convert a dict to a Field object."""
+    name = field_dict.get("name")
+    if name is None:
+        raise ValueError(f"Field dict must have 'name' key: {field_dict}")
+    return Field(name=name, type=field_dict.get("type"))
+
+
+def _normalize_fields_item(item: str | Field | dict[str, Any]) -> Field:
+    """Convert a single field item (str, Field, or dict) to Field."""
+    if isinstance(item, Field):
+        return item
+    if isinstance(item, dict):
+        return _dict_to_field(item)
+    if isinstance(item, str):
+        parsed_dict = _parse_string_to_dict(item)
+        if parsed_dict:
+            return _dict_to_field(parsed_dict)
+        return Field(name=item, type=None)
+    raise TypeError(f"Field must be str, Field, or dict, got {type(item)}")
+
+
+class Vertex(ConfigBaseModel):
     """Represents a vertex in the graph database.
 
     A vertex is a fundamental unit in the graph that can have fields, indexes,
@@ -162,8 +183,7 @@ class Vertex(BaseDataclass):
     Attributes:
         name: Name of the vertex
         fields: List of field names (str), Field objects, or dicts.
-               Will be normalized to Field objects internally in __post_init__.
-               After initialization, this is always list[Field] (type checker sees this).
+               Will be normalized to Field objects by the validator.
         indexes: List of indexes for the vertex
         filters: List of filter expressions
         dbname: Optional database name (defaults to vertex name)
@@ -185,135 +205,79 @@ class Vertex(BaseDataclass):
         ... ])
     """
 
+    # Allow extra keys when loading from YAML (e.g. transforms, other runtime keys)
+    model_config = ConfigDict(extra="ignore")
+
     name: str
-    fields: _FieldsType = dataclasses.field(default_factory=list)
-    indexes: list[Index] = dataclasses.field(default_factory=list)
-    filters: list[Expression] = dataclasses.field(default_factory=list)
+    fields: list[Field] = PydanticField(default_factory=list)
+    indexes: list[Index] = PydanticField(default_factory=list)
+    filters: list[Any] = PydanticField(
+        default_factory=list
+    )  # items become Clause via convert_to_expressions
     dbname: str | None = None
 
-    @staticmethod
-    def _parse_string_to_dict(field_str: str) -> dict | None:
-        """Parse a string that might be a JSON or Python dict representation.
+    @field_validator("fields", mode="before")
+    @classmethod
+    def convert_to_fields(cls, v: Any) -> Any:
+        if not isinstance(v, list):
+            raise ValueError("fields must be a list")
+        return [_normalize_fields_item(item) for item in v]
 
-        Args:
-            field_str: String that might be a dict representation
-
-        Returns:
-            dict if successfully parsed as dict, None otherwise
-        """
-        # Try JSON first (handles double-quoted strings)
-        try:
-            parsed = json.loads(field_str)
-            return parsed if isinstance(parsed, dict) else None
-        except json.JSONDecodeError:
-            pass
-
-        # Try Python literal eval (handles single-quoted strings)
-        try:
-            parsed = ast.literal_eval(field_str)
-            return parsed if isinstance(parsed, dict) else None
-        except (ValueError, SyntaxError):
-            return None
-
-    @staticmethod
-    def _dict_to_field(field_dict: dict) -> Field:
-        """Convert a dict to a Field object.
-
-        Args:
-            field_dict: Dictionary with 'name' key and optional 'type' key
-
-        Returns:
-            Field object
-
-        Raises:
-            ValueError: If dict doesn't have 'name' key
-        """
-        name = field_dict.get("name")
-        if name is None:
-            raise ValueError(f"Field dict must have 'name' key: {field_dict}")
-        return Field(name=name, type=field_dict.get("type"))
-
-    def _normalize_fields(
-        self, fields: list[str] | list[Field] | list[dict]
-    ) -> list[Field]:
-        """Normalize fields to Field objects.
-
-        Converts strings, Field objects, or dicts to Field objects.
-        Handles the case where dataclass_wizard may have converted dicts to JSON strings.
-        Field objects behave like strings for backward compatibility.
-
-        Args:
-            fields: List of strings, Field objects, or dicts
-
-        Returns:
-            list[Field]: Normalized list of Field objects (preserving order)
-        """
-        normalized = []
-        for field in fields:
-            if isinstance(field, Field):
-                normalized.append(field)
-            elif isinstance(field, dict):
-                normalized.append(self._dict_to_field(field))
-            elif isinstance(field, str):
-                # Try to parse as dict (JSON or Python literal)
-                parsed_dict = self._parse_string_to_dict(field)
-                if parsed_dict:
-                    normalized.append(self._dict_to_field(parsed_dict))
-                else:
-                    # Plain field name
-                    normalized.append(Field(name=field, type=None))
+    @field_validator("indexes", mode="before")
+    @classmethod
+    def convert_to_indexes(cls, v: Any) -> Any:
+        if not isinstance(v, list):
+            return v
+        result = []
+        for item in v:
+            if isinstance(item, dict):
+                result.append(Index.model_validate(item))
             else:
-                raise TypeError(f"Field must be str, Field, or dict, got {type(field)}")
-        return normalized
+                result.append(item)
+        return result
+
+    @field_validator("filters", mode="before")
+    @classmethod
+    def convert_to_expressions(cls, v: Any) -> Any:
+        if not isinstance(v, list):
+            return v
+        result: list[Any] = []
+        for item in v:
+            if isinstance(item, dict):
+                result.append(Clause.from_dict(item))
+            else:
+                result.append(item)
+        return result
+
+    @model_validator(mode="after")
+    def set_dbname_and_indexes(self) -> "Vertex":
+        if self.dbname is None:
+            object.__setattr__(self, "dbname", self.name)
+        indexes = list(self.indexes)
+        if not indexes:
+            object.__setattr__(
+                self,
+                "indexes",
+                [Index(fields=[f.name for f in self.fields])],
+            )
+        else:
+            seen_names = {f.name for f in self.fields}
+            new_fields = list(self.fields)
+            for idx in indexes:
+                for field_name in idx.fields:
+                    if field_name not in seen_names:
+                        new_fields.append(Field(name=field_name, type=None))
+                        seen_names.add(field_name)
+            object.__setattr__(self, "fields", new_fields)
+        return self
 
     @property
     def field_names(self) -> list[str]:
-        """Get list of field names (as strings).
-
-        Returns:
-            list[str]: List of field names
-        """
+        """Get list of field names (as strings)."""
         return [field.name for field in self.fields]
 
     def get_fields(self) -> list[Field]:
         return self.fields
-
-    def __post_init__(self):
-        """Initialize the vertex after dataclass initialization.
-
-        Sets the database name if not provided, normalizes fields to Field objects,
-        and updates fields based on indexes. Field objects behave like strings,
-        maintaining backward compatibility.
-        """
-        if self.dbname is None:
-            self.dbname = self.name
-
-        # Normalize fields to Field objects (preserve order)
-        self.fields = self._normalize_fields(self.fields)
-
-        # Normalize indexes to Index objects if they're dicts
-        normalized_indexes = []
-        for idx in self.indexes:
-            if isinstance(idx, dict):
-                normalized_indexes.append(Index.from_dict(idx))
-            else:
-                normalized_indexes.append(idx)
-        self.indexes = normalized_indexes
-
-        if not self.indexes:
-            # Index expects list[str], but Field objects convert to strings automatically
-            # via __str__, so we extract names
-            self.indexes = [Index(fields=self.field_names)]
-
-        # Collect field names from existing fields (preserve order)
-        seen_names = {f.name for f in self.fields}
-        # Add index fields that aren't already present (preserve original order, append new)
-        for idx in self.indexes:
-            for field_name in idx.fields:
-                if field_name not in seen_names:
-                    # Add new field, preserving order by adding to end
-                    self.fields.append(Field(name=field_name, type=None))
-                    seen_names.add(field_name)
 
     def finish_init(self, db_flavor: DBType):
         """Complete initialization of vertex with database-specific field types.
@@ -329,8 +293,7 @@ class Vertex(BaseDataclass):
         ]
 
 
-@dataclasses.dataclass
-class VertexConfig(BaseDataclass):
+class VertexConfig(ConfigBaseModel):
     """Configuration for managing vertices.
 
     This class manages vertices, providing methods for accessing
@@ -343,31 +306,35 @@ class VertexConfig(BaseDataclass):
         db_flavor: Database flavor (ARANGO or NEO4J)
     """
 
+    # Allow extra keys when loading from YAML (e.g. vertex_config wrapper key)
+    model_config = ConfigDict(extra="ignore")
+
     vertices: list[Vertex]
-    blank_vertices: list[str] = dataclasses.field(default_factory=list)
-    force_types: dict[str, list] = dataclasses.field(default_factory=dict)
+    blank_vertices: list[str] = PydanticField(default_factory=list)
+    force_types: dict[str, list] = PydanticField(default_factory=dict)
     db_flavor: DBType = DBType.ARANGO
 
-    def __post_init__(self):
-        """Initialize the vertex configuration.
+    _vertices_map: dict[str, Vertex] | None = PrivateAttr(default=None)
+    _vertex_numeric_fields_map: dict[str, object] | None = PrivateAttr(default=None)
 
-        Creates internal mappings and validates blank vertices.
-
-        Raises:
-            ValueError: If blank vertices are not defined in the configuration
-        """
-        self._vertices_map: dict[str, Vertex] = {
-            item.name: item for item in self.vertices
-        }
-
-        # TODO replace by types
-        # vertex_name -> [numeric fields]
-        self._vertex_numeric_fields_map = {}
-
+    @model_validator(mode="after")
+    def build_vertices_map_and_validate_blank(self) -> "VertexConfig":
+        object.__setattr__(
+            self,
+            "_vertices_map",
+            {item.name: item for item in self.vertices},
+        )
+        object.__setattr__(self, "_vertex_numeric_fields_map", {})
         if set(self.blank_vertices) - set(self.vertex_set):
             raise ValueError(
                 f" Blank vertices {self.blank_vertices} are not defined as vertices"
             )
+        return self
+
+    def _get_vertices_map(self) -> dict[str, Vertex]:
+        """Return the vertices map (set by model validator)."""
+        assert self._vertices_map is not None, "VertexConfig not fully initialized"
+        return self._vertices_map
 
     @property
     def vertex_set(self):
@@ -376,7 +343,7 @@ class VertexConfig(BaseDataclass):
         Returns:
             set[str]: Set of vertex names
         """
-        return set(self._vertices_map.keys())
+        return set(self._get_vertices_map().keys())
 
     @property
     def vertex_list(self):
@@ -385,7 +352,7 @@ class VertexConfig(BaseDataclass):
         Returns:
             list[Vertex]: List of vertex configurations
         """
-        return list(self._vertices_map.values())
+        return list(self._get_vertices_map().values())
 
     def _get_vertex_by_name_or_dbname(self, identifier: str) -> Vertex:
         """Get vertex by name or dbname.
@@ -399,18 +366,19 @@ class VertexConfig(BaseDataclass):
         Raises:
             KeyError: If vertex is not found by name or dbname
         """
+        m = self._get_vertices_map()
         # First try by name (most common case)
-        if identifier in self._vertices_map:
-            return self._vertices_map[identifier]
+        if identifier in m:
+            return m[identifier]
 
         # Try by dbname
-        for vertex in self._vertices_map.values():
+        for vertex in m.values():
             if vertex.dbname == identifier:
                 return vertex
 
         # Not found
-        available_names = list(self._vertices_map.keys())
-        available_dbnames = [v.dbname for v in self._vertices_map.values()]
+        available_names = list(m.keys())
+        available_dbnames = [v.dbname for v in m.values()]
         raise KeyError(
             f"Vertex '{identifier}' not found by name or dbname. "
             f"Available names: {available_names}, "
@@ -429,13 +397,12 @@ class VertexConfig(BaseDataclass):
         Raises:
             KeyError: If vertex is not found
         """
+        m = self._get_vertices_map()
         try:
-            value = self._vertices_map[vertex_name].dbname
+            value = m[vertex_name].dbname
         except KeyError as e:
             logger.error(
-                "Available vertices :"
-                f" {self._vertices_map.keys()}; vertex"
-                f" requested : {vertex_name}"
+                f"Available vertices : {m.keys()}; vertex requested : {vertex_name}"
             )
             raise e
         return value
@@ -449,7 +416,7 @@ class VertexConfig(BaseDataclass):
         Returns:
             Index: Primary index for the vertex
         """
-        return self._vertices_map[vertex_name].indexes[0]
+        return self._get_vertices_map()[vertex_name].indexes[0]
 
     def indexes(self, vertex_name) -> list[Index]:
         """Get all indexes for a vertex.
@@ -460,7 +427,7 @@ class VertexConfig(BaseDataclass):
         Returns:
             list[Index]: List of indexes for the vertex
         """
-        return self._vertices_map[vertex_name].indexes
+        return self._get_vertices_map()[vertex_name].indexes
 
     def fields(self, vertex_name: str) -> list[Field]:
         """Get fields for a vertex.
@@ -504,8 +471,9 @@ class VertexConfig(BaseDataclass):
             ValueError: If vertex is not defined in config
         """
         if vertex_name in self.vertex_set:
-            if vertex_name in self._vertex_numeric_fields_map:
-                return self._vertex_numeric_fields_map[vertex_name]
+            nmap = self._vertex_numeric_fields_map
+            if nmap is not None and vertex_name in nmap:
+                return nmap[vertex_name]
             else:
                 return ()
         else:
@@ -514,17 +482,18 @@ class VertexConfig(BaseDataclass):
                 f" {vertex_name} was not defined in config"
             )
 
-    def filters(self, vertex_name) -> list[Expression]:
-        """Get filter expressions for a vertex.
+    def filters(self, vertex_name) -> list[Clause]:
+        """Get filter clauses for a vertex.
 
         Args:
             vertex_name: Name of the vertex
 
         Returns:
-            list[Expression]: List of filter expressions
+            list[Clause]: List of filter clauses
         """
-        if vertex_name in self._vertices_map:
-            return self._vertices_map[vertex_name].filters
+        m = self._get_vertices_map()
+        if vertex_name in m:
+            return m[vertex_name].filters
         else:
             return []
 
@@ -540,8 +509,9 @@ class VertexConfig(BaseDataclass):
         if not names:
             return
         self.vertices[:] = [v for v in self.vertices if v.name not in names]
+        m = self._get_vertices_map()
         for n in names:
-            self._vertices_map.pop(n, None)
+            m.pop(n, None)
         self.blank_vertices[:] = [b for b in self.blank_vertices if b not in names]
 
     def update_vertex(self, v: Vertex):
@@ -550,7 +520,7 @@ class VertexConfig(BaseDataclass):
         Args:
             v: Vertex configuration to update
         """
-        self._vertices_map[v.name] = v
+        self._get_vertices_map()[v.name] = v
 
     def __getitem__(self, key: str):
         """Get vertex configuration by name.
@@ -564,8 +534,9 @@ class VertexConfig(BaseDataclass):
         Raises:
             KeyError: If vertex is not found
         """
-        if key in self._vertices_map:
-            return self._vertices_map[key]
+        m = self._get_vertices_map()
+        if key in m:
+            return m[key]
         else:
             raise KeyError(f"Vertex {key} absent")
 
@@ -576,7 +547,7 @@ class VertexConfig(BaseDataclass):
             key: Vertex name
             value: Vertex configuration
         """
-        self._vertices_map[key] = value
+        self._get_vertices_map()[key] = value
 
     def finish_init(self):
         """Complete initialization of all vertices with database-specific field types.

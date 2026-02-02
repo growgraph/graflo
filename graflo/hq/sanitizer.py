@@ -73,14 +73,17 @@ class SchemaSanitizer:
 
         # First pass: Sanitize vertex dbnames
         for vertex in schema.vertex_config.vertices:
+            if vertex.dbname is None:
+                continue
+            dbname = vertex.dbname
             sanitized_vertex_name = sanitize_attribute_name(
-                vertex.dbname, self.reserved_words, suffix=f"_{VERTEX_SUFFIX}"
+                dbname, self.reserved_words, suffix=f"_{VERTEX_SUFFIX}"
             )
-            if sanitized_vertex_name != vertex.dbname:
+            if sanitized_vertex_name != dbname:
                 logger.debug(
-                    f"Sanitizing vertex name '{vertex.dbname}' -> '{sanitized_vertex_name}'"
+                    f"Sanitizing vertex name '{dbname}' -> '{sanitized_vertex_name}'"
                 )
-                self.vertex_mappings[vertex.dbname] = sanitized_vertex_name
+                self.vertex_mappings[dbname] = sanitized_vertex_name
                 vertex.dbname = sanitized_vertex_name
 
         # Second pass: Sanitize vertex field names
@@ -113,6 +116,8 @@ class SchemaSanitizer:
                 continue
 
             original = edge.relation_dbname
+            if original is None:
+                continue
 
             # First pass: sanitize against reserved words
             sanitized = sanitize_attribute_name(

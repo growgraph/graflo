@@ -64,7 +64,10 @@ class ArangoConnection(Connection):
 
     Attributes:
         conn: ArangoDB database connection instance
+        flavor: Database type (ARANGO) for expression flavor mapping
     """
+
+    flavor = DBType.ARANGO
 
     def __init__(self, config: ArangoConfig):
         """Initialize ArangoDB connection.
@@ -410,6 +413,11 @@ class ArangoConnection(Connection):
                 logger.warning("Edge has no database_name, skipping")
                 continue
             if not g.has_edge_definition(collection_name):
+                if item._source is None or item._target is None:
+                    logger.warning(
+                        "Edge has no _source or _target, skipping edge definition"
+                    )
+                    continue
                 _ = g.create_edge_definition(
                     edge_collection=collection_name,
                     from_vertex_collections=[item._source],

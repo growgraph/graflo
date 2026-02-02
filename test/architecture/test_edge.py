@@ -14,7 +14,7 @@ def test_weight_config_b(vertex_helper_b):
 
 def test_init_edge(edge_with_weights):
     vc = Edge.from_dict(edge_with_weights)
-    assert len(vc.weights.vertices) == 2
+    assert vc.weights is not None and len(vc.weights.vertices) == 2
     assert len(vc.indexes) == 0
 
 

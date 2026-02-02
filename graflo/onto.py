@@ -97,25 +97,21 @@ _register_yaml_representer()
 
 
 class ExpressionFlavor(BaseEnum):
-    """Supported expression language types.
+    """Supported expression language types for filter/query rendering.
 
-    This enum defines the supported expression languages for querying and
-    filtering data.
+    Uses the actual query language names: AQL (ArangoDB), CYPHER (Neo4j,
+    FalkorDB, Memgraph), GSQL (TigerGraph), PYTHON for in-memory evaluation.
 
     Attributes:
-        ARANGO: ArangoDB AQL expressions
-        NEO4J: Neo4j Cypher expressions
-        TIGERGRAPH: TigerGraph GSQL expressions
-        FALKORDB: FalkorDB Cypher expressions (OpenCypher compatible)
-        MEMGRAPH: Memgraph Cypher expressions (OpenCypher compatible)
-        PYTHON: Python expressions
+        AQL: ArangoDB AQL expressions
+        CYPHER: OpenCypher expressions (Neo4j, FalkorDB, Memgraph)
+        GSQL: TigerGraph GSQL expressions (including REST++ filter format)
+        PYTHON: Python expression evaluation
     """
 
-    ARANGO = "arango"
-    NEO4J = "neo4j"
-    TIGERGRAPH = "tigergraph"
-    FALKORDB = "falkordb"
-    MEMGRAPH = "memgraph"
+    AQL = "aql"
+    CYPHER = "cypher"
+    GSQL = "gsql"
     PYTHON = "python"
 
 
@@ -319,3 +315,14 @@ class DBType(StrEnum, metaclass=MetaEnum):
     MYSQL = "mysql"
     MONGODB = "mongodb"
     SQLITE = "sqlite"
+
+
+# Mapping from graph DB type to expression flavor for filter rendering.
+# Used by Connection subclasses so filters are rendered in the correct language.
+DB_TYPE_TO_EXPRESSION_FLAVOR: dict[DBType, ExpressionFlavor] = {
+    DBType.ARANGO: ExpressionFlavor.AQL,
+    DBType.NEO4J: ExpressionFlavor.CYPHER,
+    DBType.FALKORDB: ExpressionFlavor.CYPHER,
+    DBType.MEMGRAPH: ExpressionFlavor.CYPHER,
+    DBType.TIGERGRAPH: ExpressionFlavor.GSQL,
+}

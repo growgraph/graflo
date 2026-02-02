@@ -111,7 +111,7 @@ class InferenceManager:
         schema.resources = resources
 
         # Re-initialize to set up resource mappings
-        schema.__post_init__()
+        schema.finish_init()
 
         return schema
 

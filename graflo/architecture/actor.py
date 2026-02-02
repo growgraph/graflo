@@ -27,7 +27,18 @@ from collections import defaultdict
 from functools import reduce
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Callable, Generic, Type, TypeVar
+from typing import Any, Callable, Type
+
+from graflo.architecture.actor_config import (
+    ActorConfig,
+    DescendActorConfig,
+    EdgeActorConfig,
+    TransformActorConfig,
+    VertexActorConfig,
+    parse_root_config,
+    normalize_actor_step,
+    validate_actor_step,
+)
 
 from graflo.architecture.actor_util import (
     add_blank_collections,
@@ -203,22 +214,18 @@ class VertexActor(Actor):
         vertex_config: Configuration for the vertex
     """
 
-    def __init__(
-        self,
-        vertex: str,
-        keep_fields: tuple[str, ...] | None = None,
-        **kwargs,
-    ):
-        """Initialize the vertex actor.
-
-        Args:
-            vertex: Name of the vertex
-            keep_fields: Optional tuple of fields to keep
-            **kwargs: Additional initialization parameters
-        """
-        self.name = vertex
-        self.keep_fields: tuple[str, ...] | None = keep_fields
+    def __init__(self, config: VertexActorConfig):
+        """Initialize the vertex actor from config."""
+        self.name = config.vertex
+        self.keep_fields: tuple[str, ...] | None = (
+            tuple(config.keep_fields) if config.keep_fields else None
+        )
         self.vertex_config: VertexConfig
+
+    @classmethod
+    def from_config(cls, config: VertexActorConfig) -> VertexActor:
+        """Create a VertexActor from a VertexActorConfig."""
+        return cls(config)
 
     def fetch_important_items(self) -> dict[str, Any]:
         """Get important items for string representation.
@@ -399,17 +406,17 @@ class EdgeActor(Actor):
         vertex_config: Vertex configuration
     """
 
-    def __init__(
-        self,
-        **kwargs: Any,
-    ):
-        """Initialize the edge actor.
-
-        Args:
-            **kwargs: Edge configuration parameters
-        """
+    def __init__(self, config: EdgeActorConfig):
+        """Initialize the edge actor from config."""
+        kwargs = config.model_dump(by_alias=False, exclude_none=True)
+        kwargs.pop("type", None)
         self.edge = Edge.from_dict(kwargs)
         self.vertex_config: VertexConfig
+
+    @classmethod
+    def from_config(cls, config: EdgeActorConfig) -> EdgeActor:
+        """Create an EdgeActor from an EdgeActorConfig."""
+        return cls(config)
 
     def fetch_important_items(self) -> dict[str, Any]:
         """Get important items for string representation.
@@ -482,26 +489,30 @@ class TransformActor(Actor):
     both simple and complex transformation scenarios.
 
     Attributes:
-        _kwargs: Original initialization parameters
-        vertex: Optional target vertex
+        _kwargs: Config dump for init_transforms (module, foo, input, output)
+        vertex: Optional target vertex (to_vertex)
         transforms: Dictionary of available transforms
         name: Transform name
         params: Transform parameters
         t: Transform instance
     """
 
-    def __init__(self, **kwargs: Any):
-        """Initialize the transform actor.
-
-        Args:
-            **kwargs: Transform configuration parameters
-        """
-        self._kwargs = kwargs
-        self.vertex: str | None = kwargs.pop("target_vertex", None)
-        self.transforms: dict[str, ProtoTransform]
-        self.name: str | None = kwargs.get("name", None)
-        self.params: dict[str, Any] = kwargs.get("params", {})
-        self.t: Transform = Transform(**kwargs)
+    def __init__(self, config: TransformActorConfig):
+        """Initialize the transform actor from config."""
+        self._kwargs = config.model_dump(by_alias=True)
+        self.vertex = config.to_vertex
+        self.transforms = {}
+        self.name = config.name
+        self.params = config.params
+        self.t: Transform = Transform(
+            map=config.map or {},
+            name=config.name,
+            params=config.params,
+            module=config.module,
+            foo=config.foo,
+            input=tuple(config.input) if config.input else (),
+            output=tuple(config.output) if config.output else (),
+        )
 
     def fetch_important_items(self) -> dict[str, Any]:
         """Get important items for string representation.
@@ -512,6 +523,11 @@ class TransformActor(Actor):
         items = self._fetch_items_from_dict(("name", "vertex"))
         items.update({"t.input": self.t.input, "t.output": self.t.output})
         return items
+
+    @classmethod
+    def from_config(cls, config: TransformActorConfig) -> TransformActor:
+        """Create a TransformActor from a TransformActorConfig."""
+        return cls(config)
 
     def init_transforms(self, **kwargs: Any) -> None:
         """Initialize available transforms.
@@ -561,7 +577,7 @@ class TransformActor(Actor):
                     ):
                         self.t.input = pt.input
                         self.t.output = pt.output
-                        self.t.__post_init__()
+                        self.t._refresh_derived()
 
     def _extract_doc(self, nargs: tuple[Any, ...], **kwargs: Any) -> dict[str, Any]:
         """Extract document from arguments.
@@ -654,7 +670,11 @@ class DescendActor(Actor):
     """
 
     def __init__(
-        self, key: str | None, descendants_kwargs: list, any_key: bool = False, **kwargs
+        self,
+        key: str | None,
+        any_key: bool = False,
+        *,
+        _descendants: list[ActorWrapper] | None = None,
     ):
         """Initialize the descend actor.
 
@@ -662,17 +682,13 @@ class DescendActor(Actor):
             key: Optional key for accessing nested data. If provided, only this key
                 will be processed. Mutually exclusive with `any_key`.
             any_key: If True, processes all keys in a dictionary instead of a specific key.
-                When enabled, iterates over all key-value pairs in the document dictionary.
-                Mutually exclusive with `key`.
-            descendants_kwargs: List of child actor configurations
-            **kwargs: Additional initialization parameters
+            _descendants: Pre-built list of child ActorWrappers (from config).
         """
         self.key = key
         self.any_key = any_key
-        self._descendants: list[ActorWrapper] = []
-        for descendant_kwargs in descendants_kwargs:
-            self._descendants += [ActorWrapper(**descendant_kwargs, **kwargs)]
-        # Sort descendants once after initialization
+        self._descendants: list[ActorWrapper] = (
+            list(_descendants) if _descendants else []
+        )
         self._descendants.sort(key=lambda x: _NodeTypePriority[type(x.actor)])
 
     def fetch_important_items(self):
@@ -712,6 +728,12 @@ class DescendActor(Actor):
             list[ActorWrapper]: Sorted list of descendant actors
         """
         return self._descendants
+
+    @classmethod
+    def from_config(cls, config: DescendActorConfig) -> DescendActor:
+        """Create a DescendActor from a DescendActorConfig."""
+        wrappers = [ActorWrapper.from_config(c) for c in config.pipeline]
+        return cls(key=config.into, any_key=config.any_key, _descendants=wrappers)
 
     def init_transforms(self, **kwargs: Any) -> None:
         """Initialize transforms for all descendants.
@@ -788,7 +810,9 @@ class DescendActor(Actor):
             skip_vertex = len(transform_targets) >= 2
             if intersection and v.name not in present_vertices:
                 if not skip_vertex or (v.name in transform_targets and skip_vertex):
-                    new_descendant = ActorWrapper(vertex=v.name)
+                    new_descendant = ActorWrapper.from_config(
+                        VertexActorConfig(vertex=v.name)
+                    )
                     new_descendant.finish_init(**kwargs)
                     self.add_descendant(new_descendant)
 
@@ -916,10 +940,8 @@ _NodeTypePriority: MappingProxyType[Type[Actor], int] = MappingProxyType(
     }
 )
 
-A = TypeVar("A", bound=Actor)
 
-
-class ActorWrapper(Generic[A]):
+class ActorWrapper:
     """Wrapper class for managing actor instances.
 
     This class provides a unified interface for creating and managing different types
@@ -932,35 +954,22 @@ class ActorWrapper(Generic[A]):
     """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
-        """Initialize the actor wrapper.
+        """Initialize the actor wrapper from config only.
 
-        Args:
-            *args: Positional arguments for actor initialization
-            **kwargs: Keyword arguments for actor initialization
+        Accepts the same shapes as parse_root_config:
+        - Single step dict or **kwargs: e.g. ActorWrapper(vertex="user")
+        - Pipeline: ActorWrapper(pipeline=[...]) or ActorWrapper(*list_of_steps)
 
         Raises:
-            ValueError: If unable to initialize an actor
+            ValueError: If input does not validate as ActorConfig
         """
-        self.actor: Actor
-        self.vertex_config: VertexConfig
-        self.edge_config: EdgeConfig
-        self.edge_greedy: bool = True
-        self.target_vertices: set[str] = set()
-
-        # Try initialization methods in order
-        # Make a single copy of kwargs to avoid mutation issues
-        # (only _try_init_descend modifies kwargs, but we use copy for all for consistency)
-        kwargs_copy = kwargs.copy()
-        if self._try_init_descend(*args, **kwargs_copy):
-            pass
-        elif self._try_init_transform(**kwargs_copy):
-            pass
-        elif self._try_init_vertex(**kwargs_copy):
-            pass
-        elif self._try_init_edge(**kwargs_copy):
-            pass
-        else:
-            raise ValueError(f"Not able to init ActorWrapper with {kwargs}")
+        config = parse_root_config(*args, **kwargs)
+        w = ActorWrapper.from_config(config)
+        self.actor = w.actor
+        self.vertex_config = w.vertex_config
+        self.edge_config = w.edge_config
+        self.edge_greedy = w.edge_greedy
+        self.target_vertices = w.target_vertices
 
     def init_transforms(self, **kwargs: Any) -> None:
         """Initialize transforms for the wrapped actor.
@@ -1018,91 +1027,34 @@ class ActorWrapper(Generic[A]):
         """
         return self.actor.count()
 
-    def _try_init_descend(self, *args: Any, **kwargs: Any) -> bool:
-        """Try to initialize a descend actor.
-
-        Args:
-            *args: Positional arguments
-            **kwargs: Keyword arguments (may be modified)
-
-        Returns:
-            bool: True if successful, False otherwise
-        """
-        # Check if we have the required arguments before modifying kwargs
-        has_apply = "apply" in kwargs
-        has_args = len(args) > 0
-        if not (has_apply or has_args):
-            return False
-
-        # Now safe to pop from kwargs
-        descend_key = kwargs.pop(ActorConstants.DESCEND_KEY, None)
-        descendants = kwargs.pop("apply", None)
-
-        if descendants is not None:
-            descendants = (
-                descendants if isinstance(descendants, list) else [descendants]
-            )
-        elif len(args) > 0:
-            descendants = list(args)
+    @classmethod
+    def from_config(cls, config: ActorConfig) -> ActorWrapper:
+        """Create an ActorWrapper from a validated ActorConfig (Pydantic model)."""
+        if isinstance(config, VertexActorConfig):
+            actor = VertexActor.from_config(config)
+        elif isinstance(config, TransformActorConfig):
+            actor = TransformActor.from_config(config)
+        elif isinstance(config, EdgeActorConfig):
+            actor = EdgeActor.from_config(config)
+        elif isinstance(config, DescendActorConfig):
+            actor = DescendActor.from_config(config)
         else:
-            return False
-
-        try:
-            self.actor = DescendActor(
-                descend_key, descendants_kwargs=descendants, **kwargs
+            raise ValueError(
+                f"Expected VertexActorConfig, TransformActorConfig, EdgeActorConfig, or DescendActorConfig, got {type(config)}"
             )
-            return True
-        except (TypeError, ValueError, AttributeError) as e:
-            logger.debug(f"Failed to initialize DescendActor: {e}")
-            return False
+        wrapper = cls.__new__(cls)
+        wrapper.actor = actor
+        wrapper.vertex_config = VertexConfig(vertices=[])
+        wrapper.edge_config = EdgeConfig()
+        wrapper.edge_greedy = True
+        wrapper.target_vertices = set()
+        return wrapper
 
-    def _try_init_transform(self, **kwargs: Any) -> bool:
-        """Try to initialize a transform actor.
-
-        Args:
-            **kwargs: Keyword arguments
-
-        Returns:
-            bool: True if successful, False otherwise
-        """
-        try:
-            self.actor = TransformActor(**kwargs)
-            return True
-        except (TypeError, ValueError, AttributeError) as e:
-            logger.debug(f"Failed to initialize TransformActor: {e}")
-            return False
-
-    def _try_init_vertex(self, **kwargs: Any) -> bool:
-        """Try to initialize a vertex actor.
-
-        Args:
-            **kwargs: Keyword arguments
-
-        Returns:
-            bool: True if successful, False otherwise
-        """
-        try:
-            self.actor = VertexActor(**kwargs)
-            return True
-        except (TypeError, ValueError, AttributeError) as e:
-            logger.debug(f"Failed to initialize VertexActor: {e}")
-            return False
-
-    def _try_init_edge(self, **kwargs: Any) -> bool:
-        """Try to initialize an edge actor.
-
-        Args:
-            **kwargs: Keyword arguments
-
-        Returns:
-            bool: True if successful, False otherwise
-        """
-        try:
-            self.actor = EdgeActor(**kwargs)
-            return True
-        except (TypeError, ValueError, AttributeError) as e:
-            logger.debug(f"Failed to initialize EdgeActor: {e}")
-            return False
+    @classmethod
+    def _from_step(cls, step: dict[str, Any]) -> ActorWrapper:
+        """Build an ActorWrapper from a single pipeline step dict (normalize + validate + from_config)."""
+        config = validate_actor_step(normalize_actor_step(dict(step)))
+        return cls.from_config(config)
 
     def __call__(
         self,
@@ -1283,9 +1235,9 @@ class ActorWrapper(Generic[A]):
 
     def find_descendants(
         self,
-        predicate: Callable[[ActorWrapper[Any]], bool] | None = None,
+        predicate: Callable[[ActorWrapper], bool] | None = None,
         *,
-        actor_type: type[A] | None = None,
+        actor_type: type[Actor] | None = None,
         **attr_in: Any,
     ) -> list[ActorWrapper]:
         """Find all descendant ActorWrappers matching the given criteria.

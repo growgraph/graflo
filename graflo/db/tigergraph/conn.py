@@ -49,8 +49,8 @@ from graflo.db.tigergraph.onto import (
     VALID_TIGERGRAPH_TYPES,
 )
 from graflo.db.util import json_serializer
-from graflo.filter.onto import Clause, Expression
-from graflo.onto import AggregationType, ExpressionFlavor
+from graflo.filter.onto import Clause
+from graflo.onto import AggregationType
 from graflo.onto import DBType
 from graflo.util.transform import pick_unique_dict
 from urllib.parse import quote
@@ -2057,6 +2057,8 @@ class TigerGraphConnection(Connection):
         # Vertices
         for vertex in vertex_config.vertices:
             # Validate vertex name
+            if vertex.dbname is None:
+                raise ValueError(f"Vertex {vertex.name!r} has no dbname")
             _validate_tigergraph_schema_name(vertex.dbname, "vertex")
             stmt = self._get_vertex_add_statement(vertex, vertex_config)
             vertex_stmts.append(stmt)
@@ -3697,18 +3699,18 @@ class TigerGraphConnection(Connection):
         """
         if filters is not None:
             if not isinstance(filters, Clause):
-                ff = Expression.from_dict(filters)
+                ff = Clause.from_dict(filters)
             else:
                 ff = filters
 
-            # Use ExpressionFlavor.TIGERGRAPH with empty doc_name to trigger REST++ format
+            # Use GSQL flavor with empty doc_name to trigger REST++ format
             # Pass field_types to help with proper value quoting
-            filter_str = ff(
+            result = ff(
                 doc_name="",
-                kind=ExpressionFlavor.TIGERGRAPH,
+                kind=self.expression_flavor(),
                 field_types=field_types,
             )
-            return filter_str
+            return result if isinstance(result, str) else ""
         else:
             return ""
 

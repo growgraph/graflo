@@ -71,7 +71,8 @@ class PostgresSchemaInferencer:
             fields = []
             for col in columns:
                 field_name = col.name
-                field_type = self.type_mapper.map_type(col.type)
+                raw_type = self.type_mapper.map_type(col.type)
+                field_type = FieldType(raw_type) if raw_type else None
                 fields.append(Field(name=field_name, type=field_type))
 
             # Create indexes from primary key
@@ -256,13 +257,15 @@ class PostgresSchemaInferencer:
         direct_weights = []
         for col in weight_columns:
             # Infer type: use PostgreSQL type first, then sample if needed
-            field_type = self._infer_type_from_samples(
+            raw_type = self._infer_type_from_samples(
                 edge_table_info.name,
                 edge_table_info.schema_name,
                 col.name,
                 col.type,
             )
-            direct_weights.append(Field(name=col.name, type=field_type))
+            direct_weights.append(
+                Field(name=col.name, type=FieldType(raw_type) if raw_type else None)
+            )
 
         logger.debug(
             f"Inferred {len(direct_weights)} weights for edge table "
@@ -313,11 +316,11 @@ class PostgresSchemaInferencer:
             # Infer weights
             weights = self.infer_edge_weights(edge_table_info)
             indexes = []
-            # Create edge
+            # Create edge (use alias "index" for indexes field)
             edge = Edge(
                 source=source_table,
                 target=target_table,
-                indexes=indexes,
+                index=indexes,
                 weights=weights,
                 relation=edge_table_info.relation,
             )

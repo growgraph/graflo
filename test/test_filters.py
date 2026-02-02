@@ -1,9 +1,9 @@
 import pytest
 
 from graflo.filter.onto import (
+    Clause,
     ComparisonOperator,
     Expression,
-    LeafClause,
     LogicalOperator,
 )
 
@@ -37,12 +37,14 @@ def and_clause(eq_clause, cong_clause):
 
 
 def test_none_leaf(none_clause):
-    lc = LeafClause(*none_clause)
-    assert "null" in lc()
+    lc = Clause.from_list(none_clause)
+    result = lc()
+    assert isinstance(result, str)
+    assert "null" in result
 
 
 def test_leaf_clause_construct(eq_clause):
-    lc = LeafClause(*eq_clause)
+    lc = Clause.from_list(eq_clause)
     assert lc.cmp_operator == ComparisonOperator.EQ
     assert lc() == 'doc["x"] == "1"'
 

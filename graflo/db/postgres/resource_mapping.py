@@ -116,8 +116,8 @@ class PostgresResourceMapper:
             )
 
         # Get primary key fields for source and target vertices
-        source_vertex_obj = vertex_config._vertices_map[source_table]
-        target_vertex_obj = vertex_config._vertices_map[target_table]
+        source_vertex_obj = vertex_config[source_table]
+        target_vertex_obj = vertex_config[target_table]
 
         # Get the primary key field(s) from the first index (primary key)
         source_pk_fields = (
