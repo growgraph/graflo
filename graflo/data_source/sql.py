@@ -4,21 +4,20 @@ This module provides a data source for SQL databases using SQLAlchemy-style
 configuration. It supports parameterized queries and pagination.
 """
 
-import dataclasses
 import logging
 from typing import Any, Iterator
 
+from pydantic import Field, PrivateAttr
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
+from graflo.architecture.base import ConfigBaseModel
 from graflo.data_source.base import AbstractDataSource, DataSourceType
-from graflo.onto import BaseDataclass
 
 logger = logging.getLogger(__name__)
 
 
-@dataclasses.dataclass
-class SQLConfig(BaseDataclass):
+class SQLConfig(ConfigBaseModel):
     """Configuration for SQL data source.
 
     Uses SQLAlchemy connection string format.
@@ -34,12 +33,11 @@ class SQLConfig(BaseDataclass):
 
     connection_string: str
     query: str
-    params: dict[str, Any] = dataclasses.field(default_factory=dict)
+    params: dict[str, Any] = Field(default_factory=dict)
     pagination: bool = True
     page_size: int = 1000
 
 
-@dataclasses.dataclass
 class SQLDataSource(AbstractDataSource):
     """Data source for SQL databases.
 
@@ -53,12 +51,8 @@ class SQLDataSource(AbstractDataSource):
     """
 
     config: SQLConfig
-    engine: Engine | None = dataclasses.field(default=None, init=False)
-
-    def __post_init__(self):
-        """Initialize the SQL data source."""
-        super().__post_init__()
-        self.source_type = DataSourceType.SQL
+    source_type: DataSourceType = DataSourceType.SQL
+    _engine: Engine | None = PrivateAttr(default=None)
 
     def _get_engine(self) -> Engine:
         """Get or create SQLAlchemy engine.
@@ -66,9 +60,9 @@ class SQLDataSource(AbstractDataSource):
         Returns:
             SQLAlchemy engine instance
         """
-        if self.engine is None:
-            self.engine = create_engine(self.config.connection_string)
-        return self.engine
+        if self._engine is None:
+            self._engine = create_engine(self.config.connection_string)
+        return self._engine
 
     def _add_pagination(self, query: str, offset: int, limit: int) -> str:
         """Add pagination to SQL query.

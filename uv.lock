@@ -352,7 +352,6 @@ version = "1.4.5"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
-    { name = "dataclass-wizard" },
     { name = "falkordb" },
     { name = "ijson" },
     { name = "neo4j" },
@@ -399,7 +398,6 @@ plot = [
 [package.metadata]
 requires-dist = [
     { name = "click", specifier = ">=8.2.0,<9" },
-    { name = "dataclass-wizard", specifier = ">=0.34.0" },
     { name = "falkordb", specifier = ">=1.0.9" },
     { name = "ijson", specifier = ">=3.2.3,<4" },
     { name = "neo4j", specifier = ">=5.22.0,<6" },

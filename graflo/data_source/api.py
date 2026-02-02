@@ -7,7 +7,6 @@ and retry logic.
 
 from __future__ import annotations
 
-import dataclasses
 import logging
 from typing import Any, Iterator
 
@@ -16,14 +15,15 @@ from requests.adapters import HTTPAdapter
 from requests.auth import HTTPBasicAuth, HTTPDigestAuth
 from urllib3.util.retry import Retry
 
+from pydantic import Field
+
+from graflo.architecture.base import ConfigBaseModel
 from graflo.data_source.base import AbstractDataSource, DataSourceType
-from graflo.onto import BaseDataclass
 
 logger = logging.getLogger(__name__)
 
 
-@dataclasses.dataclass
-class PaginationConfig(BaseDataclass):
+class PaginationConfig(ConfigBaseModel):
     """Configuration for API pagination.
 
     Supports multiple pagination strategies:
@@ -60,8 +60,7 @@ class PaginationConfig(BaseDataclass):
     data_path: str | None = None  # JSON path to data array, None means root
 
 
-@dataclasses.dataclass
-class APIConfig(BaseDataclass):
+class APIConfig(ConfigBaseModel):
     """Configuration for REST API data source.
 
     Attributes:
@@ -83,20 +82,19 @@ class APIConfig(BaseDataclass):
 
     url: str
     method: str = "GET"
-    headers: dict[str, str] = dataclasses.field(default_factory=dict)
+    headers: dict[str, str] = Field(default_factory=dict)
     auth: dict[str, Any] | None = None
-    params: dict[str, Any] = dataclasses.field(default_factory=dict)
+    params: dict[str, Any] = Field(default_factory=dict)
     timeout: float | None = None
     retries: int = 0
     retry_backoff_factor: float = 0.1
-    retry_status_forcelist: list[int] = dataclasses.field(
+    retry_status_forcelist: list[int] = Field(
         default_factory=lambda: [500, 502, 503, 504]
     )
     verify: bool = True
     pagination: PaginationConfig | None = None
 
 
-@dataclasses.dataclass
 class APIDataSource(AbstractDataSource):
     """Data source for REST API endpoints.
 
@@ -109,10 +107,7 @@ class APIDataSource(AbstractDataSource):
     """
 
     config: APIConfig
-
-    def __post_init__(self):
-        """Initialize the API data source."""
-        self.source_type = DataSourceType.API
+    source_type: DataSourceType = DataSourceType.API
 
     def _create_session(self) -> requests.Session:
         """Create a requests session with retry configuration.

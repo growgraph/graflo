@@ -14,9 +14,6 @@ class ConfigBaseModel(BaseModel):
 
     Provides YAML serialization/deserialization and standard configuration
     for all Pydantic models in the system.
-
-    This replaces the JSONWizard/YAMLWizard functionality from dataclass-wizard
-    with Pydantic's superior validation and type safety.
     """
 
     model_config = ConfigDict(
@@ -96,7 +93,7 @@ class ConfigBaseModel(BaseModel):
             raise TypeError(
                 f"Expected {type(self).__name__} instance, got {type(other).__name__}"
             )
-        for name in self.model_fields:
+        for name in type(self).model_fields:
             current = getattr(self, name)
             other_val = getattr(other, name)
             if other_val is None:

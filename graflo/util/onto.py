@@ -1,6 +1,6 @@
 """Utility ontology classes for resource patterns and configurations.
 
-This module provides data classes for managing resource patterns (files and database tables)
+This module provides Pydantic models for managing resource patterns (files and database tables)
 and configurations used throughout the system. These classes support resource discovery,
 pattern matching, and configuration management.
 
@@ -12,12 +12,15 @@ Key Components:
 """
 
 import abc
-import dataclasses
+import copy
 import pathlib
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 
-from graflo.onto import BaseDataclass, BaseEnum
+from pydantic import AliasChoices, Field, model_validator
+
+from graflo.architecture.base import ConfigBaseModel
+from graflo.onto import BaseEnum
 
 if TYPE_CHECKING:
     from graflo.db.connection.onto import PostgresConfig
@@ -45,8 +48,7 @@ class ResourceType(BaseEnum):
     SQL_TABLE = "sql_table"
 
 
-@dataclasses.dataclass
-class ResourcePattern(BaseDataclass, abc.ABC):
+class ResourcePattern(ConfigBaseModel, abc.ABC):
     """Abstract base class for resource patterns (files or tables).
 
     Provides common API for pattern matching and resource identification.
@@ -80,7 +82,6 @@ class ResourcePattern(BaseDataclass, abc.ABC):
         pass
 
 
-@dataclasses.dataclass
 class FilePattern(ResourcePattern):
     """Pattern for matching files.
 
@@ -93,48 +94,38 @@ class FilePattern(ResourcePattern):
         date_range_days: Number of days after start date (used with date_range_start)
     """
 
-    class _(BaseDataclass.Meta):
-        tag = "file"
-
     regex: str | None = None
-    sub_path: None | pathlib.Path = dataclasses.field(
-        default_factory=lambda: pathlib.Path("./")
-    )
+    sub_path: pathlib.Path = Field(default_factory=lambda: pathlib.Path("./"))
     date_field: str | None = None
     date_filter: str | None = None
     date_range_start: str | None = None
     date_range_days: int | None = None
 
-    def __post_init__(self):
-        """Initialize and validate the file pattern.
-
-        Ensures that sub_path is a Path object and is not None.
-        """
-        if self.sub_path is not None and not isinstance(self.sub_path, pathlib.Path):
-            self.sub_path = pathlib.Path(self.sub_path)
-        elif self.sub_path is None:
-            self.sub_path = pathlib.Path("./")
-        assert self.sub_path is not None
-        # Validate date filtering parameters (note: date filtering for files is not yet implemented)
+    @model_validator(mode="after")
+    def _validate_file_pattern(self) -> Self:
+        """Ensure sub_path is a Path and validate date filtering parameters."""
+        if not isinstance(self.sub_path, pathlib.Path):
+            object.__setattr__(self, "sub_path", pathlib.Path(self.sub_path))
         if (self.date_filter or self.date_range_start) and not self.date_field:
             raise ValueError(
                 "date_field is required when using date_filter or date_range_start"
             )
         if self.date_range_days is not None and not self.date_range_start:
             raise ValueError("date_range_start is required when using date_range_days")
+        return self
 
-    def matches(self, filename: str) -> bool:
+    def matches(self, resource_identifier: str) -> bool:
         """Check if pattern matches a filename.
 
         Args:
-            filename: Filename to match
+            resource_identifier: Filename to match
 
         Returns:
             bool: True if pattern matches
         """
         if self.regex is None:
             return False
-        return bool(re.match(self.regex, filename))
+        return bool(re.match(self.regex, resource_identifier))
 
     def get_resource_type(self) -> ResourceType:
         """Get resource type.
@@ -146,7 +137,6 @@ class FilePattern(ResourcePattern):
         return ResourceType.FILE
 
 
-@dataclasses.dataclass
 class TablePattern(ResourcePattern):
     """Pattern for matching database tables.
 
@@ -160,9 +150,6 @@ class TablePattern(ResourcePattern):
         date_range_days: Number of days after start date (used with date_range_start)
     """
 
-    class _(BaseDataclass.Meta):
-        tag = "table"
-
     table_name: str = ""
     schema_name: str | None = None
     database: str | None = None
@@ -171,23 +158,24 @@ class TablePattern(ResourcePattern):
     date_range_start: str | None = None
     date_range_days: int | None = None
 
-    def __post_init__(self):
-        """Validate table pattern after initialization."""
+    @model_validator(mode="after")
+    def _validate_table_pattern(self) -> Self:
+        """Validate table_name and date filtering parameters."""
         if not self.table_name:
             raise ValueError("table_name is required for TablePattern")
-        # Validate date filtering parameters
         if (self.date_filter or self.date_range_start) and not self.date_field:
             raise ValueError(
                 "date_field is required when using date_filter or date_range_start"
             )
         if self.date_range_days is not None and not self.date_range_start:
             raise ValueError("date_range_start is required when using date_range_days")
+        return self
 
-    def matches(self, table_identifier: str) -> bool:
+    def matches(self, resource_identifier: str) -> bool:
         """Check if pattern matches a table name.
 
         Args:
-            table_identifier: Table name to match (format: schema.table or just table)
+            resource_identifier: Table name to match (format: schema.table or just table)
 
         Returns:
             bool: True if pattern matches
@@ -203,13 +191,13 @@ class TablePattern(ResourcePattern):
             # Exact match pattern
             pattern = re.compile(f"^{re.escape(self.table_name)}$")
 
-        # Check if table_identifier matches
-        if pattern.match(table_identifier):
+        # Check if resource_identifier matches
+        if pattern.match(resource_identifier):
             return True
 
         # If schema_name is specified, also check schema.table format
         if self.schema_name:
-            full_name = f"{self.schema_name}.{table_identifier}"
+            full_name = f"{self.schema_name}.{resource_identifier}"
             if pattern.match(full_name):
                 return True
 
@@ -259,8 +247,7 @@ class TablePattern(ResourcePattern):
         return ""
 
 
-@dataclasses.dataclass
-class Patterns(BaseDataclass):
+class Patterns(ConfigBaseModel):
     """Collection of named resource patterns with connection management.
 
     This class manages a collection of resource patterns (files or tables),
@@ -281,24 +268,29 @@ class Patterns(BaseDataclass):
         postgres_table_configs: Dictionary mapping resource_name to (config_key, schema_name, table_name)
     """
 
-    file_patterns: dict[str, FilePattern] = dataclasses.field(default_factory=dict)
-    table_patterns: dict[str, TablePattern] = dataclasses.field(default_factory=dict)
-    postgres_configs: dict[tuple[str, str | None], Any] = dataclasses.field(
-        default_factory=dict, metadata={"exclude": True}
+    file_patterns: dict[str, FilePattern] = Field(default_factory=dict)
+    table_patterns: dict[str, TablePattern] = Field(default_factory=dict)
+    postgres_configs: dict[tuple[str, str | None], Any] = Field(
+        default_factory=dict, exclude=True
     )
-    postgres_table_configs: dict[str, tuple[str, str | None, str]] = dataclasses.field(
-        default_factory=dict, metadata={"exclude": True}
+    postgres_table_configs: dict[str, tuple[str, str | None, str]] = Field(
+        default_factory=dict, exclude=True
     )
-    # Initialization parameters (not stored as fields, excluded from serialization)
-    # Use Any for _postgres_connections to avoid type evaluation issues with dataclass_wizard
-    _resource_mapping: dict[str, str | tuple[str, str]] | None = dataclasses.field(
-        default=None, repr=False, compare=False, metadata={"exclude": True}
+    # Initialization parameters (not stored in serialization); accept both _name and name
+    resource_mapping: dict[str, str | tuple[str, str]] | None = Field(
+        default=None,
+        exclude=True,
+        validation_alias=AliasChoices("_resource_mapping", "resource_mapping"),
     )
-    _postgres_connections: dict[str, Any] | None = dataclasses.field(
-        default=None, repr=False, compare=False, metadata={"exclude": True}
+    postgres_connections: dict[str, Any] | None = Field(
+        default=None,
+        exclude=True,
+        validation_alias=AliasChoices("_postgres_connections", "postgres_connections"),
     )
-    _postgres_tables: dict[str, tuple[str, str | None, str]] | None = dataclasses.field(
-        default=None, repr=False, compare=False, metadata={"exclude": True}
+    postgres_tables: dict[str, tuple[str, str | None, str]] | None = Field(
+        default=None,
+        exclude=True,
+        validation_alias=AliasChoices("_postgres_tables", "postgres_tables"),
     )
 
     @property
@@ -313,76 +305,18 @@ class Patterns(BaseDataclass):
         result.update(self.table_patterns)
         return result
 
-    @classmethod
-    def from_dict(cls, data: dict):
-        """Create Patterns from dictionary, supporting both old and new YAML formats.
-
-        Supports two formats:
-        1. New format: Separate `file_patterns` and `table_patterns` fields
-        2. Old format: Unified `patterns` field with `__tag__` markers (for backward compatibility)
-
-        Args:
-            data: Dictionary containing patterns data
-
-        Returns:
-            Patterns: New Patterns instance with properly deserialized patterns
-        """
-        # Check if using new format (separate file_patterns/table_patterns)
-        if "file_patterns" in data or "table_patterns" in data:
-            # New format - let JSONWizard handle it directly (no union types!)
-            return super().from_dict(data)
-
-        # Old format - convert unified patterns dict to separate fields
-        patterns_data = data.get("patterns", {})
-        data_copy = {k: v for k, v in data.items() if k != "patterns"}
-
-        # Call parent from_dict (JSONWizard) to handle other fields
-        instance = super().from_dict(data_copy)
-
-        # Convert old format to new format
-        for pattern_name, pattern_dict in patterns_data.items():
-            if pattern_dict is None:
-                continue
-            # Check for tag to determine pattern type
-            tag = pattern_dict.get("__tag__")
-            if tag == "file":
-                pattern = FilePattern.from_dict(pattern_dict)
-                instance.file_patterns[pattern_name] = pattern
-            elif tag == "table":
-                pattern = TablePattern.from_dict(pattern_dict)
-                instance.table_patterns[pattern_name] = pattern
-            else:
-                # Try to infer from structure if no tag
-                if "table_name" in pattern_dict:
-                    pattern = TablePattern.from_dict(pattern_dict)
-                    instance.table_patterns[pattern_name] = pattern
-                elif "regex" in pattern_dict or "sub_path" in pattern_dict:
-                    pattern = FilePattern.from_dict(pattern_dict)
-                    instance.file_patterns[pattern_name] = pattern
-                else:
-                    raise ValueError(
-                        f"Unable to determine pattern type for '{pattern_name}'. "
-                        "Expected either '__tag__: file' or '__tag__: table', "
-                        "or pattern fields (table_name for TablePattern, "
-                        "regex/sub_path for FilePattern)"
-                    )
-
-        return instance
-
-    def __post_init__(self):
-        """Initialize Patterns from resource mappings and PostgreSQL configurations."""
-        # Store PostgreSQL connection configs
-        if self._postgres_connections:
-            for config_key, config in self._postgres_connections.items():
+    @model_validator(mode="after")
+    def _populate_from_mappings(self) -> Self:
+        """Populate file_patterns/table_patterns from resource mappings and PostgreSQL configs."""
+        if self.postgres_connections:
+            for config_key, config in self.postgres_connections.items():
                 if config is not None:
-                    schema_name = config.schema_name
+                    schema_name = getattr(config, "schema_name", None)
                     self.postgres_configs[(config_key, schema_name)] = config
 
-        # Process resource mappings
-        if self._resource_mapping:
-            for resource_name, resource_spec in self._resource_mapping.items():
+        if self.resource_mapping:
+            for resource_name, resource_spec in self.resource_mapping.items():
                 if isinstance(resource_spec, str):
-                    # File path - create FilePattern
                     file_path = pathlib.Path(resource_spec)
                     pattern = FilePattern(
                         regex=f"^{re.escape(file_path.name)}$",
@@ -391,36 +325,33 @@ class Patterns(BaseDataclass):
                     )
                     self.file_patterns[resource_name] = pattern
                 elif isinstance(resource_spec, tuple) and len(resource_spec) == 2:
-                    # (config_key, table_name) tuple - create TablePattern
                     config_key, table_name = resource_spec
-                    # Find the schema_name from the config
                     config = (
-                        self._postgres_connections.get(config_key)
-                        if self._postgres_connections
+                        self.postgres_connections.get(config_key)
+                        if self.postgres_connections
                         else None
                     )
-                    schema_name = config.schema_name if config else None
-
+                    schema_name = (
+                        getattr(config, "schema_name", None) if config else None
+                    )
                     pattern = TablePattern(
                         table_name=table_name,
                         schema_name=schema_name,
                         resource_name=resource_name,
                     )
                     self.table_patterns[resource_name] = pattern
-                    # Store the config mapping
                     self.postgres_table_configs[resource_name] = (
                         config_key,
                         schema_name,
                         table_name,
                     )
 
-        # Process explicit postgres_tables mapping
-        if self._postgres_tables:
+        if self.postgres_tables:
             for table_name, (
                 config_key,
                 schema_name,
                 actual_table_name,
-            ) in self._postgres_tables.items():
+            ) in self.postgres_tables.items():
                 pattern = TablePattern(
                     table_name=actual_table_name,
                     schema_name=schema_name,
@@ -432,6 +363,70 @@ class Patterns(BaseDataclass):
                     schema_name,
                     actual_table_name,
                 )
+        return self
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | list[Any]) -> Self:
+        """Create Patterns from dictionary, supporting both old and new YAML formats.
+
+        Supports two formats:
+        1. New format: Separate `file_patterns` and `table_patterns` fields
+        2. Old format: Unified `patterns` field with `__tag__` markers (for backward compatibility)
+
+        Args:
+            data: Dictionary containing patterns data (or list for base compatibility)
+
+        Returns:
+            Patterns: New Patterns instance with properly deserialized patterns
+        """
+        if isinstance(data, list):
+            return cls.model_validate(data)
+        if "file_patterns" in data or "table_patterns" in data:
+            # Strip __tag__ from nested pattern dicts so extra="forbid" does not fail
+            data = copy.deepcopy(data)
+            for key in ("file_patterns", "table_patterns"):
+                if key in data and isinstance(data[key], dict):
+                    for name, val in data[key].items():
+                        if isinstance(val, dict) and "__tag__" in val:
+                            data[key][name] = {
+                                k: v for k, v in val.items() if k != "__tag__"
+                            }
+            return cls.model_validate(data)
+
+        patterns_data = data.get("patterns", {})
+        data_copy = {k: v for k, v in data.items() if k != "patterns"}
+        instance = cls.model_validate(data_copy)
+
+        for pattern_name, raw in patterns_data.items():
+            if raw is None:
+                continue
+            pattern_dict = {k: v for k, v in raw.items() if k != "__tag__"}
+            tag_val = raw.get("__tag__") if isinstance(raw, dict) else None
+            if tag_val == "file":
+                instance.file_patterns[pattern_name] = FilePattern.model_validate(
+                    pattern_dict
+                )
+            elif tag_val == "table":
+                instance.table_patterns[pattern_name] = TablePattern.model_validate(
+                    pattern_dict
+                )
+            else:
+                if "table_name" in pattern_dict:
+                    instance.table_patterns[pattern_name] = TablePattern.model_validate(
+                        pattern_dict
+                    )
+                elif "regex" in pattern_dict or "sub_path" in pattern_dict:
+                    instance.file_patterns[pattern_name] = FilePattern.model_validate(
+                        pattern_dict
+                    )
+                else:
+                    raise ValueError(
+                        f"Unable to determine pattern type for '{pattern_name}'. "
+                        "Expected either '__tag__: file' or '__tag__: table', "
+                        "or pattern fields (table_name for TablePattern, "
+                        "regex/sub_path for FilePattern)"
+                    )
+        return instance
 
     def add_file_pattern(self, name: str, file_pattern: FilePattern):
         """Add a file pattern to the collection.

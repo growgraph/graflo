@@ -31,7 +31,6 @@ classifiers = [
 ]
 dependencies = [
   "click>=8.2.0,<9",
-  "dataclass-wizard>=0.34.0",
   "falkordb>=1.0.9",
   "ijson>=3.2.3,<4",
   "neo4j>=5.22.0,<6",

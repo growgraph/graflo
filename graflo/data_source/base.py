@@ -8,7 +8,10 @@ and provide a unified interface for batch iteration.
 import abc
 from typing import Iterator
 
-from graflo.onto import BaseDataclass, BaseEnum
+from pydantic import PrivateAttr
+
+from graflo.architecture.base import ConfigBaseModel
+from graflo.onto import BaseEnum
 
 
 class DataSourceType(BaseEnum):
@@ -26,7 +29,7 @@ class DataSourceType(BaseEnum):
     IN_MEMORY = "in_memory"
 
 
-class AbstractDataSource(BaseDataclass, abc.ABC):
+class AbstractDataSource(ConfigBaseModel, abc.ABC):
     """Abstract base class for all data sources.
 
     Data sources handle data retrieval from various sources and provide
@@ -40,10 +43,7 @@ class AbstractDataSource(BaseDataclass, abc.ABC):
     """
 
     source_type: DataSourceType
-
-    def __post_init__(self):
-        """Initialize the data source after dataclass initialization."""
-        self._resource_name: str | None = None
+    _resource_name: str | None = PrivateAttr(default=None)
 
     @property
     def resource_name(self) -> str | None:
@@ -55,7 +55,7 @@ class AbstractDataSource(BaseDataclass, abc.ABC):
         return self._resource_name
 
     @resource_name.setter
-    def resource_name(self, value: str | None):
+    def resource_name(self, value: str | None) -> None:
         """Set the resource name this data source maps to.
 
         Args:

@@ -32,7 +32,9 @@ def test_actor_wrapper_openalex_implicit(
     resource_cross_implicit, vertex_config_cross, sample_cross
 ):
     ctx = ActionContext()
-    anw = ActorWrapper(*resource_cross_implicit)
+    # Pass list as single arg so it is interpreted as pipeline (DescendActor), not
+    # as a single step; finish_init then adds VertexActors from transform outputs.
+    anw = ActorWrapper(resource_cross_implicit)
     anw.finish_init(transforms={}, vertex_config=vertex_config_cross)
     ctx = anw(ctx, doc=sample_cross)
 
