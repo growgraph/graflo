@@ -19,7 +19,7 @@ The resource system allows for:
 Example:
     >>> resource = Resource(
     ...     resource_name="users",
-    ...     apply=[{"vertex": "user"}, {"edge": {"from": "user", "to": "user"}}],
+    ...     pipeline=[{"vertex": "user"}, {"edge": {"from": "user", "to": "user"}}],
     ...     encoding=EncodingType.UTF_8
     ... )
     >>> result = resource(doc)
@@ -62,11 +62,11 @@ class Resource(ConfigBaseModel):
         ...,
         description="Name of the resource (e.g. table or file identifier).",
     )
-    apply: list[dict[str, Any]] = PydanticField(
+    pipeline: list[dict[str, Any]] = PydanticField(
         ...,
         description="Pipeline of actor steps to apply in sequence (vertex, edge, transform, descend). "
         'Each step is a dict, e.g. {"vertex": "user"} or {"edge": {"from": "a", "to": "b"}}.',
-        validation_alias=AliasChoices("apply", "pipeline"),
+        validation_alias=AliasChoices("pipeline", "apply"),
     )
     encoding: EncodingType = PydanticField(
         default=EncodingType.UTF_8,
@@ -96,8 +96,8 @@ class Resource(ConfigBaseModel):
 
     @model_validator(mode="after")
     def _build_root_and_types(self) -> Resource:
-        """Build root ActorWrapper from apply and evaluate type expressions."""
-        object.__setattr__(self, "_root", ActorWrapper(*self.apply))
+        """Build root ActorWrapper from pipeline and evaluate type expressions."""
+        object.__setattr__(self, "_root", ActorWrapper(*self.pipeline))
         object.__setattr__(self, "_types", {})
         for k, v in self.types.items():
             try:

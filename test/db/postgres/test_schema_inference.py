@@ -124,16 +124,16 @@ def test_infer_schema_from_postgres(conn_conf, load_mock_schema):
 
     # Verify resource actors
     users_resource = next(r for r in schema.resources if r.name == "users")
-    assert users_resource.apply is not None, "users resource should have apply list"
-    assert len(users_resource.apply) > 0, (
+    assert users_resource.pipeline is not None, "users resource should have pipeline"
+    assert len(users_resource.pipeline) > 0, (
         "users resource should have at least one actor"
     )
 
     purchases_resource = next(r for r in schema.resources if r.name == "purchases")
-    assert purchases_resource.apply is not None, (
-        "purchases resource should have apply list"
+    assert purchases_resource.pipeline is not None, (
+        "purchases resource should have pipeline"
     )
-    assert len(purchases_resource.apply) > 0, (
+    assert len(purchases_resource.pipeline) > 0, (
         "purchases resource should have at least one actor"
     )
 
@@ -158,7 +158,7 @@ def test_infer_schema_from_postgres(conn_conf, load_mock_schema):
 
     print(f"\nResources ({len(schema.resources)}):")
     for r in schema.resources:
-        actor_types = [type(a).__name__ for a in r.apply]
+        actor_types = [type(a).__name__ for a in r.pipeline]
         print(f"  - {r.name} (actors: {', '.join(actor_types)})")
 
     print("=" * 80)
@@ -306,18 +306,18 @@ def test_infer_schema_with_pg_catalog_fallback(conn_conf, load_mock_schema):
 
         # Verify resource actors - should be correctly created via pg_catalog
         users_resource = next(r for r in schema.resources if r.name == "users")
-        assert users_resource.apply is not None, (
-            "users resource should have apply list when using pg_catalog"
+        assert users_resource.pipeline is not None, (
+            "users resource should have pipeline when using pg_catalog"
         )
-        assert len(users_resource.apply) > 0, (
+        assert len(users_resource.pipeline) > 0, (
             "users resource should have at least one actor when using pg_catalog"
         )
 
         purchases_resource = next(r for r in schema.resources if r.name == "purchases")
-        assert purchases_resource.apply is not None, (
-            "purchases resource should have apply list when using pg_catalog"
+        assert purchases_resource.pipeline is not None, (
+            "purchases resource should have pipeline when using pg_catalog"
         )
-        assert len(purchases_resource.apply) > 0, (
+        assert len(purchases_resource.pipeline) > 0, (
             "purchases resource should have at least one actor when using pg_catalog"
         )
 
@@ -344,7 +344,7 @@ def test_infer_schema_with_pg_catalog_fallback(conn_conf, load_mock_schema):
 
         print(f"\nResources ({len(schema.resources)}):")
         for r in schema.resources:
-            actor_types = [type(a).__name__ for a in r.apply]
+            actor_types = [type(a).__name__ for a in r.pipeline]
             print(f"  - {r.name} (actors: {', '.join(actor_types)})")
 
         print("=" * 80)

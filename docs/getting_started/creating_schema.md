@@ -114,12 +114,12 @@ Resources define **how** each data stream is turned into vertices and edges. Eac
 - **`encoding`**: Optional. Character encoding (default `UTF_8`).
 - **`merge_collections`**: Optional. List of collection names to merge when writing.
 - **`extra_weights`**: Optional. Additional edge weight configs for this resource.
-- **`types`**: Optional. Field name → Python type expression for casting (e.g. `{"amount": "float"}`).
+- **`types`**: Optional. Field name → Python type expression for casting during ingestion (e.g. `{"age": "int"}`, `{"amount": "float"}`, `{"created_at": "datetime"}`). Useful when input is string-only (CSV, JSON) and you need numeric or date values.
 - **`edge_greedy`**: Optional. If true (default), emit edges as soon as source/target exist; if false, wait for explicit targets.
 
 ### Actor steps in `apply` / `pipeline`
 
-Each step is a dict. The system recognizes:
+Each step is a dict. You can write steps in shorthand (e.g. `vertex: person`) or with an explicit **`type`** (`vertex`, `transform`, `edge`, `descend`). The system recognizes:
 
 1. **Vertex step** — create vertices of a given type from the current document level:
    ```yaml

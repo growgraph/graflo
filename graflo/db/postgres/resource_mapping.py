@@ -67,7 +67,7 @@ class PostgresResourceMapper:
 
         resource = Resource(
             resource_name=table_name,
-            apply=apply,
+            pipeline=apply,
         )
 
         logger.debug(
@@ -202,7 +202,7 @@ class PostgresResourceMapper:
 
         resource = Resource(
             resource_name=table_name,
-            apply=apply,
+            pipeline=apply,
         )
 
         relation_info = f" with relation '{relation}'" if relation else ""
