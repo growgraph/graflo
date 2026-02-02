@@ -373,7 +373,7 @@ from graflo.hq.caster import IngestionParams
 # Use GraphEngine for schema definition and ingestion
 engine = GraphEngine()
 ingestion_params = IngestionParams(
-    recreate_schema=True,  # Drop existing schema and define new one before ingesting
+    clear_data=True,  # Clear existing data before ingesting
 )
 
 engine.define_and_ingest(
@@ -436,7 +436,7 @@ patterns = engine.create_patterns(postgres_conf, schema_name="public")
 
 # Step 7: Define schema and ingest data
 ingestion_params = IngestionParams(
-    recreate_schema=True,  # Drop existing schema and define new one before ingesting
+    clear_data=True,  # Clear existing data before ingesting
 )
 
 # Use GraphEngine to define schema and ingest data

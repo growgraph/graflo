@@ -121,7 +121,7 @@ from graflo.hq.caster import IngestionParams
 caster = Caster(schema)
 
 ingestion_params = IngestionParams(
-    recreate_schema=False,  # Set to True to drop and redefine schema (script halts if schema exists)
+    clear_data=True,  # Clear existing data before ingesting
     # max_items=1000,  # Optional: limit number of items to process
 )
 

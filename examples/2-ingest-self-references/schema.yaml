@@ -33,7 +33,8 @@ vertex_config:
         -   unique: false
             fields:
             -   doi
-edge_config: []
+edge_config:
+    edges: []
 transforms:
     keep_suffix_id:
         foo: split_keep_part

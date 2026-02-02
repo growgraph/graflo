@@ -464,12 +464,3 @@ class EdgeConfig(ConfigBaseModel):
             set[str]: Set of vertex names
         """
         return {e.source for e in self.edges} | {e.target for e in self.edges}
-
-    # def __getitem__(self, key: EdgeId):
-    #     if key in self._reset_edges():
-    #         return self._edges_map[key]
-    #     else:
-    #         raise KeyError(f"Vertex {key} absent")
-    #
-    # def __setitem__(self, key: EdgeId, value: Edge):
-    #     self._edges_map[key] = value

@@ -1,15 +1,24 @@
 edge_config:
     edges:
-    -   relation: follows
+    -   aux: false
+        index: []
+        relation: follows
+        relation_from_key: false
         source: users
         target: users
+        type: direct
         weights:
             direct:
             -   name: created_at
                 type: DATETIME
-    -   relation: purchases
+            vertices: []
+    -   aux: false
+        index: []
+        relation: purchases
+        relation_from_key: false
         source: users
         target: products
+        type: direct
         weights:
             direct:
             -   name: purchase_date
@@ -18,15 +27,26 @@ edge_config:
                 type: INT
             -   name: total_amount
                 type: FLOAT
+            vertices: []
 general:
     name: accounting
 resources:
 -   apply:
     -   vertex: products
+    edge_greedy: true
+    encoding: utf-8
+    extra_weights: []
+    merge_collections: []
     resource_name: products
+    types: {}
 -   apply:
     -   vertex: users
+    edge_greedy: true
+    encoding: utf-8
+    extra_weights: []
+    merge_collections: []
     resource_name: users
+    types: {}
 -   apply:
     -   map:
             follower_id: id
@@ -34,7 +54,12 @@ resources:
     -   map:
             followed_id: id
         target_vertex: users
+    edge_greedy: true
+    encoding: utf-8
+    extra_weights: []
+    merge_collections: []
     resource_name: follows
+    types: {}
 -   apply:
     -   map:
             user_id: id
@@ -42,11 +67,17 @@ resources:
     -   map:
             product_id: id
         target_vertex: products
+    edge_greedy: true
+    encoding: utf-8
+    extra_weights: []
+    merge_collections: []
     resource_name: purchases
+    types: {}
 transforms: {}
 vertex_config:
-    db_flavor: !!python/object/apply:graflo.onto.DBType
-    -   tigergraph
+    blank_vertices: []
+    db_flavor: tigergraph
+    force_types: {}
     vertices:
     -   dbname: products
         fields:
@@ -60,9 +91,15 @@ vertex_config:
             type: STRING
         -   name: created_at
             type: DATETIME
+        filters: []
         indexes:
-        -   fields:
+        -   deduplicate: true
+            exclude_edge_endpoints: false
+            fields:
             -   id
+            sparse: false
+            type: persistent
+            unique: true
         name: products
     -   dbname: users
         fields:
@@ -74,7 +111,13 @@ vertex_config:
             type: STRING
         -   name: created_at
             type: DATETIME
+        filters: []
         indexes:
-        -   fields:
+        -   deduplicate: true
+            exclude_edge_endpoints: false
+            fields:
             -   id
+            sparse: false
+            type: persistent
+            unique: true
         name: users

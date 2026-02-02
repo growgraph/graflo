@@ -155,6 +155,10 @@ class GraphEngine:
                 # ArangoDB, Neo4j use 'database' field (which maps to effective_schema)
                 target_db_config.database = schema_name
 
+        # Ensure schema's vertex_config reflects target DB so Edge.finish_init()
+        # applies DB-specific defaults (e.g. TigerGraph default relation name)
+        schema.vertex_config.db_flavor = target_db_config.connection_type
+
         # Initialize database with schema definition
         # init_db() handles database/schema creation automatically
         # It checks if the database exists and creates it if needed

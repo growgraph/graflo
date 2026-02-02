@@ -57,4 +57,5 @@ engine.define_and_ingest(
     target_db_config=conn_conf,
     patterns=patterns,
     ingestion_params=ingestion_params,
+    recreate_schema=True,
 )

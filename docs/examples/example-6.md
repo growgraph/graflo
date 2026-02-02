@@ -91,6 +91,7 @@ config_data = FileHandle.load("db.yaml")
 conn_conf = DBConfig.from_dict(config_data)
 
 ingestion_params = IngestionParams(
+    clear_data=True,
     batch_size=1000,  # Process 1000 items per batch
 )
 
@@ -218,7 +219,9 @@ registry.register(file_source, resource_name="users")
 # Both will be processed and combined
 from graflo.hq.caster import IngestionParams
 
-ingestion_params = IngestionParams()  # Use default parameters
+ingestion_params = IngestionParams(
+    clear_data=True,
+)
 
 caster.ingest_data_sources(
     data_source_registry=registry,

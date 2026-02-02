@@ -1,4 +1,6 @@
-"""Tests for DBConfig.from_env() method with prefix support."""
+"""Tests for DBConfig.from_env() method with prefix, profile, and suffix support."""
+
+import pytest
 
 from graflo.db.connection.onto import ArangoConfig, Neo4jConfig, TigergraphConfig
 
@@ -73,6 +75,43 @@ class TestArangoConfigFromEnv:
         # Note: PORT/HOSTNAME/PROTOCOL are not model fields, so they won't be
         # automatically read. Only fields defined in the model are read.
         assert config.username == "admin"
+
+    def test_from_env_with_profile(self, monkeypatch):
+        """Test profile: ARANGO_{profile}_* (e.g. ARANGO_DEV_URI)."""
+        monkeypatch.setenv("ARANGO_DEV_URI", "http://dev-db:8529")
+        monkeypatch.setenv("ARANGO_DEV_USERNAME", "dev_user")
+        monkeypatch.setenv("ARANGO_DEV_PASSWORD", "dev_pass")
+        monkeypatch.setenv("ARANGO_DEV_DATABASE", "dev_db")
+
+        config = ArangoConfig.from_env(profile="DEV")
+
+        assert config.uri == "http://dev-db:8529"
+        assert config.username == "dev_user"
+        assert config.password == "dev_pass"
+        assert config.database == "dev_db"
+
+    def test_from_env_with_suffix(self, monkeypatch):
+        """Test suffix: ARANGO_*_{suffix} (e.g. ARANGO_URI_DEV)."""
+        monkeypatch.setenv("ARANGO_URI_DEV", "http://dev-db:8529")
+        monkeypatch.setenv("ARANGO_USERNAME_DEV", "dev_user")
+        monkeypatch.setenv("ARANGO_PASSWORD_DEV", "dev_pass")
+        monkeypatch.setenv("ARANGO_DATABASE_DEV", "dev_db")
+
+        config = ArangoConfig.from_env(suffix="DEV")
+
+        assert config.uri == "http://dev-db:8529"
+        assert config.username == "dev_user"
+        assert config.password == "dev_pass"
+        assert config.database == "dev_db"
+
+    def test_from_env_at_most_one_qualifier(self):
+        """Test that at most one of prefix, profile, suffix may be set."""
+        with pytest.raises(ValueError, match="At most one of prefix, profile, suffix"):
+            ArangoConfig.from_env(prefix="USER", profile="DEV")
+        with pytest.raises(ValueError, match="At most one of prefix, profile, suffix"):
+            ArangoConfig.from_env(prefix="USER", suffix="DEV")
+        with pytest.raises(ValueError, match="At most one of prefix, profile, suffix"):
+            ArangoConfig.from_env(profile="DEV", suffix="DEV")
 
 
 class TestNeo4jConfigFromEnv:

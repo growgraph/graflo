@@ -112,8 +112,11 @@ class ProtoTransform(ConfigBaseModel):
             return data
         data = dict(data)
         for key in ("input", "output"):
-            if key in data and data[key] is not None:
-                data[key] = _tuple_it(data[key])
+            if key in data:
+                if data[key] is not None:
+                    data[key] = _tuple_it(data[key])
+                else:
+                    data[key] = ()
         return data
 
     @model_validator(mode="after")
