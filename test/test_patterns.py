@@ -19,11 +19,15 @@ def test_patterns():
     patterns.add_file_pattern("a", pattern_a)
     patterns.add_file_pattern("b", pattern_b)
 
-    # Test that patterns work correctly
-    assert patterns.patterns["a"].sub_path is not None
-    assert isinstance(patterns.patterns["a"].sub_path / "a", pathlib.Path)
-    assert patterns.patterns["b"].sub_path is not None
-    assert str(patterns.patterns["b"].sub_path / "a") == "a"
+    # Test that patterns work correctly (narrow to FilePattern for .sub_path)
+    pattern_a_loaded = patterns.patterns["a"]
+    pattern_b_loaded = patterns.patterns["b"]
+    assert isinstance(pattern_a_loaded, FilePattern)
+    assert isinstance(pattern_b_loaded, FilePattern)
+    assert pattern_a_loaded.sub_path is not None
+    assert isinstance(pattern_a_loaded.sub_path / "a", pathlib.Path)
+    assert pattern_b_loaded.sub_path is not None
+    assert str(pattern_b_loaded.sub_path / "a") == "a"
 
     # Test that patterns can be accessed by name
     assert "a" in patterns.patterns
@@ -229,10 +233,13 @@ def test_patterns_with_filtering():
     )
     patterns.add_table_pattern("events", table_pattern)
 
-    # Verify patterns are stored correctly
-    assert patterns.patterns["users"].regex == r".*\.csv$"
-    assert patterns.patterns["events"].date_field == "created_at"
-    assert patterns.patterns["events"].date_filter == "> '2020-10-10'"
+    # Verify patterns are stored correctly (narrow to FilePattern for .regex)
+    users_pattern = patterns.patterns["users"]
+    events_pattern = patterns.patterns["events"]
+    assert isinstance(users_pattern, FilePattern)
+    assert users_pattern.regex == r".*\.csv$"
+    assert events_pattern.date_field == "created_at"
+    assert events_pattern.date_filter == "> '2020-10-10'"
 
 
 def test_table_pattern_sql_query_building():

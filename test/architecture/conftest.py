@@ -44,17 +44,17 @@ def vertex_pub():
         -   OR:
             -   IF_THEN:
                 -   field: name
-                    foo: __eq__
+                    cmp_operator: "=="
                     value: Open
                 -   field: value
-                    foo: __gt__
+                    cmp_operator: ">"
                     value: 0
             -   IF_THEN:
                 -   field: name
-                    foo: __eq__
+                    cmp_operator: "=="
                     value: Close
                 -   field: value
-                    foo: __gt__
+                    cmp_operator: ">"
                     value: 0
         transforms:
         -   foo: cast_ibes_analyst
@@ -221,7 +221,7 @@ def edge_config_kg():
         -   name: publication
             fields:
             -   _key
-        -   exclude_edge_end_vertices: true
+        -   exclude_edge_endpoints: true
             unique: false
             fields:
             -   publication@_key

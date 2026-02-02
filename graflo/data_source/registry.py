@@ -7,17 +7,12 @@ ingestion from multiple sources.
 
 from __future__ import annotations
 
-import dataclasses
-from typing import TYPE_CHECKING
-
-from graflo.onto import BaseDataclass
-
-if TYPE_CHECKING:
-    from graflo.data_source.base import AbstractDataSource
+from graflo.architecture.base import ConfigBaseModel
+from graflo.data_source.base import AbstractDataSource
+from pydantic import Field
 
 
-@dataclasses.dataclass
-class DataSourceRegistry(BaseDataclass):
+class DataSourceRegistry(ConfigBaseModel):
     """Registry for mapping data sources to resource names.
 
     This class maintains a mapping from resource names to lists of data sources.
@@ -28,9 +23,7 @@ class DataSourceRegistry(BaseDataclass):
         sources: Dictionary mapping resource names to lists of data sources
     """
 
-    sources: dict[str, list[AbstractDataSource]] = dataclasses.field(
-        default_factory=dict
-    )
+    sources: dict[str, list[AbstractDataSource]] = Field(default_factory=dict)
 
     def register(self, data_source: AbstractDataSource, resource_name: str) -> None:
         """Register a data source for a resource.

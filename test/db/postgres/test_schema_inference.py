@@ -64,14 +64,12 @@ def test_infer_schema_from_postgres(conn_conf, load_mock_schema):
     # Verify field types (id should be INT, name/email should be STRING)
     id_field = next(f for f in users_vertex.fields if f.name == "id")
     assert id_field.type is not None, "id field should have a type"
-    assert id_field.type.value == "INT", (
-        f"Expected id type to be INT, got {id_field.type.value}"
-    )
+    assert id_field.type == "INT", f"Expected id type to be INT, got {id_field.type}"
 
     name_field = next(f for f in users_vertex.fields if f.name == "name")
     assert name_field.type is not None, "name field should have a type"
-    assert name_field.type.value == "STRING", (
-        f"Expected name type to be STRING, got {name_field.type.value}"
+    assert name_field.type == "STRING", (
+        f"Expected name type to be STRING, got {name_field.type}"
     )
 
     # Verify datetime field type (created_at should be DATETIME)
@@ -80,8 +78,8 @@ def test_infer_schema_from_postgres(conn_conf, load_mock_schema):
     )
     if created_at_field:
         assert created_at_field.type is not None, "created_at field should have a type"
-        assert created_at_field.type.value == "DATETIME", (
-            f"Expected created_at type to be DATETIME, got {created_at_field.type.value}"
+        assert created_at_field.type == "DATETIME", (
+            f"Expected created_at type to be DATETIME, got {created_at_field.type}"
         )
 
     # Verify purchases edge structure
@@ -126,16 +124,16 @@ def test_infer_schema_from_postgres(conn_conf, load_mock_schema):
 
     # Verify resource actors
     users_resource = next(r for r in schema.resources if r.name == "users")
-    assert users_resource.apply is not None, "users resource should have apply list"
-    assert len(users_resource.apply) > 0, (
+    assert users_resource.pipeline is not None, "users resource should have pipeline"
+    assert len(users_resource.pipeline) > 0, (
         "users resource should have at least one actor"
     )
 
     purchases_resource = next(r for r in schema.resources if r.name == "purchases")
-    assert purchases_resource.apply is not None, (
-        "purchases resource should have apply list"
+    assert purchases_resource.pipeline is not None, (
+        "purchases resource should have pipeline"
     )
-    assert len(purchases_resource.apply) > 0, (
+    assert len(purchases_resource.pipeline) > 0, (
         "purchases resource should have at least one actor"
     )
 
@@ -145,7 +143,7 @@ def test_infer_schema_from_postgres(conn_conf, load_mock_schema):
     print(f"\nVertices ({len(schema.vertex_config.vertices)}):")
     for v in schema.vertex_config.vertices:
         field_types = ", ".join(
-            [f"{f.name}:{f.type.value if f.type else 'None'}" for f in v.fields[:5]]
+            [f"{f.name}:{f.type if f.type else 'None'}" for f in v.fields[:5]]
         )
         print(f"  - {v.name}: {field_types}...")
 
@@ -160,7 +158,7 @@ def test_infer_schema_from_postgres(conn_conf, load_mock_schema):
 
     print(f"\nResources ({len(schema.resources)}):")
     for r in schema.resources:
-        actor_types = [type(a).__name__ for a in r.apply]
+        actor_types = [type(a).__name__ for a in r.pipeline]
         print(f"  - {r.name} (actors: {', '.join(actor_types)})")
 
     print("=" * 80)
@@ -250,16 +248,16 @@ def test_infer_schema_with_pg_catalog_fallback(conn_conf, load_mock_schema):
         assert id_field.type is not None, (
             "id field should have a type when using pg_catalog"
         )
-        assert id_field.type.value == "INT", (
-            f"Expected id type to be INT when using pg_catalog, got {id_field.type.value}"
+        assert id_field.type == "INT", (
+            f"Expected id type to be INT when using pg_catalog, got {id_field.type}"
         )
 
         name_field = next(f for f in users_vertex.fields if f.name == "name")
         assert name_field.type is not None, (
             "name field should have a type when using pg_catalog"
         )
-        assert name_field.type.value == "STRING", (
-            f"Expected name type to be STRING when using pg_catalog, got {name_field.type.value}"
+        assert name_field.type == "STRING", (
+            f"Expected name type to be STRING when using pg_catalog, got {name_field.type}"
         )
 
         # Verify purchases edge structure - should be correctly inferred via pg_catalog
@@ -308,18 +306,18 @@ def test_infer_schema_with_pg_catalog_fallback(conn_conf, load_mock_schema):
 
         # Verify resource actors - should be correctly created via pg_catalog
         users_resource = next(r for r in schema.resources if r.name == "users")
-        assert users_resource.apply is not None, (
-            "users resource should have apply list when using pg_catalog"
+        assert users_resource.pipeline is not None, (
+            "users resource should have pipeline when using pg_catalog"
         )
-        assert len(users_resource.apply) > 0, (
+        assert len(users_resource.pipeline) > 0, (
             "users resource should have at least one actor when using pg_catalog"
         )
 
         purchases_resource = next(r for r in schema.resources if r.name == "purchases")
-        assert purchases_resource.apply is not None, (
-            "purchases resource should have apply list when using pg_catalog"
+        assert purchases_resource.pipeline is not None, (
+            "purchases resource should have pipeline when using pg_catalog"
         )
-        assert len(purchases_resource.apply) > 0, (
+        assert len(purchases_resource.pipeline) > 0, (
             "purchases resource should have at least one actor when using pg_catalog"
         )
 
@@ -329,7 +327,7 @@ def test_infer_schema_with_pg_catalog_fallback(conn_conf, load_mock_schema):
         print(f"\nVertices ({len(schema.vertex_config.vertices)}):")
         for v in schema.vertex_config.vertices:
             field_types = ", ".join(
-                [f"{f.name}:{f.type.value if f.type else 'None'}" for f in v.fields[:5]]
+                [f"{f.name}:{f.type if f.type else 'None'}" for f in v.fields[:5]]
             )
             print(f"  - {v.name}: {field_types}...")
 
@@ -346,7 +344,7 @@ def test_infer_schema_with_pg_catalog_fallback(conn_conf, load_mock_schema):
 
         print(f"\nResources ({len(schema.resources)}):")
         for r in schema.resources:
-            actor_types = [type(a).__name__ for a in r.apply]
+            actor_types = [type(a).__name__ for a in r.pipeline]
             print(f"  - {r.name} (actors: {', '.join(actor_types)})")
 
         print("=" * 80)

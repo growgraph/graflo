@@ -5,6 +5,7 @@ It handles edge configuration, weight management, indexing, and relationship ope
 The module supports both ArangoDB and Neo4j through the DBType enum.
 
 Key Components:
+    - EdgeBase: Shared base for edge-like configs (Edge and EdgeActorConfig)
     - Edge: Represents an edge with its source, target, and configuration
     - EdgeConfig: Manages collections of edges and their configurations
     - WeightConfig: Configuration for edge weights and relationships
@@ -17,17 +18,23 @@ Example:
 
 from __future__ import annotations
 
-import dataclasses
-from typing import Union
+from typing import Any
 
+from pydantic import (
+    Field as PydanticField,
+    PrivateAttr,
+    field_validator,
+    model_validator,
+)
+
+from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.onto import (
-    BaseDataclass,
     EdgeId,
     EdgeType,
     Index,
     Weight,
 )
-from graflo.architecture.vertex import Field, FieldType, VertexConfig, _FieldsType
+from graflo.architecture.vertex import Field, FieldType, VertexConfig
 from graflo.onto import DBType
 
 
@@ -38,8 +45,21 @@ DEFAULT_TIGERGRAPH_RELATION = "relates"
 DEFAULT_TIGERGRAPH_RELATION_WEIGHTNAME = "relation"
 
 
-@dataclasses.dataclass
-class WeightConfig(BaseDataclass):
+def _normalize_direct_item(item: str | Field | dict[str, Any]) -> Field:
+    """Convert a single direct field item (str, Field, or dict) to Field."""
+    if isinstance(item, Field):
+        return item
+    if isinstance(item, str):
+        return Field(name=item, type=None)
+    if isinstance(item, dict):
+        name = item.get("name")
+        if name is None:
+            raise ValueError(f"Field dict must have 'name' key: {item}")
+        return Field(name=name, type=item.get("type"))
+    raise TypeError(f"Field must be str, Field, or dict, got {type(item)}")
+
+
+class WeightConfig(ConfigBaseModel):
     """Configuration for edge weights and relationships.
 
     This class manages the configuration of weights and relationships for edges,
@@ -48,7 +68,7 @@ class WeightConfig(BaseDataclass):
     Attributes:
         vertices: List of weight configurations
         direct: List of direct field mappings. Can be specified as strings, Field objects, or dicts.
-               Will be normalized to Field objects internally in __post_init__.
+               Will be normalized to Field objects by the validator.
                After initialization, this is always list[Field] (type checker sees this).
 
     Examples:
@@ -68,45 +88,21 @@ class WeightConfig(BaseDataclass):
         ... ])
     """
 
-    vertices: list[Weight] = dataclasses.field(default_factory=list)
-    # Internal representation: After __post_init__, this is always list[Field]
-    # Input types: Accepts list[str], list[Field], or list[dict] at construction
-    # The _FieldsType allows flexible input but normalizes to list[Field] internally
-    direct: _FieldsType = dataclasses.field(default_factory=list)
+    vertices: list[Weight] = PydanticField(
+        default_factory=list,
+        description="List of weight definitions for vertex-based edge attributes.",
+    )
+    direct: list[Field] = PydanticField(
+        default_factory=list,
+        description="Direct edge attributes (field names, Field objects, or dicts). Normalized to Field objects.",
+    )
 
-    def _normalize_fields(
-        self, fields: list[str] | list[Field] | list[dict]
-    ) -> list[Field]:
-        """Normalize fields to Field objects.
-
-        Converts strings, Field objects, or dicts to Field objects.
-        Field objects behave like strings for backward compatibility.
-
-        Args:
-            fields: List of strings, Field objects, or dicts
-
-        Returns:
-            list[Field]: Normalized list of Field objects (preserving order)
-        """
-        normalized = []
-        for field in fields:
-            if isinstance(field, Field):
-                normalized.append(field)
-            elif isinstance(field, str):
-                # Backward compatibility: string becomes Field with None type
-                # (most databases like ArangoDB don't require types)
-                normalized.append(Field(name=field, type=None))
-            elif isinstance(field, dict):
-                # From dict (e.g., from YAML/JSON)
-                # Extract name and optional type
-                name = field.get("name")
-                if name is None:
-                    raise ValueError(f"Field dict must have 'name' key: {field}")
-                field_type = field.get("type")
-                normalized.append(Field(name=name, type=field_type))
-            else:
-                raise TypeError(f"Field must be str, Field, or dict, got {type(field)}")
-        return normalized
+    @field_validator("direct", mode="before")
+    @classmethod
+    def normalize_direct(cls, v: Any) -> Any:
+        if not isinstance(v, list):
+            return v
+        return [_normalize_direct_item(item) for item in v]
 
     @property
     def direct_names(self) -> list[str]:
@@ -117,49 +113,57 @@ class WeightConfig(BaseDataclass):
         """
         return [field.name for field in self.direct]
 
-    def __post_init__(self):
-        """Initialize the weight configuration after dataclass initialization.
 
-        Normalizes direct fields to Field objects. Field objects behave like strings,
-        maintaining backward compatibility.
+class EdgeBase(ConfigBaseModel):
+    """Shared base for edge-like configs (Edge schema and EdgeActorConfig).
 
-        After this method, self.direct is always list[Field], regardless of input type.
-        """
-        # Normalize direct fields to Field objects (preserve order)
-        # This converts str, Field, or dict inputs to list[Field]
-        self.direct = self._normalize_fields(self.direct)
+    Holds the common scalar fields so Edge and EdgeActorConfig stay in sync
+    without duplication.
+    """
 
-    @classmethod
-    def from_dict(cls, data: dict):
-        """Create WeightConfig from dictionary, handling field normalization.
+    source: str = PydanticField(
+        ...,
+        description="Source vertex type name (e.g. user, company).",
+    )
+    target: str = PydanticField(
+        ...,
+        description="Target vertex type name (e.g. post, company).",
+    )
+    match_source: str | None = PydanticField(
+        default=None,
+        description="Field used to match source vertices when creating edges.",
+    )
+    match_target: str | None = PydanticField(
+        default=None,
+        description="Field used to match target vertices when creating edges.",
+    )
+    relation: str | None = PydanticField(
+        default=None,
+        description="Relation/edge type name (e.g. Neo4j relationship type). For ArangoDB used as weight.",
+    )
+    relation_field: str | None = PydanticField(
+        default=None,
+        description="Field name to store or read relation type (e.g. for TigerGraph).",
+    )
+    relation_from_key: bool = PydanticField(
+        default=False,
+        description="If True, derive relation value from the location key during ingestion.",
+    )
+    exclude_source: str | None = PydanticField(
+        default=None,
+        description="Exclude source vertices matching this field from edge creation.",
+    )
+    exclude_target: str | None = PydanticField(
+        default=None,
+        description="Exclude target vertices matching this field from edge creation.",
+    )
+    match: str | None = PydanticField(
+        default=None,
+        description="Match discriminant for edge creation.",
+    )
 
-        Overrides parent to properly handle direct fields that may be strings, dicts, or Field objects.
-        JSONWizard may incorrectly deserialize dicts in direct, so we need to handle them manually.
 
-        Args:
-            data: Dictionary containing weight config data
-
-        Returns:
-            WeightConfig: New WeightConfig instance with direct normalized to list[Field]
-        """
-        # Extract and preserve direct fields before JSONWizard processes them
-        direct_data = data.get("direct", [])
-        # Create a copy without direct to let JSONWizard handle the rest
-        data_copy = {k: v for k, v in data.items() if k != "direct"}
-
-        # Call parent from_dict (JSONWizard)
-        instance = super().from_dict(data_copy)
-
-        # Now manually set direct (could be strings, dicts, or already Field objects)
-        # __post_init__ will normalize them to list[Field]
-        instance.direct = direct_data
-        # Trigger normalization - this ensures direct is always list[Field] after init
-        instance.direct = instance._normalize_fields(instance.direct)
-        return instance
-
-
-@dataclasses.dataclass
-class Edge(BaseDataclass):
+class Edge(EdgeBase):
     """Represents an edge in the graph database.
 
     An edge connects two vertices and can have various configurations for
@@ -182,48 +186,48 @@ class Edge(BaseDataclass):
                        For ArangoDB, this corresponds to the edge collection name.
     """
 
-    source: str
-    target: str
-    indexes: list[Index] = dataclasses.field(default_factory=list)
-    weights: Union[WeightConfig, None] = (
-        None  # Using Union for dataclass_wizard compatibility
+    indexes: list[Index] = PydanticField(
+        default_factory=list,
+        alias="index",
+        description="List of index definitions for this edge. Alias: index.",
     )
-
-    # relation represents Class in neo4j, for arango it becomes a weight
-    relation: str | None = None
-    _relation_dbname: str | None = dataclasses.field(
+    weights: WeightConfig | None = PydanticField(
         default=None,
-        repr=False,
-        metadata={"dump": False},
+        description="Optional edge weight/attribute configuration (direct fields and vertex-based weights).",
     )
 
-    relation_field: str | None = None
-    relation_from_key: bool = False
+    _relation_dbname: str | None = PrivateAttr(default=None)
 
-    # used to create extra utility collections between the same type of vertices (A, B)
-    purpose: str | None = None
-
-    match_source: str | None = None
-    match_target: str | None = None
-    exclude_source: str | None = None
-    exclude_target: str | None = None
-    match: str | None = None
-
-    type: EdgeType = EdgeType.DIRECT
-
-    aux: bool = False  # aux=True edges are init in the db but not considered by graflo
-
-    by: str | None = None
-    graph_name: str | None = None  # ArangoDB-specific: graph name (set in finish_init)
-    database_name: str | None = (
-        None  # ArangoDB-specific: edge collection name (set in finish_init)
+    purpose: str | None = PydanticField(
+        default=None,
+        description="Optional purpose label for utility edge collections between same vertex types.",
     )
 
-    def __post_init__(self):
-        """Initialize the edge after dataclass initialization."""
+    type: EdgeType = PydanticField(
+        default=EdgeType.DIRECT,
+        description="Edge type: DIRECT (created during ingestion) or INDIRECT (pre-existing collection).",
+    )
 
-        self._source: str | None = None
-        self._target: str | None = None
+    aux: bool = PydanticField(
+        default=False,
+        description="If True, edge is initialized in DB but not used by graflo ingestion.",
+    )
+
+    by: str | None = PydanticField(
+        default=None,
+        description="For INDIRECT edges: vertex type name used to define the edge (set to dbname in finish_init).",
+    )
+    graph_name: str | None = PydanticField(
+        default=None,
+        description="ArangoDB graph name (set in finish_init).",
+    )
+    database_name: str | None = PydanticField(
+        default=None,
+        description="ArangoDB edge collection name (set in finish_init).",
+    )
+
+    _source: str | None = PrivateAttr(default=None)
+    _target: str | None = PrivateAttr(default=None)
 
     @property
     def relation_dbname(self) -> str | None:
@@ -362,9 +366,10 @@ class Edge(BaseDataclass):
         """
         return self.source, self.target, self.purpose
 
+    # update() inherited from ConfigBaseModel; docstring: same as base, in-place merge.
 
-@dataclasses.dataclass
-class EdgeConfig(BaseDataclass):
+
+class EdgeConfig(ConfigBaseModel):
     """Configuration for managing collections of edges.
 
     This class manages a collection of edges, providing methods for accessing
@@ -374,14 +379,17 @@ class EdgeConfig(BaseDataclass):
         edges: List of edge configurations
     """
 
-    edges: list[Edge] = dataclasses.field(default_factory=list)
+    edges: list[Edge] = PydanticField(
+        default_factory=list,
+        description="List of edge definitions (source, target, weights, indexes, relation, etc.).",
+    )
+    _edges_map: dict[EdgeId, Edge] = PrivateAttr()
 
-    def __post_init__(self):
-        """Initialize the edge configuration.
-
-        Creates internal mapping of edge IDs to edge configurations.
-        """
-        self._edges_map: dict[EdgeId, Edge] = {e.edge_id: e for e in self.edges}
+    @model_validator(mode="after")
+    def _build_edges_map(self) -> EdgeConfig:
+        """Build internal mapping of edge IDs to edge configurations."""
+        object.__setattr__(self, "_edges_map", {e.edge_id: e for e in self.edges})
+        return self
 
     def finish_init(self, vc: VertexConfig):
         """Complete initialization of all edges with vertex configuration.
@@ -456,12 +464,3 @@ class EdgeConfig(BaseDataclass):
             set[str]: Set of vertex names
         """
         return {e.source for e in self.edges} | {e.target for e in self.edges}
-
-    # def __getitem__(self, key: EdgeId):
-    #     if key in self._reset_edges():
-    #         return self._edges_map[key]
-    #     else:
-    #         raise KeyError(f"Vertex {key} absent")
-    #
-    # def __setitem__(self, key: EdgeId, value: Edge):
-    #     self._edges_map[key] = value

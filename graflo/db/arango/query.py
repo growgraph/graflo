@@ -21,8 +21,8 @@ from os.path import join
 
 from arango import ArangoClient
 
-from graflo.filter.onto import Expression
-from graflo.onto import DBType
+from graflo.filter.onto import FilterExpression
+from graflo.onto import ExpressionFlavor
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +129,7 @@ def fetch_fields_query(
     docs,
     match_keys,
     keep_keys,
-    filters: list | dict | None = None,
+    filters: list | dict | FilterExpression | None = None,
 ):
     """Generate and execute a field-fetching AQL query.
 
@@ -165,8 +165,12 @@ def fetch_fields_query(
     keep_clause = f"KEEP(_x, {list(keep_keys)})" if keep_keys is not None else "_x"
 
     if filters is not None:
-        ff = Expression.from_dict(filters)
-        extrac_filter_clause = f" && {ff(doc_name='_cdoc', kind=DBType.ARANGO)}"
+        ff = (
+            filters
+            if isinstance(filters, FilterExpression)
+            else FilterExpression.from_dict(filters)
+        )
+        extrac_filter_clause = f" && {ff(doc_name='_cdoc', kind=ExpressionFlavor.AQL)}"
     else:
         extrac_filter_clause = ""
 

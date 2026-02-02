@@ -16,7 +16,7 @@ Example:
 import logging
 
 from graflo.architecture.edge import Edge
-from graflo.filter.onto import Clause, Expression
+from graflo.filter.onto import FilterExpression
 from graflo.onto import ExpressionFlavor
 
 logger = logging.getLogger(__name__)
@@ -42,14 +42,17 @@ def define_extra_edges(g: Edge):
         >>> # Generates query to create user->post edges through comments
     """
     ucol, vcol, wcol = g.source, g.target, g.by
-    weight = g.weight_dict
+    weight = g.weights
     s = f"""FOR w IN {wcol}
         LET uset = (FOR u IN 1..1 INBOUND w {ucol}_{wcol}_edges RETURN u)
         LET vset = (FOR v IN 1..1 INBOUND w {vcol}_{wcol}_edges RETURN v)
         FOR u in uset
         FOR v in vset
     """
-    s_ins_ = ", ".join([f"{v}: w.{k}" for k, v in weight.items()])
+    if weight is None:
+        raise ValueError("WeightConfig is required for edge list rendering")
+    # WeightConfig.direct is list[Field]; AQL copies each field from w to the edge
+    s_ins_ = ", ".join([f"{f.name}: w.{f.name}" for f in weight.direct])
     s_ins_ = f"_from: u._id, _to: v._id, {s_ins_}"
     s_ins = f"          INSERT {{{s_ins_}}} "
     s_last = f"IN {ucol}_{vcol}_edges"
@@ -57,7 +60,9 @@ def define_extra_edges(g: Edge):
     return query0
 
 
-def render_filters(filters: None | list | dict | Clause = None, doc_name="d") -> str:
+def render_filters(
+    filters: None | list | dict | FilterExpression = None, doc_name="d"
+) -> str:
     """Convert filter expressions to AQL filter clauses.
 
     This function converts filter expressions into AQL filter clauses that
@@ -76,11 +81,11 @@ def render_filters(filters: None | list | dict | Clause = None, doc_name="d") ->
         >>> # Returns: "FILTER user.field == 'value' && user.age > 18"
     """
     if filters is not None:
-        if not isinstance(filters, Clause):
-            ff = Expression.from_dict(filters)
+        if not isinstance(filters, FilterExpression):
+            ff = FilterExpression.from_dict(filters)
         else:
             ff = filters
-        literal_condition = ff(doc_name=doc_name, kind=ExpressionFlavor.ARANGO)
+        literal_condition = ff(doc_name=doc_name, kind=ExpressionFlavor.AQL)
         filter_clause = f"FILTER {literal_condition}"
     else:
         filter_clause = ""

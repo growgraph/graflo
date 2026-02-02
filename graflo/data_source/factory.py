@@ -226,7 +226,6 @@ class DataSourceFactory:
                 pagination = None
                 if pagination_dict is not None:
                     if isinstance(pagination_dict, dict):
-                        # Manually construct PaginationConfig to avoid dataclass_wizard issues
                         pagination = PaginationConfig(**pagination_dict)
                     else:
                         pagination = pagination_dict
@@ -243,7 +242,6 @@ class DataSourceFactory:
                 pagination = None
                 if pagination_dict is not None:
                     if isinstance(pagination_dict, dict):
-                        # Manually construct PaginationConfig to avoid dataclass_wizard issues
                         pagination = PaginationConfig(**pagination_dict)
                     else:
                         pagination = pagination_dict

@@ -20,13 +20,20 @@ class ResourceMapper:
     """
 
     def create_patterns_from_postgres(
-        self, conn: PostgresConnection, schema_name: str | None = None
+        self,
+        conn: PostgresConnection,
+        schema_name: str | None = None,
+        datetime_columns: dict[str, str] | None = None,
     ) -> Patterns:
         """Create Patterns from PostgreSQL tables.
 
         Args:
             conn: PostgresConnection instance
             schema_name: Schema name to introspect
+            datetime_columns: Optional mapping of resource/table name to datetime
+                column name for date-range filtering (sets date_field on each
+                TablePattern). Used with IngestionParams.datetime_after /
+                datetime_before.
 
         Returns:
             Patterns: Patterns object with TablePattern instances for all tables
@@ -44,6 +51,8 @@ class ResourceMapper:
         config_key = "default"
         patterns.postgres_configs[(config_key, effective_schema)] = conn.config
 
+        date_cols = datetime_columns or {}
+
         # Add patterns for vertex tables
         for table_info in introspection_result.vertex_tables:
             table_name = table_info.name
@@ -51,6 +60,7 @@ class ResourceMapper:
                 table_name=table_name,
                 schema_name=effective_schema,
                 resource_name=table_name,
+                date_field=date_cols.get(table_name),
             )
             patterns.table_patterns[table_name] = table_pattern
             patterns.postgres_table_configs[table_name] = (
@@ -66,6 +76,7 @@ class ResourceMapper:
                 table_name=table_name,
                 schema_name=effective_schema,
                 resource_name=table_name,
+                date_field=date_cols.get(table_name),
             )
             patterns.table_patterns[table_name] = table_pattern
             patterns.postgres_table_configs[table_name] = (

@@ -27,66 +27,104 @@ Example:
     >>> resource = schema.fetch_resource("users")
 """
 
-import dataclasses
+from __future__ import annotations
+
 import logging
 from collections import Counter
+from typing import Any
+
+from pydantic import (
+    Field as PydanticField,
+    PrivateAttr,
+    field_validator,
+    model_validator,
+)
 
 from graflo.architecture.actor import EdgeActor, TransformActor, VertexActor
+from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.edge import EdgeConfig
 from graflo.architecture.resource import Resource
 from graflo.architecture.transform import ProtoTransform
 from graflo.architecture.vertex import VertexConfig
-from graflo.onto import BaseDataclass
 
 logger = logging.getLogger(__name__)
 
 
-@dataclasses.dataclass
-class SchemaMetadata(BaseDataclass):
+class SchemaMetadata(ConfigBaseModel):
     """Schema metadata and versioning information.
 
-    This class holds metadata about the schema, including its name and version.
-    It's used for schema identification and versioning.
-
-    Attributes:
-        name: Name of the schema
-        version: Optional version string of the schema
+    Holds metadata about the schema, including its name and version.
+    Used for schema identification and versioning. Suitable for LLM-generated
+    schema constituents.
     """
 
-    name: str
-    version: str | None = None
+    name: str = PydanticField(
+        ...,
+        description="Name of the schema (e.g. graph or database identifier).",
+    )
+    version: str | None = PydanticField(
+        default=None,
+        description="Optional version string of the schema (e.g. semantic version).",
+    )
 
 
-@dataclasses.dataclass
-class Schema(BaseDataclass):
+class Schema(ConfigBaseModel):
     """Graph database schema configuration.
 
-    This class represents the complete schema configuration for a graph database.
-    It manages resources, vertex configurations, edge configurations, and transforms.
-
-    Attributes:
-        general: Schema metadata and versioning information
-        vertex_config: Configuration for vertex collections
-        edge_config: Configuration for edge collections
-        resources: List of resource definitions
-        transforms: Dictionary of available transforms
-        _resources: Internal mapping of resource names to resources
+    Represents the complete schema configuration for a graph database.
+    Manages resources, vertex configurations, edge configurations, and transforms.
+    Suitable for LLM-generated schema constituents.
     """
 
-    general: SchemaMetadata
-    vertex_config: VertexConfig
-    edge_config: EdgeConfig
-    resources: list[Resource]
-    transforms: dict[str, ProtoTransform] = dataclasses.field(default_factory=dict)
+    general: SchemaMetadata = PydanticField(
+        ...,
+        description="Schema metadata and versioning (name, version).",
+    )
+    vertex_config: VertexConfig = PydanticField(
+        ...,
+        description="Configuration for vertex collections (vertices, fields, indexes).",
+    )
+    edge_config: EdgeConfig = PydanticField(
+        ...,
+        description="Configuration for edge collections (edges, weights).",
+    )
+    resources: list[Resource] = PydanticField(
+        default_factory=list,
+        description="List of resource definitions (data pipelines mapping to vertices/edges).",
+    )
+    transforms: dict[str, ProtoTransform] = PydanticField(
+        default_factory=dict,
+        description="Dictionary of named transforms available to resources (name -> ProtoTransform).",
+    )
 
-    def __post_init__(self):
-        """Initialize the schema after dataclass initialization.
+    _resources: dict[str, Resource] = PrivateAttr()
 
-        Sets up transforms, initializes edge configuration, and validates
-        resource names for uniqueness.
+    @field_validator("resources", mode="before")
+    @classmethod
+    def _coerce_resources_list(cls, v: Any) -> Any:
+        """Accept empty dict as empty list for backward compatibility."""
+        if isinstance(v, dict) and len(v) == 0:
+            return []
+        return v
+
+    @model_validator(mode="after")
+    def _init_schema(self) -> Schema:
+        """Set transform names, finish edge/resource init, and build resource name map."""
+        self.finish_init()
+        return self
+
+    def finish_init(self) -> None:
+        """Complete schema initialization after construction or resource updates.
+
+        Sets transform names, initializes edge configuration with vertex config,
+        calls finish_init on each resource, validates unique resource names,
+        and builds the internal _resources name-to-Resource mapping.
+
+        Call this after assigning to resources (e.g. when inferring resources
+        from a database) so that _resources and resource pipelines are correct.
 
         Raises:
-            ValueError: If duplicate resource names are found
+            ValueError: If duplicate resource names are found.
         """
         for name, t in self.transforms.items():
             t.name = name
@@ -105,9 +143,7 @@ class Schema(BaseDataclass):
         for k, v in c.items():
             if v > 1:
                 raise ValueError(f"resource name {k} used {v} times")
-        self._resources: dict[str, Resource] = {}
-        for r in self.resources:
-            self._resources[r.name] = r
+        object.__setattr__(self, "_resources", {r.name: r for r in self.resources})
 
     def fetch_resource(self, name: str | None = None) -> Resource:
         """Fetch a resource by name or get the first available resource.

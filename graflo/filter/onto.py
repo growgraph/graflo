@@ -7,13 +7,10 @@ It includes classes for logical operators, comparison operators, and filter clau
 Key Components:
     - LogicalOperator: Enum for logical operations (AND, OR, NOT, IMPLICATION)
     - ComparisonOperator: Enum for comparison operations (==, !=, >, <, etc.)
-    - AbsClause: Abstract base class for filter clauses
-    - LeafClause: Concrete clause for field comparisons
-    - Clause: Composite clause combining multiple sub-clauses
-    - Expression: Factory class for creating filter expressions from dictionaries
+    - FilterExpression: Unified filter expression (discriminated: kind="leaf" or kind="composite")
 
 Example:
-    >>> expr = Expression.from_dict({
+    >>> expr = FilterExpression.from_dict({
     ...     "AND": [
     ...         {"field": "age", "cmp_operator": ">=", "value": 18},
     ...         {"field": "status", "cmp_operator": "==", "value": "active"}
@@ -22,13 +19,15 @@ Example:
     >>> # Converts to: "age >= 18 AND status == 'active'"
 """
 
-import dataclasses
-import logging
-from abc import ABCMeta, abstractmethod
-from types import MappingProxyType
-from typing import Any
+from __future__ import annotations
 
-from graflo.onto import BaseDataclass, BaseEnum, ExpressionFlavor
+import logging
+from types import MappingProxyType
+from typing import Any, Literal, Self
+
+from graflo.architecture.base import ConfigBaseModel
+from graflo.onto import BaseEnum, ExpressionFlavor
+from pydantic import Field, field_validator, model_validator
 
 logger = logging.getLogger(__name__)
 
@@ -93,108 +92,180 @@ class ComparisonOperator(BaseEnum):
     IN = "IN"
 
 
-@dataclasses.dataclass
-class AbsClause(BaseDataclass, metaclass=ABCMeta):
-    """Abstract base class for filter clauses.
+class FilterExpression(ConfigBaseModel):
+    """Unified filter expression (discriminated: leaf or composite).
 
-    This class defines the interface for all filter clauses, requiring
-    implementation of the __call__ method to evaluate or render the clause.
+    - kind="leaf": single field comparison (field, cmp_operator, value, optional unary_op).
+    - kind="composite": logical combination (operator AND/OR/NOT/IF_THEN, deps).
     """
 
-    @abstractmethod
-    def __call__(
-        self,
-        doc_name,
-        kind: ExpressionFlavor = ExpressionFlavor.ARANGO,
-        **kwargs,
-    ):
-        """Evaluate or render the clause.
+    kind: Literal["leaf", "composite"]
 
-        Args:
-            doc_name: Name of the document variable in the query
-            kind: Target expression flavor (ARANGO, NEO4J, PYTHON)
-            **kwargs: Additional arguments for evaluation
-
-        Returns:
-            str: Rendered clause in the target language
-        """
-        pass
-
-
-@dataclasses.dataclass
-class LeafClause(AbsClause):
-    """Concrete clause for field comparisons.
-
-    This class represents a single field comparison operation, such as
-    "field >= value" or "field IN [values]".
-
-    Attributes:
-        cmp_operator: Comparison operator to use
-        value: Value(s) to compare against
-        field: Field name to compare
-        operator: Optional operator to apply before comparison
-    """
-
+    # Leaf fields (used when kind="leaf")
     cmp_operator: ComparisonOperator | None = None
-    value: list = dataclasses.field(default_factory=list)
+    value: list[Any] = Field(default_factory=list)
     field: str | None = None
-    operator: str | None = None
+    unary_op: str | None = (
+        None  # optional operator before comparison (YAML key: "operator")
+    )
 
-    def __post_init__(self):
-        """Convert single value to list if necessary."""
-        if not isinstance(self.value, list):
-            self.value = [self.value]
+    # Composite fields (used when kind="composite")
+    operator: LogicalOperator | None = None  # AND, OR, NOT, IF_THEN
+    deps: list[FilterExpression] = Field(default_factory=list)
+
+    @field_validator("value", mode="before")
+    @classmethod
+    def value_to_list(cls, v: list[Any] | Any) -> list[Any]:
+        """Convert single value to list if necessary. Explicit None becomes [None] for null comparison."""
+        if v is None:
+            return [None]
+        if isinstance(v, list):
+            return v
+        return [v]
+
+    @model_validator(mode="before")
+    @classmethod
+    def leaf_operator_to_unary_op(cls, data: Any) -> Any:
+        """Map leaf 'operator' (YAML/kwargs) to unary_op; infer kind=leaf when missing."""
+        if not isinstance(data, dict):
+            return data
+        # Only map operator -> unary_op for leaf clauses (never for composite)
+        if data.get("kind") == "composite":
+            return data
+        if "operator" in data and isinstance(data["operator"], str):
+            data = dict(data)
+            data["unary_op"] = data.pop("operator")
+            if data.get("kind") is None:
+                data["kind"] = "leaf"
+        return data
+
+    @model_validator(mode="after")
+    def check_discriminated_shape(self) -> FilterExpression:
+        """Enforce exactly one shape per kind."""
+        if self.kind == "leaf":
+            if self.operator is not None or self.deps:
+                raise ValueError("leaf expression must not have operator or deps")
+        else:
+            if self.operator is None:
+                raise ValueError("composite expression must have operator")
+        return self
+
+    @field_validator("deps", mode="before")
+    @classmethod
+    def parse_deps(cls, v: list[Any]) -> list[Any]:
+        """Parse dict/list items into FilterExpression instances."""
+        if not isinstance(v, list):
+            return v
+        result = []
+        for item in v:
+            if isinstance(item, (dict, list)):
+                result.append(FilterExpression.from_dict(item))
+            else:
+                result.append(item)
+        return result
+
+    @classmethod
+    def from_list(cls, current: list[Any]) -> FilterExpression:
+        """Build a leaf expression from list form [cmp_operator, value, field?, unary_op?]."""
+        cmp_operator = current[0]
+        value = current[1]
+        field = current[2] if len(current) > 2 else None
+        unary_op = current[3] if len(current) > 3 else None
+        return cls(
+            kind="leaf",
+            cmp_operator=cmp_operator,
+            value=value,
+            field=field,
+            unary_op=unary_op,
+        )
+
+    @classmethod
+    def from_dict(cls, current: dict[str, Any] | list[Any]) -> Self:  # type: ignore[override]
+        """Create a filter expression from a dictionary or list.
+
+        Returns FilterExpression (leaf or composite). LSP-compliant: return type is Self.
+        """
+        if isinstance(current, list):
+            if current[0] in ComparisonOperator:
+                return cls.from_list(current)  # type: ignore[return-value]
+            elif current[0] in LogicalOperator:
+                return cls(kind="composite", operator=current[0], deps=current[1])
+        elif isinstance(current, dict):
+            k = list(current.keys())[0]
+            if k in LogicalOperator:
+                deps = [cls.from_dict(v) for v in current[k]]
+                return cls(kind="composite", operator=LogicalOperator(k), deps=deps)
+            else:
+                # Leaf from dict: map YAML "operator" -> unary_op
+                unary_op = current.get("operator")
+                return cls(
+                    kind="leaf",
+                    cmp_operator=current.get("cmp_operator"),
+                    value=current.get("value", []),
+                    field=current.get("field"),
+                    unary_op=unary_op,
+                )
+        raise ValueError(f"expected dict or list, got {type(current)}")
 
     def __call__(
         self,
         doc_name="doc",
-        kind: ExpressionFlavor = ExpressionFlavor.ARANGO,
+        kind: ExpressionFlavor = ExpressionFlavor.AQL,
         **kwargs,
-    ):
-        """Render the leaf clause in the target language.
+    ) -> str | bool:
+        """Render or evaluate the expression in the target language."""
+        if self.kind == "leaf":
+            return self._call_leaf(doc_name=doc_name, kind=kind, **kwargs)
+        return self._call_composite(doc_name=doc_name, kind=kind, **kwargs)
 
-        Args:
-            doc_name: Name of the document variable
-            kind: Target expression flavor
-            **kwargs: Additional arguments (may include field_types for REST++)
-
-        Returns:
-            str: Rendered clause
-
-        Raises:
-            ValueError: If kind is not implemented
-        """
+    def _call_leaf(
+        self,
+        doc_name="doc",
+        kind: ExpressionFlavor = ExpressionFlavor.AQL,
+        **kwargs,
+    ) -> str | bool:
         if not self.value:
             logger.warning(f"for {self} value is not set : {self.value}")
-        if kind == ExpressionFlavor.ARANGO:
+        if kind == ExpressionFlavor.AQL:
             assert self.cmp_operator is not None
             return self._cast_arango(doc_name)
-        elif kind == ExpressionFlavor.NEO4J:
+        elif kind == ExpressionFlavor.CYPHER:
             assert self.cmp_operator is not None
             return self._cast_cypher(doc_name)
-        elif kind == ExpressionFlavor.TIGERGRAPH:
+        elif kind == ExpressionFlavor.GSQL:
             assert self.cmp_operator is not None
-            # Check if this is for REST++ API (no doc_name prefix)
             if doc_name == "":
                 field_types = kwargs.get("field_types")
                 return self._cast_restpp(field_types=field_types)
-            else:
-                return self._cast_tigergraph(doc_name)
+            return self._cast_tigergraph(doc_name)
+        elif kind == ExpressionFlavor.SQL:
+            assert self.cmp_operator is not None
+            return self._cast_sql()
         elif kind == ExpressionFlavor.PYTHON:
             return self._cast_python(**kwargs)
-        else:
-            raise ValueError(f"kind {kind} not implemented")
+        raise ValueError(f"kind {kind} not implemented")
 
-    def _cast_value(self):
-        """Format the comparison value for query rendering.
+    def _call_composite(
+        self,
+        doc_name="doc",
+        kind: ExpressionFlavor = ExpressionFlavor.AQL,
+        **kwargs,
+    ) -> str | bool:
+        if kind in (
+            ExpressionFlavor.AQL,
+            ExpressionFlavor.CYPHER,
+            ExpressionFlavor.GSQL,
+            ExpressionFlavor.SQL,
+        ):
+            return self._cast_generic(doc_name=doc_name, kind=kind)
+        elif kind == ExpressionFlavor.PYTHON:
+            return self._cast_python_composite(kind=kind, **kwargs)
+        raise ValueError(f"kind {kind} not implemented")
 
-        Returns:
-            str: Formatted value string
-        """
+    def _cast_value(self) -> str:
         value = f"{self.value[0]}" if len(self.value) == 1 else f"{self.value}"
         if len(self.value) == 1:
             if isinstance(self.value[0], str):
-                # Escape backslashes first, then double quotes
                 escaped = self.value[0].replace("\\", "\\\\").replace('"', '\\"')
                 value = f'"{escaped}"'
             elif self.value[0] is None:
@@ -203,87 +274,70 @@ class LeafClause(AbsClause):
                 value = f"{self.value[0]}"
         return value
 
-    def _cast_arango(self, doc_name):
-        """Render the clause in AQL format.
-
-        Args:
-            doc_name: Document variable name
-
-        Returns:
-            str: AQL clause
-        """
+    def _cast_arango(self, doc_name: str) -> str:
         const = self._cast_value()
-
         lemma = f"{self.cmp_operator} {const}"
-        if self.operator is not None:
-            lemma = f"{self.operator} {lemma}"
-
+        if self.unary_op is not None:
+            lemma = f"{self.unary_op} {lemma}"
         if self.field is not None:
             lemma = f'{doc_name}["{self.field}"] {lemma}'
         return lemma
 
-    def _cast_cypher(self, doc_name):
-        """Render the clause in Cypher format.
-
-        Args:
-            doc_name: Document variable name
-
-        Returns:
-            str: Cypher clause
-        """
+    def _cast_cypher(self, doc_name: str) -> str:
         const = self._cast_value()
-        if self.cmp_operator == ComparisonOperator.EQ:
-            cmp_operator = "="
-        else:
-            cmp_operator = self.cmp_operator
-        lemma = f"{cmp_operator} {const}"
-        if self.operator is not None:
-            lemma = f"{self.operator} {lemma}"
-
+        cmp_op = (
+            "=" if self.cmp_operator == ComparisonOperator.EQ else self.cmp_operator
+        )
+        lemma = f"{cmp_op} {const}"
+        if self.unary_op is not None:
+            lemma = f"{self.unary_op} {lemma}"
         if self.field is not None:
             lemma = f"{doc_name}.{self.field} {lemma}"
         return lemma
 
-    def _cast_tigergraph(self, doc_name):
-        """Render the clause in GSQL format.
-
-        Args:
-            doc_name: Document variable name (typically "v" for vertex)
-
-        Returns:
-            str: GSQL clause
-        """
+    def _cast_tigergraph(self, doc_name: str) -> str:
         const = self._cast_value()
-        # GSQL supports both == and =, but == is more common
-        if self.cmp_operator == ComparisonOperator.EQ:
-            cmp_operator = "=="
-        else:
-            cmp_operator = self.cmp_operator
-        lemma = f"{cmp_operator} {const}"
-        if self.operator is not None:
-            lemma = f"{self.operator} {lemma}"
-
+        cmp_op = (
+            "==" if self.cmp_operator == ComparisonOperator.EQ else self.cmp_operator
+        )
+        lemma = f"{cmp_op} {const}"
+        if self.unary_op is not None:
+            lemma = f"{self.unary_op} {lemma}"
         if self.field is not None:
             lemma = f"{doc_name}.{self.field} {lemma}"
         return lemma
 
-    def _cast_restpp(self, field_types: dict[str, Any] | None = None):
-        """Render the clause in REST++ filter format.
-
-        REST++ filter format: "field=value" or "field>value" etc.
-        Format: fieldoperatorvalue (no spaces, quotes for string values)
-        Example: "hindex=10" or "hindex>20" or 'name="John"'
-
-        Args:
-            field_types: Optional mapping of field names to FieldType enum values or type strings
-
-        Returns:
-            str: REST++ filter clause
-        """
+    def _cast_sql(self) -> str:
+        """Render leaf as SQL WHERE fragment: \"column\" op value (strings/dates single-quoted)."""
         if not self.field:
             return ""
+        if self.cmp_operator == ComparisonOperator.EQ:
+            op_str = "="
+        elif self.cmp_operator == ComparisonOperator.NEQ:
+            op_str = "!="
+        elif self.cmp_operator in (
+            ComparisonOperator.GT,
+            ComparisonOperator.LT,
+            ComparisonOperator.GE,
+            ComparisonOperator.LE,
+        ):
+            op_str = str(self.cmp_operator)
+        else:
+            op_str = str(self.cmp_operator)
+        value = self.value[0] if self.value else None
+        if value is None:
+            value_str = "null"
+        elif isinstance(value, (int, float)):
+            value_str = str(value)
+        else:
+            # Strings and ISO datetimes: single-quoted for SQL
+            value_str = str(value).replace("'", "''")
+            value_str = f"'{value_str}'"
+        return f'"{self.field}" {op_str} {value_str}'
 
-        # Map operator
+    def _cast_restpp(self, field_types: dict[str, Any] | None = None) -> str:
+        if not self.field:
+            return ""
         if self.cmp_operator == ComparisonOperator.EQ:
             op_str = "="
         elif self.cmp_operator == ComparisonOperator.NEQ:
@@ -298,230 +352,64 @@ class LeafClause(AbsClause):
             op_str = "<="
         else:
             op_str = str(self.cmp_operator)
-
-        # Format value for REST++ API
-        # Use field_types to determine if value should be quoted
-        # Default: if no explicit type information, treat as string (quote it)
         value = self.value[0] if self.value else None
         if value is None:
             value_str = "null"
         elif isinstance(value, (int, float)):
-            # Numeric values: pass as string without quotes
             value_str = str(value)
         elif isinstance(value, str):
-            # Check field type to determine if it's a string field
-            is_string_field = True  # Default: treat as string unless explicitly numeric
+            is_string_field = True
             if field_types and self.field in field_types:
                 field_type = field_types[self.field]
-                # Handle FieldType enum or string type
-                if hasattr(field_type, "value"):
-                    # It's a FieldType enum
-                    field_type_str = field_type.value
-                else:
-                    # It's a string
-                    field_type_str = str(field_type).upper()
-                # Check if it's explicitly a numeric type
-                numeric_types = ("INT", "UINT", "FLOAT", "DOUBLE")
-                if field_type_str in numeric_types:
-                    # Explicitly numeric type, don't quote
+                field_type_str = (
+                    field_type.value
+                    if hasattr(field_type, "value")
+                    else str(field_type).upper()
+                )
+                if field_type_str in ("INT", "UINT", "FLOAT", "DOUBLE"):
                     is_string_field = False
-                else:
-                    # Explicitly string type or other (STRING, VARCHAR, TEXT, DATETIME, BOOL, etc.)
-                    # Quote it
-                    is_string_field = True
-            # If no field_types info, default to treating as string (quote it)
-
-            if is_string_field:
-                value_str = f'"{value}"'
-            else:
-                # Numeric value (explicitly numeric type)
-                value_str = value
+            value_str = f'"{value}"' if is_string_field else str(value)
         else:
             value_str = str(value)
-
-        # REST++ format: fieldoperatorvalue (no spaces)
-        # Example: hindex=10, hindex>20, name="John"
         return f"{self.field}{op_str}{value_str}"
 
-    def _cast_python(self, **kwargs):
-        """Evaluate the clause in Python.
-
-        Args:
-            **kwargs: Additional arguments
-
-        Returns:
-            bool: Evaluation result
-        """
+    def _cast_python(self, **kwargs: Any) -> bool:
         if self.field is not None:
-            field = kwargs.pop(self.field, None)
-            if field is not None and self.operator is not None:
-                foo = getattr(field, self.operator)
+            field_val = kwargs.pop(self.field, None)
+            if field_val is not None and self.unary_op is not None:
+                foo = getattr(field_val, self.unary_op)
                 return foo(self.value[0])
         return False
 
-
-@dataclasses.dataclass
-class Clause(AbsClause):
-    """Composite clause combining multiple sub-clauses.
-
-    This class represents a logical combination of multiple filter clauses,
-    such as "clause1 AND clause2" or "NOT clause1".
-
-    Attributes:
-        operator: Logical operator to combine clauses
-        deps: List of dependent clauses
-    """
-
-    operator: LogicalOperator
-    deps: list[AbsClause]
-
-    def __call__(
-        self,
-        doc_name="doc",
-        kind: ExpressionFlavor = ExpressionFlavor.ARANGO,
-        **kwargs,
-    ):
-        """Render the composite clause in the target language.
-
-        Args:
-            doc_name: Document variable name
-            kind: Target expression flavor
-            **kwargs: Additional arguments
-
-        Returns:
-            str: Rendered clause
-
-        Raises:
-            ValueError: If operator and dependencies don't match
-        """
-        if kind in (
-            ExpressionFlavor.ARANGO,
-            ExpressionFlavor.NEO4J,
-            ExpressionFlavor.TIGERGRAPH,
-        ):
-            return self._cast_generic(doc_name=doc_name, kind=kind)
-        elif kind == ExpressionFlavor.PYTHON:
-            return self._cast_python(kind=kind, **kwargs)
-
-    def _cast_generic(self, doc_name, kind):
-        """Render the clause in a generic format.
-
-        Args:
-            doc_name: Document variable name
-            kind: Target expression flavor
-
-        Returns:
-            str: Rendered clause
-
-        Raises:
-            ValueError: If operator and dependencies don't match
-        """
+    def _cast_generic(self, doc_name: str, kind: ExpressionFlavor) -> str:
+        assert self.operator is not None
         if len(self.deps) == 1:
             if self.operator == LogicalOperator.NOT:
                 result = self.deps[0](kind=kind, doc_name=doc_name)
-                # REST++ format uses ! prefix, not "NOT " prefix
-                if doc_name == "" and kind == ExpressionFlavor.TIGERGRAPH:
+                if doc_name == "" and kind == ExpressionFlavor.GSQL:
                     return f"!{result}"
-                else:
-                    return f"{self.operator} {result}"
-            else:
-                raise ValueError(
-                    f" length of deps = {len(self.deps)} but operator is not"
-                    f" {LogicalOperator.NOT}"
-                )
-        else:
-            deps_str = [item(kind=kind, doc_name=doc_name) for item in self.deps]
-            # REST++ format uses && and || instead of AND and OR
-            if doc_name == "" and kind == ExpressionFlavor.TIGERGRAPH:
-                if self.operator == LogicalOperator.AND:
-                    return " && ".join(deps_str)
-                elif self.operator == LogicalOperator.OR:
-                    return " || ".join(deps_str)
-                else:
-                    return f" {self.operator} ".join(deps_str)
-            else:
-                return f" {self.operator} ".join(deps_str)
+                return f"{self.operator} {result}"
+            raise ValueError(
+                f" length of deps = {len(self.deps)} but operator is not {LogicalOperator.NOT}"
+            )
+        deps_str = [dep(kind=kind, doc_name=doc_name) for dep in self.deps]
+        # __call__ returns str | bool; join expects str
+        deps_str_cast: list[str] = [str(x) for x in deps_str]
+        if doc_name == "" and kind == ExpressionFlavor.GSQL:
+            if self.operator == LogicalOperator.AND:
+                return " && ".join(deps_str_cast)
+            if self.operator == LogicalOperator.OR:
+                return " || ".join(deps_str_cast)
+        return f" {self.operator} ".join(deps_str_cast)
 
-    def _cast_python(self, kind, **kwargs):
-        """Evaluate the clause in Python.
-
-        Args:
-            kind: Expression flavor
-            **kwargs: Additional arguments
-
-        Returns:
-            bool: Evaluation result
-
-        Raises:
-            ValueError: If operator and dependencies don't match
-        """
+    def _cast_python_composite(self, kind: ExpressionFlavor, **kwargs: Any) -> bool:
+        assert self.operator is not None
         if len(self.deps) == 1:
             if self.operator == LogicalOperator.NOT:
                 return not self.deps[0](kind=kind, **kwargs)
-            else:
-                raise ValueError(
-                    f" length of deps = {len(self.deps)} but operator is not"
-                    f" {LogicalOperator.NOT}"
-                )
-        else:
-            return OperatorMapping[self.operator](
-                [item(kind=kind, **kwargs) for item in self.deps]
+            raise ValueError(
+                f" length of deps = {len(self.deps)} but operator is not {LogicalOperator.NOT}"
             )
-
-
-@dataclasses.dataclass
-class Expression(AbsClause):
-    """Factory class for creating filter expressions.
-
-    This class provides methods to create filter expressions from dictionaries
-    and evaluate them in different languages.
-    """
-
-    @classmethod
-    def from_dict(cls, current):
-        """Create a filter expression from a dictionary.
-
-        Args:
-            current: Dictionary or list representing the filter expression
-
-        Returns:
-            AbsClause: Created filter expression
-
-        Example:
-            >>> expr = Expression.from_dict({
-            ...     "AND": [
-            ...         {"field": "age", "cmp_operator": ">=", "value": 18},
-            ...         {"field": "status", "cmp_operator": "==", "value": "active"}
-            ...     ]
-            ... })
-        """
-        if isinstance(current, list):
-            if current[0] in ComparisonOperator:
-                return LeafClause(*current)
-            elif current[0] in LogicalOperator:
-                return Clause(*current)
-        elif isinstance(current, dict):
-            k = list(current.keys())[0]
-            if k in LogicalOperator:
-                clauses = [cls.from_dict(v) for v in current[k]]
-                return Clause(operator=k, deps=clauses)
-            else:
-                return LeafClause(**current)
-
-    def __call__(
-        self,
-        doc_name="doc",
-        kind: ExpressionFlavor = ExpressionFlavor.ARANGO,
-        **kwargs,
-    ):
-        """Evaluate the expression in the target language.
-
-        Args:
-            doc_name: Document variable name
-            kind: Target expression flavor
-            **kwargs: Additional arguments
-
-        Returns:
-            str: Rendered expression
-        """
-        pass
+        return OperatorMapping[self.operator](
+            [dep(kind=kind, **kwargs) for dep in self.deps]
+        )

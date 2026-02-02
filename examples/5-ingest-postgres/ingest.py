@@ -107,18 +107,41 @@ logger.info(f"Inferred schema saved to {schema_output_file}")
 # Step 4: Create Patterns from PostgreSQL tables
 # This maps PostgreSQL tables to resource patterns that Caster can use
 # Connection is automatically managed inside create_patterns()
-patterns = engine.create_patterns(postgres_conf, schema_name="public")
+#
+# Optional: provide a datetime column per resource for date-range filtering.
+# Use with IngestionParams(datetime_after=..., datetime_before=...) to ingest
+# only rows where the column falls in [datetime_after, datetime_before).
+datetime_columns = {
+    "purchases": "purchase_date",
+    "users": "created_at",
+    "products": "created_at",
+    "follows": "created_at",
+}
+patterns = engine.create_patterns(
+    postgres_conf,
+    schema_name="public",
+    datetime_columns=datetime_columns,
+)
 
 # Step 4.5 & 5: Define schema and ingest data in one operation
 # This creates/initializes the database schema and then ingests data
 # Some databases don't require explicit schema definition, but this ensures proper initialization
 # Note: ingestion will create its own PostgreSQL connections per table internally
+#
+# Optional: ingest only rows in a date range (requires datetime_columns above or
+# IngestionParams(datetime_column="column_name") for a single default column).
+# ingestion_params = IngestionParams(
+#     clear_data=True,
+#     datetime_after="2020-01-01",
+#     datetime_before="2021-01-01",
+#     datetime_column="created_at",  # default if a pattern has no date_field
+# )
 engine.define_and_ingest(
     schema=schema,
     target_db_config=conn_conf,
     patterns=patterns,
-    ingestion_params=IngestionParams(clear_data=False),
-    recreate_schema=True,  # Drop existing schema and define new one before ingesting
+    ingestion_params=IngestionParams(clear_data=True),
+    recreate_schema=True,
 )
 
 print("\n" + "=" * 80)

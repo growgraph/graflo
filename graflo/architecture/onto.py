@@ -28,16 +28,15 @@ Example:
 
 from __future__ import annotations
 
-import dataclasses
 import logging
-from abc import ABCMeta
 from collections import defaultdict
 from typing import Any, TypeAlias
 
-from dataclass_wizard import JSONWizard, YAMLWizard
+from pydantic import ConfigDict, Field, model_validator
 
+from graflo.architecture.base import ConfigBaseModel
 from graflo.onto import DBType
-from graflo.onto import BaseDataclass, BaseEnum
+from graflo.onto import BaseEnum
 from graflo.util.transform import pick_unique_dict
 
 # type for vertex or edge name (index)
@@ -91,18 +90,26 @@ class EdgeType(BaseEnum):
     DIRECT = "direct"
 
 
-@dataclasses.dataclass
-class ABCFields(BaseDataclass, metaclass=ABCMeta):
-    """Abstract base class for entities that have fields.
+class ABCFields(ConfigBaseModel):
+    """Base model for entities that have fields.
 
     Attributes:
         name: Optional name of the entity
         fields: List of field names
     """
 
-    name: str | None = None
-    fields: list[str] = dataclasses.field(default_factory=list)
-    keep_vertex_name: bool = True
+    name: str | None = Field(
+        default=None,
+        description="Optional name of the entity (e.g. vertex name for composite field prefix).",
+    )
+    fields: list[str] = Field(
+        default_factory=list,
+        description="List of field names for this entity.",
+    )
+    keep_vertex_name: bool = Field(
+        default=True,
+        description="If True, composite field names use entity@field format; otherwise use field only.",
+    )
 
     def cfield(self, x: str) -> str:
         """Creates a composite field name by combining the entity name with a field name.
@@ -116,7 +123,6 @@ class ABCFields(BaseDataclass, metaclass=ABCMeta):
         return f"{self.name}@{x}" if self.keep_vertex_name else x
 
 
-@dataclasses.dataclass
 class Weight(ABCFields):
     """Defines weight configuration for edges.
 
@@ -125,12 +131,17 @@ class Weight(ABCFields):
         filter: Dictionary of filter conditions for weights
     """
 
-    map: dict = dataclasses.field(default_factory=dict)
-    filter: dict = dataclasses.field(default_factory=dict)
+    map: dict = Field(
+        default_factory=dict,
+        description="Mapping of field values to weight values for vertex-based edge attributes.",
+    )
+    filter: dict = Field(
+        default_factory=dict,
+        description="Filter conditions applied when resolving vertex-based weights.",
+    )
 
 
-@dataclasses.dataclass
-class Index(BaseDataclass):
+class Index(ConfigBaseModel):
     """Configuration for database indexes.
 
     Attributes:
@@ -143,13 +154,34 @@ class Index(BaseDataclass):
         exclude_edge_endpoints: Whether to exclude edge endpoints from index
     """
 
-    name: str | None = None
-    fields: list[str] = dataclasses.field(default_factory=list)
-    unique: bool = True
-    type: IndexType = IndexType.PERSISTENT
-    deduplicate: bool = True
-    sparse: bool = False
-    exclude_edge_endpoints: bool = False
+    name: str | None = Field(
+        default=None,
+        description="Optional index name. For edges, can reference a vertex name for composite fields.",
+    )
+    fields: list[str] = Field(
+        default_factory=list,
+        description="List of field names included in this index.",
+    )
+    unique: bool = Field(
+        default=True,
+        description="If True, index enforces uniqueness on the field combination.",
+    )
+    type: IndexType = Field(
+        default=IndexType.PERSISTENT,
+        description="Index type (PERSISTENT, HASH, SKIPLIST, FULLTEXT).",
+    )
+    deduplicate: bool = Field(
+        default=True,
+        description="Whether to deduplicate index entries (e.g. ArangoDB).",
+    )
+    sparse: bool = Field(
+        default=False,
+        description="If True, create a sparse index (exclude null/missing values).",
+    )
+    exclude_edge_endpoints: bool = Field(
+        default=False,
+        description="If True, do not add _from/_to to edge index (e.g. ArangoDB).",
+    )
 
     def __iter__(self):
         """Iterate over the indexed fields."""
@@ -167,12 +199,10 @@ class Index(BaseDataclass):
         Raises:
             ValueError: If db_type is not supported
         """
-        r = self.to_dict()
+        r = dict(self.to_dict())
         if db_type == DBType.ARANGO:
-            _ = r.pop("name")
-            _ = r.pop("exclude_edge_endpoints")
-        else:
-            pass
+            r.pop("name", None)
+            r.pop("exclude_edge_endpoints", None)
         return r
 
 
@@ -190,8 +220,7 @@ class ItemsView:
             yield key, self._dictlike.edges[key]
 
 
-@dataclasses.dataclass
-class GraphContainer(BaseDataclass):
+class GraphContainer(ConfigBaseModel):
     """Container for graph data including vertices and edges.
 
     Attributes:
@@ -200,12 +229,11 @@ class GraphContainer(BaseDataclass):
         linear: List of default dictionaries containing linear data
     """
 
-    vertices: dict[str, list]
-    edges: dict[tuple[str, str, str | None], list]
-    linear: list[defaultdict[str | tuple[str, str, str | None], list[Any]]]
-
-    def __post_init__(self):
-        pass
+    vertices: dict[str, list] = Field(default_factory=dict)
+    edges: dict[tuple[str, str, str | None], list] = Field(default_factory=dict)
+    linear: list[defaultdict[str | tuple[str, str, str | None], list[Any]]] = Field(
+        default_factory=list
+    )
 
     def items(self):
         """Get an ItemsView of the container's contents."""
@@ -293,8 +321,7 @@ def dd_factory() -> defaultdict[GraphEntity, list]:
     return defaultdict(list)
 
 
-@dataclasses.dataclass(kw_only=True)
-class VertexRep(BaseDataclass):
+class VertexRep(ConfigBaseModel):
     """Context for graph transformation actions.
 
     Attributes:
@@ -302,21 +329,40 @@ class VertexRep(BaseDataclass):
         ctx: context (for edge definition upstream
     """
 
+    model_config = ConfigDict(kw_only=True)  # type: ignore[assignment]
+
     vertex: dict
     ctx: dict
 
 
-@dataclasses.dataclass(frozen=True, eq=True)
-class LocationIndex(JSONWizard, YAMLWizard):
-    path: tuple[str | int | None, ...] = dataclasses.field(default_factory=tuple)
+class LocationIndex(ConfigBaseModel):
+    """Immutable location index for nested graph traversal."""
+
+    model_config = ConfigDict(frozen=True)
+
+    path: tuple[str | int | None, ...] = Field(default_factory=tuple)
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_tuple(cls, data: Any) -> Any:
+        """Accept a single tuple as positional path (e.g. LocationIndex((0,)))."""
+        if isinstance(data, tuple):
+            return {"path": data}
+        return data
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Allow LocationIndex((0,)) or LocationIndex(path=(0,))."""
+        if args and len(args) == 1 and isinstance(args[0], tuple) and not kwargs:
+            kwargs = {"path": args[0]}
+        super().__init__(**kwargs)
 
     def extend(self, extension: tuple[str | int | None, ...]) -> LocationIndex:
-        return LocationIndex((*self.path, *extension))
+        return LocationIndex(path=(*self.path, *extension))
 
-    def depth(self):
+    def depth(self) -> int:
         return len(self.path)
 
-    def congruence_measure(self, other: LocationIndex):
+    def congruence_measure(self, other: LocationIndex) -> int:
         neq_position = 0
         for step_a, step_b in zip(self.path, other.path):
             if step_a != step_b:
@@ -331,44 +377,47 @@ class LocationIndex(JSONWizard, YAMLWizard):
             if t.depth() >= self.depth() and t.path[: self.depth()] == self.path
         ]
 
-    def __lt__(self, other: LocationIndex):
+    def __lt__(self, other: LocationIndex) -> bool:
         return len(self.path) < len(other.path)
 
-    def __contains__(self, item):
+    def __contains__(self, item: object) -> bool:
         return item in self.path
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.path)
 
     def __iter__(self):
         return iter(self.path)
 
-    def __getitem__(self, item):
+    def __getitem__(self, item: int | slice):
         return self.path[item]
 
 
-@dataclasses.dataclass(kw_only=True)
-class ActionContext(BaseDataclass):
+def _default_dict_list() -> defaultdict[GraphEntity, list]:
+    return defaultdict(list)
+
+
+def _default_dict_transforms() -> defaultdict[LocationIndex, list[dict]]:
+    return defaultdict(list)
+
+
+class ActionContext(ConfigBaseModel):
     """Context for graph transformation actions.
 
     Attributes:
-        acc_vertex: Local accumulation of vertices
-        acc_global: Global accumulation of graph entities
-        buffer_vertex: Buffer for vertex data
-        buffer_transforms: Buffer for transforms data
+        acc_vertex: Local accumulation of vertices (defaultdict[str, defaultdict[LocationIndex, list]])
+        acc_global: Global accumulation of graph entities (defaultdict[GraphEntity, list])
+        buffer_vertex: Buffer for vertex data (defaultdict[GraphEntity, list])
+        buffer_transforms: Buffer for transforms data (defaultdict[LocationIndex, list[dict]])
         target_vertices: Set of target vertex names indicating user intention
     """
 
-    acc_vertex: defaultdict[str, defaultdict[LocationIndex, list]] = dataclasses.field(
-        default_factory=outer_factory
-    )
-    acc_global: defaultdict[GraphEntity, list] = dataclasses.field(
-        default_factory=dd_factory
-    )
-    buffer_vertex: defaultdict[GraphEntity, list] = dataclasses.field(
-        default_factory=lambda: defaultdict(list)
-    )
-    buffer_transforms: defaultdict[LocationIndex, list[dict]] = dataclasses.field(
-        default_factory=lambda: defaultdict(list)
-    )
-    target_vertices: set[str] = dataclasses.field(default_factory=set)
+    model_config = ConfigDict(kw_only=True)  # type: ignore[assignment]
+
+    # Pydantic cannot schema nested defaultdict with custom key types (e.g. LocationIndex),
+    # so we use Any; runtime type is as documented in Attributes
+    acc_vertex: Any = Field(default_factory=outer_factory)
+    acc_global: Any = Field(default_factory=dd_factory)
+    buffer_vertex: Any = Field(default_factory=_default_dict_list)
+    buffer_transforms: Any = Field(default_factory=_default_dict_transforms)
+    target_vertices: set[str] = Field(default_factory=set)

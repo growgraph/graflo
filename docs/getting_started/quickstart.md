@@ -105,7 +105,7 @@ engine.define_and_ingest(
 # )
 ```
 
-Here `schema` defines the graph and the mapping the sources to vertices and edges (refer to [Schema](../concepts/index.md#schema) for details on schema and its components).
+Here `schema` defines the graph and the mapping of sources to vertices and edges. See [Creating a Schema](creating_schema.md) for how to define `vertex_config`, `edge_config`, and **resources**; see [Concepts — Schema](../concepts/index.md#schema) for a high-level overview.
 
 The `Patterns` class maps resource names (from `Schema`) to their physical data sources:
 - **FilePattern**: For file-based resources with `regex` for matching filenames and `sub_path` for the directory to search
@@ -162,6 +162,8 @@ arango_config = ArangoConfig.from_docker_env()  # Target graph database
 engine = GraphEngine()
 ingestion_params = IngestionParams(
     recreate_schema=False,  # Set to True to drop and redefine schema (script halts if schema exists)
+    # Optional: restrict to a date range with datetime_after, datetime_before, datetime_column
+    # (use with create_patterns(..., datetime_columns={...}) for per-table columns)
 )
 
 engine.define_and_ingest(

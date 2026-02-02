@@ -187,3 +187,38 @@ def test_find_descendants_transform_by_target_vertex(
         actor_type=TransformActor, vertex={"nonexistent"}
     )
     assert len(by_vertex_empty) == 0
+
+
+def test_explicit_format_pipeline_transform_create_edge():
+    """New explicit format: pipeline with transform (map, to_vertex) and create_edge (from, to)."""
+    from graflo.architecture.actor_config import (
+        TransformActorConfig,
+        normalize_actor_step,
+        validate_actor_step,
+    )
+    from graflo.architecture.vertex import VertexConfig
+
+    vc = VertexConfig.from_dict({"vertices": [{"name": "users", "fields": ["id"]}]})
+    pipeline = [
+        {"transform": {"map": {"follower_id": "id"}, "to_vertex": "users"}},
+        {"transform": {"map": {"followed_id": "id"}, "to_vertex": "users"}},
+        {"create_edge": {"from": "users", "to": "users"}},
+    ]
+    anw = ActorWrapper(pipeline=pipeline)
+    anw.finish_init(vertex_config=vc, transforms={})
+    # Root is DescendActor with at least 3 descendants: 2 TransformActors, 1 EdgeActor
+    # (finish_init may auto-add a VertexActor for "users")
+    assert isinstance(anw.actor, DescendActor)
+    assert len(anw.actor.descendants) >= 3
+    transform_count = sum(
+        1 for d in anw.actor.descendants if isinstance(d.actor, TransformActor)
+    )
+    edge_count = sum(1 for d in anw.actor.descendants if isinstance(d.actor, EdgeActor))
+    assert transform_count >= 2 and edge_count >= 1
+    # Explicit format parses via Pydantic config
+    step = {"transform": {"map": {"x": "y"}, "to_vertex": "users"}}
+    config = validate_actor_step(normalize_actor_step(step))
+    assert config.type == "transform"
+    assert isinstance(config, TransformActorConfig)
+    assert config.map == {"x": "y"}
+    assert config.to_vertex == "users"

@@ -1,5 +1,6 @@
 import abc
 import logging
+import os
 import warnings
 from pathlib import Path
 from typing import Any, Dict, Type, TypeVar
@@ -399,49 +400,84 @@ class DBConfig(BaseSettings, abc.ABC):
         raise NotImplementedError("Subclasses must implement from_docker_env")
 
     @classmethod
-    def from_env(cls: Type[T], prefix: str | None = None) -> T:
+    def from_env(
+        cls: Type[T],
+        *,
+        prefix: str | None = None,
+        profile: str | None = None,
+        suffix: str | None = None,
+    ) -> T:
         """Load config from environment variables using Pydantic BaseSettings.
 
-        Supports custom prefixes for multiple configs:
-        - Default (prefix=None): Uses {BASE_PREFIX}URI, {BASE_PREFIX}USERNAME, etc.
-        - With prefix (prefix="USER"): Uses USER_{BASE_PREFIX}URI, USER_{BASE_PREFIX}USERNAME, etc.
+        Supports qualifiers for multiple configs from the same env:
+
+        - **prefix**: outer prefix → ``{prefix}_{BASE_PREFIX}URI`` (e.g. ``USER_ARANGO_URI``).
+        - **profile**: segment after base → ``{BASE_PREFIX}{profile}_URI`` (e.g. ``ARANGO_DEV_URI``).
+        - **suffix**: after field name → ``{BASE_PREFIX}URI_{suffix}`` (e.g. ``ARANGO_URI_DEV``).
+
+        At most one of ``prefix``, ``profile``, ``suffix`` should be set.
 
         Args:
-            prefix: Optional prefix for environment variables (e.g., "USER", "LAKE", "KG").
-                   If None, uses default {BASE_PREFIX}* variables.
+            prefix: Outer env prefix (e.g. ``"USER"`` → ``USER_ARANGO_URI``).
+            profile: Env segment after base (e.g. ``"DEV"`` → ``ARANGO_DEV_URI``).
+            suffix: Env segment after field name (e.g. ``"DEV"`` → ``ARANGO_URI_DEV``).
 
         Returns:
-            DBConfig instance loaded from environment variables using Pydantic BaseSettings
+            DBConfig instance loaded from environment variables.
 
         Examples:
-            # Load default config (ARANGO_URI, ARANGO_USERNAME, etc.)
+            # Default (ARANGO_URI, ARANGO_USERNAME, ...)
             config = ArangoConfig.from_env()
 
-            # Load config with prefix (USER_ARANGO_URI, USER_ARANGO_USERNAME, etc.)
+            # By profile: ARANGO_DEV_URI, ARANGO_DEV_USERNAME, ...
+            dev = ArangoConfig.from_env(profile="DEV")
+
+            # By suffix: ARANGO_URI_DEV, ARANGO_USERNAME_DEV, ...
+            dev2 = ArangoConfig.from_env(suffix="DEV")
+
+            # Outer prefix: USER_ARANGO_URI, ...
             user_config = ArangoConfig.from_env(prefix="USER")
         """
+        base_prefix = cls.model_config.get("env_prefix")
+        if not base_prefix:
+            raise ValueError(
+                f"Class {cls.__name__} does not have env_prefix configured in model_config"
+            )
+        case_sensitive = cls.model_config.get("case_sensitive", False)
+        qualifiers = sum(1 for q in (prefix, profile, suffix) if q is not None)
+        if qualifiers > 1:
+            raise ValueError("At most one of prefix, profile, suffix may be set")
+
+        if suffix:
+            # Pydantic doesn't support env_suffix; read suffixed vars manually.
+            data: Dict[str, Any] = {}
+            suf = suffix if case_sensitive else suffix.upper()
+            for name in cls.model_fields:
+                env_name = f"{base_prefix}{name.upper()}_{suf}"
+                if not case_sensitive:
+                    # Match pydantic-settings: first try exact, then uppercase
+                    val = os.environ.get(env_name) or os.environ.get(env_name.lower())
+                else:
+                    val = os.environ.get(env_name)
+                if val is not None:
+                    data[name] = val
+            return cls(**data)
+
         if prefix:
-            # Get the base prefix from the class's model_config
-            base_prefix = cls.model_config.get("env_prefix")
-            if not base_prefix:
-                raise ValueError(
-                    f"Class {cls.__name__} does not have env_prefix configured in model_config"
-                )
-            # Create a new model class with modified env_prefix
             new_prefix = f"{prefix.upper()}_{base_prefix}"
-            case_sensitive = cls.model_config.get("case_sensitive", False)
-            model_config = SettingsConfigDict(
-                env_prefix=new_prefix,
-                case_sensitive=case_sensitive,
-            )
-            # Create a new class dynamically with the modified prefix
-            temp_class = type(
-                f"{cls.__name__}WithPrefix", (cls,), {"model_config": model_config}
-            )
-            return temp_class()
+        elif profile:
+            new_prefix = f"{base_prefix}{profile.upper()}_"
         else:
-            # Use default prefix - Pydantic will read from environment automatically
             return cls()
+
+        model_config = SettingsConfigDict(
+            env_prefix=new_prefix,
+            case_sensitive=case_sensitive,
+        )
+        temp_class = type(
+            f"{cls.__name__}WithPrefix", (cls,), {"model_config": model_config}
+        )
+        return temp_class()
 
 
 class ArangoConfig(DBConfig):

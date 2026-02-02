@@ -105,19 +105,26 @@ class GraphEngine:
         self,
         postgres_config: PostgresConfig,
         schema_name: str | None = None,
+        datetime_columns: dict[str, str] | None = None,
     ) -> Patterns:
         """Create Patterns from PostgreSQL tables.
 
         Args:
             postgres_config: PostgresConfig instance
             schema_name: Schema name to introspect
+            datetime_columns: Optional mapping of resource/table name to datetime
+                column name for date-range filtering (sets date_field per
+                TablePattern). Use with IngestionParams.datetime_after /
+                datetime_before.
 
         Returns:
             Patterns: Patterns object with TablePattern instances for all tables
         """
         with PostgresConnection(postgres_config) as postgres_conn:
             return self.resource_mapper.create_patterns_from_postgres(
-                conn=postgres_conn, schema_name=schema_name
+                conn=postgres_conn,
+                schema_name=schema_name,
+                datetime_columns=datetime_columns,
             )
 
     def define_schema(
@@ -154,6 +161,10 @@ class GraphEngine:
             else:
                 # ArangoDB, Neo4j use 'database' field (which maps to effective_schema)
                 target_db_config.database = schema_name
+
+        # Ensure schema's vertex_config reflects target DB so Edge.finish_init()
+        # applies DB-specific defaults (e.g. TigerGraph default relation name)
+        schema.vertex_config.db_flavor = target_db_config.connection_type
 
         # Initialize database with schema definition
         # init_db() handles database/schema creation automatically
@@ -202,8 +213,8 @@ class GraphEngine:
         )
 
         # Then ingest data (clear_data is applied inside ingest() when ingestion_params.clear_data)
-        ingestion_params = IngestionParams(
-            **{**ingestion_params.model_dump(), "clear_data": clear_data}
+        ingestion_params = ingestion_params.model_copy(
+            update={"clear_data": clear_data}
         )
         self.ingest(
             schema=schema,

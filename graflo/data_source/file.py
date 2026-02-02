@@ -5,16 +5,16 @@ including JSON, JSONL, and CSV/TSV files. It integrates with the existing
 chunker logic for efficient batch processing.
 """
 
-import dataclasses
 from pathlib import Path
 from typing import Iterator
+
+from pydantic import field_validator
 
 from graflo.architecture.onto import EncodingType
 from graflo.data_source.base import AbstractDataSource, DataSourceType
 from graflo.util.chunker import ChunkerFactory, ChunkerType
 
 
-@dataclasses.dataclass
 class FileDataSource(AbstractDataSource):
     """Base class for file-based data sources.
 
@@ -30,12 +30,12 @@ class FileDataSource(AbstractDataSource):
     path: Path | str
     file_type: str | None = None
     encoding: EncodingType = EncodingType.UTF_8
+    source_type: DataSourceType = DataSourceType.FILE
 
-    def __post_init__(self):
-        """Initialize the file data source."""
-        self.source_type = DataSourceType.FILE
-        if isinstance(self.path, str):
-            self.path = Path(self.path)
+    @field_validator("path", mode="before")
+    @classmethod
+    def _path_to_path(cls, v: Path | str) -> Path:
+        return Path(v) if isinstance(v, str) else v
 
     def iter_batches(
         self, batch_size: int = 1000, limit: int | None = None
@@ -73,7 +73,6 @@ class FileDataSource(AbstractDataSource):
             yield batch
 
 
-@dataclasses.dataclass
 class JsonFileDataSource(FileDataSource):
     """Data source for JSON files.
 
@@ -86,13 +85,9 @@ class JsonFileDataSource(FileDataSource):
         encoding: File encoding (default: UTF_8)
     """
 
-    def __post_init__(self):
-        """Initialize the JSON file data source."""
-        super().__post_init__()
-        self.file_type = ChunkerType.JSON.value
+    file_type: str = ChunkerType.JSON.value
 
 
-@dataclasses.dataclass
 class JsonlFileDataSource(FileDataSource):
     """Data source for JSONL (JSON Lines) files.
 
@@ -104,13 +99,9 @@ class JsonlFileDataSource(FileDataSource):
         encoding: File encoding (default: UTF_8)
     """
 
-    def __post_init__(self):
-        """Initialize the JSONL file data source."""
-        super().__post_init__()
-        self.file_type = ChunkerType.JSONL.value
+    file_type: str = ChunkerType.JSONL.value
 
 
-@dataclasses.dataclass
 class TableFileDataSource(FileDataSource):
     """Data source for CSV/TSV files.
 
@@ -124,14 +115,9 @@ class TableFileDataSource(FileDataSource):
     """
 
     sep: str = ","
-
-    def __post_init__(self):
-        """Initialize the table file data source."""
-        super().__post_init__()
-        self.file_type = ChunkerType.TABLE.value
+    file_type: str = ChunkerType.TABLE.value
 
 
-@dataclasses.dataclass
 class ParquetFileDataSource(FileDataSource):
     """Data source for Parquet files.
 
@@ -142,7 +128,4 @@ class ParquetFileDataSource(FileDataSource):
         path: Path to the Parquet file
     """
 
-    def __post_init__(self):
-        """Initialize the Parquet file data source."""
-        super().__post_init__()
-        self.file_type = ChunkerType.PARQUET.value
+    file_type: str = ChunkerType.PARQUET.value

@@ -4,7 +4,6 @@ This module provides data source implementations for in-memory data structures,
 including lists of dictionaries, lists of lists, and Pandas DataFrames.
 """
 
-import dataclasses
 from typing import Iterator
 
 import pandas as pd
@@ -13,7 +12,6 @@ from graflo.data_source.base import AbstractDataSource, DataSourceType
 from graflo.util.chunker import ChunkerFactory
 
 
-@dataclasses.dataclass
 class InMemoryDataSource(AbstractDataSource):
     """Data source for in-memory data structures.
 
@@ -25,12 +23,11 @@ class InMemoryDataSource(AbstractDataSource):
         columns: Optional column names for list[list] data
     """
 
+    model_config = {"arbitrary_types_allowed": True}
+
     data: list[dict] | list[list] | pd.DataFrame
     columns: list[str] | None = None
-
-    def __post_init__(self):
-        """Initialize the in-memory data source."""
-        self.source_type = DataSourceType.IN_MEMORY
+    source_type: DataSourceType = DataSourceType.IN_MEMORY
 
     def iter_batches(
         self, batch_size: int = 1000, limit: int | None = None

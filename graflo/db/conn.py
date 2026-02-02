@@ -52,12 +52,17 @@ Example:
 
 import abc
 import logging
-from typing import Any, TypeVar
+from typing import Any, ClassVar, TypeVar
 
 from graflo.architecture.edge import Edge
 from graflo.architecture.schema import Schema
 from graflo.architecture.vertex import VertexConfig
-from graflo.onto import AggregationType
+from graflo.onto import (
+    AggregationType,
+    DB_TYPE_TO_EXPRESSION_FLAVOR,
+    DBType,
+    ExpressionFlavor,
+)
 
 logger = logging.getLogger(__name__)
 ConnectionType = TypeVar("ConnectionType", bound="Connection")
@@ -80,12 +85,24 @@ class Connection(abc.ABC):
 
     Note:
         All methods marked with @abc.abstractmethod must be implemented by
-        concrete connection classes.
+        concrete connection classes. Subclasses must set the class attribute
+        `flavor` to their DBType.
     """
+
+    flavor: ClassVar[DBType] = DBType.ARANGO  # Overridden by subclasses
 
     def __init__(self):
         """Initialize the connection."""
         pass
+
+    @classmethod
+    def expression_flavor(cls) -> ExpressionFlavor:
+        """Expression flavor for filter rendering (AQL, CYPHER, GSQL).
+
+        Graph connection subclasses must set class attribute `flavor` to a
+        DBType present in DB_TYPE_TO_EXPRESSION_FLAVOR.
+        """
+        return DB_TYPE_TO_EXPRESSION_FLAVOR[cls.flavor]
 
     @abc.abstractmethod
     def create_database(self, name: str):

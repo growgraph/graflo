@@ -28,15 +28,32 @@ Example:
 
 from __future__ import annotations
 
-import dataclasses
 import importlib
 import logging
 from copy import deepcopy
-from typing import Any
+from typing import Any, Self
 
-from graflo.onto import BaseDataclass
+from pydantic import Field, PrivateAttr, model_validator
+
+from graflo.architecture.base import ConfigBaseModel
 
 logger = logging.getLogger(__name__)
+
+
+def _tuple_it(x: str | list[str] | tuple[str, ...]) -> tuple[str, ...]:
+    """Convert input to tuple format.
+
+    Args:
+        x: Input to convert (string, list, or tuple)
+
+    Returns:
+        tuple: Converted tuple
+    """
+    if isinstance(x, str):
+        x = [x]
+    if isinstance(x, list):
+        x = tuple(x)
+    return x
 
 
 class TransformException(BaseException):
@@ -45,8 +62,7 @@ class TransformException(BaseException):
     pass
 
 
-@dataclasses.dataclass
-class ProtoTransform(BaseDataclass):
+class ProtoTransform(ConfigBaseModel):
     """Base class for transform definitions.
 
     This class provides the foundation for data transformations, supporting both
@@ -62,65 +78,70 @@ class ProtoTransform(BaseDataclass):
         _foo: Internal reference to the transform function
     """
 
-    name: str | None = None
-    module: str | None = None
-    params: dict[str, Any] = dataclasses.field(default_factory=dict)
-    foo: str | None = None
-    input: str | list[str] | tuple[str, ...] = dataclasses.field(default_factory=tuple)
-    output: str | list[str] | tuple[str, ...] = dataclasses.field(default_factory=tuple)
+    name: str | None = Field(
+        default=None,
+        description="Optional name for this transform (e.g. for reference in schema.transforms).",
+    )
+    module: str | None = Field(
+        default=None,
+        description="Python module path containing the transform function (e.g. my_package.transforms).",
+    )
+    params: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Extra parameters passed to the transform function at runtime.",
+    )
+    foo: str | None = Field(
+        default=None,
+        description="Name of the callable in module to use as the transform function.",
+    )
+    input: tuple[str, ...] = Field(
+        default_factory=tuple,
+        description="Input field names passed to the transform function.",
+    )
+    output: tuple[str, ...] = Field(
+        default_factory=tuple,
+        description="Output field names produced by the transform (defaults to input if unset).",
+    )
 
-    def __post_init__(self):
-        """Initialize the transform after dataclass initialization.
+    _foo: Any = PrivateAttr(default=None)
 
-        Sets up the transform function and input/output field specifications.
-        """
-        self._foo = None
-        self._init_foo()
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_input_output(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        data = dict(data)
+        for key in ("input", "output"):
+            if key in data:
+                if data[key] is not None:
+                    data[key] = _tuple_it(data[key])
+                else:
+                    data[key] = ()
+        return data
 
-        self.input = self._tuple_it(self.input)
-
-        if not self.output:
-            self.output = self.input
-        self.output = self._tuple_it(self.output)
-
-    @staticmethod
-    def _tuple_it(x):
-        """Convert input to tuple format.
-
-        Args:
-            x: Input to convert (string, list, or tuple)
-
-        Returns:
-            tuple: Converted tuple
-        """
-        if isinstance(x, str):
-            x = [x]
-        if isinstance(x, list):
-            x = tuple(x)
-        return x
-
-    def _init_foo(self):
-        """Initialize the transform function from module.
-
-        Imports the specified module and gets the transform function.
-
-        Raises:
-            TypeError: If module import fails
-            ValueError: If function lookup fails
-        """
+    @model_validator(mode="after")
+    def _init_foo_and_output(self) -> Self:
         if self.module is not None and self.foo is not None:
             try:
                 _module = importlib.import_module(self.module)
             except Exception as e:
                 raise TypeError(f"Provided module {self.module} is not valid: {e}")
             try:
-                self._foo = getattr(_module, self.foo)
+                object.__setattr__(self, "_foo", getattr(_module, self.foo))
             except Exception as e:
                 raise ValueError(
                     f"Could not instantiate transform function. Exception: {e}"
                 )
+        if not self.output and self.input:
+            object.__setattr__(self, "output", self.input)
+        return self
 
-    def __lt__(self, other):
+    @classmethod
+    def get_fields_members(cls) -> list[str]:
+        """Get list of field members (public model fields)."""
+        return list(cls.model_fields.keys())
+
+    def __lt__(self, other: object) -> bool:
         """Compare transforms for ordering.
 
         Args:
@@ -129,12 +150,13 @@ class ProtoTransform(BaseDataclass):
         Returns:
             bool: True if this transform should be ordered before other
         """
+        if not isinstance(other, ProtoTransform):
+            return NotImplemented
         if self._foo is None and other._foo is not None:
             return True
         return False
 
 
-@dataclasses.dataclass(kw_only=True)
 class Transform(ProtoTransform):
     """Concrete transform implementation.
 
@@ -148,65 +170,74 @@ class Transform(ProtoTransform):
         functional_transform: Whether this is a functional transform
     """
 
-    fields: str | list[str] | tuple[str, ...] = dataclasses.field(default_factory=tuple)
-    map: dict[str, str] = dataclasses.field(default_factory=dict)
-    switch: dict[str, Any] = dataclasses.field(default_factory=dict)
+    fields: tuple[str, ...] = Field(
+        default_factory=tuple,
+        description="Field names for declarative transform (used to derive input when input unset).",
+    )
+    map: dict[str, str] = Field(
+        default_factory=dict,
+        description="Mapping of output_key -> input_key for pure field renaming (no function).",
+    )
+    switch: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Switch/case-style mapping for conditional field values (key -> output spec).",
+    )
 
-    def __post_init__(self):
-        """Initialize the transform after dataclass initialization.
+    functional_transform: bool = Field(
+        default=False,
+        description="True when a callable (module.foo) is set; False for pure map/switch transforms.",
+    )
 
-        Sets up field specifications and validates transform configuration.
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_fields(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        data = dict(data)
+        if "fields" in data and data["fields"] is not None:
+            data["fields"] = _tuple_it(data["fields"])
+        return data
 
-        Raises:
-            ValueError: If transform configuration is invalid
-        """
-        super().__post_init__()
-        self.functional_transform = self._foo is not None
-
-        # Normalize containers
-        self.fields = self._tuple_it(self.fields)
-        self.input = self._tuple_it(self.input)
-        self.output = self._tuple_it(self.output)
-
-        # Derive relationships between map, input, output, and fields.
+    @model_validator(mode="after")
+    def _init_derived(self) -> Self:
+        object.__setattr__(self, "functional_transform", self._foo is not None)
         self._init_input_from_fields()
         self._init_io_from_map()
         self._init_from_switch()
         self._default_output_from_input()
         self._init_map_from_io()
-
         self._validate_configuration()
+        return self
 
     def _init_input_from_fields(self) -> None:
         """Populate input from fields when provided."""
         if self.fields and not self.input:
-            self.input = self.fields
+            object.__setattr__(self, "input", self.fields)
 
-    def _init_io_from_map(self, force_init=False) -> None:
+    def _init_io_from_map(self, force_init: bool = False) -> None:
         """Populate input/output tuples from an explicit map."""
         if not self.map:
             return
         if force_init or (not self.input and not self.output):
             input_fields, output_fields = zip(*self.map.items())
-            self.input = tuple(input_fields)
-            self.output = tuple(output_fields)
+            object.__setattr__(self, "input", tuple(input_fields))
+            object.__setattr__(self, "output", tuple(output_fields))
         elif not self.input:
-            self.input = tuple(self.map.keys())
+            object.__setattr__(self, "input", tuple(self.map.keys()))
         elif not self.output:
-            self.output = tuple(self.map.values())
+            object.__setattr__(self, "output", tuple(self.map.values()))
 
     def _init_from_switch(self) -> None:
         """Fallback initialization using switch definitions."""
         if self.switch and not self.input and not self.output:
-            self.input = tuple(self.switch)
-            # We rely on the first switch entry to infer the output shape.
+            object.__setattr__(self, "input", tuple(self.switch))
             first_key = self.input[0]
-            self.output = self._tuple_it(self.switch[first_key])
+            object.__setattr__(self, "output", _tuple_it(self.switch[first_key]))
 
     def _default_output_from_input(self) -> None:
         """Ensure output mirrors input when not explicitly provided."""
-        if not self.output:
-            self.output = self.input
+        if not self.output and self.input:
+            object.__setattr__(self, "output", self.input)
 
     def _init_map_from_io(self) -> None:
         """Derive map from input/output when possible."""
@@ -214,7 +245,9 @@ class Transform(ProtoTransform):
             return
         if len(self.input) != len(self.output):
             return
-        self.map = {src: dst for src, dst in zip(self.input, self.output)}
+        object.__setattr__(
+            self, "map", {src: dst for src, dst in zip(self.input, self.output)}
+        )
 
     def _validate_configuration(self) -> None:
         """Validate that the transform has enough information to operate."""
@@ -224,7 +257,11 @@ class Transform(ProtoTransform):
                 "constructor."
             )
 
-    def __call__(self, *nargs, **kwargs):
+    def _refresh_derived(self) -> None:
+        """Re-run derived state (e.g. map from input/output) after mutating attributes."""
+        self._init_map_from_io()
+
+    def __call__(self, *nargs: Any, **kwargs: Any) -> dict[str, Any] | Any:
         """Execute the transform.
 
         Args:
@@ -239,7 +276,7 @@ class Transform(ProtoTransform):
             if isinstance(input_doc, dict):
                 output_values = [input_doc[k] for k in self.input]
             else:
-                output_values = nargs
+                output_values = list(nargs)
         else:
             if nargs and isinstance(input_doc := nargs[0], dict):
                 new_args = [input_doc[k] for k in self.input]
@@ -258,7 +295,7 @@ class Transform(ProtoTransform):
         """True when the transform is pure mapping (no function)."""
         return self._foo is None
 
-    def _dress_as_dict(self, transform_result) -> dict[str, Any]:
+    def _dress_as_dict(self, transform_result: Any) -> dict[str, Any]:
         """Convert transform result to dictionary format.
 
         Args:
@@ -285,14 +322,18 @@ class Transform(ProtoTransform):
         """
         return (self.name is not None) and (not self.map and self._foo is None)
 
-    def update(self, t: Transform) -> Transform:
-        """Update this transform with another transform's configuration.
+    def merge_from(self, t: Transform) -> Transform:
+        """Merge another transform's configuration into a copy of it.
+
+        Returns a new Transform with values from self overriding t where set.
+        Does not override ConfigBaseModel.update (in-place); use this for
+        copy-and-merge semantics.
 
         Args:
-            t: Transform to update from
+            t: Transform to merge from
 
         Returns:
-            Transform: Updated transform
+            Transform: New transform with merged configuration
         """
         t_copy = deepcopy(t)
         if self.input:
@@ -300,8 +341,8 @@ class Transform(ProtoTransform):
         if self.output:
             t_copy.output = self.output
         if self.params:
-            t_copy.params.update(self.params)
-        t_copy.__post_init__()
+            t_copy.params = {**t_copy.params, **self.params}
+        t_copy._refresh_derived()
         return t_copy
 
     def get_barebone(
@@ -316,7 +357,7 @@ class Transform(ProtoTransform):
             tuple[Transform | None, Transform | None]: Updated self transform
             and transform to store in library
         """
-        self_param = self.to_dict(skip_defaults=True)
+        self_param = self.to_dict(exclude_defaults=True)
         if self.foo is not None:
             # self will be the lib transform
             return None, self
@@ -324,7 +365,7 @@ class Transform(ProtoTransform):
             # init self from other
             self_param.pop("foo", None)
             self_param.pop("module", None)
-            other_param = other.to_dict(skip_defaults=True)
+            other_param = other.to_dict(exclude_defaults=True)
             other_param.update(self_param)
             return Transform(**other_param), None
         else:

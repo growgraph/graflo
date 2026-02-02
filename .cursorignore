@@ -28,6 +28,8 @@
 !sh/
 !sh/**/*.sh
 
+!planning
+!planning/*MD
 
 !.github/**
 !.env.example

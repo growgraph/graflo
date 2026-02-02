@@ -132,7 +132,7 @@ patterns.add_file_pattern(
 from graflo.hq.caster import IngestionParams
 
 ingestion_params = IngestionParams(
-    recreate_schema=True,  # Wipe existing schema before defining and ingesting
+    clear_data=True,  # Clear existing data before ingesting
 )
 
 caster.ingest(

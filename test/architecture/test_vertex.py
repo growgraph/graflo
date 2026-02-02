@@ -25,25 +25,25 @@ def test_field_with_explicit_type():
         assert field.type == field_type.value
 
     # Test case insensitive
-    field = Field(name="test", type="int")
+    field = Field(name="test", type=FieldType.INT)
     assert field.type == "INT"
 
-    field = Field(name="test", type="string")
+    field = Field(name="test", type=FieldType.STRING)
     assert field.type == "STRING"
 
 
 def test_field_type_validation():
     """Test that invalid field types raise errors."""
     with pytest.raises(ValueError, match="not allowed"):
-        Field(name="test", type="INVALID_TYPE")
+        Field.from_dict({"name": "test", "type": "INVALID_TYPE"})
 
     with pytest.raises(ValueError, match="not allowed"):
-        Field(name="test", type="invalid")
+        Field.from_dict({"name": "test", "type": "invalid"})
 
 
 def test_field_string_behavior():
     """Test that Field objects behave like strings."""
-    field = Field(name="test_field", type="INT")
+    field = Field(name="test_field", type=FieldType.INT)
 
     # String conversion
     assert str(field) == "test_field"
@@ -112,10 +112,10 @@ def test_vertex_with_string_fields_dict_compatibility():
 def test_vertex_with_field_objects():
     """Test Vertex creation with list of Field objects."""
     fields = [
-        Field(name="id", type="INT"),
-        Field(name="name", type="STRING"),
-        Field(name="age", type="INT"),
-        Field(name="active", type="BOOL"),
+        Field(name="id", type=FieldType.INT),
+        Field(name="name", type=FieldType.STRING),
+        Field(name="age", type=FieldType.INT),
+        Field(name="active", type=FieldType.BOOL),
     ]
     vertex = Vertex(name="user", fields=fields)
 
@@ -147,7 +147,7 @@ def test_vertex_mixed_field_inputs():
     """Test Vertex creation with mixed field types."""
     fields = [
         "id",  # string
-        Field(name="name", type="STRING"),  # Field object
+        Field(name="name", type=FieldType.STRING),  # Field object
         {"name": "email", "type": "STRING"},  # dict
     ]
     vertex = Vertex(name="user", fields=fields)  # type: ignore[arg-type]
@@ -182,8 +182,8 @@ def test_vertex_config_fields_with_objects():
     vertex = Vertex(
         name="user",
         fields=[
-            Field(name="id", type="INT"),
-            Field(name="name", type="STRING"),
+            Field(name="id", type=FieldType.INT),
+            Field(name="name", type=FieldType.STRING),
         ],
     )
     config = VertexConfig(vertices=[vertex])
@@ -235,8 +235,8 @@ def test_vertex_indexes_work_with_field_objects():
     vertex = Vertex(
         name="user",
         fields=[
-            Field(name="id", type="INT"),
-            Field(name="email", type="STRING"),
+            Field(name="id", type=FieldType.INT),
+            Field(name="email", type=FieldType.STRING),
         ],
         indexes=[],  # Will create default index
     )
@@ -299,9 +299,9 @@ def test_get_fields_with_defaults_tigergraph():
     vertex = Vertex(
         name="user",
         fields=[  # type: ignore[arg-type]
-            Field(name="id", type="INT"),  # Already has type
+            Field(name="id", type=FieldType.INT),  # Already has type
             Field(name="name"),  # None type
-            Field(name="email", type="STRING"),  # Already has type
+            Field(name="email", type=FieldType.STRING),  # Already has type
             "address",  # String field (will be Field with None type)
         ],
     )
@@ -325,7 +325,7 @@ def test_get_fields_with_defaults_other_db():
     vertex = Vertex(
         name="user",
         fields=[
-            Field(name="id", type="INT"),
+            Field(name="id", type=FieldType.INT),
             Field(name="name"),  # None type
         ],
     )
@@ -347,7 +347,7 @@ def test_get_fields_with_defaults_none():
     vertex = Vertex(
         name="user",
         fields=[
-            Field(name="id", type="INT"),
+            Field(name="id", type=FieldType.INT),
             Field(name="name"),  # None type
         ],
     )
@@ -364,7 +364,7 @@ def test_vertex_config_fields_with_db_flavor():
     vertex = Vertex(
         name="user",
         fields=[
-            Field(name="id", type="INT"),
+            Field(name="id", type=FieldType.INT),
             Field(name="name"),  # None type
         ],
     )

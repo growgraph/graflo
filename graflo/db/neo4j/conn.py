@@ -33,8 +33,8 @@ from graflo.architecture.onto import Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.vertex import VertexConfig
 from graflo.db.conn import Connection, SchemaExistsError
-from graflo.filter.onto import Expression
-from graflo.onto import AggregationType, ExpressionFlavor
+from graflo.filter.onto import FilterExpression
+from graflo.onto import AggregationType
 from graflo.onto import DBType
 
 
@@ -509,8 +509,8 @@ class Neo4jConnection(Connection):
             list: Fetched nodes
         """
         if filters is not None:
-            ff = Expression.from_dict(filters)
-            filter_clause = f"WHERE {ff(doc_name='n', kind=DBType.NEO4J)}"
+            ff = FilterExpression.from_dict(filters)
+            filter_clause = f"WHERE {ff(doc_name='n', kind=self.expression_flavor())}"
         else:
             filter_clause = ""
 
@@ -589,10 +589,8 @@ class Neo4jConnection(Connection):
 
         # Add additional filters if provided
         if filters is not None:
-            from graflo.filter.onto import Expression
-
-            ff = Expression.from_dict(filters)
-            filter_clause = ff(doc_name="r", kind=ExpressionFlavor.NEO4J)
+            ff = FilterExpression.from_dict(filters)
+            filter_clause = ff(doc_name="r", kind=self.expression_flavor())
             where_clauses.append(filter_clause)
 
         where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
