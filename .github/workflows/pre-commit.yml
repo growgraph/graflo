@@ -13,7 +13,7 @@ jobs:
         -   name: Install uv
             uses: astral-sh/setup-uv@v5
             with:
-                version: "0.9.5"
+                version: "0.9.28"
         -   name: Install dependencies (including dev)
             run: uv sync --group dev
         -   name: Run pre-commit
