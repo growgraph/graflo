@@ -9,7 +9,7 @@ Key Components:
     - FilterExpression: Filter expression (leaf or composite logical formulae)
 
 Example:
-    >>> from graflo.filter.onto import FilterExpression
+    >>> from graflo.filter import FilterExpression
     >>> expr = FilterExpression.from_dict({
     ...     "AND": [
     ...         {"field": "age", "cmp_operator": ">=", "value": 18},
@@ -18,3 +18,11 @@ Example:
     ... })
     >>> # Converts to: "age >= 18 AND status == 'active'"
 """
+
+from .onto import ComparisonOperator, FilterExpression, LogicalOperator
+
+__all__ = [
+    "ComparisonOperator",
+    "FilterExpression",
+    "LogicalOperator",
+]

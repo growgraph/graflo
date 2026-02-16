@@ -35,6 +35,7 @@ from graflo.architecture.actor_config import (
     EdgeActorConfig,
     TransformActorConfig,
     VertexActorConfig,
+    VertexRouterActorConfig,
     parse_root_config,
     normalize_actor_step,
     validate_actor_step,
@@ -931,10 +932,135 @@ class DescendActor(Actor):
         return level, type(self), str(self), edges
 
 
+class VertexRouterActor(Actor):
+    """Routes documents to the correct VertexActor based on a type field.
+
+    Maintains an internal ``dict[str, ActorWrapper]`` mapping vertex type names
+    to pre-initialised VertexActor wrappers, giving O(1) dispatch per document
+    instead of iterating over all known vertex types.
+
+    On ``__call__``:
+
+    1. Read ``doc[type_field]`` to determine the vertex type name.
+    2. Look up ``_vertex_actors[vtype]`` for the matching wrapper.
+    3. Strip *prefix* from field keys (or apply *field_map*) to build a sub-doc.
+    4. Delegate to the looked-up wrapper.
+
+    Attributes:
+        type_field: Document field whose value names the target vertex type.
+        prefix: Optional prefix to strip from field keys.
+        field_map: Optional explicit rename mapping (original_key -> vertex_key).
+    """
+
+    def __init__(self, config: VertexRouterActorConfig):
+        """Initialise from config."""
+        self.type_field = config.type_field
+        self.prefix = config.prefix
+        self.field_map = config.field_map
+        self._vertex_actors: dict[str, ActorWrapper] = {}
+        self.vertex_config: VertexConfig = VertexConfig(vertices=[])
+
+    @classmethod
+    def from_config(cls, config: VertexRouterActorConfig) -> VertexRouterActor:
+        """Create a VertexRouterActor from a VertexRouterActorConfig."""
+        return cls(config)
+
+    def fetch_important_items(self) -> dict[str, Any]:
+        """Get important items for string representation."""
+        items: dict[str, Any] = {"type_field": self.type_field}
+        if self.prefix:
+            items["prefix"] = self.prefix
+        if self.field_map:
+            items["field_map"] = self.field_map
+        items["vertex_types"] = sorted(self._vertex_actors.keys())
+        return items
+
+    def finish_init(self, **kwargs: Any) -> None:
+        """Build the internal vertex-type -> ActorWrapper mapping.
+
+        One wrapper is created for every vertex type known to *vertex_config*,
+        so that any dynamically-typed document can be routed at runtime.
+        """
+        self.vertex_config = kwargs.get("vertex_config", VertexConfig(vertices=[]))
+        for vertex in self.vertex_config.vertex_list:
+            wrapper = ActorWrapper.from_config(VertexActorConfig(vertex=vertex.name))
+            wrapper.finish_init(**kwargs)
+            self._vertex_actors[vertex.name] = wrapper
+            logger.debug(
+                "VertexRouterActor: registered VertexActor(%s) for type_field=%s",
+                vertex.name,
+                self.type_field,
+            )
+
+    def count(self) -> int:
+        """Total actors managed by this router (self + all wrapped vertex actors)."""
+        return 1 + sum(w.count() for w in self._vertex_actors.values())
+
+    def _extract_sub_doc(self, doc: dict[str, Any]) -> dict[str, Any]:
+        """Build the vertex sub-document from *doc*.
+
+        If *prefix* is set, extracts and strips prefixed keys.
+        If *field_map* is set, renames keys according to the map.
+        Otherwise returns *doc* unchanged.
+        """
+        if self.prefix:
+            return {
+                k[len(self.prefix) :]: v
+                for k, v in doc.items()
+                if k.startswith(self.prefix)
+            }
+        if self.field_map:
+            return {
+                new_key: doc[old_key]
+                for old_key, new_key in self.field_map.items()
+                if old_key in doc
+            }
+        return doc
+
+    def __call__(
+        self, ctx: ActionContext, lindex: LocationIndex, *nargs: Any, **kwargs: Any
+    ) -> ActionContext:
+        """Route the document to the matching VertexActor.
+
+        Args:
+            ctx: Action context.
+            lindex: Current location index.
+            **kwargs: Must contain ``doc``.
+
+        Returns:
+            Updated ActionContext.
+        """
+        doc: dict[str, Any] = kwargs.get("doc", {})
+        vtype = doc.get(self.type_field)
+        if vtype is None:
+            logger.debug(
+                "VertexRouterActor: type_field '%s' not in doc, skipping",
+                self.type_field,
+            )
+            return ctx
+
+        wrapper = self._vertex_actors.get(vtype)
+        if wrapper is None:
+            logger.debug(
+                "VertexRouterActor: vertex type '%s' (from field '%s') "
+                "not in VertexConfig, skipping",
+                vtype,
+                self.type_field,
+            )
+            return ctx
+
+        sub_doc = self._extract_sub_doc(doc)
+        if not sub_doc:
+            return ctx
+
+        return wrapper(ctx, lindex, doc=sub_doc)
+
+
 _NodeTypePriority: MappingProxyType[Type[Actor], int] = MappingProxyType(
     {
         DescendActor: 10,
         TransformActor: 20,
+        VertexRouterActor: 30,
         VertexActor: 50,
         EdgeActor: 90,
     }
@@ -1038,9 +1164,12 @@ class ActorWrapper:
             actor = EdgeActor.from_config(config)
         elif isinstance(config, DescendActorConfig):
             actor = DescendActor.from_config(config)
+        elif isinstance(config, VertexRouterActorConfig):
+            actor = VertexRouterActor.from_config(config)
         else:
             raise ValueError(
-                f"Expected VertexActorConfig, TransformActorConfig, EdgeActorConfig, or DescendActorConfig, got {type(config)}"
+                f"Expected VertexActorConfig, TransformActorConfig, EdgeActorConfig, "
+                f"DescendActorConfig, or VertexRouterActorConfig, got {type(config)}"
             )
         wrapper = cls.__new__(cls)
         wrapper.actor = actor

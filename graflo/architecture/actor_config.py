@@ -91,6 +91,13 @@ def normalize_actor_step(data: dict[str, Any]) -> dict[str, Any]:
             del data["apply"]
         return data
 
+    if "vertex_router" in data:
+        inner = data.pop("vertex_router")
+        if isinstance(inner, dict):
+            data.update(inner)
+        data["type"] = "vertex_router"
+        return data
+
     if "apply" in data:
         data["type"] = "descend"
         data["pipeline"] = [normalize_actor_step(s) for s in _steps_list(data["apply"])]
@@ -258,9 +265,46 @@ class DescendActorConfig(ConfigBaseModel):
         return data
 
 
+class VertexRouterActorConfig(ConfigBaseModel):
+    """Configuration for a VertexRouterActor.
+
+    Routes documents to the correct VertexActor based on a type field value.
+    Optionally strips a prefix from field keys or applies an explicit field map.
+    """
+
+    type: Literal["vertex_router"] = Field(
+        default="vertex_router", description="Actor type discriminator"
+    )
+    type_field: str = Field(
+        ...,
+        description="Document field whose value determines the target vertex type name.",
+    )
+    prefix: str | None = Field(
+        default=None,
+        description="Optional prefix to strip from document field keys when building the vertex sub-doc.",
+    )
+    field_map: dict[str, str] | None = Field(
+        default=None,
+        description="Optional explicit rename map (original_key -> vertex_field_key). "
+        "Mutually exclusive with prefix.",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def set_type(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "type_field" in data and "type" not in data:
+            data = dict(data)
+            data["type"] = "vertex_router"
+        return data
+
+
 # Discriminated union for parsing a single pipeline step (used in ActorWrapper and Resource)
 ActorConfig = Annotated[
-    VertexActorConfig | TransformActorConfig | EdgeActorConfig | DescendActorConfig,
+    VertexActorConfig
+    | TransformActorConfig
+    | EdgeActorConfig
+    | DescendActorConfig
+    | VertexRouterActorConfig,
     Field(discriminator="type"),
 ]
 
@@ -268,9 +312,17 @@ DescendActorConfig.model_rebuild()
 
 # TypeAdapter for validating a single pipeline step (union type has no model_validate)
 _actor_config_adapter: TypeAdapter[
-    VertexActorConfig | TransformActorConfig | EdgeActorConfig | DescendActorConfig
+    VertexActorConfig
+    | TransformActorConfig
+    | EdgeActorConfig
+    | DescendActorConfig
+    | VertexRouterActorConfig
 ] = TypeAdapter(
-    VertexActorConfig | TransformActorConfig | EdgeActorConfig | DescendActorConfig
+    VertexActorConfig
+    | TransformActorConfig
+    | EdgeActorConfig
+    | DescendActorConfig
+    | VertexRouterActorConfig
 )
 
 
@@ -288,7 +340,13 @@ _STEP_STRIP_KEYS = frozenset(
 
 def validate_actor_step(
     data: dict[str, Any],
-) -> VertexActorConfig | TransformActorConfig | EdgeActorConfig | DescendActorConfig:
+) -> (
+    VertexActorConfig
+    | TransformActorConfig
+    | EdgeActorConfig
+    | DescendActorConfig
+    | VertexRouterActorConfig
+):
     """Validate a normalized step dict as ActorConfig (discriminated union)."""
     return _actor_config_adapter.validate_python(data)
 
@@ -296,7 +354,13 @@ def validate_actor_step(
 def parse_root_config(
     *args: Any,
     **kwargs: Any,
-) -> VertexActorConfig | TransformActorConfig | EdgeActorConfig | DescendActorConfig:
+) -> (
+    VertexActorConfig
+    | TransformActorConfig
+    | EdgeActorConfig
+    | DescendActorConfig
+    | VertexRouterActorConfig
+):
     """Parse root input into a single ActorConfig (single step or descend pipeline).
 
     Accepts the same shapes as ActorWrapper:

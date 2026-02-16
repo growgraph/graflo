@@ -15,6 +15,7 @@ The resource system allows for:
     - Weight management
     - Collection merging
     - Type casting and validation
+    - Dynamic vertex-type routing via VertexRouterActor in the pipeline
 
 Example:
     >>> resource = Resource(
@@ -54,6 +55,9 @@ class Resource(ConfigBaseModel):
     structures. Manages the processing pipeline through actors and handles data
     encoding, transformation, and mapping. Suitable for LLM-generated schema
     constituents.
+
+    Dynamic vertex-type routing is handled by ``vertex_router`` steps in the
+    pipeline (see :class:`~graflo.architecture.actor.VertexRouterActor`).
     """
 
     model_config = {"extra": "forbid"}
@@ -166,9 +170,7 @@ class Resource(ConfigBaseModel):
             edge_greedy=self.edge_greedy,
         )
 
-        logger.debug(
-            "total resource actor count (after 2 finit): %s", self.root.count()
-        )
+        logger.debug("total resource actor count (after finit): %s", self.root.count())
 
         for e in self.extra_weights:
             e.finish_init(vertex_config)

@@ -10,6 +10,266 @@ graflo transforms data sources into property graphs through a pipeline of compon
 
 Each component plays a specific role in this transformation process.
 
+## Class Diagrams
+
+### GraphEngine orchestration
+
+`GraphEngine` is the top-level orchestrator that coordinates schema inference,
+pattern creation, schema definition, and data ingestion. The diagram below shows
+how it delegates to specialised components.
+
+```mermaid
+classDiagram
+    direction TB
+
+    class GraphEngine {
+        +target_db_flavor: DBType
+        +resource_mapper: ResourceMapper
+        +introspect(postgres_config) SchemaIntrospectionResult
+        +infer_schema(postgres_config) Schema
+        +create_patterns(postgres_config) Patterns
+        +define_schema(schema, target_db_config)
+        +define_and_ingest(schema, target_db_config, ...)
+        +ingest(schema, target_db_config, ...)
+    }
+
+    class InferenceManager {
+        +conn: PostgresConnection
+        +target_db_flavor: DBType
+        +introspect(schema_name) SchemaIntrospectionResult
+        +infer_complete_schema(schema_name) Schema
+    }
+
+    class ResourceMapper {
+        +create_patterns_from_postgres(conn, ...) Patterns
+    }
+
+    class Caster {
+        +schema: Schema
+        +ingestion_params: IngestionParams
+        +ingest(target_db_config, patterns, ...)
+    }
+
+    class ConnectionManager {
+        +connection_config: DBConfig
+        +init_db(schema, recreate_schema)
+        +clear_data(schema)
+    }
+
+    class Schema {
+        «see Schema diagram»
+    }
+
+    class Patterns {
+        +file_patterns: list~FilePattern~
+        +table_patterns: list~TablePattern~
+    }
+
+    class DBConfig {
+        <<abstract>>
+        +uri: str
+        +effective_schema: str?
+        +connection_type: DBType
+    }
+
+    GraphEngine --> InferenceManager : creates for introspect / infer_schema
+    GraphEngine --> ResourceMapper : resource_mapper
+    GraphEngine --> Caster : creates for ingest
+    GraphEngine --> ConnectionManager : creates for define_schema
+    GraphEngine ..> Schema : produces / consumes
+    GraphEngine ..> Patterns : produces / consumes
+    GraphEngine ..> DBConfig : target_db_config
+```
+
+### Schema architecture
+
+`Schema` is the central configuration object that defines how data is
+transformed into a property graph. The diagram below shows its constituent
+parts and their relationships.
+
+```mermaid
+classDiagram
+    direction TB
+
+    class Schema {
+        +general: SchemaMetadata
+        +vertex_config: VertexConfig
+        +edge_config: EdgeConfig
+        +resources: list~Resource~
+        +transforms: dict~str,ProtoTransform~
+        +finish_init()
+        +fetch_resource(name) Resource
+        +remove_disconnected_vertices()
+    }
+
+    class SchemaMetadata {
+        +name: str
+        +version: str?
+        +description: str?
+    }
+
+    class VertexConfig {
+        +vertices: list~Vertex~
+        +blank_vertices: list~Vertex~
+        +db_flavor: DBType?
+    }
+
+    class Vertex {
+        +name: str
+        +indexes: list~list~str~~
+        +fields: list~Field~
+        +filters: FilterExpression?
+        +dbname: str?
+    }
+
+    class Field {
+        +name: str
+        +type: FieldType?
+    }
+
+    class EdgeConfig {
+        +edges: list~Edge~
+        +extra_edges: list~Edge~
+    }
+
+    class Edge {
+        +source: str
+        +target: str
+        +indexes: list~str~
+        +weights: WeightConfig?
+        +relation: str?
+        +relation_field: str?
+        +filters: FilterExpression?
+    }
+
+    class Resource {
+        +name: str
+        +root: ActorWrapper
+        +finish_init(vertex_config, edge_config, transforms)
+    }
+
+    class ActorWrapper {
+        +actor: Actor
+        +children: list~ActorWrapper~
+    }
+    note for ActorWrapper "Recursive tree: each<br />child is an ActorWrapper"
+
+    class Actor {
+        <<abstract>>
+    }
+    class VertexActor
+    class EdgeActor
+    class TransformActor
+    class DescendActor
+
+    class ProtoTransform {
+        +name: str
+    }
+
+    class FilterExpression {
+        +kind: leaf | composite
+        +from_dict(data) FilterExpression
+    }
+
+    Schema *-- SchemaMetadata : general
+    Schema *-- VertexConfig : vertex_config
+    Schema *-- EdgeConfig : edge_config
+    Schema *-- "0..*" Resource : resources
+    Schema *-- "0..*" ProtoTransform : transforms
+
+    VertexConfig *-- "0..*" Vertex : vertices
+    Vertex *-- "0..*" Field : fields
+    Vertex --> FilterExpression : filters
+
+    EdgeConfig *-- "0..*" Edge : edges
+    Edge --> FilterExpression : filters
+
+    Resource *-- ActorWrapper : root
+    ActorWrapper --> Actor : actor
+
+    Actor <|-- VertexActor
+    Actor <|-- EdgeActor
+    Actor <|-- TransformActor
+    Actor <|-- DescendActor
+```
+
+### Caster ingestion pipeline
+
+`Caster` is the ingestion workhorse. It builds a `DataSourceRegistry` via
+`RegistryBuilder`, casts each batch of source data into a `GraphContainer`,
+and hands that container to `DBWriter` which pushes vertices and edges to the
+target database through `ConnectionManager`.
+
+```mermaid
+classDiagram
+    direction LR
+
+    class Caster {
+        +schema: Schema
+        +ingestion_params: IngestionParams
+        +ingest(target_db_config, patterns, ...)
+        +cast_normal_resource(data, resource_name) GraphContainer
+        +process_batch(batch, resource_name, conn_conf)
+        +process_data_source(data_source, ...)
+        +ingest_data_sources(registry, conn_conf, ...)
+    }
+
+    class IngestionParams {
+        +clear_data: bool
+        +n_cores: int
+        +batch_size: int
+        +max_items: int?
+        +dry: bool
+        +datetime_after: str?
+        +datetime_before: str?
+        +datetime_column: str?
+    }
+
+    class RegistryBuilder {
+        +schema: Schema
+        +build(patterns, ingestion_params) DataSourceRegistry
+    }
+
+    class DataSourceRegistry {
+        +register(data_source, resource_name)
+        +get_data_sources(resource_name) list~AbstractDataSource~
+    }
+
+    class DBWriter {
+        +schema: Schema
+        +dry: bool
+        +max_concurrent: int
+        +write(gc, conn_conf, resource_name)
+    }
+
+    class GraphContainer {
+        +vertices: dict
+        +edges: dict
+        +from_docs_list(docs) GraphContainer
+    }
+
+    class ConnectionManager {
+        +connection_config: DBConfig
+        +upsert_docs_batch(...)
+        +insert_edges_batch(...)
+    }
+
+    class AbstractDataSource {
+        <<abstract>>
+        +resource_name: str?
+        +iter_batches(batch_size, limit)
+    }
+
+    Caster --> IngestionParams : ingestion_params
+    Caster --> RegistryBuilder : creates
+    RegistryBuilder --> DataSourceRegistry : builds
+    Caster --> DBWriter : creates per batch
+    Caster ..> GraphContainer : produces
+    DBWriter ..> GraphContainer : consumes
+    DBWriter --> ConnectionManager : opens connections
+    DataSourceRegistry o-- "0..*" AbstractDataSource : contains
+```
+
 ### Data Sources vs Resources
 
 It's important to understand the distinction between **Data Sources** and **Resources**:

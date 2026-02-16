@@ -1,4 +1,4 @@
-from graflo import Schema
+from graflo.architecture.schema import Schema
 from graflo.onto import DBType
 from graflo.architecture import Resource
 from graflo.db import PostgresConnection

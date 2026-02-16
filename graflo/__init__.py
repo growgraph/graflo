@@ -1,26 +1,41 @@
 """graflo: A flexible graph database abstraction layer.
 
 graflo provides a unified interface for working with different graph databases
-(ArangoDB, Neo4j) through a common API. It handles graph operations, data
-transformations, and query generation while abstracting away database-specific
-details.
+(ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph) through a common API.
+It handles graph operations, data transformations, and query generation while
+abstracting away database-specific details.
 
 Key Features:
     - Database-agnostic graph operations
-    - Flexible schema management
+    - Flexible schema management with typed fields
+    - Automatic schema inference from PostgreSQL databases
     - Query generation and execution
     - Data transformation utilities
     - Filter expression system
 
 Example:
-    >>> from graflo.db.manager import ConnectionManager
-    >>> with ConnectionManager(config) as conn:
-    ...     conn.init_db(schema, recreate_schema=True)
-    ...     conn.upsert_docs_batch(docs, "users")
+    >>> from graflo import GraphEngine, Schema, IngestionParams
+    >>> engine = GraphEngine()
+    >>> schema = engine.infer_schema(postgres_config)
+    >>> engine.define_and_ingest(schema, target_db_config)
 """
 
-from .architecture import Index, Schema
-from graflo.hq.caster import Caster
+# --- Core orchestration ---------------------------------------------------
+from .hq import Caster, GraphEngine, IngestionParams
+
+# --- Architecture ----------------------------------------------------------
+from .architecture import (
+    Edge,
+    EdgeConfig,
+    FieldType,
+    Index,
+    Resource,
+    Schema,
+    Vertex,
+    VertexConfig,
+)
+
+# --- Data sources ----------------------------------------------------------
 from .data_source import (
     APIConfig,
     APIDataSource,
@@ -29,6 +44,7 @@ from .data_source import (
     DataSourceRegistry,
     DataSourceType,
     FileDataSource,
+    InMemoryDataSource,
     JsonFileDataSource,
     JsonlFileDataSource,
     PaginationConfig,
@@ -36,36 +52,58 @@ from .data_source import (
     SQLDataSource,
     TableFileDataSource,
 )
+
+# --- Database --------------------------------------------------------------
 from .db import ConnectionManager, ConnectionType
-from .filter.onto import ComparisonOperator, LogicalOperator
+
+# --- Filters ---------------------------------------------------------------
+from .filter import ComparisonOperator, FilterExpression, LogicalOperator
+
+# --- Enums & utilities -----------------------------------------------------
 from .onto import AggregationType, DBType
 from .util.onto import FilePattern, Patterns, ResourcePattern, TablePattern
 
 __all__ = [
+    # Orchestration
+    "GraphEngine",
+    "Caster",
+    "IngestionParams",
+    # Architecture
+    "Schema",
+    "Resource",
+    "Vertex",
+    "VertexConfig",
+    "Edge",
+    "EdgeConfig",
+    "FieldType",
+    "Index",
+    # Data sources
     "AbstractDataSource",
     "APIConfig",
     "APIDataSource",
-    "AggregationType",
-    "ComparisonOperator",
-    "ConnectionManager",
-    "ConnectionType",
-    "Caster",
     "DataSourceFactory",
     "DataSourceRegistry",
     "DataSourceType",
-    "DBType",
     "FileDataSource",
-    "FilePattern",
-    "Index",
+    "InMemoryDataSource",
     "JsonFileDataSource",
     "JsonlFileDataSource",
-    "LogicalOperator",
     "PaginationConfig",
-    "Patterns",
-    "ResourcePattern",
-    "Schema",
     "SQLConfig",
     "SQLDataSource",
     "TableFileDataSource",
+    # Database
+    "ConnectionManager",
+    "ConnectionType",
+    # Filters
+    "ComparisonOperator",
+    "FilterExpression",
+    "LogicalOperator",
+    # Enums & utilities
+    "AggregationType",
+    "DBType",
+    "FilePattern",
+    "Patterns",
+    "ResourcePattern",
     "TablePattern",
 ]

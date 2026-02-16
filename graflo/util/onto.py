@@ -137,8 +137,50 @@ class FilePattern(ResourcePattern):
         return ResourceType.FILE
 
 
+class JoinClause(ConfigBaseModel):
+    """Specification for a SQL JOIN operation.
+
+    Used by TablePattern to describe multi-table queries. Each JoinClause
+    adds one JOIN to the generated SQL.
+
+    Attributes:
+        table: Table name to join (e.g. "all_classes").
+        schema_name: Optional schema override for the joined table.
+        alias: SQL alias for the joined table (e.g. "s", "t"). Required when
+            the same table is joined more than once.
+        on_self: Column on the base (left) table used in the ON condition.
+        on_other: Column on the joined (right) table used in the ON condition.
+        join_type: Type of join -- LEFT, INNER, etc. Defaults to LEFT.
+        select_fields: Explicit list of columns to SELECT from this join.
+            When None every column of the joined table is included (aliased
+            with the join alias prefix).
+    """
+
+    table: str = Field(..., description="Table name to join.")
+    schema_name: str | None = Field(
+        default=None, description="Schema override for the joined table."
+    )
+    alias: str | None = Field(
+        default=None, description="SQL alias for the joined table."
+    )
+    on_self: str = Field(
+        ..., description="Column on the base table for the ON condition."
+    )
+    on_other: str = Field(
+        ..., description="Column on the joined table for the ON condition."
+    )
+    join_type: str = Field(default="LEFT", description="JOIN type (LEFT, INNER, etc.).")
+    select_fields: list[str] | None = Field(
+        default=None,
+        description="Columns to SELECT from this join (None = all columns).",
+    )
+
+
 class TablePattern(ResourcePattern):
     """Pattern for matching database tables.
+
+    Supports simple single-table queries as well as multi-table JOINs and
+    pushdown filters via ``FilterExpression``.
 
     Attributes:
         table_name: Exact table name or regex pattern
@@ -148,6 +190,10 @@ class TablePattern(ResourcePattern):
         date_filter: SQL-style date filter condition (e.g., "> '2020-10-10'")
         date_range_start: Start date for range filtering (e.g., "2015-11-11")
         date_range_days: Number of days after start date (used with date_range_start)
+        filters: General-purpose pushdown filters rendered as SQL WHERE fragments.
+        joins: Multi-table JOIN specifications (auto-generated or explicit).
+        select_columns: Explicit SELECT column list. None means ``*`` for the
+            base table (plus aliased columns from joins).
     """
 
     table_name: str = ""
@@ -157,6 +203,18 @@ class TablePattern(ResourcePattern):
     date_filter: str | None = None
     date_range_start: str | None = None
     date_range_days: int | None = None
+    filters: list[Any] = Field(
+        default_factory=list,
+        description="Pushdown FilterExpression filters (rendered to SQL WHERE).",
+    )
+    joins: list[JoinClause] = Field(
+        default_factory=list,
+        description="JOIN clauses for multi-table queries.",
+    )
+    select_columns: list[str] | None = Field(
+        default=None,
+        description="Explicit SELECT columns. None = SELECT * (plus join aliases).",
+    )
 
     @model_validator(mode="after")
     def _validate_table_pattern(self) -> Self:
@@ -208,17 +266,19 @@ class TablePattern(ResourcePattern):
         return ResourceType.SQL_TABLE
 
     def build_where_clause(self) -> str:
-        """Build SQL WHERE clause from date filtering parameters.
+        """Build SQL WHERE clause from date filtering parameters **and** general filters.
 
         Returns:
             WHERE clause string (without the WHERE keyword) or empty string if no filters
         """
-        conditions = []
+        from graflo.filter.onto import FilterExpression
+        from graflo.onto import ExpressionFlavor
 
+        conditions: list[str] = []
+
+        # Date-specific conditions (legacy fields)
         if self.date_field:
             if self.date_range_start and self.date_range_days is not None:
-                # Range filtering: dt >= start_date AND dt < start_date + interval
-                # Example: Ingest for k days after 2015-11-11
                 conditions.append(
                     f"\"{self.date_field}\" >= '{self.date_range_start}'::date"
                 )
@@ -226,25 +286,92 @@ class TablePattern(ResourcePattern):
                     f"\"{self.date_field}\" < '{self.date_range_start}'::date + INTERVAL '{self.date_range_days} days'"
                 )
             elif self.date_filter:
-                # Direct filter: dt > 2020-10-10 or dt > '2020-10-10'
-                # The date_filter should include the operator and value
-                # If value doesn't have quotes, add them
                 filter_parts = self.date_filter.strip().split(None, 1)
                 if len(filter_parts) == 2:
                     operator, value = filter_parts
-                    # Add quotes if not already present and value looks like a date
                     if not (value.startswith("'") and value.endswith("'")):
-                        # Check if it's a date-like string (YYYY-MM-DD format)
                         if len(value) == 10 and value.count("-") == 2:
                             value = f"'{value}'"
                     conditions.append(f'"{self.date_field}" {operator} {value}')
                 else:
-                    # If format is unexpected, use as-is
                     conditions.append(f'"{self.date_field}" {self.date_filter}')
+
+        # General-purpose FilterExpression filters
+        for filt in self.filters:
+            if isinstance(filt, FilterExpression):
+                rendered = filt(kind=ExpressionFlavor.SQL)
+                if rendered:
+                    conditions.append(str(rendered))
 
         if conditions:
             return " AND ".join(conditions)
         return ""
+
+    # ------------------------------------------------------------------
+    # Full SQL query builder (handles SELECT, FROM, JOINs, WHERE)
+    # ------------------------------------------------------------------
+
+    def build_query(self, effective_schema: str | None = None) -> str:
+        """Build a complete SQL SELECT query.
+
+        Incorporates the base table, any JoinClauses, explicit select_columns,
+        date filters, and FilterExpression filters.
+
+        Args:
+            effective_schema: Schema to use if ``self.schema_name`` is None.
+
+        Returns:
+            Complete SQL query string.
+        """
+        schema = self.schema_name or effective_schema or "public"
+        base_alias = "r" if self.joins else None
+        base_ref = f'"{schema}"."{self.table_name}"'
+        if base_alias:
+            base_ref_aliased = f"{base_ref} {base_alias}"
+        else:
+            base_ref_aliased = base_ref
+
+        # --- SELECT ---
+        select_parts: list[str] = []
+        if self.select_columns is not None:
+            select_parts = list(self.select_columns)
+        elif self.joins:
+            select_parts.append(f"{base_alias}.*")
+            for jc in self.joins:
+                alias = jc.alias or jc.table
+                jc_schema = jc.schema_name or schema
+                if jc.select_fields is not None:
+                    for col in jc.select_fields:
+                        select_parts.append(f'{alias}."{col}" AS "{alias}__{col}"')
+                else:
+                    select_parts.append(f"{alias}.*")
+        else:
+            select_parts.append("*")
+
+        select_clause = ", ".join(select_parts)
+
+        # --- FROM + JOINs ---
+        from_clause = base_ref_aliased
+        for jc in self.joins:
+            jc_schema = jc.schema_name or schema
+            alias = jc.alias or jc.table
+            join_ref = f'"{jc_schema}"."{jc.table}"'
+            left_col = (
+                f'{base_alias}."{jc.on_self}"' if base_alias else f'"{jc.on_self}"'
+            )
+            right_col = f'{alias}."{jc.on_other}"'
+            from_clause += (
+                f" {jc.join_type} JOIN {join_ref} {alias} ON {left_col} = {right_col}"
+            )
+
+        query = f"SELECT {select_clause} FROM {from_clause}"
+
+        # --- WHERE ---
+        where = self.build_where_clause()
+        if where:
+            query += f" WHERE {where}"
+
+        return query
 
 
 class Patterns(ConfigBaseModel):

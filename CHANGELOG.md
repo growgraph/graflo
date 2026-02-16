@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **Top-level imports optimized**: Key classes are now importable directly from `graflo`:
+  - `GraphEngine`, `IngestionParams` promoted to top-level alongside existing `Caster`
+  - Architecture classes `Resource`, `Vertex`, `VertexConfig`, `Edge`, `EdgeConfig`, `FieldType` now at top-level
+  - `FilterExpression` promoted to top-level (alongside existing `ComparisonOperator`, `LogicalOperator`)
+  - `InMemoryDataSource` added to top-level data-source exports
+  - Import groups reorganized: orchestration, architecture, data sources, database, filters, enums & utilities
+- **`graflo.filter` package exports**: `FilterExpression`, `ComparisonOperator`, and `LogicalOperator` are now re-exported from `graflo.filter.__init__` (previously only available via `graflo.filter.onto`)
+
+### Documentation
+- Added **Mermaid class diagrams** to Concepts page showing:
+  - `GraphEngine` orchestration: how `GraphEngine` delegates to `InferenceManager`, `ResourceMapper`, `Caster`, and `ConnectionManager`
+  - `Schema` architecture: the full hierarchy from `Schema` through `VertexConfig`/`EdgeConfig`, `Resource`, `Actor` subtypes, `Field`, and `FilterExpression`
+  - `Caster` ingestion pipeline: how `Caster` coordinates `RegistryBuilder`, `DataSourceRegistry`, `DBWriter`, `GraphContainer`, and `ConnectionManager`
+- Enabled Mermaid rendering in mkdocs configuration
+- Updated top-level package docstring with modern usage example (`GraphEngine` workflow)
+
 ## [1.5.0] - 2026-02-02
 
 ### Added
