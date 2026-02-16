@@ -26,7 +26,7 @@ jobs:
         -   name: Install uv
             uses: astral-sh/setup-uv@v5
             with:
-                version: "0.8.14"
+                version: "0.9.28"
         -   name: Build and publish
             run: |
                 uv build

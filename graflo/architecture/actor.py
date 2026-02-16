@@ -1297,8 +1297,8 @@ class ActorWrapper:
 
         Mutates the tree in place: for each DescendActor, filters its
         descendants to exclude wrappers matching the predicate, after
-        recursing into each descendant. Use with find_descendants to
-        remove actors that reference disconnected vertices.
+        recursing into each descendant.  Intermediate DescendActor
+        wrappers that become empty after pruning are also removed.
 
         Args:
             predicate: Callable(ActorWrapper) -> bool. Descendants for
@@ -1308,5 +1308,8 @@ class ActorWrapper:
             for d in list(self.actor.descendants):
                 d.remove_descendants_if(predicate=predicate)
             self.actor._descendants[:] = [
-                d for d in self.actor.descendants if not predicate(d)
+                d
+                for d in self.actor.descendants
+                if not predicate(d)
+                and not (isinstance(d.actor, DescendActor) and d.count() == 0)
             ]

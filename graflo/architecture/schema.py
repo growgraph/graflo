@@ -175,10 +175,11 @@ class Schema(ConfigBaseModel):
         """Remove vertices that do not take part in any relation (disconnected).
 
         Builds the set of vertex names that appear as source or target of any
-        edge, then removes from VertexConfig all other vertices. For each
-        resource, finds actors that reference disconnected vertices (via
-        find_descendants) and removes them from the actor tree. Resources
-        whose root actor references only disconnected vertices are removed.
+        edge, then removes from VertexConfig all other vertices.  For each
+        resource, removes actors that reference disconnected vertices from the
+        actor tree.  If a resource's root directly references a disconnected
+        vertex (single-step pipeline) or becomes empty after pruning, the
+        entire resource is removed.
 
         Mutates this schema in place.
         """
@@ -189,7 +190,7 @@ class Schema(ConfigBaseModel):
 
         self.vertex_config.remove_vertices(disconnected)
 
-        def mentions_disconnected(wrapper):
+        def _mentions_disconnected(wrapper) -> bool:
             actor = wrapper.actor
             if isinstance(actor, VertexActor):
                 return actor.name in disconnected
@@ -205,21 +206,12 @@ class Schema(ConfigBaseModel):
         to_drop: list[Resource] = []
         for resource in self.resources:
             root = resource.root
-            to_remove = set(
-                root.find_descendants(actor_type=VertexActor, name=disconnected)
-                + root.find_descendants(actor_type=TransformActor, vertex=disconnected)
-                + root.find_descendants(
-                    predicate=lambda w: isinstance(w.actor, EdgeActor)
-                    and (
-                        w.actor.edge.source in disconnected
-                        or w.actor.edge.target in disconnected
-                    ),
-                )
-            )
-            if mentions_disconnected(root):
+            if _mentions_disconnected(root):
                 to_drop.append(resource)
                 continue
-            root.remove_descendants_if(lambda w: w in to_remove)
+            root.remove_descendants_if(_mentions_disconnected)
+            if not any(isinstance(a, VertexActor) for a in root.collect_actors()):
+                to_drop.append(resource)
 
         for r in to_drop:
             self.resources.remove(r)
