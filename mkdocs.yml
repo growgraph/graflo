@@ -72,7 +72,11 @@ markdown_extensions:
         pygments_lang_class: true
 -   pymdownx.inlinehilite
 -   pymdownx.snippets
--   pymdownx.superfences
+-   pymdownx.superfences:
+        custom_fences:
+        -   name: mermaid
+            class: mermaid
+            format: !!python/name:pymdownx.superfences.fence_code_format
 -   attr_list
 -   md_in_html
 -   admonition
@@ -80,8 +84,6 @@ markdown_extensions:
 -   footnotes
 -   meta
 -   pymdownx.blocks.caption
--   admonition
--   pymdownx.superfences
 -   pymdownx.details
 -   pymdownx.tabbed
 -   pymdownx.highlight

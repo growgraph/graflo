@@ -19,7 +19,7 @@ The schema system provides:
 
 Example:
     >>> schema = Schema(
-    ...     general=SchemaMetadata(name="social_network", version="1.0"),
+    ...     general=SchemaMetadata(name="social_network", version="1.0.0"),
     ...     vertex_config=VertexConfig(...),
     ...     edge_config=EdgeConfig(...),
     ...     resources=[Resource(...)]
@@ -30,6 +30,7 @@ Example:
 from __future__ import annotations
 
 import logging
+import re
 from collections import Counter
 from typing import Any
 
@@ -50,12 +51,19 @@ from graflo.architecture.vertex import VertexConfig
 logger = logging.getLogger(__name__)
 
 
+_SEMVER_RE = re.compile(
+    r"^\d+\.\d+\.\d+"
+    r"(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?"
+    r"(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$"
+)
+
+
 class SchemaMetadata(ConfigBaseModel):
     """Schema metadata and versioning information.
 
-    Holds metadata about the schema, including its name and version.
-    Used for schema identification and versioning. Suitable for LLM-generated
-    schema constituents.
+    Holds metadata about the schema, including its name, version, and
+    description.  Used for schema identification and versioning.
+    Suitable for LLM-generated schema constituents.
     """
 
     name: str = PydanticField(
@@ -64,8 +72,22 @@ class SchemaMetadata(ConfigBaseModel):
     )
     version: str | None = PydanticField(
         default=None,
-        description="Optional version string of the schema (e.g. semantic version).",
+        description="Semantic version of the schema (e.g. '1.0.0', '2.1.3-beta+build.42').",
     )
+    description: str | None = PydanticField(
+        default=None,
+        description="Optional human-readable description of the schema.",
+    )
+
+    @field_validator("version")
+    @classmethod
+    def _validate_semver(cls, v: str | None) -> str | None:
+        if v is not None and not _SEMVER_RE.match(v):
+            raise ValueError(
+                f"version '{v}' is not a valid semantic version "
+                f"(expected MAJOR.MINOR.PATCH[-prerelease][+build])"
+            )
+        return v
 
 
 class Schema(ConfigBaseModel):

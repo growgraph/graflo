@@ -81,6 +81,8 @@ class ComparisonOperator(BaseEnum):
         GT: Greater than (>)
         LT: Less than (<)
         IN: Membership test (IN)
+        IS_NULL: Null check (IS NULL)
+        IS_NOT_NULL: Non-null check (IS NOT NULL)
     """
 
     NEQ = "!="
@@ -90,6 +92,8 @@ class ComparisonOperator(BaseEnum):
     GT = ">"
     LT = "<"
     IN = "IN"
+    IS_NULL = "IS_NULL"
+    IS_NOT_NULL = "IS_NOT_NULL"
 
 
 class FilterExpression(ConfigBaseModel):
@@ -141,10 +145,16 @@ class FilterExpression(ConfigBaseModel):
 
     @model_validator(mode="after")
     def check_discriminated_shape(self) -> FilterExpression:
-        """Enforce exactly one shape per kind."""
+        """Enforce exactly one shape per kind and normalise null-check operators."""
         if self.kind == "leaf":
             if self.operator is not None or self.deps:
                 raise ValueError("leaf expression must not have operator or deps")
+            # IS_NULL / IS_NOT_NULL are unary; clear any spurious value list
+            if self.cmp_operator in (
+                ComparisonOperator.IS_NULL,
+                ComparisonOperator.IS_NOT_NULL,
+            ):
+                object.__setattr__(self, "value", [])
         else:
             if self.operator is None:
                 raise ValueError("composite expression must have operator")
@@ -218,13 +228,20 @@ class FilterExpression(ConfigBaseModel):
             return self._call_leaf(doc_name=doc_name, kind=kind, **kwargs)
         return self._call_composite(doc_name=doc_name, kind=kind, **kwargs)
 
+    def _is_null_operator(self) -> bool:
+        """Check if this is a null-checking operator (IS_NULL or IS_NOT_NULL)."""
+        return self.cmp_operator in (
+            ComparisonOperator.IS_NULL,
+            ComparisonOperator.IS_NOT_NULL,
+        )
+
     def _call_leaf(
         self,
         doc_name="doc",
         kind: ExpressionFlavor = ExpressionFlavor.AQL,
         **kwargs,
     ) -> str | bool:
-        if not self.value:
+        if not self._is_null_operator() and not self.value:
             logger.warning(f"for {self} value is not set : {self.value}")
         if kind == ExpressionFlavor.AQL:
             assert self.cmp_operator is not None
@@ -275,6 +292,10 @@ class FilterExpression(ConfigBaseModel):
         return value
 
     def _cast_arango(self, doc_name: str) -> str:
+        if self.cmp_operator == ComparisonOperator.IS_NULL:
+            return f'{doc_name}["{self.field}"] == null'
+        if self.cmp_operator == ComparisonOperator.IS_NOT_NULL:
+            return f'{doc_name}["{self.field}"] != null'
         const = self._cast_value()
         lemma = f"{self.cmp_operator} {const}"
         if self.unary_op is not None:
@@ -284,6 +305,10 @@ class FilterExpression(ConfigBaseModel):
         return lemma
 
     def _cast_cypher(self, doc_name: str) -> str:
+        if self.cmp_operator == ComparisonOperator.IS_NULL:
+            return f"{doc_name}.{self.field} IS NULL"
+        if self.cmp_operator == ComparisonOperator.IS_NOT_NULL:
+            return f"{doc_name}.{self.field} IS NOT NULL"
         const = self._cast_value()
         cmp_op = (
             "=" if self.cmp_operator == ComparisonOperator.EQ else self.cmp_operator
@@ -296,6 +321,10 @@ class FilterExpression(ConfigBaseModel):
         return lemma
 
     def _cast_tigergraph(self, doc_name: str) -> str:
+        if self.cmp_operator == ComparisonOperator.IS_NULL:
+            return f"{doc_name}.{self.field} IS NULL"
+        if self.cmp_operator == ComparisonOperator.IS_NOT_NULL:
+            return f"{doc_name}.{self.field} IS NOT NULL"
         const = self._cast_value()
         cmp_op = (
             "==" if self.cmp_operator == ComparisonOperator.EQ else self.cmp_operator
@@ -307,10 +336,27 @@ class FilterExpression(ConfigBaseModel):
             lemma = f"{doc_name}.{self.field} {lemma}"
         return lemma
 
+    @staticmethod
+    def _quote_sql_field(field: str) -> str:
+        """Quote a SQL field name, handling dotted alias.column references.
+
+        ``sys_id``   -> ``"sys_id"``
+        ``s.sys_id`` -> ``s."sys_id"``
+        """
+        if "." in field:
+            alias, col = field.split(".", 1)
+            return f'{alias}."{col}"'
+        return f'"{field}"'
+
     def _cast_sql(self) -> str:
         """Render leaf as SQL WHERE fragment: \"column\" op value (strings/dates single-quoted)."""
         if not self.field:
             return ""
+        quoted = self._quote_sql_field(self.field)
+        if self.cmp_operator == ComparisonOperator.IS_NULL:
+            return f"{quoted} IS NULL"
+        if self.cmp_operator == ComparisonOperator.IS_NOT_NULL:
+            return f"{quoted} IS NOT NULL"
         if self.cmp_operator == ComparisonOperator.EQ:
             op_str = "="
         elif self.cmp_operator == ComparisonOperator.NEQ:
@@ -333,11 +379,15 @@ class FilterExpression(ConfigBaseModel):
             # Strings and ISO datetimes: single-quoted for SQL
             value_str = str(value).replace("'", "''")
             value_str = f"'{value_str}'"
-        return f'"{self.field}" {op_str} {value_str}'
+        return f"{quoted} {op_str} {value_str}"
 
     def _cast_restpp(self, field_types: dict[str, Any] | None = None) -> str:
         if not self.field:
             return ""
+        if self.cmp_operator == ComparisonOperator.IS_NULL:
+            return f'{self.field}=""'
+        if self.cmp_operator == ComparisonOperator.IS_NOT_NULL:
+            return f'{self.field}!=""'
         if self.cmp_operator == ComparisonOperator.EQ:
             op_str = "="
         elif self.cmp_operator == ComparisonOperator.NEQ:
@@ -376,6 +426,10 @@ class FilterExpression(ConfigBaseModel):
     def _cast_python(self, **kwargs: Any) -> bool:
         if self.field is not None:
             field_val = kwargs.pop(self.field, None)
+            if self.cmp_operator == ComparisonOperator.IS_NULL:
+                return field_val is None
+            if self.cmp_operator == ComparisonOperator.IS_NOT_NULL:
+                return field_val is not None
             if field_val is not None and self.unary_op is not None:
                 foo = getattr(field_val, self.unary_op)
                 return foo(self.value[0])

@@ -5,7 +5,8 @@ and asserts that datetime_after/datetime_before and per-resource date_field
 filter rows correctly.
 """
 
-from graflo.hq.caster import Caster, IngestionParams
+from graflo.filter.sql import datetime_range_where_sql
+from graflo.hq.caster import IngestionParams
 from graflo.hq.graph_engine import GraphEngine
 from graflo.onto import DBType
 from graflo.util.onto import TablePattern
@@ -60,7 +61,7 @@ def test_ingest_datetime_range_postgres(postgres_conn, load_mock_schema):
         resource_name="purchases",
         date_field="purchase_date",
     )
-    datetime_where = Caster._datetime_range_where_sql(
+    datetime_where = datetime_range_where_sql(
         "2020-02-01",
         "2020-06-01",
         pattern.date_field or "purchase_date",
@@ -93,7 +94,7 @@ def test_ingest_datetime_range_with_global_column(postgres_conn, load_mock_schem
     )
     date_column = pattern.date_field or ingestion_params.datetime_column
     assert date_column == "purchase_date"
-    datetime_where = Caster._datetime_range_where_sql(
+    datetime_where = datetime_range_where_sql(
         ingestion_params.datetime_after,
         ingestion_params.datetime_before,
         date_column,
