@@ -59,6 +59,10 @@ version = "1.6.0"
 plot = [
   "pygraphviz>=1.14"
 ]
+sparql = [
+  "SPARQLWrapper>=2.0.0",
+  "rdflib>=7.0.0"
+]
 
 [project.scripts]
 ingest = "graflo.cli.ingest:ingest"
@@ -76,6 +80,7 @@ include = ["graflo"]
 include = ["graflo"]
 
 [tool.pytest.ini_options]
+addopts = "-m 'not slow'"
 markers = [
-  "slow: marks tests as slow (deselect with '-m \"not slow\"')"
+  "slow: marks tests as slow (run with '-m slow' or '--run-slow')"
 ]

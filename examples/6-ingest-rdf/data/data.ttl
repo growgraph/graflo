@@ -1,0 +1,88 @@
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix ex:   <http://example.org/> .
+
+# --- TBox (included so the file is self-contained) -------------------------
+
+ex:Researcher    a owl:Class .
+ex:Publication   a owl:Class .
+ex:Institution   a owl:Class .
+
+ex:fullName      a owl:DatatypeProperty ; rdfs:domain ex:Researcher   ; rdfs:range xsd:string .
+ex:orcid         a owl:DatatypeProperty ; rdfs:domain ex:Researcher   ; rdfs:range xsd:string .
+ex:title         a owl:DatatypeProperty ; rdfs:domain ex:Publication  ; rdfs:range xsd:string .
+ex:year          a owl:DatatypeProperty ; rdfs:domain ex:Publication  ; rdfs:range xsd:integer .
+ex:doi           a owl:DatatypeProperty ; rdfs:domain ex:Publication  ; rdfs:range xsd:string .
+ex:instName      a owl:DatatypeProperty ; rdfs:domain ex:Institution  ; rdfs:range xsd:string .
+ex:country       a owl:DatatypeProperty ; rdfs:domain ex:Institution  ; rdfs:range xsd:string .
+
+ex:authorOf       a owl:ObjectProperty ; rdfs:domain ex:Researcher  ; rdfs:range ex:Publication .
+ex:affiliatedWith a owl:ObjectProperty ; rdfs:domain ex:Researcher  ; rdfs:range ex:Institution .
+ex:cites          a owl:ObjectProperty ; rdfs:domain ex:Publication  ; rdfs:range ex:Publication .
+
+# --- Institutions ----------------------------------------------------------
+
+ex:mit  a ex:Institution ;
+    ex:instName "MIT" ;
+    ex:country  "USA" .
+
+ex:eth  a ex:Institution ;
+    ex:instName "ETH Zürich" ;
+    ex:country  "Switzerland" .
+
+ex:oxford  a ex:Institution ;
+    ex:instName "University of Oxford" ;
+    ex:country  "UK" .
+
+# --- Researchers -----------------------------------------------------------
+
+ex:alice  a ex:Researcher ;
+    ex:fullName       "Alice Smith" ;
+    ex:orcid          "0000-0001-0001-0001" ;
+    ex:affiliatedWith ex:mit ;
+    ex:authorOf       ex:paper1 , ex:paper3 .
+
+ex:bob  a ex:Researcher ;
+    ex:fullName       "Bob Jones" ;
+    ex:orcid          "0000-0001-0002-0002" ;
+    ex:affiliatedWith ex:eth ;
+    ex:authorOf       ex:paper1 , ex:paper2 .
+
+ex:carol  a ex:Researcher ;
+    ex:fullName       "Carol Wu" ;
+    ex:orcid          "0000-0001-0003-0003" ;
+    ex:affiliatedWith ex:oxford ;
+    ex:authorOf       ex:paper2 , ex:paper3 .
+
+ex:dave  a ex:Researcher ;
+    ex:fullName       "Dave Müller" ;
+    ex:orcid          "0000-0001-0004-0004" ;
+    ex:affiliatedWith ex:eth ;
+    ex:authorOf       ex:paper4 .
+
+# --- Publications ----------------------------------------------------------
+
+ex:paper1  a ex:Publication ;
+    ex:title "Graph Databases: A Survey" ;
+    ex:year  2021 ;
+    ex:doi   "10.1234/paper1" .
+
+ex:paper2  a ex:Publication ;
+    ex:title "Knowledge Graphs in Practice" ;
+    ex:year  2022 ;
+    ex:doi   "10.1234/paper2" ;
+    ex:cites ex:paper1 .
+
+ex:paper3  a ex:Publication ;
+    ex:title "Ontology-Driven Data Integration" ;
+    ex:year  2023 ;
+    ex:doi   "10.1234/paper3" ;
+    ex:cites ex:paper1 , ex:paper2 .
+
+ex:paper4  a ex:Publication ;
+    ex:title "SPARQL Query Optimization Techniques" ;
+    ex:year  2024 ;
+    ex:doi   "10.1234/paper4" ;
+    ex:cites ex:paper2 , ex:paper3 .

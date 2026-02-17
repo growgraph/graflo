@@ -21,12 +21,14 @@ class DataSourceType(BaseEnum):
     API: REST API data sources
     SQL: SQL database data sources
     IN_MEMORY: In-memory data sources (lists, DataFrames)
+    SPARQL: RDF data sources (local files via rdflib, remote endpoints via SPARQLWrapper)
     """
 
     FILE = "file"
     API = "api"
     SQL = "sql"
     IN_MEMORY = "in_memory"
+    SPARQL = "sparql"
 
 
 class AbstractDataSource(ConfigBaseModel, abc.ABC):

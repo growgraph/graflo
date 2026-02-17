@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 # Database directories
-DATABASES=("arango" "neo4j" "postgres" "falkordb" "memgraph" "nebula" "tigergraph")
+DATABASES=("arango" "neo4j" "postgres" "falkordb" "memgraph" "nebula" "tigergraph" "fuseki")
 
 # Colors for output
 GREEN='\033[0;32m'

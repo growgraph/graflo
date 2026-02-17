@@ -29,6 +29,7 @@ SOURCE_DATABASES: set[DBType] = {
     DBType.MYSQL,
     DBType.MONGODB,
     DBType.SQLITE,
+    DBType.SPARQL,  # RDF / SPARQL endpoints
 }
 
 # Databases that can be used as targets (OUTPUT)
@@ -1219,5 +1220,109 @@ class PostgresConfig(DBConfig):
             config_data["database"] = env_vars.get("POSTGRES_DB") or env_vars.get(
                 "POSTGRES_DATABASE"
             )
+
+        return cls(**config_data)
+
+
+class SparqlEndpointConfig(DBConfig):
+    """Configuration for SPARQL endpoint connections (e.g. Apache Fuseki).
+
+    SPARQL endpoints are used as **source-only** data stores.  The endpoint
+    exposes one or more datasets, each reachable at
+    ``<uri>/<dataset>/sparql`` for queries and ``<uri>/<dataset>/data`` for
+    graph-store operations.
+
+    Attributes:
+        dataset: Dataset (repository) name on the SPARQL server.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="SPARQL_",
+        case_sensitive=False,
+    )
+
+    dataset: str | None = Field(
+        default=None, description="Dataset / repository name on the SPARQL server"
+    )
+
+    def _get_default_port(self) -> int:
+        """Default Fuseki HTTP port."""
+        return 3030
+
+    def _get_effective_database(self) -> str | None:
+        """SPARQL endpoints have no database level."""
+        return None
+
+    def _get_effective_schema(self) -> str | None:
+        """Dataset name acts as the schema equivalent."""
+        return self.dataset
+
+    @property
+    def query_endpoint(self) -> str:
+        """Full SPARQL query endpoint URL.
+
+        Returns:
+            URL like ``http://localhost:3030/dataset/sparql``
+        """
+        base = (self.uri or "").rstrip("/")
+        ds = self.dataset or ""
+        return f"{base}/{ds}/sparql"
+
+    @property
+    def graph_store_endpoint(self) -> str:
+        """Full SPARQL Graph Store endpoint URL.
+
+        Returns:
+            URL like ``http://localhost:3030/dataset/data``
+        """
+        base = (self.uri or "").rstrip("/")
+        ds = self.dataset or ""
+        return f"{base}/{ds}/data"
+
+    @classmethod
+    def from_docker_env(
+        cls, docker_dir: str | Path | None = None
+    ) -> "SparqlEndpointConfig":
+        """Load SPARQL / Fuseki config from ``docker/fuseki/.env``.
+
+        Expected env vars (see ``docker/fuseki/.env``):
+
+        - ``TS_PORT``      – mapped host port (default 3030)
+        - ``TS_USERNAME``   – admin user (default ``admin``)
+        - ``TS_PASSWORD``   – admin password
+        - ``TS_DATASET``    – dataset name (optional)
+        """
+        if docker_dir is None:
+            docker_dir = (
+                Path(__file__).parent.parent.parent.parent / "docker" / "fuseki"
+            )
+        else:
+            docker_dir = Path(docker_dir)
+
+        env_file = docker_dir / ".env"
+        if not env_file.exists():
+            raise FileNotFoundError(f"Environment file not found: {env_file}")
+
+        env_vars: Dict[str, str] = {}
+        with open(env_file, "r") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, value = line.split("=", 1)
+                    env_vars[key.strip()] = value.strip().strip('"').strip("'")
+
+        config_data: Dict[str, Any] = {}
+
+        port = env_vars.get("TS_PORT", "3030")
+        hostname = env_vars.get("TS_HOSTNAME", "localhost")
+        protocol = env_vars.get("TS_PROTOCOL", "http")
+        config_data["uri"] = f"{protocol}://{hostname}:{port}"
+
+        config_data["username"] = env_vars.get("TS_USERNAME", "admin")
+        if "TS_PASSWORD" in env_vars:
+            config_data["password"] = env_vars["TS_PASSWORD"]
+
+        if "TS_DATASET" in env_vars:
+            config_data["dataset"] = env_vars["TS_DATASET"]
 
         return cls(**config_data)

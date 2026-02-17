@@ -1,6 +1,6 @@
 # GraFlo <img src="https://raw.githubusercontent.com/growgraph/graflo/main/docs/assets/favicon.ico" alt="graflo logo" style="height: 32px; width:32px;"/>
 
-graflo is a framework for transforming **tabular** data (CSV, SQL) and **hierarchical** data (JSON, XML) into property graphs and ingesting them into graph databases (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph). **Automatically infer schemas from normalized PostgreSQL databases (3NF)** with proper primary keys (PK) and foreign keys (FK) - uses intelligent heuristics to detect vertices and edges!
+graflo is a framework for transforming **tabular** (CSV, SQL), **hierarchical** (JSON, XML), and **RDF/SPARQL** data into property graphs and ingesting them into graph databases (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph).
 
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg) 
 [![PyPI version](https://badge.fury.io/py/graflo.svg)](https://badge.fury.io/py/graflo)
@@ -8,8 +8,6 @@ graflo is a framework for transforming **tabular** data (CSV, SQL) and **hierarc
 [![License: BSL](https://img.shields.io/badge/license-BSL--1.1-green)](https://github.com/growgraph/graflo/blob/main/LICENSE)
 [![pre-commit](https://github.com/growgraph/graflo/actions/workflows/pre-commit.yml/badge.svg)](https://github.com/growgraph/graflo/actions/workflows/pre-commit.yml)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.15446131.svg)]( https://doi.org/10.5281/zenodo.15446131)
-
-
 
 <!-- [![pytest](https://github.com/growgraph/graflo/actions/workflows/pytest.yml/badge.svg)](https://github.com/growgraph/graflo/actions/workflows/pytest.yml) -->
 
@@ -24,65 +22,49 @@ graflo works with property graphs, which consist of:
 - **Properties**: Both vertices and edges may have properties
 
 ### Schema
-The Schema defines how your data should be transformed into a graph and contains:
+The Schema defines how your data should be transformed into a graph:
 
-- **Vertex Definitions**: Specify vertex types, their properties, and unique identifiers
-  - Fields can be specified as strings (backward compatible) or typed `Field` objects with types (INT, FLOAT, STRING, DATETIME, BOOL)
-  - Type information enables better validation and database-specific optimizations
-- **Edge Definitions**: Define relationships between vertices and their properties
-  - Weight fields support typed definitions for better type safety
-- **Resource Mapping**: describe how data sources map to vertices and edges
-- **Transforms**: Modify data during the casting process
-- **Automatic Schema Inference**: Generate schemas automatically from PostgreSQL 3NF databases
+- **Vertex Definitions**: Vertex types, their properties, and unique identifiers. Fields may carry optional types (`INT`, `FLOAT`, `STRING`, `DATETIME`, `BOOL`).
+- **Edge Definitions**: Relationships between vertices, with optional weight fields.
+- **Resource Mapping**: How data sources map to vertices and edges.
+- **Transforms**: Modify data during the casting process.
+- **Automatic Schema Inference**: Generate schemas from PostgreSQL 3NF databases (PK/FK heuristics) or from OWL/RDFS ontologies.
 
 ### Data Sources
 Data Sources define where data comes from:
 
-- **File Sources**: JSON, JSONL, CSV/TSV files
+- **File Sources**: CSV, JSON, JSONL, Parquet files
+- **SQL Sources**: PostgreSQL and other SQL databases via SQLAlchemy
+- **RDF Sources**: Local Turtle/RDF/N3/JSON-LD files via rdflib
+- **SPARQL Sources**: Remote SPARQL endpoints (e.g. Apache Fuseki) via SPARQLWrapper
 - **API Sources**: REST API endpoints with pagination and authentication
-- **SQL Sources**: SQL databases via SQLAlchemy
 - **In-Memory Sources**: Python objects (lists, DataFrames)
 
 ### Resources
 Resources define how data is transformed into a graph (semantic mapping). They work with data from any DataSource type:
 
 - **Table-like processing**: CSV files, SQL tables, API responses
-- **JSON-like processing**: JSON files, nested data structures, hierarchical API responses
+- **JSON-like processing**: JSON files, nested data structures
+- **RDF processing**: Triples grouped by subject into flat documents
 
 ### GraphEngine
-The `GraphEngine` orchestrates graph database operations, providing a unified interface for:
-- Schema inference from PostgreSQL databases
-- Schema definition in target graph databases (moved from Caster)
+`GraphEngine` orchestrates graph database operations:
+
+- Schema inference from PostgreSQL databases or RDF/OWL ontologies
+- Schema definition in target graph databases
 - Pattern creation from data sources
 - Data ingestion with async support
 
 ## Key Features
 
-- **🚀 PostgreSQL Schema Inference**: **Automatically generate schemas from normalized PostgreSQL databases (3NF)** - No manual schema definition needed!
-    - **Requirements**: Works with normalized databases (3NF) that have proper primary keys (PK) and foreign keys (FK) decorated
-    - Uses intelligent heuristics to classify tables as vertices or edges based on structure
-    - Introspect PostgreSQL schemas to identify vertex-like and edge-like tables automatically
-    - Automatically map PostgreSQL data types to graflo Field types (INT, FLOAT, STRING, DATETIME, BOOL)
-    - Infer vertex configurations from table structures with proper indexes (primary keys become vertex indexes)
-    - Infer edge configurations from foreign key relationships (foreign keys become edge source/target mappings)
-    - Create Resource mappings from PostgreSQL tables automatically
-    - Direct database access - ingest data without exporting to files first
-    - See [Example 5: PostgreSQL Schema Inference](examples/example-5.md) for a complete walkthrough
-- **Graph Transformation Meta-language**: A powerful declarative language to describe how your data becomes a property graph:
-    - Define vertex and edge structures with typed fields
-    - Set compound indexes for vertices and edges
-    - Use blank vertices for complex relationships
-    - Specify edge constraints and properties with typed weight fields
-    - Apply advanced filtering and transformations
-- **Typed Schema Definitions**: Enhanced type support throughout the schema system
-    - Vertex fields support types (INT, FLOAT, STRING, DATETIME, BOOL) for better validation
-    - Edge weight fields can specify types for improved type safety
-    - Backward compatible: fields without types default to None (suitable for databases like ArangoDB)
-- **Async Ingestion**: Efficient async/await-based ingestion pipeline for better performance
-- **Parallel Processing**: Efficient processing with multi-threading
-- **Database Integration**: Seamless integration with Neo4j, ArangoDB, TigerGraph, FalkorDB, Memgraph, and PostgreSQL (as source)
-- **Advanced Filtering**: Powerful filtering capabilities for data transformation with server-side filtering support
-- **Blank Node Support**: Create intermediate vertices for complex relationships
+- **Declarative graph transformation**: Define vertex/edge structures, indexes, weights, and transforms in YAML. Resources describe how each data source maps to vertices and edges.
+- **PostgreSQL schema inference**: Automatically generate schemas from normalized PostgreSQL databases (3NF) with proper PK/FK constraints. See [Example 5](examples/example-5.md).
+- **RDF / SPARQL ingestion**: Read `.ttl`/`.rdf`/`.n3` files or query SPARQL endpoints. Auto-infer schemas from OWL/RDFS ontologies: `owl:Class` maps to vertices, `owl:ObjectProperty` to edges, `owl:DatatypeProperty` to vertex fields. Install with `pip install graflo[sparql]`.
+- **Typed fields**: Vertex fields and edge weights support types (`INT`, `FLOAT`, `STRING`, `DATETIME`, `BOOL`) for validation and database-specific optimisation.
+- **Parallel batch processing**: Configurable batch sizes and multi-core execution.
+- **Database-agnostic target**: Single API for ArangoDB, Neo4j, TigerGraph, FalkorDB, and Memgraph.
+- **Advanced filtering**: Server-side filtering (e.g. TigerGraph REST++ API) and client-side filter expressions.
+- **Blank vertices**: Create intermediate nodes for complex relationship modelling.
 
 ## Quick Links
 
@@ -93,20 +75,19 @@ The `GraphEngine` orchestrates graph database operations, providing a unified in
 
 ## Use Cases
 
-- **Data Migration**: Transform relational data into graph structures
-    - **PostgreSQL to Graph**: Automatically infer schemas from normalized PostgreSQL databases (3NF) with proper PK/FK constraints and migrate data directly
-    - Uses intelligent heuristics to detect vertices and edges - no manual schema definition required
-    - Perfect for migrating existing relational databases that follow normalization best practices
-- **Knowledge Graphs**: Build complex knowledge representations
-- **Data Integration**: Combine multiple data sources into a unified graph
-- **Graph Views**: Create graph views of existing PostgreSQL databases without schema changes
+- **Data Migration**: Transform relational data into graph structures. Infer schemas from PostgreSQL 3NF databases (PK/FK heuristics) and migrate data directly.
+- **RDF-to-Property-Graph**: Read RDF triples from files or SPARQL endpoints, auto-infer schemas from OWL ontologies, and ingest into ArangoDB, Neo4j, etc.
+- **Knowledge Graphs**: Build knowledge representations from heterogeneous sources (SQL, files, APIs, RDF).
+- **Data Integration**: Combine multiple data sources into a unified property graph.
+- **Graph Views**: Create graph views of existing PostgreSQL databases without schema changes.
 
 ## Requirements
 
-- Python 3.11 or higher (Python 3.11 and 3.12 are officially supported)
-- Graph database (Neo4j, ArangoDB, TigerGraph, FalkorDB, or Memgraph) for storage
-- Optional: PostgreSQL or other SQL databases for data sources (with automatic schema inference support)
-- Dependencies as specified in pyproject.toml
+- Python 3.11 or higher (3.11 and 3.12 officially supported)
+- A graph database (ArangoDB, Neo4j, TigerGraph, FalkorDB, or Memgraph) as target
+- Optional: PostgreSQL for SQL data sources and schema inference
+- Optional: `rdflib` + `SPARQLWrapper` for RDF/SPARQL support (`pip install graflo[sparql]`)
+- Full dependency list in `pyproject.toml`
 
 ## Contributing
 

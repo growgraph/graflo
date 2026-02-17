@@ -1,0 +1,45 @@
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix ex:   <http://example.org/> .
+
+# --- Ontology (TBox) -------------------------------------------------------
+
+ex:Person  a owl:Class .
+ex:Organization  a owl:Class .
+
+ex:name     a owl:DatatypeProperty ; rdfs:domain ex:Person ; rdfs:range xsd:string .
+ex:age      a owl:DatatypeProperty ; rdfs:domain ex:Person ; rdfs:range xsd:integer .
+ex:orgName  a owl:DatatypeProperty ; rdfs:domain ex:Organization ; rdfs:range xsd:string .
+ex:founded  a owl:DatatypeProperty ; rdfs:domain ex:Organization ; rdfs:range xsd:integer .
+ex:worksFor a owl:ObjectProperty   ; rdfs:domain ex:Person ; rdfs:range ex:Organization .
+ex:knows    a owl:ObjectProperty   ; rdfs:domain ex:Person ; rdfs:range ex:Person .
+
+# --- Instance data (ABox) --------------------------------------------------
+
+ex:alice  a ex:Person ;
+    ex:name    "Alice" ;
+    ex:age     30 ;
+    ex:worksFor ex:acme ;
+    ex:knows   ex:bob .
+
+ex:bob  a ex:Person ;
+    ex:name    "Bob" ;
+    ex:age     25 ;
+    ex:worksFor ex:acme ;
+    ex:knows   ex:alice .
+
+ex:carol  a ex:Person ;
+    ex:name    "Carol" ;
+    ex:age     35 ;
+    ex:worksFor ex:globex ;
+    ex:knows   ex:alice .
+
+ex:acme  a ex:Organization ;
+    ex:orgName "Acme Corp" ;
+    ex:founded 1990 .
+
+ex:globex  a ex:Organization ;
+    ex:orgName "Globex Inc" ;
+    ex:founded 2005 .

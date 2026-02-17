@@ -46,3 +46,23 @@ __all__ = [
     "SQLDataSource",
     "TableFileDataSource",
 ]
+
+# RDF / SPARQL data sources are optional (require graflo[sparql])
+try:
+    from .rdf import (  # noqa: F401
+        RdfDataSource,
+        RdfFileDataSource,
+        SparqlDataSource,
+        SparqlEndpointDataSource,
+        SparqlSourceConfig,
+    )
+
+    __all__ += [
+        "RdfDataSource",
+        "RdfFileDataSource",
+        "SparqlDataSource",
+        "SparqlEndpointDataSource",
+        "SparqlSourceConfig",
+    ]
+except ImportError:
+    pass

@@ -5,7 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.6.0] - 2026-02-17
+
+### Added
+- **SPARQL / RDF resource support**: Ingest data from SPARQL endpoints (e.g. Apache Fuseki) and local RDF files (`.ttl`, `.rdf`, `.n3`, `.jsonld`) into property graphs
+  - New `SparqlPattern` for mapping `rdf:Class` instances to resources, alongside existing `FilePattern` and `TablePattern`
+  - New `RdfDataSource` abstract parent with shared RDF-to-dict conversion logic; concrete subclasses `RdfFileDataSource` (local files via rdflib) and `SparqlEndpointDataSource` (remote endpoints via SPARQLWrapper)
+  - New `SparqlEndpointConfig` (extends `DBConfig`) with `from_docker_env()` for Fuseki containers
+  - New `RdfInferenceManager` auto-infers graflo `Schema` from OWL/RDFS ontologies: `owl:Class` to vertices, `owl:DatatypeProperty` to fields, `owl:ObjectProperty` to edges
+  - `GraphEngine.infer_schema_from_rdf()` and `GraphEngine.create_patterns_from_rdf()` for the RDF inference workflow
+  - `Patterns` class extended with `sparql_patterns` and `sparql_configs` dicts
+  - `RegistryBuilder` handles `ResourceType.SPARQL` to create the appropriate data sources
+  - `ResourceType.SPARQL`, `DataSourceType.SPARQL`, `DBType.SPARQL` enum values
+  - `rdflib` and `SPARQLWrapper` available as the `sparql` optional extra (`pip install graflo[sparql]`)
+  - Docker scripts (`start-all.sh`, `stop-all.sh`, `cleanup-all.sh`) updated to include Fuseki
+  - Test suite with 22 tests: RDF file parsing, ontology inference, and live Fuseki integration
 
 ### Changed
 - **Top-level imports optimized**: Key classes are now importable directly from `graflo`:
@@ -17,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`graflo.filter` package exports**: `FilterExpression`, `ComparisonOperator`, and `LogicalOperator` are now re-exported from `graflo.filter.__init__` (previously only available via `graflo.filter.onto`)
 
 ### Documentation
+- Added data-flow diagram (Pattern -> DataSource -> Resource -> GraphContainer -> Target DB) to Concepts page
 - Added **Mermaid class diagrams** to Concepts page showing:
   - `GraphEngine` orchestration: how `GraphEngine` delegates to `InferenceManager`, `ResourceMapper`, `Caster`, and `ConnectionManager`
   - `Schema` architecture: the full hierarchy from `Schema` through `VertexConfig`/`EdgeConfig`, `Resource`, `Actor` subtypes, `Field`, and `FilterExpression`

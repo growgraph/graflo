@@ -1,8 +1,8 @@
 # GraFlo <img src="https://raw.githubusercontent.com/growgraph/graflo/main/docs/assets/favicon.ico" alt="graflo logo" style="height: 32px; width:32px;"/>
 
-A framework for transforming **tabular** (CSV, SQL) and **hierarchical** data (JSON, XML) into property graphs and ingesting them into graph databases (ArangoDB, Neo4j, **TigerGraph**, **FalkorDB**, **Memgraph**).
+A framework for transforming **tabular** (CSV, SQL), **hierarchical** (JSON, XML), and **RDF/SPARQL** data into property graphs and ingesting them into graph databases (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph).
 
-> **⚠️ Package Renamed**: This package was formerly known as `graphcast`.
+> **Package Renamed**: This package was formerly known as `graphcast`.
 
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg) 
 [![PyPI version](https://badge.fury.io/py/graflo.svg)](https://badge.fury.io/py/graflo)
@@ -11,56 +11,35 @@ A framework for transforming **tabular** (CSV, SQL) and **hierarchical** data (J
 [![pre-commit](https://github.com/growgraph/graflo/actions/workflows/pre-commit.yml/badge.svg)](https://github.com/growgraph/graflo/actions/workflows/pre-commit.yml)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.15446131.svg)]( https://doi.org/10.5281/zenodo.15446131)
 
-## Core Concepts
+## Overview
 
-### Property Graphs
-graflo works with property graphs, which consist of:
+graflo reads data from multiple source types, transforms it according to a declarative schema, and writes property-graph vertices and edges to a target graph database. The pipeline is:
 
-- **Vertices**: Nodes with properties and optional unique identifiers
-- **Edges**: Relationships between vertices with their own properties
-- **Properties**: Both vertices and edges may have properties
+**Pattern** (where data lives) --> **DataSource** (how to read it) --> **Resource** (what to extract) --> **GraphContainer** --> **Target DB**
 
-### Schema
-The Schema defines how your data should be transformed into a graph and contains:
+### Supported sources
 
-- **Vertex Definitions**: Specify vertex types, their properties, and unique identifiers
-  - Fields can be specified as strings (backward compatible) or typed `Field` objects with types (INT, FLOAT, STRING, DATETIME, BOOL)
-  - Type information enables better validation and database-specific optimizations
-- **Edge Definitions**: Define relationships between vertices and their properties
-  - Weight fields support typed definitions for better type safety
-- **Resource Mapping**: describe how data sources map to vertices and edges
-- **Transforms**: Modify data during the casting process
-- **Automatic Schema Inference**: Generate schemas automatically from PostgreSQL 3NF databases
+| Source type | Pattern | DataSource | Schema inference |
+|---|---|---|---|
+| CSV / JSON / JSONL / Parquet files | `FilePattern` | `FileDataSource` | manual |
+| PostgreSQL tables | `TablePattern` | `SQLDataSource` | automatic (3NF with PK/FK) |
+| RDF files (`.ttl`, `.rdf`, `.n3`) | `SparqlPattern` | `RdfFileDataSource` | automatic (OWL/RDFS ontology) |
+| SPARQL endpoints (Fuseki, ...) | `SparqlPattern` | `SparqlEndpointDataSource` | automatic (OWL/RDFS ontology) |
+| REST APIs | -- | `APIDataSource` | manual |
+| In-memory (list / DataFrame) | -- | `InMemoryDataSource` | manual |
 
-### Resources
-Resources are your data sources that can be:
+### Supported targets
 
-- **Table-like**: CSV files, database tables
-- **JSON-like**: JSON files, nested data structures
+ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph -- same API for all.
 
 ## Features
 
-- **Graph Transformation Meta-language**: A powerful declarative language to describe how your data becomes a property graph:
-    - Define vertex and edge structures with typed fields
-    - Set compound indexes for vertices and edges
-    - Use blank vertices for complex relationships
-    - Specify edge constraints and properties with typed weight fields
-    - Apply advanced filtering and transformations
-- **Typed Schema Definitions**: Enhanced type support throughout the schema system
-    - Vertex fields support types (INT, FLOAT, STRING, DATETIME, BOOL) for better validation
-    - Edge weight fields can specify types for improved type safety
-    - Backward compatible: fields without types default to None (suitable for databases like ArangoDB)
-- **🚀 PostgreSQL Schema Inference**: **Automatically generate schemas from PostgreSQL 3NF databases** - No manual schema definition needed!
-    - Introspect PostgreSQL schemas to identify vertex-like and edge-like tables
-    - Automatically map PostgreSQL data types to graflo Field types (INT, FLOAT, STRING, DATETIME, BOOL)
-    - Infer vertex configurations from table structures with proper indexes
-    - Infer edge configurations from foreign key relationships
-    - Create Resource mappings from PostgreSQL tables automatically
-    - Direct database access - ingest data without exporting to files first
-- **Async ingestion**: Efficient async/await-based ingestion pipeline for better performance
-- **Parallel processing**: Use as many cores as you have
-- **Database support**: Ingest into ArangoDB, Neo4j, **TigerGraph**, **FalkorDB**, and **Memgraph** using the same API (database agnostic). Source data from PostgreSQL and other SQL databases.
-- **Server-side filtering**: Efficient querying with server-side filtering support (TigerGraph REST++ API)
+- **Declarative graph transformation**: Define vertex/edge structures, indexes, weights, and transforms in YAML or Python dicts. Resources describe how each data source maps to vertices and edges.
+- **Schema inference**: Automatically generate schemas from PostgreSQL 3NF databases (PK/FK heuristics) or from OWL/RDFS ontologies (class/property introspection).
+- **RDF / SPARQL ingestion**: Read `.ttl` files via rdflib or query SPARQL endpoints (e.g. Apache Fuseki). `owl:Class` maps to vertices, `owl:ObjectProperty` to edges, `owl:DatatypeProperty` to vertex fields.
+- **Typed fields**: Vertex fields and edge weights support types (`INT`, `FLOAT`, `STRING`, `DATETIME`, `BOOL`) for validation and database-specific optimisation.
+- **Parallel batch processing**: Configurable batch sizes and multi-core execution.
+- **Database-agnostic**: Single API targeting ArangoDB, Neo4j, TigerGraph, FalkorDB, and Memgraph. Source data from PostgreSQL, SPARQL endpoints, files, APIs, or in-memory objects.
 
 ## Documentation
 Full documentation is available at: [growgraph.github.io/graflo](https://growgraph.github.io/graflo)
@@ -69,6 +48,9 @@ Full documentation is available at: [growgraph.github.io/graflo](https://growgra
 
 ```bash
 pip install graflo
+
+# With RDF / SPARQL support (adds rdflib + SPARQLWrapper)
+pip install graflo[sparql]
 ```
 
 ## Usage Examples
@@ -187,6 +169,34 @@ caster = Caster(schema)
 # ... continue with ingestion
 ```
 
+### RDF / SPARQL Ingestion
+
+```python
+from pathlib import Path
+from graflo.hq import GraphEngine
+from graflo.db.connection.onto import ArangoConfig
+
+engine = GraphEngine()
+
+# Infer schema from an OWL/RDFS ontology file
+ontology = Path("ontology.ttl")
+schema = engine.infer_schema_from_rdf(source=ontology)
+
+# Create data-source patterns (reads a local .ttl file per rdf:Class)
+patterns = engine.create_patterns_from_rdf(source=ontology)
+
+# Or point at a SPARQL endpoint instead:
+# from graflo.db.connection.onto import SparqlEndpointConfig
+# sparql_cfg = SparqlEndpointConfig(uri="http://localhost:3030", dataset="mydata")
+# patterns = engine.create_patterns_from_rdf(
+#     source=ontology,
+#     endpoint_url=sparql_cfg.query_endpoint,
+# )
+
+target = ArangoConfig.from_docker_env()
+engine.define_and_ingest(schema=schema, target_db_config=target, patterns=patterns)
+```
+
 ## Development
 
 To install requirements
@@ -235,10 +245,16 @@ FalkorDB from [falkordb docker folder](./docker/falkordb) by
 docker-compose --env-file .env up falkordb
 ```
 
-and Memgraph from [memgraph docker folder](./docker/memgraph) by
+Memgraph from [memgraph docker folder](./docker/memgraph) by
 
 ```shell
 docker-compose --env-file .env up memgraph
+```
+
+and Apache Fuseki from [fuseki docker folder](./docker/fuseki) by
+
+```shell
+docker-compose --env-file .env up fuseki
 ```
 
 To run unit tests
@@ -247,13 +263,14 @@ To run unit tests
 pytest test
 ```
 
-> **Note**: Tests require external database containers (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph) to be running. CI builds intentionally skip test execution. Tests must be run locally with the required database images started (see [Test databases](#test-databases) section above).
+> **Note**: Tests require external database containers (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, Fuseki) to be running. CI builds intentionally skip test execution. Tests must be run locally with the required database images started (see [Test databases](#test-databases) section above).
 
 ## Requirements
 
 - Python 3.11+ (Python 3.11 and 3.12 are officially supported)
 - python-arango
 - sqlalchemy>=2.0.0 (for PostgreSQL and SQL data sources)
+- rdflib>=7.0.0 + SPARQLWrapper>=2.0.0 (optional, install with `pip install graflo[sparql]`)
 
 ## Contributing
 

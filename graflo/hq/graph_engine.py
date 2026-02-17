@@ -11,11 +11,13 @@ from graflo.architecture.schema import Schema
 from graflo.onto import DBType
 from graflo.architecture.onto_sql import SchemaIntrospectionResult
 from graflo.db import ConnectionManager, PostgresConnection
-from graflo.db.connection.onto import DBConfig, PostgresConfig
+from graflo.db.connection.onto import DBConfig, PostgresConfig, SparqlEndpointConfig
 from graflo.hq.caster import Caster, IngestionParams
 from graflo.hq.inferencer import InferenceManager
 from graflo.hq.resource_mapper import ResourceMapper
 from graflo.util.onto import Patterns
+
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -253,3 +255,79 @@ class GraphEngine:
             patterns=patterns or Patterns(),
             ingestion_params=ingestion_params,
         )
+
+    # ------------------------------------------------------------------
+    # RDF / SPARQL inference
+    # ------------------------------------------------------------------
+
+    def infer_schema_from_rdf(
+        self,
+        source: str | Path,
+        *,
+        endpoint_url: str | None = None,
+        graph_uri: str | None = None,
+        schema_name: str | None = None,
+    ) -> Schema:
+        """Infer a graflo Schema from an RDF / OWL ontology.
+
+        Reads the TBox (class and property declarations) and produces
+        vertices (from ``owl:Class``), fields (from ``owl:DatatypeProperty``),
+        and edges (from ``owl:ObjectProperty`` with domain/range).
+
+        Args:
+            source: Path to an RDF file (e.g. ``ontology.ttl``) or a base
+                URL when using *endpoint_url*.
+            endpoint_url: Optional SPARQL endpoint to CONSTRUCT the
+                ontology from.
+            graph_uri: Named graph containing the ontology.
+            schema_name: Name for the resulting schema.
+
+        Returns:
+            A fully initialised :class:`Schema`.
+        """
+        from graflo.hq.rdf_inferencer import RdfInferenceManager
+
+        mgr = RdfInferenceManager(target_db_flavor=self.target_db_flavor)
+        return mgr.infer_schema(
+            source,
+            endpoint_url=endpoint_url,
+            graph_uri=graph_uri,
+            schema_name=schema_name,
+        )
+
+    def create_patterns_from_rdf(
+        self,
+        source: str | Path,
+        *,
+        endpoint_url: str | None = None,
+        graph_uri: str | None = None,
+        sparql_config: SparqlEndpointConfig | None = None,
+    ) -> Patterns:
+        """Create :class:`Patterns` from an RDF ontology.
+
+        One :class:`SparqlPattern` is created per ``owl:Class`` found in the
+        ontology.
+
+        Args:
+            source: Path to an RDF file or base URL.
+            endpoint_url: SPARQL endpoint for the *data* (ABox).
+            graph_uri: Named graph containing the data.
+            sparql_config: Optional :class:`SparqlEndpointConfig` to attach
+                to the resulting patterns for authentication.
+
+        Returns:
+            Patterns with SPARQL patterns for each class.
+        """
+        from graflo.hq.rdf_inferencer import RdfInferenceManager
+
+        mgr = RdfInferenceManager(target_db_flavor=self.target_db_flavor)
+        patterns = mgr.create_patterns(
+            source,
+            endpoint_url=endpoint_url,
+            graph_uri=graph_uri,
+        )
+
+        if sparql_config:
+            patterns.sparql_configs["default"] = sparql_config
+
+        return patterns

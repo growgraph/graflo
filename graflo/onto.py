@@ -146,11 +146,12 @@ class DBType(StrEnum, metaclass=MetaEnum):
     MEMGRAPH = "memgraph"
     NEBULA = "nebula"
 
-    # Source databases (SQL, NoSQL)
+    # Source databases (SQL, NoSQL, RDF)
     POSTGRES = "postgres"
     MYSQL = "mysql"
     MONGODB = "mongodb"
     SQLITE = "sqlite"
+    SPARQL = "sparql"
 
 
 # Mapping from graph DB type to expression flavor for filter rendering.

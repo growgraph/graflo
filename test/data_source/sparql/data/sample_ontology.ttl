@@ -1,0 +1,41 @@
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix ex:   <http://example.org/> .
+
+# --- Classes ---------------------------------------------------------------
+
+ex:Person  a owl:Class ;
+    rdfs:label "Person" .
+
+ex:Organization  a owl:Class ;
+    rdfs:label "Organization" .
+
+# --- Datatype properties (fields) ------------------------------------------
+
+ex:name  a owl:DatatypeProperty ;
+    rdfs:domain ex:Person ;
+    rdfs:range  xsd:string .
+
+ex:age  a owl:DatatypeProperty ;
+    rdfs:domain ex:Person ;
+    rdfs:range  xsd:integer .
+
+ex:orgName  a owl:DatatypeProperty ;
+    rdfs:domain ex:Organization ;
+    rdfs:range  xsd:string .
+
+ex:founded  a owl:DatatypeProperty ;
+    rdfs:domain ex:Organization ;
+    rdfs:range  xsd:integer .
+
+# --- Object properties (edges) ---------------------------------------------
+
+ex:worksFor  a owl:ObjectProperty ;
+    rdfs:domain ex:Person ;
+    rdfs:range  ex:Organization .
+
+ex:knows  a owl:ObjectProperty ;
+    rdfs:domain ex:Person ;
+    rdfs:range  ex:Person .
