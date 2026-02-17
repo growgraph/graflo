@@ -42,10 +42,12 @@ class ResourceType(BaseEnum):
     Attributes:
         FILE: File-based data source (any format: CSV, JSON, JSONL, Parquet, etc.)
         SQL_TABLE: SQL database table (e.g., PostgreSQL table)
+        SPARQL: SPARQL / RDF data source (endpoint or .ttl/.rdf files via rdflib)
     """
 
     FILE = "file"
     SQL_TABLE = "sql_table"
+    SPARQL = "sparql"
 
 
 class ResourcePattern(ConfigBaseModel, abc.ABC):
@@ -374,6 +376,87 @@ class TablePattern(ResourcePattern):
         return query
 
 
+class SparqlPattern(ResourcePattern):
+    """Pattern for matching SPARQL / RDF data sources.
+
+    Each ``SparqlPattern`` targets instances of a single ``rdf:Class``.
+    It can be backed either by a remote SPARQL endpoint (Fuseki, Blazegraph, ...)
+    or by a local RDF file parsed with *rdflib*.
+
+    Attributes:
+        rdf_class: Full URI of the ``rdf:Class`` whose instances this pattern
+            fetches (e.g. ``"http://example.org/Person"``).
+        endpoint_url: SPARQL query endpoint URL.  When set, instances are
+            fetched via HTTP.  When ``None`` the pattern is for local file mode.
+        graph_uri: Named-graph URI to restrict the query to (optional).
+        sparql_query: Custom SPARQL ``SELECT`` query override.  When provided
+            the auto-generated per-class query is skipped.
+        rdf_file: Path to a local RDF file (``.ttl``, ``.rdf``, ``.n3``,
+            ``.jsonld``).  Mutually exclusive with *endpoint_url*.
+    """
+
+    rdf_class: str = Field(
+        ..., description="URI of the rdf:Class to fetch instances of"
+    )
+    endpoint_url: str | None = Field(
+        default=None, description="SPARQL query endpoint URL"
+    )
+    graph_uri: str | None = Field(
+        default=None, description="Named graph URI (optional)"
+    )
+    sparql_query: str | None = Field(
+        default=None, description="Custom SPARQL query override"
+    )
+    rdf_file: pathlib.Path | None = Field(
+        default=None, description="Path to a local RDF file"
+    )
+
+    def matches(self, resource_identifier: str) -> bool:
+        """Match by the local name (fragment) of the rdf:Class URI.
+
+        Args:
+            resource_identifier: Identifier to match against
+
+        Returns:
+            True when *resource_identifier* equals the class local name
+        """
+        local_name = self.rdf_class.rsplit("#", 1)[-1].rsplit("/", 1)[-1]
+        return resource_identifier == local_name
+
+    def get_resource_type(self) -> ResourceType:
+        """Return ``ResourceType.SPARQL``."""
+        return ResourceType.SPARQL
+
+    def build_select_query(self) -> str:
+        """Build a SPARQL SELECT query for instances of ``rdf_class``.
+
+        If *sparql_query* is set it is returned as-is.  Otherwise a simple
+        per-class query is generated::
+
+            SELECT ?s ?p ?o WHERE {
+              ?s a <rdf_class> .
+              ?s ?p ?o .
+            }
+
+        Returns:
+            SPARQL query string
+        """
+        if self.sparql_query:
+            return self.sparql_query
+
+        graph_open = f"GRAPH <{self.graph_uri}> {{" if self.graph_uri else ""
+        graph_close = "}" if self.graph_uri else ""
+
+        return (
+            "SELECT ?s ?p ?o WHERE { "
+            f"{graph_open} "
+            f"?s a <{self.rdf_class}> . "
+            f"?s ?p ?o . "
+            f"{graph_close} "
+            "}"
+        )
+
+
 class Patterns(ConfigBaseModel):
     """Collection of named resource patterns with connection management.
 
@@ -390,19 +473,23 @@ class Patterns(ConfigBaseModel):
     Attributes:
         file_patterns: Dictionary mapping resource names to FilePattern instances
         table_patterns: Dictionary mapping resource names to TablePattern instances
-        patterns: Property that merges file_patterns and table_patterns (for backward compatibility)
+        sparql_patterns: Dictionary mapping resource names to SparqlPattern instances
+        patterns: Property that merges all pattern dicts (for backward compatibility)
         postgres_configs: Dictionary mapping (config_key, schema_name) to PostgresConfig
         postgres_table_configs: Dictionary mapping resource_name to (config_key, schema_name, table_name)
+        sparql_configs: Dictionary mapping config_key to SparqlEndpointConfig
     """
 
     file_patterns: dict[str, FilePattern] = Field(default_factory=dict)
     table_patterns: dict[str, TablePattern] = Field(default_factory=dict)
+    sparql_patterns: dict[str, SparqlPattern] = Field(default_factory=dict)
     postgres_configs: dict[tuple[str, str | None], Any] = Field(
         default_factory=dict, exclude=True
     )
     postgres_table_configs: dict[str, tuple[str, str | None, str]] = Field(
         default_factory=dict, exclude=True
     )
+    sparql_configs: dict[str, Any] = Field(default_factory=dict, exclude=True)
     # Initialization parameters (not stored in serialization); accept both _name and name
     resource_mapping: dict[str, str | tuple[str, str]] | None = Field(
         default=None,
@@ -421,15 +508,16 @@ class Patterns(ConfigBaseModel):
     )
 
     @property
-    def patterns(self) -> dict[str, TablePattern | FilePattern]:
-        """Merged dictionary of all patterns (file and table) for backward compatibility.
+    def patterns(self) -> dict[str, TablePattern | FilePattern | SparqlPattern]:
+        """Merged dictionary of all patterns (file, table, and SPARQL).
 
         Returns:
             Dictionary mapping resource names to ResourcePattern instances
         """
-        result: dict[str, TablePattern | FilePattern] = {}
+        result: dict[str, TablePattern | FilePattern | SparqlPattern] = {}
         result.update(self.file_patterns)
         result.update(self.table_patterns)
+        result.update(self.sparql_patterns)
         return result
 
     @model_validator(mode="after")
@@ -508,10 +596,14 @@ class Patterns(ConfigBaseModel):
         """
         if isinstance(data, list):
             return cls.model_validate(data)
-        if "file_patterns" in data or "table_patterns" in data:
+        if (
+            "file_patterns" in data
+            or "table_patterns" in data
+            or "sparql_patterns" in data
+        ):
             # Strip __tag__ from nested pattern dicts so extra="forbid" does not fail
             data = copy.deepcopy(data)
-            for key in ("file_patterns", "table_patterns"):
+            for key in ("file_patterns", "table_patterns", "sparql_patterns"):
                 if key in data and isinstance(data[key], dict):
                     for name, val in data[key].items():
                         if isinstance(val, dict) and "__tag__" in val:
@@ -537,6 +629,10 @@ class Patterns(ConfigBaseModel):
                 instance.table_patterns[pattern_name] = TablePattern.model_validate(
                     pattern_dict
                 )
+            elif tag_val == "sparql":
+                instance.sparql_patterns[pattern_name] = SparqlPattern.model_validate(
+                    pattern_dict
+                )
             else:
                 if "table_name" in pattern_dict:
                     instance.table_patterns[pattern_name] = TablePattern.model_validate(
@@ -546,12 +642,17 @@ class Patterns(ConfigBaseModel):
                     instance.file_patterns[pattern_name] = FilePattern.model_validate(
                         pattern_dict
                     )
+                elif "rdf_class" in pattern_dict:
+                    instance.sparql_patterns[pattern_name] = (
+                        SparqlPattern.model_validate(pattern_dict)
+                    )
                 else:
                     raise ValueError(
                         f"Unable to determine pattern type for '{pattern_name}'. "
-                        "Expected either '__tag__: file' or '__tag__: table', "
+                        "Expected '__tag__: file|table|sparql', "
                         "or pattern fields (table_name for TablePattern, "
-                        "regex/sub_path for FilePattern)"
+                        "regex/sub_path for FilePattern, "
+                        "rdf_class for SparqlPattern)"
                     )
         return instance
 
@@ -572,6 +673,38 @@ class Patterns(ConfigBaseModel):
             table_pattern: TablePattern instance
         """
         self.table_patterns[name] = table_pattern
+
+    def add_sparql_pattern(self, name: str, sparql_pattern: SparqlPattern):
+        """Add a SPARQL pattern to the collection.
+
+        Args:
+            name: Name of the pattern (typically the rdf:Class local name)
+            sparql_pattern: SparqlPattern instance
+        """
+        self.sparql_patterns[name] = sparql_pattern
+
+    def get_sparql_config(self, resource_name: str) -> Any:
+        """Get SPARQL endpoint config for a resource.
+
+        Args:
+            resource_name: Name of the resource
+
+        Returns:
+            SparqlEndpointConfig if resource is a SPARQL pattern, None otherwise
+        """
+        if resource_name in self.sparql_patterns:
+            pattern = self.sparql_patterns[resource_name]
+            if pattern.endpoint_url:
+                for cfg in self.sparql_configs.values():
+                    if (
+                        hasattr(cfg, "query_endpoint")
+                        and cfg.query_endpoint == pattern.endpoint_url
+                    ):
+                        return cfg
+            # Return the first config if only one is registered
+            if self.sparql_configs:
+                return next(iter(self.sparql_configs.values()))
+        return None
 
     def get_postgres_config(self, resource_name: str) -> Any:
         """Get PostgreSQL connection config for a resource.
@@ -600,6 +733,8 @@ class Patterns(ConfigBaseModel):
             return self.file_patterns[resource_name].get_resource_type()
         if resource_name in self.table_patterns:
             return self.table_patterns[resource_name].get_resource_type()
+        if resource_name in self.sparql_patterns:
+            return self.sparql_patterns[resource_name].get_resource_type()
         return None
 
     def get_table_info(self, resource_name: str) -> tuple[str, str | None] | None:

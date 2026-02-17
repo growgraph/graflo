@@ -233,11 +233,12 @@ def test_patterns_with_filtering():
     )
     patterns.add_table_pattern("events", table_pattern)
 
-    # Verify patterns are stored correctly (narrow to FilePattern for .regex)
+    # Verify patterns are stored correctly (narrow with isinstance checks)
     users_pattern = patterns.patterns["users"]
     events_pattern = patterns.patterns["events"]
     assert isinstance(users_pattern, FilePattern)
     assert users_pattern.regex == r".*\.csv$"
+    assert isinstance(events_pattern, TablePattern)
     assert events_pattern.date_field == "created_at"
     assert events_pattern.date_filter == "> '2020-10-10'"
 

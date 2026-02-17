@@ -1,0 +1,60 @@
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix ex:   <http://example.org/> .
+
+# --- Classes ---------------------------------------------------------------
+
+ex:Researcher  a owl:Class ;
+    rdfs:label "Researcher" .
+
+ex:Publication  a owl:Class ;
+    rdfs:label "Publication" .
+
+ex:Institution  a owl:Class ;
+    rdfs:label "Institution" .
+
+# --- Datatype properties (vertex fields) -----------------------------------
+
+ex:fullName     a owl:DatatypeProperty ;
+    rdfs:domain ex:Researcher ;
+    rdfs:range  xsd:string .
+
+ex:orcid        a owl:DatatypeProperty ;
+    rdfs:domain ex:Researcher ;
+    rdfs:range  xsd:string .
+
+ex:title        a owl:DatatypeProperty ;
+    rdfs:domain ex:Publication ;
+    rdfs:range  xsd:string .
+
+ex:year         a owl:DatatypeProperty ;
+    rdfs:domain ex:Publication ;
+    rdfs:range  xsd:integer .
+
+ex:doi          a owl:DatatypeProperty ;
+    rdfs:domain ex:Publication ;
+    rdfs:range  xsd:string .
+
+ex:instName     a owl:DatatypeProperty ;
+    rdfs:domain ex:Institution ;
+    rdfs:range  xsd:string .
+
+ex:country      a owl:DatatypeProperty ;
+    rdfs:domain ex:Institution ;
+    rdfs:range  xsd:string .
+
+# --- Object properties (edges) --------------------------------------------
+
+ex:authorOf  a owl:ObjectProperty ;
+    rdfs:domain ex:Researcher ;
+    rdfs:range  ex:Publication .
+
+ex:affiliatedWith  a owl:ObjectProperty ;
+    rdfs:domain ex:Researcher ;
+    rdfs:range  ex:Institution .
+
+ex:cites  a owl:ObjectProperty ;
+    rdfs:domain ex:Publication ;
+    rdfs:range  ex:Publication .

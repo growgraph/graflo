@@ -551,6 +551,7 @@ class TestConcurrency:
 class TestBatchSizing:
     """Tests to find optimal batch size."""
 
+    @pytest.mark.slow
     def test_optimal_batch_size(self, conn_conf, test_graph_name, clean_db):
         """Compare different batch sizes for optimal throughput."""
         _ = clean_db
@@ -595,6 +596,7 @@ class TestBatchSizing:
 
         print(f"\n  Optimal batch size: {best_size}")
 
+    @pytest.mark.slow
     def test_batch_size_memory_impact(self, conn_conf, test_graph_name, clean_db):
         """Measure memory impact of different batch sizes."""
         _ = clean_db
@@ -805,6 +807,7 @@ class TestLimits:
         for count, dur, status in results:
             print(f"  {count:>5} props: {dur:>8.1f} ms - {status}")
 
+    @pytest.mark.slow
     def test_max_batch_size(self, conn_conf, test_graph_name, clean_db):
         """Find practical maximum batch size."""
         _ = clean_db
@@ -894,6 +897,7 @@ class TestLimits:
 class TestGraphOperationsLoad:
     """Graph-specific operation load tests."""
 
+    @pytest.mark.slow
     def test_edge_creation_throughput(self, conn_conf, test_graph_name, clean_db):
         """Measure edge creation throughput."""
         _ = clean_db

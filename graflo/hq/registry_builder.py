@@ -15,7 +15,7 @@ from graflo.architecture.schema import Schema
 from graflo.data_source import DataSourceFactory, DataSourceRegistry
 from graflo.data_source.sql import SQLConfig, SQLDataSource
 from graflo.filter.sql import datetime_range_where_sql
-from graflo.util.onto import FilePattern, ResourceType, TablePattern
+from graflo.util.onto import FilePattern, ResourceType, SparqlPattern, TablePattern
 
 if TYPE_CHECKING:
     from graflo.hq.caster import IngestionParams
@@ -84,6 +84,16 @@ class RegistryBuilder:
                     )
                     continue
                 self._register_sql_table_sources(
+                    registry, resource_name, pattern, patterns, ingestion_params
+                )
+
+            elif resource_type == ResourceType.SPARQL:
+                if not isinstance(pattern, SparqlPattern):
+                    logger.warning(
+                        f"Pattern for resource '{resource_name}' is not a SparqlPattern, skipping"
+                    )
+                    continue
+                self._register_sparql_sources(
                     registry, resource_name, pattern, patterns, ingestion_params
                 )
 
@@ -252,5 +262,94 @@ class RegistryBuilder:
         except Exception as e:
             logger.error(
                 f"Failed to create data source for PostgreSQL table '{resource_name}': {e}",
+                exc_info=True,
+            )
+
+    # ------------------------------------------------------------------
+    # SPARQL / RDF sources
+    # ------------------------------------------------------------------
+
+    def _register_sparql_sources(
+        self,
+        registry: DataSourceRegistry,
+        resource_name: str,
+        pattern: SparqlPattern,
+        patterns: "Patterns",
+        ingestion_params: "IngestionParams",
+    ) -> None:
+        """Register SPARQL data sources for a resource.
+
+        Handles two modes:
+
+        * **Endpoint mode** (``pattern.endpoint_url`` is set): creates a
+          :class:`SparqlEndpointDataSource` that queries the remote SPARQL
+          endpoint.
+        * **File mode** (``pattern.rdf_file`` is set): creates an
+          :class:`RdfFileDataSource` that parses a local RDF file.
+        """
+        try:
+            if pattern.endpoint_url:
+                from graflo.data_source.rdf import (
+                    SparqlEndpointDataSource,
+                    SparqlSourceConfig,
+                )
+
+                sparql_config = patterns.get_sparql_config(resource_name)
+                username = (
+                    getattr(sparql_config, "username", None) if sparql_config else None
+                )
+                password = (
+                    getattr(sparql_config, "password", None) if sparql_config else None
+                )
+
+                source_config = SparqlSourceConfig(
+                    endpoint_url=pattern.endpoint_url,
+                    rdf_class=pattern.rdf_class,
+                    graph_uri=pattern.graph_uri,
+                    sparql_query=pattern.sparql_query,
+                    username=username,
+                    password=password,
+                    page_size=ingestion_params.batch_size,
+                )
+                sparql_source = SparqlEndpointDataSource(config=source_config)
+                registry.register(sparql_source, resource_name=resource_name)
+
+                logger.info(
+                    "Created SPARQL endpoint data source for class <%s> at '%s' "
+                    "mapped to resource '%s'",
+                    pattern.rdf_class,
+                    pattern.endpoint_url,
+                    resource_name,
+                )
+
+            elif pattern.rdf_file:
+                from graflo.data_source.rdf import RdfFileDataSource
+
+                rdf_source = RdfFileDataSource(
+                    path=pattern.rdf_file,
+                    rdf_class=pattern.rdf_class,
+                )
+                registry.register(rdf_source, resource_name=resource_name)
+
+                logger.info(
+                    "Created RDF file data source for class <%s> from '%s' "
+                    "mapped to resource '%s'",
+                    pattern.rdf_class,
+                    pattern.rdf_file,
+                    resource_name,
+                )
+
+            else:
+                logger.warning(
+                    "SparqlPattern for resource '%s' has neither endpoint_url nor "
+                    "rdf_file set, skipping",
+                    resource_name,
+                )
+
+        except Exception as e:
+            logger.error(
+                "Failed to create data source for SPARQL resource '%s': %s",
+                resource_name,
+                e,
                 exc_info=True,
             )

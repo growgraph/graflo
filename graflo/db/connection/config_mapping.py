@@ -8,6 +8,7 @@ from .onto import (
     NebulaConfig,
     Neo4jConfig,
     PostgresConfig,
+    SparqlEndpointConfig,
     TigergraphConfig,
 )
 from ... import DBType
@@ -21,6 +22,7 @@ DB_TYPE_MAPPING: Dict[DBType, Type[DBConfig]] = {
     DBType.MEMGRAPH: MemgraphConfig,
     DBType.NEBULA: NebulaConfig,
     DBType.POSTGRES: PostgresConfig,
+    DBType.SPARQL: SparqlEndpointConfig,
 }
 
 

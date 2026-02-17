@@ -155,6 +155,7 @@ def benchmark(operation_name: str, ops: int, func: Callable) -> BenchmarkResult:
 # =============================================================================
 
 
+@pytest.mark.slow
 class TestThroughput:
     """Throughput tests - operations per second measurements."""
 
@@ -268,6 +269,7 @@ class TestThroughput:
 # =============================================================================
 
 
+@pytest.mark.slow
 class TestScalability:
     """Scalability tests - behavior with increasing data volumes."""
 
@@ -362,6 +364,7 @@ class TestScalability:
 # =============================================================================
 
 
+@pytest.mark.slow
 class TestConcurrency:
     """Concurrency tests - parallel access patterns."""
 
@@ -465,7 +468,6 @@ class TestConcurrency:
 
         assert len(errors) == 0
 
-    @pytest.mark.slow
     def test_mixed_read_write_load(self, conn_conf, test_graph_name, clean_db):
         """Mixed concurrent read/write workload."""
         _ = clean_db
@@ -543,6 +545,7 @@ class TestConcurrency:
 # =============================================================================
 
 
+@pytest.mark.slow
 class TestBatchSizing:
     """Tests to find optimal batch size."""
 
@@ -627,10 +630,10 @@ class TestBatchSizing:
 # =============================================================================
 
 
+@pytest.mark.slow
 class TestSustainedLoad:
     """Sustained load tests - stability over time."""
 
-    @pytest.mark.slow
     def test_sustained_write_load(self, conn_conf, test_graph_name, clean_db):
         """Sustained write load over multiple seconds."""
         _ = clean_db
@@ -689,7 +692,6 @@ class TestSustainedLoad:
             if degradation > 5.0:
                 print("  WARNING: Unstable latency under sustained load")
 
-    @pytest.mark.slow
     def test_sustained_mixed_load(self, conn_conf, test_graph_name, clean_db):
         """Sustained mixed load with reads and writes."""
         _ = clean_db
@@ -768,6 +770,7 @@ class TestSustainedLoad:
 # =============================================================================
 
 
+@pytest.mark.slow
 class TestLimits:
     """System limits tests."""
 
@@ -885,6 +888,7 @@ class TestLimits:
 # =============================================================================
 
 
+@pytest.mark.slow
 class TestGraphOperationsLoad:
     """Graph-specific operation load tests."""
 

@@ -10,6 +10,51 @@ graflo transforms data sources into property graphs through a pipeline of compon
 
 Each component plays a specific role in this transformation process.
 
+### Data flow: Pattern → DataSource → Resource → GraphContainer → Target DB
+
+The diagram below shows how different data sources (files, SQL tables, RDF/SPARQL)
+flow through the unified ingestion pipeline.
+
+```mermaid
+flowchart LR
+    subgraph sources [Data Sources]
+        TTL["*.ttl / *.rdf files"]
+        Fuseki["SPARQL Endpoint\n(Fuseki)"]
+        Files["CSV / JSON files"]
+        PG["PostgreSQL"]
+    end
+    subgraph patterns [Patterns]
+        FP[FilePattern]
+        TP[TablePattern]
+        SP[SparqlPattern]
+    end
+    subgraph datasources [DataSource Layer]
+        subgraph rdfFamily ["RdfDataSource (abstract)"]
+            RdfDS[RdfFileDataSource]
+            SparqlDS[SparqlEndpointDataSource]
+        end
+        FileDS[FileDataSource]
+        SQLDS[SQLDataSource]
+    end
+    subgraph pipeline [Shared Pipeline]
+        Res[Resource Pipeline]
+        GC[GraphContainer]
+        DBW[DBWriter]
+    end
+
+    TTL --> SP --> RdfDS --> Res
+    Fuseki --> SP --> SparqlDS --> Res
+    Files --> FP --> FileDS --> Res
+    PG --> TP --> SQLDS --> Res
+    Res --> GC --> DBW
+```
+
+- **Patterns** describe *where* data comes from (file paths, SQL tables, SPARQL endpoints).
+- **DataSources** handle *how* to read data in batches from each source type.
+- **Resources** define *what* to extract from each document (vertices, edges, transforms).
+- **GraphContainer** collects the resulting vertices and edges.
+- **DBWriter** pushes the graph data into the target database (ArangoDB, Neo4j, TigerGraph, etc.).
+
 ## Class Diagrams
 
 ### GraphEngine orchestration
@@ -28,6 +73,8 @@ classDiagram
         +introspect(postgres_config) SchemaIntrospectionResult
         +infer_schema(postgres_config) Schema
         +create_patterns(postgres_config) Patterns
+        +infer_schema_from_rdf(source) Schema
+        +create_patterns_from_rdf(source) Patterns
         +define_schema(schema, target_db_config)
         +define_and_ingest(schema, target_db_config, ...)
         +ingest(schema, target_db_config, ...)
@@ -63,6 +110,7 @@ classDiagram
     class Patterns {
         +file_patterns: list~FilePattern~
         +table_patterns: list~TablePattern~
+        +sparql_patterns: list~SparqlPattern~
     }
 
     class DBConfig {
@@ -293,7 +341,7 @@ The `Schema` is the central configuration that defines how data sources are tran
 - Resource mappings
 - Data transformations
 - Index configurations
-- Automatic schema inference from normalized PostgreSQL databases (3NF) with proper primary keys (PK) and foreign keys (FK) using intelligent heuristics
+- Automatic schema inference from normalized PostgreSQL databases (3NF with PK/FK) or from OWL/RDFS ontologies
 
 ### Vertex
 A `Vertex` describes vertices and their database indexes. It supports:
@@ -386,11 +434,13 @@ Edges in graflo support a rich set of attributes that enable flexible relationsh
 A `DataSource` defines where data comes from and how it's retrieved. graflo supports multiple data source types:
 
 - **File Data Sources**: JSON, JSONL, CSV/TSV files
+- **RDF File Data Sources**: Turtle (`.ttl`), RDF/XML (`.rdf`), N3 (`.n3`), JSON-LD files -- parsed via `rdflib`, triples grouped by subject into flat dictionaries
+- **SPARQL Data Sources**: Remote SPARQL endpoints (e.g. Apache Fuseki) queried via `SPARQLWrapper` with pagination
 - **API Data Sources**: REST API endpoints with pagination, authentication, and retry logic
 - **SQL Data Sources**: SQL databases via SQLAlchemy with parameterized queries
 - **In-Memory Data Sources**: Python objects (lists, DataFrames) already in memory
 
-Data sources are separate from Resources - they handle data retrieval, while Resources handle data transformation. Many data sources can map to the same Resource, allowing data to be ingested from multiple sources.
+Data sources are separate from Resources -- they handle data retrieval, while Resources handle data transformation. Many data sources can map to the same Resource, allowing data to be ingested from multiple sources.
 
 ### Resource
 A `Resource` is a set of mappings and transformations that define how data becomes a graph, defined as a hierarchical structure of `Actors`. Resources are part of the Schema and define:
@@ -431,7 +481,8 @@ A `Transform` defines data transforms, from renaming and type-casting to arbitra
 - **Edge Constraints**: Ensure edge uniqueness based on source, target, and weight
 - **Reusable Transforms**: Define and reference transformations by name
 - **Vertex Filtering**: Filter vertices based on custom conditions
-- **PostgreSQL Schema Inference**: Automatically infer schemas from normalized PostgreSQL databases (3NF) with proper primary keys (PK) and foreign keys (FK) decorated, using intelligent heuristics to detect vertices and edges
+- **PostgreSQL Schema Inference**: Infer schemas from normalized PostgreSQL databases (3NF) with PK/FK constraints
+- **RDF / OWL Schema Inference**: Infer schemas from OWL/RDFS ontologies -- `owl:Class` becomes vertices, `owl:ObjectProperty` becomes edges, `owl:DatatypeProperty` becomes vertex fields
 
 ### Performance Optimization
 - **Batch Processing**: Process large datasets in configurable batches (`batch_size` parameter of `Caster`)
@@ -453,6 +504,7 @@ A `Transform` defines data transforms, from renaming and type-casting to arbitra
    - Specify types for weight fields when using databases that require type information (e.g., TigerGraph)
    - Use typed `Field` objects or dicts with `type` key for better validation
 8. Leverage key matching (`match_source`, `match_target`) for complex matching scenarios
-9. Use PostgreSQL schema inference for automatic schema generation from normalized databases (3NF) with proper PK/FK constraints - the heuristics work best when primary keys and foreign keys are properly decorated
-10. Specify field types for better validation and database-specific optimizations, especially when targeting TigerGraph
+9. Use PostgreSQL schema inference for automatic schema generation from normalized databases (3NF) with proper PK/FK constraints
+10. Use RDF/OWL schema inference (`infer_schema_from_rdf`) when ingesting data from SPARQL endpoints or `.ttl` files with a well-defined ontology
+11. Specify field types for better validation and database-specific optimizations, especially when targeting TigerGraph
 
