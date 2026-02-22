@@ -51,7 +51,7 @@ Run sustained load tests::
 Notes
 -----
 - Performance thresholds are hardware-dependent and should be adjusted
-- Tests marked with @pytest.mark.slow are excluded from quick CI runs
+- Tests marked with @pytest.mark.performance are excluded unless --run-performance is passed
 - Use -s flag to see performance metrics output
 - Results vary based on Memgraph configuration and available resources
 
@@ -74,6 +74,8 @@ import pytest
 
 from graflo.db import ConnectionManager
 from graflo.onto import AggregationType
+
+pytestmark = pytest.mark.performance
 
 
 # =============================================================================
@@ -468,7 +470,6 @@ class TestConcurrency:
 
         assert len(errors) == 0
 
-    @pytest.mark.slow
     def test_mixed_read_write_load(self, conn_conf, test_graph_name, clean_db):
         """Mixed concurrent read/write workload."""
         _ = clean_db
@@ -551,7 +552,6 @@ class TestConcurrency:
 class TestBatchSizing:
     """Tests to find optimal batch size."""
 
-    @pytest.mark.slow
     def test_optimal_batch_size(self, conn_conf, test_graph_name, clean_db):
         """Compare different batch sizes for optimal throughput."""
         _ = clean_db
@@ -596,7 +596,6 @@ class TestBatchSizing:
 
         print(f"\n  Optimal batch size: {best_size}")
 
-    @pytest.mark.slow
     def test_batch_size_memory_impact(self, conn_conf, test_graph_name, clean_db):
         """Measure memory impact of different batch sizes."""
         _ = clean_db
@@ -637,7 +636,6 @@ class TestBatchSizing:
 class TestSustainedLoad:
     """Sustained load tests - stability over time."""
 
-    @pytest.mark.slow
     def test_sustained_write_load(self, conn_conf, test_graph_name, clean_db):
         """Sustained write load over multiple seconds."""
         _ = clean_db
@@ -694,7 +692,6 @@ class TestSustainedLoad:
             if degradation > 5.0:
                 print("  WARNING: Unstable latency under sustained load")
 
-    @pytest.mark.slow
     def test_sustained_mixed_load(self, conn_conf, test_graph_name, clean_db):
         """Sustained mixed load with reads and writes."""
         _ = clean_db
@@ -807,7 +804,6 @@ class TestLimits:
         for count, dur, status in results:
             print(f"  {count:>5} props: {dur:>8.1f} ms - {status}")
 
-    @pytest.mark.slow
     def test_max_batch_size(self, conn_conf, test_graph_name, clean_db):
         """Find practical maximum batch size."""
         _ = clean_db
@@ -897,7 +893,6 @@ class TestLimits:
 class TestGraphOperationsLoad:
     """Graph-specific operation load tests."""
 
-    @pytest.mark.slow
     def test_edge_creation_throughput(self, conn_conf, test_graph_name, clean_db):
         """Measure edge creation throughput."""
         _ = clean_db

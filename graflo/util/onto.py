@@ -29,7 +29,7 @@ else:
     try:
         from graflo.db.connection.onto import PostgresConfig
     except ImportError:
-        PostgresConfig = Any  # type: ignore
+        PostgresConfig = Any
 
 
 class ResourceType(BaseEnum):

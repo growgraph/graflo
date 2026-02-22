@@ -249,6 +249,9 @@ class FilterExpression(ConfigBaseModel):
         elif kind == ExpressionFlavor.CYPHER:
             assert self.cmp_operator is not None
             return self._cast_cypher(doc_name)
+        elif kind == ExpressionFlavor.NGQL:
+            assert self.cmp_operator is not None
+            return self._cast_ngql(doc_name)
         elif kind == ExpressionFlavor.GSQL:
             assert self.cmp_operator is not None
             if doc_name == "":
@@ -271,6 +274,7 @@ class FilterExpression(ConfigBaseModel):
         if kind in (
             ExpressionFlavor.AQL,
             ExpressionFlavor.CYPHER,
+            ExpressionFlavor.NGQL,
             ExpressionFlavor.GSQL,
             ExpressionFlavor.SQL,
         ):
@@ -314,6 +318,25 @@ class FilterExpression(ConfigBaseModel):
             "=" if self.cmp_operator == ComparisonOperator.EQ else self.cmp_operator
         )
         lemma = f"{cmp_op} {const}"
+        if self.unary_op is not None:
+            lemma = f"{self.unary_op} {lemma}"
+        if self.field is not None:
+            lemma = f"{doc_name}.{self.field} {lemma}"
+        return lemma
+
+    def _cast_ngql(self, doc_name: str) -> str:
+        """Render leaf as nGQL expression (NebulaGraph 3.x).
+
+        Uses dot-access like Cypher but keeps ``==`` for equality (nGQL standard).
+        The caller passes *doc_name* as ``"v.TagName"`` so property access becomes
+        ``v.TagName.field``.
+        """
+        if self.cmp_operator == ComparisonOperator.IS_NULL:
+            return f"{doc_name}.{self.field} IS EMPTY"
+        if self.cmp_operator == ComparisonOperator.IS_NOT_NULL:
+            return f"{doc_name}.{self.field} IS NOT EMPTY"
+        const = self._cast_value()
+        lemma = f"{self.cmp_operator} {const}"
         if self.unary_op is not None:
             lemma = f"{self.unary_op} {lemma}"
         if self.field is not None:

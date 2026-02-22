@@ -363,7 +363,7 @@ class ArangoConnection(Connection):
             if self.conn.has_graph(gname):
                 g_result = self.conn.graph(gname)
             else:
-                g_result = self.conn.create_graph(gname)  # type: ignore
+                g_result = self.conn.create_graph(gname)
 
             # Type narrowing: ensure g is a Graph instance
             g: Graph | None = None

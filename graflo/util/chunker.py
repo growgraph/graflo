@@ -776,9 +776,7 @@ def convert(
 
     with (
         open_foo(source, "rb")
-        if isinstance(  # type: ignore
-            source, pathlib.Path
-        )
+        if isinstance(source, pathlib.Path)
         else nullcontext() as fp  # type: ignore[assignment]
     ):
         if pattern is not None:

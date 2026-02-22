@@ -51,7 +51,7 @@ Run sustained load tests::
 Notes
 -----
 - Performance thresholds are hardware-dependent and should be adjusted
-- Tests marked with @pytest.mark.slow are excluded from quick CI runs
+- Tests marked with @pytest.mark.performance are excluded unless --run-performance is passed
 - Use -s flag to see performance metrics output
 - Results vary based on FalkorDB configuration and available resources
 
@@ -74,6 +74,8 @@ import pytest
 
 from graflo.db import ConnectionManager
 from graflo.onto import AggregationType
+
+pytestmark = pytest.mark.performance
 
 
 # =============================================================================
@@ -155,7 +157,6 @@ def benchmark(operation_name: str, ops: int, func: Callable) -> BenchmarkResult:
 # =============================================================================
 
 
-@pytest.mark.slow
 class TestThroughput:
     """Throughput tests - operations per second measurements."""
 
@@ -269,7 +270,6 @@ class TestThroughput:
 # =============================================================================
 
 
-@pytest.mark.slow
 class TestScalability:
     """Scalability tests - behavior with increasing data volumes."""
 
@@ -364,7 +364,6 @@ class TestScalability:
 # =============================================================================
 
 
-@pytest.mark.slow
 class TestConcurrency:
     """Concurrency tests - parallel access patterns."""
 
@@ -545,7 +544,6 @@ class TestConcurrency:
 # =============================================================================
 
 
-@pytest.mark.slow
 class TestBatchSizing:
     """Tests to find optimal batch size."""
 
@@ -630,7 +628,6 @@ class TestBatchSizing:
 # =============================================================================
 
 
-@pytest.mark.slow
 class TestSustainedLoad:
     """Sustained load tests - stability over time."""
 
@@ -770,7 +767,6 @@ class TestSustainedLoad:
 # =============================================================================
 
 
-@pytest.mark.slow
 class TestLimits:
     """System limits tests."""
 
@@ -888,7 +884,6 @@ class TestLimits:
 # =============================================================================
 
 
-@pytest.mark.slow
 class TestGraphOperationsLoad:
     """Graph-specific operation load tests."""
 

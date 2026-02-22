@@ -3,7 +3,7 @@ import logging
 import os
 import warnings
 from pathlib import Path
-from typing import Any, Dict, Type, TypeVar
+from typing import Any, Dict, Type, TypeVar, cast
 from urllib.parse import urlparse
 
 from pydantic import Field, model_validator
@@ -478,7 +478,7 @@ class DBConfig(BaseSettings, abc.ABC):
         temp_class = type(
             f"{cls.__name__}WithPrefix", (cls,), {"model_config": model_config}
         )
-        return temp_class()
+        return cast(T, temp_class())
 
 
 class ArangoConfig(DBConfig):
@@ -515,9 +515,9 @@ class ArangoConfig(DBConfig):
         - ARANGO_HOSTNAME: Hostname (defaults to localhost)
         - ARANGO_PROTOCOL: Protocol (defaults to http)
         - ARANGO_USERNAME: Username (defaults to root)
-        - ARANGO_PASSWORD: Password (or read from secret file if PATH_TO_SECRET is set)
+        - ARANGO_ROOT_PASSWORD: Root password (preferred)
+        - ARANGO_PASSWORD: Password (fallback)
         - ARANGO_DATABASE: Database name (optional, can be set later)
-        - PATH_TO_SECRET: Path to secret file containing password (relative to docker_dir)
         """
         if docker_dir is None:
             docker_dir = (
@@ -575,24 +575,11 @@ class ArangoConfig(DBConfig):
         else:
             config_data["username"] = "root"
 
-        # Password: check ARANGO_PASSWORD first, then try secret file
-        if "ARANGO_PASSWORD" in env_vars:
+        # Password: ARANGO_ROOT_PASSWORD (docker standard) > ARANGO_PASSWORD (fallback)
+        if "ARANGO_ROOT_PASSWORD" in env_vars:
+            config_data["password"] = env_vars["ARANGO_ROOT_PASSWORD"]
+        elif "ARANGO_PASSWORD" in env_vars:
             config_data["password"] = env_vars["ARANGO_PASSWORD"]
-        elif "PATH_TO_SECRET" in env_vars:
-            # Read password from secret file
-            secret_path_str = env_vars["PATH_TO_SECRET"]
-            # Handle relative paths (relative to docker_dir)
-            if secret_path_str.startswith("./"):
-                secret_path = docker_dir / secret_path_str[2:]
-            else:
-                secret_path = Path(secret_path_str)
-
-            if secret_path.exists():
-                with open(secret_path, "r") as f:
-                    config_data["password"] = f.read().strip()
-            else:
-                # Secret file not found, password will be None (ArangoDB accepts empty string)
-                config_data["password"] = None
 
         # Database (optional, can be set later or use Schema.general.name)
         if "ARANGO_DATABASE" in env_vars:
@@ -1038,12 +1025,45 @@ class MemgraphConfig(DBConfig):
 
 
 class NebulaConfig(DBConfig):
-    """Configuration for NebulaGraph connections."""
+    """Configuration for NebulaGraph connections.
+
+    Supports both NebulaGraph 3.x (nGQL via nebula3-python) and 5.x (ISO GQL
+    via nebula5-python).  Set ``version`` to ``"3"`` or ``"5"`` to select the
+    driver and query language.
+    """
 
     model_config = SettingsConfigDict(
         env_prefix="NEBULA_",
         case_sensitive=False,
     )
+
+    version: str = Field(
+        default="3",
+        description="Major NebulaGraph version: '3' for nGQL/nebula3-python, '5' for ISO GQL/nebula5-python",
+    )
+    vid_type: str = Field(
+        default="FIXED_STRING(256)",
+        description="VID type for space creation (e.g. 'FIXED_STRING(256)' or 'INT64')",
+    )
+    partition_num: int = Field(
+        default=1,
+        description="Number of partitions when creating a space",
+    )
+    replica_factor: int = Field(
+        default=1,
+        description="Replica factor when creating a space",
+    )
+    storaged_addresses: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Storage daemon addresses for ADD HOSTS (v3.x). "
+            "Each entry is 'host:port', e.g. ['nebula-storaged:9779']."
+        ),
+    )
+
+    @property
+    def is_v3(self) -> bool:
+        return self.version.startswith("3")
 
     def _get_default_port(self) -> int:
         """Get default NebulaGraph GraphD port."""
@@ -1075,7 +1095,6 @@ class NebulaConfig(DBConfig):
         if not env_file.exists():
             raise FileNotFoundError(f"Environment file not found: {env_file}")
 
-        # Load .env file manually
         env_vars: Dict[str, str] = {}
         with open(env_file, "r") as f:
             for line in f:
@@ -1084,7 +1103,6 @@ class NebulaConfig(DBConfig):
                     key, value = line.split("=", 1)
                     env_vars[key.strip()] = value.strip().strip('"').strip("'")
 
-        # Map environment variables to config
         config_data: Dict[str, Any] = {}
         if "NEBULA_URI" in env_vars:
             config_data["uri"] = env_vars["NEBULA_URI"]
@@ -1094,7 +1112,6 @@ class NebulaConfig(DBConfig):
             protocol = env_vars.get("NEBULA_PROTOCOL", "nebula")
             config_data["uri"] = f"{protocol}://{hostname}:{port}"
         elif "NEBULA_ADDRESS" in env_vars:
-            # NebulaGraph often uses NEBULA_ADDRESS instead of NEBULA_HOSTNAME
             port = env_vars.get("NEBULA_PORT", "9669")
             hostname = env_vars["NEBULA_ADDRESS"]
             protocol = env_vars.get("NEBULA_PROTOCOL", "nebula")
@@ -1110,6 +1127,13 @@ class NebulaConfig(DBConfig):
             config_data["schema_name"] = env_vars.get("NEBULA_SPACE") or env_vars.get(
                 "NEBULA_SCHEMA_NAME"
             )
+
+        nebula_version = env_vars.get("NEBULA_VERSION", "v3.8.0")
+        config_data["version"] = "5" if nebula_version.startswith("v5") else "3"
+
+        storaged_host = env_vars.get("STORAGED_ADDRESS", "nebula-storaged")
+        storaged_port = env_vars.get("STORAGED_PORT", "9779")
+        config_data["storaged_addresses"] = [f"{storaged_host}:{storaged_port}"]
 
         return cls(**config_data)
 

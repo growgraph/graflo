@@ -95,11 +95,13 @@ class ExpressionFlavor(BaseEnum):
     """Supported expression language types for filter/query rendering.
 
     Uses the actual query language names: AQL (ArangoDB), CYPHER (Neo4j,
-    FalkorDB, Memgraph), GSQL (TigerGraph), SQL for WHERE clauses, PYTHON for in-memory evaluation.
+    FalkorDB, Memgraph), NGQL (NebulaGraph 3.x), GSQL (TigerGraph),
+    SQL for WHERE clauses, PYTHON for in-memory evaluation.
 
     Attributes:
         AQL: ArangoDB AQL expressions
-        CYPHER: OpenCypher expressions (Neo4j, FalkorDB, Memgraph)
+        CYPHER: OpenCypher expressions (Neo4j, FalkorDB, Memgraph, NebulaGraph 5.x)
+        NGQL: NebulaGraph nGQL expressions (v3.x: dot-access, == equality)
         GSQL: TigerGraph GSQL expressions (including REST++ filter format)
         SQL: SQL WHERE clause fragments (column names, single-quoted values)
         PYTHON: Python expression evaluation
@@ -107,6 +109,7 @@ class ExpressionFlavor(BaseEnum):
 
     AQL = "aql"
     CYPHER = "cypher"
+    NGQL = "ngql"
     GSQL = "gsql"
     SQL = "sql"
     PYTHON = "python"
@@ -161,5 +164,6 @@ DB_TYPE_TO_EXPRESSION_FLAVOR: dict[DBType, ExpressionFlavor] = {
     DBType.NEO4J: ExpressionFlavor.CYPHER,
     DBType.FALKORDB: ExpressionFlavor.CYPHER,
     DBType.MEMGRAPH: ExpressionFlavor.CYPHER,
+    DBType.NEBULA: ExpressionFlavor.NGQL,
     DBType.TIGERGRAPH: ExpressionFlavor.GSQL,
 }
