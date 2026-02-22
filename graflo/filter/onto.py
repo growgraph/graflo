@@ -96,6 +96,18 @@ class ComparisonOperator(BaseEnum):
     IS_NOT_NULL = "IS_NOT_NULL"
 
 
+DUNDER_TO_CMP: MappingProxyType[str, ComparisonOperator] = MappingProxyType(
+    {
+        "__eq__": ComparisonOperator.EQ,
+        "__ne__": ComparisonOperator.NEQ,
+        "__gt__": ComparisonOperator.GT,
+        "__lt__": ComparisonOperator.LT,
+        "__ge__": ComparisonOperator.GE,
+        "__le__": ComparisonOperator.LE,
+    }
+)
+
+
 class FilterExpression(ConfigBaseModel):
     """Unified filter expression (discriminated: leaf or composite).
 
@@ -130,15 +142,21 @@ class FilterExpression(ConfigBaseModel):
     @model_validator(mode="before")
     @classmethod
     def leaf_operator_to_unary_op(cls, data: Any) -> Any:
-        """Map leaf 'operator' (YAML/kwargs) to unary_op; infer kind=leaf when missing."""
+        """Map leaf 'operator' or 'foo' (YAML/kwargs) to unary_op; infer kind and cmp_operator."""
         if not isinstance(data, dict):
             return data
-        # Only map operator -> unary_op for leaf clauses (never for composite)
         if data.get("kind") == "composite":
             return data
+        raw_op = None
+        data = dict(data)
         if "operator" in data and isinstance(data["operator"], str):
-            data = dict(data)
-            data["unary_op"] = data.pop("operator")
+            raw_op = data.pop("operator")
+        elif "foo" in data and isinstance(data["foo"], str):
+            raw_op = data.pop("foo")
+        if raw_op is not None:
+            data["unary_op"] = raw_op
+            if data.get("cmp_operator") is None and raw_op in DUNDER_TO_CMP:
+                data["cmp_operator"] = DUNDER_TO_CMP[raw_op]
             if data.get("kind") is None:
                 data["kind"] = "leaf"
         return data
@@ -202,15 +220,20 @@ class FilterExpression(ConfigBaseModel):
                 return cls(kind="composite", operator=current[0], deps=current[1])
         elif isinstance(current, dict):
             k = list(current.keys())[0]
-            if k in LogicalOperator:
+            norm_k = k.upper() if isinstance(k, str) else k
+            if norm_k in LogicalOperator:
                 deps = [cls.from_dict(v) for v in current[k]]
-                return cls(kind="composite", operator=LogicalOperator(k), deps=deps)
+                return cls(
+                    kind="composite", operator=LogicalOperator(norm_k), deps=deps
+                )
             else:
-                # Leaf from dict: map YAML "operator" -> unary_op
-                unary_op = current.get("operator")
+                unary_op = current.get("operator") or current.get("foo")
+                cmp_operator = current.get("cmp_operator")
+                if cmp_operator is None and unary_op is not None:
+                    cmp_operator = DUNDER_TO_CMP.get(unary_op)
                 return cls(
                     kind="leaf",
-                    cmp_operator=current.get("cmp_operator"),
+                    cmp_operator=cmp_operator,
                     value=current.get("value", []),
                     field=current.get("field"),
                     unary_op=unary_op,
@@ -249,6 +272,9 @@ class FilterExpression(ConfigBaseModel):
         elif kind == ExpressionFlavor.CYPHER:
             assert self.cmp_operator is not None
             return self._cast_cypher(doc_name)
+        elif kind == ExpressionFlavor.NGQL:
+            assert self.cmp_operator is not None
+            return self._cast_ngql(doc_name)
         elif kind == ExpressionFlavor.GSQL:
             assert self.cmp_operator is not None
             if doc_name == "":
@@ -271,6 +297,7 @@ class FilterExpression(ConfigBaseModel):
         if kind in (
             ExpressionFlavor.AQL,
             ExpressionFlavor.CYPHER,
+            ExpressionFlavor.NGQL,
             ExpressionFlavor.GSQL,
             ExpressionFlavor.SQL,
         ):
@@ -314,6 +341,25 @@ class FilterExpression(ConfigBaseModel):
             "=" if self.cmp_operator == ComparisonOperator.EQ else self.cmp_operator
         )
         lemma = f"{cmp_op} {const}"
+        if self.unary_op is not None:
+            lemma = f"{self.unary_op} {lemma}"
+        if self.field is not None:
+            lemma = f"{doc_name}.{self.field} {lemma}"
+        return lemma
+
+    def _cast_ngql(self, doc_name: str) -> str:
+        """Render leaf as nGQL expression (NebulaGraph 3.x).
+
+        Uses dot-access like Cypher but keeps ``==`` for equality (nGQL standard).
+        The caller passes *doc_name* as ``"v.TagName"`` so property access becomes
+        ``v.TagName.field``.
+        """
+        if self.cmp_operator == ComparisonOperator.IS_NULL:
+            return f"{doc_name}.{self.field} IS EMPTY"
+        if self.cmp_operator == ComparisonOperator.IS_NOT_NULL:
+            return f"{doc_name}.{self.field} IS NOT EMPTY"
+        const = self._cast_value()
+        lemma = f"{self.cmp_operator} {const}"
         if self.unary_op is not None:
             lemma = f"{self.unary_op} {lemma}"
         if self.field is not None:

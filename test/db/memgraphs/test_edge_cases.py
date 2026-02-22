@@ -1223,6 +1223,7 @@ class TestEdgeOperationsEdgeCases:
 # =============================================================================
 
 
+@pytest.mark.performance
 class TestBatchStress:
     """Stress test batch operations."""
 
@@ -1271,6 +1272,7 @@ class TestBatchStress:
 # =============================================================================
 
 
+@pytest.mark.performance
 class TestConcurrencyStress:
     """Thread safety and race condition testing."""
 
@@ -1408,6 +1410,7 @@ class TestStateCorruption:
 # =============================================================================
 
 
+@pytest.mark.performance
 class TestConnectionStress:
     """Stress connection handling and state management."""
 
@@ -1829,6 +1832,7 @@ class TestTemporalAnomalies:
 # =============================================================================
 
 
+@pytest.mark.performance
 class TestGraphAlgorithmEdgeCases:
     """Pathological graph structures that stress graph algorithms."""
 
@@ -2398,6 +2402,7 @@ class TestBoundaryValueAnalysis:
 # =============================================================================
 
 
+@pytest.mark.performance
 class TestFilterStress:
     """Stress test the filter system."""
 

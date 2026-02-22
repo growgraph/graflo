@@ -16,18 +16,21 @@ The manager supports:
     - Automatic connection cleanup
 
 Example:
-    >>> from graflo.db.connection.onto import ArangoConfig
+    >>> from graflo.db import ArangoConfig
     >>> config = ArangoConfig.from_env()
     >>> with ConnectionManager(connection_config=config) as conn:
     ...     # ArangoDB-specific AQL query (collection is ArangoDB terminology)
     ...     conn.execute("FOR doc IN vertex_class RETURN doc")
 """
 
+from typing import Any, cast
+
 from graflo.db.arango.conn import ArangoConnection
-from graflo.db.connection.onto import DBConfig, TARGET_DATABASES
+from graflo.db.connection import DBConfig, TARGET_DATABASES
 from graflo.onto import DBType
 from graflo.db.falkordb.conn import FalkordbConnection
 from graflo.db.memgraph.conn import MemgraphConnection
+from graflo.db.nebula.conn import NebulaConnection
 from graflo.db.neo4j.conn import Neo4jConnection
 from graflo.db.tigergraph.conn import TigerGraphConnection
 
@@ -57,6 +60,7 @@ class ConnectionManager:
         DBType.TIGERGRAPH: TigerGraphConnection,
         DBType.FALKORDB: FalkordbConnection,
         DBType.MEMGRAPH: MemgraphConnection,
+        DBType.NEBULA: NebulaConnection,
     }
 
     # Source database connections (INPUT) - to be implemented
@@ -101,7 +105,7 @@ class ConnectionManager:
 
         if self.working_db is not None:
             self.config.database = self.working_db
-        self.conn = cls(config=self.config)
+        self.conn = cls(config=cast(Any, self.config))
         return self.conn
 
     def close(self):

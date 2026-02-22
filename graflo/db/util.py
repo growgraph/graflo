@@ -30,7 +30,7 @@ from pathlib import Path
 
 from arango.exceptions import CursorNextError
 
-from graflo.db.connection.onto import DBType
+from graflo.onto import DBType
 
 logger = logging.getLogger(__name__)
 

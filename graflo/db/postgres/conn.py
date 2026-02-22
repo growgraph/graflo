@@ -11,7 +11,7 @@ Key Features:
 
 Example:
     >>> from graflo.db.postgres import PostgresConnection
-    >>> from graflo.db.connection.onto import PostgresConfig
+    >>> from graflo.db import PostgresConfig
     >>> config = PostgresConfig.from_docker_env()
     >>> conn = PostgresConnection(config)
     >>> schema_info = conn.introspect_schema()
@@ -34,7 +34,7 @@ from graflo.architecture.onto_sql import (
     RawTableInfo,
     SchemaIntrospectionResult,
 )
-from graflo.db.connection.onto import PostgresConfig
+from graflo.db.connection import PostgresConfig
 
 from graflo.hq.fuzzy_matcher import FuzzyMatcher
 

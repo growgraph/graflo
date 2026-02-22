@@ -2,7 +2,7 @@
 
 import pytest
 
-from graflo.db.connection.onto import ArangoConfig, Neo4jConfig, TigergraphConfig
+from graflo.db import ArangoConfig, Neo4jConfig, TigergraphConfig
 
 
 class TestArangoConfigFromEnv:
@@ -181,7 +181,7 @@ class TestNeo4jConfigFromEnv:
 
         # Verify BOLT_PORT and username are read correctly
         # The dynamically created class inherits from Neo4jConfig, so it has bolt_port
-        assert config.bolt_port == 7688  # type: ignore[attr-defined]
+        assert config.bolt_port == 7688
         assert config.username == "admin"
 
 

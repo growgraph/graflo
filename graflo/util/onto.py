@@ -23,13 +23,13 @@ from graflo.architecture.base import ConfigBaseModel
 from graflo.onto import BaseEnum
 
 if TYPE_CHECKING:
-    from graflo.db.connection.onto import PostgresConfig
+    from graflo.db import PostgresConfig
 else:
     # Import at runtime for type evaluation
     try:
-        from graflo.db.connection.onto import PostgresConfig
+        from graflo.db import PostgresConfig
     except ImportError:
-        PostgresConfig = Any  # type: ignore
+        PostgresConfig = Any
 
 
 class ResourceType(BaseEnum):

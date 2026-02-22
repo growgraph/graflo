@@ -14,7 +14,7 @@ Key Features:
 
 Example:
     >>> from graflo.db.memgraph import MemgraphConnection
-    >>> from graflo.db.connection import MemgraphConfig
+    >>> from graflo.db import MemgraphConfig
     >>> config = MemgraphConfig(uri="bolt://localhost:7687")
     >>> conn = MemgraphConnection(config)
     >>> conn.init_db(schema, recreate_schema=True)

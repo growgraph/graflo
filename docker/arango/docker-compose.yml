@@ -7,14 +7,10 @@ services:
         -   "${ARANGO_PORT}:8529"
         container_name: ${CONTAINER_NAME}
         volumes:
-        -   type: bind
-            source: ${PATH_TO_SECRET}
-            target: /tmp/secret
-            read_only: true
         -   arango_data:/var/lib/arangodb3
         -   arango_apps:/var/lib/arangodb3-apps
         environment:
-        -   ARANGO_ROOT_PASSWORD_FILE=/tmp/secret
+        -   ARANGO_ROOT_PASSWORD=$ARANGO_ROOT_PASSWORD
 
 volumes:
     arango_data:

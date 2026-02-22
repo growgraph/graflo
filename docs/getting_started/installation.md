@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - Python 3.11+
-- A graph database (ArangoDB, Neo4j, TigerGraph, FalkorDB, or Memgraph) if you plan to use database features
+- A graph database (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, or NebulaGraph) if you plan to use database features
 
 ## Installation Methods
 
@@ -64,7 +64,7 @@ print(graflo.__version__)
 
 ## Spinning up databases
 
-Instructions on how to spin up ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, and Apache Fuseki as Docker containers using `docker compose` are provided here: [github.com/growgraph/graflo/docker](https://github.com/growgraph/graflo/tree/main/docker)
+Instructions on how to spin up ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph, and Apache Fuseki as Docker containers using `docker compose` are provided here: [github.com/growgraph/graflo/docker](https://github.com/growgraph/graflo/tree/main/docker)
 
 ## Configuration
 

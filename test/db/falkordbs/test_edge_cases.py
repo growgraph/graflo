@@ -72,6 +72,7 @@ import concurrent.futures
 import math
 import threading
 import uuid
+from typing import Any
 
 import pytest
 
@@ -384,8 +385,8 @@ class TestBoundaryConditions:
         _ = clean_db
         with ConnectionManager(connection_config=conn_conf) as db:
             # Build deeply nested structure
-            nested = {"level": 0}
-            current = nested
+            nested: dict[str, Any] = {"level": 0}
+            current: dict[str, Any] = nested
             for i in range(1, 50):
                 current["child"] = {"level": i}
                 current = current["child"]
@@ -815,6 +816,7 @@ class TestPathologicalGraphs:
 # =============================================================================
 
 
+@pytest.mark.performance
 class TestConcurrencyChaos:
     """Thread safety and race condition testing.
 
@@ -1113,6 +1115,7 @@ class TestEdgeOperationsEdgeCases:
 # =============================================================================
 
 
+@pytest.mark.performance
 class TestBatchStress:
     """Stress test batch operations."""
 
@@ -1522,6 +1525,7 @@ class TestTemporalAnomalies:
 # =============================================================================
 
 
+@pytest.mark.performance
 class TestGraphAlgorithmExploits:
     """Pathological graph structures that stress graph algorithms.
 
@@ -1689,6 +1693,7 @@ class TestGraphAlgorithmExploits:
 # =============================================================================
 
 
+@pytest.mark.performance
 class TestConnectionTorture:
     """Stress connection handling and state management."""
 

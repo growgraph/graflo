@@ -2,7 +2,7 @@ import pathlib
 from suthing import FileHandle
 from graflo import Patterns, Schema
 from graflo.util.onto import FilePattern
-from graflo.db.connection.onto import Neo4jConfig
+from graflo.db import Neo4jConfig
 from graflo.hq import GraphEngine
 from graflo.hq.caster import IngestionParams
 

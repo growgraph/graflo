@@ -14,7 +14,7 @@ from graflo.architecture.edge import Edge
 from graflo.architecture.onto import GraphContainer
 from graflo.architecture.schema import Schema
 from graflo.db import ConnectionManager
-from graflo.db.connection.onto import DBConfig
+from graflo.db import DBConfig
 
 logger = logging.getLogger(__name__)
 

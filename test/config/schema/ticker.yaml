@@ -1,37 +1,39 @@
 general:
     name: ticker_history
 resources:
-    row_likes:
-    -   name: history
-        transforms:
-        -   foo: round_str
-            module: graflo.util.transform
-            params:
-                ndigits: 3
-            switch:
-                Open:
-                -   name
-                -   value
-        -   foo: round_str
-            module: graflo.util.transform
-            params:
-                ndigits: 3
-            switch:
-                Close:
-                -   name
-                -   value
-        -   foo: int
-            module: builtins
-            switch:
-                Volume:
-                -   name
-                -   value
-        -   foo: parse_date_yahoo
-            module: graflo.util.transform
-            map:
-                Date: t_obs
-        -   map:
-                __ticker: oftic
+-   resource_name: history
+    apply:
+    -   foo: round_str
+        module: graflo.util.transform
+        params:
+            ndigits: 3
+        input:
+        -   Open
+        output:
+        -   name
+        -   value
+    -   foo: round_str
+        module: graflo.util.transform
+        params:
+            ndigits: 3
+        input:
+        -   Close
+        output:
+        -   name
+        -   value
+    -   foo: int
+        module: builtins
+        input:
+        -   Volume
+        output:
+        -   name
+        -   value
+    -   foo: parse_date_yahoo
+        module: graflo.util.transform
+        map:
+            Date: t_obs
+    -   map:
+            __ticker: oftic
 vertex_config:
     vertices:
     -   name: ticker
@@ -92,7 +94,7 @@ edge_config:
             -   name: feature
                 fields:
                 -   name
-        index:
+        indexes:
         -   fields:
             -   t_obs
             -   name

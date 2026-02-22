@@ -28,7 +28,7 @@ import click
 from suthing import FileHandle
 
 from graflo import DataSourceRegistry, Patterns, Schema, DBType
-from graflo.db.connection.onto import DBConfig
+from graflo.db import DBConfig
 from graflo.data_source import DataSourceFactory
 from graflo.hq import GraphEngine
 

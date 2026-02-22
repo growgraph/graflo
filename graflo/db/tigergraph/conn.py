@@ -43,7 +43,7 @@ from graflo.architecture.onto import Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.vertex import FieldType, Vertex, VertexConfig
 from graflo.db.conn import Connection, SchemaExistsError
-from graflo.db.connection.onto import TigergraphConfig
+from graflo.db.connection import TigergraphConfig
 from graflo.db.tigergraph.onto import (
     TIGERGRAPH_TYPE_ALIASES,
     VALID_TIGERGRAPH_TYPES,
@@ -75,7 +75,7 @@ def _add_note_shim(self, note: str) -> None:
 def _patch_exception_class(cls: type[Exception]) -> None:
     """Patch an exception class to add add_note() if it doesn't exist."""
     if not hasattr(cls, "add_note"):
-        cls.add_note = _add_note_shim  # type: ignore[attr-defined, assignment]
+        cls.add_note = _add_note_shim
 
 
 # Patch requests exceptions (HTTPError, ConnectionError, Timeout, RequestException)

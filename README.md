@@ -1,6 +1,6 @@
 # GraFlo <img src="https://raw.githubusercontent.com/growgraph/graflo/main/docs/assets/favicon.ico" alt="graflo logo" style="height: 32px; width:32px;"/>
 
-A framework for transforming **tabular** (CSV, SQL), **hierarchical** (JSON, XML), and **RDF/SPARQL** data into property graphs and ingesting them into graph databases (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph).
+A framework for transforming **tabular** (CSV, SQL), **hierarchical** (JSON, XML), and **RDF/SPARQL** data into property graphs and ingesting them into graph databases (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph).
 
 > **Package Renamed**: This package was formerly known as `graphcast`.
 
@@ -30,7 +30,7 @@ graflo reads data from multiple source types, transforms it according to a decla
 
 ### Supported targets
 
-ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph -- same API for all.
+ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph -- same API for all.
 
 ## Features
 
@@ -39,7 +39,7 @@ ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph -- same API for all.
 - **RDF / SPARQL ingestion**: Read `.ttl` files via rdflib or query SPARQL endpoints (e.g. Apache Fuseki). `owl:Class` maps to vertices, `owl:ObjectProperty` to edges, `owl:DatatypeProperty` to vertex fields.
 - **Typed fields**: Vertex fields and edge weights support types (`INT`, `FLOAT`, `STRING`, `DATETIME`, `BOOL`) for validation and database-specific optimisation.
 - **Parallel batch processing**: Configurable batch sizes and multi-core execution.
-- **Database-agnostic**: Single API targeting ArangoDB, Neo4j, TigerGraph, FalkorDB, and Memgraph. Source data from PostgreSQL, SPARQL endpoints, files, APIs, or in-memory objects.
+- **Database-agnostic**: Single API targeting ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, and NebulaGraph. Source data from PostgreSQL, SPARQL endpoints, files, APIs, or in-memory objects.
 
 ## Documentation
 Full documentation is available at: [growgraph.github.io/graflo](https://growgraph.github.io/graflo)
@@ -251,6 +251,12 @@ Memgraph from [memgraph docker folder](./docker/memgraph) by
 docker-compose --env-file .env up memgraph
 ```
 
+NebulaGraph from [nebula docker folder](./docker/nebula) by
+
+```shell
+docker-compose --env-file .env up
+```
+
 and Apache Fuseki from [fuseki docker folder](./docker/fuseki) by
 
 ```shell
@@ -263,12 +269,14 @@ To run unit tests
 pytest test
 ```
 
-> **Note**: Tests require external database containers (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, Fuseki) to be running. CI builds intentionally skip test execution. Tests must be run locally with the required database images started (see [Test databases](#test-databases) section above).
+> **Note**: Tests require external database containers (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph, Fuseki) to be running. CI builds intentionally skip test execution. Tests must be run locally with the required database images started (see [Test databases](#test-databases) section above). NebulaGraph tests are gated behind `pytest --run-nebula`.
 
 ## Requirements
 
 - Python 3.11+ (Python 3.11 and 3.12 are officially supported)
 - python-arango
+- nebula3-python>=3.8.3 (NebulaGraph v3.x support)
+- nebula5-python>=5.2.1 (NebulaGraph v5.x support)
 - sqlalchemy>=2.0.0 (for PostgreSQL and SQL data sources)
 - rdflib>=7.0.0 + SPARQLWrapper>=2.0.0 (optional, install with `pip install graflo[sparql]`)
 

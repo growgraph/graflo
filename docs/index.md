@@ -1,6 +1,6 @@
 # GraFlo <img src="https://raw.githubusercontent.com/growgraph/graflo/main/docs/assets/favicon.ico" alt="graflo logo" style="height: 32px; width:32px;"/>
 
-graflo is a framework for transforming **tabular** (CSV, SQL), **hierarchical** (JSON, XML), and **RDF/SPARQL** data into property graphs and ingesting them into graph databases (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph).
+graflo is a framework for transforming **tabular** (CSV, SQL), **hierarchical** (JSON, XML), and **RDF/SPARQL** data into property graphs and ingesting them into graph databases (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph).
 
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg) 
 [![PyPI version](https://badge.fury.io/py/graflo.svg)](https://badge.fury.io/py/graflo)
@@ -62,7 +62,7 @@ Resources define how data is transformed into a graph (semantic mapping). They w
 - **RDF / SPARQL ingestion**: Read `.ttl`/`.rdf`/`.n3` files or query SPARQL endpoints. Auto-infer schemas from OWL/RDFS ontologies: `owl:Class` maps to vertices, `owl:ObjectProperty` to edges, `owl:DatatypeProperty` to vertex fields. Install with `pip install graflo[sparql]`.
 - **Typed fields**: Vertex fields and edge weights support types (`INT`, `FLOAT`, `STRING`, `DATETIME`, `BOOL`) for validation and database-specific optimisation.
 - **Parallel batch processing**: Configurable batch sizes and multi-core execution.
-- **Database-agnostic target**: Single API for ArangoDB, Neo4j, TigerGraph, FalkorDB, and Memgraph.
+- **Database-agnostic target**: Single API for ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, and NebulaGraph.
 - **Advanced filtering**: Server-side filtering (e.g. TigerGraph REST++ API) and client-side filter expressions.
 - **Blank vertices**: Create intermediate nodes for complex relationship modelling.
 
@@ -84,7 +84,7 @@ Resources define how data is transformed into a graph (semantic mapping). They w
 ## Requirements
 
 - Python 3.11 or higher (3.11 and 3.12 officially supported)
-- A graph database (ArangoDB, Neo4j, TigerGraph, FalkorDB, or Memgraph) as target
+- A graph database (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, or NebulaGraph) as target
 - Optional: PostgreSQL for SQL data sources and schema inference
 - Optional: `rdflib` + `SPARQLWrapper` for RDF/SPARQL support (`pip install graflo[sparql]`)
 - Full dependency list in `pyproject.toml`

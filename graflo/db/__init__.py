@@ -25,23 +25,43 @@ Example:
 
 from .arango.conn import ArangoConnection
 from .conn import Connection, ConnectionType
-from .connection import DBConfig
+from .connection import (
+    ArangoConfig,
+    DBConfig,
+    FalkordbConfig,
+    MemgraphConfig,
+    NebulaConfig,
+    Neo4jConfig,
+    PostgresConfig,
+    SparqlEndpointConfig,
+    TigergraphConfig,
+)
 from .falkordb.conn import FalkordbConnection
 from .manager import ConnectionManager
 from .memgraph.conn import MemgraphConnection
+from .nebula.conn import NebulaConnection
 from .neo4j.conn import Neo4jConnection
 from .postgres.conn import PostgresConnection
 from .tigergraph.conn import TigerGraphConnection
 
 
 __all__ = [
+    "ArangoConfig",
     "Connection",
     "ConnectionType",
     "DBConfig",
     "ConnectionManager",
+    "FalkordbConfig",
+    "MemgraphConfig",
+    "NebulaConfig",
+    "Neo4jConfig",
+    "PostgresConfig",
+    "SparqlEndpointConfig",
+    "TigergraphConfig",
     "ArangoConnection",
     "FalkordbConnection",
     "MemgraphConnection",
+    "NebulaConnection",
     "Neo4jConnection",
     "PostgresConnection",
     "TigerGraphConnection",

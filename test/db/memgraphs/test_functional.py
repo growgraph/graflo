@@ -882,6 +882,7 @@ class TestTransactionalRobustness:
 # =============================================================================
 
 
+@pytest.mark.performance
 class TestPerformanceEdgeCases:
     """Tests for performance-related edge cases."""
 

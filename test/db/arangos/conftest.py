@@ -1,10 +1,9 @@
 from test.conftest import ingest_atomic, verify
 
 import pytest
-from suthing import FileHandle
 
 from graflo.db import ConnectionManager
-from graflo.db.connection.onto import ArangoConfig
+from graflo.db import ArangoConfig
 from test.conftest import fetch_schema_obj
 
 
@@ -17,11 +16,6 @@ def test_db_name():
 def conn_conf():
     """Load ArangoDB config from docker/arango/.env file."""
     conn_conf = ArangoConfig.from_docker_env()
-    # Override password from secret file if needed
-    cred_pass = FileHandle.load("docker.arango", "graflo.arango.secret")
-    if cred_pass:
-        conn_conf.password = cred_pass
-    # Ensure database is set
     if not conn_conf.database:
         conn_conf.database = "_system"
     return conn_conf

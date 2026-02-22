@@ -18,7 +18,7 @@ Prerequisites:
 import logging
 from pathlib import Path
 
-from graflo.db.connection.onto import ArangoConfig
+from graflo.db import ArangoConfig
 from graflo.hq import GraphEngine, IngestionParams
 from graflo.util.onto import Patterns, SparqlPattern
 
@@ -43,7 +43,7 @@ DATA_FILE = DATA_DIR / "data.ttl"
 conn_conf = ArangoConfig.from_docker_env()
 
 # Alternative targets – uncomment the one you need:
-# from graflo.db.connection.onto import Neo4jConfig, TigergraphConfig, FalkordbConfig
+# from graflo.db import Neo4jConfig, TigergraphConfig, FalkordbConfig
 # conn_conf = Neo4jConfig.from_docker_env()
 # conn_conf = TigergraphConfig.from_docker_env()
 # conn_conf = FalkordbConfig.from_docker_env()

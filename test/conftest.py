@@ -16,8 +16,44 @@ from graflo.util.onto import Patterns, FilePattern
 logger = logging.getLogger(__name__)
 
 
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "performance: performance / stress tests (skipped unless --run-performance)",
+    )
+    config.addinivalue_line(
+        "markers", "nebula: NebulaGraph integration tests (skipped unless --run-nebula)"
+    )
+
+
 def pytest_addoption(parser):
     parser.addoption("--reset", action="store_true")
+    parser.addoption(
+        "--run-performance",
+        action="store_true",
+        default=False,
+        help="Run performance / stress tests marked @pytest.mark.performance",
+    )
+    parser.addoption(
+        "--run-nebula",
+        action="store_true",
+        default=False,
+        help="Run NebulaGraph integration tests marked @pytest.mark.nebula",
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    _skip_map = {
+        "performance": ("--run-performance", "need --run-performance option to run"),
+        "nebula": ("--run-nebula", "need --run-nebula option to run"),
+    }
+    for marker_name, (option, reason) in _skip_map.items():
+        if config.getoption(option):
+            continue
+        skip = pytest.mark.skip(reason=reason)
+        for item in items:
+            if marker_name in item.keywords:
+                item.add_marker(skip)
 
 
 @pytest.fixture(scope="session", autouse=True)
