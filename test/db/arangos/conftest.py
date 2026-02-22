@@ -3,7 +3,7 @@ from test.conftest import ingest_atomic, verify
 import pytest
 
 from graflo.db import ConnectionManager
-from graflo.db.connection.onto import ArangoConfig
+from graflo.db import ArangoConfig
 from test.conftest import fetch_schema_obj
 
 

@@ -1,6 +1,6 @@
 """Unit tests for NebulaConfig (no Docker required)."""
 
-from graflo.db.connection.onto import NebulaConfig
+from graflo.db import NebulaConfig
 from graflo.onto import DB_TYPE_TO_EXPRESSION_FLAVOR, DBType, ExpressionFlavor
 
 

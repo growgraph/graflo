@@ -2,7 +2,7 @@
 
 import pytest
 
-from graflo.db.connection.onto import ArangoConfig, Neo4jConfig, TigergraphConfig
+from graflo.db import ArangoConfig, Neo4jConfig, TigergraphConfig
 
 
 class TestArangoConfigFromEnv:

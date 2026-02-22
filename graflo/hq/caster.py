@@ -32,7 +32,7 @@ from graflo.data_source import (
     DataSourceFactory,
     DataSourceRegistry,
 )
-from graflo.db.connection.onto import DBConfig
+from graflo.db import DBConfig
 from graflo.hq.db_writer import DBWriter
 from graflo.hq.registry_builder import RegistryBuilder
 from graflo.util.chunker import ChunkerType

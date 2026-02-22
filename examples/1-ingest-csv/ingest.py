@@ -2,7 +2,7 @@ import pathlib
 from suthing import FileHandle
 from graflo import Patterns, Schema
 from graflo.util.onto import FilePattern
-from graflo.db.connection.onto import ArangoConfig
+from graflo.db import ArangoConfig
 from graflo.hq import GraphEngine
 from graflo.hq.caster import IngestionParams
 

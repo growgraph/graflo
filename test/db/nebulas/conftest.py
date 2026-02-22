@@ -19,7 +19,7 @@ import pytest
 from graflo.architecture.schema import Schema
 from graflo.db import ConnectionManager
 from graflo.db.conn import Connection
-from graflo.db.connection.onto import NebulaConfig
+from graflo.db import NebulaConfig
 
 
 MINI_SCHEMA_DICT = {
