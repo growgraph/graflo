@@ -96,6 +96,18 @@ class ComparisonOperator(BaseEnum):
     IS_NOT_NULL = "IS_NOT_NULL"
 
 
+DUNDER_TO_CMP: MappingProxyType[str, ComparisonOperator] = MappingProxyType(
+    {
+        "__eq__": ComparisonOperator.EQ,
+        "__ne__": ComparisonOperator.NEQ,
+        "__gt__": ComparisonOperator.GT,
+        "__lt__": ComparisonOperator.LT,
+        "__ge__": ComparisonOperator.GE,
+        "__le__": ComparisonOperator.LE,
+    }
+)
+
+
 class FilterExpression(ConfigBaseModel):
     """Unified filter expression (discriminated: leaf or composite).
 
@@ -130,15 +142,21 @@ class FilterExpression(ConfigBaseModel):
     @model_validator(mode="before")
     @classmethod
     def leaf_operator_to_unary_op(cls, data: Any) -> Any:
-        """Map leaf 'operator' (YAML/kwargs) to unary_op; infer kind=leaf when missing."""
+        """Map leaf 'operator' or 'foo' (YAML/kwargs) to unary_op; infer kind and cmp_operator."""
         if not isinstance(data, dict):
             return data
-        # Only map operator -> unary_op for leaf clauses (never for composite)
         if data.get("kind") == "composite":
             return data
+        raw_op = None
+        data = dict(data)
         if "operator" in data and isinstance(data["operator"], str):
-            data = dict(data)
-            data["unary_op"] = data.pop("operator")
+            raw_op = data.pop("operator")
+        elif "foo" in data and isinstance(data["foo"], str):
+            raw_op = data.pop("foo")
+        if raw_op is not None:
+            data["unary_op"] = raw_op
+            if data.get("cmp_operator") is None and raw_op in DUNDER_TO_CMP:
+                data["cmp_operator"] = DUNDER_TO_CMP[raw_op]
             if data.get("kind") is None:
                 data["kind"] = "leaf"
         return data
@@ -202,15 +220,20 @@ class FilterExpression(ConfigBaseModel):
                 return cls(kind="composite", operator=current[0], deps=current[1])
         elif isinstance(current, dict):
             k = list(current.keys())[0]
-            if k in LogicalOperator:
+            norm_k = k.upper() if isinstance(k, str) else k
+            if norm_k in LogicalOperator:
                 deps = [cls.from_dict(v) for v in current[k]]
-                return cls(kind="composite", operator=LogicalOperator(k), deps=deps)
+                return cls(
+                    kind="composite", operator=LogicalOperator(norm_k), deps=deps
+                )
             else:
-                # Leaf from dict: map YAML "operator" -> unary_op
-                unary_op = current.get("operator")
+                unary_op = current.get("operator") or current.get("foo")
+                cmp_operator = current.get("cmp_operator")
+                if cmp_operator is None and unary_op is not None:
+                    cmp_operator = DUNDER_TO_CMP.get(unary_op)
                 return cls(
                     kind="leaf",
-                    cmp_operator=current.get("cmp_operator"),
+                    cmp_operator=cmp_operator,
                     value=current.get("value", []),
                     field=current.get("field"),
                     unary_op=unary_op,

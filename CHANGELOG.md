@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.6.1] - 2026-02-22
 
+### Fixed
+- **Filter expression parsing**: Fixed several bugs in `FilterExpression` deserialization
+  - Added support for `foo` key (dunder-method shorthand, e.g. `foo: __eq__`) as an alternative to `operator` in YAML filter definitions
+  - `cmp_operator` is now auto-inferred from dunder operator names (`__eq__` → `EQ`, `__gt__` → `GT`, etc.) via the new `DUNDER_TO_CMP` mapping, fixing cases where `cmp_operator` remained `None`
+  - Fixed case-insensitive logical operator parsing in `from_dict` — lowercase keys like `or`, `and`, `if_then` from YAML are now correctly matched to `LogicalOperator` enum values
+
 ### Added
 - **NebulaGraph adapter**: Full support for NebulaGraph as a target graph database, with dual-version support for both v3.x (nGQL via `nebula3-python`, Thrift) and v5.x (ISO GQL via `nebula5-python`, gRPC)
   - `NebulaConnection` implementing the full `Connection` interface: space lifecycle (`create_database`, `delete_database`, `init_db`), schema DDL (`define_schema`, `define_vertex_classes`, `define_edge_classes`), index management with rebuild/retry, batched vertex upserts and edge inserts, `fetch_docs`, `fetch_edges`, `fetch_present_documents`, `keep_absent_documents`, and `aggregate` (COUNT, MAX, MIN, AVG, SORTED_UNIQUE)

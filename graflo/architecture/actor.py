@@ -57,6 +57,7 @@ from graflo.architecture.transform import ProtoTransform, Transform
 from graflo.architecture.vertex import (
     VertexConfig,
 )
+from graflo.onto import ExpressionFlavor
 from graflo.util.merge import (
     merge_doc_basis,
 )
@@ -257,7 +258,11 @@ class VertexActor(Actor):
             list[dict]: Filtered list of vertex documents
         """
         filters = self.vertex_config.filters(self.name)
-        return [_doc for _doc in docs if all(cfilter(doc) for cfilter in filters)]
+        return [
+            _doc
+            for _doc in docs
+            if all(cfilter(kind=ExpressionFlavor.PYTHON, **_doc) for cfilter in filters)
+        ]
 
     def _extract_vertex_doc_from_transformed_item(
         self, item: dict[str, Any], vertex_keys: tuple[str, ...]
