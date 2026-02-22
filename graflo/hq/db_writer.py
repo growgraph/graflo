@@ -106,6 +106,8 @@ class DBWriter:
             for edge_id, _edge in self.schema.edge_config.edges_items():
                 vfrom, vto, _relation = edge_id
                 if vcol == vfrom or vcol == vto:
+                    if vfrom not in gc.vertices or vto not in gc.vertices:
+                        continue
                     if edge_id not in gc.edges:
                         gc.edges[edge_id] = []
                     gc.edges[edge_id].extend(

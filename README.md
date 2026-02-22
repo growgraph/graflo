@@ -1,6 +1,8 @@
 # GraFlo <img src="https://raw.githubusercontent.com/growgraph/graflo/main/docs/assets/favicon.ico" alt="graflo logo" style="height: 32px; width:32px;"/>
 
-A framework for transforming **tabular** (CSV, SQL), **hierarchical** (JSON, XML), and **RDF/SPARQL** data into property graphs and ingesting them into graph databases (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph).
+A **Graph Schema & Transformation Language (GSTL)** for Labeled Property Graphs (LPG).
+
+GraFlo provides a declarative, database-agnostic specification for mapping heterogeneous data sources — tabular (CSV, SQL), hierarchical (JSON, XML), and RDF/SPARQL — to a unified LPG representation and ingesting it into ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, or NebulaGraph.
 
 > **Package Renamed**: This package was formerly known as `graphcast`.
 
@@ -13,33 +15,70 @@ A framework for transforming **tabular** (CSV, SQL), **hierarchical** (JSON, XML
 
 ## Overview
 
-graflo reads data from multiple source types, transforms it according to a declarative schema, and writes property-graph vertices and edges to a target graph database. The pipeline is:
+GraFlo separates *what the graph looks like* from *where data comes from* and *which database stores it*.
 
-**Pattern** (where data lives) --> **DataSource** (how to read it) --> **Resource** (what to extract) --> **GraphContainer** --> **Target DB**
+```mermaid
+flowchart LR
+    subgraph si ["Source Instance"]
+        F["File\nCSV · JSON · Parquet"]
+        S["SQL\nPostgreSQL"]
+        SP["SPARQL\nendpoint · .ttl"]
+        A["API · In-memory"]
+    end
 
-### Supported sources
+    R(["<b>Resource</b>\nactor pipeline"])
 
-| Source type | Pattern | DataSource | Schema inference |
+    subgraph gs ["Graph Schema"]
+        V["Vertex & Edge\ndefinitions"]
+        T["Transforms\n& indexes"]
+    end
+
+    GC["<b>GraphContainer</b>\ncovariant graph\nrepresentation"]
+
+    subgraph db ["Graph DB · LPG"]
+        AR["ArangoDB"]
+        NE["Neo4j"]
+        TG["TigerGraph"]
+        More["FalkorDB\nMemgraph\nNebulaGraph"]
+    end
+
+    si --> R --> gs --> GC --> db
+```
+
+**Source Instance** → **Resource** → **Graph Schema** → **Covariant Graph Representation** → **Graph DB**
+
+| Stage | Role | Code |
+|-------|------|------|
+| **Source Instance** | A concrete data artifact — a CSV file, a PostgreSQL table, a SPARQL endpoint, a `.ttl` file. | `AbstractDataSource` subclasses (`FileDataSource`, `SQLDataSource`, `SparqlEndpointDataSource`, …) with a `DataSourceType`. |
+| **Resource** | A reusable transformation pipeline — actor steps (descend, transform, vertex, edge) that map raw records to graph elements. Data sources bind to Resources by name via the `DataSourceRegistry`. | `Resource` (part of `Schema`). |
+| **Graph Schema** | Declarative vertex/edge definitions, indexes, typed fields, and named transforms — defined in YAML or Python. | `Schema`, `VertexConfig`, `EdgeConfig`. |
+| **Covariant Graph Representation** | A database-independent collection of vertices and edges. | `GraphContainer`. |
+| **Graph DB** | The target LPG store — same API for all supported databases. | `ConnectionManager`, `DBWriter`. |
+
+### Supported source types (`DataSourceType`)
+
+| DataSourceType | Pattern | DataSource | Schema inference |
 |---|---|---|---|
-| CSV / JSON / JSONL / Parquet files | `FilePattern` | `FileDataSource` | manual |
-| PostgreSQL tables | `TablePattern` | `SQLDataSource` | automatic (3NF with PK/FK) |
-| RDF files (`.ttl`, `.rdf`, `.n3`) | `SparqlPattern` | `RdfFileDataSource` | automatic (OWL/RDFS ontology) |
-| SPARQL endpoints (Fuseki, ...) | `SparqlPattern` | `SparqlEndpointDataSource` | automatic (OWL/RDFS ontology) |
-| REST APIs | -- | `APIDataSource` | manual |
-| In-memory (list / DataFrame) | -- | `InMemoryDataSource` | manual |
+| `FILE` — CSV / JSON / JSONL / Parquet | `FilePattern` | `FileDataSource` | manual |
+| `SQL` — PostgreSQL tables | `TablePattern` | `SQLDataSource` | automatic (3NF with PK/FK) |
+| `SPARQL` — RDF files (`.ttl`, `.rdf`, `.n3`) | `SparqlPattern` | `RdfFileDataSource` | automatic (OWL/RDFS ontology) |
+| `SPARQL` — SPARQL endpoints (Fuseki, …) | `SparqlPattern` | `SparqlEndpointDataSource` | automatic (OWL/RDFS ontology) |
+| `API` — REST APIs | — | `APIDataSource` | manual |
+| `IN_MEMORY` — list / DataFrame | — | `InMemoryDataSource` | manual |
 
 ### Supported targets
 
-ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph -- same API for all.
+ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph — same API for all.
 
 ## Features
 
-- **Declarative graph transformation**: Define vertex/edge structures, indexes, weights, and transforms in YAML or Python dicts. Resources describe how each data source maps to vertices and edges.
-- **Schema inference**: Automatically generate schemas from PostgreSQL 3NF databases (PK/FK heuristics) or from OWL/RDFS ontologies (class/property introspection).
-- **RDF / SPARQL ingestion**: Read `.ttl` files via rdflib or query SPARQL endpoints (e.g. Apache Fuseki). `owl:Class` maps to vertices, `owl:ObjectProperty` to edges, `owl:DatatypeProperty` to vertex fields.
-- **Typed fields**: Vertex fields and edge weights support types (`INT`, `FLOAT`, `STRING`, `DATETIME`, `BOOL`) for validation and database-specific optimisation.
-- **Parallel batch processing**: Configurable batch sizes and multi-core execution.
-- **Database-agnostic**: Single API targeting ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, and NebulaGraph. Source data from PostgreSQL, SPARQL endpoints, files, APIs, or in-memory objects.
+- **Declarative LPG schema** — Define vertices, edges, indexes, weights, and transforms in YAML or Python. The `Schema` is the single source of truth, independent of source or target.
+- **Database abstraction** — One schema, one API. Target ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, or NebulaGraph without rewriting pipelines. Database idiosyncrasies are handled by the `GraphContainer` (covariant graph representation).
+- **Resource abstraction** — Each `Resource` defines a reusable actor pipeline (descend → transform → vertex → edge) that maps raw records to graph elements. Data sources bind to Resources by name via the `DataSourceRegistry`, decoupling transformation logic from data retrieval.
+- **SPARQL & RDF support** — Query SPARQL endpoints (e.g. Apache Fuseki), read `.ttl`/`.rdf`/`.n3` files, and auto-infer schemas from OWL/RDFS ontologies. Install with `pip install graflo[sparql]`.
+- **Schema inference** — Generate graph schemas from PostgreSQL 3NF databases (PK/FK heuristics) or from OWL/RDFS ontologies (`owl:Class` → vertices, `owl:ObjectProperty` → edges, `owl:DatatypeProperty` → vertex fields).
+- **Typed fields** — Vertex fields and edge weights carry types (`INT`, `FLOAT`, `STRING`, `DATETIME`, `BOOL`) for validation and database-specific optimisation.
+- **Parallel batch processing** — Configurable batch sizes and multi-core execution.
 
 ## Documentation
 Full documentation is available at: [growgraph.github.io/graflo](https://growgraph.github.io/graflo)

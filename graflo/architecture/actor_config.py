@@ -18,6 +18,7 @@ from pydantic import Field, TypeAdapter, model_validator
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.edge import EdgeBase
+from graflo.architecture.transform import DressConfig
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +173,14 @@ class TransformActorConfig(ConfigBaseModel):
     output: list[str] | None = Field(
         default=None, description="Output field names for functional transform"
     )
+    dress: DressConfig | None = Field(
+        default=None,
+        description=(
+            "Dressing spec for pivoted output: {key: <key_field>, value: <value_field>}. "
+            "key_field receives the input field name, value_field receives the "
+            "function result."
+        ),
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -184,6 +193,20 @@ class TransformActorConfig(ConfigBaseModel):
             if isinstance(inner, dict):
                 data.update(inner)
             data["type"] = "transform"
+        # Legacy: convert switch → input + dress
+        if "switch" in data:
+            switch = data.pop("switch")
+            if isinstance(switch, dict) and switch:
+                key = next(iter(switch))
+                vals = switch[key]
+                if isinstance(vals, (list, tuple)) and len(vals) >= 2:
+                    data.setdefault("input", [key])
+                    data.setdefault("dress", {"key": vals[0], "value": vals[1]})
+        # Legacy: convert list-style dress → dict-style
+        if "dress" in data and isinstance(data["dress"], (list, tuple)):
+            vals = data["dress"]
+            if len(vals) >= 2:
+                data["dress"] = {"key": vals[0], "value": vals[1]}
         return data
 
 

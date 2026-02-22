@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.2] - 2026-02-23
+
+### Changed
+- **Messaging & positioning**: GraFlo is now presented as a **Graph Schema & Transformation Language (GSTL)** for Labeled Property Graphs (LPG) across all documentation
+  - README, docs landing page, concepts, and creating-schema guide rewritten to lead with the GSTL / LPG identity
+  - Pipeline description standardised to **Source Instance → Resource → Graph Schema → Covariant Graph Representation → Graph DB**
+  - Added top-level mermaid pipeline diagram to README
+  - Vocabulary aligned with codebase: `Resource`, `DataSourceRegistry`, `AbstractDataSource`, `DataSourceType`, `GraphContainer` used consistently
+  - Resolved Source Type / Resource ambiguity — `DataSourceType` (`FILE`, `SQL`, `SPARQL`, `API`, `IN_MEMORY`) is now documented as a property of the source instance, while `Resource` is the transformation pipeline
+  - Database abstraction and `GraphContainer` (covariant graph representation) highlighted as core value propositions
+  - SPARQL & RDF support elevated to a first-class feature across all pages
+
 ## [1.6.1] - 2026-02-22
 
 ### Fixed

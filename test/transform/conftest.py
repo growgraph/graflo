@@ -216,24 +216,27 @@ def table_config_ticker():
             module: graflo.util.transform
             params:
                 ndigits: 3
-            switch:
-                Open:
-                -   name
-                -   value
+            input:
+            -   Open
+            dress:
+                key: name
+                value: value
         -   foo: round_str
             module: graflo.util.transform
             params:
                 ndigits: 3
-            switch:
-                Close:
-                -   name
-                -   value
+            input:
+            -   Close
+            dress:
+                key: name
+                value: value
         -   foo: int
             module: builtins
-            switch:
-                Volume:
-                -   name
-                -   value
+            input:
+            -   Volume
+            dress:
+                key: name
+                value: value
         -   foo: parse_date_yahoo
             module: graflo.util.transform
             map:

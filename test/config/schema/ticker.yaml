@@ -9,25 +9,25 @@ resources:
             ndigits: 3
         input:
         -   Open
-        output:
-        -   name
-        -   value
+        dress:
+            key: name
+            value: value
     -   foo: round_str
         module: graflo.util.transform
         params:
             ndigits: 3
         input:
         -   Close
-        output:
-        -   name
-        -   value
+        dress:
+            key: name
+            value: value
     -   foo: int
         module: builtins
         input:
         -   Volume
-        output:
-        -   name
-        -   value
+        dress:
+            key: name
+            value: value
     -   foo: parse_date_yahoo
         module: graflo.util.transform
         map:

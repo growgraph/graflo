@@ -72,19 +72,20 @@ def test_parse_multi_item(quoted_multi_item):
     assert r["id"][-1] == "360777873683"
 
 
-def test_switch():
+def test_dress():
     kwargs = {
         "module": "builtins",
         "foo": "round",
-        "switch": {"Open": ["name", "value"]},
+        "input": ["Open"],
+        "dress": {"key": "name", "value": "value"},
         "params": {"ndigits": 3},
     }
     t = Transform(**kwargs)  # type: ignore
     r = t({"Open": 0.1234})
-    assert r == {"value": 0.123, "name": "Open"}
+    assert r == {"name": "Open", "value": 0.123}
 
 
-def test_switch_complete():
+def test_dress_complete():
     doc = {
         "Date": "2014-04-15",
         "Open": "17.899999618530273",
@@ -100,12 +101,61 @@ def test_switch_complete():
     kwargs = {
         "module": "graflo.util.transform",
         "foo": "round_str",
-        "switch": {"Open": ["name", "value"]},
+        "input": ["Open"],
+        "dress": {"key": "name", "value": "value"},
         "params": {"ndigits": 3},
     }
     t = Transform(**kwargs)  # type: ignore
     r = t(doc)
-    assert r["value"] == 17.9
+    assert r == {"name": "Open", "value": 17.9}
+
+
+def test_dress_derives_output():
+    """dress auto-derives output=(key, value) field names."""
+    kwargs = {
+        "module": "builtins",
+        "foo": "int",
+        "input": ["Volume"],
+        "dress": {"key": "name", "value": "value"},
+    }
+    t = Transform(**kwargs)  # type: ignore
+    assert t.output == ("name", "value")
+    assert t.dress is not None
+    assert t.dress.key == "name"
+    assert t.dress.value == "value"
+
+
+def test_switch_legacy_compat():
+    """switch is still accepted and converted to input + dress internally."""
+    kwargs = {
+        "module": "builtins",
+        "foo": "round",
+        "switch": {"Open": ["name", "value"]},
+        "params": {"ndigits": 3},
+    }
+    t = Transform(**kwargs)  # type: ignore
+    r = t({"Open": 0.1234})
+    assert r == {"name": "Open", "value": 0.123}
+    assert t.dress is not None
+    assert t.dress.key == "name"
+    assert t.dress.value == "value"
+    assert t.input == ("Open",)
+
+
+def test_dress_list_legacy_compat():
+    """List-style dress is still accepted and converted to DressConfig."""
+    kwargs = {
+        "module": "builtins",
+        "foo": "round",
+        "input": ["Open"],
+        "dress": ["name", "value"],
+        "params": {"ndigits": 3},
+    }
+    t = Transform(**kwargs)  # type: ignore
+    r = t({"Open": 0.1234})
+    assert r == {"name": "Open", "value": 0.123}
+    assert t.dress is not None
+    assert t.dress.key == "name"
 
 
 def test_split_keep_part():
