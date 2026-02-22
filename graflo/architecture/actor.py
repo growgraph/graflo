@@ -518,6 +518,7 @@ class TransformActor(Actor):
             foo=config.foo,
             input=tuple(config.input) if config.input else (),
             output=tuple(config.output) if config.output else (),
+            dress=config.dress,
         )
 
     def fetch_important_items(self) -> dict[str, Any]:

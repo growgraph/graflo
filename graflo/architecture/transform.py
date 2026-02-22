@@ -2,16 +2,17 @@
 
 This module provides a flexible system for transforming and mapping data in graph
 databases. It supports both functional transformations and declarative mappings,
-with support for field switching and parameter configuration.
+with support for output dressing and parameter configuration.
 
 Key Components:
-    - ProtoTransform: Base class for transform definitions
-    - Transform: Concrete transform implementation
+    - ProtoTransform: Base class for transform definitions (raw function wrapper)
+    - Transform: Concrete transform with input extraction, output dressing,
+      and field mapping
     - TransformException: Custom exception for transform errors
 
 The transform system supports:
     - Functional transformations through imported modules
-    - Field mapping and switching
+    - Field mapping and dressing
     - Parameter configuration
     - Input/output field specification
     - Transform composition and inheritance
@@ -60,6 +61,22 @@ class TransformException(BaseException):
     """Base exception for transform-related errors."""
 
     pass
+
+
+class DressConfig(ConfigBaseModel):
+    """Output dressing specification for pivoted transforms.
+
+    When a transform function returns a single scalar (e.g. ``round_str``
+    returns ``6.43``), DressConfig describes how to package that scalar together
+    with the input field name into a dict.
+
+    Attributes:
+        key: Output field that receives the **input field name** (e.g. "Open").
+        value: Output field that receives the **function result** (e.g. 6.43).
+    """
+
+    key: str = Field(description="Output field name for the input key.")
+    value: str = Field(description="Output field name for the function result.")
 
 
 class ProtoTransform(ConfigBaseModel):
@@ -141,6 +158,19 @@ class ProtoTransform(ConfigBaseModel):
         """Get list of field members (public model fields)."""
         return list(cls.model_fields.keys())
 
+    def apply(self, *args: Any, **kwargs: Any) -> Any:
+        """Apply the raw transform function to the given arguments.
+
+        This is the core function invocation without any input extraction or
+        output dressing — purely ``self._foo(*args, **kwargs, **self.params)``.
+
+        Raises:
+            TransformException: If no transform function has been set.
+        """
+        if self._foo is None:
+            raise TransformException("No transform function set")
+        return self._foo(*args, **kwargs, **self.params)
+
     def __lt__(self, other: object) -> bool:
         """Compare transforms for ordering.
 
@@ -160,13 +190,13 @@ class ProtoTransform(ConfigBaseModel):
 class Transform(ProtoTransform):
     """Concrete transform implementation.
 
-    This class extends ProtoTransform with additional functionality for
-    field mapping, switching, and transform composition.
+    Wraps a ProtoTransform with input extraction, output dressing, field
+    mapping, and transform composition.
 
     Attributes:
         fields: Tuple of fields to transform
         map: Dictionary mapping input fields to output fields
-        switch: Dictionary for field switching logic
+        dress: Optional DressConfig for pivoted output
         functional_transform: Whether this is a functional transform
     """
 
@@ -178,14 +208,19 @@ class Transform(ProtoTransform):
         default_factory=dict,
         description="Mapping of output_key -> input_key for pure field renaming (no function).",
     )
-    switch: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Switch/case-style mapping for conditional field values (key -> output spec).",
+    dress: DressConfig | None = Field(
+        default=None,
+        description=(
+            "Dressing spec for pivoted output. "
+            "dress.key receives the input field name, dress.value receives the "
+            "function result. E.g. dress={key: name, value: value} with "
+            "input=(Open,) produces {name: 'Open', value: <result>}."
+        ),
     )
 
     functional_transform: bool = Field(
         default=False,
-        description="True when a callable (module.foo) is set; False for pure map/switch transforms.",
+        description="True when a callable (module.foo) is set; False for pure map/dress transforms.",
     )
 
     @model_validator(mode="before")
@@ -196,6 +231,20 @@ class Transform(ProtoTransform):
         data = dict(data)
         if "fields" in data and data["fields"] is not None:
             data["fields"] = _tuple_it(data["fields"])
+        # Legacy: convert switch → input + dress
+        if "switch" in data:
+            switch = data.pop("switch")
+            if isinstance(switch, dict) and switch:
+                key = next(iter(switch))
+                vals = switch[key]
+                if isinstance(vals, (list, tuple)) and len(vals) >= 2:
+                    data.setdefault("input", [key])
+                    data.setdefault("dress", {"key": vals[0], "value": vals[1]})
+        # Legacy: convert list-style dress → dict-style
+        if "dress" in data and isinstance(data["dress"], (list, tuple)):
+            vals = data["dress"]
+            if len(vals) >= 2:
+                data["dress"] = {"key": vals[0], "value": vals[1]}
         return data
 
     @model_validator(mode="after")
@@ -203,7 +252,7 @@ class Transform(ProtoTransform):
         object.__setattr__(self, "functional_transform", self._foo is not None)
         self._init_input_from_fields()
         self._init_io_from_map()
-        self._init_from_switch()
+        self._init_output_from_dress()
         self._default_output_from_input()
         self._init_map_from_io()
         self._validate_configuration()
@@ -227,12 +276,10 @@ class Transform(ProtoTransform):
         elif not self.output:
             object.__setattr__(self, "output", tuple(self.map.values()))
 
-    def _init_from_switch(self) -> None:
-        """Fallback initialization using switch definitions."""
-        if self.switch and not self.input and not self.output:
-            object.__setattr__(self, "input", tuple(self.switch))
-            first_key = self.input[0]
-            object.__setattr__(self, "output", _tuple_it(self.switch[first_key]))
+    def _init_output_from_dress(self) -> None:
+        """Derive output from dress — always takes precedence when set."""
+        if self.dress is not None:
+            object.__setattr__(self, "output", (self.dress.key, self.dress.value))
 
     def _default_output_from_input(self) -> None:
         """Ensure output mirrors input when not explicitly provided."""
@@ -280,9 +327,9 @@ class Transform(ProtoTransform):
         else:
             if nargs and isinstance(input_doc := nargs[0], dict):
                 new_args = [input_doc[k] for k in self.input]
-                output_values = self._foo(*new_args, **kwargs, **self.params)
+                output_values = self.apply(*new_args, **kwargs)
             else:
-                output_values = self._foo(*nargs, **kwargs, **self.params)
+                output_values = self.apply(*nargs, **kwargs)
 
         if self.output:
             r = self._dress_as_dict(output_values)
@@ -298,20 +345,19 @@ class Transform(ProtoTransform):
     def _dress_as_dict(self, transform_result: Any) -> dict[str, Any]:
         """Convert transform result to dictionary format.
 
-        Args:
-            transform_result: Result of the transform
-
-        Returns:
-            dict: Dictionary representation of the result
+        When ``dress`` is set the result is pivoted: the input field name is
+        stored under ``dress.key`` and the function result under ``dress.value``.
+        Otherwise the result is mapped positionally to ``output`` fields.
         """
-        if isinstance(transform_result, (list, tuple)) and not self.switch:
-            upd = {k: v for k, v in zip(self.output, transform_result)}
+        if self.dress is not None:
+            return {
+                self.dress.key: self.input[0],
+                self.dress.value: transform_result,
+            }
+        elif isinstance(transform_result, (list, tuple)):
+            return {k: v for k, v in zip(self.output, transform_result)}
         else:
-            # TODO : temporary solution works only there is one switch clause
-            upd = {self.output[-1]: transform_result}
-        for k0, (q, qq) in self.switch.items():
-            upd.update({q: k0})
-        return upd
+            return {self.output[-1]: transform_result}
 
     @property
     def is_dummy(self) -> bool:

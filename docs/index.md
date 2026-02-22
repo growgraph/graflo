@@ -1,6 +1,8 @@
 # GraFlo <img src="https://raw.githubusercontent.com/growgraph/graflo/main/docs/assets/favicon.ico" alt="graflo logo" style="height: 32px; width:32px;"/>
 
-graflo is a framework for transforming **tabular** (CSV, SQL), **hierarchical** (JSON, XML), and **RDF/SPARQL** data into property graphs and ingesting them into graph databases (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph).
+GraFlo is a **Graph Schema & Transformation Language (GSTL)** for Labeled Property Graphs (LPG).
+
+It provides a declarative, database-agnostic specification for mapping heterogeneous data sources — tabular (CSV, SQL), hierarchical (JSON, XML), and RDF/SPARQL — to a unified LPG representation. A `Resource` abstraction decouples transformation logic from data retrieval; a `GraphContainer` (covariant graph representation) abstracts away database idiosyncrasies; and a `DataSourceRegistry` manages source adapters so that files, SQL tables, REST APIs, and SPARQL endpoints plug into the same pipeline. Supported targets: ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph.
 
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg) 
 [![PyPI version](https://badge.fury.io/py/graflo.svg)](https://badge.fury.io/py/graflo)
@@ -12,59 +14,70 @@ graflo is a framework for transforming **tabular** (CSV, SQL), **hierarchical** 
 <!-- [![pytest](https://github.com/growgraph/graflo/actions/workflows/pytest.yml/badge.svg)](https://github.com/growgraph/graflo/actions/workflows/pytest.yml) -->
 
 
+## Pipeline
+
+**Source Instance** → **Resource** → **Graph Schema** → **Covariant Graph Representation** → **Graph DB**
+
+| Stage | Role | Code |
+|-------|------|------|
+| **Source Instance** | A concrete data artifact — a CSV file, a PostgreSQL table, a SPARQL endpoint, a `.ttl` file. | `AbstractDataSource` subclasses with a `DataSourceType` (`FILE`, `SQL`, `SPARQL`, `API`, `IN_MEMORY`). |
+| **Resource** | A reusable transformation pipeline — actor steps (descend, transform, vertex, edge) that map raw records to graph elements. Data sources bind to Resources by name via the `DataSourceRegistry`. | `Resource` (part of `Schema`). |
+| **Graph Schema** | Declarative vertex/edge definitions, indexes, typed fields, and named transforms. | `Schema`, `VertexConfig`, `EdgeConfig`. |
+| **Covariant Graph Representation** | A database-independent collection of vertices and edges. | `GraphContainer`. |
+| **Graph DB** | The target LPG store — same API for all supported databases. | `ConnectionManager`, `DBWriter`. |
+
 ## Core Concepts
 
-### Property Graphs
-graflo works with property graphs, which consist of:
+### Labeled Property Graphs
 
-- **Vertices**: Nodes with properties and optional unique identifiers
-- **Edges**: Relationships between vertices with their own properties
-- **Properties**: Both vertices and edges may have properties
+GraFlo targets the LPG model:
+
+- **Vertices** — nodes with typed properties and unique identifiers.
+- **Edges** — directed relationships between vertices, carrying their own properties and weights.
 
 ### Schema
-The Schema defines how your data should be transformed into a graph:
 
-- **Vertex Definitions**: Vertex types, their properties, and unique identifiers. Fields may carry optional types (`INT`, `FLOAT`, `STRING`, `DATETIME`, `BOOL`).
-- **Edge Definitions**: Relationships between vertices, with optional weight fields.
-- **Resource Mapping**: How data sources map to vertices and edges.
-- **Transforms**: Modify data during the casting process.
-- **Automatic Schema Inference**: Generate schemas from PostgreSQL 3NF databases (PK/FK heuristics) or from OWL/RDFS ontologies.
+The Schema is the single source of truth for the graph structure:
 
-### Data Sources
-Data Sources define where data comes from:
+- **Vertex definitions** — vertex types, fields (optionally typed: `INT`, `FLOAT`, `STRING`, `DATETIME`, `BOOL`), and indexes.
+- **Edge definitions** — relationships between vertex types, with optional weight fields.
+- **Resources** — reusable actor pipelines that map raw records to vertices and edges (see below).
+- **Transforms** — named data transformations referenced by Resources.
+- **Schema inference** — generate schemas from PostgreSQL 3NF databases (PK/FK heuristics) or from OWL/RDFS ontologies.
 
-- **File Sources**: CSV, JSON, JSONL, Parquet files
-- **SQL Sources**: PostgreSQL and other SQL databases via SQLAlchemy
-- **RDF Sources**: Local Turtle/RDF/N3/JSON-LD files via rdflib
-- **SPARQL Sources**: Remote SPARQL endpoints (e.g. Apache Fuseki) via SPARQLWrapper
-- **API Sources**: REST API endpoints with pagination and authentication
-- **In-Memory Sources**: Python objects (lists, DataFrames)
+### Resource
 
-### Resources
-Resources define how data is transformed into a graph (semantic mapping). They work with data from any DataSource type:
+A `Resource` is the central abstraction that bridges data sources and the graph schema. Each Resource defines a reusable pipeline of actors (descend, transform, vertex, edge) that maps raw records to graph elements. Data sources bind to Resources by name via the `DataSourceRegistry`, so the same transformation logic applies regardless of whether data arrives from a file, an API, or a SPARQL endpoint.
 
-- **Table-like processing**: CSV files, SQL tables, API responses
-- **JSON-like processing**: JSON files, nested data structures
-- **RDF processing**: Triples grouped by subject into flat documents
+### DataSourceRegistry
+
+The `DataSourceRegistry` manages `AbstractDataSource` adapters, each carrying a `DataSourceType`:
+
+| `DataSourceType` | Adapter | Sources |
+|---|---|---|
+| `FILE` | `FileDataSource` | CSV, JSON, JSONL, Parquet files |
+| `SQL` | `SQLDataSource` | PostgreSQL and other SQL databases via SQLAlchemy |
+| `SPARQL` | `RdfFileDataSource` | Turtle/RDF/N3/JSON-LD files via rdflib |
+| `SPARQL` | `SparqlEndpointDataSource` | Remote SPARQL endpoints (e.g. Apache Fuseki) via SPARQLWrapper |
+| `API` | `APIDataSource` | REST API endpoints with pagination and authentication |
+| `IN_MEMORY` | `InMemoryDataSource` | Python objects (lists, DataFrames) |
 
 ### GraphEngine
-`GraphEngine` orchestrates graph database operations:
 
-- Schema inference from PostgreSQL databases or RDF/OWL ontologies
-- Schema definition in target graph databases
-- Pattern creation from data sources
-- Data ingestion with async support
+`GraphEngine` orchestrates end-to-end operations: schema inference, schema definition in the target database, pattern creation from data sources, and data ingestion.
 
 ## Key Features
 
-- **Declarative graph transformation**: Define vertex/edge structures, indexes, weights, and transforms in YAML. Resources describe how each data source maps to vertices and edges.
-- **PostgreSQL schema inference**: Automatically generate schemas from normalized PostgreSQL databases (3NF) with proper PK/FK constraints. See [Example 5](examples/example-5.md).
-- **RDF / SPARQL ingestion**: Read `.ttl`/`.rdf`/`.n3` files or query SPARQL endpoints. Auto-infer schemas from OWL/RDFS ontologies: `owl:Class` maps to vertices, `owl:ObjectProperty` to edges, `owl:DatatypeProperty` to vertex fields. Install with `pip install graflo[sparql]`.
-- **Typed fields**: Vertex fields and edge weights support types (`INT`, `FLOAT`, `STRING`, `DATETIME`, `BOOL`) for validation and database-specific optimisation.
-- **Parallel batch processing**: Configurable batch sizes and multi-core execution.
-- **Database-agnostic target**: Single API for ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, and NebulaGraph.
-- **Advanced filtering**: Server-side filtering (e.g. TigerGraph REST++ API) and client-side filter expressions.
-- **Blank vertices**: Create intermediate nodes for complex relationship modelling.
+- **Declarative LPG schema** — Define vertices, edges, indexes, weights, and transforms in YAML or Python. The `Schema` is the single source of truth, independent of source or target.
+- **Database abstraction** — One schema, one API. Target ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, or NebulaGraph without rewriting pipelines. Database idiosyncrasies are handled by the `GraphContainer` (covariant graph representation).
+- **Resource abstraction** — Each `Resource` defines a reusable actor pipeline that maps raw records to graph elements. Data sources bind to Resources by name via the `DataSourceRegistry`, decoupling transformation logic from data retrieval.
+- **DataSourceRegistry** — Register `FILE`, `SQL`, `API`, `IN_MEMORY`, or `SPARQL` data sources. Each `DataSourceType` plugs into the same Resource pipeline.
+- **SPARQL & RDF support** — Query SPARQL endpoints (e.g. Apache Fuseki), read `.ttl`/`.rdf`/`.n3` files, and auto-infer schemas from OWL/RDFS ontologies. Install with `pip install graflo[sparql]`.
+- **Schema inference** — Generate graph schemas from PostgreSQL 3NF databases (PK/FK heuristics) or from OWL/RDFS ontologies. See [Example 5](examples/example-5.md).
+- **Typed fields** — Vertex fields and edge weights carry types for validation and database-specific optimisation.
+- **Parallel batch processing** — Configurable batch sizes and multi-core execution.
+- **Advanced filtering** — Server-side filtering (e.g. TigerGraph REST++ API) and client-side filter expressions.
+- **Blank vertices** — Create intermediate nodes for complex relationship modelling.
 
 ## Quick Links
 
@@ -75,11 +88,11 @@ Resources define how data is transformed into a graph (semantic mapping). They w
 
 ## Use Cases
 
-- **Data Migration**: Transform relational data into graph structures. Infer schemas from PostgreSQL 3NF databases (PK/FK heuristics) and migrate data directly.
-- **RDF-to-Property-Graph**: Read RDF triples from files or SPARQL endpoints, auto-infer schemas from OWL ontologies, and ingest into ArangoDB, Neo4j, etc.
-- **Knowledge Graphs**: Build knowledge representations from heterogeneous sources (SQL, files, APIs, RDF).
-- **Data Integration**: Combine multiple data sources into a unified property graph.
-- **Graph Views**: Create graph views of existing PostgreSQL databases without schema changes.
+- **Data Migration** — Transform relational data into LPG structures. Infer schemas from PostgreSQL 3NF databases and migrate data directly.
+- **RDF-to-LPG** — Read RDF triples from files or SPARQL endpoints, auto-infer schemas from OWL ontologies, and ingest into ArangoDB, Neo4j, etc.
+- **Knowledge Graphs** — Build knowledge representations from heterogeneous sources (SQL, files, APIs, RDF/SPARQL).
+- **Data Integration** — Combine multiple data sources into a unified labeled property graph.
+- **Graph Views** — Create graph views of existing PostgreSQL databases without schema changes.
 
 ## Requirements
 

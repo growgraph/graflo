@@ -1,19 +1,23 @@
 # Concepts
 
-Here we introduce the main concepts of graflo, a framework for transforming data into property graphs.
+GraFlo is a Graph Schema & Transformation Language (GSTL) for Labeled Property Graphs (LPG). It separates graph schema definition from data-source binding and database targeting, enabling a single declarative specification to drive ingestion across heterogeneous sources and databases.
 
 ## System Overview
 
-graflo transforms data sources into property graphs through a pipeline of components:
+The GraFlo pipeline transforms data through five stages:
 
-1. **Data Sources** → **Resources** → **Actors** → **Vertices/Edges** → **Graph Database**
+**Source Instance** → **Resource** → **Graph Schema** → **Covariant Graph Representation** → **Graph DB**
 
-Each component plays a specific role in this transformation process.
+- **Source Instance** — a concrete data artifact (a file, a table, a SPARQL endpoint), wrapped by an `AbstractDataSource` with a `DataSourceType` (`FILE`, `SQL`, `SPARQL`, `API`, `IN_MEMORY`).
+- **Resource** — a reusable transformation pipeline (actor steps: descend, transform, vertex, edge) that maps raw records to graph elements. Data sources bind to Resources by name via the `DataSourceRegistry`.
+- **Graph Schema** — the declarative specification (`Schema`): vertex/edge definitions, indexes, typed fields, transforms, and the Resources themselves.
+- **Covariant Graph Representation** — a `GraphContainer` of vertices and edges, independent of any target database.
+- **Graph DB** — the target LPG store (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph).
 
-### Data flow: Pattern → DataSource → Resource → GraphContainer → Target DB
+### Data flow detail
 
-The diagram below shows how different data sources (files, SQL tables, RDF/SPARQL)
-flow through the unified ingestion pipeline.
+The diagram below shows how different source instances (files, SQL tables, RDF/SPARQL)
+flow through the `DataSourceRegistry` into the shared `Resource` pipeline.
 
 ```mermaid
 flowchart LR
@@ -49,11 +53,11 @@ flowchart LR
     Res --> GC --> DBW
 ```
 
-- **Patterns** describe *where* data comes from (file paths, SQL tables, SPARQL endpoints).
-- **DataSources** handle *how* to read data in batches from each source type.
-- **Resources** define *what* to extract from each document (vertices, edges, transforms).
-- **GraphContainer** collects the resulting vertices and edges.
-- **DBWriter** pushes the graph data into the target database (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph).
+- **Patterns** (`FilePattern`, `TablePattern`, `SparqlPattern`) describe *where* data comes from (file paths, SQL tables, SPARQL endpoints).
+- **DataSources** (`AbstractDataSource` subclasses) handle *how* to read data in batches. Each carries a `DataSourceType` and is registered in the `DataSourceRegistry`.
+- **Resources** define *what* to extract — each `Resource` is a reusable actor pipeline (descend → transform → vertex → edge) that maps raw records to graph elements.
+- **GraphContainer** (covariant graph representation) collects the resulting vertices and edges in a database-independent format.
+- **DBWriter** pushes the graph data into the target LPG store (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph).
 
 ## Class Diagrams
 
@@ -318,24 +322,18 @@ classDiagram
     DataSourceRegistry o-- "0..*" AbstractDataSource : contains
 ```
 
-### Data Sources vs Resources
+### DataSources vs Resources
 
-It's important to understand the distinction between **Data Sources** and **Resources**:
+These are the two key abstractions that decouple *data retrieval* from *graph transformation*:
 
-- **Data Sources**: Define *where* data comes from (files, APIs, databases, in-memory objects)
-  - Examples: JSON file, REST API endpoint, SQL database, Python list
-  - Many data sources can map to the same resource
-  - Handled by the `DataSource` abstraction layer
+- **DataSources** (`AbstractDataSource` subclasses) — handle *where* and *how* data is read. Each carries a `DataSourceType` (`FILE`, `SQL`, `SPARQL`, `API`, `IN_MEMORY`). Many DataSources can bind to the same Resource by name via the `DataSourceRegistry`.
 
-- **Resources**: Define *how* data is transformed into a graph (semantic mapping)
-  - Part of the Schema configuration
-  - Defines the transformation pipeline using Actors
-  - Maps data structures to vertices and edges
+- **Resources** (`Resource`) — handle *what* the data becomes in the LPG. Each Resource is a reusable actor pipeline (descend → transform → vertex → edge) that maps raw records to graph elements. Because DataSources bind to Resources by name, the same transformation logic applies regardless of whether data arrives from a file, an API, or a SPARQL endpoint.
 
 ## Core Components
 
 ### Schema
-The `Schema` is the central configuration that defines how data sources are transformed into a property graph. It encapsulates:
+The `Schema` is the single source of truth for the LPG structure. It encapsulates:
  
 - Vertex and edge definitions with optional type information
 - Resource mappings
@@ -430,26 +428,28 @@ Edges in graflo support a rich set of attributes that enable flexible relationsh
 - For scenarios where we have multiple leaves of json containing the same vertex class
 - Example: Creating edges between specific subsets of vertices
 
-### Data Source
-A `DataSource` defines where data comes from and how it's retrieved. graflo supports multiple data source types:
+### DataSource & DataSourceRegistry
+An `AbstractDataSource` subclass defines where data comes from and how it is retrieved. Each carries a `DataSourceType`. The `DataSourceRegistry` maps data sources to Resources by name.
 
-- **File Data Sources**: JSON, JSONL, CSV/TSV files
-- **RDF File Data Sources**: Turtle (`.ttl`), RDF/XML (`.rdf`), N3 (`.n3`), JSON-LD files -- parsed via `rdflib`, triples grouped by subject into flat dictionaries
-- **SPARQL Data Sources**: Remote SPARQL endpoints (e.g. Apache Fuseki) queried via `SPARQLWrapper` with pagination
-- **API Data Sources**: REST API endpoints with pagination, authentication, and retry logic
-- **SQL Data Sources**: SQL databases via SQLAlchemy with parameterized queries
-- **In-Memory Data Sources**: Python objects (lists, DataFrames) already in memory
+| `DataSourceType` | Adapter | Sources |
+|---|---|---|
+| `FILE` | `FileDataSource` | JSON, JSONL, CSV/TSV, Parquet files |
+| `SPARQL` | `RdfFileDataSource` | Turtle (`.ttl`), RDF/XML (`.rdf`), N3 (`.n3`), JSON-LD files — parsed via `rdflib` |
+| `SPARQL` | `SparqlEndpointDataSource` | Remote SPARQL endpoints (e.g. Apache Fuseki) queried via `SPARQLWrapper` |
+| `API` | `APIDataSource` | REST API endpoints with pagination, authentication, and retry logic |
+| `SQL` | `SQLDataSource` | SQL databases via SQLAlchemy with parameterised queries |
+| `IN_MEMORY` | `InMemoryDataSource` | Python objects (lists, DataFrames) already in memory |
 
-Data sources are separate from Resources -- they handle data retrieval, while Resources handle data transformation. Many data sources can map to the same Resource, allowing data to be ingested from multiple sources.
+Data sources handle retrieval only. They bind to Resources by name via the `DataSourceRegistry`, so the same `Resource` can ingest data from multiple sources without modification.
 
 ### Resource
-A `Resource` is a set of mappings and transformations that define how data becomes a graph, defined as a hierarchical structure of `Actors`. Resources are part of the Schema and define:
- 
+A `Resource` is the central abstraction that bridges data sources and the graph schema. Each Resource defines a reusable actor pipeline (descend → transform → vertex → edge) that maps raw records to graph elements:
+
 - How data structures map to vertices and edges
 - What transformations to apply
 - The actor pipeline for processing documents
 
-Resources work with data from any DataSource type - the same Resource can process data from files, APIs, SQL databases, or in-memory objects.
+Because DataSources bind to Resources by name, the same transformation logic applies regardless of whether data arrives from a file, an API, a SQL table, or a SPARQL endpoint.
 
 ### Actor
 An `Actor` describes how the current level of the document should be mapped/transformed to the property graph vertices and edges. There are four types that act on the provided document in this order:
@@ -462,27 +462,115 @@ An `Actor` describes how the current level of the document should be mapped/tran
 - `EdgeActor`: Creates edges between vertices
 
 ### Transform
-A `Transform` defines data transforms, from renaming and type-casting to arbitrary transforms defined as Python functions. Transforms can be:
- 
-- Provided in the `transforms` section of `Schema`
-- Referenced by their `name`
-- Applied to both vertices and edges
+
+A `Transform` defines data transforms, from renaming and type-casting to
+arbitrary Python functions. The transform system is built on two layers:
+
+- **ProtoTransform** — the raw function wrapper. It holds `module`, `foo`
+  (function name), and `params`. Its `apply()` method invokes the function
+  without caring about where the inputs come from or how the outputs are
+  packaged.
+- **Transform** — wraps a ProtoTransform with input extraction, output
+  formatting, field mapping, and optional *dressing*.
+
+#### Output modes
+
+A Transform can produce output in three ways:
+
+1. **Direct output** (`output`) — the function returns one or more values that
+   map 1:1 to output field names:
+
+    ```yaml
+    - foo: parse_date_ibes
+      module: graflo.util.transform
+      input: [ANNDATS, ANNTIMS]
+      output: [datetime_announce]
+    ```
+
+    The function takes two arguments and returns a single string; the string
+    is placed into the `datetime_announce` field.
+
+2. **Field mapping** (`map`) — pure renaming with no function:
+
+    ```yaml
+    - map:
+        Date: t_obs
+    ```
+
+3. **Dressed output** (`dress`) — the function returns a single scalar, and
+   the result is packaged together with the input field name into a dict.
+   This is useful for pivoting wide columns into key/value rows:
+
+    ```yaml
+    - foo: round_str
+      module: graflo.util.transform
+      params:
+        ndigits: 3
+      input:
+      - Open
+      dress:
+        key: name
+        value: value
+    ```
+
+    Given a document `{Open: "6.430062..."}`, this produces
+    `{name: "Open", value: 6.43}`. The `dress` dict has two roles:
+
+    - `key` — the output field that receives the **input field name** (here `"Open"`)
+    - `value` — the output field that receives the **function result** (here `6.43`)
+
+    This cleanly separates *what function to apply* (ProtoTransform) from
+    *how to present the result* (dressing).
+
+```mermaid
+flowchart LR
+    Doc["Input Document"] -->|"extract input fields"| Proto["ProtoTransform.apply()"]
+    Proto -->|"dress is set"| Dressed["{dress.key: input_key,\ndress.value: result}"]
+    Proto -->|"output is set"| Direct["zip(output, result)"]
+    Proto -->|"map only"| Mapped["{new_key: old_value}"]
+```
+
+#### Schema-level transforms
+
+Transforms can be defined at the schema level and referenced by name in
+resources, allowing reuse across multiple pipelines:
+
+```yaml
+transforms:
+  keep_suffix_id:
+    foo: split_keep_part
+    module: graflo.util.transform
+    params: { sep: "/", keep: -1 }
+    input: [id]
+    output: [_key]
+
+resources:
+- resource_name: works
+  apply:
+  - name: keep_suffix_id   # references the transform above
+    input: [doi]            # override input for this usage
+  - vertex: work
+```
 
 ## Key Features
 
+### Schema & Abstraction
+- **Declarative LPG schema** — `Schema` defines vertices, edges, indexes, weights, and transforms in YAML or Python; the single source of truth for the graph structure.
+- **Database abstraction** — one schema, one API; database idiosyncrasies are handled by the `GraphContainer` (covariant graph representation).
+- **Resource abstraction** — each `Resource` is a reusable actor pipeline that maps raw records to graph elements, decoupled from data retrieval.
+- **DataSourceRegistry** — pluggable `AbstractDataSource` adapters (`FILE`, `SQL`, `API`, `SPARQL`, `IN_MEMORY`) bound to Resources by name.
+
 ### Schema Features
-- **Flexible Indexing**: Support for compound indexes on vertices and edges
-- **Typed Fields**: Optional type information for vertex fields and edge weights (INT, FLOAT, STRING, DATETIME, BOOL)
-- **Hierarchical Edge Definition**: Define edges at any level of nested documents
-- **Weighted Edges**: Configure edge weights from document fields or vertex properties with optional type information
-- **Blank Vertices**: Create intermediate vertices for complex relationships
-- **Actor Pipeline**: Process documents through a sequence of specialized actors
-- **Smart Navigation**: Automatic handling of both single documents and lists
-- **Edge Constraints**: Ensure edge uniqueness based on source, target, and weight
-- **Reusable Transforms**: Define and reference transformations by name
-- **Vertex Filtering**: Filter vertices based on custom conditions
-- **PostgreSQL Schema Inference**: Infer schemas from normalized PostgreSQL databases (3NF) with PK/FK constraints
-- **RDF / OWL Schema Inference**: Infer schemas from OWL/RDFS ontologies -- `owl:Class` becomes vertices, `owl:ObjectProperty` becomes edges, `owl:DatatypeProperty` becomes vertex fields
+- **Flexible Indexing** — compound indexes on vertices and edges.
+- **Typed Fields** — optional type information for vertex fields and edge weights (INT, FLOAT, STRING, DATETIME, BOOL).
+- **Hierarchical Edge Definition** — define edges at any level of nested documents.
+- **Weighted Edges** — configure edge weights from document fields or vertex properties with optional type information.
+- **Blank Vertices** — create intermediate vertices for complex relationships.
+- **Actor Pipeline** — process documents through a sequence of specialised actors (descend, transform, vertex, edge).
+- **Reusable Transforms** — define and reference transformations by name across Resources.
+- **Vertex Filtering** — filter vertices based on custom conditions.
+- **PostgreSQL Schema Inference** — infer schemas from normalised PostgreSQL databases (3NF) with PK/FK constraints.
+- **RDF / OWL Schema Inference** — infer schemas from OWL/RDFS ontologies: `owl:Class` → vertices, `owl:ObjectProperty` → edges, `owl:DatatypeProperty` → vertex fields.
 
 ### Performance Optimization
 - **Batch Processing**: Process large datasets in configurable batches (`batch_size` parameter of `Caster`)

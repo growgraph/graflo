@@ -1,12 +1,12 @@
 # Creating a Schema
 
-This guide explains how to define a graflo **Schema**: the central configuration that describes your graph structure (vertices and edges), how data is transformed (resources and actors), and optional metadata. The content is structured so that both developers and automated agents can follow the same principles.
+This guide explains how to define a GraFlo **Schema** — the declarative, database-agnostic specification at the heart of the Graph Schema & Transformation Language (GSTL). A Schema describes the LPG structure (vertices and edges), how data is transformed (Resources and actors), and optional metadata.
 
 ## Principles
 
-1. **Schema is the single source of truth** for the graph: vertex types, edge types, indexes, and the mapping from raw data to vertices/edges.
+1. **Schema is the single source of truth** for the LPG: vertex types, edge types, indexes, and the mapping from raw data to vertices/edges.
 2. **All schema configs are Pydantic models** (`ConfigBaseModel`). You can load from YAML or dicts; validation runs at load time.
-3. **Resources define data pipelines**: each resource has a unique `resource_name` and an `apply` (or `pipeline`) list of **actor steps**. Data sources (files, APIs, SQL) are bound to resources by name elsewhere (e.g. `Patterns`).
+3. **Resources define transformation pipelines**: each `Resource` has a unique `resource_name` and an `apply` (or `pipeline`) list of **actor steps**. `AbstractDataSource` instances (files, APIs, SQL, SPARQL endpoints) bind to Resources by name via the `DataSourceRegistry`.
 4. **Order of definition is flexible** in YAML: `general`, `vertex_config`, `edge_config`, `resources`, and `transforms` can appear in any order. References (e.g. vertex names in edges or in `apply`) must refer to names defined in the same schema.
 
 ## Schema structure
@@ -127,14 +127,43 @@ Each step is a dict. You can write steps in shorthand (e.g. `vertex: person`) or
    ```
    Optional: `keep_fields: [id, name]`.
 
-2. **Transform step** — rename fields, change shape, or apply a named transform; optionally send result to a vertex:
+2. **Transform step** — rename fields, change shape, or apply a function.
+   There are several forms:
+
+   **Field mapping** (pure renaming, no function):
    ```yaml
    - map:
        person: name
        person_id: id
-     target_vertex: department   # or to_vertex
+     target_vertex: department   # optional: send result to a vertex
    ```
-   Or use a **named transform** (defined in `transforms`):
+
+   **Direct output** (function result maps 1:1 to output fields):
+   ```yaml
+   - foo: parse_date_yahoo
+     module: graflo.util.transform
+     input: [Date]
+     output: [t_obs]
+   ```
+
+   **Dressed output** (function result + input field name packaged as key/value).
+   Use `dress` when you need to pivot a wide column into a key/value pair,
+   e.g. turning `{Open: "6.43..."}` into `{name: "Open", value: 6.43}`:
+   ```yaml
+   - foo: round_str
+     module: graflo.util.transform
+     params:
+       ndigits: 3
+     input:
+     - Open
+     dress:
+       key: name      # output field for the input field name
+       value: value    # output field for the function result
+   ```
+   The `dress` dict makes the roles explicit: `key` receives the input
+   field name (`"Open"`), `value` receives the function result (`6.43`).
+
+   **Named transform** (defined in `transforms`, referenced by name):
    ```yaml
    - name: keep_suffix_id
      params: { sep: "/", keep: -1 }
