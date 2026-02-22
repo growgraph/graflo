@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.1] - 2026-02-22
+
+### Added
+- **NebulaGraph adapter**: Full support for NebulaGraph as a target graph database, with dual-version support for both v3.x (nGQL via `nebula3-python`, Thrift) and v5.x (ISO GQL via `nebula5-python`, gRPC)
+  - `NebulaConnection` implementing the full `Connection` interface: space lifecycle (`create_database`, `delete_database`, `init_db`), schema DDL (`define_schema`, `define_vertex_classes`, `define_edge_classes`), index management with rebuild/retry, batched vertex upserts and edge inserts, `fetch_docs`, `fetch_edges`, `fetch_present_documents`, `keep_absent_documents`, and `aggregate` (COUNT, MAX, MIN, AVG, SORTED_UNIQUE)
+  - Version-agnostic adapter layer (`NebulaClientAdapter`, `NebulaV3Adapter`, `NebulaV5Adapter`, `NebulaResultSet`) abstracting driver differences behind a unified interface, with `create_adapter()` factory
+  - Pure-function query builders in `graflo.db.nebula.query` for DDL (space/tag/edge/index creation), DML (batch upsert vertices, insert edges), and DQL (fetch docs/edges, aggregation) in both nGQL and GQL dialects
+  - Utilities in `graflo.db.nebula.util`: NebulaGraph type mapping (`FieldType` to `int64`/`float`/`string`/`bool`), value serialization, VID generation (composite key support via `::`), filter rendering for nGQL and Cypher flavors, and schema propagation wait helpers
+  - `NebulaConfig` (extends `DBConfig`) with fields for `version` (selects v3 or v5), `vid_type`, `partition_num`, `replica_factor`, `storaged_addresses`, `request_timeout`; environment prefix `NEBULA_`; `from_docker_env()` support reading from `docker/nebula/.env`
+  - `DBType.NEBULA` enum value; NebulaGraph registered in both `SOURCE_DATABASES` and `TARGET_DATABASES`
+  - Docker Compose setup (`docker/nebula/`) with four services: `nebula-metad`, `nebula-storaged`, `nebula-graphd`, and `nebula-graph-studio` (v3.8.0 images); docker management scripts (`start-all.sh`, `stop-all.sh`, `cleanup-all.sh`) updated to include NebulaGraph
+  - Test suite with ~76 tests: unit tests for config, query builders, and utilities; integration tests (gated behind `pytest --run-nebula`) covering connection lifecycle, CRUD, fetch, edges, and aggregation
+
+### Documentation
+- Added NebulaGraph to all supported-targets lists across README, docs landing page, quickstart, installation, and concepts pages
+- Added `NebulaConfig` environment variable examples and `from_docker_env()` usage to quickstart guide
+- Added NebulaGraph API reference pages (connection, adapter, query, utilities)
+
 ## [1.6.0] - 2026-02-17
 
 ### Added

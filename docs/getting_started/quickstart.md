@@ -10,7 +10,7 @@ This guide will help you get started with graflo by showing you how to transform
 - `DataSource` defines where data comes from (files, APIs, SQL databases, in-memory objects).
 - Class `Patterns` manages the mapping of resources to their physical data sources (files or PostgreSQL tables). It efficiently handles PostgreSQL connections by grouping tables that share the same connection configuration. 
 - `DataSourceRegistry` maps DataSources to Resources (many DataSources can map to the same Resource).
-1- Database backend configurations use Pydantic `BaseSettings` with environment variable support. Use `ArangoConfig`, `Neo4jConfig`, `TigergraphConfig`, `FalkordbConfig`, `MemgraphConfig`, or `PostgresConfig` directly, or load from docker `.env` files using `from_docker_env()`. All configs inherit from `DBConfig` and support unified `database`/`schema_name` structure with `effective_database` and `effective_schema` properties for database-agnostic access. If `effective_schema` is not set, `GraphEngine.define_schema()` automatically uses `Schema.general.name` as fallback.
+- Database backend configurations use Pydantic `BaseSettings` with environment variable support. Use `ArangoConfig`, `Neo4jConfig`, `TigergraphConfig`, `FalkordbConfig`, `MemgraphConfig`, `NebulaConfig`, or `PostgresConfig` directly, or load from docker `.env` files using `from_docker_env()`. All configs inherit from `DBConfig` and support unified `database`/`schema_name` structure with `effective_database` and `effective_schema` properties for database-agnostic access. If `effective_schema` is not set, `GraphEngine.define_schema()` automatically uses `Schema.general.name` as fallback.
 
 ## Basic Example
 
@@ -305,6 +305,15 @@ export MEMGRAPH_PASSWORD=
 export MEMGRAPH_DATABASE=memgraph
 ```
 
+**NebulaGraph:**
+```bash
+export NEBULA_URI=nebula://localhost:9669
+export NEBULA_USERNAME=root
+export NEBULA_PASSWORD=nebula
+export NEBULA_SCHEMA_NAME=mygraph
+export NEBULA_VERSION=3  # "3" for v3.x (nGQL) or "5" for v5.x (GQL)
+```
+
 **PostgreSQL:**
 ```bash
 export POSTGRES_URI=postgresql://localhost:5432
@@ -317,7 +326,7 @@ export POSTGRES_SCHEMA_NAME=public
 Then load the config:
 
 ```python
-from graflo.db.connection.onto import ArangoConfig, Neo4jConfig, TigergraphConfig, FalkordbConfig, MemgraphConfig, PostgresConfig
+from graflo.db.connection.onto import ArangoConfig, Neo4jConfig, TigergraphConfig, FalkordbConfig, MemgraphConfig, NebulaConfig, PostgresConfig
 
 # Load from default environment variables
 arango_conf = ArangoConfig.from_env()
@@ -325,6 +334,7 @@ neo4j_conf = Neo4jConfig.from_env()
 tg_conf = TigergraphConfig.from_env()
 falkordb_conf = FalkordbConfig.from_env()
 memgraph_conf = MemgraphConfig.from_env()
+nebula_conf = NebulaConfig.from_env()
 pg_conf = PostgresConfig.from_env()
 ```
 

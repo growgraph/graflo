@@ -30,6 +30,11 @@ Database connection and management components:
   - [Connection](db/falkordb/conn.md): FalkorDB-specific connection implementation
 - **[TigerGraph](db/tigergraph/__init__.md)**:
   - [Connection](db/tigergraph/conn.md): TigerGraph-specific connection implementation with REST++ API and GSQL support
+- **[NebulaGraph](db/nebula/__init__.md)**:
+  - [Connection](db/nebula/conn.md): NebulaGraph connection implementation with dual v3.x/v5.x support
+  - [Adapter](db/nebula/adapter.md): Version-agnostic client adapter layer (v3 Thrift, v5 gRPC)
+  - [Query](db/nebula/query.md): nGQL and GQL query builders
+  - [Utilities](db/nebula/util.md): Type mapping, value serialization, VID generation, filter rendering
 - **[PostgreSQL](db/postgres/__init__.md)**:
   - [Connection](db/postgres/conn.md): PostgreSQL connection and schema introspection
   - [Schema Inference](db/postgres/schema_inference.md): Automatic schema generation from PostgreSQL 3NF databases

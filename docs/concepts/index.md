@@ -53,7 +53,7 @@ flowchart LR
 - **DataSources** handle *how* to read data in batches from each source type.
 - **Resources** define *what* to extract from each document (vertices, edges, transforms).
 - **GraphContainer** collects the resulting vertices and edges.
-- **DBWriter** pushes the graph data into the target database (ArangoDB, Neo4j, TigerGraph, etc.).
+- **DBWriter** pushes the graph data into the target database (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph).
 
 ## Class Diagrams
 
