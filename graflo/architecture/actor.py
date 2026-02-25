@@ -366,7 +366,6 @@ class VertexActor(Actor):
         vertex_keys: tuple[str, ...] = tuple(vertex_keys_list)
 
         agg = []
-        # if self.name not in ctx.target_vertices:
         buffer_vertex = ctx.buffer_vertex.pop(self.name, [])
         agg.extend(self._process_buffer_vertex(buffer_vertex, doc, vertex_keys))
 
@@ -1097,7 +1096,6 @@ class ActorWrapper:
         self.vertex_config = w.vertex_config
         self.edge_config = w.edge_config
         self.edge_greedy = w.edge_greedy
-        self.target_vertices = w.target_vertices
 
     def init_transforms(self, **kwargs: Any) -> None:
         """Initialize transforms for the wrapped actor.
@@ -1124,20 +1122,6 @@ class ActorWrapper:
         if "edge_greedy" in kwargs:
             self.edge_greedy = kwargs.pop("edge_greedy")
         self.actor.finish_init(**kwargs)
-
-        # Collect target vertices from TransformActors with target_vertex
-        # This is used when edge_greedy is False to only process relevant edges
-        all_actors = self.collect_actors()
-        transform_actors_with_target = [
-            actor
-            for actor in all_actors
-            if isinstance(actor, TransformActor) and actor.vertex is not None
-        ]
-        self.target_vertices = {
-            actor.vertex
-            for actor in transform_actors_with_target
-            if actor.vertex is not None
-        }
 
     def count(self):
         """Get count of items processed by the wrapped actor.
@@ -1170,7 +1154,6 @@ class ActorWrapper:
         wrapper.vertex_config = VertexConfig(vertices=[])
         wrapper.edge_config = EdgeConfig()
         wrapper.edge_greedy = True
-        wrapper.target_vertices = set()
         return wrapper
 
     @classmethod
@@ -1196,9 +1179,6 @@ class ActorWrapper:
         Returns:
             Updated action context
         """
-        # Set target_vertices in context if not already set (preserves user intention)
-        if not ctx.target_vertices and self.target_vertices:
-            ctx.target_vertices = self.target_vertices
         ctx = self.actor(ctx, lindex, *nargs, **kwargs)
         return ctx
 
