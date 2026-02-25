@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.3] - 2026-02-25
+
+### Fixed
+- **Multi-edge emission from a single row**: Corrected edge rendering so repeated metric-like values in one source record produce distinct edges instead of collapsing into a linear/pair-only result
+  - Edge casting selection now differentiates pair/product/combinations based on source/target branch layout and same-leaf scenarios
+  - Same-vertex multi-sample cases are handled with combinations logic to preserve all expected links
+- **Edge weight alignment**: Fixed weight propagation to keep per-edge weights aligned with each emitted edge tuple rather than reusing a single accumulated weight payload
+
+### Changed
+- **`edge_greedy` semantics clarified and tightened**:
+  - `edge_greedy=True` now infers extra edges only when both endpoint vertex sets are populated, while avoiding duplicate source-target emissions already present in the accumulator
+  - `edge_greedy=False` now behaves as "explicit-only" mode (emit edges created directly by edge actors in the pipeline)
+- **Runtime cleanup/performance**: Simplified several actor-path operations (context merging, wrapper step normalization, and logging formatting) for lower overhead and clearer execution flow
+
+### Added
+- **Regression coverage for multi-edge casting**:
+  - Added actor tests for multi-edge creation from one row and for filter-constrained variants to ensure cardinality remains correct
+
+### Documentation
+- **Example 7 rewritten**: Replaced placeholder content with a full multi-edge/weights walkthrough using `dress` transforms and vertex filters
+  - Added updated schema/pipeline guidance and generated visuals for ticker-to-metric relationships
+
 ## [1.6.2] - 2026-02-23
 
 ### Changed
