@@ -24,7 +24,6 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from functools import reduce
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Callable, Type
@@ -375,9 +374,7 @@ class VertexActor(Actor):
         agg.extend(self._process_transformed_items(ctx, lindex, doc, vertex_keys))
 
         # Add passthrough items from doc
-        remaining_keys = set(vertex_keys) - reduce(
-            lambda acc, d: acc | d.keys(), agg, set()
-        )
+        remaining_keys = set(vertex_keys) - set().union(*[d.keys() for d in agg])
         passthrough_doc = {k: doc.pop(k) for k in remaining_keys if k in doc}
         if passthrough_doc:
             agg.append(passthrough_doc)
@@ -478,13 +475,11 @@ class EdgeActor(Actor):
         return ctx
 
     def merge_vertices(self, ctx: ActionContext) -> ActionContext:
-        for vertex, dd in ctx.acc_vertex.items():
-            for lindex, vertex_list in dd.items():
-                vvv = merge_doc_basis(
-                    vertex_list,
-                    tuple(self.vertex_config.index(vertex).fields),
+        for vname in (self.edge.source, self.edge.target):
+            for lindex, vlist in ctx.acc_vertex[vname].items():
+                ctx.acc_vertex[vname][lindex] = merge_doc_basis(
+                    vlist, tuple(self.vertex_config.index(vname).fields)
                 )
-                ctx.acc_vertex[vertex][lindex] = vvv
         return ctx
 
 
@@ -557,7 +552,7 @@ class TransformActor(Actor):
                 elif pt.params:
                     self.transforms[pt.name] = pt
         except (TypeError, ValueError, AttributeError) as e:
-            logger.debug(f"Failed to initialize ProtoTransform: {e}")
+            logger.debug("Failed to initialize ProtoTransform: %s", e)
             pass
 
     def finish_init(self, **kwargs: Any) -> None:
@@ -646,14 +641,11 @@ class TransformActor(Actor):
         Raises:
             ValueError: If no document is provided
         """
-        logger.debug(f"transforms : {id(self.transforms)} {len(self.transforms)}")
+        logger.debug("transforms : %s %s", id(self.transforms), len(self.transforms))
 
         doc = self._extract_doc(nargs, **kwargs)
 
-        if isinstance(doc, dict):
-            transform_result = self.t(doc)
-        else:
-            transform_result = self.t(doc)
+        transform_result = self.t(doc)
 
         _update_doc = self._format_transform_result(transform_result)
 
@@ -888,10 +880,10 @@ class DescendActor(Actor):
         if not doc_expanded:
             return ctx
 
-        logger.debug(f"Expanding {len(doc_expanded)} items")
+        logger.debug("Expanding %s items", len(doc_expanded))
 
         for idoc, (key, sub_doc) in enumerate(doc_expanded):
-            logger.debug(f"Processing item {idoc + 1}/{len(doc_expanded)}")
+            logger.debug("Processing item %s/%s", idoc + 1, len(doc_expanded))
             if isinstance(sub_doc, dict):
                 nargs: tuple[Any, ...] = tuple()
                 # Create new dict to avoid mutating original kwargs
@@ -928,7 +920,11 @@ class DescendActor(Actor):
         label_current = str(self)
         cname_current = type(self)
         hash_current = hash((level, cname_current, label_current))
-        logger.info(f"{hash_current}, {level, cname_current, label_current}")
+        logger.info(
+            "%s, %s",
+            hash_current,
+            (level, cname_current, label_current),
+        )
         props_current = {"label": label_current, "class": cname_current, "level": level}
         for d in self.descendants:
             level_a, cname, label_a, edges_a = d.fetch_actors(level + 1, edges)
@@ -1143,14 +1139,6 @@ class ActorWrapper:
             if actor.vertex is not None
         }
 
-        # Auto-set edge_greedy to False if there are at least 2 TransformActors with target_vertex
-        if len(transform_actors_with_target) >= 2:
-            self.edge_greedy = False
-            logger.debug(
-                f"Auto-set edge_greedy=False (found {len(transform_actors_with_target)} "
-                f"TransformActors with target_vertex: {self.target_vertices})"
-            )
-
     def count(self):
         """Get count of items processed by the wrapped actor.
 
@@ -1188,7 +1176,7 @@ class ActorWrapper:
     @classmethod
     def _from_step(cls, step: dict[str, Any]) -> ActorWrapper:
         """Build an ActorWrapper from a single pipeline step dict (normalize + validate + from_config)."""
-        config = validate_actor_step(normalize_actor_step(dict(step)))
+        config = validate_actor_step(normalize_actor_step(step))
         return cls.from_config(config)
 
     def __call__(
@@ -1224,42 +1212,32 @@ class ActorWrapper:
             defaultdict[GraphEntity, list]: Normalized context
         """
 
-        # Prepare list of edges to process based on edge_greedy setting
-        edges_to_process = []
-        edges_ids = [k for k in ctx.acc_global if not isinstance(k, str)]
+        if self.edge_greedy:
+            populated = {v for v, dd in ctx.acc_vertex.items() if any(dd.values())}
+            already_emitted = {
+                (s, t)
+                for s, t, _ in (k for k in ctx.acc_global if not isinstance(k, str))
+            }
+            for edge_id, edge in self.edge_config.edges_items():
+                s, t, _ = edge_id
+                if (
+                    (s, t) in already_emitted
+                    or s not in populated
+                    or t not in populated
+                ):
+                    continue
+                extra_edges = render_edge(
+                    edge=edge, vertex_config=self.vertex_config, ctx=ctx
+                )
+                extra_edges = render_weights(
+                    edge,
+                    self.vertex_config,
+                    ctx.acc_vertex,
+                    extra_edges,
+                )
 
-        for edge_id, edge in self.edge_config.edges_items():
-            s, t, _ = edge_id
-            # Skip if edge already exists
-            if any(s == sp and t == tp for sp, tp, _ in edges_ids):
-                continue
-
-            # Filter edges based on edge_greedy setting
-            if self.edge_greedy:
-                # When edge_greedy is True, process all edges
-                edges_to_process.append((edge_id, edge))
-            else:
-                # When edge_greedy is False, only process edges where both source and target
-                # are in the set of target_vertices from TransformActors
-                # This ensures we only create edges between vertices explicitly mapped by TransformActors
-                if s in self.target_vertices and t in self.target_vertices:
-                    edges_to_process.append((edge_id, edge))
-
-        # Process the filtered list of edges
-        for edge_id, edge in edges_to_process:
-            s, t, _ = edge_id
-            extra_edges = render_edge(
-                edge=edge, vertex_config=self.vertex_config, ctx=ctx
-            )
-            extra_edges = render_weights(
-                edge,
-                self.vertex_config,
-                ctx.acc_vertex,
-                extra_edges,
-            )
-
-            for relation, v in extra_edges.items():
-                ctx.acc_global[s, t, relation] += v
+                for relation, v in extra_edges.items():
+                    ctx.acc_global[s, t, relation] += v
 
         for vertex_name, dd in ctx.acc_vertex.items():
             for lindex, vertex_list in dd.items():
@@ -1301,11 +1279,11 @@ class ActorWrapper:
             networkx.MultiDiGraph | None: Graph representation of the actor tree
         """
         _, _, _, edges = self.fetch_actors(0, [])
-        logger.info(f"{len(edges)}")
+        logger.info("%s", len(edges))
         try:
             import networkx as nx
         except ImportError as e:
-            logger.error(f"not able to import networks {e}")
+            logger.error("not able to import networks %s", e)
             return None
         nodes = {}
         g = nx.MultiDiGraph()

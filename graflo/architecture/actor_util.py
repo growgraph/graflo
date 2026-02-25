@@ -269,16 +269,10 @@ def render_edge(
 
     casting = EdgeCastingType.PAIR
     if set(source_lindexes) == set(target_lindexes):
-        combos = list(combinations(source_lindexes, 2))
-
         source_groups, target_groups = [source_lindexes], [target_lindexes]
-        if not combos:
+        if len(source_lindexes) < 2:
             casting = EdgeCastingType.PRODUCT
-        elif (
-            source == target
-            and not combos
-            and len(source_items_tdressed[source_lindexes[0]]) > 1
-        ):
+        elif source == target and len(source_items_tdressed[source_lindexes[0]]) > 1:
             casting = EdgeCastingType.COMBINATIONS
     elif (
         source_uni < len(source_spec) - 1
