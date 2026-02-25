@@ -1,232 +1,161 @@
-# Example 6: REST API Data Source [coming]
+# Example 7: Multi-Edge Weights with Filters and `dress` in Transform
 
-This example demonstrates how to ingest data from a REST API endpoint into a graph database.
+This example demonstrates a compact pattern for transforming one tabular row into multiple metric vertices and weighted edges, while keeping only valid values with declarative filters.
 
-## Scenario
+## Overview
 
-Suppose you have a REST API that provides user data with pagination. You want to ingest this data into a graph database.
+The dataset contains stock observations (`Date`, `Open`, `Close`, `Volume`, `ticker`, ...).  
+Instead of storing all columns directly on one vertex, this schema creates:
 
-## API Response Format
+- one `ticker` vertex (e.g. `AAPL`)
+- multiple `metric` vertices (one per metric name/value pair)
+- edges `ticker -> metric` weighted by observation date (`t_obs`)
 
-The API returns data in the following format:
+The two novelties in this example are:
 
-```json
-{
-  "data": [
-    {"id": 1, "name": "Alice", "department": "Engineering"},
-    {"id": 2, "name": "Bob", "department": "Sales"}
-  ],
-  "has_more": true,
-  "offset": 0,
-  "limit": 100,
-  "total": 250
-}
+1. **Using `dress` in transform** to normalize scalar columns into `(name, value)` pairs
+2. **Using vertex `filters`** to keep only valid metric rows (positive values for selected metric names)
+
+## Data
+
+Input CSV (`examples/7-multi-edges-weights/data.csv`) includes columns such as:
+
+```csv
+Date,Open,High,Low,Close,Volume,Dividends,Stock Splits,ticker
+2014-04-15,17.899999618530273,17.920000076293945,15.149999618530273,15.350000381469727,3531700,0,0,AAPL
+2014-04-16,15.350000381469727,16.09000015258789,15.210000038146973,15.619999885559082,266500,0,0,AAPL
+2014-04-17,-15.35000,16.09000015258789,15.210000038146973,15.619999885559082,-5,0,0,AAPL
 ```
 
-## Schema Definition
+## Core Schema Ideas
 
-Define your schema as usual:
+### 1) `dress` in transform
+
+`dress` reshapes each transformed scalar into a standardized object:
+
+- `key: name`
+- `value: value`
+
+Applied on `Open`, `Close`, and `Volume`, this turns one row into metric-like records:
+
+- `{name: "Open", value: 17.9, ...}`
+- `{name: "Close", value: 15.35, ...}`
+- `{name: "Volume", value: 3531700, ...}`
+
+Example from `schema.yaml`:
 
 ```yaml
-general:
-  name: users_api
-
-vertices:
-  - name: person
-    fields:
-      - id
-      - name
-      - department
-    indexes:
-      - fields:
-          - id
-
 resources:
-  - resource_name: users
+-   resource_name: ticker_data
     apply:
-      - vertex: person
+    -   foo: round_str
+        module: graflo.util.transform
+        params: {ndigits: 3}
+        input: [Open]
+        dress: {key: name, value: value}
+    -   foo: round_str
+        module: graflo.util.transform
+        params: {ndigits: 3}
+        input: [Close]
+        dress: {key: name, value: value}
+    -   foo: int
+        module: builtins
+        input: [Volume]
+        dress: {key: name, value: value}
 ```
 
-## Using API Data Source
+This is especially useful when you want a generic `metric` vertex model instead of fixed columns.
 
-### Python Code
+### 2) Vertex filters
+
+The `metric` vertex defines filters that keep only `Open`, `Close`, and `Volume`, and only when `value > 0`:
+
+```yaml
+-   name: metric
+    fields: [name, value]
+    filters:
+    -   if_then:
+        - or:
+          - {field: name, foo: __eq__, value: Open}
+          - {field: name, foo: __eq__, value: Close}
+          - {field: name, foo: __eq__, value: Volume}
+        - {field: value, foo: __gt__, value: 0}
+```
+
+So negative values (for example the test row with negative `Open` / `Volume`) are dropped before ingestion.
+
+## Graph Structure
+
+Ticker-to-metric relationships:
+
+![Ticker to Metric](../assets/7-multi-edges-weights/figs/ticker_vc2vc.png){ width="240" }
+
+Metric fields:
+
+![Metric Fields](../assets/7-multi-edges-weights/figs/ticker_vc2fields.png){ width="360" }
+
+Resource pipeline view:
+
+![Resource Pipeline](../assets/7-multi-edges-weights/figs/ticker.resource-ticker_data.png){ width="780" }
+
+## Edge Weights
+
+Edges from `ticker` to `metric` include a direct weight:
+
+```yaml
+edge_config:
+    edges:
+    -   source: ticker
+        target: metric
+        weights:
+            direct: [t_obs]
+```
+
+`t_obs` comes from:
+
+```yaml
+-   foo: parse_date_yahoo
+    module: graflo.util.transform
+    map: {Date: t_obs}
+```
+
+This preserves time context for each metric relationship.
+
+## Run the Example
 
 ```python
 from suthing import FileHandle
-from graflo import Caster, DataSourceRegistry, Schema
-from graflo.data_source import DataSourceFactory, APIConfig, PaginationConfig
-from graflo.db.connection.onto import DBConfig
+from graflo import Patterns, Schema
+from graflo.db import Neo4jConfig
+from graflo.hq import GraphEngine
+from graflo.hq.caster import IngestionParams
+from graflo.util.onto import FilePattern
+import pathlib
 
-# Load schema
 schema = Schema.from_dict(FileHandle.load("schema.yaml"))
+conn_conf = Neo4jConfig.from_docker_env()
+db_type = conn_conf.connection_type
 
-# Create API configuration
-api_config = APIConfig(
-    url="https://api.example.com/users",
-    method="GET",
-    headers={"Authorization": "Bearer your-token"},
-    pagination=PaginationConfig(
-        strategy="offset",
-        offset_param="offset",
-        limit_param="limit",
-        page_size=100,
-        has_more_path="has_more",
-        data_path="data",
-    ),
+patterns = Patterns()
+patterns.add_file_pattern(
+    "ticker_data",
+    FilePattern(regex="^data.*\\.csv$", sub_path=pathlib.Path("."), resource_name="ticker_data"),
 )
 
-# Create API data source
-api_source = DataSourceFactory.create_api_data_source(api_config)
-
-# Register with resource
-registry = DataSourceRegistry()
-registry.register(api_source, resource_name="users")
-
-# Create caster and ingest
-from graflo.hq.caster import IngestionParams
-
-caster = Caster(schema)
-# Load config from file
-config_data = FileHandle.load("db.yaml")
-conn_conf = DBConfig.from_dict(config_data)
-
-ingestion_params = IngestionParams(
-    clear_data=True,
-    batch_size=1000,  # Process 1000 items per batch
-)
-
-caster.ingest_data_sources(
-    data_source_registry=registry,
-    conn_conf=conn_conf,
-    ingestion_params=ingestion_params,
+engine = GraphEngine(target_db_flavor=db_type)
+engine.define_and_ingest(
+    schema=schema,
+    target_db_config=conn_conf,
+    patterns=patterns,
+    ingestion_params=IngestionParams(clear_data=True),
+    recreate_schema=True,
 )
 ```
 
-### Using Configuration File
+## Key Takeaways
 
-Create a data source configuration file (`data_sources.yaml`):
-
-```yaml
-data_sources:
-  - source_type: api
-    resource_name: users
-    config:
-      url: https://api.example.com/users
-      method: GET
-      headers:
-        Authorization: "Bearer your-token"
-      pagination:
-        strategy: offset
-        offset_param: offset
-        limit_param: limit
-        page_size: 100
-        has_more_path: has_more
-        data_path: data
-```
-
-Then use the CLI:
-
-```bash
-uv run ingest \
-    --db-config-path config/db.yaml \
-    --schema-path config/schema.yaml \
-    --data-source-config-path data_sources.yaml
-```
-
-## Pagination Strategies
-
-### Offset-based Pagination
-
-```python
-pagination = PaginationConfig(
-    strategy="offset",
-    offset_param="offset",
-    limit_param="limit",
-    page_size=100,
-    has_more_path="has_more",
-    data_path="data",
-)
-```
-
-### Cursor-based Pagination
-
-```python
-pagination = PaginationConfig(
-    strategy="cursor",
-    cursor_param="next_cursor",
-    cursor_path="next_cursor",
-    page_size=100,
-    data_path="items",
-)
-```
-
-### Page-based Pagination
-
-```python
-pagination = PaginationConfig(
-    strategy="page",
-    page_param="page",
-    per_page_param="per_page",
-    page_size=50,
-    data_path="results",
-)
-```
-
-## Authentication
-
-### Basic Authentication
-
-```python
-api_config = APIConfig(
-    url="https://api.example.com/users",
-    auth={"type": "basic", "username": "user", "password": "pass"},
-)
-```
-
-### Bearer Token
-
-```python
-api_config = APIConfig(
-    url="https://api.example.com/users",
-    auth={"type": "bearer", "token": "your-token"},
-)
-```
-
-### Custom Headers
-
-```python
-api_config = APIConfig(
-    url="https://api.example.com/users",
-    headers={"X-API-Key": "your-api-key"},
-)
-```
-
-## Combining Multiple Data Sources
-
-You can combine multiple data sources for the same resource:
-
-```python
-registry = DataSourceRegistry()
-
-# API source
-api_source = DataSourceFactory.create_api_data_source(api_config)
-registry.register(api_source, resource_name="users")
-
-# File source
-file_source = DataSourceFactory.create_file_data_source(path="users_backup.json")
-registry.register(file_source, resource_name="users")
-
-# Both will be processed and combined
-from graflo.hq.caster import IngestionParams
-
-ingestion_params = IngestionParams(
-    clear_data=True,
-)
-
-caster.ingest_data_sources(
-    data_source_registry=registry,
-    conn_conf=conn_conf,
-    ingestion_params=ingestion_params,
-)
-```
+1. **`dress` enables schema normalization** from wide tabular columns into reusable `(name, value)` metric records.
+2. **`filters` provide declarative data quality checks** directly in the schema.
+3. **Edge weights (`t_obs`) preserve temporal information** for repeated metric observations.
+4. **Multiple edges between the same vertex types** naturally model evolving time-series measurements.
 

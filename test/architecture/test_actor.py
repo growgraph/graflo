@@ -9,6 +9,12 @@ from graflo.architecture.actor import (
 )
 from graflo.architecture.edge import EdgeConfig
 from graflo.architecture.onto import ActionContext, LocationIndex, VertexRep
+from graflo.architecture.actor_config import (
+    TransformActorConfig,
+    normalize_actor_step,
+    validate_actor_step,
+)
+from graflo.architecture.vertex import VertexConfig
 
 logger = logging.getLogger(__name__)
 
@@ -191,12 +197,6 @@ def test_find_descendants_transform_by_target_vertex(
 
 def test_explicit_format_pipeline_transform_create_edge():
     """New explicit format: pipeline with transform (map, to_vertex) and create_edge (from, to)."""
-    from graflo.architecture.actor_config import (
-        TransformActorConfig,
-        normalize_actor_step,
-        validate_actor_step,
-    )
-    from graflo.architecture.vertex import VertexConfig
 
     vc = VertexConfig.from_dict({"vertices": [{"name": "users", "fields": ["id"]}]})
     pipeline = [
@@ -222,3 +222,32 @@ def test_explicit_format_pipeline_transform_create_edge():
     assert isinstance(config, TransformActorConfig)
     assert config.map == {"x": "y"}
     assert config.to_vertex == "users"
+
+
+def test_multi_edges_from_row(resource_ticker, vc_ticker, ec_ticker, sample_ticker):
+    ctx = ActionContext()
+    anw = ActorWrapper(**resource_ticker)
+    anw.finish_init(vertex_config=vc_ticker, transforms={}, edge_config=ec_ticker)
+    ctx = anw(ctx, doc=sample_ticker[0])
+
+    acc = anw.normalize_ctx(ctx)
+
+    assert len(acc[("ticker", "feature", None)]) == 3
+    assert (
+        len(set(w["feature@name"] for _, _, w in acc[("ticker", "feature", None)])) == 3
+    )
+
+
+def test_multi_edges_from_row_filtered(
+    resource_ticker, vc_ticker_filtered, ec_ticker, sample_ticker
+):
+    ctx = ActionContext()
+    anw = ActorWrapper(**resource_ticker)
+    anw.finish_init(
+        vertex_config=vc_ticker_filtered, transforms={}, edge_config=ec_ticker
+    )
+    ctx = anw(ctx, doc=sample_ticker[0])
+
+    acc = anw.normalize_ctx(ctx)
+
+    assert len(acc[("ticker", "feature", None)]) == 2

@@ -1,0 +1,94 @@
+general:
+    name: ticker
+resources:
+-   resource_name: ticker_data
+    apply:
+    -   foo: round_str
+        module: graflo.util.transform
+        params:
+            ndigits: 3
+        input:
+        -   Open
+        dress:
+            key: name
+            value: value
+    -   foo: round_str
+        module: graflo.util.transform
+        params:
+            ndigits: 3
+        input:
+        -   Close
+        dress:
+            key: name
+            value: value
+    -   foo: int
+        module: builtins
+        input:
+        -   Volume
+        dress:
+            key: name
+            value: value
+    -   foo: parse_date_yahoo
+        module: graflo.util.transform
+        map:
+            Date: t_obs
+    -   map:
+            ticker: oftic
+    -   vertex: metric
+vertex_config:
+    vertices:
+    -   name: ticker
+        dbname: tickers
+        fields:
+        -   oftic
+        indexes:
+        -   fields:
+            -   oftic
+    -   name: metric
+        dbname: metrics
+        fields:
+        -   name
+        -   value
+        indexes:
+        -   fields:
+            -   name
+            -   value
+        -   type: hash
+            unique: false
+            fields:
+            -   value
+        -   type: hash
+            unique: false
+            fields:
+            -   name
+        filters:
+        -   if_then:
+            -   or:
+                -   field: name
+                    foo: __eq__
+                    value: Open
+                -   field: name
+                    foo: __eq__
+                    value: Close
+                -   field: name
+                    foo: __eq__
+                    value: Volume
+            -   field: value
+                foo: __gt__
+                value: 0
+edge_config:
+    edges:
+    -   source: ticker
+        target: metric
+        weights:
+            direct:
+            -   t_obs
+            vertices:
+            -   name: metric
+                fields:
+                -   name
+        indexes:
+        -   fields:
+            -   t_obs
+            -   name
+

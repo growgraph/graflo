@@ -63,7 +63,7 @@ nav:
     -   4 - Dynamic Relations from Keys (Neo4j): examples/example-4.md
     -   5 - Ingesting Data from PostgreSQL Tables: examples/example-5.md
     -   6 - RDF / Turtle Ingestion with Explicit Resource Mapping: examples/example-6.md
-#    -   7 - REST API Data Source: examples/example-7.md
+    -   7 - Multi-Edge Weights with Filters and dress Transform: examples/example-7.md
 -   API Reference: reference/
 -   Contributing: contributing.md
 markdown_extensions:

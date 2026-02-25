@@ -190,14 +190,13 @@ def df_ibes() -> pd.DataFrame:
 
 
 @pytest.fixture()
-def df_ticker() -> pd.DataFrame:
-    df0_str = """Date,Open,High,Low,Close,Volume,Dividends,Stock Splits,__ticker
+def sample_ticker() -> list[dict]:
+    df0_str = """Date,Open,High,Low,Close,Volume,Dividends,Stock Splits,ticker
 2014-04-15,17.899999618530273,17.920000076293945,15.149999618530273,15.350000381469727,3531700,0,0,AAPL
 2014-04-16,15.350000381469727,16.09000015258789,15.210000038146973,15.619999885559082,266500,0,0,AAPL"""
     return pd.read_csv(
         io.StringIO(df0_str),
-        sep=",",
-    )
+    ).to_dict(orient="records")
 
 
 @pytest.fixture()
@@ -423,6 +422,46 @@ def resource_deb_compact():
         -   key: maintainer
             apply:
             -   vertex: maintainer
+    """)
+
+
+@pytest.fixture()
+def resource_ticker():
+    return yaml.safe_load("""
+    resource_name: ticker_data
+    apply:
+    -   foo: round_str
+        module: graflo.util.transform
+        params:
+            ndigits: 3
+        input:
+        -   Open
+        dress:
+            key: name
+            value: value
+    -   foo: round_str
+        module: graflo.util.transform
+        params:
+            ndigits: 3
+        input:
+        -   Close
+        dress:
+            key: name
+            value: value
+    -   foo: int
+        module: builtins
+        input:
+        -   Volume
+        dress:
+            key: name
+            value: value
+    -   foo: parse_date_yahoo
+        module: graflo.util.transform
+        map:
+            Date: t_obs
+    -   map:
+            ticker: oftic
+    - vertex: feature
     """)
 
 
