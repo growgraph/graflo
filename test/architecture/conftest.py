@@ -4,6 +4,7 @@ import pytest
 import yaml
 from suthing import FileHandle
 
+from graflo import EdgeConfig
 from graflo.architecture import VertexConfig
 
 
@@ -694,4 +695,107 @@ def schema_vc_deb():
         -   fields:
             -   id
     """)
+    return VertexConfig.from_dict(tc)
+
+
+@pytest.fixture()
+def vc_ticker():
+    tc = yaml.safe_load(
+        """
+        vertices:
+        -   name: ticker
+            dbname: tickers
+            fields:
+            -   cusip
+            -   cname
+            -   oftic
+            indexes:
+            -   fields:
+                -   cusip
+                -   cname
+                -   oftic
+        -   name: feature
+            dbname: features
+            fields:
+            -   name
+            -   value
+            indexes:
+            -   fields:
+                -   name
+                -   value
+            -   type: hash
+                unique: false
+                fields:
+                -   value
+            -   type: hash
+                unique: false
+                fields:
+                -   name
+    """
+    )
+    return VertexConfig.from_dict(tc)
+
+
+@pytest.fixture()
+def ec_ticker():
+    tc = yaml.safe_load(
+        """
+    edges:
+    -   source: ticker
+        target: feature
+        weights:
+            direct:
+            -   t_obs
+            vertices:
+            -   name: feature
+                fields:
+                -   name
+        indexes:
+        -   fields:
+            -   t_obs
+            -   name
+    """
+    )
+    return EdgeConfig.from_dict(tc)
+
+
+@pytest.fixture()
+def vc_ticker_filtered():
+    tc = yaml.safe_load(
+        """
+        vertices:
+        -   name: ticker
+            dbname: tickers
+            fields:
+            -   cusip
+            -   cname
+            -   oftic
+            indexes:
+            -   fields:
+                -   cusip
+                -   cname
+                -   oftic
+        -   name: feature
+            dbname: features
+            fields:
+            -   name
+            -   value
+            indexes:
+            -   fields:
+                -   name
+                -   value
+            -   type: hash
+                unique: false
+                fields:
+                -   value
+            -   type: hash
+                unique: false
+                fields:
+                -   name
+            filters:
+            -   field: name
+                foo: __ne__
+                value: Volume                        
+    """
+    )
     return VertexConfig.from_dict(tc)

@@ -193,7 +193,6 @@ def render_edge(
     buffer_transforms = ctx.buffer_transforms
 
     source, target = edge.source, edge.target
-    relation = edge.relation
 
     # get source and target edge fields
     source_index, target_index = (
@@ -268,20 +267,13 @@ def render_edge(
         (i for i, x in enumerate(target_spec) if x != 1), len(target_spec)
     )
 
-    flag_same_vertex_same_leaf = False
-
-    if source == target and set(source_lindexes) == set(target_lindexes):
-        # prepare combinations: we confirmed the set
-
-        combos = list(combinations(source_lindexes, 2))
-        source_groups, target_groups = zip(*combos) if combos else ([], [])
-
-        # and edge case when samples of the same vertex are encoded in the same leaf (like a table row)
-        # see example/3-ingest-csv-edge-weights
-
-        if not combos and len(source_items_tdressed[source_lindexes[0]]) > 1:
-            source_groups, target_groups = [source_lindexes], [target_lindexes]
-            flag_same_vertex_same_leaf = True
+    casting = EdgeCastingType.PAIR
+    if set(source_lindexes) == set(target_lindexes):
+        source_groups, target_groups = [source_lindexes], [target_lindexes]
+        if len(source_lindexes) < 2:
+            casting = EdgeCastingType.PRODUCT
+        elif source == target and len(source_items_tdressed[source_lindexes[0]]) > 1:
+            casting = EdgeCastingType.COMBINATIONS
     elif (
         source_uni < len(source_spec) - 1
         and target_uni < len(target_spec) - 1
@@ -309,13 +301,7 @@ def render_edge(
             for target_lindex in target_lis:
                 target_items = target_items_tdressed[target_lindex]
 
-                if flag_same_vertex_same_leaf:
-                    # edge case when samples of the same vertex are encoded in the same leaf
-                    iterator = select_iterator(EdgeCastingType.COMBINATIONS)
-                else:
-                    # in this case by construction source_items and target_items have only one element
-
-                    iterator = select_iterator(EdgeCastingType.PAIR)
+                iterator = select_iterator(casting)
 
                 for (u_, u_tr), (v_, v_tr) in iterator(source_items, target_items):
                     u = u_.vertex
@@ -421,7 +407,7 @@ def render_weights(
         4. Default index fields
     """
     vertex_weights = [] if edge.weights is None else edge.weights.vertices
-    weight: dict = {}
+    weights: list = []
 
     for w in vertex_weights:
         vertex = w.name
@@ -444,9 +430,9 @@ def render_weights(
             ]
         if vertex_sample:
             for doc in vertex_sample:
+                weight = {}
                 if w.fields:
                     weight = {
-                        **weight,
                         **{
                             w.cfield(field): doc[field]
                             for field in w.fields
@@ -473,8 +459,10 @@ def render_weights(
                             f" {edge.source} {edge.target} refers to"
                             f" a non existent vcollection {vertex}"
                         )
-
-    if weight:
+                weights += [weight]
+    if weights:
         for r, edocs in edges.items():
-            edges[r] = [(u, v, {**w, **weight}) for u, v, w in edocs]
+            edges[r] = [
+                (u, v, {**w, **weight}) for (u, v, w), weight in zip(edocs, weights)
+            ]
     return edges

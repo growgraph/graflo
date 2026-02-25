@@ -90,7 +90,10 @@ class Resource(ConfigBaseModel):
     )
     edge_greedy: bool = PydanticField(
         default=True,
-        description="If True, emit edges as soon as source/target vertices exist; if False, wait for explicit targets.",
+        description=(
+            "If True, infer edges from current vertex population. "
+            "If False, emit only edges explicitly declared as edge actors in the pipeline."
+        ),
     )
 
     _root: ActorWrapper = PrivateAttr()

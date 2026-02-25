@@ -409,7 +409,6 @@ class ActionContext(ConfigBaseModel):
         acc_global: Global accumulation of graph entities (defaultdict[GraphEntity, list])
         buffer_vertex: Buffer for vertex data (defaultdict[GraphEntity, list])
         buffer_transforms: Buffer for transforms data (defaultdict[LocationIndex, list[dict]])
-        target_vertices: Set of target vertex names indicating user intention
     """
 
     model_config = ConfigDict(kw_only=True)  # type: ignore[assignment]
@@ -420,4 +419,3 @@ class ActionContext(ConfigBaseModel):
     acc_global: Any = Field(default_factory=dd_factory)
     buffer_vertex: Any = Field(default_factory=_default_dict_list)
     buffer_transforms: Any = Field(default_factory=_default_dict_transforms)
-    target_vertices: set[str] = Field(default_factory=set)

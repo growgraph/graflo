@@ -115,7 +115,7 @@ Resources define **how** each data stream is turned into vertices and edges. Eac
 - **`merge_collections`**: Optional. List of collection names to merge when writing.
 - **`extra_weights`**: Optional. Additional edge weight configs for this resource.
 - **`types`**: Optional. Field name → Python type expression for casting during ingestion (e.g. `{"age": "int"}`, `{"amount": "float"}`, `{"created_at": "datetime"}`). Useful when input is string-only (CSV, JSON) and you need numeric or date values.
-- **`edge_greedy`**: Optional. If true (default), emit edges as soon as source/target exist; if false, wait for explicit targets.
+- **`edge_greedy`**: Optional. If true (default), infer edges from vertex population; if false, emit only edges explicitly declared as edge actors in the pipeline.
 
 ### Actor steps in `apply` / `pipeline`
 
