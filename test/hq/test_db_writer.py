@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from graflo.architecture.edge import Edge, EdgeConfig
+from graflo.architecture.database_features import DatabaseFeatures
 from graflo.architecture.onto import GraphContainer
 from graflo.architecture.schema import Schema, SchemaMetadata
 from graflo.architecture.vertex import Vertex, VertexConfig, Field
@@ -42,13 +43,13 @@ def _build_schema() -> Schema:
             Vertex(name="target_v", fields=[Field(name="id")], identity=["id"]),
         ],
         blank_vertices=["blank_v"],
-        db_flavor=DBType.NEO4J,
     )
     edge_config = EdgeConfig(edges=[Edge(source="blank_v", target="target_v")])
     return Schema(
         general=SchemaMetadata(name="test"),
         vertex_config=vertex_config,
         edge_config=edge_config,
+        database_features=DatabaseFeatures(db_flavor=DBType.NEO4J),
         resources=[],
     )
 
@@ -93,13 +94,13 @@ def test_blank_vertex_default_identity_depends_on_db_flavor():
     arango_cfg = VertexConfig(
         vertices=[Vertex(name="blank_v", fields=[], identity=[])],
         blank_vertices=["blank_v"],
-        db_flavor=DBType.ARANGO,
     )
+    arango_cfg.finish_init(DBType.ARANGO)
     neo4j_cfg = VertexConfig(
         vertices=[Vertex(name="blank_v", fields=[], identity=[])],
         blank_vertices=["blank_v"],
-        db_flavor=DBType.NEO4J,
     )
+    neo4j_cfg.finish_init(DBType.NEO4J)
 
     assert arango_cfg["blank_v"].identity == ["_key"]
     assert neo4j_cfg["blank_v"].identity == ["id"]

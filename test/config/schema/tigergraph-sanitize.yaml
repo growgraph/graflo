@@ -1,11 +1,15 @@
 general:
     name: tigergraph-sanitize
+database_features:
+    db_flavor: tigergraph
+    vertex_storage_names:
+        package: Package
+        users: Users
 resources:
 -   resource_name: package
     apply:
     -   vertex: package
 vertex_config:
-    db_flavor: tigergraph
     vertices:
     -   name: package
         fields:
@@ -33,8 +37,4 @@ edge_config:
     edges:
     -   source: package
         target: users
-database_features:
-    vertex_storage_names:
-        package: Package
-        users: Users
 

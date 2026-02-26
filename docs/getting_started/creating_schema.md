@@ -52,6 +52,7 @@ vertex_config:
       identity: [name]
   blank_vertices: []       # optional: vertex names allowed without explicit data
   force_types: {}           # optional: vertex -> list of field type names
+database_features:
   db_flavor: ARANGO         # optional: ARANGO | NEO4J | TIGERGRAPH
 ```
 
@@ -70,7 +71,7 @@ vertex_config:
 
 - **`blank_vertices`**: Vertex names that may be created without explicit row data (e.g. placeholders). Each must exist in `vertices`.
 - **`force_types`**: Override mapping from vertex name to list of field type names for inference.
-- **`db_flavor`**: Database flavor used for schema/index generation: `ARANGO`, `NEO4J`, or `TIGERGRAPH`.
+- **`database_features.db_flavor`**: Database flavor used for schema/index generation: `ARANGO`, `NEO4J`, or `TIGERGRAPH`.
 
 ## `edge_config`
 

@@ -156,8 +156,14 @@ class Schema(ConfigBaseModel):
         for name, t in self.transforms.items():
             t.name = name
 
+        db_flavor = self.database_features.db_flavor
         self.vertex_config.bind_database_features(self.database_features)
-        self.edge_config.finish_init(self.vertex_config)
+        self.vertex_config.finish_init(db_flavor)
+        self.edge_config.finish_init(
+            self.vertex_config,
+            db_flavor=db_flavor,
+            database_features=self.database_features,
+        )
 
         for r in self.resources:
             r.finish_init(

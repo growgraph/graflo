@@ -51,8 +51,7 @@ class DBWriter:
             *gc* is mutated in-place: blank-vertex keys are updated and blank
             edges are extended after the vertex round-trip.
         """
-        self.schema.vertex_config.bind_database_features(self.schema.database_features)
-        self.schema.edge_config.finish_init(self.schema.vertex_config)
+        self.schema.finish_init()
         resource = self.schema.fetch_resource(resource_name)
 
         await self._push_vertices(gc, conn_conf)

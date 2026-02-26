@@ -28,6 +28,7 @@ from pydantic import (
 )
 
 from graflo.architecture.base import ConfigBaseModel
+from graflo.architecture.database_features import DatabaseFeatures
 from graflo.architecture.onto import (
     EdgeId,
     EdgeType,
@@ -197,6 +198,8 @@ class Edge(EdgeBase):
     )
 
     _relation_dbname: str | None = PrivateAttr(default=None)
+    _database_features: DatabaseFeatures | None = PrivateAttr(default=None)
+    _store_extracted_relation_as_weight: bool = PrivateAttr(default=False)
 
     purpose: str | None = PydanticField(
         default=None,
@@ -231,13 +234,34 @@ class Edge(EdgeBase):
 
     @property
     def relation_dbname(self) -> str | None:
+        if self._database_features is not None:
+            return self._database_features.edge_relation_name(
+                self.edge_id,
+                default_relation=self.relation,
+                logical_relation=self.relation,
+            )
         return self._relation_dbname or self.relation
 
     @relation_dbname.setter
     def relation_dbname(self, value: str | None):
+        if self._database_features is not None:
+            self._database_features.set_edge_name_spec(
+                self.edge_id,
+                logical_relation=self.relation,
+                relation_name=value,
+            )
         self._relation_dbname = value
 
-    def finish_init(self, vertex_config: VertexConfig):
+    @property
+    def store_extracted_relation_as_weight(self) -> bool:
+        return self._store_extracted_relation_as_weight
+
+    def finish_init(
+        self,
+        vertex_config: VertexConfig,
+        db_flavor: DBType | None = None,
+        database_features: DatabaseFeatures | None = None,
+    ):
         """Complete edge initialization with vertex configuration.
 
         Sets up edge collections, graph names, and initializes indices based on
@@ -245,27 +269,38 @@ class Edge(EdgeBase):
 
         Args:
             vertex_config: Configuration for vertices
+            db_flavor: Active database flavor
+            database_features: DB-only physical features and naming
 
         """
+        if database_features is not None:
+            self._database_features = database_features
+        if self._database_features is not None and db_flavor is None:
+            db_flavor = self._database_features.db_flavor
+        if db_flavor is None:
+            db_flavor = DBType.ARANGO
+
         if self.type == EdgeType.INDIRECT and self.by is not None:
             self.by = vertex_config.vertex_dbname(self.by)
 
         self._source = vertex_config.vertex_dbname(self.source)
         self._target = vertex_config.vertex_dbname(self.target)
 
-        # ArangoDB-specific: set graph_name and database_name only for ArangoDB
-        if vertex_config.db_flavor == DBType.ARANGO:
-            graph_name = [
-                vertex_config.vertex_dbname(self.source),
-                vertex_config.vertex_dbname(self.target),
-            ]
-            if self.purpose is not None:
-                graph_name += [self.purpose]
-            self.graph_name = "_".join(graph_name + ["graph"])
-            self.database_name = "_".join(graph_name + ["edges"])
+        # ArangoDB-specific names are delegated to DatabaseFeatures.
+        if self._database_features is not None:
+            self.graph_name = self._database_features.edge_graph_name(
+                self.edge_id,
+                source_storage=self._source,
+                target_storage=self._target,
+            )
+            self.database_name = self._database_features.edge_storage_name(
+                self.edge_id,
+                source_storage=self._source,
+                target_storage=self._target,
+            )
 
         # TigerGraph requires named edge types (relations), so assign default if missing
-        if vertex_config.db_flavor == DBType.TIGERGRAPH and self.relation is None:
+        if db_flavor == DBType.TIGERGRAPH and self.relation is None:
             # Use default relation name for TigerGraph
             # TigerGraph requires all edges to have a named type (relation)
             self.relation = DEFAULT_TIGERGRAPH_RELATION
@@ -275,7 +310,8 @@ class Edge(EdgeBase):
 
         # TigerGraph: add relation field to weights if relation_field or relation_from_key is set
         # This ensures the relation value is included as a typed property in the edge schema
-        if vertex_config.db_flavor == DBType.TIGERGRAPH:
+        if db_flavor == DBType.TIGERGRAPH:
+            self._store_extracted_relation_as_weight = True
             if self.relation_field is None and self.relation_from_key:
                 # relation_from_key is True but relation_field not set, default to standard name
                 self.relation_field = DEFAULT_TIGERGRAPH_RELATION_WEIGHTNAME
@@ -302,17 +338,22 @@ class Edge(EdgeBase):
                     # Add a persistent secondary index for the relation field
                     self.indexes.append(Index(fields=[self.relation_field]))
 
-        self._init_indices(vertex_config)
+        else:
+            self._store_extracted_relation_as_weight = False
 
-    def _init_indices(self, vc: VertexConfig):
+        self._init_indices(vertex_config, db_flavor)
+
+    def _init_indices(self, vc: VertexConfig, db_flavor: DBType):
         """Initialize indices for the edge.
 
         Args:
             vc: Vertex configuration
         """
-        self.indexes = [self._init_index(index, vc) for index in self.indexes]
+        self.indexes = [
+            self._init_index(index, vc, db_flavor) for index in self.indexes
+        ]
 
-    def _init_index(self, index: Index, vc: VertexConfig) -> Index:
+    def _init_index(self, index: Index, vc: VertexConfig, db_flavor: DBType) -> Index:
         """Initialize a single index for the edge.
 
         Args:
@@ -341,7 +382,7 @@ class Edge(EdgeBase):
                 fields = vc.index(index.name).fields
             index_fields += [f"{index.name}@{x}" for x in fields]
 
-        if not index.exclude_edge_endpoints and vc.db_flavor == DBType.ARANGO:
+        if not index.exclude_edge_endpoints and db_flavor == DBType.ARANGO:
             if all([item not in index_fields for item in ["_from", "_to"]]):
                 index_fields = ["_from", "_to"] + index_fields
 
@@ -384,6 +425,8 @@ class EdgeConfig(ConfigBaseModel):
         description="List of edge definitions (source, target, weights, indexes, relation, etc.).",
     )
     _edges_map: dict[EdgeId, Edge] = PrivateAttr()
+    _db_flavor: DBType = PrivateAttr(default=DBType.ARANGO)
+    _database_features: DatabaseFeatures | None = PrivateAttr(default=None)
 
     @model_validator(mode="after")
     def _build_edges_map(self) -> EdgeConfig:
@@ -391,14 +434,33 @@ class EdgeConfig(ConfigBaseModel):
         object.__setattr__(self, "_edges_map", {e.edge_id: e for e in self.edges})
         return self
 
-    def finish_init(self, vc: VertexConfig):
+    def finish_init(
+        self,
+        vc: VertexConfig,
+        db_flavor: DBType | None = None,
+        database_features: DatabaseFeatures | None = None,
+    ):
         """Complete initialization of all edges with vertex configuration.
 
         Args:
             vc: Vertex configuration
+            db_flavor: Active database flavor
+            database_features: DB-only physical features and naming
         """
+        if db_flavor is not None:
+            self._db_flavor = db_flavor
+        if database_features is not None:
+            self._database_features = database_features
+
+        active_db_flavor = db_flavor or self._db_flavor
+        active_database_features = database_features or self._database_features
+
         for e in self.edges:
-            e.finish_init(vc)
+            e.finish_init(
+                vertex_config=vc,
+                db_flavor=active_db_flavor,
+                database_features=active_database_features,
+            )
 
     def edges_list(self, include_aux=False):
         """Get list of edges.
@@ -443,7 +505,13 @@ class EdgeConfig(ConfigBaseModel):
         else:
             return False
 
-    def update_edges(self, edge: Edge, vertex_config: VertexConfig):
+    def update_edges(
+        self,
+        edge: Edge,
+        vertex_config: VertexConfig,
+        db_flavor: DBType | None = None,
+        database_features: DatabaseFeatures | None = None,
+    ):
         """Update edge configuration.
 
         Args:
@@ -454,7 +522,16 @@ class EdgeConfig(ConfigBaseModel):
             self._edges_map[edge.edge_id].update(edge)
         else:
             self._edges_map[edge.edge_id] = edge
-        self._edges_map[edge.edge_id].finish_init(vertex_config=vertex_config)
+            self.edges.append(edge)
+
+        active_db_flavor = db_flavor or self._db_flavor
+        active_database_features = database_features or self._database_features
+
+        self._edges_map[edge.edge_id].finish_init(
+            vertex_config=vertex_config,
+            db_flavor=active_db_flavor,
+            database_features=active_database_features,
+        )
 
     @property
     def vertices(self):

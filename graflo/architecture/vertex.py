@@ -313,7 +313,6 @@ class VertexConfig(ConfigBaseModel):
         vertices: List of vertex configurations
         blank_vertices: List of blank vertex names
         force_types: Dictionary mapping vertex names to type lists
-        db_flavor: Database flavor (ARANGO or NEO4J)
     """
 
     # Allow extra keys when loading from YAML (e.g. vertex_config wrapper key)
@@ -331,11 +330,6 @@ class VertexConfig(ConfigBaseModel):
         default_factory=dict,
         description="Override mapping: vertex name -> list of field type names for type inference.",
     )
-    db_flavor: DBType = PydanticField(
-        default=DBType.ARANGO,
-        description="Database flavor (ARANGO, NEO4J, TIGERGRAPH) for schema and index generation.",
-    )
-
     _vertices_map: dict[str, Vertex] | None = PrivateAttr(default=None)
     _vertex_numeric_fields_map: dict[str, object] | None = PrivateAttr(default=None)
     _vertex_storage_names: dict[str, str] | None = PrivateAttr(default=None)
@@ -357,7 +351,7 @@ class VertexConfig(ConfigBaseModel):
             raise ValueError(
                 f" Blank vertices {self.blank_vertices} are not defined as vertices"
             )
-        self._normalize_vertex_identities()
+        self._normalize_vertex_identities(DBType.ARANGO)
         return self
 
     def bind_database_features(self, database_features) -> None:
@@ -368,15 +362,22 @@ class VertexConfig(ConfigBaseModel):
         }
         object.__setattr__(self, "_vertex_storage_names", mapping)
 
-    def _default_blank_identity_field(self) -> str:
-        if self.db_flavor == DBType.ARANGO:
+    def _default_blank_identity_field(self, db_flavor: DBType) -> str:
+        if db_flavor == DBType.ARANGO:
             return "_key"
         return "id"
 
-    def _normalize_vertex_identities(self) -> None:
-        blank_id_field = self._default_blank_identity_field()
+    def _normalize_vertex_identities(
+        self,
+        db_flavor: DBType,
+        *,
+        force_blank_identity: bool = False,
+    ) -> None:
+        blank_id_field = self._default_blank_identity_field(db_flavor)
         for vertex in self.vertices:
-            if not vertex.identity and vertex.name in self.blank_vertices:
+            if vertex.name in self.blank_vertices and (
+                not vertex.identity or force_blank_identity
+            ):
                 vertex.identity = [blank_id_field]
             if not vertex.identity:
                 raise ValueError(f"Vertex '{vertex.name}' must define identity fields")
@@ -595,10 +596,11 @@ class VertexConfig(ConfigBaseModel):
         """
         self._get_vertices_map()[key] = value
 
-    def finish_init(self):
+    def finish_init(self, db_flavor: DBType):
         """Complete initialization of all vertices with database-specific field types.
 
-        Uses self.db_flavor to determine database-specific initialization behavior.
+        Uses db_flavor to determine database-specific initialization behavior.
         """
+        self._normalize_vertex_identities(db_flavor, force_blank_identity=True)
         for v in self.vertices:
-            v.finish_init(self.db_flavor)
+            v.finish_init(db_flavor)

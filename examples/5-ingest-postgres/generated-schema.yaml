@@ -74,7 +74,6 @@ resources:
 transforms: {}
 vertex_config:
     blank_vertices: []
-    db_flavor: tigergraph
     force_types: {}
     vertices:
     -   fields:
@@ -106,6 +105,7 @@ vertex_config:
         -   id
         name: users
 database_features:
+    db_flavor: tigergraph
     vertex_storage_names:
         products: products
         users: users

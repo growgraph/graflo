@@ -88,7 +88,7 @@ class PostgresSchemaInferencer:
                 f"identity {list(pk_columns)}"
             )
 
-        return VertexConfig(vertices=vertices, db_flavor=self.db_flavor)
+        return VertexConfig(vertices=vertices)
 
     def _infer_type_from_samples(
         self, table_name: str, schema_name: str, column_name: str, pg_type: str
@@ -361,7 +361,8 @@ class PostgresSchemaInferencer:
             vertex_config=vertex_config,
             edge_config=edge_config,
             database_features=DatabaseFeatures(
-                vertex_storage_names={v.name: v.name for v in vertex_config.vertices}
+                db_flavor=self.db_flavor,
+                vertex_storage_names={v.name: v.name for v in vertex_config.vertices},
             ),
             resources=[],  # Resources will be created separately
         )

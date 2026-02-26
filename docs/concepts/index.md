@@ -186,7 +186,6 @@ classDiagram
     class VertexConfig {
         +vertices: list~Vertex~
         +blank_vertices: list~Vertex~
-        +db_flavor: DBType?
     }
 
     class Vertex {

@@ -156,7 +156,7 @@ class SchemaSanitizer:
             str, dict[str, str]
         ] = {}  # vertex_name -> {old_field: new_field}
 
-        if schema.vertex_config.db_flavor == DBType.TIGERGRAPH:
+        if schema.database_features.db_flavor == DBType.TIGERGRAPH:
             # Group edges by relation
             edges_by_relation: dict[str | None, list[Edge]] = {}
             for edge in schema.edge_config.edges:

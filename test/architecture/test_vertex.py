@@ -370,8 +370,7 @@ def test_vertex_config_fields_with_db_flavor():
     assert fields[1].type is None  # Preserved
 
     # Set db_flavor and call finish_init on config
-    config.db_flavor = DBType.TIGERGRAPH
-    config.finish_init()
+    config.finish_init(DBType.TIGERGRAPH)
     # With TigerGraph, should get fields with defaults applied
     fields = config.fields("user")
     assert len(fields) == 2

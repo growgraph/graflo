@@ -2066,7 +2066,11 @@ class TigerGraphConnection(Connection):
         # to be created in a single statement with multiple FROM/TO pairs
         edges_to_create = list(edge_config.edges_list(include_aux=True))
         for edge in edges_to_create:
-            edge.finish_init(vertex_config)
+            edge.finish_init(
+                vertex_config=vertex_config,
+                db_flavor=schema.database_features.db_flavor,
+                database_features=schema.database_features,
+            )
             # Validate edge name using sanitized dbname when available
             edge_dbname = edge.relation_dbname
             _validate_tigergraph_schema_name(edge_dbname, "edge")

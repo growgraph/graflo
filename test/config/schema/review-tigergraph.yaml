@@ -13,7 +13,6 @@ resources:
         map:
             research_sector: id
 vertex_config:
-    db_flavor: tigergraph
     vertices:
     -   name: author
         fields:
@@ -35,6 +34,7 @@ edge_config:
         target: researchField
         relation: belongsTo
 database_features:
+    db_flavor: tigergraph
     vertex_storage_names:
         author: Author
         researchField: ResearchField

@@ -1,5 +1,17 @@
 general:
     name: review
+database_features:
+    db_flavor: neo4j
+    vertex_storage_names:
+        author: Author
+        researchField: ResearchField
+    edge_indexes:
+    -   source: author
+        target: researchField
+        purpose:
+        indexes:
+        -   fields:
+            -   t_obs
 resources:
 -   resource_name: authors
     apply:
@@ -13,7 +25,6 @@ resources:
         map:
             research_sector: id
 vertex_config:
-    db_flavor: neo4j
     vertices:
     -   name: author
         fields:
@@ -35,14 +46,3 @@ edge_config:
     -   source: author
         target: researchField
         relation: belongsTo
-database_features:
-    vertex_storage_names:
-        author: Author
-        researchField: ResearchField
-    edge_indexes:
-    -   source: author
-        target: researchField
-        purpose:
-        indexes:
-        -   fields:
-            -   t_obs
