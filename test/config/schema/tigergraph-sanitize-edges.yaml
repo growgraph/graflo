@@ -1,5 +1,7 @@
 general:
     name: tigergraph-sanitize-edges
+database_features:
+    db_flavor: tigergraph
 resources:
 -   resource_name: parcels
     apply:
@@ -17,28 +19,24 @@ resources:
     -   map:
             container_name: name
 vertex_config:
-    db_flavor: tigergraph
     vertices:
     -   name: parcel
         fields:
         -   name: id
             type: INT
-        indexes:
-        -   fields:
-            -   id
+        identity:
+        -   id
     -   name: box
         fields:
         -   name: id
             type: INT
-        indexes:
-        -   fields:
-            -   id
+        identity:
+        -   id
     -   name: container
         fields:
         -   name
-        indexes:
-        -   fields:
-            -   name
+        identity:
+        -   name
 edge_config:
     edges:
     -   source: box

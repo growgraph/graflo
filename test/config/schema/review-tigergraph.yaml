@@ -13,28 +13,28 @@ resources:
         map:
             research_sector: id
 vertex_config:
-    db_flavor: tigergraph
     vertices:
     -   name: author
-        dbname: Author
         fields:
         -   id
         -   full_name
         -   hindex
-        indexes:
-        -   fields:
-            -   id
+        identity:
+        -   id
     -   name: researchField
-        dbname: ResearchField
         fields:
         -   id
         -   name
         -   level
-        indexes:
-        -   fields:
-            -   id
+        identity:
+        -   id
 edge_config:
     edges:
     -   source: author
         target: researchField
         relation: belongsTo
+database_features:
+    db_flavor: tigergraph
+    vertex_storage_names:
+        author: Author
+        researchField: ResearchField

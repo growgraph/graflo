@@ -14,6 +14,8 @@ vertex_config:
     -   name: company
         fields:
         -   name
+        identity:
+        -   name
 edge_config:
     edges:
     -   source: company

@@ -413,9 +413,8 @@ class Caster:
         ingestion_params = ingestion_params or IngestionParams()
 
         db_flavor = target_db_config.connection_type
-        self.schema.vertex_config.db_flavor = db_flavor
-        self.schema.vertex_config.finish_init()
-        self.schema.edge_config.finish_init(self.schema.vertex_config)
+        self.schema.database_features.db_flavor = db_flavor
+        self.schema.finish_init()
 
         registry = RegistryBuilder(self.schema).build(patterns, ingestion_params)
 

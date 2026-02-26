@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.4] - 2026-02-25
+
+### Changed
+- **Logical identity vs physical indexes**:
+  - `Vertex` now models logical identity via `identity` fields instead of owning physical index definitions
+  - Secondary indexes were moved to `Schema.database_features.vertex_indexes` / `Schema.database_features.edge_indexes`
+  - This separates graph semantics (identity) from DB-specific physical tuning (indexes)
+- **DB-specific names moved to database features**:
+  - Vertex/edge physical naming is now managed through `Schema.database_features` (`vertex_storage_names`, `edge_names`)
+  - DB-only aliases such as vertex `dbname` and edge `relation_dbname` are represented as physical naming features rather than core logical schema fields
+
 ## [1.6.3] - 2026-02-25
 
 ### Fixed

@@ -1,7 +1,6 @@
 edge_config:
     edges:
     -   aux: false
-        index: []
         relation: follows
         relation_from_key: false
         source: users
@@ -13,7 +12,6 @@ edge_config:
                 type: DATETIME
             vertices: []
     -   aux: false
-        index: []
         relation: purchases
         relation_from_key: false
         source: users
@@ -76,11 +74,9 @@ resources:
 transforms: {}
 vertex_config:
     blank_vertices: []
-    db_flavor: tigergraph
     force_types: {}
     vertices:
-    -   dbname: products
-        fields:
+    -   fields:
         -   name: id
             type: INT
         -   name: name
@@ -92,17 +88,10 @@ vertex_config:
         -   name: created_at
             type: DATETIME
         filters: []
-        indexes:
-        -   deduplicate: true
-            exclude_edge_endpoints: false
-            fields:
-            -   id
-            sparse: false
-            type: persistent
-            unique: true
+        identity:
+        -   id
         name: products
-    -   dbname: users
-        fields:
+    -   fields:
         -   name: id
             type: INT
         -   name: name
@@ -112,12 +101,11 @@ vertex_config:
         -   name: created_at
             type: DATETIME
         filters: []
-        indexes:
-        -   deduplicate: true
-            exclude_edge_endpoints: false
-            fields:
-            -   id
-            sparse: false
-            type: persistent
-            unique: true
+        identity:
+        -   id
         name: users
+database_features:
+    db_flavor: tigergraph
+    vertex_storage_names:
+        products: products
+        users: users

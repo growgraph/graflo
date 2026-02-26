@@ -45,61 +45,43 @@ vertex_config:
     -   publication
     vertices:
     -   name: publication
-        dbname: publications
         fields:
         -   datetime_review
         -   datetime_announce
-        indexes:
-        -   fields:
-            -   _key
-        -   type: hash
-            unique: false
-            fields:
-            -   datetime_review
-        -   type: hash
-            unique: false
-            fields:
-            -   datetime_announce
+        identity:
+        -   _key
     -   name: ticker
-        dbname: tickers
         fields:
         -   cusip
         -   cname
         -   oftic
-        indexes:
-        -   fields:
-            -   cusip
-            -   cname
-            -   oftic
+        identity:
+        -   cusip
+        -   cname
+        -   oftic
     -   name: agency
-        dbname: agencies
         fields:
         -   aname
-        indexes:
-        -   fields:
-            -   aname
+        identity:
+        -   aname
     -   name: analyst
-        dbname: analysts
         fields:
         -   last_name
         -   initial
-        indexes:
-        -   fields:
-            -   last_name
-            -   initial
+        identity:
+        -   last_name
+        -   initial
     -   name: recommendation
-        dbname: recommendations
         fields:
         -   erec
         -   etext
         -   irec
         -   itext
-        indexes:
-        -   fields:
-            -   irec
-            -   erec
-            -   etext
-            -   itext
+        identity:
+        -   irec
+        -   erec
+        -   etext
+        -   itext
 edge_config:
     edges:
     -   source: publication
@@ -117,3 +99,20 @@ edge_config:
         target: publication
     -   source: publication
         target: recommendation
+database_features:
+    vertex_storage_names:
+        publication: publications
+        ticker: tickers
+        agency: agencies
+        analyst: analysts
+        recommendation: recommendations
+    vertex_indexes:
+        publication:
+        -   type: hash
+            unique: false
+            fields:
+            -   datetime_review
+        -   type: hash
+            unique: false
+            fields:
+            -   datetime_announce

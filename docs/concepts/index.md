@@ -6,11 +6,33 @@ GraFlo is a Graph Schema & Transformation Language (GSTL) for Labeled Property G
 
 The GraFlo pipeline transforms data through five stages:
 
-**Source Instance** → **Resource** → **Graph Schema** → **Covariant Graph Representation** → **Graph DB**
+```mermaid
+%%{ init: { 
+  "theme": "base",
+  "themeVariables": {
+    "primaryColor": "#90CAF9",
+    "primaryTextColor": "#111111",
+    "primaryBorderColor": "#1E88E5",
+    "lineColor": "#546E7A",
+    "secondaryColor": "#A5D6A7",
+    "tertiaryColor": "#CE93D8"
+  }
+} }%%
+
+flowchart LR
+    SI["<b>Source Instance</b><br/>File · SQL · SPARQL · API"]
+    R["<b>Resource</b><br/>Actor Pipeline"]
+    GS["<b>Graph Schema</b><br/>Vertex/Edge Definitions<br/>Identities · Transforms · DB Features"]
+    GC["<b>GraphContainer</b><br/>Covariant Graph Representation"]
+    DB["<b>Graph DB (LPG)</b><br/>ArangoDB · Neo4j · TigerGraph · Others"]
+
+    SI --> R --> GS --> GC --> DB
+```
+
 
 - **Source Instance** — a concrete data artifact (a file, a table, a SPARQL endpoint), wrapped by an `AbstractDataSource` with a `DataSourceType` (`FILE`, `SQL`, `SPARQL`, `API`, `IN_MEMORY`).
 - **Resource** — a reusable transformation pipeline (actor steps: descend, transform, vertex, edge) that maps raw records to graph elements. Data sources bind to Resources by name via the `DataSourceRegistry`.
-- **Graph Schema** — the declarative specification (`Schema`): vertex/edge definitions, indexes, typed fields, transforms, and the Resources themselves.
+- **Graph Schema** — the declarative specification (`Schema`): vertex/edge definitions, logical identities, typed fields, DB features, transforms, and the Resources themselves.
 - **Covariant Graph Representation** — a `GraphContainer` of vertices and edges, independent of any target database.
 - **Graph DB** — the target LPG store (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph).
 
@@ -23,7 +45,7 @@ flow through the `DataSourceRegistry` into the shared `Resource` pipeline.
 flowchart LR
     subgraph sources [Data Sources]
         TTL["*.ttl / *.rdf files"]
-        Fuseki["SPARQL Endpoint\n(Fuseki)"]
+        Fuseki["SPARQL Endpoint<br/>(Fuseki)"]
         Files["CSV / JSON files"]
         PG["PostgreSQL"]
     end
@@ -147,6 +169,7 @@ classDiagram
         +general: SchemaMetadata
         +vertex_config: VertexConfig
         +edge_config: EdgeConfig
+        +database_features: DatabaseFeatures
         +resources: list~Resource~
         +transforms: dict~str,ProtoTransform~
         +finish_init()
@@ -163,12 +186,12 @@ classDiagram
     class VertexConfig {
         +vertices: list~Vertex~
         +blank_vertices: list~Vertex~
-        +db_flavor: DBType?
     }
 
     class Vertex {
         +name: str
-        +indexes: list~list~str~~
+        +identity: list~str~
+        +indexes: list~Index~ (legacy/compat)
         +fields: list~Field~
         +filters: FilterExpression?
         +dbname: str?
@@ -525,7 +548,7 @@ A Transform can produce output in three ways:
 ```mermaid
 flowchart LR
     Doc["Input Document"] -->|"extract input fields"| Proto["ProtoTransform.apply()"]
-    Proto -->|"dress is set"| Dressed["{dress.key: input_key,\ndress.value: result}"]
+    Proto -->|"dress is set"| Dressed["{dress.key: input_key,<br/>dress.value: result}"]
     Proto -->|"output is set"| Direct["zip(output, result)"]
     Proto -->|"map only"| Mapped["{new_key: old_value}"]
 ```

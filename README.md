@@ -18,31 +18,26 @@ GraFlo provides a declarative, database-agnostic specification for mapping heter
 GraFlo separates *what the graph looks like* from *where data comes from* and *which database stores it*.
 
 ```mermaid
+%%{ init: { 
+  "theme": "base",
+  "themeVariables": {
+    "primaryColor": "#90CAF9",
+    "primaryTextColor": "#111111",
+    "primaryBorderColor": "#1E88E5",
+    "lineColor": "#546E7A",
+    "secondaryColor": "#A5D6A7",
+    "tertiaryColor": "#CE93D8"
+  }
+} }%%
+
 flowchart LR
-    subgraph si ["Source Instance"]
-        F["File\nCSV · JSON · Parquet"]
-        S["SQL\nPostgreSQL"]
-        SP["SPARQL\nendpoint · .ttl"]
-        A["API · In-memory"]
-    end
+    SI["<b>Source Instance</b><br/>File · SQL · SPARQL · API"]
+    R["<b>Resource</b><br/>Actor Pipeline"]
+    GS["<b>Graph Schema</b><br/>Vertex/Edge Definitions<br/>Identities · Transforms · DB Features"]
+    GC["<b>GraphContainer</b><br/>Covariant Graph Representation"]
+    DB["<b>Graph DB (LPG)</b><br/>ArangoDB · Neo4j · TigerGraph · Others"]
 
-    R(["<b>Resource</b>\nactor pipeline"])
-
-    subgraph gs ["Graph Schema"]
-        V["Vertex & Edge\ndefinitions"]
-        T["Transforms\n& indexes"]
-    end
-
-    GC["<b>GraphContainer</b>\ncovariant graph\nrepresentation"]
-
-    subgraph db ["Graph DB · LPG"]
-        AR["ArangoDB"]
-        NE["Neo4j"]
-        TG["TigerGraph"]
-        More["FalkorDB\nMemgraph\nNebulaGraph"]
-    end
-
-    si --> R --> gs --> GC --> db
+    SI --> R --> GS --> GC --> DB
 ```
 
 **Source Instance** → **Resource** → **Graph Schema** → **Covariant Graph Representation** → **Graph DB**
@@ -51,7 +46,7 @@ flowchart LR
 |-------|------|------|
 | **Source Instance** | A concrete data artifact — a CSV file, a PostgreSQL table, a SPARQL endpoint, a `.ttl` file. | `AbstractDataSource` subclasses (`FileDataSource`, `SQLDataSource`, `SparqlEndpointDataSource`, …) with a `DataSourceType`. |
 | **Resource** | A reusable transformation pipeline — actor steps (descend, transform, vertex, edge) that map raw records to graph elements. Data sources bind to Resources by name via the `DataSourceRegistry`. | `Resource` (part of `Schema`). |
-| **Graph Schema** | Declarative vertex/edge definitions, indexes, typed fields, and named transforms — defined in YAML or Python. | `Schema`, `VertexConfig`, `EdgeConfig`. |
+| **Graph Schema** | Declarative vertex/edge definitions, vertex identities, typed fields, DB features (secondary indexes), and named transforms — defined in YAML or Python. | `Schema`, `VertexConfig`, `EdgeConfig`. |
 | **Covariant Graph Representation** | A database-independent collection of vertices and edges. | `GraphContainer`. |
 | **Graph DB** | The target LPG store — same API for all supported databases. | `ConnectionManager`, `DBWriter`. |
 
@@ -72,7 +67,7 @@ ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph — same API for al
 
 ## Features
 
-- **Declarative LPG schema** — Define vertices, edges, indexes, weights, and transforms in YAML or Python. The `Schema` is the single source of truth, independent of source or target.
+- **Declarative LPG schema** — Define vertices, edges, vertex identity, secondary DB indexes, weights, and transforms in YAML or Python. The `Schema` is the single source of truth, independent of source or target.
 - **Database abstraction** — One schema, one API. Target ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, or NebulaGraph without rewriting pipelines. Database idiosyncrasies are handled by the `GraphContainer` (covariant graph representation).
 - **Resource abstraction** — Each `Resource` defines a reusable actor pipeline (descend → transform → vertex → edge) that maps raw records to graph elements. Data sources bind to Resources by name via the `DataSourceRegistry`, decoupling transformation logic from data retrieval.
 - **SPARQL & RDF support** — Query SPARQL endpoints (e.g. Apache Fuseki), read `.ttl`/`.rdf`/`.n3` files, and auto-infer schemas from OWL/RDFS ontologies. Install with `pip install graflo[sparql]`.

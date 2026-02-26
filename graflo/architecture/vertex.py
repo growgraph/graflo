@@ -1,11 +1,11 @@
 """Vertex configuration and management for graph databases.
 
 This module provides classes and utilities for managing vertices in graph databases.
-It handles vertex configuration, field management, indexing, and filtering operations.
+It handles vertex configuration, field management, identity, and filtering operations.
 The module supports both ArangoDB and Neo4j through the DBType enum.
 
 Key Components:
-    - Vertex: Represents a vertex with its fields and indexes
+    - Vertex: Represents a vertex with its fields and identity
     - VertexConfig: Manages vertices and their configurations
 
 Example:
@@ -181,7 +181,7 @@ def _normalize_fields_item(item: str | Field | dict[str, Any]) -> Field:
 class Vertex(ConfigBaseModel):
     """Represents a vertex in the graph database.
 
-    A vertex is a fundamental unit in the graph that can have fields, indexes,
+    A vertex is a fundamental unit in the graph that can have fields, identity,
     and filters. Fields can be specified as strings, Field objects, or dicts.
     Internally, fields are stored as Field objects but behave like strings
     for backward compatibility.
@@ -190,9 +190,8 @@ class Vertex(ConfigBaseModel):
         name: Name of the vertex
         fields: List of field names (str), Field objects, or dicts.
                Will be normalized to Field objects by the validator.
-        indexes: List of indexes for the vertex
+        identity: List of fields forming logical primary identity
         filters: List of filter expressions
-        dbname: Optional database name (defaults to vertex name)
 
     Examples:
         >>> # Backward compatible: list of strings
@@ -222,17 +221,13 @@ class Vertex(ConfigBaseModel):
         default_factory=list,
         description="List of fields (names, Field objects, or dicts). Normalized to Field objects.",
     )
-    indexes: list[Index] = PydanticField(
+    identity: list[str] = PydanticField(
         default_factory=list,
-        description="List of index definitions for this vertex. Defaults to primary index on all fields if empty.",
+        description="Logical identity fields (primary key semantics for matching/upserts).",
     )
     filters: list[FilterExpression] = PydanticField(
         default_factory=list,
         description="Filter expressions (logical formulae) applied when querying this vertex.",
-    )
-    dbname: str | None = PydanticField(
-        default=None,
-        description="Optional database collection/table name. Defaults to vertex name if not set.",
     )
 
     @field_validator("fields", mode="before")
@@ -241,19 +236,6 @@ class Vertex(ConfigBaseModel):
         if not isinstance(v, list):
             raise ValueError("fields must be a list")
         return [_normalize_fields_item(item) for item in v]
-
-    @field_validator("indexes", mode="before")
-    @classmethod
-    def convert_to_indexes(cls, v: Any) -> Any:
-        if not isinstance(v, list):
-            return v
-        result = []
-        for item in v:
-            if isinstance(item, dict):
-                result.append(Index.model_validate(item))
-            else:
-                result.append(item)
-        return result
 
     @field_validator("filters", mode="before")
     @classmethod
@@ -272,26 +254,31 @@ class Vertex(ConfigBaseModel):
                 )
         return result
 
+    @field_validator("identity", mode="before")
+    @classmethod
+    def convert_identity(cls, v: Any) -> Any:
+        if v is None:
+            return []
+        if isinstance(v, tuple):
+            return list(v)
+        if isinstance(v, list):
+            return v
+        raise ValueError("identity must be a list[str]")
+
     @model_validator(mode="after")
-    def set_dbname_and_indexes(self) -> "Vertex":
-        if self.dbname is None:
-            object.__setattr__(self, "dbname", self.name)
-        indexes = list(self.indexes)
-        if not indexes:
-            object.__setattr__(
-                self,
-                "indexes",
-                [Index(fields=[f.name for f in self.fields])],
-            )
-        else:
-            seen_names = {f.name for f in self.fields}
-            new_fields = list(self.fields)
-            for idx in indexes:
-                for field_name in idx.fields:
-                    if field_name not in seen_names:
-                        new_fields.append(Field(name=field_name, type=None))
-                        seen_names.add(field_name)
-            object.__setattr__(self, "fields", new_fields)
+    def set_identity(self) -> "Vertex":
+        identity_fields = list(self.identity)
+        if not identity_fields:
+            identity_fields = [f.name for f in self.fields]
+        object.__setattr__(self, "identity", identity_fields)
+
+        seen_names = {f.name for f in self.fields}
+        new_fields = list(self.fields)
+        for field_name in identity_fields:
+            if field_name not in seen_names:
+                new_fields.append(Field(name=field_name, type=None))
+                seen_names.add(field_name)
+        object.__setattr__(self, "fields", new_fields)
         return self
 
     @property
@@ -326,7 +313,6 @@ class VertexConfig(ConfigBaseModel):
         vertices: List of vertex configurations
         blank_vertices: List of blank vertex names
         force_types: Dictionary mapping vertex names to type lists
-        db_flavor: Database flavor (ARANGO or NEO4J)
     """
 
     # Allow extra keys when loading from YAML (e.g. vertex_config wrapper key)
@@ -334,7 +320,7 @@ class VertexConfig(ConfigBaseModel):
 
     vertices: list[Vertex] = PydanticField(
         ...,
-        description="List of vertex type definitions (name, fields, indexes, filters).",
+        description="List of vertex type definitions (name, fields, identity, filters).",
     )
     blank_vertices: list[str] = PydanticField(
         default_factory=list,
@@ -344,13 +330,9 @@ class VertexConfig(ConfigBaseModel):
         default_factory=dict,
         description="Override mapping: vertex name -> list of field type names for type inference.",
     )
-    db_flavor: DBType = PydanticField(
-        default=DBType.ARANGO,
-        description="Database flavor (ARANGO, NEO4J, TIGERGRAPH) for schema and index generation.",
-    )
-
     _vertices_map: dict[str, Vertex] | None = PrivateAttr(default=None)
     _vertex_numeric_fields_map: dict[str, object] | None = PrivateAttr(default=None)
+    _vertex_storage_names: dict[str, str] | None = PrivateAttr(default=None)
 
     @model_validator(mode="after")
     def build_vertices_map_and_validate_blank(self) -> "VertexConfig":
@@ -360,11 +342,48 @@ class VertexConfig(ConfigBaseModel):
             {item.name: item for item in self.vertices},
         )
         object.__setattr__(self, "_vertex_numeric_fields_map", {})
+        object.__setattr__(
+            self,
+            "_vertex_storage_names",
+            {item.name: item.name for item in self.vertices},
+        )
         if set(self.blank_vertices) - set(self.vertex_set):
             raise ValueError(
                 f" Blank vertices {self.blank_vertices} are not defined as vertices"
             )
+        self._normalize_vertex_identities(DBType.ARANGO)
         return self
+
+    def bind_database_features(self, database_features) -> None:
+        """Bind physical vertex names from database features."""
+        mapping = {
+            item.name: database_features.vertex_storage_name(item.name)
+            for item in self.vertices
+        }
+        object.__setattr__(self, "_vertex_storage_names", mapping)
+
+    def _default_blank_identity_field(self, db_flavor: DBType) -> str:
+        if db_flavor == DBType.ARANGO:
+            return "_key"
+        return "id"
+
+    def _normalize_vertex_identities(
+        self,
+        db_flavor: DBType,
+        *,
+        force_blank_identity: bool = False,
+    ) -> None:
+        blank_id_field = self._default_blank_identity_field(db_flavor)
+        for vertex in self.vertices:
+            if vertex.name in self.blank_vertices and (
+                not vertex.identity or force_blank_identity
+            ):
+                vertex.identity = [blank_id_field]
+            if not vertex.identity:
+                raise ValueError(f"Vertex '{vertex.name}' must define identity fields")
+            missing = [f for f in vertex.identity if f not in vertex.field_names]
+            for field_name in missing:
+                vertex.fields.append(Field(name=field_name, type=None))
 
     def _get_vertices_map(self) -> dict[str, Vertex]:
         """Return the vertices map (set by model validator)."""
@@ -390,34 +409,34 @@ class VertexConfig(ConfigBaseModel):
         return list(self._get_vertices_map().values())
 
     def _get_vertex_by_name_or_dbname(self, identifier: str) -> Vertex:
-        """Get vertex by name or dbname.
+        """Get vertex by name or storage name.
 
         Args:
-            identifier: Vertex name or dbname
+            identifier: Vertex name or storage name
 
         Returns:
             Vertex: The vertex object
 
         Raises:
-            KeyError: If vertex is not found by name or dbname
+            KeyError: If vertex is not found by name or storage name
         """
         m = self._get_vertices_map()
         # First try by name (most common case)
         if identifier in m:
             return m[identifier]
 
-        # Try by dbname
-        for vertex in m.values():
-            if vertex.dbname == identifier:
-                return vertex
+        storage_map = self._vertex_storage_names or {}
+        for name, storage_name in storage_map.items():
+            if storage_name == identifier and name in m:
+                return m[name]
 
         # Not found
         available_names = list(m.keys())
-        available_dbnames = [v.dbname for v in m.values()]
+        available_dbnames = list(storage_map.values())
         raise KeyError(
-            f"Vertex '{identifier}' not found by name or dbname. "
+            f"Vertex '{identifier}' not found by name or storage name. "
             f"Available names: {available_names}, "
-            f"Available dbnames: {available_dbnames}"
+            f"Available storage names: {available_dbnames}"
         )
 
     def vertex_dbname(self, vertex_name):
@@ -432,9 +451,9 @@ class VertexConfig(ConfigBaseModel):
         Raises:
             KeyError: If vertex is not found
         """
-        m = self._get_vertices_map()
+        m = self._vertex_storage_names or {}
         try:
-            value = m[vertex_name].dbname
+            value = m[vertex_name]
         except KeyError as e:
             logger.error(
                 f"Available vertices : {m.keys()}; vertex requested : {vertex_name}"
@@ -451,29 +470,22 @@ class VertexConfig(ConfigBaseModel):
         Returns:
             Index: Primary index for the vertex
         """
-        return self._get_vertices_map()[vertex_name].indexes[0]
+        return Index(fields=self.identity_fields(vertex_name))
 
-    def indexes(self, vertex_name) -> list[Index]:
-        """Get all indexes for a vertex.
-
-        Args:
-            vertex_name: Name of the vertex
-
-        Returns:
-            list[Index]: List of indexes for the vertex
-        """
-        return self._get_vertices_map()[vertex_name].indexes
+    def identity_fields(self, vertex_name: str) -> list[str]:
+        """Get identity fields for a vertex."""
+        return list(self._get_vertices_map()[vertex_name].identity)
 
     def fields(self, vertex_name: str) -> list[Field]:
         """Get fields for a vertex.
 
         Args:
-            vertex_name: Name of the vertex or dbname
+            vertex_name: Name of the vertex or storage name
 
         Returns:
             list[Field]: List of Field objects
         """
-        # Get vertex by name or dbname
+        # Get vertex by logical or physical storage name
         vertex = self._get_vertex_by_name_or_dbname(vertex_name)
 
         return vertex.fields
@@ -485,7 +497,7 @@ class VertexConfig(ConfigBaseModel):
         """Get field names for a vertex as strings.
 
         Args:
-            vertex_name: Name of the vertex or dbname
+            vertex_name: Name of the vertex or storage name
 
         Returns:
             list[str]: List of field names as strings
@@ -584,10 +596,11 @@ class VertexConfig(ConfigBaseModel):
         """
         self._get_vertices_map()[key] = value
 
-    def finish_init(self):
+    def finish_init(self, db_flavor: DBType):
         """Complete initialization of all vertices with database-specific field types.
 
-        Uses self.db_flavor to determine database-specific initialization behavior.
+        Uses db_flavor to determine database-specific initialization behavior.
         """
+        self._normalize_vertex_identities(db_flavor, force_blank_identity=True)
         for v in self.vertices:
-            v.finish_init(self.db_flavor)
+            v.finish_init(db_flavor)

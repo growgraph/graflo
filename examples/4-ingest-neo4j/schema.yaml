@@ -31,25 +31,22 @@ vertex_config:
         fields:
         -   name
         -   version
-        indexes:
-        -   fields:
-            -   name
+        identity:
+        -   name
     -   name: maintainer
         fields:
         -   name
         -   email
-        indexes:
-        -   fields:
-            -   email
+        identity:
+        -   email
     -   name: bug
         fields:
         -   id
         -   subject
         -   severity
         -   date
-        indexes:
-        -   fields:
-            -   id
+        identity:
+        -   id
 edge_config:
     edges:
     -   source: package

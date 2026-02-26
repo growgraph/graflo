@@ -43,6 +43,7 @@ from pydantic import (
 
 from graflo.architecture.actor import EdgeActor, TransformActor, VertexActor
 from graflo.architecture.base import ConfigBaseModel
+from graflo.architecture.database_features import DatabaseFeatures
 from graflo.architecture.edge import EdgeConfig
 from graflo.architecture.resource import Resource
 from graflo.architecture.transform import ProtoTransform
@@ -110,6 +111,10 @@ class Schema(ConfigBaseModel):
         ...,
         description="Configuration for edge collections (edges, weights).",
     )
+    database_features: DatabaseFeatures = PydanticField(
+        default_factory=DatabaseFeatures,
+        description="Database-specific physical features (secondary indexes, etc.).",
+    )
     resources: list[Resource] = PydanticField(
         default_factory=list,
         description="List of resource definitions (data pipelines mapping to vertices/edges).",
@@ -151,7 +156,14 @@ class Schema(ConfigBaseModel):
         for name, t in self.transforms.items():
             t.name = name
 
-        self.edge_config.finish_init(self.vertex_config)
+        db_flavor = self.database_features.db_flavor
+        self.vertex_config.bind_database_features(self.database_features)
+        self.vertex_config.finish_init(db_flavor)
+        self.edge_config.finish_init(
+            self.vertex_config,
+            db_flavor=db_flavor,
+            database_features=self.database_features,
+        )
 
         for r in self.resources:
             r.finish_init(

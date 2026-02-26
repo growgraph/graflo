@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from graflo.architecture.edge import Edge, EdgeConfig
+from graflo.architecture.database_features import DatabaseFeatures
 from graflo.architecture.resource import Resource
 from graflo.architecture.schema import Schema, SchemaMetadata
 from graflo.architecture.vertex import Field as VertexField, Vertex, VertexConfig
@@ -172,7 +173,7 @@ class RdfInferenceManager:
             vertex_fields = [VertexField(name=f) for f in fields]
             vertices.append(Vertex(name=cls_name, fields=vertex_fields))
 
-        vertex_config = VertexConfig(vertices=vertices, db_flavor=self.target_db_flavor)
+        vertex_config = VertexConfig(vertices=vertices)
 
         edge_objects = [
             Edge(
@@ -204,6 +205,7 @@ class RdfInferenceManager:
             general=SchemaMetadata(name=effective_name),
             vertex_config=vertex_config,
             edge_config=edge_config,
+            database_features=DatabaseFeatures(db_flavor=self.target_db_flavor),
             resources=resources,
         )
         schema.finish_init()

@@ -16,7 +16,6 @@ resources:
 vertex_config:
     vertices:
     -   name: institution
-        dbname: institutions
         fields:
         -   _key
         -   display_name
@@ -27,9 +26,15 @@ vertex_config:
         -   mag
         -   created_date
         -   updated_date
-        indexes:
-        -   fields:
-            -   _key
+        identity:
+        -   _key
+edge_config:
+    edges: []
+database_features:
+    vertex_storage_names:
+        institution: institutions
+    vertex_indexes:
+        institution:
         -   unique: false
             type: fulltext
             fields:
@@ -37,8 +42,6 @@ vertex_config:
         -   unique: false
             fields:
             -   type
-edge_config:
-    edges: []
 transforms:
     keep_suffix_id:
         foo: split_keep_part

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 
 from graflo.architecture.edge import Edge, EdgeConfig, WeightConfig
-from graflo.architecture.onto import Index, IndexType
+from graflo.architecture.database_features import DatabaseFeatures
 from graflo.architecture.schema import Schema, SchemaMetadata
 from graflo.architecture.vertex import Field, FieldType, Vertex, VertexConfig
 from graflo.onto import DBType
@@ -75,28 +75,20 @@ class PostgresSchemaInferencer:
                 field_type = FieldType(raw_type) if raw_type else None
                 fields.append(Field(name=field_name, type=field_type))
 
-            # Create indexes from primary key
-            indexes = []
-            if pk_columns:
-                indexes.append(
-                    Index(fields=pk_columns, type=IndexType.PERSISTENT, unique=True)
-                )
-
             # Create vertex
             vertex = Vertex(
                 name=table_name,
-                dbname=table_name,
                 fields=fields,
-                indexes=indexes,
+                identity=list(pk_columns),
             )
 
             vertices.append(vertex)
             logger.debug(
                 f"Inferred vertex '{table_name}' with {len(fields)} fields and "
-                f"{len(indexes)} indexes"
+                f"identity {list(pk_columns)}"
             )
 
-        return VertexConfig(vertices=vertices, db_flavor=self.db_flavor)
+        return VertexConfig(vertices=vertices)
 
     def _infer_type_from_samples(
         self, table_name: str, schema_name: str, column_name: str, pg_type: str
@@ -368,6 +360,10 @@ class PostgresSchemaInferencer:
             general=metadata,
             vertex_config=vertex_config,
             edge_config=edge_config,
+            database_features=DatabaseFeatures(
+                db_flavor=self.db_flavor,
+                vertex_storage_names={v.name: v.name for v in vertex_config.vertices},
+            ),
             resources=[],  # Resources will be created separately
         )
 

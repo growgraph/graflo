@@ -38,29 +38,17 @@ resources:
 vertex_config:
     vertices:
     -   name: ticker
-        dbname: tickers
         fields:
         -   oftic
-        indexes:
-        -   fields:
-            -   oftic
+        identity:
+        -   oftic
     -   name: metric
-        dbname: metrics
         fields:
         -   name
         -   value
-        indexes:
-        -   fields:
-            -   name
-            -   value
-        -   type: hash
-            unique: false
-            fields:
-            -   value
-        -   type: hash
-            unique: false
-            fields:
-            -   name
+        identity:
+        -   name
+        -   value
         filters:
         -   if_then:
             -   or:
@@ -87,8 +75,28 @@ edge_config:
             -   name: metric
                 fields:
                 -   name
+database_features:
+    vertex_storage_names:
+        ticker: tickers
+        metric: metrics
+    vertex_indexes:
+        metric:
+        -   type: hash
+            unique: false
+            fields:
+            -   value
+        -   type: hash
+            unique: false
+            fields:
+            -   name
+    edge_indexes:
+    -   source: ticker
+        target: metric
+        purpose:
         indexes:
         -   fields:
+            -   _from
+            -   _to
             -   t_obs
             -   name
 

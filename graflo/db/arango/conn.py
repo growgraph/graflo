@@ -324,7 +324,11 @@ class ArangoConnection(Connection):
                 self.conn.collection(cname).truncate()
                 logger.debug(f"Truncated vertex collection '{cname}'")
         for edge in schema.edge_config.edges_list(include_aux=True):
-            cname = edge.database_name
+            cname = schema.database_features.edge_storage_name(
+                edge.edge_id,
+                source_storage=schema.vertex_config.vertex_dbname(edge.source),
+                target_storage=schema.vertex_config.vertex_dbname(edge.target),
+            )
             if cname and self.conn.has_collection(cname):
                 self.conn.collection(cname).truncate()
                 logger.debug(f"Truncated edge collection '{cname}'")
@@ -336,7 +340,7 @@ class ArangoConnection(Connection):
             schema: Schema containing collection definitions
         """
         self.define_vertex_classes(schema)
-        self.define_edge_classes(schema.edge_config.edges_list(include_aux=True))
+        self.define_edge_classes(list(schema.edge_config.edges_list(include_aux=True)))
 
     def define_vertex_classes(self, schema: Schema) -> None:
         """Define vertex collections in ArangoDB.
@@ -353,7 +357,11 @@ class ArangoConnection(Connection):
         )
         for item in schema.edge_config.edges_list():
             u, v = item.source, item.target
-            gname = item.graph_name
+            gname = schema.database_features.edge_graph_name(
+                item.edge_id,
+                source_storage=vertex_config.vertex_dbname(u),
+                target_storage=vertex_config.vertex_dbname(v),
+            )
             if not gname:
                 logger.warning(
                     f"Edge {item.source} -> {item.target} has no graph_name, skipping"
@@ -452,7 +460,9 @@ class ArangoConnection(Connection):
             )
         return ih
 
-    def define_vertex_indices(self, vertex_config: VertexConfig) -> None:
+    def define_vertex_indices(
+        self, vertex_config: VertexConfig, schema: Schema | None = None
+    ) -> None:
         """Define indices for vertex collections.
 
         Creates indices for each vertex collection based on the configuration.
@@ -471,11 +481,18 @@ class ArangoConnection(Connection):
                         fields_value = ix_dict.get("fields")
                         if isinstance(fields_value, (list, tuple)):
                             field_combinations.append(tuple(fields_value))
-            for index_obj in vertex_config.indexes(c):
+            index_list = (
+                schema.database_features.vertex_secondary_indexes(c)
+                if schema is not None
+                else []
+            )
+            for index_obj in index_list:
                 if tuple(index_obj.fields) not in field_combinations:
                     self._add_index(general_collection, index_obj)
 
-    def define_edge_indices(self, edges: list[Edge]) -> None:
+    def define_edge_indices(
+        self, edges: list[Edge], schema: Schema | None = None
+    ) -> None:
         """Define indices for edge collections.
 
         Creates indices for each edge collection based on the configuration.
@@ -484,12 +501,20 @@ class ArangoConnection(Connection):
             edges: List of edge configurations containing index definitions
         """
         for edge in edges:
-            collection_name = edge.database_name
+            if schema is None:
+                logger.warning("Schema required for edge index naming, skipping")
+                continue
+            collection_name = schema.database_features.edge_storage_name(
+                edge.edge_id,
+                source_storage=schema.vertex_config.vertex_dbname(edge.source),
+                target_storage=schema.vertex_config.vertex_dbname(edge.target),
+            )
             if not collection_name:
                 logger.warning("Edge has no database_name, skipping index creation")
                 continue
             general_collection = self.conn.collection(collection_name)
-            for index_obj in edge.indexes:
+            index_list = schema.database_features.edge_secondary_indexes(edge.edge_id)
+            for index_obj in index_list:
                 self._add_index(general_collection, index_obj)
 
     def fetch_indexes(self, db_class_name: str | None = None) -> dict[str, Any]:
@@ -564,6 +589,17 @@ class ArangoConnection(Connection):
             graph_names: Graph names to delete
             delete_all: If True, delete all non-system vertex/edge classes and graphs
         """
+
+        def _graph_name(graph_item: Any) -> str | None:
+            if not isinstance(graph_item, dict):
+                return None
+            graph_dict = cast(dict[str, Any], graph_item)
+            for key in ("name", "_key"):
+                value = graph_dict.get(key)
+                if isinstance(value, str) and value:
+                    return value
+            return None
+
         cnames: list[str] = list(vertex_types)
         gnames: list[str] = list(graph_names)
         logger.info("vertex/edge classes (non system, ArangoDB collections):")
@@ -594,22 +630,53 @@ class ArangoConnection(Connection):
             gnames = []
             if isinstance(graphs_result, list):
                 for g in graphs_result:
-                    if isinstance(g, dict):
-                        g_dict = cast(dict[str, Any], g)
-                        name_value = g_dict.get("name")
-                        if isinstance(name_value, str):
-                            gnames.append(name_value)
+                    name_value = _graph_name(g)
+                    if name_value is not None:
+                        gnames.append(name_value)
 
-        for gn in gnames:
-            if self.conn.has_graph(gn):
-                self.conn.delete_graph(gn)
+        # Delete graphs first. Retry because graph metadata can be stale after deletes.
+        for _ in range(3):
+            deleted_any = False
+            for gn in list(gnames):
+                if self.conn.has_graph(gn):
+                    self.conn.delete_graph(gn)
+                    deleted_any = True
+            if not deleted_any:
+                break
+            # Refresh remaining graph names before next pass.
+            refreshed_graphs = self.conn.graphs()
+            gnames = []
+            if isinstance(refreshed_graphs, list):
+                for g in refreshed_graphs:
+                    name_value = _graph_name(g)
+                    if name_value is not None:
+                        gnames.append(name_value)
 
         logger.info("graphs (after delete operation):")
         logger.info(self.conn.graphs())
 
-        for cn in cnames:
-            if self.conn.has_collection(cn):
-                self.conn.delete_collection(cn)
+        # Delete collections. If any collection is still attached to a graph,
+        # remove graphs again and retry once.
+        for attempt in range(2):
+            blocked = False
+            for cn in cnames:
+                if not self.conn.has_collection(cn):
+                    continue
+                try:
+                    self.conn.delete_collection(cn)
+                except Exception as e:
+                    if "ERR 1942" in str(e) and attempt == 0:
+                        blocked = True
+                        continue
+                    raise
+            if not blocked:
+                break
+            refreshed_graphs = self.conn.graphs()
+            if isinstance(refreshed_graphs, list):
+                for g in refreshed_graphs:
+                    gn = _graph_name(g)
+                    if gn is not None and self.conn.has_graph(gn):
+                        self.conn.delete_graph(gn)
 
         logger.info(
             "vertex/edge classes (after delete operation, ArangoDB collections):"

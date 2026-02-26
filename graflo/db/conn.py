@@ -146,8 +146,10 @@ class Connection(abc.ABC):
         Args:
             schema: Schema containing vertex and edge configurations
         """
-        self.define_vertex_indices(schema.vertex_config)
-        self.define_edge_indices(schema.edge_config.edges_list(include_aux=True))
+        self.define_vertex_indices(schema.vertex_config, schema=schema)
+        self.define_edge_indices(
+            schema.edge_config.edges_list(include_aux=True), schema=schema
+        )
 
     @abc.abstractmethod
     def define_schema(self, schema: Schema):
@@ -405,7 +407,9 @@ class Connection(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def define_vertex_indices(self, vertex_config: VertexConfig):
+    def define_vertex_indices(
+        self, vertex_config: VertexConfig, schema: Schema | None = None
+    ):
         """Define indices for vertex classes.
 
         Args:
@@ -414,7 +418,7 @@ class Connection(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def define_edge_indices(self, edges: list[Edge]):
+    def define_edge_indices(self, edges: list[Edge], schema: Schema | None = None):
         """Define indices for edge classes.
 
         Args:

@@ -1,14 +1,17 @@
 general:
     name: tigergraph-sanitize
+database_features:
+    db_flavor: tigergraph
+    vertex_storage_names:
+        package: Package
+        users: Users
 resources:
 -   resource_name: package
     apply:
     -   vertex: package
 vertex_config:
-    db_flavor: tigergraph
     vertices:
     -   name: package
-        dbname: Package
         fields:
         -   name: id
             type: INT
@@ -20,19 +23,16 @@ vertex_config:
             type: STRING
         -   name: name
             type: STRING
-        indexes:
-        -   fields:
-            -   id
+        identity:
+        -   id
     -   name: users
-        dbname: Users
         fields:
         -   name: id
             type: INT
         -   name: name
             type: STRING
-        indexes:
-        -   fields:
-            -   id
+        identity:
+        -   id
 edge_config:
     edges:
     -   source: package

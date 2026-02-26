@@ -71,11 +71,9 @@ class SchemaSanitizer:
             # No reserved words to check, return schema as-is
             return schema
 
-        # First pass: Sanitize vertex dbnames
+        # First pass: Sanitize physical vertex storage names
         for vertex in schema.vertex_config.vertices:
-            if vertex.dbname is None:
-                continue
-            dbname = vertex.dbname
+            dbname = schema.database_features.vertex_storage_name(vertex.name)
             sanitized_vertex_name = sanitize_attribute_name(
                 dbname, self.reserved_words, suffix=f"_{VERTEX_SUFFIX}"
             )
@@ -84,7 +82,9 @@ class SchemaSanitizer:
                     f"Sanitizing vertex name '{dbname}' -> '{sanitized_vertex_name}'"
                 )
                 self.vertex_mappings[dbname] = sanitized_vertex_name
-                vertex.dbname = sanitized_vertex_name
+                schema.database_features.vertex_storage_names[vertex.name] = (
+                    sanitized_vertex_name
+                )
 
         # Second pass: Sanitize vertex field names
         for vertex in schema.vertex_config.vertices:
@@ -103,13 +103,15 @@ class SchemaSanitizer:
                     )
                     field.name = sanitized_name
 
-            for index in vertex.indexes:
-                index.fields = [
-                    self.vertex_attribute_mappings[vertex.name].get(item, item)
-                    for item in index.fields
-                ]
+            vertex.identity = [
+                self.vertex_attribute_mappings[vertex.name].get(item, item)
+                for item in vertex.identity
+            ]
 
-        vertex_names = {vertex.dbname for vertex in schema.vertex_config.vertices}
+        vertex_names = {
+            schema.database_features.vertex_storage_name(vertex.name)
+            for vertex in schema.vertex_config.vertices
+        }
 
         for edge in schema.edge_config.edges:
             if not edge.relation:
@@ -154,7 +156,7 @@ class SchemaSanitizer:
             str, dict[str, str]
         ] = {}  # vertex_name -> {old_field: new_field}
 
-        if schema.vertex_config.db_flavor == DBType.TIGERGRAPH:
+        if schema.database_features.db_flavor == DBType.TIGERGRAPH:
             # Group edges by relation
             edges_by_relation: dict[str | None, list[Edge]] = {}
             for edge in schema.edge_config.edges:
@@ -314,8 +316,8 @@ class SchemaSanitizer:
             for field_to_remove in fields_to_remove:
                 vertex.fields.remove(field_to_remove)
 
-            # Update vertex index to match the most popular one
-            vertex.indexes[0].fields = list(most_popular_index)
+            # Update logical identity to match the most popular one.
+            vertex.identity = list(most_popular_index)
 
             logger.debug(
                 f"Normalizing {role} index for vertex '{vertex_name}' in relation '{relation}': "

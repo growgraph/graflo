@@ -426,7 +426,9 @@ class MemgraphConnection(Connection):
                 sanitized.append(clean_doc)
         return sanitized
 
-    def define_vertex_indices(self, vertex_config: VertexConfig):
+    def define_vertex_indices(
+        self, vertex_config: VertexConfig, schema: Schema | None = None
+    ):
         """Create indices for vertex labels based on configuration.
 
         Iterates through all vertices defined in the configuration and creates
@@ -448,7 +450,12 @@ class MemgraphConnection(Connection):
         assert self.conn is not None, "Connection is closed"
 
         for label in vertex_config.vertex_set:
-            for index_obj in vertex_config.indexes(label):
+            index_list = (
+                schema.database_features.vertex_secondary_indexes(label)
+                if schema is not None
+                else []
+            )
+            for index_obj in index_list:
                 for field in index_obj.fields:
                     try:
                         query = f"CREATE INDEX ON :{label}({field})"
@@ -464,7 +471,7 @@ class MemgraphConnection(Connection):
                                 f"Failed to create index on {label}.{field}: {e}"
                             )
 
-    def define_edge_indices(self, edges: list[Edge]):
+    def define_edge_indices(self, edges: list[Edge], schema: Schema | None = None):
         """Create indices for edge types.
 
         Memgraph doesn't support relationship property indices in the same way,
@@ -479,7 +486,12 @@ class MemgraphConnection(Connection):
         for edge in edges:
             if edge.relation is None:
                 continue
-            for idx in edge.indexes:
+            index_list = (
+                schema.database_features.edge_secondary_indexes(edge.edge_id)
+                if schema is not None
+                else []
+            )
+            for idx in index_list:
                 for field in idx.fields:
                     try:
                         # Create index on relationship type
