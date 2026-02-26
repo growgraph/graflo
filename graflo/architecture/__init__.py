@@ -20,6 +20,7 @@ Example:
     >>> resource = Resource(name="users", data=user_data)
 """
 
+from .database_features import DatabaseFeatures, EdgeIndexSpec
 from .edge import Edge, EdgeConfig
 from .onto import Index
 from .resource import Resource
@@ -29,8 +30,10 @@ from .vertex import FieldType, Vertex, VertexConfig
 __all__ = [
     "Edge",
     "EdgeConfig",
+    "EdgeIndexSpec",
     "FieldType",
     "Index",
+    "DatabaseFeatures",
     "Resource",
     "Schema",
     "Vertex",

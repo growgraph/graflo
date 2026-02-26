@@ -48,7 +48,10 @@ def test_vertex_name_sanitization_for_tigergraph(schema_with_reserved_words):
 
     sanitized_schema = sanitizer.sanitize(schema)
 
-    vertex_dbnames = [v.dbname for v in sanitized_schema.vertex_config.vertices]
+    vertex_dbnames = [
+        sanitized_schema.database_features.vertex_storage_name(v.name)
+        for v in sanitized_schema.vertex_config.vertices
+    ]
     assert "Package_vertex" in vertex_dbnames, (
         f"Expected 'package_vertex' in vertices after sanitization, got {vertex_dbnames}"
     )
@@ -77,6 +80,6 @@ def test_edges_sanitization_for_tigergraph(schema_with_incompatible_edges):
     }
 
     assert sanitized_schema.vertex_config.vertices[-1].fields[0].name == "id"
-    assert sanitized_schema.vertex_config.vertices[-1].indexes[0].fields[0] == "id"
+    assert sanitized_schema.vertex_config.vertices[-1].identity[0] == "id"
     assert sanitized_schema.edge_config.edges[-2].relation_dbname == "package_relation"
     assert sanitized_schema.edge_config.edges[-1].relation_dbname == "box_relation"

@@ -296,17 +296,43 @@ class NebulaConnection(Connection):
     # Index management
     # ------------------------------------------------------------------
 
-    def define_vertex_indices(self, vertex_config: VertexConfig) -> None:
+    def define_vertex_indices(
+        self, vertex_config: VertexConfig, schema: Schema | None = None
+    ) -> None:
         for vname in vertex_config.vertex_set:
             fields = vertex_config.fields(vname)
             string_fields = {f.name for f in fields if f.type == FieldType.STRING}
-            for idx in vertex_config.indexes(vname):
+            index_list = (
+                schema.database_features.vertex_secondary_indexes(vname)
+                if schema is not None
+                else []
+            )
+
+            # Nebula requires TAG indexes for LOOKUP and many property-filtered MATCH
+            # plans. Keep identity index creation implicit so schemas without
+            # explicit database_features remain queryable/clearable.
+            identity_idx = Index(fields=vertex_config.identity_fields(vname))
+            all_indexes = [identity_idx, *index_list]
+
+            seen: set[tuple[str, ...]] = set()
+            for idx in all_indexes:
+                key = tuple(str(f) for f in idx.fields)
+                if not key or key in seen:
+                    continue
+                seen.add(key)
                 self._add_tag_index(vname, idx, string_fields=string_fields)
 
-    def define_edge_indices(self, edges: list[Edge]) -> None:
+    def define_edge_indices(
+        self, edges: list[Edge], schema: Schema | None = None
+    ) -> None:
         for edge in edges:
             rel = edge.relation or f"{edge.source}_{edge.target}"
-            for idx in edge.indexes:
+            index_list = (
+                schema.database_features.edge_secondary_indexes(edge.edge_id)
+                if schema is not None
+                else []
+            )
+            for idx in index_list:
                 self._add_edge_index(rel, idx)
 
     def _add_tag_index(

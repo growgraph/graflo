@@ -51,9 +51,6 @@ resources:
         weights:
             direct:
             -   _role
-        indexes:
-        -   fields:
-            -   _role
 -   resource_name: communities
     apply:
     -   source: entity
@@ -67,24 +64,15 @@ resources:
 vertex_config:
     vertices:
     -   name: publication
-        dbname: publications
         fields:
         -   arxiv
         -   doi
         -   created
         -   data_source
-        indexes:
-        -   fields:
-            -   arxiv
-            -   doi
-        -   unique: false
-            fields:
-            -   created
-        -   unique: false
-            fields:
-            -   created
+        identity:
+        -   arxiv
+        -   doi
     -   name: entity
-        dbname: entities
         fields:
         -   linker_type
         -   ent_db_type
@@ -92,102 +80,134 @@ vertex_config:
         -   ent_type
         -   original_form
         -   description
-        indexes:
-        -   fields:
-            -   _key
+        identity:
+        -   _key
+    -   name: mention
+        fields:
+        -   text
+        identity:
+        -   _key
+    -   name: community
+        fields:
+        -   obs_date
+        -   t_window
+        -   comm_id
+        -   size
+        identity:
+        -   obs_date
+        -   t_window
+        -   comm_id
+edge_config:
+    edges:
+    -   source: entity
+        target: entity
+        aux: true
+    -   source: entity
+        target: entity
+        purpose: tmp
+        aux: true
+    -   source: entity
+        target: entity
+        purpose: redux
+        aux: true
+    -   source: entity
+        target: entity
+        purpose: convolution
+        aux: true
+    -   source: mention
+        target: entity
+    -   source: entity
+        target: community
+    -   source: community
+        target: community
+database_features:
+    vertex_storage_names:
+        publication: publications
+        entity: entities
+        mention: mentions
+        community: communities
+    vertex_indexes:
+        publication:
+        -   unique: false
+            fields:
+            -   created
+        -   unique: false
+            fields:
+            -   created
+        entity:
         -   fields:
             -   id
             -   ent_type
         -   fields:
             -   id
             -   ent_db_type
-    -   name: mention
-        dbname: mentions
-        fields:
-        -   text
-        indexes:
-        -   fields:
-            -   _key
+        mention:
         -   unique: false
             fields:
             -   text
-    -   name: community
-        dbname: communities
-        fields:
-        -   obs_date
-        -   t_window
-        -   comm_id
-        -   size
-        indexes:
-        -   fields:
-            -   obs_date
-            -   t_window
-            -   comm_id
-edge_config:
-    edges:
+    edge_indexes:
     -   source: entity
         target: entity
-        aux: true
+        purpose:
         indexes:
-        -   name: publication
-            fields:
-            -   _id
-        -   name: publication
-            fields:
-            -   _id
-            exclude_edge_endpoints: true
+        -   fields:
+            -   _from
+            -   _to
+            -   publication@_id
+        -   fields:
+            -   publication@_id
             unique: false
     -   source: entity
         target: entity
         purpose: tmp
-        aux: true
         indexes:
-        -   name: publication
-            fields:
-            -   _id
-        -   name: publication
-            fields:
-            -   _id
-            exclude_edge_endpoints: true
+        -   fields:
+            -   _from
+            -   _to
+            -   publication@_id
+        -   fields:
+            -   publication@_id
             unique: false
     -   source: entity
         target: entity
         purpose: redux
-        aux: true
         indexes:
-        -   name: publication
-            fields:
-            -   _id
-        -   name: publication
-            fields:
-            -   _id
-            exclude_edge_endpoints: true
+        -   fields:
+            -   _from
+            -   _to
+            -   publication@_id
+        -   fields:
+            -   publication@_id
             unique: false
     -   source: entity
         target: entity
         purpose: convolution
-        aux: true
         indexes:
         -   fields:
+            -   _from
+            -   _to
             -   obs_date
             -   t_window
         -   fields:
             -   obs_date
             -   t_window
-            exclude_edge_endpoints: true
             unique: false
     -   source: mention
         target: entity
+        purpose:
         indexes:
-        -   name: publication
-            fields:
-            -   _id
-        -   name: publication
-            fields:
-            -   _id
-            exclude_edge_endpoints: true
+        -   fields:
+            -   _from
+            -   _to
+            -   publication@_id
+        -   fields:
+            -   publication@_id
             unique: false
-    -   source: entity
-        target: community
-    -   source: community
-        target: community
+    -   source: mention
+        target: mention
+        purpose:
+        indexes:
+        -   fields:
+            -   _from
+            -   _to
+            -   _role

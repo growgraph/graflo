@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from uuid import uuid4
 
 from graflo.architecture.edge import Edge
 from graflo.architecture.onto import GraphContainer
 from graflo.architecture.schema import Schema
 from graflo.db import ConnectionManager
 from graflo.db import DBConfig
+from graflo.onto import DBType
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +51,8 @@ class DBWriter:
             *gc* is mutated in-place: blank-vertex keys are updated and blank
             edges are extended after the vertex round-trip.
         """
-        _ = self.schema.vertex_config
+        self.schema.vertex_config.bind_database_features(self.schema.database_features)
+        self.schema.edge_config.finish_init(self.schema.vertex_config)
         resource = self.schema.fetch_resource(resource_name)
 
         await self._push_vertices(gc, conn_conf)
@@ -72,13 +75,13 @@ class DBWriter:
                 def _sync():
                     with ConnectionManager(connection_config=conn_conf) as db:
                         if vcol in vc.blank_vertices:
-                            query = db.insert_return_batch(data, vc.vertex_dbname(vcol))
-                            cursor = db.execute(query)
-                            return vcol, list(cursor)
+                            self._assign_blank_vertex_ids(
+                                vcol=vcol, data=data, conn_conf=conn_conf
+                            )
                         db.upsert_docs_batch(
                             data,
                             vc.vertex_dbname(vcol),
-                            vc.index(vcol),
+                            vc.identity_fields(vcol),
                             update_keys="doc",
                             filter_uniques=True,
                             dry=self.dry,
@@ -95,6 +98,23 @@ class DBWriter:
             if result is not None:
                 gc.vertices[vcol] = result
 
+    def _assign_blank_vertex_ids(
+        self, vcol: str, data: list[dict], conn_conf: DBConfig
+    ) -> None:
+        """Assign deterministic in-memory IDs to blank vertices before persistence."""
+        vc = self.schema.vertex_config
+        identity_fields = vc.identity_fields(vcol)
+        default_field = "_key" if conn_conf.connection_type == DBType.ARANGO else "id"
+        preferred_field = identity_fields[0] if identity_fields else default_field
+
+        for doc in data:
+            current_value = doc.get(preferred_field)
+            if current_value is None or current_value == "":
+                generated = str(uuid4())
+                doc[preferred_field] = generated
+                if default_field != preferred_field and default_field not in doc:
+                    doc[default_field] = generated
+
     # ------------------------------------------------------------------
     # Blank-edge resolution
     # ------------------------------------------------------------------
@@ -110,9 +130,31 @@ class DBWriter:
                         continue
                     if edge_id not in gc.edges:
                         gc.edges[edge_id] = []
-                    gc.edges[edge_id].extend(
-                        (x, y, {}) for x, y in zip(gc.vertices[vfrom], gc.vertices[vto])
-                    )
+                    source_docs = gc.vertices[vfrom]
+                    target_docs = gc.vertices[vto]
+                    source_id_fields = vc.identity_fields(vfrom)
+                    target_id_fields = vc.identity_fields(vto)
+                    shared_fields = [
+                        f for f in source_id_fields if f in target_id_fields
+                    ]
+
+                    if shared_fields:
+                        target_by_key: dict[tuple, list[dict]] = {}
+                        for target_doc in target_docs:
+                            key = tuple(target_doc.get(f) for f in shared_fields)
+                            if any(item is None for item in key):
+                                continue
+                            target_by_key.setdefault(key, []).append(target_doc)
+                        for source_doc in source_docs:
+                            key = tuple(source_doc.get(f) for f in shared_fields)
+                            if any(item is None for item in key):
+                                continue
+                            for target_doc in target_by_key.get(key, []):
+                                gc.edges[edge_id].append((source_doc, target_doc, {}))
+                    else:
+                        gc.edges[edge_id].extend(
+                            (x, y, {}) for x, y in zip(source_docs, target_docs)
+                        )
 
     # ------------------------------------------------------------------
     # Extra weights
@@ -133,13 +175,13 @@ class DBWriter:
                         if weight.name not in vc.vertex_set:
                             logger.error(f"{weight.name} not a valid vertex")
                             continue
-                        index_fields = vc.index(weight.name)
+                        index_fields = vc.identity_fields(weight.name)
                         if self.dry or weight.name not in gc.vertices:
                             continue
                         weights_per_item = db.fetch_present_documents(
                             class_name=vc.vertex_dbname(weight.name),
                             batch=gc.vertices[weight.name],
-                            match_keys=index_fields.fields,
+                            match_keys=index_fields,
                             keep_keys=weight.fields,
                         )
                         for j, item in enumerate(gc.linear):
@@ -174,8 +216,12 @@ class DBWriter:
                                     source_class=vc.vertex_dbname(edge.source),
                                     target_class=vc.vertex_dbname(edge.target),
                                     relation_name=relation,
-                                    match_keys_source=vc.index(edge.source).fields,
-                                    match_keys_target=vc.index(edge.target).fields,
+                                    match_keys_source=tuple(
+                                        vc.identity_fields(edge.source)
+                                    ),
+                                    match_keys_target=tuple(
+                                        vc.identity_fields(edge.target)
+                                    ),
                                     filter_uniques=False,
                                     dry=self.dry,
                                     collection_name=edge.database_name,

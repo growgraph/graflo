@@ -19,15 +19,13 @@ vertex_config:
         -   id
         -   name
         -   age
-        indexes:
-        -   fields:
-            -   id
+        identity:
+        -   id
     -   name: department
         fields:
         -   name
-        indexes:
-        -   fields:
-            -   name
+        identity:
+        -   name
 edge_config:
     edges:
     -   source: person

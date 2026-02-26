@@ -23,22 +23,19 @@ vertex_config:
         fields:
         -   name: id
             type: INT
-        indexes:
-        -   fields:
-            -   id
+        identity:
+        -   id
     -   name: box
         fields:
         -   name: id
             type: INT
-        indexes:
-        -   fields:
-            -   id
+        identity:
+        -   id
     -   name: container
         fields:
         -   name
-        indexes:
-        -   fields:
-            -   name
+        identity:
+        -   name
 edge_config:
     edges:
     -   source: box

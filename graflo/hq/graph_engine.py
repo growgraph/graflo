@@ -167,6 +167,9 @@ class GraphEngine:
         # Ensure schema's vertex_config reflects target DB so Edge.finish_init()
         # applies DB-specific defaults (e.g. TigerGraph default relation name)
         schema.vertex_config.db_flavor = target_db_config.connection_type
+        # db_flavor assignment re-validates VertexConfig; re-bind physical storage names.
+        schema.vertex_config.bind_database_features(schema.database_features)
+        schema.edge_config.finish_init(schema.vertex_config)
 
         # Initialize database with schema definition
         # init_db() handles database/schema creation automatically

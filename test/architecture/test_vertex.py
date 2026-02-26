@@ -230,37 +230,32 @@ def test_vertex_from_dict_with_typed_fields():
     assert vertex.fields[2].type is None
 
 
-def test_vertex_indexes_work_with_field_objects():
-    """Test that indexes work correctly with Field objects."""
+def test_vertex_identity_defaults_to_fields():
+    """Test that identity defaults to all fields when not specified."""
     vertex = Vertex(
         name="user",
         fields=[
             Field(name="id", type=FieldType.INT),
             Field(name="email", type=FieldType.STRING),
         ],
-        indexes=[],  # Will create default index
     )
 
-    # Default index should be created with field names
-    assert len(vertex.indexes) == 1
-    assert vertex.indexes[0].fields == ["id", "email"]
+    assert vertex.identity == ["id", "email"]
 
     # Field objects should still be accessible
     assert len(vertex.fields) == 2
     assert vertex.fields[0].type == FieldType.INT
 
 
-def test_vertex_with_custom_indexes():
-    """Test vertex with custom indexes that reference fields."""
+def test_vertex_with_explicit_identity():
+    """Test vertex with explicit identity fields."""
     vertex = Vertex(
         name="user",
         fields=["id", "name", "email"],  # type: ignore[arg-type]
-        indexes=[  # type: ignore[arg-type]
-            {"fields": ["id", "email"]},
-        ],
+        identity=["id", "email"],
     )
 
-    # Index fields should be added to vertex fields if missing
+    assert vertex.identity == ["id", "email"]
     field_names = vertex.field_names
     assert "id" in field_names
     assert "name" in field_names
@@ -286,7 +281,7 @@ def test_invalid_field_type_in_dict():
 def test_init(vertex_pub):
     """Original test: Test Vertex.from_dict() with existing fixture."""
     vc = Vertex.from_dict(vertex_pub)
-    assert len(vc.indexes) == 3
+    assert vc.identity == ["arxiv", "doi", "created", "data_source"]
     # Fields are now Field objects, so check count
     assert len(vc.fields) == 4
     # Verify they're Field objects

@@ -3,6 +3,7 @@ import logging
 from graflo.architecture.actor import EdgeActor, VertexActor
 from graflo.architecture.resource import Resource
 from graflo.architecture.schema import Schema
+from graflo.architecture.vertex import Vertex, VertexConfig
 
 logger = logging.getLogger(__name__)
 
@@ -223,3 +224,47 @@ def test_remove_disconnected_vertices_nested_resource(vertex_config_kg, edge_con
     assert len(sch.resources) == 2
     resource_names = {r.name for r in sch.resources}
     assert "r_all_disconnected" not in resource_names
+
+
+def test_schema_database_features_from_explicit_section():
+    vertex_config = VertexConfig(
+        vertices=[
+            Vertex(
+                name="v",
+                fields=["id", "name"],  # type: ignore[arg-type]
+                identity=["id"],
+            )
+        ]
+    )
+    edge_config = {
+        "edges": [
+            {
+                "source": "v",
+                "target": "v",
+            }
+        ]
+    }
+    schema = Schema.from_dict(
+        {
+            "general": {"name": "g"},
+            "vertex_config": vertex_config.to_dict(),
+            "edge_config": edge_config,
+            "database_features": {
+                "vertex_indexes": {"v": [{"fields": ["name"]}]},
+                "edge_indexes": [
+                    {
+                        "source": "v",
+                        "target": "v",
+                        "purpose": None,
+                        "indexes": [{"fields": ["relation"]}],
+                    }
+                ],
+            },
+            "resources": [],
+        }
+    )
+    assert schema.database_features.vertex_secondary_indexes("v")[0].fields == ["name"]
+    edge = next(iter(schema.edge_config.edges_list(include_aux=True)))
+    assert schema.database_features.edge_secondary_indexes(edge.edge_id)[0].fields == [
+        "relation",
+    ]

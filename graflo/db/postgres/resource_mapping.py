@@ -119,13 +119,9 @@ class PostgresResourceMapper:
         source_vertex_obj = vertex_config[source_table]
         target_vertex_obj = vertex_config[target_table]
 
-        # Get the primary key field(s) from the first index (primary key)
-        source_pk_fields = (
-            source_vertex_obj.indexes[0].fields if source_vertex_obj.indexes else []
-        )
-        target_pk_fields = (
-            target_vertex_obj.indexes[0].fields if target_vertex_obj.indexes else []
-        )
+        # Logical identity replaces implicit primary-index semantics.
+        source_pk_fields = list(source_vertex_obj.identity)
+        target_pk_fields = list(target_vertex_obj.identity)
 
         # Use heuristics to infer PK field names from column names
         # This handles cases like "bla_user" -> "user" vertex -> use "id" or matched field

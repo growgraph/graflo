@@ -37,33 +37,21 @@ resources:
 vertex_config:
     vertices:
     -   name: ticker
-        dbname: tickers
         fields:
         -   cusip
         -   cname
         -   oftic
-        indexes:
-        -   fields:
-            -   cusip
-            -   cname
-            -   oftic
+        identity:
+        -   cusip
+        -   cname
+        -   oftic
     -   name: feature
-        dbname: features
         fields:
         -   name
         -   value
-        indexes:
-        -   fields:
-            -   name
-            -   value
-        -   type: hash
-            unique: false
-            fields:
-            -   value
-        -   type: hash
-            unique: false
-            fields:
-            -   name
+        identity:
+        -   name
+        -   value
         filters:
         -   or:
             -   if_then:
@@ -94,7 +82,27 @@ edge_config:
             -   name: feature
                 fields:
                 -   name
+database_features:
+    vertex_storage_names:
+        ticker: tickers
+        feature: features
+    vertex_indexes:
+        feature:
+        -   type: hash
+            unique: false
+            fields:
+            -   value
+        -   type: hash
+            unique: false
+            fields:
+            -   name
+    edge_indexes:
+    -   source: ticker
+        target: feature
+        purpose:
         indexes:
         -   fields:
+            -   _from
+            -   _to
             -   t_obs
             -   name

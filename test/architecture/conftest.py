@@ -175,16 +175,9 @@ def vertex_config_kg():
         -   doi
         -   created
         -   data_source
-        indexes:
-        -   fields:
-            -   arxiv
-            -   doi
-        -   unique: false
-            fields:
-            -   created
-        -   unique: false
-            fields:
-            -   created
+        identity:
+        -   arxiv
+        -   doi
     -   name: entity
         dbname: entities
         fields:
@@ -194,18 +187,15 @@ def vertex_config_kg():
         -   ent_type
         -   original_form
         -   description
-        indexes:
-        -   fields:
-            -   id
-            -   ent_type
+        identity:
+        -   id
+        -   ent_type
     -   name: mention
         dbname: mentions
         fields:
         -   text
-        indexes:
-        -   unique: false
-            fields:
-            -   text
+        identity:
+        -   _key
     """
     )
     return vc
@@ -275,19 +265,8 @@ def schema_vc_openalex():
         -   _key
         -   display_name
         -   updated_date
-        indexes:
-        -   fields:
-            -   _key
-        -   unique: false
-            type: fulltext
-            fields:
-            -   display_name
-        -   unique: false
-            fields:
-            -   updated_date
-        -   unique: false
-            fields:
-            -   created_date
+        identity:
+        -   _key
     -   name: concept
         dbname: concepts
         fields:
@@ -298,9 +277,8 @@ def schema_vc_openalex():
         -   mag
         -   created_date
         -   updated_date
-        indexes:
-        -   fields:
-            -   _key
+        identity:
+        -   _key
     -   name: institution
         dbname: institutions
         fields:
@@ -314,16 +292,8 @@ def schema_vc_openalex():
         -   mag
         -   created_date
         -   updated_date
-        indexes:
-        -   fields:
-            -   _key
-        -   unique: false
-            type: fulltext
-            fields:
-            -   display_name
-        -   unique: false
-            fields:
-            -   type
+        identity:
+        -   _key
     -   name: source
         dbname: sources
         fields:
@@ -334,11 +304,8 @@ def schema_vc_openalex():
         -   created_date
         -   updated_date
         -   country_code
-        indexes:
-        -   fields:
-            -   _key
-        -   fields:
-            -   issn_l
+        identity:
+        -   _key
     -   name: work
         dbname: works
         fields:
@@ -349,11 +316,8 @@ def schema_vc_openalex():
         -   updated_date
         -   publication_date
         -   publication_year
-        indexes:
-        -   fields:
-            -   _key
-        -   fields:
-            -   doi
+        identity:
+        -   _key
     """)
     return VertexConfig.from_dict(tc)
 
@@ -614,12 +578,8 @@ def vertex_config_kg_mention():
         dbname: mentions
         fields:
         -   text
-        indexes:
-        -   fields:
-            -   _key
-        -   unique: false
-            fields:
-            -   text
+        identity:
+        -   _key
     """)
     return VertexConfig.from_dict(tc)
 

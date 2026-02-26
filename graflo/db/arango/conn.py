@@ -452,7 +452,9 @@ class ArangoConnection(Connection):
             )
         return ih
 
-    def define_vertex_indices(self, vertex_config: VertexConfig) -> None:
+    def define_vertex_indices(
+        self, vertex_config: VertexConfig, schema: Schema | None = None
+    ) -> None:
         """Define indices for vertex collections.
 
         Creates indices for each vertex collection based on the configuration.
@@ -471,11 +473,18 @@ class ArangoConnection(Connection):
                         fields_value = ix_dict.get("fields")
                         if isinstance(fields_value, (list, tuple)):
                             field_combinations.append(tuple(fields_value))
-            for index_obj in vertex_config.indexes(c):
+            index_list = (
+                schema.database_features.vertex_secondary_indexes(c)
+                if schema is not None
+                else []
+            )
+            for index_obj in index_list:
                 if tuple(index_obj.fields) not in field_combinations:
                     self._add_index(general_collection, index_obj)
 
-    def define_edge_indices(self, edges: list[Edge]) -> None:
+    def define_edge_indices(
+        self, edges: list[Edge], schema: Schema | None = None
+    ) -> None:
         """Define indices for edge collections.
 
         Creates indices for each edge collection based on the configuration.
@@ -489,7 +498,12 @@ class ArangoConnection(Connection):
                 logger.warning("Edge has no database_name, skipping index creation")
                 continue
             general_collection = self.conn.collection(collection_name)
-            for index_obj in edge.indexes:
+            index_list = (
+                schema.database_features.edge_secondary_indexes(edge.edge_id)
+                if schema is not None
+                else []
+            )
+            for index_obj in index_list:
                 self._add_index(general_collection, index_obj)
 
     def fetch_indexes(self, db_class_name: str | None = None) -> dict[str, Any]:

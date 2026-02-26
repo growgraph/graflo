@@ -4,7 +4,7 @@ This guide explains how to define a GraFlo **Schema** — the declarative, datab
 
 ## Principles
 
-1. **Schema is the single source of truth** for the LPG: vertex types, edge types, indexes, and the mapping from raw data to vertices/edges.
+1. **Schema is the single source of truth** for the LPG: vertex types, edge types, identities, DB features, and the mapping from raw data to vertices/edges.
 2. **All schema configs are Pydantic models** (`ConfigBaseModel`). You can load from YAML or dicts; validation runs at load time.
 3. **Resources define transformation pipelines**: each `Resource` has a unique `resource_name` and an `apply` (or `pipeline`) list of **actor steps**. `AbstractDataSource` instances (files, APIs, SQL, SPARQL endpoints) bind to Resources by name via the `DataSourceRegistry`.
 4. **Order of definition is flexible** in YAML: `general`, `vertex_config`, `edge_config`, `resources`, and `transforms` can appear in any order. References (e.g. vertex names in edges or in `apply`) must refer to names defined in the same schema.
@@ -16,8 +16,9 @@ A Schema has five top-level parts:
 | Section          | Required | Description |
 |------------------|----------|-------------|
 | `general`        | Yes      | Schema name and optional version. |
-| `vertex_config`  | Yes      | Vertex types and their fields, indexes, filters. |
-| `edge_config`    | Yes      | Edge types (source, target, weights, indexes). |
+| `vertex_config`  | Yes      | Vertex types, fields, logical identity, filters. |
+| `edge_config`    | Yes      | Edge types (source, target, weights). |
+| `database_features` | No    | Physical DB features (secondary indexes for vertices/edges). |
 | `resources`      | No       | List of resources: data pipelines (apply/pipeline) that map data to vertices and edges. |
 | `transforms`     | No       | Named transform functions used by resources. |
 
@@ -36,7 +37,7 @@ general:
 
 ## `vertex_config`
 
-Defines **vertex types**: their fields, indexes, and optional filters. Each vertex type has a unique `name` and is referenced by that name in edges and in resources.
+Defines **vertex types**: their fields, logical identity, and optional filters. Each vertex type has a unique `name` and is referenced by that name in edges and in resources.
 
 ### Structure
 
@@ -45,12 +46,10 @@ vertex_config:
   vertices:
     - name: person
       fields: [id, name, age]
-      indexes:
-        - fields: [id]
+      identity: [id]
     - name: department
       fields: [name]
-      indexes:
-        - fields: [name]
+      identity: [name]
   blank_vertices: []       # optional: vertex names allowed without explicit data
   force_types: {}           # optional: vertex -> list of field type names
   db_flavor: ARANGO         # optional: ARANGO | NEO4J | TIGERGRAPH
@@ -63,7 +62,7 @@ vertex_config:
   - A **string** (field name, type inferred or omitted).
   - A **dict** with `name` and optional `type`: `{"name": "created_at", "type": "DATETIME"}`.
   - For TigerGraph or typed backends, use types: `INT`, `UINT`, `FLOAT`, `DOUBLE`, `BOOL`, `STRING`, `DATETIME`.
-- **`indexes`**: List of index definitions. If empty, a single primary index on all fields is created. Each index can specify `fields` and optionally `unique: true/false`.
+- **`identity`**: Logical primary identity fields used for matching/upserts and edge linking.
 - **`filters`**: Optional list of filter expressions for querying this vertex.
 - **`dbname`**: Optional. Database-specific name (e.g. collection/table). Defaults to `name` if not set.
 
@@ -75,7 +74,7 @@ vertex_config:
 
 ## `edge_config`
 
-Defines **edge types**: source and target vertex types, relation name, weights, and indexes.
+Defines **edge types**: source and target vertex types, relation name, and weights.
 
 ### Structure
 
@@ -97,13 +96,29 @@ edge_config:
 - **`weights`**: Optional. Weight/attribute configuration:
   - **`direct`**: List of field names or typed fields to attach directly to the edge (e.g. `["date", "weight"]` or `[{"name": "date", "type": "DATETIME"}]`).
   - **`vertices`**: List of vertex-based weight definitions.
-- **`indexes`** (or **`index`**): Optional. List of index definitions for the edge.
 - **`purpose`**: Optional. Extra label for utility edges between the same vertex types.
 - **`type`**: Optional. `DIRECT` (default) or `INDIRECT`.
 - **`aux`**: Optional. If true, edge is created in DB but not used by graflo ingestion.
 - **`by`**: Optional. For `INDIRECT` edges: vertex type name used to define the edge.
 
 ## `resources` (focus)
+
+## `database_features`
+
+Use this optional section for physical DB features that are not part of logical graph identity.
+
+```yaml
+database_features:
+  vertex_indexes:
+    person:
+      - fields: [name]
+  edge_indexes:
+    - source: person
+      target: department
+      purpose: null
+      indexes:
+        - fields: [relation]
+```
 
 Resources define **how** each data stream is turned into vertices and edges. Each resource has a unique **`resource_name`** (used by Patterns / DataSourceRegistry to bind files, APIs, or SQL to this pipeline) and an **`apply`** (or **`pipeline`**) list of **actor steps**. Steps are executed in order; the pipeline can branch with **descend** steps.
 

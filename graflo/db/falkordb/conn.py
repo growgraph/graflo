@@ -319,7 +319,9 @@ class FalkordbConnection(Connection):
             )
             raise
 
-    def define_vertex_indices(self, vertex_config: VertexConfig):
+    def define_vertex_indices(
+        self, vertex_config: VertexConfig, schema: Schema | None = None
+    ):
         """Define indices for vertex labels.
 
         Creates indices for each vertex label based on the configuration.
@@ -329,10 +331,15 @@ class FalkordbConnection(Connection):
             vertex_config: Vertex configuration containing index definitions
         """
         for c in vertex_config.vertex_set:
-            for index_obj in vertex_config.indexes(c):
+            index_list = (
+                schema.database_features.vertex_secondary_indexes(c)
+                if schema is not None
+                else []
+            )
+            for index_obj in index_list:
                 self._add_index(c, index_obj)
 
-    def define_edge_indices(self, edges: list[Edge]):
+    def define_edge_indices(self, edges: list[Edge], schema: Schema | None = None):
         """Define indices for relationship types.
 
         Creates indices for each relationship type based on the configuration.
@@ -342,7 +349,12 @@ class FalkordbConnection(Connection):
             edges: List of edge configurations containing index definitions
         """
         for edge in edges:
-            for index_obj in edge.indexes:
+            index_list = (
+                schema.database_features.edge_secondary_indexes(edge.edge_id)
+                if schema is not None
+                else []
+            )
+            for index_obj in index_list:
                 if edge.relation is not None:
                     self._add_index(edge.relation, index_obj, is_vertex_index=False)
 

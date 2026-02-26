@@ -16,29 +16,33 @@ vertex_config:
     db_flavor: neo4j
     vertices:
     -   name: author
-        dbname: Author
         fields:
         -   id
         -   full_name
         -   hindex
-        indexes:
-        -   fields:
-            -   id
-            -   full_name
+        identity:
+        -   id
+        -   full_name
     -   name: researchField
-        dbname: ResearchField
         fields:
         -   id
         -   name
         -   level
-        indexes:
-        -   fields:
-            -   id
+        identity:
+        -   id
 edge_config:
     edges:
     -   source: author
         target: researchField
         relation: belongsTo
+database_features:
+    vertex_storage_names:
+        author: Author
+        researchField: ResearchField
+    edge_indexes:
+    -   source: author
+        target: researchField
+        purpose:
         indexes:
         -   fields:
             -   t_obs

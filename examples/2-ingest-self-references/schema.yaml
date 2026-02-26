@@ -27,14 +27,16 @@ vertex_config:
         -   doi
         -   title
         -   created_date
-        indexes:
-        -   fields:
-            -   _key
+        identity:
+        -   _key
+edge_config:
+    edges: []
+database_features:
+    vertex_indexes:
+        work:
         -   unique: false
             fields:
             -   doi
-edge_config:
-    edges: []
 transforms:
     keep_suffix_id:
         foo: split_keep_part

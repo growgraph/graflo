@@ -43,27 +43,21 @@ resources:
 vertex_config:
     vertices:
     -   name: author
-        dbname: authors
         fields:
         -   _key
-        indexes:
-        -   fields:
-            -   _key
+        identity:
+        -   _key
     -   name: institution
-        dbname: institutions
         fields:
         -   _key
-        indexes:
-        -   fields:
-            -   _key
+        identity:
+        -   _key
     -   name: work
-        dbname: works
         fields:
         -   _key
         -   doi
-        indexes:
-        -   fields:
-            -   _key
+        identity:
+        -   _key
 transforms:
     keep_suffix_id:
         foo: split_keep_part
@@ -75,4 +69,9 @@ transforms:
         -   id
         output:
         -   _key
+database_features:
+    vertex_storage_names:
+        author: authors
+        institution: institutions
+        work: works
 edge_config: []
