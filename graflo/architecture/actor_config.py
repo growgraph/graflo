@@ -51,6 +51,20 @@ def normalize_actor_step(data: dict[str, Any]) -> dict[str, Any]:
         inner = data.pop("transform")
         if isinstance(inner, dict):
             data.update(inner)
+        # Legacy: convert switch -> input + dress
+        if "switch" in data:
+            switch = data.pop("switch")
+            if isinstance(switch, dict) and switch:
+                key = next(iter(switch))
+                vals = switch[key]
+                if isinstance(vals, (list, tuple)) and len(vals) >= 2:
+                    data.setdefault("input", [key])
+                    data.setdefault("dress", {"key": vals[0], "value": vals[1]})
+        # Legacy: convert list-style dress -> dict-style
+        if "dress" in data and isinstance(data["dress"], (list, tuple)):
+            vals = data["dress"]
+            if len(vals) >= 2:
+                data["dress"] = {"key": vals[0], "value": vals[1]}
         data["type"] = "transform"
         return data
 
@@ -111,9 +125,23 @@ def normalize_actor_step(data: dict[str, Any]) -> dict[str, Any]:
         ]
         return data
 
-    # Minimal transform step: only "name" or only "map"
-    if "type" not in data and ("name" in data or "map" in data):
+    # Minimal transform step
+    if "type" not in data and (
+        "name" in data or "map" in data or "switch" in data or "dress" in data
+    ):
         data = dict(data)
+        if "switch" in data:
+            switch = data.pop("switch")
+            if isinstance(switch, dict) and switch:
+                key = next(iter(switch))
+                vals = switch[key]
+                if isinstance(vals, (list, tuple)) and len(vals) >= 2:
+                    data.setdefault("input", [key])
+                    data.setdefault("dress", {"key": vals[0], "value": vals[1]})
+        if "dress" in data and isinstance(data["dress"], (list, tuple)):
+            vals = data["dress"]
+            if len(vals) >= 2:
+                data["dress"] = {"key": vals[0], "value": vals[1]}
         data["type"] = "transform"
         return data
 
@@ -187,27 +215,8 @@ class TransformActorConfig(ConfigBaseModel):
     def set_type_and_flatten(cls, data: Any) -> Any:
         if not isinstance(data, dict):
             return data
-        data = dict(data)
-        if "transform" in data and "type" not in data:
-            inner = data.pop("transform")
-            if isinstance(inner, dict):
-                data.update(inner)
-            data["type"] = "transform"
-        # Legacy: convert switch → input + dress
-        if "switch" in data:
-            switch = data.pop("switch")
-            if isinstance(switch, dict) and switch:
-                key = next(iter(switch))
-                vals = switch[key]
-                if isinstance(vals, (list, tuple)) and len(vals) >= 2:
-                    data.setdefault("input", [key])
-                    data.setdefault("dress", {"key": vals[0], "value": vals[1]})
-        # Legacy: convert list-style dress → dict-style
-        if "dress" in data and isinstance(data["dress"], (list, tuple)):
-            vals = data["dress"]
-            if len(vals) >= 2:
-                data["dress"] = {"key": vals[0], "value": vals[1]}
-        return data
+        normalized = normalize_actor_step(cast(dict[str, Any], data))
+        return normalized if normalized.get("type") == "transform" else data
 
 
 class EdgeActorConfig(EdgeBase):
@@ -230,18 +239,8 @@ class EdgeActorConfig(EdgeBase):
     def set_type_and_flatten(cls, data: Any) -> Any:
         if not isinstance(data, dict):
             return data
-        data = dict(data)
-        for key in ("edge", "create_edge"):
-            if key in data and "type" not in data:
-                inner = data.pop(key)
-                if isinstance(inner, dict):
-                    data.update(inner)
-                data["type"] = "edge"
-                break
-        if "source" in data or "from" in data:
-            if "target" in data or "to" in data and "type" not in data:
-                data["type"] = "edge"
-        return data
+        normalized = normalize_actor_step(cast(dict[str, Any], data))
+        return normalized if normalized.get("type") == "edge" else data
 
 
 class DescendActorConfig(ConfigBaseModel):
@@ -265,27 +264,8 @@ class DescendActorConfig(ConfigBaseModel):
     def set_type_and_normalize(cls, data: Any) -> Any:
         if not isinstance(data, dict):
             return data
-        data = dict(data)
-        if (
-            "into" in data
-            or "key" in data
-            or "any_key" in data
-            or "descend" in data
-            or "apply" in data
-            or "pipeline" in data
-        ) and "type" not in data:
-            data["type"] = "descend"
-        if "apply" in data and "pipeline" not in data:
-            data["pipeline"] = data["apply"]
-        if "descend" in data:
-            inner = data.pop("descend")
-            if isinstance(inner, dict):
-                data.update(inner)
-        if "pipeline" in data:
-            data["pipeline"] = [
-                normalize_actor_step(s) for s in _steps_list(data["pipeline"])
-            ]
-        return data
+        normalized = normalize_actor_step(cast(dict[str, Any], data))
+        return normalized if normalized.get("type") == "descend" else data
 
 
 class VertexRouterActorConfig(ConfigBaseModel):

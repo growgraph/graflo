@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Callable, Type
@@ -80,6 +81,16 @@ class ActorConstants:
     DRESSING_TRANSFORMED_VALUE_KEY: str = "__value__"
 
 
+@dataclass(slots=True)
+class ActorInitContext:
+    """Typed initialization state shared across actor tree."""
+
+    vertex_config: VertexConfig
+    edge_config: EdgeConfig
+    transforms: dict[str, ProtoTransform]
+    edge_greedy: bool = True
+
+
 class Actor(ABC):
     """Abstract base class for all actors in the system.
 
@@ -114,19 +125,19 @@ class Actor(ABC):
         """
         return {}
 
-    def finish_init(self, **kwargs: Any) -> None:
+    def finish_init(self, init_ctx: ActorInitContext) -> None:
         """Complete initialization of the actor.
 
         Args:
-            **kwargs: Additional initialization parameters
+            init_ctx: Shared typed initialization context
         """
         pass
 
-    def init_transforms(self, **kwargs: Any) -> None:
+    def init_transforms(self, init_ctx: ActorInitContext) -> None:
         """Initialize transformations for the actor.
 
         Args:
-            **kwargs: Transformation parameters
+            init_ctx: Shared typed initialization context
         """
         pass
 
@@ -236,13 +247,13 @@ class VertexActor(Actor):
         """
         return self._fetch_items_from_dict(("name", "keep_fields"))
 
-    def finish_init(self, **kwargs: Any) -> None:
+    def finish_init(self, init_ctx: ActorInitContext) -> None:
         """Complete initialization of the vertex actor.
 
         Args:
-            **kwargs: Additional initialization parameters
+            init_ctx: Shared typed initialization context
         """
-        self.vertex_config: VertexConfig = kwargs.pop("vertex_config")
+        self.vertex_config = init_ctx.vertex_config
 
     def _filter_and_aggregate_vertex_docs(
         self, docs: list[dict[str, Any]], doc: dict[str, Any]
@@ -359,7 +370,7 @@ class VertexActor(Actor):
         Returns:
             ActionContext: Updated action context
         """
-        doc: dict[str, Any] = kwargs.pop("doc", {})
+        doc: dict[str, Any] = kwargs.get("doc", {})
 
         vertex_keys_list = self.vertex_config.fields_names(self.name)
         # Convert to tuple of strings for type compatibility
@@ -432,16 +443,17 @@ class EdgeActor(Actor):
             if k in self.edge.__dict__
         }
 
-    def finish_init(self, **kwargs: Any) -> None:
+    def finish_init(self, init_ctx: ActorInitContext) -> None:
         """Complete initialization of the edge actor.
 
         Args:
-            **kwargs: Additional initialization parameters
+            init_ctx: Shared typed initialization context
         """
-        self.vertex_config: VertexConfig = kwargs.pop("vertex_config")
-        edge_config: EdgeConfig | None = kwargs.pop("edge_config", None)
-        if edge_config is not None and self.vertex_config is not None:
-            edge_config.update_edges(self.edge, vertex_config=self.vertex_config)
+        self.vertex_config = init_ctx.vertex_config
+        if self.vertex_config is not None:
+            init_ctx.edge_config.update_edges(
+                self.edge, vertex_config=self.vertex_config
+            )
 
     def __call__(
         self, ctx: ActionContext, lindex: LocationIndex, *nargs: Any, **kwargs: Any
@@ -529,13 +541,13 @@ class TransformActor(Actor):
         """Create a TransformActor from a TransformActorConfig."""
         return cls(config)
 
-    def init_transforms(self, **kwargs: Any) -> None:
+    def init_transforms(self, init_ctx: ActorInitContext) -> None:
         """Initialize available transforms.
 
         Args:
-            **kwargs: Transform initialization parameters
+            init_ctx: Shared typed initialization context
         """
-        self.transforms = kwargs.pop("transforms", {})
+        self.transforms = init_ctx.transforms
         try:
             pt = ProtoTransform(
                 **{
@@ -553,13 +565,13 @@ class TransformActor(Actor):
             logger.debug("Failed to initialize ProtoTransform: %s", e)
             pass
 
-    def finish_init(self, **kwargs: Any) -> None:
+    def finish_init(self, init_ctx: ActorInitContext) -> None:
         """Complete initialization of the transform actor.
 
         Args:
-            **kwargs: Additional initialization parameters
+            init_ctx: Shared typed initialization context
         """
-        self.transforms: dict[str, ProtoTransform] = kwargs.pop("transforms", {})
+        self.transforms = init_ctx.transforms
 
         if self.name is not None:
             pt = self.transforms.get(self.name, None)
@@ -748,14 +760,14 @@ class DescendActor(Actor):
         wrappers = [ActorWrapper.from_config(c) for c in config.pipeline]
         return cls(key=config.into, any_key=config.any_key, _descendants=wrappers)
 
-    def init_transforms(self, **kwargs: Any) -> None:
+    def init_transforms(self, init_ctx: ActorInitContext) -> None:
         """Initialize transforms for all descendants.
 
         Args:
-            **kwargs: Transform initialization parameters
+            init_ctx: Shared typed initialization context
         """
         for an in self.descendants:
-            an.init_transforms(**kwargs)
+            an.init_transforms(init_ctx)
 
     def _collect_transform_actors_with_target(
         self, actor_wrappers: list[ActorWrapper]
@@ -780,18 +792,16 @@ class DescendActor(Actor):
                 )
         return result
 
-    def finish_init(self, **kwargs: Any) -> None:
+    def finish_init(self, init_ctx: ActorInitContext) -> None:
         """Complete initialization of the descend actor and its descendants.
 
         Args:
-            **kwargs: Additional initialization parameters
+            init_ctx: Shared typed initialization context
         """
-        self.vertex_config: VertexConfig = kwargs.get(
-            "vertex_config", VertexConfig(vertices=[])
-        )
+        self.vertex_config = init_ctx.vertex_config
 
         for an in self.descendants:
-            an.finish_init(**kwargs)
+            an.finish_init(init_ctx)
 
         # Count TransformActors with target_vertex at current level and below
         # Use the helper method which safely traverses the tree after initialization
@@ -826,7 +836,7 @@ class DescendActor(Actor):
                     new_descendant = ActorWrapper.from_config(
                         VertexActorConfig(vertex=v.name)
                     )
-                    new_descendant.finish_init(**kwargs)
+                    new_descendant.finish_init(init_ctx)
                     self.add_descendant(new_descendant)
 
         logger.debug(
@@ -992,10 +1002,10 @@ class VertexRouterActor(Actor):
         items["vertex_types"] = sorted(self._vertex_actors.keys())
         return items
 
-    def finish_init(self, **kwargs: Any) -> None:
+    def finish_init(self, init_ctx: ActorInitContext) -> None:
         """Store initialization state for on-demand wrapper creation."""
-        self.vertex_config = kwargs.get("vertex_config", VertexConfig(vertices=[]))
-        self._init_kwargs = dict(kwargs)
+        self.vertex_config = init_ctx.vertex_config
+        self._init_kwargs = {"init_ctx": init_ctx}
         self._vertex_actors.clear()
 
     def _get_or_create_wrapper(self, vertex_type: str) -> ActorWrapper | None:
@@ -1119,31 +1129,43 @@ class ActorWrapper:
         self.edge_config = w.edge_config
         self.edge_greedy = w.edge_greedy
 
-    def init_transforms(self, **kwargs: Any) -> None:
+    def init_transforms(
+        self, init_ctx: ActorInitContext | None = None, **kwargs: Any
+    ) -> None:
         """Initialize transforms for the wrapped actor.
 
         Args:
-            **kwargs: Transform initialization parameters
+            init_ctx: Shared typed initialization context
         """
-        self.actor.init_transforms(**kwargs)
+        if init_ctx is None:
+            init_ctx = ActorInitContext(
+                vertex_config=kwargs.get("vertex_config", VertexConfig(vertices=[])),
+                edge_config=kwargs.get("edge_config", EdgeConfig()),
+                transforms=kwargs.get("transforms", {}),
+                edge_greedy=kwargs.get("edge_greedy", self.edge_greedy),
+            )
+        self.actor.init_transforms(init_ctx)
 
-    def finish_init(self, **kwargs: Any) -> None:
+    def finish_init(
+        self, init_ctx: ActorInitContext | None = None, **kwargs: Any
+    ) -> None:
         """Complete initialization of the wrapped actor.
 
         Args:
-            **kwargs: Additional initialization parameters
+            init_ctx: Shared typed initialization context
         """
-        kwargs["transforms"]: dict[str, ProtoTransform] = kwargs.get("transforms", {})
-        self.actor.init_transforms(**kwargs)
-
-        self.vertex_config = kwargs.get("vertex_config", VertexConfig(vertices=[]))
-        kwargs["vertex_config"] = self.vertex_config
-        self.edge_config = kwargs.get("edge_config", EdgeConfig())
-        kwargs["edge_config"] = self.edge_config
-        # Set edge_greedy if provided (only used at top-level ActorWrapper)
-        if "edge_greedy" in kwargs:
-            self.edge_greedy = kwargs.pop("edge_greedy")
-        self.actor.finish_init(**kwargs)
+        if init_ctx is None:
+            init_ctx = ActorInitContext(
+                vertex_config=kwargs.get("vertex_config", VertexConfig(vertices=[])),
+                edge_config=kwargs.get("edge_config", EdgeConfig()),
+                transforms=kwargs.get("transforms", {}),
+                edge_greedy=kwargs.get("edge_greedy", self.edge_greedy),
+            )
+        self.actor.init_transforms(init_ctx)
+        self.vertex_config = init_ctx.vertex_config
+        self.edge_config = init_ctx.edge_config
+        self.edge_greedy = init_ctx.edge_greedy
+        self.actor.finish_init(init_ctx)
 
     def count(self):
         """Get count of items processed by the wrapped actor.

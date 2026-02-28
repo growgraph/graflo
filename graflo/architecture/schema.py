@@ -137,7 +137,7 @@ class Schema(ConfigBaseModel):
     @model_validator(mode="after")
     def _init_schema(self) -> Schema:
         """Set transform names, finish edge/resource init, and build resource name map."""
-        self.finish_init()
+        self._rebuild_runtime_state()
         return self
 
     def finish_init(self) -> None:
@@ -153,6 +153,10 @@ class Schema(ConfigBaseModel):
         Raises:
             ValueError: If duplicate resource names are found.
         """
+        self._rebuild_runtime_state()
+
+    def _rebuild_runtime_state(self) -> None:
+        """Rebuild fully initialized runtime state for schema and resources."""
         for name, t in self.transforms.items():
             t.name = name
 

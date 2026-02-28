@@ -35,7 +35,7 @@ from typing import Any, Callable
 
 from pydantic import AliasChoices, Field as PydanticField, PrivateAttr, model_validator
 
-from graflo.architecture.actor import ActorWrapper
+from graflo.architecture.actor import ActorInitContext, ActorWrapper
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.edge import Edge, EdgeConfig
 from graflo.architecture.onto import (
@@ -147,12 +147,8 @@ class Resource(ConfigBaseModel):
                     k,
                     v,
                 )
-        # Placeholders until finish_init is called by Schema
-        object.__setattr__(
-            self,
-            "_vertex_config",
-            VertexConfig(vertices=[]),
-        )
+        # Placeholders until schema binds real configs.
+        object.__setattr__(self, "_vertex_config", VertexConfig(vertices=[]))
         object.__setattr__(self, "_edge_config", EdgeConfig())
         return self
 
@@ -192,16 +188,31 @@ class Resource(ConfigBaseModel):
             edge_config: Configuration for edges
             transforms: Dictionary of available transforms
         """
+        self._rebuild_runtime(
+            vertex_config=vertex_config,
+            edge_config=edge_config,
+            transforms=transforms,
+        )
+
+    def _rebuild_runtime(
+        self,
+        *,
+        vertex_config: VertexConfig,
+        edge_config: EdgeConfig,
+        transforms: dict[str, ProtoTransform],
+    ) -> None:
+        """Rebuild runtime actor initialization state from typed context."""
         object.__setattr__(self, "_vertex_config", vertex_config)
         object.__setattr__(self, "_edge_config", edge_config)
 
         logger.debug("total resource actor count : %s", self.root.count())
-        self.root.finish_init(
+        init_ctx = ActorInitContext(
             vertex_config=vertex_config,
-            transforms=transforms,
             edge_config=edge_config,
+            transforms=transforms,
             edge_greedy=self.edge_greedy,
         )
+        self.root.finish_init(init_ctx=init_ctx)
 
         logger.debug("total resource actor count (after finit): %s", self.root.count())
 
