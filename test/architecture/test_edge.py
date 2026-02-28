@@ -3,6 +3,7 @@ import logging
 from graflo.architecture.edge import Edge, EdgeConfig
 from graflo.architecture.onto import Index, Weight
 from graflo.architecture.vertex import VertexConfig
+from graflo.onto import DBType
 
 logger = logging.getLogger(__name__)
 
@@ -61,3 +62,43 @@ def test_edge_key(vertex_config_kg, edge_config_kg):
     e = EdgeConfig.from_dict(edge_config_kg)
     e.finish_init(vertex_config)
     assert True
+
+
+def test_edge_finish_init_is_idempotent(edge_with_vertex_indexes, vertex_config_kg):
+    vertex_config = VertexConfig.from_dict(vertex_config_kg)
+    e = Edge.from_dict(edge_with_vertex_indexes)
+    e.finish_init(vertex_config)
+    first_indexes = [list(index.fields) for index in e.indexes]
+
+    e.finish_init(vertex_config)
+    second_indexes = [list(index.fields) for index in e.indexes]
+
+    assert second_indexes == first_indexes
+
+
+def test_edge_finish_init_tigergraph_relation_artifacts_are_not_duplicated(
+    vertex_config_kg,
+):
+    vertex_config = VertexConfig.from_dict(vertex_config_kg)
+    e = Edge.from_dict(
+        {
+            "source": "entity",
+            "target": "entity",
+            "relation_from_key": True,
+        }
+    )
+
+    e.finish_init(vertex_config, db_flavor=DBType.TIGERGRAPH)
+    first_direct_names = list(e.weights.direct_names if e.weights is not None else [])
+    first_relation_index_count = sum(
+        1 for index in e.indexes if e.relation_field in index.fields
+    )
+
+    e.finish_init(vertex_config, db_flavor=DBType.TIGERGRAPH)
+    second_direct_names = list(e.weights.direct_names if e.weights is not None else [])
+    second_relation_index_count = sum(
+        1 for index in e.indexes if e.relation_field in index.fields
+    )
+
+    assert second_direct_names == first_direct_names
+    assert second_relation_index_count == first_relation_index_count

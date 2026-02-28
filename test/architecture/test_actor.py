@@ -14,6 +14,7 @@ from graflo.architecture.actor_config import (
     normalize_actor_step,
     validate_actor_step,
 )
+from graflo.architecture.transform import ProtoTransform
 from graflo.architecture.vertex import VertexConfig
 
 logger = logging.getLogger(__name__)
@@ -224,6 +225,68 @@ def test_explicit_format_pipeline_transform_create_edge():
     assert config.to_vertex == "users"
 
 
+def test_normalize_actor_step_nested_descend_apply_create_edge_shape():
+    step = {
+        "descend": {
+            "key": "deps",
+            "apply": {"create_edge": {"from": "package", "to": "package"}},
+        }
+    }
+    normalized = normalize_actor_step(step)
+    assert normalized["type"] == "descend"
+    assert normalized["pipeline"][0]["type"] == "edge"
+    assert normalized["pipeline"][0]["from"] == "package"
+    assert normalized["pipeline"][0]["to"] == "package"
+
+    config = validate_actor_step(normalized)
+    assert config.type == "descend"
+    assert config.pipeline[0].type == "edge"  # type: ignore[arg-type]
+
+
+def test_transform_tuple_output_maps_to_vertex_index_fields_in_order():
+    vc = VertexConfig.from_dict(
+        {
+            "vertices": [
+                {
+                    "name": "pair",
+                    "fields": ["left", "right"],
+                    "indexes": [{"fields": ["left", "right"]}],
+                }
+            ]
+        }
+    )
+    pipeline = [{"map": {"unused": "unused"}}, {"vertex": "pair"}]
+    anw = ActorWrapper(pipeline=pipeline)
+    anw.finish_init(vertex_config=vc, transforms={})
+
+    transform_wrappers = anw.find_descendants(actor_type=TransformActor)
+    assert len(transform_wrappers) == 1
+    transform_wrappers[0].actor.t = lambda doc: ("L", "R")
+
+    ctx = ActionContext()
+    ctx = anw(ctx, doc={"unused": "value"})
+    assert ctx.acc_vertex["pair"][LocationIndex(path=(0,))] == [
+        VertexRep(vertex={"left": "L", "right": "R"}, ctx={"unused": "value"}),
+    ]
+
+
+def test_transform_named_proto_binding_executes_with_registered_transform():
+    anw = ActorWrapper(
+        pipeline=[{"name": "to_int", "input": ["value"], "output": ["v"]}]
+    )
+    transforms = {
+        "to_int": ProtoTransform(name="to_int", module="builtins", foo="int", params={})
+    }
+    anw.finish_init(vertex_config=VertexConfig(vertices=[]), transforms=transforms)
+
+    transform_wrappers = anw.find_descendants(actor_type=TransformActor)
+    assert len(transform_wrappers) == 1
+
+    ctx = ActionContext()
+    ctx = anw(ctx, doc={"value": "7"})
+    assert ctx.buffer_transforms[LocationIndex(path=(0,))] == [{"v": 7}]
+
+
 def test_multi_edges_from_row(resource_ticker, vc_ticker, ec_ticker, sample_ticker):
     ctx = ActionContext()
     anw = ActorWrapper(**resource_ticker)
@@ -251,3 +314,17 @@ def test_multi_edges_from_row_filtered(
     acc = anw.normalize_ctx(ctx)
 
     assert len(acc[("ticker", "feature", None)]) == 2
+
+
+def test_edge_greedy_edges_are_emitted_only_during_normalize_ctx(
+    resource_ticker, vc_ticker, ec_ticker, sample_ticker
+):
+    ctx = ActionContext()
+    anw = ActorWrapper(**resource_ticker)
+    anw.finish_init(vertex_config=vc_ticker, transforms={}, edge_config=ec_ticker)
+    ctx = anw(ctx, doc=sample_ticker[0])
+
+    assert all(not isinstance(k, tuple) for k in ctx.acc_global.keys())
+
+    acc = anw.normalize_ctx(ctx)
+    assert len(acc[("ticker", "feature", None)]) == 3

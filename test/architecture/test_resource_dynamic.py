@@ -348,9 +348,9 @@ class TestEdgeResourceAutoJoin:
         type_fields = {a.type_field for a in router_actors}
         assert type_fields == {"s__class_name", "t__class_name"}
 
-        # Each router should have all 3 vertex types registered
+        # Routers lazily create wrappers on first use.
         for ra in router_actors:
-            assert set(ra._vertex_actors.keys()) == {"server", "database", "network"}
+            assert set(ra._vertex_actors.keys()) == set()
 
     def test_vertex_router_extract_sub_doc_strips_prefix(self):
         """VertexRouterActor._extract_sub_doc strips prefix from field keys."""
@@ -434,3 +434,33 @@ class TestEdgeResourceAutoJoin:
         db_docs = result["database"]
         assert len(db_docs) >= 1
         assert any(d.get("id") == "2" for d in db_docs)
+
+    def test_vertex_router_registers_wrappers_lazily(self):
+        """VertexRouterActor creates only wrappers used by routed documents."""
+        from graflo.architecture.actor import VertexRouterActor
+
+        schema = self._build_schema()
+        resource = schema.fetch_resource("relations")
+        router_actors = [
+            a
+            for a in resource.root.collect_actors()
+            if isinstance(a, VertexRouterActor)
+        ]
+        assert len(router_actors) == 2
+        assert all(not a._vertex_actors for a in router_actors)
+
+        resource(
+            {
+                "parent": "1",
+                "child": "2",
+                "type_display": "runs_on",
+                "s__id": "1",
+                "s__class_name": "server",
+                "s__description": "Web Server",
+                "t__id": "2",
+                "t__class_name": "database",
+                "t__description": "PostgreSQL",
+            }
+        )
+        assert set(router_actors[0]._vertex_actors.keys()) == {"server"}
+        assert set(router_actors[1]._vertex_actors.keys()) == {"database"}

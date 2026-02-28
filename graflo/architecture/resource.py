@@ -28,6 +28,7 @@ Example:
 
 from __future__ import annotations
 
+import builtins
 import logging
 from collections import defaultdict
 from typing import Any, Callable
@@ -46,6 +47,35 @@ from graflo.architecture.transform import ProtoTransform
 from graflo.architecture.vertex import VertexConfig
 
 logger = logging.getLogger(__name__)
+
+_SAFE_TYPE_CASTERS: dict[str, Callable[..., Any]] = {
+    "str": str,
+    "int": int,
+    "float": float,
+    "bool": bool,
+    "bytes": bytes,
+    "list": list,
+    "dict": dict,
+    "tuple": tuple,
+    "set": set,
+}
+
+
+def _resolve_type_caster(name: str) -> Callable[..., Any] | None:
+    """Resolve a type caster by name from a strict allowlist."""
+    if not isinstance(name, str):
+        return None
+    candidate = _SAFE_TYPE_CASTERS.get(name)
+    if candidate is not None:
+        return candidate
+    # Support "builtins.int" style entries without evaluating expressions.
+    if "." in name:
+        module_name, attr_name = name.split(".", 1)
+        if module_name == "builtins":
+            builtin_attr = getattr(builtins, attr_name, None)
+            if callable(builtin_attr) and attr_name in _SAFE_TYPE_CASTERS:
+                return _SAFE_TYPE_CASTERS[attr_name]
+    return None
 
 
 class Resource(ConfigBaseModel):
@@ -103,19 +133,19 @@ class Resource(ConfigBaseModel):
 
     @model_validator(mode="after")
     def _build_root_and_types(self) -> Resource:
-        """Build root ActorWrapper from pipeline and evaluate type expressions."""
+        """Build root ActorWrapper and resolve safe cast functions."""
         object.__setattr__(self, "_root", ActorWrapper(*self.pipeline))
         object.__setattr__(self, "_types", {})
         for k, v in self.types.items():
-            try:
-                self._types[k] = eval(v)
-            except Exception as ex:
+            caster = _resolve_type_caster(v)
+            if caster is not None:
+                self._types[k] = caster
+            else:
                 logger.error(
-                    "For resource %s for field %s failed to cast type %s : %s",
+                    "For resource %s for field %s failed to resolve cast type %s",
                     self.name,
                     k,
                     v,
-                    ex,
                 )
         # Placeholders until finish_init is called by Schema
         object.__setattr__(

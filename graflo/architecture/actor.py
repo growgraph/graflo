@@ -441,7 +441,6 @@ class EdgeActor(Actor):
         self.vertex_config: VertexConfig = kwargs.pop("vertex_config")
         edge_config: EdgeConfig | None = kwargs.pop("edge_config", None)
         if edge_config is not None and self.vertex_config is not None:
-            self.edge.finish_init(vertex_config=self.vertex_config)
             edge_config.update_edges(self.edge, vertex_config=self.vertex_config)
 
     def __call__(
@@ -565,20 +564,33 @@ class TransformActor(Actor):
         if self.name is not None:
             pt = self.transforms.get(self.name, None)
             if pt is not None:
-                self.t._foo = pt._foo
-                self.t.module = pt.module
-                self.t.foo = pt.foo
+                next_params = self.t.params
+                next_input = self.t.input
+                next_output = self.t.output
+
                 if pt.params and not self.t.params:
-                    self.t.params = pt.params
+                    next_params = pt.params
                     if (
                         pt.input
                         and not self.t.input
                         and pt.output
                         and not self.t.output
                     ):
-                        self.t.input = pt.input
-                        self.t.output = pt.output
-                        self.t._refresh_derived()
+                        next_input = pt.input
+                        next_output = pt.output
+
+                # Rebuild a new Transform instance rather than mutating private attrs.
+                self.t = Transform(
+                    fields=self.t.fields,
+                    map=self.t.map,
+                    dress=self.t.dress,
+                    name=self.t.name,
+                    module=pt.module,
+                    foo=pt.foo,
+                    params=next_params,
+                    input=next_input,
+                    output=next_output,
+                )
 
     def _extract_doc(self, nargs: tuple[Any, ...], **kwargs: Any) -> dict[str, Any]:
         """Extract document from arguments.
@@ -687,6 +699,7 @@ class DescendActor(Actor):
         self._descendants: list[ActorWrapper] = (
             list(_descendants) if _descendants else []
         )
+        self._descendants_sorted = True
         self._descendants.sort(key=lambda x: _NodeTypePriority[type(x.actor)])
 
     def fetch_important_items(self):
@@ -707,8 +720,7 @@ class DescendActor(Actor):
             d: Actor wrapper to add
         """
         self._descendants.append(d)
-        # Keep descendants sorted
-        self._descendants.sort(key=lambda x: _NodeTypePriority[type(x.actor)])
+        self._descendants_sorted = False
 
     def count(self):
         """Get total count of items processed by all descendants.
@@ -725,6 +737,9 @@ class DescendActor(Actor):
         Returns:
             list[ActorWrapper]: Sorted list of descendant actors
         """
+        if not self._descendants_sorted:
+            self._descendants.sort(key=lambda x: _NodeTypePriority[type(x.actor)])
+            self._descendants_sorted = True
         return self._descendants
 
     @classmethod
@@ -959,6 +974,7 @@ class VertexRouterActor(Actor):
         self.prefix = config.prefix
         self.field_map = config.field_map
         self._vertex_actors: dict[str, ActorWrapper] = {}
+        self._init_kwargs: dict[str, Any] = {}
         self.vertex_config: VertexConfig = VertexConfig(vertices=[])
 
     @classmethod
@@ -977,21 +993,27 @@ class VertexRouterActor(Actor):
         return items
 
     def finish_init(self, **kwargs: Any) -> None:
-        """Build the internal vertex-type -> ActorWrapper mapping.
-
-        One wrapper is created for every vertex type known to *vertex_config*,
-        so that any dynamically-typed document can be routed at runtime.
-        """
+        """Store initialization state for on-demand wrapper creation."""
         self.vertex_config = kwargs.get("vertex_config", VertexConfig(vertices=[]))
-        for vertex in self.vertex_config.vertex_list:
-            wrapper = ActorWrapper.from_config(VertexActorConfig(vertex=vertex.name))
-            wrapper.finish_init(**kwargs)
-            self._vertex_actors[vertex.name] = wrapper
-            logger.debug(
-                "VertexRouterActor: registered VertexActor(%s) for type_field=%s",
-                vertex.name,
-                self.type_field,
-            )
+        self._init_kwargs = dict(kwargs)
+        self._vertex_actors.clear()
+
+    def _get_or_create_wrapper(self, vertex_type: str) -> ActorWrapper | None:
+        if vertex_type not in self.vertex_config.vertex_set:
+            return None
+        wrapper = self._vertex_actors.get(vertex_type)
+        if wrapper is not None:
+            return wrapper
+
+        wrapper = ActorWrapper.from_config(VertexActorConfig(vertex=vertex_type))
+        wrapper.finish_init(**self._init_kwargs)
+        self._vertex_actors[vertex_type] = wrapper
+        logger.debug(
+            "VertexRouterActor: lazily registered VertexActor(%s) for type_field=%s",
+            vertex_type,
+            self.type_field,
+        )
+        return wrapper
 
     def count(self) -> int:
         """Total actors managed by this router (self + all wrapped vertex actors)."""
@@ -1040,7 +1062,7 @@ class VertexRouterActor(Actor):
             )
             return ctx
 
-        wrapper = self._vertex_actors.get(vtype)
+        wrapper = self._get_or_create_wrapper(vtype)
         if wrapper is None:
             logger.debug(
                 "VertexRouterActor: vertex type '%s' (from field '%s') "

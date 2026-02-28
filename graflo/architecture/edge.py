@@ -369,18 +369,22 @@ class Edge(EdgeBase):
         """
         index_fields = []
 
-        # "@" is reserved : quick hack - do not reinit the index twice
-        if any("@" in f for f in index.fields):
-            return index
         if index.name is None:
             index_fields += index.fields
         else:
             # add index over a vertex of index.name
-            if index.fields:
-                fields = index.fields
+            vertex_prefix = f"{index.name}@"
+            raw_fields = list(index.fields)
+            if not index.exclude_edge_endpoints and db_flavor == DBType.ARANGO:
+                raw_fields = [f for f in raw_fields if f not in {"_from", "_to"}]
+            already_mapped = bool(raw_fields) and all(
+                f.startswith(vertex_prefix) for f in raw_fields
+            )
+            if already_mapped:
+                index_fields += raw_fields
             else:
-                fields = vc.index(index.name).fields
-            index_fields += [f"{index.name}@{x}" for x in fields]
+                fields = raw_fields if raw_fields else vc.index(index.name).fields
+                index_fields += [f"{index.name}@{x}" for x in fields]
 
         if not index.exclude_edge_endpoints and db_flavor == DBType.ARANGO:
             if all([item not in index_fields for item in ["_from", "_to"]]):
