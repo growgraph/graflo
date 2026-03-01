@@ -335,6 +335,25 @@ class VertexRep(ConfigBaseModel):
     ctx: dict
 
 
+class TransformPayload(ConfigBaseModel):
+    """Typed transform output shared between extraction and assembly phases."""
+
+    named: dict[str, Any] = Field(default_factory=dict)
+    positional: tuple[Any, ...] = Field(default_factory=tuple)
+
+    @classmethod
+    def from_result(cls, result: Any) -> TransformPayload:
+        if isinstance(result, dict):
+            return cls(named=dict(result))
+        if isinstance(result, tuple):
+            return cls(positional=tuple(result))
+        return cls(positional=(result,))
+
+    def context_doc(self) -> dict[str, Any]:
+        """Named values available for weight and relation extraction."""
+        return dict(self.named)
+
+
 class LocationIndex(ConfigBaseModel):
     """Immutable location index for nested graph traversal."""
 
@@ -397,8 +416,12 @@ def _default_dict_list() -> defaultdict[GraphEntity, list]:
     return defaultdict(list)
 
 
-def _default_dict_transforms() -> defaultdict[LocationIndex, list[dict]]:
+def _default_dict_transforms() -> defaultdict[LocationIndex, list[Any]]:
     return defaultdict(list)
+
+
+def _default_edge_requests() -> list[tuple[Any, LocationIndex]]:
+    return []
 
 
 class ActionContext(ConfigBaseModel):
@@ -408,7 +431,8 @@ class ActionContext(ConfigBaseModel):
         acc_vertex: Local accumulation of vertices (defaultdict[str, defaultdict[LocationIndex, list]])
         acc_global: Global accumulation of graph entities (defaultdict[GraphEntity, list])
         buffer_vertex: Buffer for vertex data (defaultdict[GraphEntity, list])
-        buffer_transforms: Buffer for transforms data (defaultdict[LocationIndex, list[dict]])
+        buffer_transforms: Buffer for transform payloads (defaultdict[LocationIndex, list])
+        edge_requests: Explicit edge assembly requests collected during extraction
     """
 
     model_config = ConfigDict(kw_only=True)  # type: ignore[assignment]
@@ -419,3 +443,4 @@ class ActionContext(ConfigBaseModel):
     acc_global: Any = Field(default_factory=dd_factory)
     buffer_vertex: Any = Field(default_factory=_default_dict_list)
     buffer_transforms: Any = Field(default_factory=_default_dict_transforms)
+    edge_requests: Any = Field(default_factory=_default_edge_requests)

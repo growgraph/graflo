@@ -427,7 +427,7 @@ class SchemaSanitizer:
                         f"for vertex '{vertex_name}': {mappings}"
                     )
 
-                target_vertex = transform_actor.vertex
+                target_vertex = transform_actor.target_vertex
 
                 if isinstance(target_vertex, str):
                     # TransformActor has explicit target_vertex

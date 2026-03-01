@@ -2,7 +2,7 @@
 
 These models define the structure of YAML configuration files for the
 actor-based graph transformation system. They provide validation,
-type safety, and explicit format support (pipeline, transform/map/to_vertex,
+type safety, and explicit format support (pipeline, transform/map/target_vertex,
 create_edge/edge with from/to).
 
 These replace the implicit type inference in ActorWrapper.__init__()
@@ -33,9 +33,9 @@ def normalize_actor_step(data: dict[str, Any]) -> dict[str, Any]:
 
     Supports explicit format:
     - {"vertex": "user"} -> {"type": "vertex", "vertex": "user"}
-    - {"transform": {"map": {...}, "to_vertex": "x"}} -> {"type": "transform", "map": {...}, "to_vertex": "x"}
+    - {"transform": {"map": {...}, "target_vertex": "x"}} -> {"type": "transform", "map": {...}, "target_vertex": "x"}
     - {"edge": {"from": "a", "to": "b"}} or {"create_edge": {...}} -> {"type": "edge", "from": "a", "to": "b"}
-    - {"descend": {"into": "k", "pipeline": [...]}} or {"apply": [...]} / {"pipeline": [...]}
+    - {"descend": {"key": "k", "pipeline": [...]}} or {"apply": [...]} / {"pipeline": [...]}
     """
     if not isinstance(data, dict):
         return data
@@ -171,7 +171,7 @@ class VertexActorConfig(ConfigBaseModel):
 class TransformActorConfig(ConfigBaseModel):
     """Configuration for a TransformActor.
 
-    Explicit format: transform with map and to_vertex (target vertex for output).
+    Explicit format: transform with map and target_vertex (output target vertex).
     """
 
     type: Literal["transform"] = Field(
@@ -180,9 +180,8 @@ class TransformActorConfig(ConfigBaseModel):
     map: dict[str, str] | None = Field(
         default=None, description="Field mapping: output_key -> input_key"
     )
-    to_vertex: str | None = Field(
+    target_vertex: str | None = Field(
         default=None,
-        alias="target_vertex",
         description="Target vertex to send transformed output to",
     )
     name: str | None = Field(default=None, description="Named transform function")
@@ -244,14 +243,12 @@ class EdgeActorConfig(EdgeBase):
 
 
 class DescendActorConfig(ConfigBaseModel):
-    """Configuration for a DescendActor. Uses 'pipeline' (alias 'apply') and optional 'into' (alias 'key')."""
+    """Configuration for a DescendActor. Uses 'pipeline' (alias 'apply') and optional 'key'."""
 
     type: Literal["descend"] = Field(
         default="descend", description="Actor type discriminator"
     )
-    into: str | None = Field(
-        default=None, alias="key", description="Key to descend into"
-    )
+    key: str | None = Field(default=None, description="Key to descend into")
     any_key: bool = Field(default=False, description="Process all keys")
     pipeline: list["ActorConfig"] = Field(
         default_factory=list,
@@ -334,7 +331,7 @@ _STEP_STRIP_KEYS = frozenset(
     {
         "vertex_config",
         "edge_config",
-        "edge_greedy",
+        "infer_edges",
         "transforms",
         "resource_name",
     }
@@ -372,7 +369,7 @@ def parse_root_config(
 
     Returns:
         Validated ActorConfig. For pipeline input, returns a DescendActorConfig
-        with into=None and pipeline=[...].
+        with key=None and pipeline=[...].
     """
     pipeline: list[dict[str, Any]] | None = None
     single: dict[str, Any] | None = None
@@ -400,7 +397,7 @@ def parse_root_config(
         return DescendActorConfig.model_validate(
             {
                 "type": "descend",
-                "into": None,
+                "key": None,
                 "any_key": False,
                 "pipeline": configs,
             }

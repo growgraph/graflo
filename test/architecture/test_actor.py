@@ -89,12 +89,13 @@ def test_edge_between_levels(
     ec = EdgeConfig()
     anw.finish_init(vertex_config=schema_vc_openalex, transforms={}, edge_config=ec)
     ctx = anw(ctx, doc=sample_openalex)
+    acc = anw.assemble(ctx)
     lindexes = list(ctx.acc_vertex["work"])
 
     assert len(lindexes) == 6
     assert len([li for li in lindexes if len(li) == 1]) == 1
     assert len([li for li in lindexes if len(li) > 1]) == 5
-    assert len(ctx.acc_global[("work", "work", None)]) == 5
+    assert len(acc[("work", "work", None)]) == 5
 
 
 def test_relation_from_key(resource_deb, data_deb, schema_vc_deb):
@@ -102,13 +103,14 @@ def test_relation_from_key(resource_deb, data_deb, schema_vc_deb):
     anw.finish_init(vertex_config=schema_vc_deb, transforms={})
     ctx = ActionContext()
     ctx = anw(ctx, doc=data_deb)
+    acc = anw.assemble(ctx)
     relevant_keys = [
         (u, v, r)
-        for u, v, r in ctx.acc_global.keys()
+        for u, v, r in (k for k in acc.keys() if isinstance(k, tuple))
         if v == "package" and u == "package"
     ]
     assert len(relevant_keys) == 4
-    assert {k: len(ctx.acc_global[k]) for k in relevant_keys} == {
+    assert {k: len(acc[k]) for k in relevant_keys} == {
         ("package", "package", "depends"): 29,
         ("package", "package", "pre_depends"): 3,
         ("package", "package", "suggests"): 2,
@@ -121,7 +123,8 @@ def test_relation_exclude_target(resource_deb, data_deb, schema_vc_deb):
     anw.finish_init(vertex_config=schema_vc_deb, transforms={})
     ctx = ActionContext()
     ctx = anw(ctx, doc=data_deb)
-    assert len(ctx.acc_global[("maintainer", "package", None)]) == 3
+    acc = anw.assemble(ctx)
+    assert len(acc[("maintainer", "package", None)]) == 3
 
 
 def test_resource_deb_compact(resource_deb_compact, data_deb, schema_vc_deb):
@@ -129,13 +132,14 @@ def test_resource_deb_compact(resource_deb_compact, data_deb, schema_vc_deb):
     anw.finish_init(vertex_config=schema_vc_deb, transforms={})
     ctx = ActionContext()
     ctx = anw(ctx, doc=data_deb)
+    acc = anw.assemble(ctx)
     relevant_keys = [
         (u, v, r)
-        for u, v, r in ctx.acc_global.keys()
+        for u, v, r in (k for k in acc.keys() if isinstance(k, tuple))
         if v == "package" and u == "package"
     ]
     assert len(relevant_keys) == 4
-    assert {k: len(ctx.acc_global[k]) for k in relevant_keys} == {
+    assert {k: len(acc[k]) for k in relevant_keys} == {
         ("package", "package", "depends"): 29,
         ("package", "package", "pre_depends"): 3,
         ("package", "package", "suggests"): 2,
@@ -184,25 +188,27 @@ def test_find_descendants_transform_by_target_vertex(
     """find_descendants returns TransformActors whose target_vertex is in the given set."""
     anw = ActorWrapper(*resource_collision)
     anw.finish_init(vertex_config=vertex_config_collision, transforms={})
-    by_vertex = anw.find_descendants(actor_type=TransformActor, vertex={"person"})
+    by_vertex = anw.find_descendants(
+        actor_type=TransformActor, target_vertex={"person"}
+    )
     assert len(by_vertex) == 1
     assert (
         isinstance(by_vertex[0].actor, TransformActor)
-        and by_vertex[0].actor.vertex == "person"
+        and by_vertex[0].actor.target_vertex == "person"
     )
     by_vertex_empty = anw.find_descendants(
-        actor_type=TransformActor, vertex={"nonexistent"}
+        actor_type=TransformActor, target_vertex={"nonexistent"}
     )
     assert len(by_vertex_empty) == 0
 
 
 def test_explicit_format_pipeline_transform_create_edge():
-    """New explicit format: pipeline with transform (map, to_vertex) and create_edge (from, to)."""
+    """New explicit format: pipeline with transform(map,target_vertex)+create_edge."""
 
     vc = VertexConfig.from_dict({"vertices": [{"name": "users", "fields": ["id"]}]})
     pipeline = [
-        {"transform": {"map": {"follower_id": "id"}, "to_vertex": "users"}},
-        {"transform": {"map": {"followed_id": "id"}, "to_vertex": "users"}},
+        {"transform": {"map": {"follower_id": "id"}, "target_vertex": "users"}},
+        {"transform": {"map": {"followed_id": "id"}, "target_vertex": "users"}},
         {"create_edge": {"from": "users", "to": "users"}},
     ]
     anw = ActorWrapper(pipeline=pipeline)
@@ -217,12 +223,12 @@ def test_explicit_format_pipeline_transform_create_edge():
     edge_count = sum(1 for d in anw.actor.descendants if isinstance(d.actor, EdgeActor))
     assert transform_count >= 2 and edge_count >= 1
     # Explicit format parses via Pydantic config
-    step = {"transform": {"map": {"x": "y"}, "to_vertex": "users"}}
+    step = {"transform": {"map": {"x": "y"}, "target_vertex": "users"}}
     config = validate_actor_step(normalize_actor_step(step))
     assert config.type == "transform"
     assert isinstance(config, TransformActorConfig)
     assert config.map == {"x": "y"}
-    assert config.to_vertex == "users"
+    assert config.target_vertex == "users"
 
 
 def test_normalize_actor_step_nested_descend_apply_create_edge_shape():
@@ -284,7 +290,9 @@ def test_transform_named_proto_binding_executes_with_registered_transform():
 
     ctx = ActionContext()
     ctx = anw(ctx, doc={"value": "7"})
-    assert ctx.buffer_transforms[LocationIndex(path=(0,))] == [{"v": 7}]
+    payload = ctx.buffer_transforms[LocationIndex(path=(0,))][0]
+    assert payload.named == {"v": 7}
+    assert payload.positional == ()
 
 
 def test_multi_edges_from_row(resource_ticker, vc_ticker, ec_ticker, sample_ticker):
@@ -293,7 +301,7 @@ def test_multi_edges_from_row(resource_ticker, vc_ticker, ec_ticker, sample_tick
     anw.finish_init(vertex_config=vc_ticker, transforms={}, edge_config=ec_ticker)
     ctx = anw(ctx, doc=sample_ticker[0])
 
-    acc = anw.normalize_ctx(ctx)
+    acc = anw.assemble(ctx)
 
     assert len(acc[("ticker", "feature", None)]) == 3
     assert (
@@ -311,12 +319,12 @@ def test_multi_edges_from_row_filtered(
     )
     ctx = anw(ctx, doc=sample_ticker[0])
 
-    acc = anw.normalize_ctx(ctx)
+    acc = anw.assemble(ctx)
 
     assert len(acc[("ticker", "feature", None)]) == 2
 
 
-def test_edge_greedy_edges_are_emitted_only_during_normalize_ctx(
+def test_infer_edges_are_emitted_only_during_assemble(
     resource_ticker, vc_ticker, ec_ticker, sample_ticker
 ):
     ctx = ActionContext()
@@ -326,5 +334,57 @@ def test_edge_greedy_edges_are_emitted_only_during_normalize_ctx(
 
     assert all(not isinstance(k, tuple) for k in ctx.acc_global.keys())
 
-    acc = anw.normalize_ctx(ctx)
+    acc = anw.assemble(ctx)
     assert len(acc[("ticker", "feature", None)]) == 3
+
+
+def test_transform_payload_consumption_avoids_cross_vertex_self_edge():
+    doc = {
+        "author_id": "309238221625",
+        "FullName": "Guillaume Lemaître",
+        "HIndex": "10",
+        "research_sector": "32057259",
+    }
+    vc = VertexConfig.from_dict(
+        {
+            "vertices": [
+                {
+                    "name": "author",
+                    "fields": ["id", "full_name", "hindex"],
+                    "identity": ["id"],
+                },
+                {
+                    "name": "researchField",
+                    "fields": ["id", "name", "level"],
+                    "identity": ["id"],
+                },
+            ]
+        }
+    )
+    ec = EdgeConfig.from_dict(
+        {
+            "edges": [
+                {
+                    "source": "author",
+                    "target": "researchField",
+                    "relation": "belongsTo",
+                }
+            ]
+        }
+    )
+    pipeline = [
+        {"vertex": "author"},
+        {"vertex": "researchField"},
+        {"map": {"author_id": "id", "FullName": "full_name", "HIndex": "hindex"}},
+        {"target_vertex": "researchField", "map": {"research_sector": "id"}},
+    ]
+    anw = ActorWrapper(pipeline=pipeline)
+    anw.finish_init(vertex_config=vc, edge_config=ec, transforms={})
+
+    ctx = ActionContext()
+    ctx = anw(ctx, doc=doc)
+    acc = anw.assemble(ctx)
+
+    assert acc[("author", "researchField", "belongsTo")] == [
+        ({"id": "309238221625"}, {"id": "32057259"}, {})
+    ]

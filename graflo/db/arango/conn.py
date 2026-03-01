@@ -1013,7 +1013,6 @@ class ArangoConnection(Connection):
         cursor = self.execute(q)
         return get_data_from_cursor(cursor)
 
-    # TODO test
     def fetch_edges(
         self,
         from_type: str,

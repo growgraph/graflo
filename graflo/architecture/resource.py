@@ -118,7 +118,7 @@ class Resource(ConfigBaseModel):
         default_factory=dict,
         description='Field name to Python type expression for casting (e.g. {"amount": "float"}).',
     )
-    edge_greedy: bool = PydanticField(
+    infer_edges: bool = PydanticField(
         default=True,
         description=(
             "If True, infer edges from current vertex population. "
@@ -210,7 +210,7 @@ class Resource(ConfigBaseModel):
             vertex_config=vertex_config,
             edge_config=edge_config,
             transforms=transforms,
-            edge_greedy=self.edge_greedy,
+            infer_edges=self.infer_edges,
         )
         self.root.finish_init(init_ctx=init_ctx)
 
@@ -230,7 +230,7 @@ class Resource(ConfigBaseModel):
         """
         ctx = ActionContext()
         ctx = self.root(ctx, doc=doc)
-        acc = self.root.normalize_ctx(ctx)
+        acc = self.root.assemble(ctx)
         return acc
 
     def count(self) -> int:

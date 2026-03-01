@@ -22,7 +22,8 @@ def test_act_openalex(resource_openalex_authors, vc_openalex, sample_openalex_au
     except ImportError:
         # graphviz/pygraphviz not available, skip visualization
         logger.debug("graphviz not available, skipping tree visualization")
-    edge = ctx.acc_global[("author", "institution", None)][0]
+    acc = anw.assemble(ctx)
+    edge = acc[("author", "institution", None)][0]
     assert edge[-1] == {
         "updated_date": "2023-06-08",
         "created_date": "2023-06-08",
@@ -34,9 +35,8 @@ def test_kg_mention(resource_kg_menton_triple, vertex_config_kg_mention, mention
     anw = ActorWrapper(*resource_kg_menton_triple)
     anw.finish_init(vertex_config=vertex_config_kg_mention, transforms={})
     ctx = anw(ctx, doc=[mention_data])
-    roles = set(
-        item[-1]["_role"] for item in ctx.acc_global[("mention", "mention", None)]
-    )
+    acc = anw.assemble(ctx)
+    roles = set(item[-1]["_role"] for item in acc[("mention", "mention", None)])
     assert roles == {"relation", "target", "source"}
 
 

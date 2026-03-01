@@ -41,7 +41,6 @@ from pydantic import (
     model_validator,
 )
 
-from graflo.architecture.actor import EdgeActor, TransformActor, VertexActor
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.database_features import DatabaseFeatures
 from graflo.architecture.edge import EdgeConfig
@@ -229,17 +228,7 @@ class Schema(ConfigBaseModel):
         self.vertex_config.remove_vertices(disconnected)
 
         def _mentions_disconnected(wrapper) -> bool:
-            actor = wrapper.actor
-            if isinstance(actor, VertexActor):
-                return actor.name in disconnected
-            if isinstance(actor, TransformActor):
-                return actor.vertex is not None and actor.vertex in disconnected
-            if isinstance(actor, EdgeActor):
-                return (
-                    actor.edge.source in disconnected
-                    or actor.edge.target in disconnected
-                )
-            return False
+            return bool(wrapper.actor.references_vertices() & disconnected)
 
         to_drop: list[Resource] = []
         for resource in self.resources:
@@ -248,7 +237,7 @@ class Schema(ConfigBaseModel):
                 to_drop.append(resource)
                 continue
             root.remove_descendants_if(_mentions_disconnected)
-            if not any(isinstance(a, VertexActor) for a in root.collect_actors()):
+            if not any(a.references_vertices() for a in root.collect_actors()):
                 to_drop.append(resource)
 
         for r in to_drop:
