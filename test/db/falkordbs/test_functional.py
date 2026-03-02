@@ -643,7 +643,9 @@ class TestSchemaEvolution:
             )
 
             with pytest.raises(Exception):
-                db.aggregate("Result", AggregationType.AVERAGE, aggregated_field="score")
+                db.aggregate(
+                    "Result", AggregationType.AVERAGE, aggregated_field="score"
+                )
 
 
 # =============================================================================

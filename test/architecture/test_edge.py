@@ -3,6 +3,8 @@ import logging
 import pytest
 
 from graflo.architecture.edge import Edge, EdgeConfig
+from graflo.architecture.database_features import DatabaseFeatures
+from graflo.architecture.db_aware import EdgeConfigDBAware, VertexConfigDBAware
 from graflo.architecture.onto import Weight
 from graflo.architecture.vertex import VertexConfig
 from graflo.onto import DBType
@@ -103,9 +105,16 @@ def test_edge_finish_init_tigergraph_relation_artifacts_are_not_duplicated(
         }
     )
 
-    e.finish_init(vertex_config, db_flavor=DBType.TIGERGRAPH)
-    first_direct_names = list(e.weights.direct_names if e.weights is not None else [])
-    e.finish_init(vertex_config, db_flavor=DBType.TIGERGRAPH)
-    second_direct_names = list(e.weights.direct_names if e.weights is not None else [])
+    db_features = DatabaseFeatures(db_flavor=DBType.TIGERGRAPH)
+    vc_db = VertexConfigDBAware(vertex_config, db_features)
+    ec_db = EdgeConfigDBAware(EdgeConfig(edges=[e]), vc_db, db_features)
+    first_weights = ec_db.effective_weights(e)
+    second_weights = ec_db.effective_weights(e)
+    first_direct_names = list(
+        first_weights.direct_names if first_weights is not None else []
+    )
+    second_direct_names = list(
+        second_weights.direct_names if second_weights is not None else []
+    )
 
     assert second_direct_names == first_direct_names

@@ -315,6 +315,7 @@ def test_edge_identities_compile_custom_identity_field():
             "resources": [],
         }
     )
+    schema.resolve_db_aware()
     edge = next(iter(schema.edge_config.edges_list(include_aux=True)))
     indexes = schema.database_features.edge_secondary_indexes(
         edge.edge_id, logical_relation=edge.relation
@@ -346,11 +347,13 @@ def test_edge_identities_index_compilation_is_idempotent():
             "resources": [],
         }
     )
+    schema.resolve_db_aware()
     edge = next(iter(schema.edge_config.edges_list(include_aux=True)))
     first = schema.database_features.edge_secondary_indexes(
         edge.edge_id, logical_relation=edge.relation
     )
     schema.finish_init()
+    schema.resolve_db_aware()
     second = schema.database_features.edge_secondary_indexes(
         edge.edge_id, logical_relation=edge.relation
     )
@@ -382,6 +385,7 @@ def test_edge_identities_compile_multiple_keys():
             "resources": [],
         }
     )
+    schema.resolve_db_aware()
     edge = next(iter(schema.edge_config.edges_list(include_aux=True)))
     indexes = schema.database_features.edge_secondary_indexes(
         edge.edge_id, logical_relation=edge.relation
@@ -469,6 +473,7 @@ def test_edge_purpose_variants_expand_from_database_features():
             "resources": [],
         }
     )
+    db_schema = schema.resolve_db_aware()
     edge = next(iter(schema.edge_config.edges_list(include_aux=True)))
     purposes = schema.database_features.edge_purposes(
         edge.edge_id, logical_relation=edge.relation
@@ -476,8 +481,8 @@ def test_edge_purpose_variants_expand_from_database_features():
     assert purposes == [None, "tmp"]
     variants = schema.database_features.edge_physical_variants(
         edge.edge_id,
-        source_storage=schema.vertex_config.vertex_dbname(edge.source),
-        target_storage=schema.vertex_config.vertex_dbname(edge.target),
+        source_storage=db_schema.vertex_config.vertex_dbname(edge.source),
+        target_storage=db_schema.vertex_config.vertex_dbname(edge.target),
         logical_relation=edge.relation,
     )
     by_purpose = {variant["purpose"]: variant for variant in variants}
@@ -518,6 +523,7 @@ def test_edge_identity_indexes_propagate_to_purpose_copies():
             "resources": [],
         }
     )
+    schema.resolve_db_aware()
     edge = next(iter(schema.edge_config.edges_list(include_aux=True)))
     base_indexes = schema.database_features.edge_secondary_indexes(
         edge.edge_id,
@@ -578,6 +584,7 @@ def test_edge_purpose_specific_indexes_override_base_indexes():
             "resources": [],
         }
     )
+    schema.resolve_db_aware()
     edge = next(iter(schema.edge_config.edges_list(include_aux=True)))
     base_indexes = schema.database_features.edge_secondary_indexes(
         edge.edge_id, logical_relation=edge.relation, purpose=None

@@ -39,6 +39,8 @@ from requests import exceptions as requests_exceptions
 
 
 from graflo.architecture.edge import Edge
+from graflo.architecture.database_features import DatabaseFeatures
+from graflo.architecture.db_aware import VertexConfigDBAware
 from graflo.architecture.onto import Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.vertex import FieldType, Vertex, VertexConfig
@@ -1619,9 +1621,7 @@ class TigerGraphConnection(Connection):
         """Close connection - no cleanup needed (using direct REST API calls)."""
         pass
 
-    def _get_vertex_add_statement(
-        self, vertex: Vertex, vertex_config: VertexConfig
-    ) -> str:
+    def _get_vertex_add_statement(self, vertex: Vertex, vertex_config) -> str:
         """Generate ADD VERTEX statement for a schema change job.
 
         Args:
@@ -1735,14 +1735,24 @@ class TigerGraphConnection(Connection):
                 if token in {"source", "target"}:
                     continue
                 if token == "relation":
-                    if edge.relation_field is not None:
-                        fields.add(edge.relation_field)
+                    relation_field = edge.relation_field
+                    if relation_field is None and edge.relation_from_key:
+                        relation_field = "relation"
+                    if relation_field is not None:
+                        fields.add(relation_field)
                     continue
                 if token not in {"_from", "_to"}:
                     fields.add(token)
         return fields
 
-    def _get_edge_add_statement(self, edge: Edge) -> str:
+    def _get_edge_add_statement(
+        self,
+        edge: Edge,
+        *,
+        relation_name: str,
+        source_vertex: str,
+        target_vertex: str,
+    ) -> str:
         """Generate ADD DIRECTED EDGE statement for a schema change job.
 
         Args:
@@ -1798,12 +1808,12 @@ class TigerGraphConnection(Connection):
                 field_types[field.name] = self._get_tigergraph_type(field.type)
 
         # Use sanitized dbname for schema names when available
-        relation_db = edge.relation_dbname
+        relation_db = relation_name
 
         # Build FROM/TO line with discriminator
         from_to_parts = [
-            f"        FROM {edge._source}",
-            f"        TO {edge._target}",
+            f"        FROM {source_vertex}",
+            f"        TO {target_vertex}",
         ]
 
         if indexed_field_names:
@@ -1843,7 +1853,14 @@ class TigerGraphConnection(Connection):
             # No trailing comma needed
             return f"ADD DIRECTED EDGE {relation_db} (\n{from_to_line}\n    )"
 
-    def _get_edge_group_create_statement(self, edges: list[Edge]) -> str:
+    def _get_edge_group_create_statement(
+        self,
+        edges: list[Edge],
+        *,
+        relation_name: str,
+        source_vertices: dict[int, str],
+        target_vertices: dict[int, str],
+    ) -> str:
         """Generate ADD DIRECTED EDGE statement for a group of edges with the same relation.
 
         TigerGraph requires edges of the same type to be created in a single statement
@@ -1861,7 +1878,7 @@ class TigerGraphConnection(Connection):
         # Use the first edge to determine attributes and discriminator
         # (all edges of the same relation should have the same schema)
         first_edge = edges[0]
-        relation = first_edge.relation_dbname
+        relation = relation_name
 
         # Collect identity discriminator fields (same logic as _get_edge_add_statement)
         indexed_field_names = self._edge_identity_discriminator_fields(first_edge)
@@ -1900,7 +1917,10 @@ class TigerGraphConnection(Connection):
         from_to_lines = []
         for edge in edges:
             # Build FROM/TO line: "FROM A, TO B" or "FROM A, TO B, DISCRIMINATOR(...)"
-            from_to_parts = [f"FROM {edge._source}", f"TO {edge._target}"]
+            from_to_parts = [
+                f"FROM {source_vertices[id(edge)]}",
+                f"TO {target_vertices[id(edge)]}",
+            ]
 
             # Add discriminator if needed (same for all edges of the same relation)
             if indexed_field_names:
@@ -2044,6 +2064,7 @@ class TigerGraphConnection(Connection):
 
         vertex_config = schema.vertex_config
         edge_config = schema.edge_config
+        db_schema = schema.resolve_db_aware(DBType.TIGERGRAPH)
 
         vertex_stmts = []
         edge_stmts = []
@@ -2051,33 +2072,39 @@ class TigerGraphConnection(Connection):
         # Vertices
         for vertex in vertex_config.vertices:
             # Validate vertex name
-            vertex_dbname = schema.database_features.vertex_storage_name(vertex.name)
+            vertex_dbname = db_schema.vertex_config.vertex_dbname(vertex.name)
             _validate_tigergraph_schema_name(vertex_dbname, "vertex")
-            stmt = self._get_vertex_add_statement(vertex, vertex_config)
+            stmt = self._get_vertex_add_statement(vertex, db_schema.vertex_config)
             vertex_stmts.append(stmt)
 
         # Edges - group by relation since TigerGraph requires edges of the same type
         # to be created in a single statement with multiple FROM/TO pairs
         edges_to_create = list(edge_config.edges_list(include_aux=True))
+        source_vertices: dict[int, str] = {}
+        target_vertices: dict[int, str] = {}
+        relation_names: dict[int, str] = {}
         for edge in edges_to_create:
-            edge.finish_init(
-                vertex_config=vertex_config,
-                db_flavor=schema.database_features.db_flavor,
-                database_features=schema.database_features,
-            )
-            # Validate edge name using sanitized dbname when available
-            edge_dbname = edge.relation_dbname
+            runtime = db_schema.edge_config.runtime(edge)
+            source_vertices[id(edge)] = runtime.source_storage
+            target_vertices[id(edge)] = runtime.target_storage
+            edge_dbname = runtime.relation_name or f"{edge.source}_{edge.target}"
+            relation_names[id(edge)] = edge_dbname
             _validate_tigergraph_schema_name(edge_dbname, "edge")
 
         # Group edges by relation
         edges_by_relation: dict[str, list[Edge]] = defaultdict(list)
         for edge in edges_to_create:
-            key = edge.relation_dbname
+            key = relation_names[id(edge)]
             edges_by_relation[key].append(edge)
 
         # Create one statement per relation with all FROM/TO pairs
         for relation, edge_group in edges_by_relation.items():
-            stmt = self._get_edge_group_create_statement(edge_group)
+            stmt = self._get_edge_group_create_statement(
+                edge_group,
+                relation_name=relation,
+                source_vertices=source_vertices,
+                target_vertices=target_vertices,
+            )
             edge_stmts.append(stmt)
 
         if not vertex_stmts and not edge_stmts:
@@ -2228,7 +2255,7 @@ class TigerGraphConnection(Connection):
             expected_vertex_types = set()
             for v in vertex_config.vertices:
                 try:
-                    dbname = vertex_config.vertex_dbname(v.name)
+                    dbname = db_schema.vertex_config.vertex_dbname(v.name)
                     # If dbname is None, use vertex name
                     expected_name = dbname if dbname is not None else v.name
                 except (KeyError, AttributeError):
@@ -2237,7 +2264,9 @@ class TigerGraphConnection(Connection):
                 expected_vertex_types.add(expected_name)
 
             expected_edge_types = {
-                e.relation_dbname for e in edges_to_create if e.relation
+                relation_names[id(e)]
+                for e in edges_to_create
+                if relation_names.get(id(e))
             }
 
             # Convert to sets for case-insensitive comparison
@@ -2399,8 +2428,15 @@ class TigerGraphConnection(Connection):
             raise ValueError("Graph name (database) must be configured")
 
         schema_change_stmts = []
+        db_vertex = (
+            VertexConfigDBAware(
+                vertex_config, DatabaseFeatures(db_flavor=DBType.TIGERGRAPH)
+            )
+            if not isinstance(vertex_config, VertexConfigDBAware)
+            else vertex_config
+        )
         for vertex in vertex_config.vertices:
-            stmt = self._get_vertex_add_statement(vertex, vertex_config)
+            stmt = self._get_vertex_add_statement(vertex, db_vertex)
             schema_change_stmts.append(stmt)
 
         if not schema_change_stmts:
@@ -2435,7 +2471,12 @@ class TigerGraphConnection(Connection):
 
         schema_change_stmts = []
         for edge in edges:
-            stmt = self._get_edge_add_statement(edge)
+            stmt = self._get_edge_add_statement(
+                edge,
+                relation_name=edge.relation or f"{edge.source}_{edge.target}",
+                source_vertex=edge.source,
+                target_vertex=edge.target,
+            )
             schema_change_stmts.append(stmt)
 
         if not schema_change_stmts:
@@ -2551,8 +2592,15 @@ class TigerGraphConnection(Connection):
         TigerGraph automatically indexes primary keys.
         Secondary indices are less common but can be created.
         """
+        db_vertex = (
+            schema.resolve_db_aware(DBType.TIGERGRAPH).vertex_config
+            if schema is not None
+            else None
+        )
         for vertex_class in vertex_config.vertex_set:
-            vertex_dbname = vertex_config.vertex_dbname(vertex_class)
+            vertex_dbname = (
+                db_vertex.vertex_dbname(vertex_class) if db_vertex else vertex_class
+            )
             index_list = (
                 schema.database_features.vertex_secondary_indexes(vertex_class)
                 if schema is not None
@@ -2577,7 +2625,13 @@ class TigerGraphConnection(Connection):
                 else []
             )
             if index_list:
-                edge_db = edge.relation_dbname
+                edge_db = (
+                    schema.resolve_db_aware(
+                        DBType.TIGERGRAPH
+                    ).edge_config.relation_dbname(edge)
+                    if schema is not None
+                    else (edge.relation or f"{edge.source}_{edge.target}")
+                )
                 logger.info(
                     f"Skipping {len(index_list)} index(es) on edge '{edge_db}': "
                     f"TigerGraph does not support indexes on edge attributes. "
@@ -3052,7 +3106,7 @@ class TigerGraphConnection(Connection):
 
         Deletes vertices (and their edges) for all vertex types in the schema.
         """
-        vc = schema.vertex_config
+        vc = schema.resolve_db_aware(DBType.TIGERGRAPH).vertex_config
         vertex_types = tuple(vc.vertex_dbname(v) for v in vc.vertex_set)
         if vertex_types:
             self.delete_graph_structure(vertex_types=vertex_types)
@@ -4185,13 +4239,9 @@ class TigerGraphConnection(Connection):
     def define_indexes(self, schema: Schema):
         """Define all indexes from schema."""
         try:
-            self.define_vertex_indices(schema.vertex_config)
-            # Ensure edges are initialized before defining indices
+            self.define_vertex_indices(schema.vertex_config, schema=schema)
             edges_for_indices = list(schema.edge_config.edges_list(include_aux=True))
-            for edge in edges_for_indices:
-                if edge._source is None or edge._target is None:
-                    edge.finish_init(schema.vertex_config)
-            self.define_edge_indices(edges_for_indices)
+            self.define_edge_indices(edges_for_indices, schema=schema)
         except Exception as e:
             logger.error(f"Error defining indexes: {e}")
 

@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.6.5] - 2026-03-02
 
 ### Changed
+- **Logical vs DB-aware architecture split finalized**:
+  - `Vertex`, `Edge`, `VertexConfig`, and `EdgeConfig` now remain logical/DB-agnostic
+  - DB-specific naming/default/index projection is resolved via `Schema.resolve_db_aware(...)`
+  - Introduced DB-aware wrappers (`VertexConfigDBAware`, `EdgeConfigDBAware`) for writer/connector stages
+- **TigerGraph relation materialization moved downstream**:
+  - Edge relation extraction in casting/assembly remains logical and backend-agnostic
+  - TigerGraph-specific relation-to-weight projection now happens during DB write/projection
 - **Manifold edge identity model**:
   - `Edge` now uses `identities` (list of identity keys) instead of singular `identity`
   - Omitted/empty `identities` is permissive by default (multiple edges allowed)
@@ -54,6 +61,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Documentation (earlier in 1.6.5 cycle)
 - Updated schema authoring docs to use canonical `infer_edges` naming and describe explicit vertex requirements for transform outputs
 - Added concepts documentation for the extraction/assembly runtime split and `ActorExecutor` ownership
+- Updated docs and README to describe the DB-aware projection layer and `Schema.resolve_db_aware(...)` flow
+- Cleaned docs landing page to keep Mermaid diagrams in section pages (for example `docs/concepts/index.md`)
 
 ## [1.6.4] - 2026-02-25
 

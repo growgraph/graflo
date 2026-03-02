@@ -21,6 +21,7 @@ Example:
 """
 
 from .database_features import DatabaseFeatures, EdgeIndexSpec
+from .db_aware import EdgeConfigDBAware, SchemaDBAware, VertexConfigDBAware
 from .edge import Edge, EdgeConfig
 from .executor import ActorExecutor
 from .onto import Index
@@ -31,6 +32,7 @@ from .vertex import FieldType, Vertex, VertexConfig
 __all__ = [
     "Edge",
     "EdgeConfig",
+    "EdgeConfigDBAware",
     "EdgeIndexSpec",
     "FieldType",
     "Index",
@@ -38,6 +40,8 @@ __all__ = [
     "DatabaseFeatures",
     "Resource",
     "Schema",
+    "SchemaDBAware",
     "Vertex",
     "VertexConfig",
+    "VertexConfigDBAware",
 ]

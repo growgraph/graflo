@@ -313,6 +313,38 @@ Runtime detail: resource processing now uses an explicit two-phase flow
 those artifacts into graph entities. Orchestration is owned by
 `ActorExecutor`, while `ActorWrapper` remains focused on actor tree behavior.
 
+#### Logical schema vs DB-aware projection
+
+GraFlo now keeps logical graph modeling separate from DB materialization:
+
+- `Vertex`, `Edge`, `VertexConfig`, and `EdgeConfig` are logical and backend-agnostic.
+- DB-specific naming/defaults/index projection is resolved through
+  `VertexConfigDBAware` and `EdgeConfigDBAware`.
+- The resolver entrypoint is `Schema.resolve_db_aware(...)`, used by DB write/connector stages.
+
+```mermaid
+flowchart TD
+  schema[LogicalSchema]
+  vcfg[VertexConfigLogical]
+  ecfg[EdgeConfigLogical]
+  dbfeat[DatabaseFeatures]
+  resolver[DbAwareConfigResolver]
+  vdb[VertexConfigDBAware]
+  edb[EdgeConfigDBAware]
+  caster[CasterAndResources]
+  dbwriter[DBWriterAndConnectors]
+
+  schema --> vcfg
+  schema --> ecfg
+  schema --> caster
+  schema --> resolver
+  dbfeat --> resolver
+  resolver --> vdb
+  resolver --> edb
+  vdb --> dbwriter
+  edb --> dbwriter
+```
+
 ### Caster ingestion pipeline
 
 `Caster` is the ingestion workhorse. It builds a `DataSourceRegistry` via
@@ -467,11 +499,8 @@ Edges in graflo support a rich set of attributes that enable flexible relationsh
 #### Advanced Configuration
 - **`type`**: Edge type (DIRECT or INDIRECT)
 - **`by`**: Vertex name for indirect edges
-- **`database_name`**: Database-specific edge identifier (auto-generated if not specified)
-  - For ArangoDB, this corresponds to the edge collection name
-  - Arango graph name is aligned with this storage name for each purpose variant
-  - For TigerGraph, used as fallback identifier when relation is not specified
-  - For Neo4j, unused (relation is used instead)
+- DB-specific edge storage/type names are resolved from `database_features`
+  through DB-aware wrappers (`EdgeConfigDBAware`), not stored on `Edge`.
 
 #### When to Use Different Attributes
 
@@ -634,7 +663,7 @@ resources:
 
 ### Schema & Abstraction
 - **Declarative LPG schema** — `Schema` defines vertices, edges, identity rules, weights, and transforms in YAML or Python; the single source of truth for the graph structure.
-- **Database abstraction** — one schema, one API; database idiosyncrasies are handled by the `GraphContainer` (covariant graph representation).
+- **Database abstraction** — one logical schema, multiple backends; DB-specific behavior is applied in DB-aware projection/writer stages (`Schema.resolve_db_aware(...)`, `VertexConfigDBAware`, `EdgeConfigDBAware`).
 - **Resource abstraction** — each `Resource` is a reusable actor pipeline that maps raw records to graph elements, decoupled from data retrieval.
 - **DataSourceRegistry** — pluggable `AbstractDataSource` adapters (`FILE`, `SQL`, `API`, `SPARQL`, `IN_MEMORY`) bound to Resources by name.
 

@@ -12,6 +12,7 @@ import logging
 from uuid import uuid4
 
 from graflo.architecture.edge import Edge
+from graflo.architecture.db_aware import EdgeRuntime, SchemaDBAware
 from graflo.architecture.onto import GraphContainer
 from graflo.architecture.schema import Schema
 from graflo.db import ConnectionManager
@@ -34,6 +35,7 @@ class DBWriter:
         self.schema = schema
         self.dry = dry
         self.max_concurrent = max_concurrent
+        self._schema_db_aware: SchemaDBAware | None = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -52,6 +54,7 @@ class DBWriter:
             edges are extended after the vertex round-trip.
         """
         self.schema.finish_init()
+        self._schema_db_aware = self.schema.resolve_db_aware(conn_conf.connection_type)
         resource = self.schema.fetch_resource(resource_name)
 
         await self._push_vertices(gc, conn_conf)
@@ -65,7 +68,7 @@ class DBWriter:
 
     async def _push_vertices(self, gc: GraphContainer, conn_conf: DBConfig) -> None:
         """Upsert all vertex collections in *gc*, resolving blank nodes."""
-        vc = self.schema.vertex_config
+        vc = self._require_db_aware().vertex_config
         semaphore = asyncio.Semaphore(self.max_concurrent)
 
         async def _push_one(vcol: str, data: list[dict]):
@@ -101,7 +104,7 @@ class DBWriter:
         self, vcol: str, data: list[dict], conn_conf: DBConfig
     ) -> None:
         """Assign deterministic in-memory IDs to blank vertices before persistence."""
-        vc = self.schema.vertex_config
+        vc = self._require_db_aware().vertex_config
         identity_fields = vc.identity_fields(vcol)
         default_field = "_key" if conn_conf.connection_type == DBType.ARANGO else "id"
         preferred_field = identity_fields[0] if identity_fields else default_field
@@ -120,7 +123,7 @@ class DBWriter:
 
     def _resolve_blank_edges(self, gc: GraphContainer) -> None:
         """Extend edge lists for blank vertices after their keys are resolved."""
-        vc = self.schema.vertex_config
+        vc = self._require_db_aware().vertex_config
         for vcol in vc.blank_vertices:
             for edge_id, _edge in self.schema.edge_config.edges_items():
                 vfrom, vto, _relation = edge_id
@@ -163,7 +166,7 @@ class DBWriter:
         self, gc: GraphContainer, conn_conf: DBConfig, resource
     ) -> None:
         """Fetch extra-weight vertex data from the DB and attach to edges."""
-        vc = self.schema.vertex_config
+        vc = self._require_db_aware().vertex_config
 
         def _sync():
             with ConnectionManager(connection_config=conn_conf) as db:
@@ -198,7 +201,9 @@ class DBWriter:
 
     async def _push_edges(self, gc: GraphContainer, conn_conf: DBConfig) -> None:
         """Insert all edges in *gc*."""
-        vc = self.schema.vertex_config
+        schema_db = self._require_db_aware()
+        vc = schema_db.vertex_config
+        ec = schema_db.edge_config
         semaphore = asyncio.Semaphore(self.max_concurrent)
 
         async def _push_one(edge_id: tuple, edge: Edge):
@@ -206,15 +211,21 @@ class DBWriter:
 
                 def _sync():
                     with ConnectionManager(connection_config=conn_conf) as db:
+                        runtime = ec.runtime(edge)
                         for ee in gc.loop_over_relations(edge_id):
                             _, _, relation = ee
                             if not self.dry:
-                                data = gc.edges[ee]
+                                data, relation_name = self._project_edge_docs_for_db(
+                                    docs=gc.edges[ee],
+                                    relation=relation,
+                                    runtime=runtime,
+                                    conn_type=conn_conf.connection_type,
+                                )
                                 db.insert_edges_batch(
                                     docs_edges=data,
                                     source_class=vc.vertex_dbname(edge.source),
                                     target_class=vc.vertex_dbname(edge.target),
-                                    relation_name=relation,
+                                    relation_name=relation_name,
                                     match_keys_source=tuple(
                                         vc.identity_fields(edge.source)
                                     ),
@@ -223,7 +234,7 @@ class DBWriter:
                                     ),
                                     filter_uniques=False,
                                     dry=self.dry,
-                                    collection_name=edge.database_name,
+                                    collection_name=runtime.storage_name(),
                                 )
 
                 await asyncio.to_thread(_sync)
@@ -234,3 +245,36 @@ class DBWriter:
                 for edge_id, edge in self.schema.edge_config.edges_items()
             ]
         )
+
+    def _require_db_aware(self) -> SchemaDBAware:
+        if self._schema_db_aware is None:
+            self.schema.finish_init()
+            self._schema_db_aware = self.schema.resolve_db_aware()
+        return self._schema_db_aware
+
+    def _project_edge_docs_for_db(
+        self,
+        *,
+        docs: list,
+        relation: str | None,
+        runtime: EdgeRuntime,
+        conn_type: DBType,
+    ) -> tuple[list, str | None]:
+        """Project logical edge docs into DB-specific relation representation."""
+        if conn_type != DBType.TIGERGRAPH:
+            return docs, relation
+
+        relation_name = runtime.relation_name
+        relation_field = runtime.effective_relation_field
+        if not runtime.store_extracted_relation_as_weight or relation_field is None:
+            return docs, relation_name
+
+        # TigerGraph stores dynamic extracted relation as an edge attribute while
+        # keeping the edge type stable.
+        projected: list = []
+        for source_doc, target_doc, weight in docs:
+            next_weight = dict(weight)
+            if relation is not None:
+                next_weight[relation_field] = relation
+            projected.append((source_doc, target_doc, next_weight))
+        return projected, relation_name

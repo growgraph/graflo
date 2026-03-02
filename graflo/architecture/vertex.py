@@ -33,7 +33,6 @@ from pydantic import (
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.onto import Index
 from graflo.filter.onto import FilterExpression
-from graflo.onto import DBType
 from graflo.onto import BaseEnum
 
 logger = logging.getLogger(__name__)
@@ -289,18 +288,9 @@ class Vertex(ConfigBaseModel):
     def get_fields(self) -> list[Field]:
         return self.fields
 
-    def finish_init(self, db_flavor: DBType):
-        """Complete initialization of vertex with database-specific field types.
-
-        Args:
-            db_flavor: Database flavor to use for initialization
-        """
-        self.fields = [
-            Field(name=f.name, type=FieldType.STRING)
-            if f.type is None and db_flavor == DBType.TIGERGRAPH
-            else f
-            for f in self.fields
-        ]
+    def finish_init(self):
+        """Complete logical initialization for vertex."""
+        return None
 
 
 class VertexConfig(ConfigBaseModel):
@@ -332,7 +322,6 @@ class VertexConfig(ConfigBaseModel):
     )
     _vertices_map: dict[str, Vertex] | None = PrivateAttr(default=None)
     _vertex_numeric_fields_map: dict[str, object] | None = PrivateAttr(default=None)
-    _vertex_storage_names: dict[str, str] | None = PrivateAttr(default=None)
 
     @model_validator(mode="after")
     def build_vertices_map_and_validate_blank(self) -> "VertexConfig":
@@ -342,42 +331,19 @@ class VertexConfig(ConfigBaseModel):
             {item.name: item for item in self.vertices},
         )
         object.__setattr__(self, "_vertex_numeric_fields_map", {})
-        object.__setattr__(
-            self,
-            "_vertex_storage_names",
-            {item.name: item.name for item in self.vertices},
-        )
         if set(self.blank_vertices) - set(self.vertex_set):
             raise ValueError(
                 f" Blank vertices {self.blank_vertices} are not defined as vertices"
             )
-        self._normalize_vertex_identities(DBType.ARANGO)
+        self._normalize_vertex_identities()
         return self
-
-    def bind_database_features(self, database_features) -> None:
-        """Bind physical vertex names from database features."""
-        mapping = {
-            item.name: database_features.vertex_storage_name(item.name)
-            for item in self.vertices
-        }
-        object.__setattr__(self, "_vertex_storage_names", mapping)
-
-    def _default_blank_identity_field(self, db_flavor: DBType) -> str:
-        if db_flavor == DBType.ARANGO:
-            return "_key"
-        return "id"
 
     def _normalize_vertex_identities(
         self,
-        db_flavor: DBType,
-        *,
-        force_blank_identity: bool = False,
     ) -> None:
-        blank_id_field = self._default_blank_identity_field(db_flavor)
+        blank_id_field = "id"
         for vertex in self.vertices:
-            if vertex.name in self.blank_vertices and (
-                not vertex.identity or force_blank_identity
-            ):
+            if vertex.name in self.blank_vertices and not vertex.identity:
                 vertex.identity = [blank_id_field]
             if not vertex.identity:
                 raise ValueError(f"Vertex '{vertex.name}' must define identity fields")
@@ -408,58 +374,16 @@ class VertexConfig(ConfigBaseModel):
         """
         return list(self._get_vertices_map().values())
 
-    def _get_vertex_by_name_or_dbname(self, identifier: str) -> Vertex:
-        """Get vertex by name or storage name.
-
-        Args:
-            identifier: Vertex name or storage name
-
-        Returns:
-            Vertex: The vertex object
-
-        Raises:
-            KeyError: If vertex is not found by name or storage name
-        """
+    def _get_vertex_by_name(self, identifier: str) -> Vertex:
+        """Get vertex by logical vertex name."""
         m = self._get_vertices_map()
-        # First try by name (most common case)
         if identifier in m:
             return m[identifier]
-
-        storage_map = self._vertex_storage_names or {}
-        for name, storage_name in storage_map.items():
-            if storage_name == identifier and name in m:
-                return m[name]
-
-        # Not found
         available_names = list(m.keys())
-        available_dbnames = list(storage_map.values())
         raise KeyError(
-            f"Vertex '{identifier}' not found by name or storage name. "
-            f"Available names: {available_names}, "
-            f"Available storage names: {available_dbnames}"
+            f"Vertex '{identifier}' not found by logical name. "
+            f"Available names: {available_names}"
         )
-
-    def vertex_dbname(self, vertex_name):
-        """Get database name for a vertex.
-
-        Args:
-            vertex_name: Name of the vertex
-
-        Returns:
-            str: Database name for the vertex
-
-        Raises:
-            KeyError: If vertex is not found
-        """
-        m = self._vertex_storage_names or {}
-        try:
-            value = m[vertex_name]
-        except KeyError as e:
-            logger.error(
-                f"Available vertices : {m.keys()}; vertex requested : {vertex_name}"
-            )
-            raise e
-        return value
 
     def index(self, vertex_name) -> Index:
         """Get primary index for a vertex.
@@ -485,8 +409,7 @@ class VertexConfig(ConfigBaseModel):
         Returns:
             list[Field]: List of Field objects
         """
-        # Get vertex by logical or physical storage name
-        vertex = self._get_vertex_by_name_or_dbname(vertex_name)
+        vertex = self._get_vertex_by_name(vertex_name)
 
         return vertex.fields
 
@@ -502,7 +425,7 @@ class VertexConfig(ConfigBaseModel):
         Returns:
             list[str]: List of field names as strings
         """
-        vertex = self._get_vertex_by_name_or_dbname(vertex_name)
+        vertex = self._get_vertex_by_name(vertex_name)
         return vertex.field_names
 
     def numeric_fields_list(self, vertex_name):
@@ -596,11 +519,8 @@ class VertexConfig(ConfigBaseModel):
         """
         self._get_vertices_map()[key] = value
 
-    def finish_init(self, db_flavor: DBType):
-        """Complete initialization of all vertices with database-specific field types.
-
-        Uses db_flavor to determine database-specific initialization behavior.
-        """
-        self._normalize_vertex_identities(db_flavor, force_blank_identity=True)
+    def finish_init(self):
+        """Complete logical initialization of vertices."""
+        self._normalize_vertex_identities()
         for v in self.vertices:
-            v.finish_init(db_flavor)
+            v.finish_init()

@@ -317,19 +317,15 @@ class ArangoConnection(Connection):
 
         Truncates vertex and edge collections that belong to the schema.
         """
-        vc = schema.vertex_config
+        db_schema = schema.resolve_db_aware(DBType.ARANGO)
+        vc = db_schema.vertex_config
         for v in vc.vertex_set:
             cname = vc.vertex_dbname(v)
             if self.conn.has_collection(cname):
                 self.conn.collection(cname).truncate()
                 logger.debug(f"Truncated vertex collection '{cname}'")
-        for edge in schema.edge_config.edges_list(include_aux=True):
-            variants = schema.database_features.edge_physical_variants(
-                edge.edge_id,
-                source_storage=schema.vertex_config.vertex_dbname(edge.source),
-                target_storage=schema.vertex_config.vertex_dbname(edge.target),
-                logical_relation=edge.relation,
-            )
+        for edge in db_schema.edge_config.edges_list(include_aux=True):
+            variants = db_schema.edge_config.runtime(edge).physical_variants()
             for variant in variants:
                 cname = cast(str | None, variant.get("storage_name"))
                 if cname and self.conn.has_collection(cname):
@@ -356,17 +352,14 @@ class ArangoConnection(Connection):
         Args:
             schema: Schema containing vertex definitions
         """
-        vertex_config = schema.vertex_config
+        db_schema = schema.resolve_db_aware(DBType.ARANGO)
+        vertex_config = db_schema.vertex_config
         disconnected_vertex_collections = (
-            set(vertex_config.vertex_set) - schema.edge_config.vertices
+            set(vertex_config.vertex_set) - db_schema.edge_config.vertices
         )
-        for item in schema.edge_config.edges_list():
+        for item in db_schema.edge_config.edges_list():
             u, v = item.source, item.target
-            gname = schema.database_features.edge_graph_name(
-                item.edge_id,
-                source_storage=vertex_config.vertex_dbname(u),
-                target_storage=vertex_config.vertex_dbname(v),
-            )
+            gname = db_schema.edge_config.runtime(item).graph_name()
             if not gname:
                 logger.warning(
                     f"Edge {item.source} -> {item.target} has no graph_name, skipping"
@@ -410,20 +403,18 @@ class ArangoConnection(Connection):
             edges: List of edge configurations to create
             schema: Optional schema used to expand purpose-based physical variants
         """
+        db_schema = (
+            schema.resolve_db_aware(DBType.ARANGO) if schema is not None else None
+        )
         for item in edges:
             variants = (
-                schema.database_features.edge_physical_variants(
-                    item.edge_id,
-                    source_storage=schema.vertex_config.vertex_dbname(item.source),
-                    target_storage=schema.vertex_config.vertex_dbname(item.target),
-                    logical_relation=item.relation,
-                )
-                if schema is not None
+                db_schema.edge_config.runtime(item).physical_variants()
+                if db_schema is not None
                 else [
                     {
                         "purpose": None,
-                        "storage_name": item.database_name,
-                        "graph_name": item.graph_name,
+                        "storage_name": f"{item.source}_{item.target}_edges",
+                        "graph_name": f"{item.source}_{item.target}_edges",
                         "indexes": [],
                     }
                 ]
@@ -447,15 +438,16 @@ class ArangoConnection(Connection):
                     logger.warning("Edge has no database_name, skipping")
                     continue
                 if not g.has_edge_definition(collection_name):
-                    if item._source is None or item._target is None:
+                    if db_schema is None:
                         logger.warning(
-                            "Edge has no _source or _target, skipping edge definition"
+                            "DB-aware schema is required, skipping edge definition"
                         )
                         continue
+                    runtime = db_schema.edge_config.runtime(item)
                     _ = g.create_edge_definition(
                         edge_collection=collection_name,
-                        from_vertex_collections=[item._source],
-                        to_vertex_collections=[item._target],
+                        from_vertex_collections=[runtime.source_storage],
+                        to_vertex_collections=[runtime.target_storage],
                     )
 
     def _add_index(self, general_collection: Any, index: Index) -> Any | None:
@@ -496,8 +488,12 @@ class ArangoConnection(Connection):
         Args:
             vertex_config: Vertex configuration containing index definitions
         """
+        db_vertex = (
+            schema.resolve_db_aware(DBType.ARANGO).vertex_config if schema else None
+        )
         for c in vertex_config.vertex_set:
-            general_collection = self.conn.collection(vertex_config.vertex_dbname(c))
+            collection_name = db_vertex.vertex_dbname(c) if db_vertex else c
+            general_collection = self.conn.collection(collection_name)
             ixs = general_collection.indexes()
             field_combinations: list[tuple[Any, ...]] = []
             if isinstance(ixs, list):
@@ -526,16 +522,12 @@ class ArangoConnection(Connection):
         Args:
             edges: List of edge configurations containing index definitions
         """
+        if schema is None:
+            logger.warning("Schema required for edge index naming, skipping")
+            return
+        db_schema = schema.resolve_db_aware(DBType.ARANGO)
         for edge in edges:
-            if schema is None:
-                logger.warning("Schema required for edge index naming, skipping")
-                continue
-            variants = schema.database_features.edge_physical_variants(
-                edge.edge_id,
-                source_storage=schema.vertex_config.vertex_dbname(edge.source),
-                target_storage=schema.vertex_config.vertex_dbname(edge.target),
-                logical_relation=edge.relation,
-            )
+            variants = db_schema.edge_config.runtime(edge).physical_variants()
             for variant in variants:
                 collection_name = cast(str | None, variant.get("storage_name"))
                 if not collection_name:

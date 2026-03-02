@@ -27,7 +27,7 @@ edge_config:
 general:
     name: accounting
 resources:
--   edge_greedy: true
+-   infer_edges: true
     encoding: utf-8
     extra_weights: []
     merge_collections: []
@@ -35,7 +35,7 @@ resources:
     -   vertex: products
     resource_name: products
     types: {}
--   edge_greedy: true
+-   infer_edges: true
     encoding: utf-8
     extra_weights: []
     merge_collections: []
@@ -43,7 +43,7 @@ resources:
     -   vertex: users
     resource_name: users
     types: {}
--   edge_greedy: true
+-   infer_edges: true
     encoding: utf-8
     extra_weights: []
     merge_collections: []
@@ -56,7 +56,7 @@ resources:
         target_vertex: users
     resource_name: follows
     types: {}
--   edge_greedy: true
+-   infer_edges: true
     encoding: utf-8
     extra_weights: []
     merge_collections: []

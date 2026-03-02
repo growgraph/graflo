@@ -117,7 +117,11 @@ class SchemaSanitizer:
             if not edge.relation:
                 continue
 
-            original = edge.relation_dbname
+            original = schema.database_features.edge_relation_name(
+                edge.edge_id,
+                default_relation=edge.relation,
+                logical_relation=edge.relation,
+            )
             if original is None:
                 continue
 
@@ -142,7 +146,11 @@ class SchemaSanitizer:
 
             # Update only if needed
             if sanitized != original:
-                edge.relation_dbname = sanitized
+                schema.database_features.set_edge_name_spec(
+                    edge.edge_id,
+                    logical_relation=edge.relation,
+                    relation_name=sanitized,
+                )
 
         # Third pass: Normalize edge indexes for TigerGraph
         # TigerGraph requires that edges with the same relation have consistent source and target indexes
@@ -162,9 +170,12 @@ class SchemaSanitizer:
             for edge in schema.edge_config.edges:
                 # Use sanitized dbname when grouping by relation for TigerGraph
                 relation = (
-                    edge.relation_dbname
-                    if edge.relation_dbname is not None
-                    else edge.relation
+                    schema.database_features.edge_relation_name(
+                        edge.edge_id,
+                        default_relation=edge.relation,
+                        logical_relation=edge.relation,
+                    )
+                    or edge.relation
                 )
                 if relation not in edges_by_relation:
                     edges_by_relation[relation] = []

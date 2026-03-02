@@ -338,8 +338,6 @@ def render_edge(
                     a = project_dict(u, source_index)
                     b = project_dict(v, target_index)
 
-                    # For TigerGraph, extracted relations go to weight, not as relation key
-                    is_tigergraph = edge.store_extracted_relation_as_weight
                     extracted_relation = None
 
                     # 1. Try to extract relation from data context
@@ -370,16 +368,9 @@ def render_edge(
 
                     # 3. Handle result
                     if extracted_relation is not None:
-                        if is_tigergraph:
-                            # For TigerGraph, add extracted relation to weight
-                            # edge.relation_field is guaranteed to be set for TigerGraph
-                            # when extraction is requested (see Edge.finish_init)
-                            weight[edge.relation_field] = extracted_relation
-                            # Use the default relation from edge.relation (set in finish_init)
-                            relation = edge.relation
-                        else:
-                            # For other databases, use extracted relation as relation key
-                            relation = extracted_relation
+                        # Keep extraction backend-agnostic at casting stage.
+                        # DB-specific relation materialization happens during DB writing.
+                        relation = extracted_relation
                     else:
                         # No relation extracted, use edge.relation as-is
                         relation = edge.relation
