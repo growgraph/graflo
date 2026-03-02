@@ -347,14 +347,10 @@ def resource_cross():
 
 @pytest.fixture()
 def resource_collision():
-    an = yaml.safe_load("""
-    -   vertex: person
-    -   vertex: company 
-    -   target_vertex: person
-        map:
-            name: id
-    """)
-    return an
+    return [
+        {"vertex": "person", "from": {"id": "name"}},
+        {"vertex": "company", "from": {"id": "id"}},
+    ]
 
 
 @pytest.fixture()

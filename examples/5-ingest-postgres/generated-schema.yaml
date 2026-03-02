@@ -48,12 +48,10 @@ resources:
     extra_weights: []
     merge_collections: []
     pipeline:
-    -   map:
-            follower_id: id
-        target_vertex: users
-    -   map:
-            followed_id: id
-        target_vertex: users
+    -   vertex: users
+        "from": {id: follower_id}
+    -   vertex: users
+        "from": {id: followed_id}
     resource_name: follows
     types: {}
 -   infer_edges: true
@@ -61,12 +59,10 @@ resources:
     extra_weights: []
     merge_collections: []
     pipeline:
-    -   map:
-            user_id: id
-        target_vertex: users
-    -   map:
-            product_id: id
-        target_vertex: products
+    -   vertex: users
+        "from": {id: user_id}
+    -   vertex: products
+        "from": {id: product_id}
     resource_name: purchases
     types: {}
 transforms: {}

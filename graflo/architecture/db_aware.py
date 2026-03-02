@@ -92,7 +92,11 @@ class VertexConfigDBAware:
         if identity:
             return identity
         if vertex_name in self.logical.blank_vertices:
-            return ["_key"] if self.database_features.db_flavor == DBType.ARANGO else ["id"]
+            return (
+                ["_key"]
+                if self.database_features.db_flavor == DBType.ARANGO
+                else ["id"]
+            )
         return identity
 
     def fields(self, vertex_name: str) -> list[Field]:
@@ -159,7 +163,11 @@ class EdgeConfigDBAware:
         if relation_field is None:
             return edge.weights
 
-        base = edge.weights.model_copy(deep=True) if edge.weights is not None else WeightConfig()
+        base = (
+            edge.weights.model_copy(deep=True)
+            if edge.weights is not None
+            else WeightConfig()
+        )
         if relation_field not in base.direct_names:
             base.direct.append(Field(name=relation_field, type=FieldType.STRING))
         return base
@@ -191,7 +199,9 @@ class EdgeConfigDBAware:
         db_flavor = self.database_features.db_flavor
         for edge in self.logical.edges:
             for identity_key in edge.identities:
-                identity_fields = self._identity_key_index_fields(identity_key, db_flavor)
+                identity_fields = self._identity_key_index_fields(
+                    identity_key, db_flavor
+                )
                 if not identity_fields:
                     continue
                 self.database_features.add_edge_index(

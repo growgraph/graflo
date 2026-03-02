@@ -2,7 +2,7 @@
 
 These models define the structure of YAML configuration files for the
 actor-based graph transformation system. They provide validation,
-type safety, and explicit format support (pipeline, transform/map/target_vertex,
+type safety, and explicit format support (pipeline, vertex/from, transform/map,
 create_edge/edge with from/to).
 
 These replace the implicit type inference in ActorWrapper.__init__()
@@ -33,7 +33,7 @@ def normalize_actor_step(data: dict[str, Any]) -> dict[str, Any]:
 
     Supports explicit format:
     - {"vertex": "user"} -> {"type": "vertex", "vertex": "user"}
-    - {"transform": {"map": {...}, "target_vertex": "x"}} -> {"type": "transform", "map": {...}, "target_vertex": "x"}
+    - {"transform": {"map": {...}}} -> {"type": "transform", "map": {...}}
     - {"edge": {"from": "a", "to": "b"}} or {"create_edge": {...}} -> {"type": "edge", "from": "a", "to": "b"}
     - {"descend": {"key": "k", "pipeline": [...]}} or {"apply": [...]} / {"pipeline": [...]}
     """
@@ -149,12 +149,21 @@ def normalize_actor_step(data: dict[str, Any]) -> dict[str, Any]:
 
 
 class VertexActorConfig(ConfigBaseModel):
-    """Configuration for a VertexActor."""
+    """Configuration for a VertexActor.
+
+    Use `from` to project document fields onto vertex fields:
+    from: {vertex_field: doc_field} — vertex field X comes from document field Y.
+    """
 
     type: Literal["vertex"] = Field(
         default="vertex", description="Actor type discriminator"
     )
     vertex: str = Field(..., description="Name of the vertex type to create")
+    from_doc: dict[str, str] | None = Field(
+        default=None,
+        alias="from",
+        description="Projection: {vertex_field: doc_field}. When set, vertex fields are populated from doc.",
+    )
     keep_fields: list[str] | None = Field(
         default=None, description="Optional list of fields to keep"
     )
@@ -171,7 +180,8 @@ class VertexActorConfig(ConfigBaseModel):
 class TransformActorConfig(ConfigBaseModel):
     """Configuration for a TransformActor.
 
-    Explicit format: transform with map and target_vertex (output target vertex).
+    Transform applies map or function; output goes to buffer_transforms for
+    consumption by VertexActors at the same level.
     """
 
     type: Literal["transform"] = Field(
@@ -179,10 +189,6 @@ class TransformActorConfig(ConfigBaseModel):
     )
     map: dict[str, str] | None = Field(
         default=None, description="Field mapping: output_key -> input_key"
-    )
-    target_vertex: str | None = Field(
-        default=None,
-        description="Target vertex to send transformed output to",
     )
     name: str | None = Field(default=None, description="Named transform function")
     params: dict[str, Any] = Field(
@@ -342,11 +348,7 @@ def _pipeline_contains_vertex(configs: list["ActorConfig"]) -> bool:
 
 def _pipeline_has_untargeted_transform(configs: list["ActorConfig"]) -> bool:
     for cfg in configs:
-        if (
-            isinstance(cfg, TransformActorConfig)
-            and cfg.target_vertex is None
-            and bool(cfg.map)
-        ):
+        if isinstance(cfg, TransformActorConfig) and bool(cfg.map):
             return True
         if isinstance(cfg, DescendActorConfig) and _pipeline_has_untargeted_transform(
             cfg.pipeline

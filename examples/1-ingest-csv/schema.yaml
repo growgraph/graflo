@@ -6,12 +6,10 @@ resources:
     -   vertex: person
 -   resource_name: departments
     apply:
-    -   map:
-            person: name
-            person_id: id
-    -   target_vertex: department
-        map:
-            department: name
+    -   vertex: person
+        from: {id: person_id, name: person}
+    -   vertex: department
+        from: {name: department}
 vertex_config:
     vertices:
     -   name: person

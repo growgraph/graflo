@@ -398,7 +398,22 @@ class SchemaSanitizer:
             # All available vertices = current level + parent levels
             all_available_vertices = current_level_vertices | parent_vertices
 
-            # Process TransformActor if present
+            # Process VertexActor with from_doc: apply field mappings to doc_field values
+            if isinstance(wrapper.actor, VertexActor) and wrapper.actor.from_doc:
+                vertex_name = wrapper.actor.name
+                if vertex_name in field_index_mappings:
+                    mappings = field_index_mappings[vertex_name]
+                    if mappings:
+                        from_doc = wrapper.actor.from_doc
+                        for v_f, d_f in list(from_doc.items()):
+                            if d_f in mappings:
+                                from_doc[v_f] = mappings[d_f]
+                        logger.debug(
+                            f"Updated VertexActor from_doc in resource '{resource.resource_name}' "
+                            f"for vertex '{vertex_name}': {mappings}"
+                        )
+
+            # Process TransformActor: apply mappings from all available vertices
             if isinstance(wrapper.actor, TransformActor):
                 transform_actor: TransformActor = wrapper.actor
 
@@ -438,49 +453,20 @@ class SchemaSanitizer:
                         f"for vertex '{vertex_name}': {mappings}"
                     )
 
-                target_vertex = transform_actor.target_vertex
-
-                if isinstance(target_vertex, str):
-                    # TransformActor has explicit target_vertex
-                    if (
-                        target_vertex in field_index_mappings
-                        and target_vertex in all_available_vertices
-                    ):
-                        mappings = field_index_mappings[target_vertex]
+                applied_any = False
+                for vertex in all_available_vertices:
+                    if vertex in field_index_mappings:
+                        mappings = field_index_mappings[vertex]
                         if mappings:
                             apply_mappings_to_transform(
-                                mappings, target_vertex, transform_actor
+                                mappings, vertex, transform_actor
                             )
-                        else:
-                            logger.debug(
-                                f"Skipping TransformActor for vertex '{target_vertex}' "
-                                f"in resource '{resource.resource_name}': no mappings needed"
-                            )
-                    else:
-                        logger.debug(
-                            f"Skipping TransformActor for vertex '{target_vertex}' "
-                            f"in resource '{resource.resource_name}': vertex not created at this level"
-                        )
-                else:
-                    # TransformActor has no target_vertex
-                    # Apply mappings from all available vertices (parent and current level)
-                    # since transformed fields will be attributed to those vertices
-                    applied_any = False
-                    for vertex in all_available_vertices:
-                        if vertex in field_index_mappings:
-                            mappings = field_index_mappings[vertex]
-                            if mappings:
-                                apply_mappings_to_transform(
-                                    mappings, vertex, transform_actor
-                                )
-                                applied_any = True
-
-                    if not applied_any:
-                        logger.debug(
-                            f"Skipping TransformActor without target_vertex "
-                            f"in resource '{resource.resource_name}': "
-                            f"no mappings found for available vertices {all_available_vertices}"
-                        )
+                            applied_any = True
+                if not applied_any:
+                    logger.debug(
+                        f"Skipping TransformActor in resource '{resource.resource_name}': "
+                        f"no mappings for vertices {all_available_vertices}"
+                    )
 
             # Recursively process nested structures (DescendActor)
             if isinstance(wrapper.actor, DescendActor):

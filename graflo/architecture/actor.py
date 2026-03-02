@@ -238,6 +238,7 @@ class VertexActor(Actor):
     def __init__(self, config: VertexActorConfig):
         """Initialize the vertex actor from config."""
         self.name = config.vertex
+        self.from_doc: dict[str, str] | None = config.from_doc
         self.keep_fields: tuple[str, ...] | None = (
             tuple(config.keep_fields) if config.keep_fields else None
         )
@@ -254,7 +255,7 @@ class VertexActor(Actor):
         Returns:
             dict[str, Any]: Dictionary of important items
         """
-        return self._fetch_items_from_dict(("name", "keep_fields"))
+        return self._fetch_items_from_dict(("name", "from_doc", "keep_fields"))
 
     def finish_init(self, init_ctx: ActorInitContext) -> None:
         """Complete initialization of the vertex actor.
@@ -378,31 +379,6 @@ class VertexActor(Actor):
 
         return self._filter_and_aggregate_vertex_docs(extracted_docs, doc)
 
-    def _process_buffer_vertex(
-        self,
-        buffer_vertex: list[Any],
-        doc: dict[str, Any],
-        vertex_keys: tuple[str, ...],
-    ) -> list[dict[str, Any]]:
-        """Process items from buffer_vertex.
-
-        Args:
-            buffer_vertex: List of vertex items from buffer
-            doc: Document being processed
-            vertex_keys: Tuple of vertex field keys
-
-        Returns:
-            list[dict]: List of processed documents
-        """
-        index_keys = tuple(self.vertex_config.index(self.name).fields)
-        extracted_docs = [
-            self._extract_vertex_doc_from_transformed_item(
-                item, vertex_keys, index_keys
-            )
-            for item in buffer_vertex
-        ]
-        return self._filter_and_aggregate_vertex_docs(extracted_docs, doc)
-
     def __call__(
         self, ctx: ExtractionContext, lindex: LocationIndex, *nargs: Any, **kwargs: Any
     ) -> ExtractionContext:
@@ -423,8 +399,10 @@ class VertexActor(Actor):
         vertex_keys: tuple[str, ...] = tuple(vertex_keys_list)
 
         agg = []
-        buffer_vertex = ctx.buffer_vertex.pop(self.name, [])
-        agg.extend(self._process_buffer_vertex(buffer_vertex, doc, vertex_keys))
+        if self.from_doc:
+            projected = {v_f: doc.get(d_f) for v_f, d_f in self.from_doc.items()}
+            if any(v is not None for v in projected.values()):
+                agg.append(projected)
 
         # Process transformed items
         agg.extend(self._process_transformed_items(ctx, lindex, doc, vertex_keys))
@@ -533,7 +511,6 @@ class TransformActor(Actor):
 
     Attributes:
         _kwargs: Config dump for init_transforms (module, foo, input, output)
-        target_vertex: Optional target vertex
         transforms: Dictionary of available transforms
         name: Transform name
         params: Transform parameters
@@ -543,7 +520,6 @@ class TransformActor(Actor):
     def __init__(self, config: TransformActorConfig):
         """Initialize the transform actor from config."""
         self._kwargs = config.model_dump(by_alias=True)
-        self.target_vertex = config.target_vertex
         self.transforms = {}
         self.name = config.name
         self.params = config.params
@@ -564,7 +540,7 @@ class TransformActor(Actor):
         Returns:
             dict[str, Any]: Dictionary of important items
         """
-        items = self._fetch_items_from_dict(("name", "target_vertex"))
+        items = self._fetch_items_from_dict(("name",))
         items.update({"t.input": self.t.input, "t.output": self.t.output})
         return items
 
@@ -696,15 +672,12 @@ class TransformActor(Actor):
 
         _update_doc = self._format_transform_result(transform_result)
 
-        if self.target_vertex is None:
-            ctx.buffer_transforms[lindex].append(_update_doc)
-        else:
-            ctx.buffer_vertex[self.target_vertex].append(_update_doc)
+        ctx.buffer_transforms[lindex].append(_update_doc)
         ctx.record_transform_observation(location=lindex, payload=_update_doc)
         return ctx
 
     def references_vertices(self) -> set[str]:
-        return {self.target_vertex} if self.target_vertex is not None else set()
+        return set()
 
 
 class DescendActor(Actor):
@@ -801,7 +774,7 @@ class DescendActor(Actor):
 
         transform_output_fields: set[str] = set()
         for an in self.descendants:
-            if isinstance(an.actor, TransformActor) and an.actor.target_vertex is None:
+            if isinstance(an.actor, TransformActor):
                 transform_output_fields.update(str(k) for k in an.actor.t.map.keys())
 
         if not transform_output_fields:
@@ -1409,7 +1382,7 @@ class ActorWrapper:
                 wrapped actor; the value must be a set. A descendant is included
                 only if getattr(actor, key, None) is in that set. Examples:
                 name={"user", "product"} for VertexActor,
-                target_vertex={"target_a", "target_b"} for TransformActor.
+                from_doc for VertexActor with projection.
 
         Returns:
             list[ActorWrapper]: All matching descendants in the tree.
@@ -1417,10 +1390,6 @@ class ActorWrapper:
         Example:
             >>> # All VertexActor descendants with name in {"user", "product"}
             >>> wrappers.find_descendants(actor_type=VertexActor, name={"user", "product"})
-            >>> # All TransformActor descendants with target_vertex in a set
-            >>> wrappers.find_descendants(
-            ...     actor_type=TransformActor, target_vertex={"a", "b"}
-            ... )
             >>> # Custom predicate
             >>> wrappers.find_descendants(predicate=lambda w: isinstance(w.actor, VertexActor) and w.actor.name == "user")
         """

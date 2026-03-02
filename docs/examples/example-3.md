@@ -62,12 +62,10 @@ The resource configuration maps the CSV columns to vertices and edges:
 resources:
 -   resource_name: relations
     apply:
-    -   target_vertex: company
-        map:
-            company_a: name
-    -   target_vertex: company
-        map:
-            company_b: name
+    -   vertex: company
+        "from": {name: company_a}
+    -   vertex: company
+        "from": {name: company_b}
 ```
 
 This creates two company vertices for each row and establishes the relationship between them.

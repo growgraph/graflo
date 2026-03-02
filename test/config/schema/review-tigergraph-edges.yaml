@@ -4,14 +4,9 @@ resources:
 -   resource_name: authors
     apply:
     -   vertex: author
+        "from": {id: author_id, full_name: FullName, hindex: HIndex}
     -   vertex: researchField
-    -   map:
-            author_id: id
-            FullName: full_name
-            HIndex: hindex
-    -   target_vertex: researchField
-        map:
-            research_sector: id
+        "from": {id: research_sector}
 vertex_config:
     vertices:
     -   name: author

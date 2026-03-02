@@ -163,6 +163,15 @@ Each step is a dict. You can write steps in shorthand (e.g. `vertex: person`) or
    ```
    Optional: `keep_fields: [id, name]`.
 
+   **Vertex projection** — map document fields directly onto vertex fields (avoids transform for simple renaming):
+   ```yaml
+   - vertex: person
+     "from": {id: person_id, name: person}
+   - vertex: department
+     "from": {name: department}
+   ```
+   Use `"from": {vertex_field: doc_field}` — vertex field X comes from document field Y. Quote `from` in YAML because it is a reserved word.
+
 2. **Transform step** — rename fields, change shape, or apply a function.
    There are several forms:
 
@@ -171,11 +180,8 @@ Each step is a dict. You can write steps in shorthand (e.g. `vertex: person`) or
    - map:
        person: name
        person_id: id
-     target_vertex: department   # optional: send result to a vertex
    ```
-   If a transform/map step does **not** declare `target_vertex`, make sure the
-   pipeline also has explicit `vertex` steps to consume those transformed
-   fields. Recent architecture updates removed implicit vertex actor creation.
+   Transform output goes to `buffer_transforms`; vertex steps at the same level consume it. For simple doc-to-vertex field mapping, prefer vertex `from` instead.
 
    **Direct output** (function result maps 1:1 to output fields):
    ```yaml
@@ -240,7 +246,7 @@ Each step is a dict. You can write steps in shorthand (e.g. `vertex: person`) or
 ### Rules for resources (for agents)
 
 - **Unique names**: Every `resource_name` in the schema must be unique.
-- **References**: All vertex names in `apply` (e.g. `vertex: person`, `source`/`target`, `target_vertex`) must exist in `vertex_config.vertices`. All edge relationships implied by `source`/`target` should exist in `edge_config.edges` (or be compatible).
+- **References**: All vertex names in `apply` (e.g. `vertex: person`, `source`/`target`, vertex `from`) must exist in `vertex_config.vertices`. All edge relationships implied by `source`/`target` should exist in `edge_config.edges` (or be compatible).
 - **Order**: Steps run in sequence. Typically you create vertices before creating edges that reference them; use **transform** to reshape data and **descend** to handle nested structures.
 - **Transforms**: If a step uses `name: <transform_name>`, that name must exist in `transforms` (see below).
 
@@ -318,12 +324,10 @@ resources:
       - vertex: person
   - resource_name: departments
     apply:
-      - map:
-          person: name
-          person_id: id
-      - target_vertex: department
-        map:
-          department: name
+      - vertex: person
+        "from": {id: person_id, name: person}
+      - vertex: department
+        "from": {name: department}
 ```
 
 This defines two vertex types (`person`, `department`), one edge type (`person` → `department`), and two resources: **people** (each row → one `person` vertex) and **departments** (transform + `department` vertices). Data sources are attached to these resources by name (e.g. via `Patterns` or `DataSourceRegistry`) as shown in the [Quick Start](quickstart.md).

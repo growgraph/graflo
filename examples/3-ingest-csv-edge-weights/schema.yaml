@@ -3,12 +3,10 @@ general:
 resources:
 -   resource_name: relations
     apply:
-    -   target_vertex: company
-        map:
-            company_a: name
-    -   target_vertex: company
-        map:
-            company_b: name
+    -   vertex: company
+        "from": {name: company_a}
+    -   vertex: company
+        "from": {name: company_b}
 vertex_config:
     vertices:
     -   name: company

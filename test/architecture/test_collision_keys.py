@@ -19,9 +19,9 @@ def test_collision(resource_collision, vertex_config_collision, sample_cross):
     ]
 
     assert ctx.acc_vertex["company"][LocationIndex(path=(0,))] == [
-        VertexRep(vertex={"id": "Apple"}, ctx={"name": "John"}),
+        VertexRep(vertex={"id": "Apple"}, ctx={"name": "John", "id": "Apple"}),
     ]
 
     assert ctx.acc_vertex["company"][LocationIndex(path=(1,))] == [
-        VertexRep(vertex={"id": "Oracle"}, ctx={"name": "Mary"}),
+        VertexRep(vertex={"id": "Oracle"}, ctx={"name": "Mary", "id": "Oracle"}),
     ]

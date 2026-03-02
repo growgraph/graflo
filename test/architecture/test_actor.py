@@ -10,7 +10,7 @@ from graflo.architecture.actor import (
 from graflo.architecture.edge import EdgeConfig
 from graflo.architecture.onto import ActionContext, LocationIndex, VertexRep
 from graflo.architecture.actor_config import (
-    TransformActorConfig,
+    VertexActorConfig,
     normalize_actor_step,
     validate_actor_step,
 )
@@ -182,53 +182,42 @@ def test_find_descendants_by_type_and_predicate(
     assert by_predicate == all_vertex_work
 
 
-def test_find_descendants_transform_by_target_vertex(
+def test_find_descendants_vertex_by_from_doc(
     resource_collision, vertex_config_collision
 ):
-    """find_descendants returns TransformActors whose target_vertex is in the given set."""
+    """find_descendants returns VertexActors whose from_doc matches."""
     anw = ActorWrapper(*resource_collision)
     anw.finish_init(vertex_config=vertex_config_collision, transforms={})
-    by_vertex = anw.find_descendants(
-        actor_type=TransformActor, target_vertex={"person"}
-    )
-    assert len(by_vertex) == 1
-    assert (
-        isinstance(by_vertex[0].actor, TransformActor)
-        and by_vertex[0].actor.target_vertex == "person"
-    )
-    by_vertex_empty = anw.find_descendants(
-        actor_type=TransformActor, target_vertex={"nonexistent"}
-    )
-    assert len(by_vertex_empty) == 0
+    by_vertex = anw.find_descendants(actor_type=VertexActor, name={"person"})
+    assert len(by_vertex) >= 1
+    with_from = [w for w in by_vertex if w.actor.from_doc]
+    assert len(with_from) == 1
+    assert with_from[0].actor.from_doc == {"id": "name"}
 
 
-def test_explicit_format_pipeline_transform_create_edge():
-    """New explicit format: pipeline with transform(map,target_vertex)+create_edge."""
+def test_explicit_format_pipeline_vertex_from_create_edge():
+    """Pipeline with vertex(from)+create_edge."""
 
     vc = VertexConfig.from_dict({"vertices": [{"name": "users", "fields": ["id"]}]})
     pipeline = [
-        {"transform": {"map": {"follower_id": "id"}, "target_vertex": "users"}},
-        {"transform": {"map": {"followed_id": "id"}, "target_vertex": "users"}},
+        {"vertex": "users", "from": {"id": "follower_id"}},
+        {"vertex": "users", "from": {"id": "followed_id"}},
         {"create_edge": {"from": "users", "to": "users"}},
     ]
     anw = ActorWrapper(pipeline=pipeline)
-    anw.finish_init(vertex_config=vc, transforms={})
-    # Root is DescendActor with at least 3 descendants: 2 TransformActors, 1 EdgeActor
-    # (finish_init may auto-add a VertexActor for "users")
+    anw.finish_init(vertex_config=vc, transforms={}, edge_config=EdgeConfig())
     assert isinstance(anw.actor, DescendActor)
-    assert len(anw.actor.descendants) >= 3
-    transform_count = sum(
-        1 for d in anw.actor.descendants if isinstance(d.actor, TransformActor)
+    vertex_count = sum(
+        1 for d in anw.actor.descendants if isinstance(d.actor, VertexActor)
     )
     edge_count = sum(1 for d in anw.actor.descendants if isinstance(d.actor, EdgeActor))
-    assert transform_count >= 2 and edge_count >= 1
-    # Explicit format parses via Pydantic config
-    step = {"transform": {"map": {"x": "y"}, "target_vertex": "users"}}
+    assert vertex_count >= 2 and edge_count >= 1
+    # Vertex with from parses via Pydantic config
+    step = {"vertex": "users", "from": {"id": "x"}}
     config = validate_actor_step(normalize_actor_step(step))
-    assert config.type == "transform"
-    assert isinstance(config, TransformActorConfig)
-    assert config.map == {"x": "y"}
-    assert config.target_vertex == "users"
+    assert config.type == "vertex"
+    assert isinstance(config, VertexActorConfig)
+    assert config.from_doc == {"id": "x"}
 
 
 def test_normalize_actor_step_nested_descend_apply_create_edge_shape():
@@ -374,10 +363,11 @@ def test_transform_payload_consumption_avoids_cross_vertex_self_edge():
         }
     )
     pipeline = [
-        {"vertex": "author"},
-        {"vertex": "researchField"},
-        {"map": {"author_id": "id", "FullName": "full_name", "HIndex": "hindex"}},
-        {"target_vertex": "researchField", "map": {"research_sector": "id"}},
+        {
+            "vertex": "author",
+            "from": {"id": "author_id", "full_name": "FullName", "hindex": "HIndex"},
+        },
+        {"vertex": "researchField", "from": {"id": "research_sector"}},
     ]
     anw = ActorWrapper(pipeline=pipeline)
     anw.finish_init(vertex_config=vc, edge_config=ec, transforms={})
@@ -410,12 +400,9 @@ def test_infer_edge_only_filters_greedy_edges():
         }
     )
     pipeline = [
-        {"vertex": "a"},
-        {"target_vertex": "a", "map": {"a": "id"}},
-        {"vertex": "b"},
-        {"target_vertex": "b", "map": {"b": "id"}},
-        {"vertex": "c"},
-        {"target_vertex": "c", "map": {"c": "id"}},
+        {"vertex": "a", "from": {"id": "a"}},
+        {"vertex": "b", "from": {"id": "b"}},
+        {"vertex": "c", "from": {"id": "c"}},
     ]
 
     anw = ActorWrapper(pipeline=pipeline)
@@ -452,12 +439,9 @@ def test_infer_edge_except_filters_greedy_edges():
         }
     )
     pipeline = [
-        {"vertex": "a"},
-        {"target_vertex": "a", "map": {"a": "id"}},
-        {"vertex": "b"},
-        {"target_vertex": "b", "map": {"b": "id"}},
-        {"vertex": "c"},
-        {"target_vertex": "c", "map": {"c": "id"}},
+        {"vertex": "a", "from": {"id": "a"}},
+        {"vertex": "b", "from": {"id": "b"}},
+        {"vertex": "c", "from": {"id": "c"}},
     ]
 
     anw = ActorWrapper(pipeline=pipeline)

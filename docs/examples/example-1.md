@@ -45,7 +45,7 @@ The graph structure is quite simple:
 ![People Resource Image](../assets/1-ingest-csv/figs/hr_vc2vc.png){ width="200" }
 
 
-Let's define the mappings: we want to rename the fields `person`, `person_id` and `department` and specify explicitly `target_vertex` to avoid the collision, since both `Person` and `Department` have a field called `name`.  
+Let's define the mappings: we want to map document fields to vertex fields. Use vertex `from` to project document fields onto vertex fields and avoid name collisions (e.g. both `Person` and `Department` have a field called `name`):
 
 ```yaml
 -   resource_name: people
@@ -53,12 +53,10 @@ Let's define the mappings: we want to rename the fields `person`, `person_id` an
     -   vertex: person
 -   resource_name: departments
     apply:
-    -   map:
-            person: name
-            person_id: id
-    -   target_vertex: department
-        map:
-            department: name
+    -   vertex: person
+        "from": {id: person_id, name: person}
+    -   vertex: department
+        "from": {name: department}
 ```
 
 Department Resource

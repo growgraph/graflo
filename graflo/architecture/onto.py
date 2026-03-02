@@ -449,10 +449,6 @@ class LocationIndex(ConfigBaseModel):
         return self.path[item]
 
 
-def _default_dict_list() -> defaultdict[GraphEntity, list]:
-    return defaultdict(list)
-
-
 def _default_dict_transforms() -> defaultdict[LocationIndex, list[Any]]:
     return defaultdict(list)
 
@@ -478,7 +474,6 @@ class ExtractionContext(ConfigBaseModel):
 
     Attributes:
         acc_vertex: Local accumulation of extracted vertices
-        buffer_vertex: Buffer for vertex data (defaultdict[GraphEntity, list])
         buffer_transforms: Buffer for transform payloads (defaultdict[LocationIndex, list])
         edge_requests: Explicit edge assembly requests collected during extraction
         vertex_observations: Explicit extracted vertex observations
@@ -491,7 +486,6 @@ class ExtractionContext(ConfigBaseModel):
     # Pydantic cannot schema nested defaultdict with custom key types (e.g. LocationIndex),
     # so we use Any; runtime type is as documented in Attributes
     acc_vertex: Any = Field(default_factory=outer_factory)
-    buffer_vertex: Any = Field(default_factory=_default_dict_list)
     buffer_transforms: Any = Field(default_factory=_default_dict_transforms)
     edge_requests: Any = Field(default_factory=_default_edge_requests)
     vertex_observations: list[VertexObservation] = Field(

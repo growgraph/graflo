@@ -43,6 +43,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Migrate by moving physical edge specs/indexes to `database_features.edge_specs` and logical uniqueness keys to `edge.identities`.
 - `database_features.edge_variants` was renamed to `database_features.edge_specs`.
 
+### Breaking (vertex projection)
+- **Vertex projection replaces `target_vertex`**:
+  - `target_vertex` on transform steps has been removed
+  - Use vertex `from` for doc-to-vertex field mapping: `vertex: X` with `"from": {vertex_field: doc_field}`
+  - Quote `from` in YAML (reserved word). Example: `vertex: person` with `"from": {id: person_id, name: person}`
+  - `buffer_vertex` was removed from `ExtractionContext`; transforms always write to `buffer_transforms`
+
 ### Changed (earlier in 1.6.5 cycle)
 - **Architecture phase separation**:
   - Runtime flow is now explicitly split into extraction and assembly contexts (`ExtractionContext`, `AssemblyContext`)
@@ -50,7 +57,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Edge assembly consumes explicit edge intents in addition to compatibility fallback paths
 - **Pipeline explicitness tightened**:
   - Implicit vertex actor auto-creation during descend initialization was removed
-  - Pipelines using transform/map steps without `target_vertex` now require explicit `vertex` steps
+  - Pipelines using transform/map steps require explicit `vertex` steps to consume output
   - Test schemas depending on implicit behavior were migrated to explicit vertex declarations
 
 ### Added (earlier in 1.6.5 cycle)
