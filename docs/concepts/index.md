@@ -552,11 +552,12 @@ A `Resource` is the central abstraction that bridges data sources and the graph 
 Because DataSources bind to Resources by name, the same transformation logic applies regardless of whether data arrives from a file, an API, a SQL table, or a SPARQL endpoint.
 
 Resource-level edge inference controls:
-- **`infer_edges`**: Global toggle for greedy/inferred edge emission during assembly.
+- **`infer_edges`**: Global toggle for inferred edge emission during assembly (default: `true`).
 - **`infer_edge_only`**: Allow-list of inferred edges (`source`, `target`, optional `relation`).
 - **`infer_edge_except`**: Deny-list of inferred edges (`source`, `target`, optional `relation`).
 - `infer_edge_only` and `infer_edge_except` are mutually exclusive and validated against declared schema edges.
 - These controls apply to inferred edges only; explicit edge actors in the pipeline are still emitted.
+- **Auto-exclusion**: When a resource pipeline contains any EdgeActor for edges of type `(source, target)`, `(source, target, None)` is automatically added to `infer_edge_except` for that resource, so inferred edges do not duplicate edges produced by explicit edge actors.
 
 ### Actor
 An `Actor` describes how the current level of the document should be mapped/transformed to the property graph vertices and edges. There are four types that act on the provided document in this order:

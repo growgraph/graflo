@@ -1632,7 +1632,7 @@ class TigerGraphConnection(Connection):
             str: GSQL ADD VERTEX statement
         """
         vertex_dbname = vertex_config.vertex_dbname(vertex.name)
-        index_fields = vertex_config.index(vertex.name).fields
+        index_fields = vertex_config.identity_fields(vertex.name)
 
         if len(index_fields) == 0:
             raise ValueError(

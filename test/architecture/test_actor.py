@@ -147,6 +147,35 @@ def test_resource_deb_compact(resource_deb_compact, data_deb, schema_vc_deb):
     }
 
 
+def test_relation_from_key_package_only(
+    resource_deb_package_only, data_deb_relation_from_key, schema_vc_deb
+):
+    """Package-package edges only via relation_from_key (example 4 style). Nothing else."""
+    anw = ActorWrapper(*resource_deb_package_only)
+    anw.finish_init(vertex_config=schema_vc_deb, transforms={})
+    ctx = ActionContext()
+    ctx = anw(ctx, doc=data_deb_relation_from_key)
+    acc = anw.assemble(ctx)
+    # Only relation_from_key edges (non-None relation)
+    package_package_keys = [
+        (u, v, r)
+        for u, v, r in (k for k in acc.keys() if isinstance(k, tuple))
+        if v == "package" and u == "package" and r is not None
+    ]
+    assert len(package_package_keys) == 4
+    assert {k: len(acc[k]) for k in package_package_keys} == {
+        ("package", "package", "depends"): 28,
+        ("package", "package", "pre_depends"): 3,
+        ("package", "package", "suggests"): 2,
+        ("package", "package", "breaks"): 1,
+    }
+    # No maintainer-package or other edge types
+    other_keys = [
+        k for k in acc.keys() if isinstance(k, tuple) and k not in package_package_keys
+    ]
+    assert len(other_keys) == 0
+
+
 def test_find_descendants_by_vertex_name(resource_descend, schema_vc_openalex):
     """find_descendants returns VertexActors whose name is in the given set."""
     anw = ActorWrapper(**resource_descend)

@@ -63,3 +63,67 @@ def test_resource_infer_edge_selector_references_unknown_edge():
     ec = EdgeConfig.from_dict({"edges": [{"source": "person", "target": "person"}]})
     with pytest.raises(ValueError, match="unknown edge selectors"):
         resource.finish_init(vertex_config=vc, edge_config=ec, transforms={})
+
+
+def test_resource_auto_adds_edge_actor_types_to_infer_edge_except():
+    """When a Resource has EdgeActors for (s,t), (s,t, None) is auto-added to infer_edge_except."""
+    resource = Resource.from_dict(
+        {
+            "resource_name": "test",
+            "pipeline": [
+                {"vertex": "a", "from": {"id": "a"}},
+                {"vertex": "b", "from": {"id": "b"}},
+                {"vertex": "c", "from": {"id": "c"}},
+                {"edge": {"from": "a", "to": "b"}},
+            ],
+        }
+    )
+    ids = resource._edge_ids_from_edge_actors()
+    assert ids == {("a", "b", None)}
+
+
+def test_resource_infer_edge_except_excludes_edges_handled_by_edge_actors():
+    """Resource with EdgeActor for (a,b) does not infer (a,b); (a,c) is still inferred."""
+    from graflo.architecture.onto import ActionContext
+
+    vc = VertexConfig.from_dict(
+        {
+            "vertices": [
+                {"name": "a", "fields": ["id"], "identity": ["id"]},
+                {"name": "b", "fields": ["id"], "identity": ["id"]},
+                {"name": "c", "fields": ["id"], "identity": ["id"]},
+            ]
+        }
+    )
+    ec = EdgeConfig.from_dict(
+        {
+            "edges": [
+                {"source": "a", "target": "b", "relation": "ab"},
+                {"source": "a", "target": "c", "relation": "ac"},
+            ]
+        }
+    )
+    # EdgeActor for (a,b) is inside a descend that never runs (doc has no "nested" key)
+    resource = Resource.from_dict(
+        {
+            "resource_name": "test",
+            "pipeline": [
+                {"vertex": "a", "from": {"id": "a"}},
+                {"vertex": "b", "from": {"id": "b"}},
+                {"vertex": "c", "from": {"id": "c"}},
+                {
+                    "key": "nested",
+                    "apply": [{"edge": {"from": "a", "to": "b"}}],
+                },
+            ],
+        }
+    )
+    resource.finish_init(vertex_config=vc, edge_config=ec, transforms={})
+    anw = resource.root
+    ctx = ActionContext()
+    ctx = anw(ctx, doc={"a": "1", "b": "2", "c": "3"})
+    acc = anw.assemble(ctx)
+    # (a,b) has EdgeActor so it's in infer_edge_except - not inferred
+    assert ("a", "b", "ab") not in acc
+    # (a,c) has no EdgeActor - inferred
+    assert len(acc[("a", "c", "ac")]) == 1

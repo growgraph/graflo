@@ -149,7 +149,7 @@ def _vertex_table_info(
     if tp is None:
         return None
     try:
-        pk_fields = vertex_config.index(vertex_name).fields
+        pk_fields = vertex_config.identity_fields(vertex_name)
     except (KeyError, IndexError):
         return None
     if not pk_fields:

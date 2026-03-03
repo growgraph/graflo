@@ -152,6 +152,7 @@ Resources define **how** each data stream is turned into vertices and edges. Eac
 - **`infer_edge_except`**: Optional list of edge selectors to suppress for inferred edges.
   - `infer_edge_only` and `infer_edge_except` are mutually exclusive.
   - These selectors affect inferred edges only, not explicit edge actors in the resource pipeline.
+  - **Auto-exclusion**: When a resource pipeline contains any EdgeActor for edges of type `(source, target)`, `(source, target, None)` is automatically added to `infer_edge_except` for that resource. This prevents inferred edges from duplicating or conflicting with edges produced by explicit edge actors.
 
 ### Actor steps in `apply` / `pipeline`
 

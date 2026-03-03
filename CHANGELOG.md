@@ -37,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added `resource.infer_edge_only` and `resource.infer_edge_except` selectors for fine-grained control of greedy/inferred edge emission
   - Added validation for contradictions (`infer_edge_only` and `infer_edge_except` are mutually exclusive)
   - Added validation that infer selectors reference existing schema edges
+  - When a resource pipeline contains any EdgeActor for edges of type `(source, target)`, `(source, target, None)` is automatically added to `infer_edge_except` for that resource, so inferred edges do not duplicate edges produced by explicit edge actors
 - **Architecture phase separation**:
   - Runtime flow is now explicitly split into extraction and assembly contexts (`ExtractionContext`, `AssemblyContext`)
   - Actor orchestration was separated from wrapper structure by introducing `ActorExecutor`

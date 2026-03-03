@@ -318,7 +318,7 @@ class SchemaPlotter:
 
         kwargs = {"vfield": True, "vertex_sh": vertex_prefix_dict}
         for k in vconf.vertex_set:
-            index_fields = vconf.index(k)
+            index_fields = vconf.identity_fields(k)
             fields = vconf.fields_names(k)
             kwargs["vertex"] = k
             nodes_collection = [
@@ -385,7 +385,7 @@ class SchemaPlotter:
                     vfield=True,
                     vertex_sh=vertex_prefix_dict,
                 )
-                for item in vconf.index(k)
+                for item in vconf.identity_fields(k)
             ]
             index_subgraph = ag.add_subgraph(level_index, name=f"cluster_{k}:def")
             index_subgraph.node_attr["style"] = "filled"

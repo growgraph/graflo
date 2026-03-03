@@ -84,8 +84,9 @@ class VertexConfigDBAware:
     def vertex_dbname(self, vertex_name: str) -> str:
         return self.database_features.vertex_storage_name(vertex_name)
 
-    def index(self, vertex_name: str):
-        return self.logical.index(vertex_name)
+    def index(self, vertex_name: str) -> Index:
+        """Get primary index for a vertex (DB layer needs Index for collection setup)."""
+        return Index(fields=self.identity_fields(vertex_name))
 
     def identity_fields(self, vertex_name: str) -> list[str]:
         identity = self.logical.identity_fields(vertex_name)

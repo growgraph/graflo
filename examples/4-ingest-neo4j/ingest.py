@@ -31,7 +31,8 @@ patterns = Patterns()
 patterns.add_file_pattern(
     "package",
     FilePattern(
-        regex=r"^package\.meta.*\.json(?:\.gz)?$",
+        # regex=r"^package\.meta.*\.json(?:\.gz)?$",
+        regex=r"^package\.meta.*\.json$",
         sub_path=pathlib.Path("./data"),
         resource_name="package",
     ),
@@ -55,7 +56,7 @@ patterns.add_file_pattern(
 
 # Create GraphEngine and define schema + ingest in one operation
 engine = GraphEngine(target_db_flavor=db_type)
-ingestion_params = IngestionParams(clear_data=True)
+ingestion_params = IngestionParams(clear_data=True, max_items=10)
 engine.define_and_ingest(
     schema=schema,
     target_db_config=conn_conf,  # Target database config

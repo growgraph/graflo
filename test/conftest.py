@@ -426,6 +426,24 @@ def resource_deb_compact():
 
 
 @pytest.fixture()
+def resource_deb_package_only():
+    """Package-package edges only via relation_from_key (example 4 style). No maintainer."""
+    return yaml.safe_load("""
+    -   resource_name: package
+        apply:
+        -   vertex: package
+        -   key: dependencies
+            apply:
+            -   any_key: true
+                apply:
+                -   vertex: package
+        -   source: package
+            target: package
+            relation_from_key: true
+    """)
+
+
+@pytest.fixture()
 def resource_ticker():
     return yaml.safe_load("""
     resource_name: ticker_data
@@ -469,3 +487,9 @@ def resource_ticker():
 @pytest.fixture()
 def data_deb():
     return FileHandle.load("test.data.deb", "package.json")
+
+
+@pytest.fixture()
+def data_deb_relation_from_key():
+    """Package data for relation_from_key edge test (example 4 style)."""
+    return FileHandle.load("test.data.deb", "package_relation_from_key.json")

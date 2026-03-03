@@ -358,7 +358,7 @@ class VertexActor(Actor):
         Returns:
             list[dict]: List of processed documents
         """
-        index_keys = tuple(self.vertex_config.index(self.name).fields)
+        index_keys = tuple(self.vertex_config.identity_fields(self.name))
         payloads = ctx.buffer_transforms[lindex]
         extracted_docs = [
             self._extract_vertex_doc_from_transformed_item(
@@ -415,7 +415,7 @@ class VertexActor(Actor):
 
         # Merge and create vertex representations
         merged = merge_doc_basis(
-            agg, index_keys=tuple(self.vertex_config.index(self.name).fields)
+            agg, index_keys=tuple(self.vertex_config.identity_fields(self.name))
         )
 
         obs_ctx = {q: w for q, w in doc.items() if not isinstance(w, (dict, list))}
@@ -783,7 +783,7 @@ class DescendActor(Actor):
         inferred_vertices: list[str] = []
         for vertex_name in sorted(init_ctx.vertex_config.vertex_set):
             identity_fields = {
-                str(field) for field in init_ctx.vertex_config.index(vertex_name).fields
+                f for f in init_ctx.vertex_config.identity_fields(vertex_name)
             }
             if identity_fields and identity_fields.issubset(transform_output_fields):
                 inferred_vertices.append(vertex_name)
@@ -1244,7 +1244,7 @@ class ActorWrapper:
             ctx=assembly_ctx,
             vertex_config=self.vertex_config,
             edge_config=self.edge_config,
-            edge_greedy=self.infer_edges,
+            infer_edges=self.infer_edges,
             infer_edge_only=self.infer_edge_only,
             infer_edge_except=self.infer_edge_except,
         )
@@ -1254,7 +1254,7 @@ class ActorWrapper:
                 vertex_list = [x.vertex for x in vertex_list]
                 vertex_list_updated = merge_doc_basis(
                     vertex_list,
-                    tuple(self.vertex_config.index(vertex_name).fields),
+                    tuple(self.vertex_config.identity_fields(vertex_name)),
                 )
                 vertex_list_updated = pick_unique_dict(vertex_list_updated)
 

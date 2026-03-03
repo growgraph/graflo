@@ -196,16 +196,20 @@ class SchemaSanitizer:
                     source_vertex = edge.source
                     target_vertex = edge.target
 
-                    # Get primary index for source vertex
-                    source_index = schema.vertex_config.index(source_vertex)
+                    # Get identity fields for source vertex
                     source_vertex_indexes.append(
-                        (source_vertex, tuple(source_index.fields))
+                        (
+                            source_vertex,
+                            tuple(schema.vertex_config.identity_fields(source_vertex)),
+                        )
                     )
 
-                    # Get primary index for target vertex
-                    target_index = schema.vertex_config.index(target_vertex)
+                    # Get identity fields for target vertex
                     target_vertex_indexes.append(
-                        (target_vertex, tuple(target_index.fields))
+                        (
+                            target_vertex,
+                            tuple(schema.vertex_config.identity_fields(target_vertex)),
+                        )
                     )
 
                 # Normalize source indexes

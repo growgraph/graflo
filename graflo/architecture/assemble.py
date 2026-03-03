@@ -17,7 +17,7 @@ def _merge_vertices_for_edge(
     for vname in (source, target):
         for lindex, vlist in ctx.acc_vertex[vname].items():
             ctx.acc_vertex[vname][lindex] = merge_doc_basis(
-                vlist, tuple(vertex_config.index(vname).fields)
+                vlist, tuple(vertex_config.identity_fields(vname))
             )
 
 
@@ -67,7 +67,7 @@ def assemble_edges(
     ctx: AssemblyContext,
     vertex_config: VertexConfig,
     edge_config: EdgeConfig,
-    edge_greedy: bool,
+    infer_edges: bool,
     infer_edge_only: set[EdgeId] | None = None,
     infer_edge_except: set[EdgeId] | None = None,
 ) -> None:
@@ -96,7 +96,7 @@ def assemble_edges(
     ctx.edge_requests = []
     ctx.extraction.edge_intents = []
 
-    if not edge_greedy:
+    if not infer_edges:
         return
 
     populated = {v for v, dd in ctx.acc_vertex.items() if any(dd.values())}

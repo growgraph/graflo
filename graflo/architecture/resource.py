@@ -35,7 +35,7 @@ from typing import Any, Callable
 
 from pydantic import AliasChoices, Field as PydanticField, PrivateAttr, model_validator
 
-from graflo.architecture.actor import ActorInitContext, ActorWrapper
+from graflo.architecture.actor import ActorInitContext, ActorWrapper, EdgeActor
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.edge import Edge, EdgeConfig
 from graflo.architecture.executor import ActorExecutor
@@ -260,6 +260,17 @@ class Resource(ConfigBaseModel):
             transforms=transforms,
         )
 
+    def _edge_ids_from_edge_actors(self) -> set[EdgeId]:
+        """Collect (source, target, None) for every EdgeActor in this resource's pipeline.
+
+        Used to auto-add to infer_edge_except so inferred edges do not duplicate
+        edges produced by explicit edge actors.
+        """
+        edge_actors = [
+            a for a in self.root.collect_actors() if isinstance(a, EdgeActor)
+        ]
+        return {(ea.edge.source, ea.edge.target, None) for ea in edge_actors}
+
     def _rebuild_runtime(
         self,
         *,
@@ -272,6 +283,12 @@ class Resource(ConfigBaseModel):
         object.__setattr__(self, "_edge_config", edge_config)
         self._validate_infer_edge_spec_targets(edge_config)
 
+        infer_edge_except = {spec.edge_id for spec in self.infer_edge_except}
+        # When not using infer_edge_only, auto-add (s,t,None) to infer_edge_except
+        # for any edge type handled by explicit EdgeActors in this resource.
+        if not self.infer_edge_only:
+            infer_edge_except |= self._edge_ids_from_edge_actors()
+
         logger.debug("total resource actor count : %s", self.root.count())
         init_ctx = ActorInitContext(
             vertex_config=vertex_config,
@@ -279,7 +296,7 @@ class Resource(ConfigBaseModel):
             transforms=transforms,
             infer_edges=self.infer_edges,
             infer_edge_only={spec.edge_id for spec in self.infer_edge_only},
-            infer_edge_except={spec.edge_id for spec in self.infer_edge_except},
+            infer_edge_except=infer_edge_except,
         )
         self.root.finish_init(init_ctx=init_ctx)
 

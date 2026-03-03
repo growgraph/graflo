@@ -31,7 +31,6 @@ from pydantic import (
 )
 
 from graflo.architecture.base import ConfigBaseModel
-from graflo.architecture.onto import Index
 from graflo.filter.onto import FilterExpression
 from graflo.onto import BaseEnum
 
@@ -384,17 +383,6 @@ class VertexConfig(ConfigBaseModel):
             f"Vertex '{identifier}' not found by logical name. "
             f"Available names: {available_names}"
         )
-
-    def index(self, vertex_name) -> Index:
-        """Get primary index for a vertex.
-
-        Args:
-            vertex_name: Name of the vertex
-
-        Returns:
-            Index: Primary index for the vertex
-        """
-        return Index(fields=self.identity_fields(vertex_name))
 
     def identity_fields(self, vertex_name: str) -> list[str]:
         """Get identity fields for a vertex."""
