@@ -612,20 +612,16 @@ resources:
     -   vertex: users
 -   resource_name: purchases
     apply:
-    -   target_vertex: users
-        map:
-            user_id: id
-    -   target_vertex: products
-        map:
-            product_id: id
+    -   vertex: users
+        "from": {id: user_id}
+    -   vertex: products
+        "from": {id: product_id}
 -   resource_name: follows
     apply:
-    -   target_vertex: users
-        map:
-            follower_id: id
-    -   target_vertex: users
-        map:
-            followed_id: id
+    -   vertex: users
+        "from": {id: follower_id}
+    -   vertex: users
+        "from": {id: followed_id}
 ```
 
 ## Key Features

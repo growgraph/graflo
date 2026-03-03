@@ -1,11 +1,11 @@
 {
     "id": "https://openalex.org/A4379737106",
     "orcid": null,
-    "display_name": "Dina Tarek",
+    "display_name": "Test Author",
     "display_name_alternatives": [],
     "works_count": 1,
     "cited_by_count": 0,
-    "most_cited_work": "LBCC-Hung: A load balancing protocol for cloud computing based on Hungarian method (2023)",
+    "most_cited_work": "Sample publication title (2023)",
     "summary_stats": {
         "2yr_mean_citedness": 0,
         "h_index": 0,

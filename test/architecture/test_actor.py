@@ -1,6 +1,7 @@
 import logging
 
 from graflo.architecture.actor import (
+    ActorInitContext,
     ActorWrapper,
     DescendActor,
     EdgeActor,
@@ -10,10 +11,11 @@ from graflo.architecture.actor import (
 from graflo.architecture.edge import EdgeConfig
 from graflo.architecture.onto import ActionContext, LocationIndex, VertexRep
 from graflo.architecture.actor_config import (
-    TransformActorConfig,
+    VertexActorConfig,
     normalize_actor_step,
     validate_actor_step,
 )
+from graflo.architecture.transform import ProtoTransform
 from graflo.architecture.vertex import VertexConfig
 
 logger = logging.getLogger(__name__)
@@ -21,7 +23,13 @@ logger = logging.getLogger(__name__)
 
 def test_descend(resource_descend, schema_vc_openalex):
     anw = ActorWrapper(**resource_descend)
-    anw.finish_init(vertex_config=schema_vc_openalex)
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=schema_vc_openalex,
+            edge_config=EdgeConfig(),
+            transforms={},
+        )
+    )
     assert isinstance(anw.actor, DescendActor)
     assert len(anw.actor.descendants) == 2
     assert isinstance(anw.actor.descendants[0].actor, DescendActor)
@@ -32,7 +40,11 @@ def test_descend(resource_descend, schema_vc_openalex):
 def test_edge(action_node_edge, schema_vc_openalex):
     anw = ActorWrapper(**action_node_edge)
     anw.finish_init(
-        transforms={}, vertex_config=schema_vc_openalex, edge_config=EdgeConfig()
+        init_ctx=ActorInitContext(
+            vertex_config=schema_vc_openalex,
+            edge_config=EdgeConfig(),
+            transforms={},
+        )
     )
     assert isinstance(anw.actor, EdgeActor)
     assert anw.actor.edge.target == "work"
@@ -40,14 +52,26 @@ def test_edge(action_node_edge, schema_vc_openalex):
 
 def test_transform(action_node_transform, schema_vc_openalex):
     anw = ActorWrapper(**action_node_transform)
-    anw.finish_init(vertex_config=schema_vc_openalex)
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=schema_vc_openalex,
+            edge_config=EdgeConfig(),
+            transforms={},
+        )
+    )
     assert isinstance(anw.actor, TransformActor)
 
 
 def test_mapper_value(resource_concept, schema_vc_openalex):
     test_doc = [{"wikidata": "https://www.wikidata.org/wiki/Q123", "mag": 105794591}]
     anw = ActorWrapper(*resource_concept)
-    anw.finish_init(vertex_config=schema_vc_openalex, transforms={})
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=schema_vc_openalex,
+            edge_config=EdgeConfig(),
+            transforms={},
+        )
+    )
     ctx = ActionContext()
     ctx = anw(ctx, doc=test_doc)
     assert len(ctx.acc_vertex) == 1
@@ -66,7 +90,13 @@ def test_transform_shortcut(resource_openalex_works, schema_vc_openalex):
     }
     anw = ActorWrapper(*resource_openalex_works)
     transforms = {}
-    anw.finish_init(vertex_config=schema_vc_openalex, transforms=transforms)
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=schema_vc_openalex,
+            edge_config=EdgeConfig(),
+            transforms=transforms,
+        )
+    )
     ctx = ActionContext()
     ctx = anw(ctx, doc=doc)
     assert ctx.acc_vertex["work"][LocationIndex(path=(0,))] == [
@@ -86,28 +116,42 @@ def test_edge_between_levels(
     ctx = ActionContext()
     anw = ActorWrapper(*resource_openalex_works)
     ec = EdgeConfig()
-    anw.finish_init(vertex_config=schema_vc_openalex, transforms={}, edge_config=ec)
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=schema_vc_openalex,
+            edge_config=ec,
+            transforms={},
+        )
+    )
     ctx = anw(ctx, doc=sample_openalex)
+    acc = anw.assemble(ctx)
     lindexes = list(ctx.acc_vertex["work"])
 
     assert len(lindexes) == 6
     assert len([li for li in lindexes if len(li) == 1]) == 1
     assert len([li for li in lindexes if len(li) > 1]) == 5
-    assert len(ctx.acc_global[("work", "work", None)]) == 5
+    assert len(acc[("work", "work", None)]) == 5
 
 
 def test_relation_from_key(resource_deb, data_deb, schema_vc_deb):
     anw = ActorWrapper(*resource_deb)
-    anw.finish_init(vertex_config=schema_vc_deb, transforms={})
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=schema_vc_deb,
+            edge_config=EdgeConfig(),
+            transforms={},
+        )
+    )
     ctx = ActionContext()
     ctx = anw(ctx, doc=data_deb)
+    acc = anw.assemble(ctx)
     relevant_keys = [
         (u, v, r)
-        for u, v, r in ctx.acc_global.keys()
+        for u, v, r in (k for k in acc.keys() if isinstance(k, tuple))
         if v == "package" and u == "package"
     ]
     assert len(relevant_keys) == 4
-    assert {k: len(ctx.acc_global[k]) for k in relevant_keys} == {
+    assert {k: len(acc[k]) for k in relevant_keys} == {
         ("package", "package", "depends"): 29,
         ("package", "package", "pre_depends"): 3,
         ("package", "package", "suggests"): 2,
@@ -117,24 +161,38 @@ def test_relation_from_key(resource_deb, data_deb, schema_vc_deb):
 
 def test_relation_exclude_target(resource_deb, data_deb, schema_vc_deb):
     anw = ActorWrapper(*resource_deb)
-    anw.finish_init(vertex_config=schema_vc_deb, transforms={})
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=schema_vc_deb,
+            edge_config=EdgeConfig(),
+            transforms={},
+        )
+    )
     ctx = ActionContext()
     ctx = anw(ctx, doc=data_deb)
-    assert len(ctx.acc_global[("maintainer", "package", None)]) == 3
+    acc = anw.assemble(ctx)
+    assert len(acc[("maintainer", "package", None)]) == 3
 
 
 def test_resource_deb_compact(resource_deb_compact, data_deb, schema_vc_deb):
     anw = ActorWrapper(*resource_deb_compact)
-    anw.finish_init(vertex_config=schema_vc_deb, transforms={})
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=schema_vc_deb,
+            edge_config=EdgeConfig(),
+            transforms={},
+        )
+    )
     ctx = ActionContext()
     ctx = anw(ctx, doc=data_deb)
+    acc = anw.assemble(ctx)
     relevant_keys = [
         (u, v, r)
-        for u, v, r in ctx.acc_global.keys()
+        for u, v, r in (k for k in acc.keys() if isinstance(k, tuple))
         if v == "package" and u == "package"
     ]
     assert len(relevant_keys) == 4
-    assert {k: len(ctx.acc_global[k]) for k in relevant_keys} == {
+    assert {k: len(acc[k]) for k in relevant_keys} == {
         ("package", "package", "depends"): 29,
         ("package", "package", "pre_depends"): 3,
         ("package", "package", "suggests"): 2,
@@ -142,10 +200,51 @@ def test_resource_deb_compact(resource_deb_compact, data_deb, schema_vc_deb):
     }
 
 
+def test_relation_from_key_package_only(
+    resource_deb_package_only, data_deb_relation_from_key, schema_vc_deb
+):
+    """Package-package edges only via relation_from_key (example 4 style). Nothing else."""
+    anw = ActorWrapper(*resource_deb_package_only)
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=schema_vc_deb,
+            edge_config=EdgeConfig(),
+            transforms={},
+        )
+    )
+    ctx = ActionContext()
+    ctx = anw(ctx, doc=data_deb_relation_from_key)
+    acc = anw.assemble(ctx)
+    # Only relation_from_key edges (non-None relation)
+    package_package_keys = [
+        (u, v, r)
+        for u, v, r in (k for k in acc.keys() if isinstance(k, tuple))
+        if v == "package" and u == "package" and r is not None
+    ]
+    assert len(package_package_keys) == 4
+    assert {k: len(acc[k]) for k in package_package_keys} == {
+        ("package", "package", "depends"): 28,
+        ("package", "package", "pre_depends"): 3,
+        ("package", "package", "suggests"): 2,
+        ("package", "package", "breaks"): 1,
+    }
+    # No maintainer-package or other edge types
+    other_keys = [
+        k for k in acc.keys() if isinstance(k, tuple) and k not in package_package_keys
+    ]
+    assert len(other_keys) == 0
+
+
 def test_find_descendants_by_vertex_name(resource_descend, schema_vc_openalex):
     """find_descendants returns VertexActors whose name is in the given set."""
     anw = ActorWrapper(**resource_descend)
-    anw.finish_init(vertex_config=schema_vc_openalex)
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=schema_vc_openalex,
+            edge_config=EdgeConfig(),
+            transforms={},
+        )
+    )
     # Tree: DescendActor -> [DescendActor(apply with name "a"), VertexActor("work")]
     by_name_work = anw.find_descendants(actor_type=VertexActor, name={"work"})
     assert len(by_name_work) == 1
@@ -162,7 +261,13 @@ def test_find_descendants_by_type_and_predicate(
 ):
     """find_descendants with actor_type and custom predicate works on nested tree."""
     anw = ActorWrapper(*resource_openalex_works)
-    anw.finish_init(vertex_config=schema_vc_openalex, transforms={})
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=schema_vc_openalex,
+            edge_config=EdgeConfig(),
+            transforms={},
+        )
+    )
     all_vertex_work = anw.find_descendants(actor_type=VertexActor, name={"work"})
     assert len(all_vertex_work) == 2  # top-level and under referenced_works
     assert all(
@@ -177,60 +282,145 @@ def test_find_descendants_by_type_and_predicate(
     assert by_predicate == all_vertex_work
 
 
-def test_find_descendants_transform_by_target_vertex(
+def test_find_descendants_vertex_by_from_doc(
     resource_collision, vertex_config_collision
 ):
-    """find_descendants returns TransformActors whose target_vertex is in the given set."""
+    """find_descendants returns VertexActors whose from_doc matches."""
     anw = ActorWrapper(*resource_collision)
-    anw.finish_init(vertex_config=vertex_config_collision, transforms={})
-    by_vertex = anw.find_descendants(actor_type=TransformActor, vertex={"person"})
-    assert len(by_vertex) == 1
-    assert (
-        isinstance(by_vertex[0].actor, TransformActor)
-        and by_vertex[0].actor.vertex == "person"
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=vertex_config_collision,
+            edge_config=EdgeConfig(),
+            transforms={},
+        )
     )
-    by_vertex_empty = anw.find_descendants(
-        actor_type=TransformActor, vertex={"nonexistent"}
-    )
-    assert len(by_vertex_empty) == 0
+    by_vertex = anw.find_descendants(actor_type=VertexActor, name={"person"})
+    assert len(by_vertex) >= 1
+    with_from = [w for w in by_vertex if w.actor.from_doc]
+    assert len(with_from) == 1
+    assert with_from[0].actor.from_doc == {"id": "name"}
 
 
-def test_explicit_format_pipeline_transform_create_edge():
-    """New explicit format: pipeline with transform (map, to_vertex) and create_edge (from, to)."""
+def test_explicit_format_pipeline_vertex_from_create_edge():
+    """Pipeline with vertex(from)+create_edge."""
 
     vc = VertexConfig.from_dict({"vertices": [{"name": "users", "fields": ["id"]}]})
     pipeline = [
-        {"transform": {"map": {"follower_id": "id"}, "to_vertex": "users"}},
-        {"transform": {"map": {"followed_id": "id"}, "to_vertex": "users"}},
+        {"vertex": "users", "from": {"id": "follower_id"}},
+        {"vertex": "users", "from": {"id": "followed_id"}},
         {"create_edge": {"from": "users", "to": "users"}},
     ]
     anw = ActorWrapper(pipeline=pipeline)
-    anw.finish_init(vertex_config=vc, transforms={})
-    # Root is DescendActor with at least 3 descendants: 2 TransformActors, 1 EdgeActor
-    # (finish_init may auto-add a VertexActor for "users")
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=vc,
+            edge_config=EdgeConfig(),
+            transforms={},
+        )
+    )
     assert isinstance(anw.actor, DescendActor)
-    assert len(anw.actor.descendants) >= 3
-    transform_count = sum(
-        1 for d in anw.actor.descendants if isinstance(d.actor, TransformActor)
+    vertex_count = sum(
+        1 for d in anw.actor.descendants if isinstance(d.actor, VertexActor)
     )
     edge_count = sum(1 for d in anw.actor.descendants if isinstance(d.actor, EdgeActor))
-    assert transform_count >= 2 and edge_count >= 1
-    # Explicit format parses via Pydantic config
-    step = {"transform": {"map": {"x": "y"}, "to_vertex": "users"}}
+    assert vertex_count >= 2 and edge_count >= 1
+    # Vertex with from parses via Pydantic config
+    step = {"vertex": "users", "from": {"id": "x"}}
     config = validate_actor_step(normalize_actor_step(step))
-    assert config.type == "transform"
-    assert isinstance(config, TransformActorConfig)
-    assert config.map == {"x": "y"}
-    assert config.to_vertex == "users"
+    assert config.type == "vertex"
+    assert isinstance(config, VertexActorConfig)
+    assert config.from_doc == {"id": "x"}
+
+
+def test_normalize_actor_step_nested_descend_apply_create_edge_shape():
+    step = {
+        "descend": {
+            "key": "deps",
+            "apply": {"create_edge": {"from": "package", "to": "package"}},
+        }
+    }
+    normalized = normalize_actor_step(step)
+    assert normalized["type"] == "descend"
+    assert normalized["pipeline"][0]["type"] == "edge"
+    assert normalized["pipeline"][0]["from"] == "package"
+    assert normalized["pipeline"][0]["to"] == "package"
+
+    config = validate_actor_step(normalized)
+    assert config.type == "descend"
+    assert config.pipeline[0].type == "edge"  # type: ignore[arg-type]
+
+
+def test_transform_tuple_output_maps_to_vertex_index_fields_in_order():
+    vc = VertexConfig.from_dict(
+        {
+            "vertices": [
+                {
+                    "name": "pair",
+                    "fields": ["left", "right"],
+                    "indexes": [{"fields": ["left", "right"]}],
+                }
+            ]
+        }
+    )
+    pipeline = [{"map": {"unused": "unused"}}, {"vertex": "pair"}]
+    anw = ActorWrapper(pipeline=pipeline)
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=vc,
+            edge_config=EdgeConfig(),
+            transforms={},
+        )
+    )
+
+    transform_wrappers = anw.find_descendants(actor_type=TransformActor)
+    assert len(transform_wrappers) == 1
+    transform_wrappers[0].actor.t = lambda doc: ("L", "R")
+
+    ctx = ActionContext()
+    ctx = anw(ctx, doc={"unused": "value"})
+    assert ctx.acc_vertex["pair"][LocationIndex(path=(0,))] == [
+        VertexRep(vertex={"left": "L", "right": "R"}, ctx={"unused": "value"}),
+    ]
+
+
+def test_transform_named_proto_binding_executes_with_registered_transform():
+    anw = ActorWrapper(
+        pipeline=[{"name": "to_int", "input": ["value"], "output": ["v"]}]
+    )
+    transforms = {
+        "to_int": ProtoTransform(name="to_int", module="builtins", foo="int", params={})
+    }
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=VertexConfig(vertices=[]),
+            edge_config=EdgeConfig(),
+            transforms=transforms,
+        )
+    )
+
+    transform_wrappers = anw.find_descendants(actor_type=TransformActor)
+    assert len(transform_wrappers) == 1
+
+    ctx = ActionContext()
+    ctx = anw(ctx, doc={"value": "7"})
+    payload = ctx.buffer_transforms[LocationIndex(path=(0,))][0]
+    assert payload.named == {"v": 7}
+    assert payload.positional == ()
 
 
 def test_multi_edges_from_row(resource_ticker, vc_ticker, ec_ticker, sample_ticker):
     ctx = ActionContext()
     anw = ActorWrapper(**resource_ticker)
-    anw.finish_init(vertex_config=vc_ticker, transforms={}, edge_config=ec_ticker)
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=vc_ticker,
+            edge_config=ec_ticker,
+            transforms={},
+        )
+    )
     ctx = anw(ctx, doc=sample_ticker[0])
 
-    acc = anw.normalize_ctx(ctx)
+    acc = anw.assemble(ctx)
 
     assert len(acc[("ticker", "feature", None)]) == 3
     assert (
@@ -244,10 +434,206 @@ def test_multi_edges_from_row_filtered(
     ctx = ActionContext()
     anw = ActorWrapper(**resource_ticker)
     anw.finish_init(
-        vertex_config=vc_ticker_filtered, transforms={}, edge_config=ec_ticker
+        init_ctx=ActorInitContext(
+            vertex_config=vc_ticker_filtered,
+            edge_config=ec_ticker,
+            transforms={},
+        )
     )
     ctx = anw(ctx, doc=sample_ticker[0])
 
-    acc = anw.normalize_ctx(ctx)
+    acc = anw.assemble(ctx)
 
     assert len(acc[("ticker", "feature", None)]) == 2
+
+
+def test_infer_edges_are_emitted_only_during_assemble(
+    resource_ticker, vc_ticker, ec_ticker, sample_ticker
+):
+    ctx = ActionContext()
+    anw = ActorWrapper(**resource_ticker)
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=vc_ticker,
+            edge_config=ec_ticker,
+            transforms={},
+        )
+    )
+    ctx = anw(ctx, doc=sample_ticker[0])
+
+    assert isinstance(ctx, ActionContext)
+    assert all(not isinstance(k, tuple) for k in ctx.acc_global.keys())
+
+    acc = anw.assemble(ctx)
+    assert len(acc[("ticker", "feature", None)]) == 3
+
+
+def test_transform_payload_consumption_avoids_cross_vertex_self_edge():
+    doc = {
+        "author_id": "309238221625",
+        "FullName": "Guillaume Lemaître",
+        "HIndex": "10",
+        "research_sector": "32057259",
+    }
+    vc = VertexConfig.from_dict(
+        {
+            "vertices": [
+                {
+                    "name": "author",
+                    "fields": ["id", "full_name", "hindex"],
+                    "identity": ["id"],
+                },
+                {
+                    "name": "researchField",
+                    "fields": ["id", "name", "level"],
+                    "identity": ["id"],
+                },
+            ]
+        }
+    )
+    ec = EdgeConfig.from_dict(
+        {
+            "edges": [
+                {
+                    "source": "author",
+                    "target": "researchField",
+                    "relation": "belongsTo",
+                }
+            ]
+        }
+    )
+    pipeline = [
+        {
+            "vertex": "author",
+            "from": {"id": "author_id", "full_name": "FullName", "hindex": "HIndex"},
+        },
+        {"vertex": "researchField", "from": {"id": "research_sector"}},
+    ]
+    anw = ActorWrapper(pipeline=pipeline)
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=vc,
+            edge_config=ec,
+            transforms={},
+        )
+    )
+
+    ctx = ActionContext()
+    ctx = anw(ctx, doc=doc)
+    acc = anw.assemble(ctx)
+
+    assert acc[("author", "researchField", "belongsTo")] == [
+        ({"id": "309238221625"}, {"id": "32057259"}, {})
+    ]
+
+
+def test_infer_edge_only_filters_greedy_edges():
+    vc = VertexConfig.from_dict(
+        {
+            "vertices": [
+                {"name": "a", "fields": ["id"], "identity": ["id"]},
+                {"name": "b", "fields": ["id"], "identity": ["id"]},
+                {"name": "c", "fields": ["id"], "identity": ["id"]},
+            ]
+        }
+    )
+    ec = EdgeConfig.from_dict(
+        {
+            "edges": [
+                {"source": "a", "target": "b", "relation": "ab"},
+                {"source": "a", "target": "c", "relation": "ac"},
+            ]
+        }
+    )
+    pipeline = [
+        {"vertex": "a", "from": {"id": "a"}},
+        {"vertex": "b", "from": {"id": "b"}},
+        {"vertex": "c", "from": {"id": "c"}},
+    ]
+
+    anw = ActorWrapper(pipeline=pipeline)
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=vc,
+            edge_config=ec,
+            transforms={},
+            infer_edge_only={("a", "b", None)},
+        )
+    )
+    ctx = ActionContext()
+    ctx = anw(ctx, doc={"a": "1", "b": "2", "c": "3"})
+    acc = anw.assemble(ctx)
+
+    assert len(acc[("a", "b", "ab")]) == 1
+    assert ("a", "c", "ac") not in acc
+
+
+def test_infer_edge_except_filters_greedy_edges():
+    vc = VertexConfig.from_dict(
+        {
+            "vertices": [
+                {"name": "a", "fields": ["id"], "identity": ["id"]},
+                {"name": "b", "fields": ["id"], "identity": ["id"]},
+                {"name": "c", "fields": ["id"], "identity": ["id"]},
+            ]
+        }
+    )
+    ec = EdgeConfig.from_dict(
+        {
+            "edges": [
+                {"source": "a", "target": "b", "relation": "ab"},
+                {"source": "a", "target": "c", "relation": "ac"},
+            ]
+        }
+    )
+    pipeline = [
+        {"vertex": "a", "from": {"id": "a"}},
+        {"vertex": "b", "from": {"id": "b"}},
+        {"vertex": "c", "from": {"id": "c"}},
+    ]
+
+    anw = ActorWrapper(pipeline=pipeline)
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=vc,
+            edge_config=ec,
+            transforms={},
+            infer_edge_except={("a", "c", None)},
+        )
+    )
+    ctx = ActionContext()
+    ctx = anw(ctx, doc={"a": "1", "b": "2", "c": "3"})
+    acc = anw.assemble(ctx)
+
+    assert len(acc[("a", "b", "ab")]) == 1
+    assert ("a", "c", "ac") not in acc
+
+
+def test_extraction_context_records_observations(
+    resource_openalex_works, schema_vc_openalex
+):
+    doc = {
+        "id": "https://openalex.org/A123",
+        "doi": "https://doi.org/10.1007/978-3-123",
+    }
+    anw = ActorWrapper(*resource_openalex_works)
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=schema_vc_openalex,
+            edge_config=EdgeConfig(),
+            transforms={},
+        )
+    )
+
+    ctx = ActionContext()
+    ctx = anw(ctx, doc=doc)
+
+    assert len(ctx.vertex_observations) > 0
+    assert len(ctx.transform_observations) > 0
+    assert len(ctx.edge_intents) > 0
+    assert all(
+        obs.provenance.path == obs.location.path for obs in ctx.vertex_observations
+    )
+    assert all(
+        obs.provenance.path == obs.location.path for obs in ctx.transform_observations
+    )

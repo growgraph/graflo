@@ -84,6 +84,7 @@ from urllib.parse import urlparse
 import mgclient  # type: ignore[import-untyped]
 
 from graflo.architecture.edge import Edge
+from graflo.architecture.onto import Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.vertex import VertexConfig
 from graflo.db.conn import Connection, SchemaExistsError
@@ -426,55 +427,75 @@ class MemgraphConnection(Connection):
                 sanitized.append(clean_doc)
         return sanitized
 
-    def define_vertex_indices(
+    def define_vertex_indexes(
         self, vertex_config: VertexConfig, schema: Schema | None = None
     ):
-        """Create indices for vertex labels based on configuration.
+        """Create indexes for vertex labels based on configuration.
 
         Iterates through all vertices defined in the configuration and creates
-        indices for each specified field. Memgraph supports indices on node
-        properties for faster lookups.
+        indexes for each specified field. Memgraph supports indexes on node
+        properties for faster lookups. Identity index is prepended when schema
+        is provided (Memgraph has no implicit identity index).
 
         Parameters
         ----------
         vertex_config : VertexConfig
             Vertex configuration containing vertices and their index definitions.
-            Each vertex may have multiple indices, each covering one or more fields.
+            Each vertex may have multiple indexes, each covering one or more fields.
 
         Notes
         -----
-        - Index creation is idempotent (existing indices are skipped)
+        - Index creation is idempotent (existing indexes are skipped)
         - Uses Memgraph syntax: ``CREATE INDEX ON :Label(property)``
-        - Errors are logged but don't stop processing of other indices
+        - Errors are logged but don't stop processing of other indexes
         """
         assert self.conn is not None, "Connection is closed"
 
+        if schema is None:
+            logger.warning(
+                "Schema is None: identity indexes cannot be ensured without schema"
+            )
         for label in vertex_config.vertex_set:
-            index_list = (
+            db_vertex = (
+                schema.resolve_db_aware(DBType.MEMGRAPH).vertex_config
+                if schema is not None
+                else None
+            )
+            index_list = list(
                 schema.database_features.vertex_secondary_indexes(label)
                 if schema is not None
                 else []
             )
+            if db_vertex:
+                identity_fields = db_vertex.identity_fields(label)
+                if identity_fields:
+                    identity_idx = Index(fields=identity_fields)
+                    seen = {tuple(ix.fields) for ix in index_list}
+                    if tuple(identity_idx.fields) not in seen:
+                        index_list = [identity_idx, *index_list]
+            storage_label = db_vertex.vertex_dbname(label) if db_vertex else label
             for index_obj in index_list:
                 for field in index_obj.fields:
                     try:
-                        query = f"CREATE INDEX ON :{label}({field})"
+                        query = f"CREATE INDEX ON :{storage_label}({field})"
                         cursor = self.conn.cursor()
                         cursor.execute(query)
                         cursor.close()
-                        logger.debug(f"Created index on {label}.{field}")
+                        logger.debug(f"Created index on {storage_label}.{field}")
                     except Exception as e:
                         if "already exists" in str(e).lower():
-                            logger.debug(f"Index on {label}.{field} already exists")
+                            logger.debug(
+                                f"Index on {storage_label}.{field} already exists"
+                            )
                         else:
                             logger.warning(
-                                f"Failed to create index on {label}.{field}: {e}"
+                                f"Failed to create index on {storage_label}.{field}: {e}"
                             )
 
-    def define_edge_indices(self, edges: list[Edge], schema: Schema | None = None):
-        """Create indices for edge types.
+    def define_edge_indexes(self, edges: list[Edge], schema: Schema | None = None):
+        """Create indexes for edge types.
 
-        Memgraph doesn't support relationship property indices in the same way,
+        Memgraph doesn't support relationship property indexes in the same way,
         so this creates indices on the relationship properties if defined.
 
         Parameters
@@ -487,7 +508,10 @@ class MemgraphConnection(Connection):
             if edge.relation is None:
                 continue
             index_list = (
-                schema.database_features.edge_secondary_indexes(edge.edge_id)
+                schema.database_features.edge_secondary_indexes(
+                    edge.edge_id,
+                    logical_relation=edge.relation,
+                )
                 if schema is not None
                 else []
             )

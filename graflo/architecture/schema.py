@@ -41,13 +41,18 @@ from pydantic import (
     model_validator,
 )
 
-from graflo.architecture.actor import EdgeActor, TransformActor, VertexActor
 from graflo.architecture.base import ConfigBaseModel
+from graflo.architecture.db_aware import (
+    EdgeConfigDBAware,
+    SchemaDBAware,
+    VertexConfigDBAware,
+)
 from graflo.architecture.database_features import DatabaseFeatures
 from graflo.architecture.edge import EdgeConfig
 from graflo.architecture.resource import Resource
 from graflo.architecture.transform import ProtoTransform
 from graflo.architecture.vertex import VertexConfig
+from graflo.onto import DBType
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +110,7 @@ class Schema(ConfigBaseModel):
     )
     vertex_config: VertexConfig = PydanticField(
         ...,
-        description="Configuration for vertex collections (vertices, fields, indexes).",
+        description="Configuration for vertex collections (vertices, identities, fields).",
     )
     edge_config: EdgeConfig = PydanticField(
         ...,
@@ -137,7 +142,7 @@ class Schema(ConfigBaseModel):
     @model_validator(mode="after")
     def _init_schema(self) -> Schema:
         """Set transform names, finish edge/resource init, and build resource name map."""
-        self.finish_init()
+        self._rebuild_runtime_state()
         return self
 
     def finish_init(self) -> None:
@@ -153,17 +158,15 @@ class Schema(ConfigBaseModel):
         Raises:
             ValueError: If duplicate resource names are found.
         """
+        self._rebuild_runtime_state()
+
+    def _rebuild_runtime_state(self) -> None:
+        """Rebuild fully initialized runtime state for schema and resources."""
         for name, t in self.transforms.items():
             t.name = name
 
-        db_flavor = self.database_features.db_flavor
-        self.vertex_config.bind_database_features(self.database_features)
-        self.vertex_config.finish_init(db_flavor)
-        self.edge_config.finish_init(
-            self.vertex_config,
-            db_flavor=db_flavor,
-            database_features=self.database_features,
-        )
+        self.vertex_config.finish_init()
+        self.edge_config.finish_init(self.vertex_config)
 
         for r in self.resources:
             r.finish_init(
@@ -225,17 +228,7 @@ class Schema(ConfigBaseModel):
         self.vertex_config.remove_vertices(disconnected)
 
         def _mentions_disconnected(wrapper) -> bool:
-            actor = wrapper.actor
-            if isinstance(actor, VertexActor):
-                return actor.name in disconnected
-            if isinstance(actor, TransformActor):
-                return actor.vertex is not None and actor.vertex in disconnected
-            if isinstance(actor, EdgeActor):
-                return (
-                    actor.edge.source in disconnected
-                    or actor.edge.target in disconnected
-                )
-            return False
+            return bool(wrapper.actor.references_vertices() & disconnected)
 
         to_drop: list[Resource] = []
         for resource in self.resources:
@@ -244,9 +237,23 @@ class Schema(ConfigBaseModel):
                 to_drop.append(resource)
                 continue
             root.remove_descendants_if(_mentions_disconnected)
-            if not any(isinstance(a, VertexActor) for a in root.collect_actors()):
+            if not any(a.references_vertices() for a in root.collect_actors()):
                 to_drop.append(resource)
 
         for r in to_drop:
             self.resources.remove(r)
             self._resources.pop(r.name, None)
+
+    def resolve_db_aware(self, db_flavor: DBType | None = None) -> SchemaDBAware:
+        """Build DB-aware runtime wrappers without mutating logical schema."""
+        if db_flavor is not None:
+            self.database_features.db_flavor = db_flavor
+
+        vertex_db = VertexConfigDBAware(self.vertex_config, self.database_features)
+        edge_db = EdgeConfigDBAware(self.edge_config, vertex_db, self.database_features)
+        edge_db.compile_identity_indexes()
+        return SchemaDBAware(
+            vertex_config=vertex_db,
+            edge_config=edge_db,
+            database_features=self.database_features,
+        )

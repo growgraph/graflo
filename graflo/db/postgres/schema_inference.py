@@ -307,12 +307,10 @@ class PostgresSchemaInferencer:
 
             # Infer weights
             weights = self.infer_edge_weights(edge_table_info)
-            indexes = []
-            # Create edge (use alias "index" for indexes field)
+            # Create edge
             edge = Edge(
                 source=source_table,
                 target=target_table,
-                index=indexes,
                 weights=weights,
                 relation=edge_table_info.relation,
             )

@@ -13,7 +13,7 @@ Key Features:
 
     - Label-based node organization
     - Relationship type management
-    - Property indices
+    - Property indexes
     - Cypher query execution
     - Batch node and relationship operations
 
@@ -150,36 +150,55 @@ class Neo4jConnection(Connection):
             )
             raise
 
-    def define_vertex_indices(
+    def define_vertex_indexes(
         self, vertex_config: VertexConfig, schema: Schema | None = None
     ):
-        """Define indices for vertex labels.
+        """Define indexes for vertex labels.
 
-        Creates indices for each vertex label based on the configuration.
+        Creates indexes for each vertex label based on the configuration.
+        Neo4j has no implicit identity index; identity is prepended when schema is provided.
 
         Args:
             vertex_config: Vertex configuration containing index definitions
         """
+        if schema is None:
+            logger.warning(
+                "Schema is None: identity indexes cannot be ensured without schema"
+            )
         for c in vertex_config.vertex_set:
-            index_list = (
+            db_vertex = (
+                schema.resolve_db_aware(DBType.NEO4J).vertex_config if schema else None
+            )
+            index_list = list(
                 schema.database_features.vertex_secondary_indexes(c)
                 if schema is not None
                 else []
             )
+            if db_vertex:
+                identity_fields = db_vertex.identity_fields(c)
+                if identity_fields:
+                    identity_idx = Index(fields=identity_fields)
+                    seen = {tuple(ix.fields) for ix in index_list}
+                    if tuple(identity_idx.fields) not in seen:
+                        index_list = [identity_idx, *index_list]
+            label = db_vertex.vertex_dbname(c) if db_vertex else c
             for index_obj in index_list:
-                self._add_index(c, index_obj)
+                self._add_index(label, index_obj)
 
-    def define_edge_indices(self, edges: list[Edge], schema: Schema | None = None):
-        """Define indices for relationship types.
+    def define_edge_indexes(self, edges: list[Edge], schema: Schema | None = None):
+        """Define indexes for relationship types.
 
-        Creates indices for each relationship type based on the configuration.
+        Creates indexes for each relationship type based on the configuration.
 
         Args:
             edges: List of edge configurations containing index definitions
         """
         for edge in edges:
             index_list = (
-                schema.database_features.edge_secondary_indexes(edge.edge_id)
+                schema.database_features.edge_secondary_indexes(
+                    edge.edge_id,
+                    logical_relation=edge.relation,
+                )
                 if schema is not None
                 else []
             )

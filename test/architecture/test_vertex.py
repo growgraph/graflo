@@ -4,6 +4,8 @@ import logging
 
 import pytest
 
+from graflo.architecture.database_features import DatabaseFeatures
+from graflo.architecture.db_aware import VertexConfigDBAware
 from graflo.architecture.vertex import Field, FieldType, Vertex, VertexConfig
 from graflo.onto import DBType
 
@@ -289,7 +291,7 @@ def test_init(vertex_pub):
 
 
 def test_get_fields_with_defaults_tigergraph():
-    """Test get_fields_with_defaults() defaults None types to STRING for TigerGraph."""
+    """Test DB-aware vertex fields default None types to STRING for TigerGraph."""
     # Create vertex with some fields that have None type
     vertex = Vertex(
         name="user",
@@ -301,9 +303,12 @@ def test_get_fields_with_defaults_tigergraph():
         ],
     )
 
-    vertex.finish_init(DBType.TIGERGRAPH)
-    # For TigerGraph, None types should default to STRING
-    fields = vertex.get_fields()
+    config = VertexConfig(vertices=[vertex])
+    db_cfg = VertexConfigDBAware(
+        logical=config,
+        database_features=DatabaseFeatures(db_flavor=DBType.TIGERGRAPH),
+    )
+    fields = db_cfg.fields("user")
     assert len(fields) == 4
     assert fields[0].name == "id"
     assert fields[0].type == "INT"
@@ -316,7 +321,7 @@ def test_get_fields_with_defaults_tigergraph():
 
 
 def test_get_fields_with_defaults_other_db():
-    """Test get_fields_with_defaults() preserves None types for other databases."""
+    """Test DB-aware vertex fields preserve None types for non-TigerGraph DBs."""
     vertex = Vertex(
         name="user",
         fields=[
@@ -325,20 +330,27 @@ def test_get_fields_with_defaults_other_db():
         ],
     )
 
-    # For ArangoDB, None types should remain None
-    fields = vertex.get_fields()
+    config = VertexConfig(vertices=[vertex])
+    db_cfg = VertexConfigDBAware(
+        logical=config,
+        database_features=DatabaseFeatures(db_flavor=DBType.ARANGO),
+    )
+    fields = db_cfg.fields("user")
     assert len(fields) == 2
     assert fields[0].type == "INT"
     assert fields[1].name == "name"
     assert fields[1].type is None  # Preserved
 
-    # For Neo4j, None types should also remain None
-    fields = vertex.get_fields()
+    db_cfg = VertexConfigDBAware(
+        logical=config,
+        database_features=DatabaseFeatures(db_flavor=DBType.NEO4J),
+    )
+    fields = db_cfg.fields("user")
     assert fields[1].type is None  # Preserved
 
 
 def test_get_fields_with_defaults_none():
-    """Test get_fields_with_defaults() with None db_flavor returns fields as-is."""
+    """Test logical vertex fields are preserved by default."""
     vertex = Vertex(
         name="user",
         fields=[
@@ -347,7 +359,6 @@ def test_get_fields_with_defaults_none():
         ],
     )
 
-    # With None db_flavor, should return fields as-is
     fields = vertex.get_fields()
     assert len(fields) == 2
     assert fields[0].type == "INT"
@@ -355,7 +366,7 @@ def test_get_fields_with_defaults_none():
 
 
 def test_vertex_config_fields_with_db_flavor():
-    """Test VertexConfig.fields() and fields_names() with db_flavor parameter."""
+    """Test DB-aware VertexConfig wrapper applies DB-specific defaults."""
     vertex = Vertex(
         name="user",
         fields=[
@@ -369,10 +380,11 @@ def test_vertex_config_fields_with_db_flavor():
     fields = config.fields("user")
     assert fields[1].type is None  # Preserved
 
-    # Set db_flavor and call finish_init on config
-    config.finish_init(DBType.TIGERGRAPH)
-    # With TigerGraph, should get fields with defaults applied
-    fields = config.fields("user")
+    db_cfg = VertexConfigDBAware(
+        logical=config,
+        database_features=DatabaseFeatures(db_flavor=DBType.TIGERGRAPH),
+    )
+    fields = db_cfg.fields("user")
     assert len(fields) == 2
     assert fields[0].type == "INT"
     assert fields[1].type == "STRING"  # Default applied

@@ -22,11 +22,15 @@ The GraFlo pipeline transforms data through five stages:
 flowchart LR
     SI["<b>Source Instance</b><br/>File · SQL · SPARQL · API"]
     R["<b>Resource</b><br/>Actor Pipeline"]
+    EX["<b>Extraction</b><br/>Observations + Edge Intents"]
+    AS["<b>Assembly</b><br/>Graph Entity Materialization"]
     GS["<b>Graph Schema</b><br/>Vertex/Edge Definitions<br/>Identities · Transforms · DB Features"]
     GC["<b>GraphContainer</b><br/>Covariant Graph Representation"]
     DB["<b>Graph DB (LPG)</b><br/>ArangoDB · Neo4j · TigerGraph · Others"]
 
-    SI --> R --> GS --> GC --> DB
+    SI --> R --> EX --> AS --> GC --> DB
+    GS -. configures .-> R
+    GS -. constrains .-> AS
 ```
 
 
@@ -63,7 +67,10 @@ flowchart LR
         SQLDS[SQLDataSource]
     end
     subgraph pipeline [Shared Pipeline]
+        Sch[Schema]
         Res[Resource Pipeline]
+        Ex[Extraction Phase]
+        Asm[Assembly Phase]
         GC[GraphContainer]
         DBW[DBWriter]
     end
@@ -72,7 +79,9 @@ flowchart LR
     Fuseki --> SP --> SparqlDS --> Res
     Files --> FP --> FileDS --> Res
     PG --> TP --> SQLDS --> Res
-    Res --> GC --> DBW
+    Sch --> Res
+    Sch --> Asm
+    Res --> Ex --> Asm --> GC --> DBW
 ```
 
 - **Patterns** (`FilePattern`, `TablePattern`, `SparqlPattern`) describe *where* data comes from (file paths, SQL tables, SPARQL endpoints).
@@ -191,10 +200,8 @@ classDiagram
     class Vertex {
         +name: str
         +identity: list~str~
-        +indexes: list~Index~ (legacy/compat)
         +fields: list~Field~
         +filters: FilterExpression?
-        +dbname: str?
     }
 
     class Field {
@@ -210,7 +217,7 @@ classDiagram
     class Edge {
         +source: str
         +target: str
-        +indexes: list~str~
+        +identities: list~list~str~~
         +weights: WeightConfig?
         +relation: str?
         +relation_field: str?
@@ -220,6 +227,7 @@ classDiagram
     class Resource {
         +name: str
         +root: ActorWrapper
+        +executor: ActorExecutor
         +finish_init(vertex_config, edge_config, transforms)
     }
 
@@ -228,6 +236,12 @@ classDiagram
         +children: list~ActorWrapper~
     }
     note for ActorWrapper "Recursive tree: each<br />child is an ActorWrapper"
+
+    class ActorExecutor {
+        +extract(doc) ExtractionContext
+        +assemble(extraction_ctx) dict
+        +assemble_result(extraction_ctx) GraphAssemblyResult
+    }
 
     class Actor {
         <<abstract>>
@@ -240,6 +254,23 @@ classDiagram
     class ProtoTransform {
         +name: str
     }
+
+    class ExtractionContext {
+        +acc_vertex: map
+        +buffer_transforms: map
+        +edge_intents: list~EdgeIntent~
+    }
+
+    class AssemblyContext {
+        +extraction: ExtractionContext
+        +acc_global: map
+    }
+
+    class VertexObservation
+    class TransformObservation
+    class EdgeIntent
+    class ProvenancePath
+    class GraphAssemblyResult
 
     class FilterExpression {
         +kind: leaf | composite
@@ -260,12 +291,58 @@ classDiagram
     Edge --> FilterExpression : filters
 
     Resource *-- ActorWrapper : root
+    Resource *-- ActorExecutor : runtime orchestration
     ActorWrapper --> Actor : actor
+    ActorExecutor ..> ExtractionContext : produces
+    ActorExecutor ..> AssemblyContext : consumes
+    ExtractionContext o-- VertexObservation
+    ExtractionContext o-- TransformObservation
+    ExtractionContext o-- EdgeIntent
+    EdgeIntent --> ProvenancePath
+    ActorExecutor ..> GraphAssemblyResult : produces
 
     Actor <|-- VertexActor
     Actor <|-- EdgeActor
     Actor <|-- TransformActor
     Actor <|-- DescendActor
+```
+
+Runtime detail: resource processing now uses an explicit two-phase flow
+(`ExtractionContext` -> `AssemblyContext`). Extraction records typed artifacts
+(`VertexObservation`, `TransformObservation`, `EdgeIntent`), and assembly turns
+those artifacts into graph entities. Orchestration is owned by
+`ActorExecutor`, while `ActorWrapper` remains focused on actor tree behavior.
+
+#### Logical schema vs DB-aware projection
+
+GraFlo now keeps logical graph modeling separate from DB materialization:
+
+- `Vertex`, `Edge`, `VertexConfig`, and `EdgeConfig` are logical and backend-agnostic.
+- DB-specific naming/defaults/index projection is resolved through
+  `VertexConfigDBAware` and `EdgeConfigDBAware`.
+- The resolver entrypoint is `Schema.resolve_db_aware(...)`, used by DB write/connector stages.
+
+```mermaid
+flowchart TD
+  schema[LogicalSchema]
+  vcfg[VertexConfigLogical]
+  ecfg[EdgeConfigLogical]
+  dbfeat[DatabaseFeatures]
+  resolver[DbAwareConfigResolver]
+  vdb[VertexConfigDBAware]
+  edb[EdgeConfigDBAware]
+  caster[CasterAndResources]
+  dbwriter[DBWriterAndConnectors]
+
+  schema --> vcfg
+  schema --> ecfg
+  schema --> caster
+  schema --> resolver
+  dbfeat --> resolver
+  resolver --> vdb
+  resolver --> edb
+  vdb --> dbwriter
+  edb --> dbwriter
 ```
 
 ### Caster ingestion pipeline
@@ -361,13 +438,13 @@ The `Schema` is the single source of truth for the LPG structure. It encapsulate
 - Vertex and edge definitions with optional type information
 - Resource mappings
 - Data transformations
-- Index configurations
+- Identity and physical index configurations
 - Automatic schema inference from normalized PostgreSQL databases (3NF with PK/FK) or from OWL/RDFS ontologies
 
 ### Vertex
-A `Vertex` describes vertices and their database indexes. It supports:
- 
-- Single or compound indexes (e.g., `["first_name", "last_name"]` instead of `"full_name"`)
+A `Vertex` describes vertices and their logical identity. It supports:
+
+- Single or compound identity fields (e.g., `["first_name", "last_name"]` instead of `"full_name"`)
 - Property definitions with optional type information
   - Fields can be specified as strings (backward compatible) or typed `Field` objects
   - Supported types: `INT`, `FLOAT`, `BOOL`, `STRING`, `DATETIME`
@@ -376,12 +453,12 @@ A `Vertex` describes vertices and their database indexes. It supports:
 - Optional blank vertex configuration
 
 ### Edge
-An `Edge` describes edges and their database indexes. It allows:
+An `Edge` describes edges and their logical identities. It allows:
  
 - Definition at any level of a hierarchical document
 - Reliance on vertex principal index
 - Weight configuration using `direct` parameter (with optional type information)
-- Uniqueness constraints with respect to `source`, `target`, and `weight` fields
+- Optional uniqueness semantics through `identities` (multiple candidate keys are allowed)
 
 ### Edge Attributes and Configuration
 
@@ -390,7 +467,7 @@ Edges in graflo support a rich set of attributes that enable flexible relationsh
 #### Basic Attributes
 - **`source`**: Source vertex name (required)
 - **`target`**: Target vertex name (required)
-- **`indexes`**: List of database indexes for the edge
+- **`identities`**: Logical identity keys for the edge (each key can induce uniqueness)
 - **`weights`**: Optional weight configuration for edge properties
 
 #### Relationship Type Configuration 
@@ -408,8 +485,11 @@ Edges in graflo support a rich set of attributes that enable flexible relationsh
 - **`weights.target_fields`**: Fields from target vertex to use as weights (deprecated)
 
 #### Edge Behavior Control
-- **`aux`**: Whether this is an auxiliary edge (created in database, but not considered by graflo)
-- **`purpose`**: Additional identifier for utility edges between same vertex types
+- Edge physical variants should be modeled with `database_features.edge_specs[*].purpose`.
+- `Edge.aux` is no longer a behavior switch.
+
+> DB-only physical edge metadata (including `purpose`) is configured under
+> `database_features.edge_specs`, not on `Edge`.
 
 #### Matching and Filtering
 - **`match_source`**: Select source items from a specific branch of json
@@ -419,11 +499,8 @@ Edges in graflo support a rich set of attributes that enable flexible relationsh
 #### Advanced Configuration
 - **`type`**: Edge type (DIRECT or INDIRECT)
 - **`by`**: Vertex name for indirect edges
-- **`graph_name`**: Custom graph name (auto-generated if not specified)
-- **`database_name`**: Database-specific edge identifier (auto-generated if not specified)
-  - For ArangoDB, this corresponds to the edge collection name
-  - For TigerGraph, used as fallback identifier when relation is not specified
-  - For Neo4j, unused (relation is used instead)
+- DB-specific edge storage/type names are resolved from `database_features`
+  through DB-aware wrappers (`EdgeConfigDBAware`), not stored on `Edge`.
 
 #### When to Use Different Attributes
 
@@ -473,6 +550,14 @@ A `Resource` is the central abstraction that bridges data sources and the graph 
 - The actor pipeline for processing documents
 
 Because DataSources bind to Resources by name, the same transformation logic applies regardless of whether data arrives from a file, an API, a SQL table, or a SPARQL endpoint.
+
+Resource-level edge inference controls:
+- **`infer_edges`**: Global toggle for inferred edge emission during assembly (default: `true`).
+- **`infer_edge_only`**: Allow-list of inferred edges (`source`, `target`, optional `relation`).
+- **`infer_edge_except`**: Deny-list of inferred edges (`source`, `target`, optional `relation`).
+- `infer_edge_only` and `infer_edge_except` are mutually exclusive and validated against declared schema edges.
+- These controls apply to inferred edges only; explicit edge actors in the pipeline are still emitted.
+- **Auto-exclusion**: When a resource pipeline contains any EdgeActor for edges of type `(source, target)`, `(source, target, None)` is automatically added to `infer_edge_except` for that resource, so inferred edges do not duplicate edges produced by explicit edge actors.
 
 ### Actor
 An `Actor` describes how the current level of the document should be mapped/transformed to the property graph vertices and edges. There are four types that act on the provided document in this order:
@@ -578,13 +663,13 @@ resources:
 ## Key Features
 
 ### Schema & Abstraction
-- **Declarative LPG schema** — `Schema` defines vertices, edges, indexes, weights, and transforms in YAML or Python; the single source of truth for the graph structure.
-- **Database abstraction** — one schema, one API; database idiosyncrasies are handled by the `GraphContainer` (covariant graph representation).
+- **Declarative LPG schema** — `Schema` defines vertices, edges, identity rules, weights, and transforms in YAML or Python; the single source of truth for the graph structure.
+- **Database abstraction** — one logical schema, multiple backends; DB-specific behavior is applied in DB-aware projection/writer stages (`Schema.resolve_db_aware(...)`, `VertexConfigDBAware`, `EdgeConfigDBAware`).
 - **Resource abstraction** — each `Resource` is a reusable actor pipeline that maps raw records to graph elements, decoupled from data retrieval.
 - **DataSourceRegistry** — pluggable `AbstractDataSource` adapters (`FILE`, `SQL`, `API`, `SPARQL`, `IN_MEMORY`) bound to Resources by name.
 
 ### Schema Features
-- **Flexible Indexing** — compound indexes on vertices and edges.
+- **Flexible Identity + Indexing** — logical identity plus DB-specific secondary indexes.
 - **Typed Fields** — optional type information for vertex fields and edge weights (INT, FLOAT, STRING, DATETIME, BOOL).
 - **Hierarchical Edge Definition** — define edges at any level of nested documents.
 - **Weighted Edges** — configure edge weights from document fields or vertex properties with optional type information.
@@ -602,7 +687,7 @@ resources:
 - **Smart Caching**: Minimize redundant operations
 
 ## Best Practices
-1. Use compound indexes for frequently queried vertex properties
+1. Use compound identity fields for natural keys, and `database_features` indexes for query performance
 2. Leverage blank vertices for complex relationship modeling
 3. Define transforms at the schema level for reusability
 4. Configure appropriate batch sizes based on your data volume

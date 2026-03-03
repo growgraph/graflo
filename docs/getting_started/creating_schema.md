@@ -84,22 +84,24 @@ edge_config:
   edges:
     - source: person
       target: department
-      # optional: relation, match_source, match_target, weights, indexes, etc.
+      # optional: relation, identities, match_source, match_target, weights, etc.
 ```
 
 ### Edge fields
 
 - **`source`**, **`target`**: Required. Vertex type names (must exist in `vertex_config.vertices`).
 - **`relation`**: Optional. Relationship/edge type name (especially for Neo4j). For ArangoDB can be used as weight.
+- **`identities`**: Optional. List of logical edge identity keys.
+  - Each key is a list of fields/tokens, e.g. `[[source, target, relation, pub_id]]`.
+  - If omitted or empty, edge multiplicity is permissive (multiple edges allowed).
+  - If provided, each key is compiled to a unique physical constraint/index candidate.
 - **`relation_field`**: Optional. Field name that stores or reads the relation type (e.g. for TigerGraph).
 - **`relation_from_key`**: Optional. If true, derive relation from the location key during ingestion (e.g. JSON key).
 - **`match_source`**, **`match_target`**: Optional. Fields used to match source/target vertices when creating edges.
 - **`weights`**: Optional. Weight/attribute configuration:
   - **`direct`**: List of field names or typed fields to attach directly to the edge (e.g. `["date", "weight"]` or `[{"name": "date", "type": "DATETIME"}]`).
   - **`vertices`**: List of vertex-based weight definitions.
-- **`purpose`**: Optional. Extra label for utility edges between the same vertex types.
 - **`type`**: Optional. `DIRECT` (default) or `INDIRECT`.
-- **`aux`**: Optional. If true, edge is created in DB but not used by graflo ingestion.
 - **`by`**: Optional. For `INDIRECT` edges: vertex type name used to define the edge.
 
 ## `resources` (focus)
@@ -108,15 +110,29 @@ edge_config:
 
 Use this optional section for physical DB features that are not part of logical graph identity.
 
+For DB-only edge physical separation (for example auxiliary collections in ArangoDB), use
+`database_features.edge_specs[*].purpose`.
+Declare the logical edge once in `edge_config`; then declare purpose-scoped DB copies under
+`database_features.edge_specs` (for example `tmp`, `redux`, `convolution`).
+Storage/graph names are derived deterministically from
+`(source_storage, target_storage, purpose)`.
+
+`exclude_edge_endpoints` is a legacy edge-index flag and should not be used for new schemas.
+Model logical uniqueness with `edge.identities` and DB-only secondary indexes with
+`database_features.edge_specs[*].indexes`.
+
 ```yaml
 database_features:
   vertex_indexes:
     person:
       - fields: [name]
-  edge_indexes:
+  edge_specs:
     - source: person
       target: department
+      relation: null
       purpose: null
+      logical_relation: null
+      indexes_mode: inherit
       indexes:
         - fields: [relation]
 ```
@@ -131,7 +147,12 @@ Resources define **how** each data stream is turned into vertices and edges. Eac
 - **`merge_collections`**: Optional. List of collection names to merge when writing.
 - **`extra_weights`**: Optional. Additional edge weight configs for this resource.
 - **`types`**: Optional. Field name → Python type expression for casting during ingestion (e.g. `{"age": "int"}`, `{"amount": "float"}`, `{"created_at": "datetime"}`). Useful when input is string-only (CSV, JSON) and you need numeric or date values.
-- **`edge_greedy`**: Optional. If true (default), infer edges from vertex population; if false, emit only edges explicitly declared as edge actors in the pipeline.
+- **`infer_edges`**: Optional. If true (default), infer edges from vertex population during assembly; if false, emit only edges explicitly declared as edge actors in the pipeline.
+- **`infer_edge_only`**: Optional list of edge selectors (`source`, `target`, optional `relation`) that are allowed for inferred edges.
+- **`infer_edge_except`**: Optional list of edge selectors to suppress for inferred edges.
+  - `infer_edge_only` and `infer_edge_except` are mutually exclusive.
+  - These selectors affect inferred edges only, not explicit edge actors in the resource pipeline.
+  - **Auto-exclusion**: When a resource pipeline contains any EdgeActor for edges of type `(source, target)`, `(source, target, None)` is automatically added to `infer_edge_except` for that resource. This prevents inferred edges from duplicating or conflicting with edges produced by explicit edge actors.
 
 ### Actor steps in `apply` / `pipeline`
 
@@ -143,6 +164,15 @@ Each step is a dict. You can write steps in shorthand (e.g. `vertex: person`) or
    ```
    Optional: `keep_fields: [id, name]`.
 
+   **Vertex projection** — map document fields directly onto vertex fields (avoids transform for simple renaming):
+   ```yaml
+   - vertex: person
+     "from": {id: person_id, name: person}
+   - vertex: department
+     "from": {name: department}
+   ```
+   Use `"from": {vertex_field: doc_field}` — vertex field X comes from document field Y. Quote `from` in YAML because it is a reserved word.
+
 2. **Transform step** — rename fields, change shape, or apply a function.
    There are several forms:
 
@@ -151,8 +181,8 @@ Each step is a dict. You can write steps in shorthand (e.g. `vertex: person`) or
    - map:
        person: name
        person_id: id
-     target_vertex: department   # optional: send result to a vertex
    ```
+   Transform output goes to `buffer_transforms`; vertex steps at the same level consume it. For simple doc-to-vertex field mapping, prefer vertex `from` instead.
 
    **Direct output** (function result maps 1:1 to output fields):
    ```yaml
@@ -198,7 +228,7 @@ Each step is a dict. You can write steps in shorthand (e.g. `vertex: person`) or
        from: person
        to: department
    ```
-   You can add edge-specific `weights`, `indexes`, etc. in the step when needed.
+  You can add edge-specific `weights`, `identities`, etc. in the step when needed.
 
 4. **Descend step** — go into a nested key and run a sub-pipeline (or process all keys with `any_key`):
    ```yaml
@@ -217,7 +247,7 @@ Each step is a dict. You can write steps in shorthand (e.g. `vertex: person`) or
 ### Rules for resources (for agents)
 
 - **Unique names**: Every `resource_name` in the schema must be unique.
-- **References**: All vertex names in `apply` (e.g. `vertex: person`, `source`/`target`, `target_vertex`) must exist in `vertex_config.vertices`. All edge relationships implied by `source`/`target` should exist in `edge_config.edges` (or be compatible).
+- **References**: All vertex names in `apply` (e.g. `vertex: person`, `source`/`target`, vertex `from`) must exist in `vertex_config.vertices`. All edge relationships implied by `source`/`target` should exist in `edge_config.edges` (or be compatible).
 - **Order**: Steps run in sequence. Typically you create vertices before creating edges that reference them; use **transform** to reshape data and **descend** to handle nested structures.
 - **Transforms**: If a step uses `name: <transform_name>`, that name must exist in `transforms` (see below).
 
@@ -236,6 +266,18 @@ transforms:
 ```
 
 Resources refer to them with `name: keep_suffix_id` (and optional `params`, `input`, `output` overrides) in a transform step.
+
+## Runtime execution phases
+
+Resource execution is split into two explicit phases:
+
+1. **Extraction phase**: actors walk documents and emit typed observations
+   (vertex observations, transform observations, and edge intents).
+2. **Assembly phase**: observations are merged and materialized into final
+   graph entities (vertex collections and edge collections).
+
+This split keeps extraction logic separate from graph assembly behavior and
+improves debuggability of actor pipelines.
 
 ## Loading a schema
 
@@ -267,12 +309,10 @@ vertex_config:
   vertices:
     - name: person
       fields: [id, name, age]
-      indexes:
-        - fields: [id]
+      identity: [id]
     - name: department
       fields: [name]
-      indexes:
-        - fields: [name]
+      identity: [name]
 
 edge_config:
   edges:
@@ -285,12 +325,10 @@ resources:
       - vertex: person
   - resource_name: departments
     apply:
-      - map:
-          person: name
-          person_id: id
-      - target_vertex: department
-        map:
-          department: name
+      - vertex: person
+        "from": {id: person_id, name: person}
+      - vertex: department
+        "from": {name: department}
 ```
 
 This defines two vertex types (`person`, `department`), one edge type (`person` → `department`), and two resources: **people** (each row → one `person` vertex) and **departments** (transform + `department` vertices). Data sources are attached to these resources by name (e.g. via `Patterns` or `DataSourceRegistry`) as shown in the [Quick Start](quickstart.md).

@@ -31,7 +31,8 @@ patterns = Patterns()
 patterns.add_file_pattern(
     "package",
     FilePattern(
-        regex=r"^package\.meta.*\.json(?:\.gz)?$",
+        # regex=r"^package\.meta.*\.json(?:\.gz)?$",
+        regex=r"^package\.meta.*\.json$",
         sub_path=pathlib.Path("./data"),
         resource_name="package",
     ),

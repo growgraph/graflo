@@ -39,7 +39,8 @@ from graflo.onto import DBType
 from graflo.onto import BaseEnum
 from graflo.util.transform import pick_unique_dict
 
-# type for vertex or edge name (index)
+# Edge identifier layers:
+# - EdgeId: schema-level edge definition key (source, target, relation)
 EdgeId: TypeAlias = tuple[str, str, str | None]
 GraphEntity: TypeAlias = str | EdgeId
 
@@ -82,8 +83,8 @@ class IndexType(BaseEnum):
 class EdgeType(BaseEnum):
     """Defines how edges are handled in the graph database.
 
-    INDIRECT: Defined as a collection with indexes, may be used after data ingestion
-    DIRECT: In addition to indexes, these edges are generated during ingestion
+    INDIRECT: Uses pre-existing DB structures and may be used after data ingestion
+    DIRECT: Generated during ingestion from resource pipelines
     """
 
     INDIRECT = "indirect"
@@ -250,7 +251,7 @@ class GraphContainer(ConfigBaseModel):
         """Iterate over edges matching the given edge definition.
 
         Args:
-            edge_def: Tuple of (source, target, optional_purpose)
+            edge_def: Tuple of (source, target, optional_relation)
 
         Returns:
             Generator yielding matching edge IDs
@@ -335,6 +336,61 @@ class VertexRep(ConfigBaseModel):
     ctx: dict
 
 
+class TransformPayload(ConfigBaseModel):
+    """Typed transform output shared between extraction and assembly phases."""
+
+    named: dict[str, Any] = Field(default_factory=dict)
+    positional: tuple[Any, ...] = Field(default_factory=tuple)
+
+    @classmethod
+    def from_result(cls, result: Any) -> TransformPayload:
+        if isinstance(result, dict):
+            return cls(named=dict(result))
+        if isinstance(result, tuple):
+            return cls(positional=tuple(result))
+        return cls(positional=(result,))
+
+    def context_doc(self) -> dict[str, Any]:
+        """Named values available for weight and relation extraction."""
+        return dict(self.named)
+
+
+class ProvenancePath(ConfigBaseModel):
+    """Explicit provenance path for extracted observations."""
+
+    path: tuple[str | int | None, ...] = Field(default_factory=tuple)
+
+    @classmethod
+    def from_lindex(cls, lindex: LocationIndex) -> ProvenancePath:
+        return cls(path=lindex.path)
+
+
+class VertexObservation(ConfigBaseModel):
+    """Typed vertex observation emitted during extraction."""
+
+    vertex_name: str
+    location: LocationIndex
+    vertex: dict[str, Any]
+    ctx: dict[str, Any]
+    provenance: ProvenancePath
+
+
+class TransformObservation(ConfigBaseModel):
+    """Typed transform observation emitted during extraction."""
+
+    location: LocationIndex
+    payload: TransformPayload
+    provenance: ProvenancePath
+
+
+class EdgeIntent(ConfigBaseModel):
+    """Typed edge assembly request emitted during extraction."""
+
+    edge: Any
+    location: LocationIndex | None = None
+    provenance: ProvenancePath | None = None
+
+
 class LocationIndex(ConfigBaseModel):
     """Immutable location index for nested graph traversal."""
 
@@ -393,22 +449,36 @@ class LocationIndex(ConfigBaseModel):
         return self.path[item]
 
 
-def _default_dict_list() -> defaultdict[GraphEntity, list]:
+def _default_dict_transforms() -> defaultdict[LocationIndex, list[Any]]:
     return defaultdict(list)
 
 
-def _default_dict_transforms() -> defaultdict[LocationIndex, list[dict]]:
-    return defaultdict(list)
+def _default_edge_requests() -> list[tuple[Any, LocationIndex]]:
+    return []
 
 
-class ActionContext(ConfigBaseModel):
-    """Context for graph transformation actions.
+def _default_vertex_observations() -> list[VertexObservation]:
+    return []
+
+
+def _default_transform_observations() -> list[TransformObservation]:
+    return []
+
+
+def _default_edge_intents() -> list[EdgeIntent]:
+    return []
+
+
+class ExtractionContext(ConfigBaseModel):
+    """Extraction-phase context.
 
     Attributes:
-        acc_vertex: Local accumulation of vertices (defaultdict[str, defaultdict[LocationIndex, list]])
-        acc_global: Global accumulation of graph entities (defaultdict[GraphEntity, list])
-        buffer_vertex: Buffer for vertex data (defaultdict[GraphEntity, list])
-        buffer_transforms: Buffer for transforms data (defaultdict[LocationIndex, list[dict]])
+        acc_vertex: Local accumulation of extracted vertices
+        buffer_transforms: Buffer for transform payloads (defaultdict[LocationIndex, list])
+        edge_requests: Explicit edge assembly requests collected during extraction
+        vertex_observations: Explicit extracted vertex observations
+        transform_observations: Explicit extracted transform observations
+        edge_intents: Explicit edge intents for assembly phase
     """
 
     model_config = ConfigDict(kw_only=True)  # type: ignore[assignment]
@@ -416,6 +486,93 @@ class ActionContext(ConfigBaseModel):
     # Pydantic cannot schema nested defaultdict with custom key types (e.g. LocationIndex),
     # so we use Any; runtime type is as documented in Attributes
     acc_vertex: Any = Field(default_factory=outer_factory)
-    acc_global: Any = Field(default_factory=dd_factory)
-    buffer_vertex: Any = Field(default_factory=_default_dict_list)
     buffer_transforms: Any = Field(default_factory=_default_dict_transforms)
+    edge_requests: Any = Field(default_factory=_default_edge_requests)
+    vertex_observations: list[VertexObservation] = Field(
+        default_factory=_default_vertex_observations
+    )
+    transform_observations: list[TransformObservation] = Field(
+        default_factory=_default_transform_observations
+    )
+    edge_intents: list[EdgeIntent] = Field(default_factory=_default_edge_intents)
+
+    def record_vertex_observation(
+        self, *, vertex_name: str, location: LocationIndex, vertex: dict, ctx: dict
+    ) -> None:
+        self.vertex_observations.append(
+            VertexObservation(
+                vertex_name=vertex_name,
+                location=location,
+                vertex=vertex,
+                ctx=ctx,
+                provenance=ProvenancePath.from_lindex(location),
+            )
+        )
+
+    def record_transform_observation(
+        self, *, location: LocationIndex, payload: TransformPayload
+    ) -> None:
+        self.transform_observations.append(
+            TransformObservation(
+                location=location,
+                payload=payload,
+                provenance=ProvenancePath.from_lindex(location),
+            )
+        )
+
+    def record_edge_intent(self, *, edge: Any, location: LocationIndex) -> None:
+        self.edge_intents.append(
+            EdgeIntent(
+                edge=edge,
+                location=location,
+                provenance=ProvenancePath.from_lindex(location),
+            )
+        )
+
+
+class AssemblyContext(ConfigBaseModel):
+    """Assembly-phase context built from extraction outputs."""
+
+    model_config = ConfigDict(kw_only=True)  # type: ignore[assignment]
+
+    extraction: ExtractionContext
+    acc_global: Any = Field(default_factory=dd_factory)
+
+    @property
+    def acc_vertex(self) -> Any:
+        return self.extraction.acc_vertex
+
+    @property
+    def buffer_transforms(self) -> Any:
+        return self.extraction.buffer_transforms
+
+    @property
+    def edge_requests(self) -> Any:
+        return self.extraction.edge_requests
+
+    @edge_requests.setter
+    def edge_requests(self, value: Any) -> None:
+        self.extraction.edge_requests = value
+
+    @property
+    def edge_intents(self) -> list[EdgeIntent]:
+        return self.extraction.edge_intents
+
+    @classmethod
+    def from_extraction(cls, extraction: ExtractionContext) -> AssemblyContext:
+        return cls(extraction=extraction)
+
+
+class GraphAssemblyResult(ConfigBaseModel):
+    """Result of graph assembly phase."""
+
+    entities: Any = Field(default_factory=dd_factory)
+
+
+class ActionContext(ExtractionContext):
+    """Backward-compatible extraction+assembly context.
+
+    Kept for existing callers/tests while Wave 5 migrates call surfaces.
+    """
+
+    acc_global: Any = Field(default_factory=dd_factory)

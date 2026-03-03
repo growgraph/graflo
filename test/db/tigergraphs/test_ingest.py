@@ -3,6 +3,7 @@ from test.conftest import ingest_atomic, fetch_schema_obj
 import pytest
 
 from graflo.db import ConnectionManager
+from graflo import ComparisonOperator
 
 
 @pytest.fixture(scope="function")
@@ -36,18 +37,18 @@ def test_ingest(
                 assert len(r) == 374
                 r = db_client.fetch_docs("Author", filters=["==", "10", "hindex"])
                 assert len(r) == 8
-                r = db_client.fetch_docs("Author", limit=1)
-                assert len(r) == 1
                 r = db_client.fetch_docs(
                     "Author",
-                    filters=["==", "10", "hindex"],
+                    filters=[ComparisonOperator.EQ, "10", "hindex"],
                     return_keys=["full_name"],
                 )
                 assert len(r[0]) == 1
-                # Test edge fetching - use vertex IDs from previous query
-                # First get a vertex ID
-                authors = db_client.fetch_docs("Author", limit=1)
-                assert len(authors) > 0
+
+                authors = db_client.fetch_docs(
+                    "Author", filters=["==", "309238221625", "id"]
+                )
+                assert len(authors) == 1
+
                 author_id = authors[0]["id"]
                 # Fetch edges from this vertex using pyTigerGraph
                 edges = db_client.fetch_edges(

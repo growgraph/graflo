@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from collections import defaultdict
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Callable, Type
@@ -42,14 +43,17 @@ from graflo.architecture.actor_config import (
 
 from graflo.architecture.actor_util import (
     add_blank_collections,
-    render_edge,
-    render_weights,
 )
+from graflo.architecture.assemble import assemble_edges
 from graflo.architecture.edge import Edge, EdgeConfig
 from graflo.architecture.onto import (
     ActionContext,
+    AssemblyContext,
+    EdgeId,
+    ExtractionContext,
     GraphEntity,
     LocationIndex,
+    TransformPayload,
     VertexRep,
 )
 from graflo.architecture.transform import ProtoTransform, Transform
@@ -80,6 +84,18 @@ class ActorConstants:
     DRESSING_TRANSFORMED_VALUE_KEY: str = "__value__"
 
 
+@dataclass(slots=True)
+class ActorInitContext:
+    """Typed initialization state shared across actor tree."""
+
+    vertex_config: VertexConfig
+    edge_config: EdgeConfig
+    transforms: dict[str, ProtoTransform]
+    infer_edges: bool = True
+    infer_edge_only: set[EdgeId] = field(default_factory=set)
+    infer_edge_except: set[EdgeId] = field(default_factory=set)
+
+
 class Actor(ABC):
     """Abstract base class for all actors in the system.
 
@@ -92,8 +108,8 @@ class Actor(ABC):
 
     @abstractmethod
     def __call__(
-        self, ctx: ActionContext, lindex: LocationIndex, *nargs, **kwargs
-    ) -> ActionContext:
+        self, ctx: ExtractionContext, lindex: LocationIndex, *nargs, **kwargs
+    ) -> ExtractionContext:
         """Execute the actor's main processing logic.
 
         Args:
@@ -114,19 +130,19 @@ class Actor(ABC):
         """
         return {}
 
-    def finish_init(self, **kwargs: Any) -> None:
+    def finish_init(self, init_ctx: ActorInitContext) -> None:
         """Complete initialization of the actor.
 
         Args:
-            **kwargs: Additional initialization parameters
+            init_ctx: Shared typed initialization context
         """
         pass
 
-    def init_transforms(self, **kwargs: Any) -> None:
+    def init_transforms(self, init_ctx: ActorInitContext) -> None:
         """Initialize transformations for the actor.
 
         Args:
-            **kwargs: Transformation parameters
+            init_ctx: Shared typed initialization context
         """
         pass
 
@@ -137,6 +153,10 @@ class Actor(ABC):
             int: Number of items
         """
         return 1
+
+    def references_vertices(self) -> set[str]:
+        """Return vertex names this actor references."""
+        return set()
 
     def _filter_items(self, items: dict[str, Any]) -> dict[str, Any]:
         """Filter out None and empty items.
@@ -218,6 +238,7 @@ class VertexActor(Actor):
     def __init__(self, config: VertexActorConfig):
         """Initialize the vertex actor from config."""
         self.name = config.vertex
+        self.from_doc: dict[str, str] | None = config.from_doc
         self.keep_fields: tuple[str, ...] | None = (
             tuple(config.keep_fields) if config.keep_fields else None
         )
@@ -234,15 +255,15 @@ class VertexActor(Actor):
         Returns:
             dict[str, Any]: Dictionary of important items
         """
-        return self._fetch_items_from_dict(("name", "keep_fields"))
+        return self._fetch_items_from_dict(("name", "from_doc", "keep_fields"))
 
-    def finish_init(self, **kwargs: Any) -> None:
+    def finish_init(self, init_ctx: ActorInitContext) -> None:
         """Complete initialization of the vertex actor.
 
         Args:
-            **kwargs: Additional initialization parameters
+            init_ctx: Shared typed initialization context
         """
-        self.vertex_config: VertexConfig = kwargs.pop("vertex_config")
+        self.vertex_config = init_ctx.vertex_config
 
     def _filter_and_aggregate_vertex_docs(
         self, docs: list[dict[str, Any]], doc: dict[str, Any]
@@ -264,42 +285,64 @@ class VertexActor(Actor):
         ]
 
     def _extract_vertex_doc_from_transformed_item(
-        self, item: dict[str, Any], vertex_keys: tuple[str, ...]
+        self,
+        item: Any,
+        vertex_keys: tuple[str, ...],
+        index_keys: tuple[str, ...],
     ) -> dict[str, Any]:
-        """Extract vertex document from a transformed item.
+        """Extract vertex document from a transformed payload.
 
         Args:
-            item: Item dictionary (may be modified by pop operations)
+            item: Transform payload (new typed payload or legacy dict)
             vertex_keys: Tuple of vertex field keys
+            index_keys: Tuple of vertex identity field keys
 
         Returns:
             dict: Extracted vertex document
         """
-        _doc: dict = {}
-        # Extract transformed values with special keys
-        n_value_keys = len(
-            [
-                k
-                for k in item
-                if k.startswith(ActorConstants.DRESSING_TRANSFORMED_VALUE_KEY)
-            ]
-        )
-        for j in range(n_value_keys):
-            vkey = self.vertex_config.index(self.name).fields[j]
-            v = item.pop(f"{ActorConstants.DRESSING_TRANSFORMED_VALUE_KEY}#{j}")
-            _doc[vkey] = v
+        if isinstance(item, TransformPayload):
+            doc: dict[str, Any] = {}
+            consumed_named: set[str] = set()
+            for k, v in item.named.items():
+                if k in vertex_keys and v is not None:
+                    doc[k] = v
+                    consumed_named.add(k)
+            for j, value in enumerate(item.positional):
+                if j >= len(index_keys):
+                    break
+                doc[index_keys[j]] = value
+            # Keep old semantics: values are consumed once by the first matching vertex.
+            for key in consumed_named:
+                item.named.pop(key, None)
+            if item.positional:
+                item.positional = ()
+            return doc
 
-        # Extract remaining vertex keys
-        for vkey in set(vertex_keys) - set(_doc):
-            v = item.pop(vkey, None)
-            if v is not None:
-                _doc[vkey] = v
+        if isinstance(item, dict):
+            # Legacy compatibility path (magic-key payloads)
+            doc = {}
+            value_keys = sorted(
+                (
+                    k
+                    for k in item
+                    if k.startswith(ActorConstants.DRESSING_TRANSFORMED_VALUE_KEY)
+                ),
+                key=lambda x: int(x.rsplit("#", 1)[-1]),
+            )
+            for j, vkey in enumerate(value_keys):
+                if j >= len(index_keys):
+                    break
+                doc[index_keys[j]] = item.pop(vkey)
+            for vkey in vertex_keys:
+                if vkey not in doc and vkey in item and item[vkey] is not None:
+                    doc[vkey] = item.pop(vkey)
+            return doc
 
-        return _doc
+        return {}
 
     def _process_transformed_items(
         self,
-        ctx: ActionContext,
+        ctx: ExtractionContext,
         lindex: LocationIndex,
         doc: dict[str, Any],
         vertex_keys: tuple[str, ...],
@@ -315,40 +358,30 @@ class VertexActor(Actor):
         Returns:
             list[dict]: List of processed documents
         """
+        index_keys = tuple(self.vertex_config.identity_fields(self.name))
+        payloads = ctx.buffer_transforms[lindex]
         extracted_docs = [
-            self._extract_vertex_doc_from_transformed_item(item, vertex_keys)
-            for item in ctx.buffer_transforms[lindex]
+            self._extract_vertex_doc_from_transformed_item(
+                item, vertex_keys, index_keys
+            )
+            for item in payloads
+        ]
+        ctx.buffer_transforms[lindex] = [
+            item
+            for item in payloads
+            if not (
+                isinstance(item, TransformPayload)
+                and not item.named
+                and not item.positional
+            )
+            and not (isinstance(item, dict) and not item)
         ]
 
-        # Clean up empty items
-        ctx.buffer_transforms[lindex] = [x for x in ctx.buffer_transforms[lindex] if x]
-
-        return self._filter_and_aggregate_vertex_docs(extracted_docs, doc)
-
-    def _process_buffer_vertex(
-        self,
-        buffer_vertex: list[dict[str, Any]],
-        doc: dict[str, Any],
-        vertex_keys: tuple[str, ...],
-    ) -> list[dict[str, Any]]:
-        """Process items from buffer_vertex.
-
-        Args:
-            buffer_vertex: List of vertex items from buffer
-            doc: Document being processed
-            vertex_keys: Tuple of vertex field keys
-
-        Returns:
-            list[dict]: List of processed documents
-        """
-        extracted_docs = [
-            {k: item[k] for k in vertex_keys if k in item} for item in buffer_vertex
-        ]
         return self._filter_and_aggregate_vertex_docs(extracted_docs, doc)
 
     def __call__(
-        self, ctx: ActionContext, lindex: LocationIndex, *nargs: Any, **kwargs: Any
-    ) -> ActionContext:
+        self, ctx: ExtractionContext, lindex: LocationIndex, *nargs: Any, **kwargs: Any
+    ) -> ExtractionContext:
         """Process vertex data.
 
         Args:
@@ -357,17 +390,19 @@ class VertexActor(Actor):
             **kwargs: Additional keyword arguments including 'doc'
 
         Returns:
-            ActionContext: Updated action context
+            ExtractionContext: Updated extraction context
         """
-        doc: dict[str, Any] = kwargs.pop("doc", {})
+        doc: dict[str, Any] = kwargs.get("doc", {})
 
         vertex_keys_list = self.vertex_config.fields_names(self.name)
         # Convert to tuple of strings for type compatibility
         vertex_keys: tuple[str, ...] = tuple(vertex_keys_list)
 
         agg = []
-        buffer_vertex = ctx.buffer_vertex.pop(self.name, [])
-        agg.extend(self._process_buffer_vertex(buffer_vertex, doc, vertex_keys))
+        if self.from_doc:
+            projected = {v_f: doc.get(d_f) for v_f, d_f in self.from_doc.items()}
+            if any(v is not None for v in projected.values()):
+                agg.append(projected)
 
         # Process transformed items
         agg.extend(self._process_transformed_items(ctx, lindex, doc, vertex_keys))
@@ -380,21 +415,23 @@ class VertexActor(Actor):
 
         # Merge and create vertex representations
         merged = merge_doc_basis(
-            agg, index_keys=tuple(self.vertex_config.index(self.name).fields)
+            agg, index_keys=tuple(self.vertex_config.identity_fields(self.name))
         )
 
-        ctx.acc_vertex[self.name][lindex].extend(
-            [
-                VertexRep(
-                    vertex=m,
-                    ctx={
-                        q: w for q, w in doc.items() if not isinstance(w, (dict, list))
-                    },
-                )
-                for m in merged
-            ]
-        )
+        obs_ctx = {q: w for q, w in doc.items() if not isinstance(w, (dict, list))}
+        for m in merged:
+            vertex_rep = VertexRep(vertex=m, ctx=obs_ctx)
+            ctx.acc_vertex[self.name][lindex].append(vertex_rep)
+            ctx.record_vertex_observation(
+                vertex_name=self.name,
+                location=lindex,
+                vertex=vertex_rep.vertex,
+                ctx=vertex_rep.ctx,
+            )
         return ctx
+
+    def references_vertices(self) -> set[str]:
+        return {self.name}
 
 
 class EdgeActor(Actor):
@@ -432,21 +469,21 @@ class EdgeActor(Actor):
             if k in self.edge.__dict__
         }
 
-    def finish_init(self, **kwargs: Any) -> None:
+    def finish_init(self, init_ctx: ActorInitContext) -> None:
         """Complete initialization of the edge actor.
 
         Args:
-            **kwargs: Additional initialization parameters
+            init_ctx: Shared typed initialization context
         """
-        self.vertex_config: VertexConfig = kwargs.pop("vertex_config")
-        edge_config: EdgeConfig | None = kwargs.pop("edge_config", None)
-        if edge_config is not None and self.vertex_config is not None:
-            self.edge.finish_init(vertex_config=self.vertex_config)
-            edge_config.update_edges(self.edge, vertex_config=self.vertex_config)
+        self.vertex_config = init_ctx.vertex_config
+        if self.vertex_config is not None:
+            init_ctx.edge_config.update_edges(
+                self.edge, vertex_config=self.vertex_config
+            )
 
     def __call__(
-        self, ctx: ActionContext, lindex: LocationIndex, *nargs: Any, **kwargs: Any
-    ) -> ActionContext:
+        self, ctx: ExtractionContext, lindex: LocationIndex, *nargs: Any, **kwargs: Any
+    ) -> ExtractionContext:
         """Process edge data.
 
         Args:
@@ -455,31 +492,15 @@ class EdgeActor(Actor):
             **kwargs: Additional keyword arguments
 
         Returns:
-            ActionContext: Updated action context
+            ExtractionContext: Updated extraction context
         """
 
-        ctx = self.merge_vertices(ctx)
-        edges = render_edge(self.edge, self.vertex_config, ctx, lindex=lindex)
-
-        edges = render_weights(
-            self.edge,
-            self.vertex_config,
-            ctx.acc_vertex,
-            edges,
-        )
-
-        for relation, v in edges.items():
-            ctx.acc_global[self.edge.source, self.edge.target, relation] += v
-
+        ctx.edge_requests.append((self.edge, lindex))
+        ctx.record_edge_intent(edge=self.edge, location=lindex)
         return ctx
 
-    def merge_vertices(self, ctx: ActionContext) -> ActionContext:
-        for vname in (self.edge.source, self.edge.target):
-            for lindex, vlist in ctx.acc_vertex[vname].items():
-                ctx.acc_vertex[vname][lindex] = merge_doc_basis(
-                    vlist, tuple(self.vertex_config.index(vname).fields)
-                )
-        return ctx
+    def references_vertices(self) -> set[str]:
+        return {self.edge.source, self.edge.target}
 
 
 class TransformActor(Actor):
@@ -490,7 +511,6 @@ class TransformActor(Actor):
 
     Attributes:
         _kwargs: Config dump for init_transforms (module, foo, input, output)
-        vertex: Optional target vertex (to_vertex)
         transforms: Dictionary of available transforms
         name: Transform name
         params: Transform parameters
@@ -500,7 +520,6 @@ class TransformActor(Actor):
     def __init__(self, config: TransformActorConfig):
         """Initialize the transform actor from config."""
         self._kwargs = config.model_dump(by_alias=True)
-        self.vertex = config.to_vertex
         self.transforms = {}
         self.name = config.name
         self.params = config.params
@@ -521,7 +540,7 @@ class TransformActor(Actor):
         Returns:
             dict[str, Any]: Dictionary of important items
         """
-        items = self._fetch_items_from_dict(("name", "vertex"))
+        items = self._fetch_items_from_dict(("name",))
         items.update({"t.input": self.t.input, "t.output": self.t.output})
         return items
 
@@ -530,13 +549,13 @@ class TransformActor(Actor):
         """Create a TransformActor from a TransformActorConfig."""
         return cls(config)
 
-    def init_transforms(self, **kwargs: Any) -> None:
+    def init_transforms(self, init_ctx: ActorInitContext) -> None:
         """Initialize available transforms.
 
         Args:
-            **kwargs: Transform initialization parameters
+            init_ctx: Shared typed initialization context
         """
-        self.transforms = kwargs.pop("transforms", {})
+        self.transforms = init_ctx.transforms
         try:
             pt = ProtoTransform(
                 **{
@@ -554,31 +573,44 @@ class TransformActor(Actor):
             logger.debug("Failed to initialize ProtoTransform: %s", e)
             pass
 
-    def finish_init(self, **kwargs: Any) -> None:
+    def finish_init(self, init_ctx: ActorInitContext) -> None:
         """Complete initialization of the transform actor.
 
         Args:
-            **kwargs: Additional initialization parameters
+            init_ctx: Shared typed initialization context
         """
-        self.transforms: dict[str, ProtoTransform] = kwargs.pop("transforms", {})
+        self.transforms = init_ctx.transforms
 
         if self.name is not None:
             pt = self.transforms.get(self.name, None)
             if pt is not None:
-                self.t._foo = pt._foo
-                self.t.module = pt.module
-                self.t.foo = pt.foo
+                next_params = self.t.params
+                next_input = self.t.input
+                next_output = self.t.output
+
                 if pt.params and not self.t.params:
-                    self.t.params = pt.params
+                    next_params = pt.params
                     if (
                         pt.input
                         and not self.t.input
                         and pt.output
                         and not self.t.output
                     ):
-                        self.t.input = pt.input
-                        self.t.output = pt.output
-                        self.t._refresh_derived()
+                        next_input = pt.input
+                        next_output = pt.output
+
+                # Rebuild a new Transform instance rather than mutating private attrs.
+                self.t = Transform(
+                    fields=self.t.fields,
+                    map=self.t.map,
+                    dress=self.t.dress,
+                    name=self.t.name,
+                    module=pt.module,
+                    foo=pt.foo,
+                    params=next_params,
+                    input=next_input,
+                    output=next_output,
+                )
 
     def _extract_doc(self, nargs: tuple[Any, ...], **kwargs: Any) -> dict[str, Any]:
         """Extract document from arguments.
@@ -605,28 +637,20 @@ class TransformActor(Actor):
 
         return doc
 
-    def _format_transform_result(self, result: Any) -> dict[str, Any]:
-        """Format transformation result into update document.
+    def _format_transform_result(self, result: Any) -> TransformPayload:
+        """Format transformation result into typed payload.
 
         Args:
             result: Result from transform
 
         Returns:
-            dict: Formatted update document
+            TransformPayload: Typed transform payload
         """
-        if isinstance(result, dict):
-            return result
-        elif isinstance(result, tuple):
-            return {
-                f"{ActorConstants.DRESSING_TRANSFORMED_VALUE_KEY}#{j}": v
-                for j, v in enumerate(result)
-            }
-        else:
-            return {f"{ActorConstants.DRESSING_TRANSFORMED_VALUE_KEY}#0": result}
+        return TransformPayload.from_result(result)
 
     def __call__(
-        self, ctx: ActionContext, lindex: LocationIndex, *nargs: Any, **kwargs: Any
-    ) -> ActionContext:
+        self, ctx: ExtractionContext, lindex: LocationIndex, *nargs: Any, **kwargs: Any
+    ) -> ExtractionContext:
         """Apply transformation to input data.
 
         Args:
@@ -635,7 +659,7 @@ class TransformActor(Actor):
             **kwargs: Additional keyword arguments including 'doc'
 
         Returns:
-            ActionContext: Updated action context
+            ExtractionContext: Updated extraction context
 
         Raises:
             ValueError: If no document is provided
@@ -648,11 +672,12 @@ class TransformActor(Actor):
 
         _update_doc = self._format_transform_result(transform_result)
 
-        if self.vertex is None:
-            ctx.buffer_transforms[lindex].append(_update_doc)
-        else:
-            ctx.buffer_vertex[self.vertex].append(_update_doc)
+        ctx.buffer_transforms[lindex].append(_update_doc)
+        ctx.record_transform_observation(location=lindex, payload=_update_doc)
         return ctx
+
+    def references_vertices(self) -> set[str]:
+        return set()
 
 
 class DescendActor(Actor):
@@ -687,6 +712,7 @@ class DescendActor(Actor):
         self._descendants: list[ActorWrapper] = (
             list(_descendants) if _descendants else []
         )
+        self._descendants_sorted = True
         self._descendants.sort(key=lambda x: _NodeTypePriority[type(x.actor)])
 
     def fetch_important_items(self):
@@ -707,8 +733,7 @@ class DescendActor(Actor):
             d: Actor wrapper to add
         """
         self._descendants.append(d)
-        # Keep descendants sorted
-        self._descendants.sort(key=lambda x: _NodeTypePriority[type(x.actor)])
+        self._descendants_sorted = False
 
     def count(self):
         """Get total count of items processed by all descendants.
@@ -725,103 +750,84 @@ class DescendActor(Actor):
         Returns:
             list[ActorWrapper]: Sorted list of descendant actors
         """
+        if not self._descendants_sorted:
+            self._descendants.sort(key=lambda x: _NodeTypePriority[type(x.actor)])
+            self._descendants_sorted = True
         return self._descendants
 
     @classmethod
     def from_config(cls, config: DescendActorConfig) -> DescendActor:
         """Create a DescendActor from a DescendActorConfig."""
         wrappers = [ActorWrapper.from_config(c) for c in config.pipeline]
-        return cls(key=config.into, any_key=config.any_key, _descendants=wrappers)
+        return cls(key=config.key, any_key=config.any_key, _descendants=wrappers)
 
-    def init_transforms(self, **kwargs: Any) -> None:
+    def _infer_vertex_descendants_from_transforms(
+        self, init_ctx: ActorInitContext
+    ) -> None:
+        """Infer implicit VertexActors from untargeted transform outputs.
+
+        This is used when a pipeline contains transform map steps without explicit
+        target vertices and no explicit vertex actors at the same level.
+        """
+        if any(isinstance(an.actor, VertexActor) for an in self.descendants):
+            return
+
+        transform_output_fields: set[str] = set()
+        for an in self.descendants:
+            if isinstance(an.actor, TransformActor):
+                transform_output_fields.update(str(k) for k in an.actor.t.map.keys())
+
+        if not transform_output_fields:
+            return
+
+        inferred_vertices: list[str] = []
+        for vertex_name in sorted(init_ctx.vertex_config.vertex_set):
+            identity_fields = {
+                f for f in init_ctx.vertex_config.identity_fields(vertex_name)
+            }
+            if identity_fields and identity_fields.issubset(transform_output_fields):
+                inferred_vertices.append(vertex_name)
+
+        if not inferred_vertices:
+            return
+
+        existing_targets: set[str] = set()
+        for an in self.descendants:
+            existing_targets.update(
+                str(v) for v in an.actor.references_vertices() if v is not None
+            )
+        for vertex_name in inferred_vertices:
+            if vertex_name in existing_targets:
+                continue
+            self.add_descendant(
+                ActorWrapper.from_config(VertexActorConfig(vertex=vertex_name))
+            )
+            logger.debug(
+                "DescendActor: inferred implicit VertexActor(%s) from untargeted transform fields %s",
+                vertex_name,
+                sorted(transform_output_fields),
+            )
+
+    def init_transforms(self, init_ctx: ActorInitContext) -> None:
         """Initialize transforms for all descendants.
 
         Args:
-            **kwargs: Transform initialization parameters
+            init_ctx: Shared typed initialization context
         """
         for an in self.descendants:
-            an.init_transforms(**kwargs)
+            an.init_transforms(init_ctx)
 
-    def _collect_transform_actors_with_target(
-        self, actor_wrappers: list[ActorWrapper]
-    ) -> list[TransformActor]:
-        """Recursively collect all TransformActors with target_vertex from actor wrappers.
-
-        Args:
-            actor_wrappers: List of ActorWrapper instances to search
-
-        Returns:
-            list[TransformActor]: List of TransformActors with target_vertex specified
-        """
-        result = []
-        for anw in actor_wrappers:
-            # Check current level TransformActors
-            if isinstance(anw.actor, TransformActor) and anw.actor.vertex is not None:
-                result.append(anw.actor)
-            # Recursively check nested DescendActors (they're already initialized at this point)
-            elif isinstance(anw.actor, DescendActor):
-                result.extend(
-                    self._collect_transform_actors_with_target(anw.actor.descendants)
-                )
-        return result
-
-    def finish_init(self, **kwargs: Any) -> None:
+    def finish_init(self, init_ctx: ActorInitContext) -> None:
         """Complete initialization of the descend actor and its descendants.
 
         Args:
-            **kwargs: Additional initialization parameters
+            init_ctx: Shared typed initialization context
         """
-        self.vertex_config: VertexConfig = kwargs.get(
-            "vertex_config", VertexConfig(vertices=[])
-        )
+        self.vertex_config = init_ctx.vertex_config
+        self._infer_vertex_descendants_from_transforms(init_ctx)
 
         for an in self.descendants:
-            an.finish_init(**kwargs)
-
-        # Count TransformActors with target_vertex at current level and below
-        # Use the helper method which safely traverses the tree after initialization
-        transform_actors_with_target = self._collect_transform_actors_with_target(
-            self.descendants
-        )
-        transform_targets = [t.vertex for t in transform_actors_with_target]
-
-        available_fields = set()
-        for anw in self.descendants:
-            actor = anw.actor
-            if isinstance(actor, TransformActor):
-                available_fields |= set(list(actor.t.output))
-
-        present_vertices = [
-            anw.actor.name
-            for anw in self.descendants
-            if isinstance(anw.actor, VertexActor)
-        ]
-
-        for v in present_vertices:
-            available_fields -= set(self.vertex_config.fields_names(v))
-
-        for v in self.vertex_config.vertex_list:
-            # Use field_names property for cleaner set operations
-            v_field_names = set(v.field_names)
-            intersection = available_fields & v_field_names
-            # If there are 2+ TransformActors with target_vertex, don't auto-create VertexActors
-            skip_vertex = len(transform_targets) >= 2
-            if intersection and v.name not in present_vertices:
-                if not skip_vertex or (v.name in transform_targets and skip_vertex):
-                    new_descendant = ActorWrapper.from_config(
-                        VertexActorConfig(vertex=v.name)
-                    )
-                    new_descendant.finish_init(**kwargs)
-                    self.add_descendant(new_descendant)
-
-        logger.debug(
-            f"""type, priority: {
-                [
-                    (t.__name__, _NodeTypePriority[t])
-                    for t in (type(x.actor) for x in self.descendants)
-                ]
-            }"""
-        )
+            an.finish_init(init_ctx)
 
     def _expand_document(self, doc: dict | list) -> list[tuple[str | None, Any]]:
         """Expand document into list of (key, item) tuples for processing.
@@ -853,8 +859,8 @@ class DescendActor(Actor):
             return [(None, doc)]
 
     def __call__(
-        self, ctx: ActionContext, lindex: LocationIndex, *nargs, **kwargs: Any
-    ) -> ActionContext:
+        self, ctx: ExtractionContext, lindex: LocationIndex, *nargs, **kwargs: Any
+    ) -> ExtractionContext:
         """Process hierarchical data structure.
 
         Args:
@@ -862,7 +868,7 @@ class DescendActor(Actor):
             **kwargs: Additional keyword arguments including 'doc'
 
         Returns:
-            ActionContext: Updated action context
+            ExtractionContext: Updated extraction context
 
         Raises:
             ValueError: If no document is provided
@@ -959,6 +965,7 @@ class VertexRouterActor(Actor):
         self.prefix = config.prefix
         self.field_map = config.field_map
         self._vertex_actors: dict[str, ActorWrapper] = {}
+        self._init_ctx: ActorInitContext | None = None
         self.vertex_config: VertexConfig = VertexConfig(vertices=[])
 
     @classmethod
@@ -976,22 +983,29 @@ class VertexRouterActor(Actor):
         items["vertex_types"] = sorted(self._vertex_actors.keys())
         return items
 
-    def finish_init(self, **kwargs: Any) -> None:
-        """Build the internal vertex-type -> ActorWrapper mapping.
+    def finish_init(self, init_ctx: ActorInitContext) -> None:
+        """Store initialization state for on-demand wrapper creation."""
+        self.vertex_config = init_ctx.vertex_config
+        self._init_ctx = init_ctx
+        self._vertex_actors.clear()
 
-        One wrapper is created for every vertex type known to *vertex_config*,
-        so that any dynamically-typed document can be routed at runtime.
-        """
-        self.vertex_config = kwargs.get("vertex_config", VertexConfig(vertices=[]))
-        for vertex in self.vertex_config.vertex_list:
-            wrapper = ActorWrapper.from_config(VertexActorConfig(vertex=vertex.name))
-            wrapper.finish_init(**kwargs)
-            self._vertex_actors[vertex.name] = wrapper
-            logger.debug(
-                "VertexRouterActor: registered VertexActor(%s) for type_field=%s",
-                vertex.name,
-                self.type_field,
-            )
+    def _get_or_create_wrapper(self, vertex_type: str) -> ActorWrapper | None:
+        if vertex_type not in self.vertex_config.vertex_set:
+            return None
+        wrapper = self._vertex_actors.get(vertex_type)
+        if wrapper is not None:
+            return wrapper
+
+        assert self._init_ctx is not None
+        wrapper = ActorWrapper.from_config(VertexActorConfig(vertex=vertex_type))
+        wrapper.finish_init(self._init_ctx)
+        self._vertex_actors[vertex_type] = wrapper
+        logger.debug(
+            "VertexRouterActor: lazily registered VertexActor(%s) for type_field=%s",
+            vertex_type,
+            self.type_field,
+        )
+        return wrapper
 
     def count(self) -> int:
         """Total actors managed by this router (self + all wrapped vertex actors)."""
@@ -1019,8 +1033,8 @@ class VertexRouterActor(Actor):
         return doc
 
     def __call__(
-        self, ctx: ActionContext, lindex: LocationIndex, *nargs: Any, **kwargs: Any
-    ) -> ActionContext:
+        self, ctx: ExtractionContext, lindex: LocationIndex, *nargs: Any, **kwargs: Any
+    ) -> ExtractionContext:
         """Route the document to the matching VertexActor.
 
         Args:
@@ -1029,7 +1043,7 @@ class VertexRouterActor(Actor):
             **kwargs: Must contain ``doc``.
 
         Returns:
-            Updated ActionContext.
+            Updated extraction context.
         """
         doc: dict[str, Any] = kwargs.get("doc", {})
         vtype = doc.get(self.type_field)
@@ -1040,7 +1054,7 @@ class VertexRouterActor(Actor):
             )
             return ctx
 
-        wrapper = self._vertex_actors.get(vtype)
+        wrapper = self._get_or_create_wrapper(vtype)
         if wrapper is None:
             logger.debug(
                 "VertexRouterActor: vertex type '%s' (from field '%s') "
@@ -1076,8 +1090,7 @@ class ActorWrapper:
 
     Attributes:
         actor: The wrapped actor instance
-        vertex_config: Vertex configuration
-        edge_config: Edge configuration
+        init_ctx: Typed initialization context (vertex_config, edge_config, etc.)
     """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -1093,35 +1106,46 @@ class ActorWrapper:
         config = parse_root_config(*args, **kwargs)
         w = ActorWrapper.from_config(config)
         self.actor = w.actor
-        self.vertex_config = w.vertex_config
-        self.edge_config = w.edge_config
-        self.edge_greedy = w.edge_greedy
+        self.init_ctx = w.init_ctx
 
-    def init_transforms(self, **kwargs: Any) -> None:
+    @property
+    def vertex_config(self) -> VertexConfig:
+        return self.init_ctx.vertex_config
+
+    @property
+    def edge_config(self) -> EdgeConfig:
+        return self.init_ctx.edge_config
+
+    @property
+    def infer_edges(self) -> bool:
+        return self.init_ctx.infer_edges
+
+    @property
+    def infer_edge_only(self) -> set[EdgeId]:
+        return self.init_ctx.infer_edge_only
+
+    @property
+    def infer_edge_except(self) -> set[EdgeId]:
+        return self.init_ctx.infer_edge_except
+
+    def init_transforms(self, init_ctx: ActorInitContext) -> None:
         """Initialize transforms for the wrapped actor.
 
         Args:
-            **kwargs: Transform initialization parameters
+            init_ctx: Shared typed initialization context
         """
-        self.actor.init_transforms(**kwargs)
+        self.init_ctx = init_ctx
+        self.actor.init_transforms(init_ctx)
 
-    def finish_init(self, **kwargs: Any) -> None:
+    def finish_init(self, init_ctx: ActorInitContext) -> None:
         """Complete initialization of the wrapped actor.
 
         Args:
-            **kwargs: Additional initialization parameters
+            init_ctx: Shared typed initialization context
         """
-        kwargs["transforms"]: dict[str, ProtoTransform] = kwargs.get("transforms", {})
-        self.actor.init_transforms(**kwargs)
-
-        self.vertex_config = kwargs.get("vertex_config", VertexConfig(vertices=[]))
-        kwargs["vertex_config"] = self.vertex_config
-        self.edge_config = kwargs.get("edge_config", EdgeConfig())
-        kwargs["edge_config"] = self.edge_config
-        # Set edge_greedy if provided (only used at top-level ActorWrapper)
-        if "edge_greedy" in kwargs:
-            self.edge_greedy = kwargs.pop("edge_greedy")
-        self.actor.finish_init(**kwargs)
+        self.init_ctx = init_ctx
+        self.actor.init_transforms(init_ctx)
+        self.actor.finish_init(init_ctx)
 
     def count(self):
         """Get count of items processed by the wrapped actor.
@@ -1151,9 +1175,14 @@ class ActorWrapper:
             )
         wrapper = cls.__new__(cls)
         wrapper.actor = actor
-        wrapper.vertex_config = VertexConfig(vertices=[])
-        wrapper.edge_config = EdgeConfig()
-        wrapper.edge_greedy = True
+        wrapper.init_ctx = ActorInitContext(
+            vertex_config=VertexConfig(vertices=[]),
+            edge_config=EdgeConfig(),
+            transforms={},
+            infer_edges=True,
+            infer_edge_only=set(),
+            infer_edge_except=set(),
+        )
         return wrapper
 
     @classmethod
@@ -1164,11 +1193,11 @@ class ActorWrapper:
 
     def __call__(
         self,
-        ctx: ActionContext,
+        ctx: ExtractionContext,
         lindex: LocationIndex = LocationIndex(),
         *nargs: Any,
         **kwargs: Any,
-    ) -> ActionContext:
+    ) -> ExtractionContext:
         """Execute the wrapped actor.
 
         Args:
@@ -1182,57 +1211,47 @@ class ActorWrapper:
         ctx = self.actor(ctx, lindex, *nargs, **kwargs)
         return ctx
 
-    def normalize_ctx(self, ctx: ActionContext) -> defaultdict[GraphEntity, list]:
-        """Normalize the action context.
+    def assemble(
+        self, ctx: ExtractionContext | AssemblyContext | ActionContext
+    ) -> defaultdict[GraphEntity, list]:
+        """Assemble final graph entities from extracted context.
 
         Args:
-            ctx: Action context to normalize
+            ctx: Extraction or assembly context
 
         Returns:
-            defaultdict[GraphEntity, list]: Normalized context
+            defaultdict[GraphEntity, list]: Assembled graph entities
         """
+        if isinstance(ctx, AssemblyContext):
+            assembly_ctx = ctx
+        else:
+            assembly_ctx = AssemblyContext.from_extraction(ctx)
+        assemble_edges(
+            ctx=assembly_ctx,
+            vertex_config=self.vertex_config,
+            edge_config=self.edge_config,
+            infer_edges=self.infer_edges,
+            infer_edge_only=self.infer_edge_only,
+            infer_edge_except=self.infer_edge_except,
+        )
 
-        if self.edge_greedy:
-            populated = {v for v, dd in ctx.acc_vertex.items() if any(dd.values())}
-            already_emitted = {
-                (s, t)
-                for s, t, _ in (k for k in ctx.acc_global if not isinstance(k, str))
-            }
-            for edge_id, edge in self.edge_config.edges_items():
-                s, t, _ = edge_id
-                if (
-                    (s, t) in already_emitted
-                    or s not in populated
-                    or t not in populated
-                ):
-                    continue
-                extra_edges = render_edge(
-                    edge=edge, vertex_config=self.vertex_config, ctx=ctx
-                )
-                extra_edges = render_weights(
-                    edge,
-                    self.vertex_config,
-                    ctx.acc_vertex,
-                    extra_edges,
-                )
-
-                for relation, v in extra_edges.items():
-                    ctx.acc_global[s, t, relation] += v
-
-        for vertex_name, dd in ctx.acc_vertex.items():
+        for vertex_name, dd in assembly_ctx.acc_vertex.items():
             for lindex, vertex_list in dd.items():
                 vertex_list = [x.vertex for x in vertex_list]
                 vertex_list_updated = merge_doc_basis(
                     vertex_list,
-                    tuple(self.vertex_config.index(vertex_name).fields),
+                    tuple(self.vertex_config.identity_fields(vertex_name)),
                 )
                 vertex_list_updated = pick_unique_dict(vertex_list_updated)
 
-                ctx.acc_global[vertex_name] += vertex_list_updated
+                assembly_ctx.acc_global[vertex_name] += vertex_list_updated
 
-        ctx = add_blank_collections(ctx, self.vertex_config)
+        assembly_ctx = add_blank_collections(assembly_ctx, self.vertex_config)
 
-        return ctx.acc_global
+        if isinstance(ctx, ActionContext):
+            ctx.acc_global = assembly_ctx.acc_global
+            return ctx.acc_global
+        return assembly_ctx.acc_global
 
     @classmethod
     def from_dict(cls, data: dict | list):
@@ -1349,7 +1368,7 @@ class ActorWrapper:
                 wrapped actor; the value must be a set. A descendant is included
                 only if getattr(actor, key, None) is in that set. Examples:
                 name={"user", "product"} for VertexActor,
-                vertex={"target_a", "target_b"} for TransformActor (target_vertex).
+                from_doc for VertexActor with projection.
 
         Returns:
             list[ActorWrapper]: All matching descendants in the tree.
@@ -1357,8 +1376,6 @@ class ActorWrapper:
         Example:
             >>> # All VertexActor descendants with name in {"user", "product"}
             >>> wrappers.find_descendants(actor_type=VertexActor, name={"user", "product"})
-            >>> # All TransformActor descendants with target_vertex in a set
-            >>> wrappers.find_descendants(actor_type=TransformActor, vertex={"a", "b"})
             >>> # Custom predicate
             >>> wrappers.find_descendants(predicate=lambda w: isinstance(w.actor, VertexActor) and w.actor.name == "user")
         """

@@ -2,7 +2,7 @@
 
 GraFlo is a **Graph Schema & Transformation Language (GSTL)** for Labeled Property Graphs (LPG).
 
-It provides a declarative, database-agnostic specification for mapping heterogeneous data sources — tabular (CSV, SQL), hierarchical (JSON, XML), and RDF/SPARQL — to a unified LPG representation. A `Resource` abstraction decouples transformation logic from data retrieval; a `GraphContainer` (covariant graph representation) abstracts away database idiosyncrasies; and a `DataSourceRegistry` manages source adapters so that files, SQL tables, REST APIs, and SPARQL endpoints plug into the same pipeline. Supported targets: ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph.
+It provides a declarative, database-agnostic specification for mapping heterogeneous data sources — tabular (CSV, SQL), hierarchical (JSON, XML), and RDF/SPARQL — to a unified LPG representation. A `Resource` abstraction decouples transformation logic from data retrieval; `GraphContainer` is the covariant graph representation; and DB-specific behavior is resolved in DB-aware projection (`Schema.resolve_db_aware(...)`) and connector/writer stages. A `DataSourceRegistry` manages source adapters so that files, SQL tables, REST APIs, and SPARQL endpoints plug into the same pipeline. Supported targets: ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph.
 
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg) 
 [![PyPI version](https://badge.fury.io/py/graflo.svg)](https://badge.fury.io/py/graflo)
@@ -22,9 +22,10 @@ It provides a declarative, database-agnostic specification for mapping heterogen
 |-------|------|------|
 | **Source Instance** | A concrete data artifact — a CSV file, a PostgreSQL table, a SPARQL endpoint, a `.ttl` file. | `AbstractDataSource` subclasses with a `DataSourceType` (`FILE`, `SQL`, `SPARQL`, `API`, `IN_MEMORY`). |
 | **Resource** | A reusable transformation pipeline — actor steps (descend, transform, vertex, edge) that map raw records to graph elements. Data sources bind to Resources by name via the `DataSourceRegistry`. | `Resource` (part of `Schema`). |
-| **Graph Schema** | Declarative vertex/edge definitions, indexes, typed fields, and named transforms. | `Schema`, `VertexConfig`, `EdgeConfig`. |
+| **Graph Schema** | Declarative logical vertex/edge definitions, identities, typed fields, and named transforms. | `Schema`, `VertexConfig`, `EdgeConfig`. |
 | **Covariant Graph Representation** | A database-independent collection of vertices and edges. | `GraphContainer`. |
-| **Graph DB** | The target LPG store — same API for all supported databases. | `ConnectionManager`, `DBWriter`. |
+| **DB-aware Projection** | Resolves DB-specific naming/default/index behavior from logical schema + `DatabaseFeatures`. | `Schema.resolve_db_aware()`, `VertexConfigDBAware`, `EdgeConfigDBAware`. |
+| **Graph DB** | The target LPG store — same API for all supported databases. | `ConnectionManager`, `DBWriter`, DB connectors. |
 
 ## Core Concepts
 
@@ -69,7 +70,7 @@ The `DataSourceRegistry` manages `AbstractDataSource` adapters, each carrying a 
 ## Key Features
 
 - **Declarative LPG schema** — Define vertices, edges, indexes, weights, and transforms in YAML or Python. The `Schema` is the single source of truth, independent of source or target.
-- **Database abstraction** — One schema, one API. Target ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, or NebulaGraph without rewriting pipelines. Database idiosyncrasies are handled by the `GraphContainer` (covariant graph representation).
+- **Database abstraction** — One logical schema, one API. Target ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, or NebulaGraph without rewriting pipelines. DB idiosyncrasies are handled in DB-aware projection (`Schema.resolve_db_aware(...)`) and connector/writer stages.
 - **Resource abstraction** — Each `Resource` defines a reusable actor pipeline that maps raw records to graph elements. Data sources bind to Resources by name via the `DataSourceRegistry`, decoupling transformation logic from data retrieval.
 - **DataSourceRegistry** — Register `FILE`, `SQL`, `API`, `IN_MEMORY`, or `SPARQL` data sources. Each `DataSourceType` plugs into the same Resource pipeline.
 - **SPARQL & RDF support** — Query SPARQL endpoints (e.g. Apache Fuseki), read `.ttl`/`.rdf`/`.n3` files, and auto-infer schemas from OWL/RDFS ontologies. Install with `pip install graflo[sparql]`.
@@ -83,8 +84,11 @@ The `DataSourceRegistry` manages `AbstractDataSource` adapters, each carrying a 
 
 - [Installation](getting_started/installation.md)
 - [Quick Start Guide](getting_started/quickstart.md)
+- [Concepts (architecture diagrams)](concepts/index.md)
 - [API Reference](reference/index.md)
 - [Examples](examples/index.md)
+
+> Note: Mermaid diagrams are kept in section pages (for example `concepts/`) rather than on this landing page.
 
 ## Use Cases
 

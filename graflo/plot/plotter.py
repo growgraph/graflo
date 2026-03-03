@@ -284,7 +284,7 @@ class SchemaPlotter:
         that aren't fully represented in edge_config.
 
         Returns:
-            dict: Dictionary mapping (source, target, purpose) to Edge objects
+            dict: Dictionary mapping (source, target, relation) to Edge objects
         """
         discovered_edges = {}
 
@@ -318,7 +318,7 @@ class SchemaPlotter:
 
         kwargs = {"vfield": True, "vertex_sh": vertex_prefix_dict}
         for k in vconf.vertex_set:
-            index_fields = vconf.index(k)
+            index_fields = vconf.identity_fields(k)
             fields = vconf.fields_names(k)
             kwargs["vertex"] = k
             nodes_collection = [
@@ -385,7 +385,7 @@ class SchemaPlotter:
                     vfield=True,
                     vertex_sh=vertex_prefix_dict,
                 )
-                for item in vconf.index(k)
+                for item in vconf.identity_fields(k)
             ]
             index_subgraph = ag.add_subgraph(level_index, name=f"cluster_{k}:def")
             index_subgraph.node_attr["style"] = "filled"
@@ -528,7 +528,7 @@ class SchemaPlotter:
                 all_edges[edge_id] = e
 
         # Create graph edges with relation labels
-        for (source, target, purpose), e in all_edges.items():
+        for (source, target, relation), e in all_edges.items():
             # Determine label based on relation configuration
             label = None
             if e.relation is not None:
@@ -555,7 +555,7 @@ class SchemaPlotter:
             edges += [ee]
 
         # Create nodes for all vertices involved in edges
-        for (source, target, purpose), e in all_edges.items():
+        for (source, target, relation), e in all_edges.items():
             for v in (source, target):
                 nodes += [
                     (

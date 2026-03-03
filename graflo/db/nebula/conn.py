@@ -296,9 +296,13 @@ class NebulaConnection(Connection):
     # Index management
     # ------------------------------------------------------------------
 
-    def define_vertex_indices(
+    def define_vertex_indexes(
         self, vertex_config: VertexConfig, schema: Schema | None = None
     ) -> None:
+        if schema is None:
+            logger.warning(
+                "Schema is None: identity indexes cannot be ensured without schema"
+            )
         for vname in vertex_config.vertex_set:
             fields = vertex_config.fields(vname)
             string_fields = {f.name for f in fields if f.type == FieldType.STRING}
@@ -322,13 +326,16 @@ class NebulaConnection(Connection):
                 seen.add(key)
                 self._add_tag_index(vname, idx, string_fields=string_fields)
 
-    def define_edge_indices(
+    def define_edge_indexes(
         self, edges: list[Edge], schema: Schema | None = None
     ) -> None:
         for edge in edges:
             rel = edge.relation or f"{edge.source}_{edge.target}"
             index_list = (
-                schema.database_features.edge_secondary_indexes(edge.edge_id)
+                schema.database_features.edge_secondary_indexes(
+                    edge.edge_id,
+                    logical_relation=edge.relation,
+                )
                 if schema is not None
                 else []
             )

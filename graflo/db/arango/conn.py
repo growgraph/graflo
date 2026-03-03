@@ -13,7 +13,7 @@ Key Features:
 
     - Graph-based document organization
     - Vertex and edge class management
-    - Persistent, hash, skiplist, and fulltext indices
+    - Persistent, hash, skiplist, and fulltext indexes
     - Batch document and edge operations
     - AQL query generation and execution
 
@@ -317,21 +317,20 @@ class ArangoConnection(Connection):
 
         Truncates vertex and edge collections that belong to the schema.
         """
-        vc = schema.vertex_config
+        db_schema = schema.resolve_db_aware(DBType.ARANGO)
+        vc = db_schema.vertex_config
         for v in vc.vertex_set:
             cname = vc.vertex_dbname(v)
             if self.conn.has_collection(cname):
                 self.conn.collection(cname).truncate()
                 logger.debug(f"Truncated vertex collection '{cname}'")
-        for edge in schema.edge_config.edges_list(include_aux=True):
-            cname = schema.database_features.edge_storage_name(
-                edge.edge_id,
-                source_storage=schema.vertex_config.vertex_dbname(edge.source),
-                target_storage=schema.vertex_config.vertex_dbname(edge.target),
-            )
-            if cname and self.conn.has_collection(cname):
-                self.conn.collection(cname).truncate()
-                logger.debug(f"Truncated edge collection '{cname}'")
+        for edge in db_schema.edge_config.edges_list(include_aux=True):
+            variants = db_schema.edge_config.runtime(edge).physical_variants()
+            for variant in variants:
+                cname = cast(str | None, variant.get("storage_name"))
+                if cname and self.conn.has_collection(cname):
+                    self.conn.collection(cname).truncate()
+                    logger.debug(f"Truncated edge collection '{cname}'")
 
     def define_schema(self, schema: Schema) -> None:
         """Define ArangoDB collections based on schema.
@@ -340,7 +339,9 @@ class ArangoConnection(Connection):
             schema: Schema containing collection definitions
         """
         self.define_vertex_classes(schema)
-        self.define_edge_classes(list(schema.edge_config.edges_list(include_aux=True)))
+        self.define_edge_classes(
+            list(schema.edge_config.edges_list(include_aux=True)), schema=schema
+        )
 
     def define_vertex_classes(self, schema: Schema) -> None:
         """Define vertex collections in ArangoDB.
@@ -351,17 +352,14 @@ class ArangoConnection(Connection):
         Args:
             schema: Schema containing vertex definitions
         """
-        vertex_config = schema.vertex_config
+        db_schema = schema.resolve_db_aware(DBType.ARANGO)
+        vertex_config = db_schema.vertex_config
         disconnected_vertex_collections = (
-            set(vertex_config.vertex_set) - schema.edge_config.vertices
+            set(vertex_config.vertex_set) - db_schema.edge_config.vertices
         )
-        for item in schema.edge_config.edges_list():
+        for item in db_schema.edge_config.edges_list():
             u, v = item.source, item.target
-            gname = schema.database_features.edge_graph_name(
-                item.edge_id,
-                source_storage=vertex_config.vertex_dbname(u),
-                target_storage=vertex_config.vertex_dbname(v),
-            )
+            gname = db_schema.edge_config.runtime(item).graph_name()
             if not gname:
                 logger.warning(
                     f"Edge {item.source} -> {item.target} has no graph_name, skipping"
@@ -394,48 +392,68 @@ class ArangoConnection(Connection):
                 vertex_config.vertex_dbname(v), vertex_config.index(v), None
             )
 
-    def define_edge_classes(self, edges: list[Edge]) -> None:
+    def define_edge_classes(
+        self, edges: list[Edge], schema: Schema | None = None
+    ) -> None:
         """Define edge classes in ArangoDB.
 
         Creates edge collections and their definitions in the appropriate graphs.
 
         Args:
             edges: List of edge configurations to create
+            schema: Optional schema used to expand purpose-based physical variants
         """
+        db_schema = (
+            schema.resolve_db_aware(DBType.ARANGO) if schema is not None else None
+        )
         for item in edges:
-            gname = item.graph_name
-            if not gname:
-                logger.warning("Edge has no graph_name, skipping")
-                continue
-            if self.conn.has_graph(gname):
-                g_result = self.conn.graph(gname)
-            else:
-                g_result = self.conn.create_graph(gname)
-            # Type guard: ensure g is a Graph instance
-            if not isinstance(g_result, Graph):
-                logger.warning(f"Graph {gname} is not a Graph instance, skipping")
-                continue
-            g = g_result
-            collection_name = item.database_name
-            if not collection_name:
-                logger.warning("Edge has no database_name, skipping")
-                continue
-            if not g.has_edge_definition(collection_name):
-                if item._source is None or item._target is None:
-                    logger.warning(
-                        "Edge has no _source or _target, skipping edge definition"
-                    )
+            variants = (
+                db_schema.edge_config.runtime(item).physical_variants()
+                if db_schema is not None
+                else [
+                    {
+                        "purpose": None,
+                        "storage_name": f"{item.source}_{item.target}_edges",
+                        "graph_name": f"{item.source}_{item.target}_edges",
+                        "indexes": [],
+                    }
+                ]
+            )
+            for variant in variants:
+                gname = cast(str | None, variant.get("graph_name"))
+                if not gname:
+                    logger.warning("Edge has no graph_name, skipping")
                     continue
-                _ = g.create_edge_definition(
-                    edge_collection=collection_name,
-                    from_vertex_collections=[item._source],
-                    to_vertex_collections=[item._target],
-                )
+                if self.conn.has_graph(gname):
+                    g_result = self.conn.graph(gname)
+                else:
+                    g_result = self.conn.create_graph(gname)
+                # Type guard: ensure g is a Graph instance
+                if not isinstance(g_result, Graph):
+                    logger.warning(f"Graph {gname} is not a Graph instance, skipping")
+                    continue
+                g = g_result
+                collection_name = cast(str | None, variant.get("storage_name"))
+                if not collection_name:
+                    logger.warning("Edge has no database_name, skipping")
+                    continue
+                if not g.has_edge_definition(collection_name):
+                    if db_schema is None:
+                        logger.warning(
+                            "DB-aware schema is required, skipping edge definition"
+                        )
+                        continue
+                    runtime = db_schema.edge_config.runtime(item)
+                    _ = g.create_edge_definition(
+                        edge_collection=collection_name,
+                        from_vertex_collections=[runtime.source_storage],
+                        to_vertex_collections=[runtime.target_storage],
+                    )
 
     def _add_index(self, general_collection: Any, index: Index) -> Any | None:
         """Add an index to an ArangoDB collection.
 
-        Supports persistent, hash, skiplist, and fulltext indices.
+        Supports persistent, hash, skiplist, and fulltext indexes.
 
         Args:
             general_collection: ArangoDB collection to add index to
@@ -460,18 +478,23 @@ class ArangoConnection(Connection):
             )
         return ih
 
-    def define_vertex_indices(
+    def define_vertex_indexes(
         self, vertex_config: VertexConfig, schema: Schema | None = None
     ) -> None:
-        """Define indices for vertex collections.
+        """Define indexes for vertex collections.
 
-        Creates indices for each vertex collection based on the configuration.
+        Creates indexes for each vertex collection based on the configuration.
+        Identity index is created at collection creation; this adds secondary indexes only.
 
         Args:
             vertex_config: Vertex configuration containing index definitions
         """
+        db_vertex = (
+            schema.resolve_db_aware(DBType.ARANGO).vertex_config if schema else None
+        )
         for c in vertex_config.vertex_set:
-            general_collection = self.conn.collection(vertex_config.vertex_dbname(c))
+            collection_name = db_vertex.vertex_dbname(c) if db_vertex else c
+            general_collection = self.conn.collection(collection_name)
             ixs = general_collection.indexes()
             field_combinations: list[tuple[Any, ...]] = []
             if isinstance(ixs, list):
@@ -490,41 +513,40 @@ class ArangoConnection(Connection):
                 if tuple(index_obj.fields) not in field_combinations:
                     self._add_index(general_collection, index_obj)
 
-    def define_edge_indices(
+    def define_edge_indexes(
         self, edges: list[Edge], schema: Schema | None = None
     ) -> None:
-        """Define indices for edge collections.
+        """Define indexes for edge collections.
 
-        Creates indices for each edge collection based on the configuration.
+        Creates indexes for each edge collection based on the configuration.
 
         Args:
             edges: List of edge configurations containing index definitions
         """
+        if schema is None:
+            logger.warning("Schema required for edge index naming, skipping")
+            return
+        db_schema = schema.resolve_db_aware(DBType.ARANGO)
         for edge in edges:
-            if schema is None:
-                logger.warning("Schema required for edge index naming, skipping")
-                continue
-            collection_name = schema.database_features.edge_storage_name(
-                edge.edge_id,
-                source_storage=schema.vertex_config.vertex_dbname(edge.source),
-                target_storage=schema.vertex_config.vertex_dbname(edge.target),
-            )
-            if not collection_name:
-                logger.warning("Edge has no database_name, skipping index creation")
-                continue
-            general_collection = self.conn.collection(collection_name)
-            index_list = schema.database_features.edge_secondary_indexes(edge.edge_id)
-            for index_obj in index_list:
-                self._add_index(general_collection, index_obj)
+            variants = db_schema.edge_config.runtime(edge).physical_variants()
+            for variant in variants:
+                collection_name = cast(str | None, variant.get("storage_name"))
+                if not collection_name:
+                    logger.warning("Edge has no database_name, skipping index creation")
+                    continue
+                general_collection = self.conn.collection(collection_name)
+                index_list = cast(list[Index], variant.get("indexes", []))
+                for index_obj in index_list:
+                    self._add_index(general_collection, index_obj)
 
     def fetch_indexes(self, db_class_name: str | None = None) -> dict[str, Any]:
-        """Fetch all indices from the database.
+        """Fetch all indexes from the database.
 
         Args:
-            db_class_name: Optional collection name to fetch indices for
+            db_class_name: Optional collection name to fetch indexes for
 
         Returns:
-            dict: Mapping of collection names to their indices
+            dict: Mapping of collection names to their indexes
         """
         classes: list[Any] = []
         if db_class_name is None:
@@ -1013,7 +1035,6 @@ class ArangoConnection(Connection):
         cursor = self.execute(q)
         return get_data_from_cursor(cursor)
 
-    # TODO test
     def fetch_edges(
         self,
         from_type: str,

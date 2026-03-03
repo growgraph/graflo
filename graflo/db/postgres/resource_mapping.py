@@ -165,9 +165,11 @@ class PostgresResourceMapper:
                 ):
                     source_map[orig_field] = sanitized_field
 
+            # from format: {vertex_field: doc_field}
+            source_from = {v_f: d_f for d_f, v_f in source_map.items()}
             source_map_config = {
-                "target_vertex": source_table,
-                "map": source_map,
+                "vertex": source_table,
+                "from": source_from,
             }
             apply.append(source_map_config)
 
@@ -190,9 +192,11 @@ class PostgresResourceMapper:
                 ):
                     target_map[orig_field] = sanitized_field
 
+            # from format: {vertex_field: doc_field}
+            target_from = {v_f: d_f for d_f, v_f in target_map.items()}
             target_map_config = {
-                "target_vertex": target_table,
-                "map": target_map,
+                "vertex": target_table,
+                "from": target_from,
             }
             apply.append(target_map_config)
 

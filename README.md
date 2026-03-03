@@ -33,22 +33,24 @@ GraFlo separates *what the graph looks like* from *where data comes from* and *w
 flowchart LR
     SI["<b>Source Instance</b><br/>File · SQL · SPARQL · API"]
     R["<b>Resource</b><br/>Actor Pipeline"]
-    GS["<b>Graph Schema</b><br/>Vertex/Edge Definitions<br/>Identities · Transforms · DB Features"]
+    GS["<b>Logical Graph Schema</b><br/>Vertex/Edge Definitions<br/>Identities · Transforms"]
+    DBA["<b>DB-aware Projection</b><br/>DatabaseFeatures<br/>VertexConfigDBAware · EdgeConfigDBAware"]
     GC["<b>GraphContainer</b><br/>Covariant Graph Representation"]
     DB["<b>Graph DB (LPG)</b><br/>ArangoDB · Neo4j · TigerGraph · Others"]
 
-    SI --> R --> GS --> GC --> DB
+    SI --> R --> GS --> GC --> DBA --> DB
 ```
 
-**Source Instance** → **Resource** → **Graph Schema** → **Covariant Graph Representation** → **Graph DB**
+**Source Instance** → **Resource** → **Logical Graph Schema** → **Covariant Graph Representation** → **DB-aware Projection** → **Graph DB**
 
 | Stage | Role | Code |
 |-------|------|------|
 | **Source Instance** | A concrete data artifact — a CSV file, a PostgreSQL table, a SPARQL endpoint, a `.ttl` file. | `AbstractDataSource` subclasses (`FileDataSource`, `SQLDataSource`, `SparqlEndpointDataSource`, …) with a `DataSourceType`. |
 | **Resource** | A reusable transformation pipeline — actor steps (descend, transform, vertex, edge) that map raw records to graph elements. Data sources bind to Resources by name via the `DataSourceRegistry`. | `Resource` (part of `Schema`). |
-| **Graph Schema** | Declarative vertex/edge definitions, vertex identities, typed fields, DB features (secondary indexes), and named transforms — defined in YAML or Python. | `Schema`, `VertexConfig`, `EdgeConfig`. |
+| **Graph Schema** | Declarative logical vertex/edge definitions, identities, typed fields, and named transforms — defined in YAML or Python. | `Schema`, `VertexConfig`, `EdgeConfig`. |
 | **Covariant Graph Representation** | A database-independent collection of vertices and edges. | `GraphContainer`. |
-| **Graph DB** | The target LPG store — same API for all supported databases. | `ConnectionManager`, `DBWriter`. |
+| **DB-aware Projection** | Resolves DB-specific naming/default/index behavior from logical schema + `DatabaseFeatures`. | `Schema.resolve_db_aware()`, `VertexConfigDBAware`, `EdgeConfigDBAware`. |
+| **Graph DB** | The target LPG store — same API for all supported databases. | `ConnectionManager`, `DBWriter`, DB connectors. |
 
 ### Supported source types (`DataSourceType`)
 
@@ -68,7 +70,7 @@ ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph — same API for al
 ## Features
 
 - **Declarative LPG schema** — Define vertices, edges, vertex identity, secondary DB indexes, weights, and transforms in YAML or Python. The `Schema` is the single source of truth, independent of source or target.
-- **Database abstraction** — One schema, one API. Target ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, or NebulaGraph without rewriting pipelines. Database idiosyncrasies are handled by the `GraphContainer` (covariant graph representation).
+- **Database abstraction** — One logical schema, one API. Target ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, or NebulaGraph without rewriting pipelines. DB idiosyncrasies are handled in DB-aware projection (`Schema.resolve_db_aware(...)`) and connector/writer stages.
 - **Resource abstraction** — Each `Resource` defines a reusable actor pipeline (descend → transform → vertex → edge) that maps raw records to graph elements. Data sources bind to Resources by name via the `DataSourceRegistry`, decoupling transformation logic from data retrieval.
 - **SPARQL & RDF support** — Query SPARQL endpoints (e.g. Apache Fuseki), read `.ttl`/`.rdf`/`.n3` files, and auto-infer schemas from OWL/RDFS ontologies. Install with `pip install graflo[sparql]`.
 - **Schema inference** — Generate graph schemas from PostgreSQL 3NF databases (PK/FK heuristics) or from OWL/RDFS ontologies (`owl:Class` → vertices, `owl:ObjectProperty` → edges, `owl:DatatypeProperty` → vertex fields).

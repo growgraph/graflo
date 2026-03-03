@@ -3,6 +3,9 @@ general:
     version: 3.0.0
 resources:
 -   resource_name: kg
+    infer_edge_except:
+    -   source: entity
+        target: entity
     apply:
     -   key: publication
         apply:
@@ -101,19 +104,15 @@ edge_config:
     edges:
     -   source: entity
         target: entity
-        aux: true
-    -   source: entity
-        target: entity
-        purpose: tmp
-        aux: true
-    -   source: entity
-        target: entity
-        purpose: redux
-        aux: true
-    -   source: entity
-        target: entity
-        purpose: convolution
-        aux: true
+        identities:
+        -   -   source
+            -   target
+            -   publication@_id
+        weights:
+            direct:
+            -   publication@_id
+            -   obs_date
+            -   t_window
     -   source: mention
         target: entity
     -   source: entity
@@ -145,7 +144,7 @@ database_features:
         -   unique: false
             fields:
             -   text
-    edge_indexes:
+    edge_specs:
     -   source: entity
         target: entity
         purpose:
@@ -160,28 +159,13 @@ database_features:
     -   source: entity
         target: entity
         purpose: tmp
-        indexes:
-        -   fields:
-            -   _from
-            -   _to
-            -   publication@_id
-        -   fields:
-            -   publication@_id
-            unique: false
     -   source: entity
         target: entity
         purpose: redux
-        indexes:
-        -   fields:
-            -   _from
-            -   _to
-            -   publication@_id
-        -   fields:
-            -   publication@_id
-            unique: false
     -   source: entity
         target: entity
         purpose: convolution
+        indexes_mode: replace
         indexes:
         -   fields:
             -   _from

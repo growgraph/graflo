@@ -40,6 +40,10 @@ The graph structure is quite simple:
 
 ![People Resource Image](../assets/2-ingest-self-references/figs/openalex_vc2vc.png){ width="200" }
 
+Rendered graph:
+
+![Rendered Graph](../assets/2-ingest-self-references/figs/graph.png){ width="700" }
+
 We will be using a transformation that truncates the suffix from a url, e.g. "https://openalex.org/W4300681084" &rarr; "W4300681084". So let's define a section for transforms that will contain reusable transforms, specified by `name`:
 
 ```yaml

@@ -43,7 +43,6 @@ Run specific category::
 Notes
 -----
 - Tests require a running Memgraph instance (see conftest.py fixtures)
-- Some tests use pytest.skip() to document expected platform behavior
 - Each test uses isolated graph instances for test independence
 
 See Also
@@ -812,11 +811,7 @@ class TestTransactionalRobustness:
     """Tests for transactional behavior and error recovery."""
 
     def test_batch_with_invalid_document(self, conn_conf, test_graph_name, clean_db):
-        """Document batch behavior with invalid documents.
-
-        Tests whether invalid documents cause entire batch to fail
-        or only affect the invalid document.
-        """
+        """Invalid property values do not drop otherwise valid documents."""
         _ = clean_db
         with ConnectionManager(connection_config=conn_conf) as db:
             docs = [
@@ -831,12 +826,7 @@ class TestTransactionalRobustness:
                 pass
 
             result = db.fetch_docs("Item")
-            if len(result) == 0:
-                pytest.skip(
-                    "Atomic behavior: entire batch rejected on invalid document"
-                )
-            elif len(result) == 2:
-                pytest.skip("Non-atomic behavior: valid documents inserted")
+            assert len(result) == 3
 
     def test_no_unique_constraint(self, conn_conf, test_graph_name, clean_db):
         """Document lack of unique constraints in Memgraph."""

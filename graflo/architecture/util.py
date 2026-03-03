@@ -16,10 +16,18 @@ Example:
     ('user', 'post', None)
 """
 
+from __future__ import annotations
+
+from typing import Any, Collection, Literal
+
 from graflo.architecture.onto import GraphEntity
 
 
-def project_dict(item, keys, how="include"):
+def project_dict(
+    item: dict[str, Any],
+    keys: Collection[str],
+    how: Literal["include", "exclude"] = "include",
+) -> dict[str, Any]:
     """Project dictionary fields based on inclusion or exclusion.
 
     This function filters a dictionary based on a list of keys, either including

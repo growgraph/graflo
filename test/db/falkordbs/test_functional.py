@@ -43,7 +43,6 @@ Run specific category::
 Notes
 -----
 - Tests require a running FalkorDB instance (see conftest.py fixtures)
-- Some tests use pytest.skip() to document expected platform behavior
 - Each test uses isolated graph instances for test independence
 
 See Also
@@ -179,11 +178,7 @@ class TestDataCoherence:
             assert contact["email"] == "alice.new@example.com"
 
     def test_null_value_behavior(self, conn_conf, test_graph_name, clean_db):
-        """Document null value handling in upserts.
-
-        This test documents whether explicit None values overwrite
-        existing valid values during upsert operations.
-        """
+        """Null values remove existing field values on upsert."""
         _ = clean_db
         with ConnectionManager(connection_config=conn_conf) as db:
             # Initial complete data
@@ -207,14 +202,7 @@ class TestDataCoherence:
             result = db.fetch_docs("Product")
             product = result[0]
 
-            # Document behavior - if None overwrites, this is a potential issue
-            if product.get("price") is None:
-                pytest.skip(
-                    "None values overwrite existing values. "
-                    "Consider filtering None values before upsert if this is undesired."
-                )
-            else:
-                assert product["price"] == 99.99
+            assert "price" not in product
 
     def test_empty_string_vs_null_distinction(
         self, conn_conf, test_graph_name, clean_db
@@ -510,10 +498,7 @@ class TestETLScenarios:
     """Tests for real-world ETL scenarios."""
 
     def test_whitespace_in_match_keys(self, conn_conf, test_graph_name, clean_db):
-        """Document whitespace handling in match keys.
-
-        Leading/trailing whitespace in keys can cause duplicate entries.
-        """
+        """Whitespace differences in match keys produce distinct entities."""
         _ = clean_db
         with ConnectionManager(connection_config=conn_conf) as db:
             csv_rows = [
@@ -529,13 +514,7 @@ class TestETLScenarios:
                 db.upsert_docs_batch([row], "User", match_keys=["email"])
 
             result = db.fetch_docs("User")
-            if len(result) == 3:
-                pytest.skip(
-                    "Whitespace not trimmed from match keys creates duplicates. "
-                    "Consider preprocessing data with .strip() before upsert."
-                )
-            else:
-                assert len(result) == 1
+            assert len(result) == 3
 
     def test_case_sensitivity(self, conn_conf, test_graph_name, clean_db):
         """Document case sensitivity behavior in match keys."""
@@ -663,12 +642,10 @@ class TestSchemaEvolution:
                 match_keys=["id"],
             )
 
-            try:
-                _avg = db.aggregate(
+            with pytest.raises(Exception):
+                db.aggregate(
                     "Result", AggregationType.AVERAGE, aggregated_field="score"
                 )
-            except Exception as e:
-                pytest.skip(f"Mixed type aggregation not supported: {e}")
 
 
 # =============================================================================
@@ -815,11 +792,7 @@ class TestTransactionalRobustness:
     """Tests for transactional behavior and error recovery."""
 
     def test_batch_with_invalid_document(self, conn_conf, test_graph_name, clean_db):
-        """Document batch behavior with invalid documents.
-
-        Tests whether invalid documents cause entire batch to fail
-        or only affect the invalid document.
-        """
+        """Invalid property values do not drop otherwise valid documents."""
         _ = clean_db
         with ConnectionManager(connection_config=conn_conf) as db:
             docs = [
@@ -834,12 +807,7 @@ class TestTransactionalRobustness:
                 pass
 
             result = db.fetch_docs("Item")
-            if len(result) == 0:
-                pytest.skip(
-                    "Atomic behavior: entire batch rejected on invalid document"
-                )
-            elif len(result) == 2:
-                pytest.skip("Non-atomic behavior: valid documents inserted")
+            assert len(result) == 3
 
     def test_no_unique_constraint(self, conn_conf, test_graph_name, clean_db):
         """Document lack of unique constraints in FalkorDB."""
@@ -971,7 +939,7 @@ class TestCommonMistakes:
             assert result.result_set[0][0] == 0
 
     def test_type_mismatch_in_match_key(self, conn_conf, test_graph_name, clean_db):
-        """Document string vs int type mismatch in match keys."""
+        """String and int match-key values are treated as distinct."""
         _ = clean_db
         with ConnectionManager(connection_config=conn_conf) as db:
             # Insert with string id
@@ -985,11 +953,7 @@ class TestCommonMistakes:
             )
 
             result = db.fetch_docs("User")
-            if len(result) == 2:
-                pytest.skip(
-                    "String '123' and int 123 create distinct entities. "
-                    "Normalize types before upsert to prevent duplicates."
-                )
+            assert len(result) == 2
 
     def test_typo_in_field_name(self, conn_conf, test_graph_name, clean_db):
         """Typos in field names create new fields instead of updating."""
@@ -1015,7 +979,7 @@ class TestCommonMistakes:
             assert "emial" in user, "Typo creates new field"
 
     def test_empty_string_id(self, conn_conf, test_graph_name, clean_db):
-        """Document empty string as ID behavior."""
+        """Empty string IDs are accepted as valid key values."""
         _ = clean_db
         with ConnectionManager(connection_config=conn_conf) as db:
             docs = [
@@ -1031,8 +995,7 @@ class TestCommonMistakes:
 
             result = db.fetch_docs("Item")
             ids = [r.get("id") for r in result]
-            if "" in ids:
-                pytest.skip("Empty string ID accepted. Consider validation.")
+            assert "" in ids
 
 
 # =============================================================================
@@ -1044,7 +1007,7 @@ class TestDataQuality:
     """Tests for data quality scenarios."""
 
     def test_duplicate_variations(self, conn_conf, test_graph_name, clean_db):
-        """Document duplicate creation from minor variations."""
+        """Minor email variations remain distinct without normalization."""
         _ = clean_db
         with ConnectionManager(connection_config=conn_conf) as db:
             variants = [
@@ -1062,11 +1025,7 @@ class TestDataQuality:
                 db.upsert_docs_batch([doc], "User", match_keys=["email"])
 
             result = db.fetch_docs("User")
-            if len(result) == 4:
-                pytest.skip(
-                    "Email variations create duplicates. "
-                    "Consider normalizing emails before upsert."
-                )
+            assert len(result) == 4
 
     def test_unicode_homoglyphs(self, conn_conf, test_graph_name, clean_db):
         """Document Unicode homoglyph handling."""

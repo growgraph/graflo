@@ -2,7 +2,7 @@
 
 These models define the structure of YAML configuration files for the
 actor-based graph transformation system. They provide validation,
-type safety, and explicit format support (pipeline, transform/map/to_vertex,
+type safety, and explicit format support (pipeline, vertex/from, transform/map,
 create_edge/edge with from/to).
 
 These replace the implicit type inference in ActorWrapper.__init__()
@@ -33,9 +33,9 @@ def normalize_actor_step(data: dict[str, Any]) -> dict[str, Any]:
 
     Supports explicit format:
     - {"vertex": "user"} -> {"type": "vertex", "vertex": "user"}
-    - {"transform": {"map": {...}, "to_vertex": "x"}} -> {"type": "transform", "map": {...}, "to_vertex": "x"}
+    - {"transform": {"map": {...}}} -> {"type": "transform", "map": {...}}
     - {"edge": {"from": "a", "to": "b"}} or {"create_edge": {...}} -> {"type": "edge", "from": "a", "to": "b"}
-    - {"descend": {"into": "k", "pipeline": [...]}} or {"apply": [...]} / {"pipeline": [...]}
+    - {"descend": {"key": "k", "pipeline": [...]}} or {"apply": [...]} / {"pipeline": [...]}
     """
     if not isinstance(data, dict):
         return data
@@ -51,6 +51,20 @@ def normalize_actor_step(data: dict[str, Any]) -> dict[str, Any]:
         inner = data.pop("transform")
         if isinstance(inner, dict):
             data.update(inner)
+        # Legacy: convert switch -> input + dress
+        if "switch" in data:
+            switch = data.pop("switch")
+            if isinstance(switch, dict) and switch:
+                key = next(iter(switch))
+                vals = switch[key]
+                if isinstance(vals, (list, tuple)) and len(vals) >= 2:
+                    data.setdefault("input", [key])
+                    data.setdefault("dress", {"key": vals[0], "value": vals[1]})
+        # Legacy: convert list-style dress -> dict-style
+        if "dress" in data and isinstance(data["dress"], (list, tuple)):
+            vals = data["dress"]
+            if len(vals) >= 2:
+                data["dress"] = {"key": vals[0], "value": vals[1]}
         data["type"] = "transform"
         return data
 
@@ -111,9 +125,23 @@ def normalize_actor_step(data: dict[str, Any]) -> dict[str, Any]:
         ]
         return data
 
-    # Minimal transform step: only "name" or only "map"
-    if "type" not in data and ("name" in data or "map" in data):
+    # Minimal transform step
+    if "type" not in data and (
+        "name" in data or "map" in data or "switch" in data or "dress" in data
+    ):
         data = dict(data)
+        if "switch" in data:
+            switch = data.pop("switch")
+            if isinstance(switch, dict) and switch:
+                key = next(iter(switch))
+                vals = switch[key]
+                if isinstance(vals, (list, tuple)) and len(vals) >= 2:
+                    data.setdefault("input", [key])
+                    data.setdefault("dress", {"key": vals[0], "value": vals[1]})
+        if "dress" in data and isinstance(data["dress"], (list, tuple)):
+            vals = data["dress"]
+            if len(vals) >= 2:
+                data["dress"] = {"key": vals[0], "value": vals[1]}
         data["type"] = "transform"
         return data
 
@@ -121,12 +149,21 @@ def normalize_actor_step(data: dict[str, Any]) -> dict[str, Any]:
 
 
 class VertexActorConfig(ConfigBaseModel):
-    """Configuration for a VertexActor."""
+    """Configuration for a VertexActor.
+
+    Use `from` to project document fields onto vertex fields:
+    from: {vertex_field: doc_field} — vertex field X comes from document field Y.
+    """
 
     type: Literal["vertex"] = Field(
         default="vertex", description="Actor type discriminator"
     )
     vertex: str = Field(..., description="Name of the vertex type to create")
+    from_doc: dict[str, str] | None = Field(
+        default=None,
+        alias="from",
+        description="Projection: {vertex_field: doc_field}. When set, vertex fields are populated from doc.",
+    )
     keep_fields: list[str] | None = Field(
         default=None, description="Optional list of fields to keep"
     )
@@ -143,7 +180,8 @@ class VertexActorConfig(ConfigBaseModel):
 class TransformActorConfig(ConfigBaseModel):
     """Configuration for a TransformActor.
 
-    Explicit format: transform with map and to_vertex (target vertex for output).
+    Transform applies map or function; output goes to buffer_transforms for
+    consumption by VertexActors at the same level.
     """
 
     type: Literal["transform"] = Field(
@@ -151,11 +189,6 @@ class TransformActorConfig(ConfigBaseModel):
     )
     map: dict[str, str] | None = Field(
         default=None, description="Field mapping: output_key -> input_key"
-    )
-    to_vertex: str | None = Field(
-        default=None,
-        alias="target_vertex",
-        description="Target vertex to send transformed output to",
     )
     name: str | None = Field(default=None, description="Named transform function")
     params: dict[str, Any] = Field(
@@ -187,27 +220,8 @@ class TransformActorConfig(ConfigBaseModel):
     def set_type_and_flatten(cls, data: Any) -> Any:
         if not isinstance(data, dict):
             return data
-        data = dict(data)
-        if "transform" in data and "type" not in data:
-            inner = data.pop("transform")
-            if isinstance(inner, dict):
-                data.update(inner)
-            data["type"] = "transform"
-        # Legacy: convert switch → input + dress
-        if "switch" in data:
-            switch = data.pop("switch")
-            if isinstance(switch, dict) and switch:
-                key = next(iter(switch))
-                vals = switch[key]
-                if isinstance(vals, (list, tuple)) and len(vals) >= 2:
-                    data.setdefault("input", [key])
-                    data.setdefault("dress", {"key": vals[0], "value": vals[1]})
-        # Legacy: convert list-style dress → dict-style
-        if "dress" in data and isinstance(data["dress"], (list, tuple)):
-            vals = data["dress"]
-            if len(vals) >= 2:
-                data["dress"] = {"key": vals[0], "value": vals[1]}
-        return data
+        normalized = normalize_actor_step(cast(dict[str, Any], data))
+        return normalized if normalized.get("type") == "transform" else data
 
 
 class EdgeActorConfig(EdgeBase):
@@ -221,38 +235,23 @@ class EdgeActorConfig(EdgeBase):
     weights: dict[str, list[str]] | None = Field(
         default=None, description="Weight configuration"
     )
-    indexes: list[dict[str, Any]] | None = Field(
-        default=None, description="Index configuration"
-    )
 
     @model_validator(mode="before")
     @classmethod
     def set_type_and_flatten(cls, data: Any) -> Any:
         if not isinstance(data, dict):
             return data
-        data = dict(data)
-        for key in ("edge", "create_edge"):
-            if key in data and "type" not in data:
-                inner = data.pop(key)
-                if isinstance(inner, dict):
-                    data.update(inner)
-                data["type"] = "edge"
-                break
-        if "source" in data or "from" in data:
-            if "target" in data or "to" in data and "type" not in data:
-                data["type"] = "edge"
-        return data
+        normalized = normalize_actor_step(cast(dict[str, Any], data))
+        return normalized if normalized.get("type") == "edge" else data
 
 
 class DescendActorConfig(ConfigBaseModel):
-    """Configuration for a DescendActor. Uses 'pipeline' (alias 'apply') and optional 'into' (alias 'key')."""
+    """Configuration for a DescendActor. Uses 'pipeline' (alias 'apply') and optional 'key'."""
 
     type: Literal["descend"] = Field(
         default="descend", description="Actor type discriminator"
     )
-    into: str | None = Field(
-        default=None, alias="key", description="Key to descend into"
-    )
+    key: str | None = Field(default=None, description="Key to descend into")
     any_key: bool = Field(default=False, description="Process all keys")
     pipeline: list["ActorConfig"] = Field(
         default_factory=list,
@@ -265,27 +264,14 @@ class DescendActorConfig(ConfigBaseModel):
     def set_type_and_normalize(cls, data: Any) -> Any:
         if not isinstance(data, dict):
             return data
-        data = dict(data)
-        if (
-            "into" in data
-            or "key" in data
-            or "any_key" in data
-            or "descend" in data
-            or "apply" in data
-            or "pipeline" in data
-        ) and "type" not in data:
-            data["type"] = "descend"
-        if "apply" in data and "pipeline" not in data:
-            data["pipeline"] = data["apply"]
-        if "descend" in data:
-            inner = data.pop("descend")
-            if isinstance(inner, dict):
-                data.update(inner)
-        if "pipeline" in data:
-            data["pipeline"] = [
-                normalize_actor_step(s) for s in _steps_list(data["pipeline"])
-            ]
-        return data
+        normalized = normalize_actor_step(cast(dict[str, Any], data))
+        return normalized if normalized.get("type") == "descend" else data
+
+    @model_validator(mode="after")
+    def validate_explicit_vertex_requirements(self) -> "DescendActorConfig":
+        # Untargeted transform steps may be resolved during runtime initialization
+        # when VertexConfig is available (identity-based vertex inference).
+        return self
 
 
 class VertexRouterActorConfig(ConfigBaseModel):
@@ -349,12 +335,36 @@ _actor_config_adapter: TypeAdapter[
 )
 
 
+def _pipeline_contains_vertex(configs: list["ActorConfig"]) -> bool:
+    for cfg in configs:
+        if isinstance(cfg, VertexActorConfig):
+            return True
+        if isinstance(cfg, DescendActorConfig) and _pipeline_contains_vertex(
+            cfg.pipeline
+        ):
+            return True
+    return False
+
+
+def _pipeline_has_untargeted_transform(configs: list["ActorConfig"]) -> bool:
+    for cfg in configs:
+        if isinstance(cfg, TransformActorConfig) and bool(cfg.map):
+            return True
+        if isinstance(cfg, DescendActorConfig) and _pipeline_has_untargeted_transform(
+            cfg.pipeline
+        ):
+            return True
+    return False
+
+
 # Keys to strip from step dicts (runtime or resource-level, not part of ActorConfig)
 _STEP_STRIP_KEYS = frozenset(
     {
         "vertex_config",
         "edge_config",
-        "edge_greedy",
+        "infer_edges",
+        "infer_edge_only",
+        "infer_edge_except",
         "transforms",
         "resource_name",
     }
@@ -392,7 +402,7 @@ def parse_root_config(
 
     Returns:
         Validated ActorConfig. For pipeline input, returns a DescendActorConfig
-        with into=None and pipeline=[...].
+        with key=None and pipeline=[...].
     """
     pipeline: list[dict[str, Any]] | None = None
     single: dict[str, Any] | None = None
@@ -420,7 +430,7 @@ def parse_root_config(
         return DescendActorConfig.model_validate(
             {
                 "type": "descend",
-                "into": None,
+                "key": None,
                 "any_key": False,
                 "pipeline": configs,
             }

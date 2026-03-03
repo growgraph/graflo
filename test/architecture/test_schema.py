@@ -29,7 +29,7 @@ def test_schema_load(schema):
 def test_resource(schema):
     sd = schema("ibes")
     sr = Resource.from_dict(sd["resources"][0])
-    assert len(sr.root.actor.descendants) == 10
+    assert len(sr.root.actor.descendants) == 11
 
 
 def test_s(schema):
@@ -251,7 +251,7 @@ def test_schema_database_features_from_explicit_section():
             "edge_config": edge_config,
             "database_features": {
                 "vertex_indexes": {"v": [{"fields": ["name"]}]},
-                "edge_indexes": [
+                "edge_specs": [
                     {
                         "source": "v",
                         "target": "v",
@@ -265,6 +265,340 @@ def test_schema_database_features_from_explicit_section():
     )
     assert schema.database_features.vertex_secondary_indexes("v")[0].fields == ["name"]
     edge = next(iter(schema.edge_config.edges_list(include_aux=True)))
-    assert schema.database_features.edge_secondary_indexes(edge.edge_id)[0].fields == [
-        "relation",
-    ]
+    assert any(
+        index.fields == ["relation"]
+        for index in schema.database_features.edge_secondary_indexes(
+            edge.edge_id, logical_relation=edge.relation
+        )
+    )
+
+
+def test_edge_default_without_identities_is_permissive():
+    schema = Schema.from_dict(
+        {
+            "general": {"name": "g"},
+            "vertex_config": {
+                "vertices": [
+                    {"name": "person", "fields": ["id"], "identity": ["id"]},
+                ]
+            },
+            "edge_config": {"edges": [{"source": "person", "target": "person"}]},
+            "resources": [],
+        }
+    )
+    edge = next(iter(schema.edge_config.edges_list(include_aux=True)))
+    indexes = schema.database_features.edge_secondary_indexes(
+        edge.edge_id, logical_relation=edge.relation
+    )
+    assert indexes == []
+
+
+def test_edge_identities_compile_custom_identity_field():
+    schema = Schema.from_dict(
+        {
+            "general": {"name": "g"},
+            "vertex_config": {
+                "vertices": [
+                    {"name": "person", "fields": ["id"], "identity": ["id"]},
+                ]
+            },
+            "edge_config": {
+                "edges": [
+                    {
+                        "source": "person",
+                        "target": "person",
+                        "identities": [["source", "target", "relation", "pub_id"]],
+                        "weights": {"direct": ["pub_id"]},
+                    }
+                ]
+            },
+            "resources": [],
+        }
+    )
+    schema.resolve_db_aware()
+    edge = next(iter(schema.edge_config.edges_list(include_aux=True)))
+    indexes = schema.database_features.edge_secondary_indexes(
+        edge.edge_id, logical_relation=edge.relation
+    )
+    assert any(
+        index.fields == ["_from", "_to", "relation", "pub_id"] for index in indexes
+    )
+
+
+def test_edge_identities_index_compilation_is_idempotent():
+    schema = Schema.from_dict(
+        {
+            "general": {"name": "g"},
+            "vertex_config": {
+                "vertices": [
+                    {"name": "person", "fields": ["id"], "identity": ["id"]},
+                ]
+            },
+            "edge_config": {
+                "edges": [
+                    {
+                        "source": "person",
+                        "target": "person",
+                        "identities": [["source", "target", "relation", "pub_id"]],
+                        "weights": {"direct": ["pub_id"]},
+                    }
+                ]
+            },
+            "resources": [],
+        }
+    )
+    schema.resolve_db_aware()
+    edge = next(iter(schema.edge_config.edges_list(include_aux=True)))
+    first = schema.database_features.edge_secondary_indexes(
+        edge.edge_id, logical_relation=edge.relation
+    )
+    schema.finish_init()
+    schema.resolve_db_aware()
+    second = schema.database_features.edge_secondary_indexes(
+        edge.edge_id, logical_relation=edge.relation
+    )
+    assert [tuple(i.fields) for i in second] == [tuple(i.fields) for i in first]
+
+
+def test_edge_identities_compile_multiple_keys():
+    schema = Schema.from_dict(
+        {
+            "general": {"name": "g"},
+            "vertex_config": {
+                "vertices": [
+                    {"name": "person", "fields": ["id"], "identity": ["id"]},
+                ]
+            },
+            "edge_config": {
+                "edges": [
+                    {
+                        "source": "person",
+                        "target": "person",
+                        "identities": [
+                            ["source", "target", "relation", "pub_id"],
+                            ["source", "target", "relation", "issn"],
+                        ],
+                        "weights": {"direct": ["pub_id", "issn"]},
+                    }
+                ]
+            },
+            "resources": [],
+        }
+    )
+    schema.resolve_db_aware()
+    edge = next(iter(schema.edge_config.edges_list(include_aux=True)))
+    indexes = schema.database_features.edge_secondary_indexes(
+        edge.edge_id, logical_relation=edge.relation
+    )
+    fields_set = {tuple(index.fields) for index in indexes}
+    assert ("_from", "_to", "relation", "pub_id") in fields_set
+    assert ("_from", "_to", "relation", "issn") in fields_set
+
+
+def test_edge_index_lookup_disambiguates_logical_relation():
+    schema = Schema.from_dict(
+        {
+            "general": {"name": "g"},
+            "vertex_config": {
+                "vertices": [
+                    {"name": "person", "fields": ["id"], "identity": ["id"]},
+                ]
+            },
+            "edge_config": {
+                "edges": [
+                    {"source": "person", "target": "person", "relation": "knows"},
+                    {"source": "person", "target": "person", "relation": "works_with"},
+                ]
+            },
+            "database_features": {
+                "edge_specs": [
+                    {
+                        "source": "person",
+                        "target": "person",
+                        "purpose": None,
+                        "logical_relation": "knows",
+                        "indexes": [{"fields": ["confidence"]}],
+                    },
+                    {
+                        "source": "person",
+                        "target": "person",
+                        "purpose": None,
+                        "logical_relation": "works_with",
+                        "indexes": [{"fields": ["since"]}],
+                    },
+                ]
+            },
+            "resources": [],
+        }
+    )
+    edge_by_relation = {edge.relation: edge for edge in schema.edge_config.edges}
+    knows_indexes = schema.database_features.edge_secondary_indexes(
+        edge_by_relation["knows"].edge_id, logical_relation="knows"
+    )
+    works_with_indexes = schema.database_features.edge_secondary_indexes(
+        edge_by_relation["works_with"].edge_id, logical_relation="works_with"
+    )
+    assert any(index.fields == ["confidence"] for index in knows_indexes)
+    assert any(index.fields == ["since"] for index in works_with_indexes)
+
+
+def test_edge_purpose_variants_expand_from_database_features():
+    schema = Schema.from_dict(
+        {
+            "general": {"name": "g"},
+            "vertex_config": {
+                "vertices": [
+                    {"name": "person", "fields": ["id"], "identity": ["id"]},
+                ]
+            },
+            "edge_config": {
+                "edges": [
+                    {
+                        "source": "person",
+                        "target": "person",
+                        "identities": [["source", "target", "pub_id"]],
+                        "weights": {"direct": ["pub_id"]},
+                    }
+                ]
+            },
+            "database_features": {
+                "edge_specs": [
+                    {
+                        "source": "person",
+                        "target": "person",
+                        "purpose": "tmp",
+                    }
+                ]
+            },
+            "resources": [],
+        }
+    )
+    db_schema = schema.resolve_db_aware()
+    edge = next(iter(schema.edge_config.edges_list(include_aux=True)))
+    purposes = schema.database_features.edge_purposes(
+        edge.edge_id, logical_relation=edge.relation
+    )
+    assert purposes == [None, "tmp"]
+    variants = schema.database_features.edge_physical_variants(
+        edge.edge_id,
+        source_storage=db_schema.vertex_config.vertex_dbname(edge.source),
+        target_storage=db_schema.vertex_config.vertex_dbname(edge.target),
+        logical_relation=edge.relation,
+    )
+    by_purpose = {variant["purpose"]: variant for variant in variants}
+    assert by_purpose[None]["storage_name"] == "person_person_edges"
+    assert by_purpose[None]["graph_name"] == "person_person_edges"
+    assert by_purpose["tmp"]["storage_name"] == "person_person_tmp_edges"
+    assert by_purpose["tmp"]["graph_name"] == "person_person_tmp_edges"
+
+
+def test_edge_identity_indexes_propagate_to_purpose_copies():
+    schema = Schema.from_dict(
+        {
+            "general": {"name": "g"},
+            "vertex_config": {
+                "vertices": [
+                    {"name": "person", "fields": ["id"], "identity": ["id"]},
+                ]
+            },
+            "edge_config": {
+                "edges": [
+                    {
+                        "source": "person",
+                        "target": "person",
+                        "identities": [["source", "target", "pub_id"]],
+                        "weights": {"direct": ["pub_id"]},
+                    }
+                ]
+            },
+            "database_features": {
+                "edge_specs": [
+                    {
+                        "source": "person",
+                        "target": "person",
+                        "purpose": "tmp",
+                    }
+                ]
+            },
+            "resources": [],
+        }
+    )
+    schema.resolve_db_aware()
+    edge = next(iter(schema.edge_config.edges_list(include_aux=True)))
+    base_indexes = schema.database_features.edge_secondary_indexes(
+        edge.edge_id,
+        logical_relation=edge.relation,
+        purpose=None,
+    )
+    tmp_indexes = schema.database_features.edge_secondary_indexes(
+        edge.edge_id,
+        logical_relation=edge.relation,
+        purpose="tmp",
+    )
+    assert any(index.fields == ["_from", "_to", "pub_id"] for index in base_indexes)
+    assert any(index.fields == ["_from", "_to", "pub_id"] for index in tmp_indexes)
+
+
+def test_edge_purpose_specific_indexes_override_base_indexes():
+    schema = Schema.from_dict(
+        {
+            "general": {"name": "g"},
+            "vertex_config": {
+                "vertices": [
+                    {"name": "person", "fields": ["id"], "identity": ["id"]},
+                ]
+            },
+            "edge_config": {
+                "edges": [
+                    {
+                        "source": "person",
+                        "target": "person",
+                        "identities": [["source", "target", "pub_id"]],
+                        "weights": {"direct": ["pub_id", "obs_date"]},
+                    }
+                ]
+            },
+            "database_features": {
+                "edge_specs": [
+                    {"source": "person", "target": "person", "purpose": "tmp"},
+                    {
+                        "source": "person",
+                        "target": "person",
+                        "purpose": "convolution",
+                    },
+                    {
+                        "source": "person",
+                        "target": "person",
+                        "purpose": None,
+                        "indexes": [{"fields": ["pub_id"], "unique": False}],
+                    },
+                    {
+                        "source": "person",
+                        "target": "person",
+                        "purpose": "convolution",
+                        "indexes_mode": "replace",
+                        "indexes": [{"fields": ["obs_date"], "unique": False}],
+                    },
+                ],
+            },
+            "resources": [],
+        }
+    )
+    schema.resolve_db_aware()
+    edge = next(iter(schema.edge_config.edges_list(include_aux=True)))
+    base_indexes = schema.database_features.edge_secondary_indexes(
+        edge.edge_id, logical_relation=edge.relation, purpose=None
+    )
+    tmp_indexes = schema.database_features.edge_secondary_indexes(
+        edge.edge_id, logical_relation=edge.relation, purpose="tmp"
+    )
+    convolution_indexes = schema.database_features.edge_secondary_indexes(
+        edge.edge_id, logical_relation=edge.relation, purpose="convolution"
+    )
+
+    assert any(index.fields == ["_from", "_to", "pub_id"] for index in base_indexes)
+    assert any(index.fields == ["pub_id"] for index in base_indexes)
+    assert any(index.fields == ["_from", "_to", "pub_id"] for index in tmp_indexes)
+    assert any(index.fields == ["pub_id"] for index in tmp_indexes)
+    assert any(index.fields == ["obs_date"] for index in convolution_indexes)
+    assert not any(index.fields == ["pub_id"] for index in convolution_indexes)

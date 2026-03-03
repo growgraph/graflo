@@ -5,6 +5,76 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+
+## [1.6.5] - 2026-03-02
+
+### Changed
+- **Vertex identity indexes**: Neo4j, Memgraph, and FalkorDB now automatically create identity indexes in `define_vertex_indexes` when schema is provided. Previously, identity had to be manually added to `database_features.vertex_indexes`.
+- **Index naming**: All index-related method names and docstrings now use "indexes" instead of "indices".
+- **Logical vs DB-aware architecture split finalized**:
+  - `Vertex`, `Edge`, `VertexConfig`, and `EdgeConfig` now remain logical/DB-agnostic
+  - DB-specific naming/default/index projection is resolved via `Schema.resolve_db_aware(...)`
+  - Introduced DB-aware wrappers (`VertexConfigDBAware`, `EdgeConfigDBAware`) for writer/connector stages
+- **TigerGraph relation materialization moved downstream**:
+  - Edge relation extraction in casting/assembly remains logical and backend-agnostic
+  - TigerGraph-specific relation-to-weight projection now happens during DB write/projection
+- **Manifold edge identity model**:
+  - `Edge` now uses `identities` (list of identity keys) instead of singular `identity`
+  - Omitted/empty `identities` is permissive by default (multiple edges allowed)
+  - Each declared identity key compiles into a unique physical index/constraint candidate
+  - TigerGraph discriminator generation now derives from `edge.identities`
+- **Edge identifier layering**:
+  - `EdgeId` is relation-based: `(source, target, relation)`
+  - `purpose` is no longer part of logical edge identity; it is treated as DB-only physical metadata
+  - Runtime edge config maps and adapter lookups are aligned to relation-specific edge identity
+- **Physical edge indexing is centralized in `database_features`**:
+  - Identity-derived edge indexes are compiled into `Schema.database_features.edge_indexes`
+  - `edge_indexes` entries support `logical_relation` to disambiguate multiple relations sharing the same edge definition
+  - Edge index lookups in DB adapters are relation-aware
+- **Edge physical spec unification**:
+  - `database_features.edge_names` + `database_features.edge_indexes` were unified as `database_features.edge_specs`
+  - Purpose-scoped edge copies now inherit base indexes by default (`indexes_mode: inherit|append|replace`)
+  - Arango edge `graph_name` is aligned with derived `storage_name`
+  - `Edge.aux` is no longer a behavior switch
+- **Resource inferred-edge controls**:
+  - Added `resource.infer_edge_only` and `resource.infer_edge_except` selectors for fine-grained control of greedy/inferred edge emission
+  - Added validation for contradictions (`infer_edge_only` and `infer_edge_except` are mutually exclusive)
+  - Added validation that infer selectors reference existing schema edges
+  - When a resource pipeline contains any EdgeActor for edges of type `(source, target)`, `(source, target, None)` is automatically added to `infer_edge_except` for that resource, so inferred edges do not duplicate edges produced by explicit edge actors
+- **Architecture phase separation**:
+  - Runtime flow is now explicitly split into extraction and assembly contexts (`ExtractionContext`, `AssemblyContext`)
+  - Actor orchestration was separated from wrapper structure by introducing `ActorExecutor`
+  - Edge assembly consumes explicit edge intents in addition to compatibility fallback paths
+- **Pipeline explicitness tightened**:
+  - Implicit vertex actor auto-creation during descend initialization was removed
+  - Pipelines using transform/map steps require explicit `vertex` steps to consume output
+  - Test schemas depending on implicit behavior were migrated to explicit vertex declarations
+
+### Breaking
+- Schemas that still define `edge.indexes` under `edge_config.edges[*]` now fail validation.
+- Migrate by moving physical edge specs/indexes to `database_features.edge_specs` and logical uniqueness keys to `edge.identities`.
+- `database_features.edge_variants` was renamed to `database_features.edge_specs`.
+- **Backend index documentation**: New `docs/concepts/backend_indexes.md` describing which backends have implicit vs explicit identity indexes and how `vertex_indexes` relates to identity.
+
+
+### Breaking (vertex projection)
+- **Vertex projection replaces `target_vertex`**:
+  - `target_vertex` on transform steps has been removed
+  - Use vertex `from` for doc-to-vertex field mapping: `vertex: X` with `"from": {vertex_field: doc_field}`
+  - Quote `from` in YAML (reserved word). Example: `vertex: person` with `"from": {id: person_id, name: person}`
+  - `buffer_vertex` was removed from `ExtractionContext`; transforms always write to `buffer_transforms`
+
+### Added
+- **Typed extraction artifacts**:
+  - Added `VertexObservation`, `TransformObservation`, `EdgeIntent`, and `ProvenancePath`
+  - Added regression tests for new context/artifact APIs in `test/architecture/test_onto.py`
+
+### Documentation
+- Updated schema authoring docs to use canonical `infer_edges` naming and describe explicit vertex requirements for transform outputs
+- Added concepts documentation for the extraction/assembly runtime split and `ActorExecutor` ownership
+- Updated docs and README to describe the DB-aware projection layer and `Schema.resolve_db_aware(...)` flow
+- Cleaned docs landing page to keep Mermaid diagrams in section pages (for example `docs/concepts/index.md`)
+
 ## [1.6.4] - 2026-02-25
 
 ### Changed

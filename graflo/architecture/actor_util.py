@@ -33,13 +33,15 @@ import logging
 from collections import defaultdict
 from functools import partial
 from itertools import combinations, product, zip_longest
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Iterator
 
 from graflo.architecture.edge import Edge
 from graflo.architecture.onto import (
     ActionContext,
+    AssemblyContext,
     EdgeCastingType,
     LocationIndex,
+    TransformPayload,
     VertexRep,
 )
 from graflo.architecture.util import project_dict
@@ -50,8 +52,8 @@ logger = logging.getLogger(__name__)
 
 
 def add_blank_collections(
-    ctx: ActionContext, vertex_conf: VertexConfig
-) -> ActionContext:
+    ctx: AssemblyContext | ActionContext, vertex_conf: VertexConfig
+) -> AssemblyContext | ActionContext:
     """Add blank collections for vertices that require them.
 
     This function creates blank collections for vertices marked as blank in the
@@ -86,16 +88,27 @@ def add_blank_collections(
     return ctx
 
 
+def _transform_context_doc(item: Any) -> dict[str, Any]:
+    if isinstance(item, TransformPayload):
+        return item.context_doc()
+    if isinstance(item, dict):
+        return dict(item)
+    return {}
+
+
 def dress_vertices(
     items_dd: defaultdict[LocationIndex, list[VertexRep]],
-    buffer_transforms: defaultdict[LocationIndex, list[dict]],
+    buffer_transforms: defaultdict[LocationIndex, list[Any]],
 ) -> defaultdict[LocationIndex, list[tuple[VertexRep, dict]]]:
     new_items_dd: defaultdict[LocationIndex, list[tuple[VertexRep, dict]]] = (
         defaultdict(list)
     )
     for va, vlist in items_dd.items():
         if va in buffer_transforms and len(buffer_transforms[va]) == len(vlist):
-            new_items_dd[va] = list(zip(vlist, buffer_transforms[va]))
+            transformed_docs = [
+                _transform_context_doc(x) for x in buffer_transforms[va]
+            ]
+            new_items_dd[va] = list(zip(vlist, transformed_docs))
         else:
             new_items_dd[va] = list(zip(vlist, [{}] * len(vlist)))
 
@@ -159,219 +172,282 @@ def count_unique_by_position_variable(tuples_list, fillvalue=None):
     return result
 
 
+def _filter_source_target_lindexes(
+    edge: Edge,
+    source_locs: list[LocationIndex],
+    target_locs: list[LocationIndex],
+) -> tuple[list[LocationIndex], list[LocationIndex]]:
+    """Apply match/exclude filters from edge config to source and target locations."""
+    if edge.match_source is not None:
+        source_locs = [loc for loc in source_locs if edge.match_source in loc]
+    if edge.exclude_source is not None:
+        source_locs = [loc for loc in source_locs if edge.exclude_source not in loc]
+    if edge.match_target is not None:
+        target_locs = [loc for loc in target_locs if edge.match_target in loc]
+    if edge.exclude_target is not None:
+        target_locs = [loc for loc in target_locs if edge.exclude_target not in loc]
+    if edge.match is not None:
+        source_locs = [loc for loc in source_locs if edge.match in loc]
+        target_locs = [loc for loc in target_locs if edge.match in loc]
+    return source_locs, target_locs
+
+
+def _compute_location_groups(
+    source_locs: list[LocationIndex],
+    target_locs: list[LocationIndex],
+    source_path_spec: list[int],
+    target_path_spec: list[int],
+) -> tuple[list[list[LocationIndex]], list[list[LocationIndex]]]:
+    """Group source and target locations for edge iteration."""
+    source_branch_idx = next(
+        (i for i, n in enumerate(source_path_spec) if n != 1), len(source_path_spec)
+    )
+    target_branch_idx = next(
+        (i for i, n in enumerate(target_path_spec) if n != 1), len(target_path_spec)
+    )
+
+    if set(source_locs) == set(target_locs):
+        return [source_locs], [target_locs]
+
+    if (
+        source_branch_idx < len(source_path_spec) - 1
+        and target_branch_idx < len(target_path_spec) - 1
+        and source_path_spec[source_branch_idx] == target_path_spec[target_branch_idx]
+    ):
+        branch_size = source_path_spec[source_branch_idx]
+        source_by_branch: dict[int, list[LocationIndex]] = {
+            i: [] for i in range(branch_size)
+        }
+        target_by_branch: dict[int, list[LocationIndex]] = {
+            i: [] for i in range(branch_size)
+        }
+        for loc in source_locs:
+            source_by_branch[loc[source_branch_idx]].append(loc)
+        for loc in target_locs:
+            target_by_branch[loc[target_branch_idx]].append(loc)
+        return (
+            [source_by_branch[i] for i in range(branch_size)],
+            [target_by_branch[i] for i in range(branch_size)],
+        )
+
+    return [source_locs], [target_locs]
+
+
+def _iter_emitter_receiver_group_pairs(
+    source_groups: list[list[LocationIndex]],
+    target_groups: list[list[LocationIndex]],
+    edge: Edge,
+    source_name: str,
+    target_name: str,
+) -> Iterator[tuple[list[LocationIndex], list[LocationIndex]]]:
+    """Yield (emitter_group, receiver_group) pairs for edge iteration.
+
+    For self-edges, partitions groups into emitters vs receivers:
+    - Explicit (both match_source and match_target): groups already filtered, use as-is.
+    - Structural: first of source emits, target receives; or split same group.
+    """
+    if source_name != target_name:
+        yield from zip(source_groups, target_groups)
+        return
+
+    if edge.match_source is not None and edge.match_target is not None:
+        yield from zip(source_groups, target_groups)
+        return
+
+    for source_group, target_group in zip(source_groups, target_groups):
+        same_group = set(source_group) == set(target_group)
+        if same_group:
+            if len(source_group) <= 1:
+                # Single location: pair with itself (e.g. company_a<->company_b per row)
+                if source_group:
+                    yield (source_group, target_group)
+            yield (source_group[:1], source_group[1:])
+        else:
+            if not source_group:
+                continue
+            yield (source_group[:1], target_group)
+
+
+def _choose_casting(
+    source_loc: LocationIndex,
+    target_loc: LocationIndex,
+    source_name: str,
+    target_name: str,
+) -> EdgeCastingType:
+    """Choose casting strategy per (source_loc, target_loc) pair."""
+    if source_loc == target_loc:
+        if source_name == target_name:
+            return EdgeCastingType.COMBINATIONS
+        if source_name != target_name:
+            return EdgeCastingType.PRODUCT
+        return EdgeCastingType.PAIR
+    return EdgeCastingType.PRODUCT
+
+
+def _extract_relation_from_key(
+    source_loc: LocationIndex,
+    target_loc: LocationIndex,
+    source_min_depth: int,
+    target_min_depth: int,
+) -> str | None:
+    """Extract relation name from location path."""
+    if source_min_depth <= target_min_depth and len(target_loc) > 1:
+        rel = target_loc[-2]
+    elif len(source_loc) > 1:
+        rel = source_loc[-2]
+    else:
+        return None
+    return str(rel).replace("-", "_") if rel is not None else None
+
+
 def render_edge(
     edge: Edge,
     vertex_config: VertexConfig,
-    ctx: ActionContext,
+    ctx: AssemblyContext | ActionContext,
     lindex: LocationIndex | None = None,
 ) -> defaultdict[str | None, list]:
     """Create edges between source and target vertices.
 
-    This is the core edge creation function that handles different edge types
-    (PAIR_LIKE and PRODUCT_LIKE) and manages edge weights. It processes source
-    and target vertices, and creates appropriate edge
-    documents with proper source/target mappings.
+    Vertices come in groups from different levels of a nested doc, parametrized by
+    LocationIndex. Casting policy determines how we form edges from groups of
+    candidate vertices:
+
+    - PAIR (zip): 1:1 correspondence within the same group
+    - COMBINATIONS: edges within the same group when source==target and >1 item
+    - PRODUCT: cartesian product between different groups or different vertex types
 
     Args:
         edge: Edge configuration defining the relationship
         vertex_config: Vertex configuration for source and target
-        ctx:
-        lindex: Location index of the source vertex
+        ctx: Assembly or action context with acc_vertex and buffer_transforms
+        lindex: Optional location filter (only consider locations under this path)
 
     Returns:
-        defaultdict[str | None, list]: Created edges organized by relation type
-
-    Note:
-        - PAIR_LIKE edges create one-to-one relationships
-        - PRODUCT_LIKE edges create cartesian product relationships
-        - Edge weights are extracted from source and target vertices
-        - Relation fields can be specified in either source or target
+        Edges organized by relation type: {relation: [(source_doc, target_doc, weight), ...]}
     """
-
     acc_vertex = ctx.acc_vertex
     buffer_transforms = ctx.buffer_transforms
+    source = edge.source
+    target = edge.target
 
-    source, target = edge.source, edge.target
+    source_identity = vertex_config.identity_fields(source)
+    target_identity = vertex_config.identity_fields(target)
 
-    # get source and target edge fields
-    source_index, target_index = (
-        vertex_config.index(source),
-        vertex_config.index(target),
-    )
-
-    # get source and target items
-    source_items_, target_items_ = (acc_vertex[source], acc_vertex[target])
-    if not source_items_ or not target_items_:
-        return defaultdict(None, [])
-
-    source_lindexes = list(source_items_)
-    target_lindexes = list(target_items_)
-
-    if lindex is not None:
-        source_lindexes = sorted(lindex.filter(source_lindexes))
-        target_lindexes = sorted(lindex.filter(target_lindexes))
-
-        if source == target and len(source_lindexes) > 1:
-            source_lindexes = source_lindexes[:1]
-            target_lindexes = target_lindexes[1:]
-
-    if edge.match_source is not None:
-        source_lindexes = [li for li in source_lindexes if edge.match_source in li]
-
-    if edge.exclude_source is not None:
-        source_lindexes = [
-            li for li in source_lindexes if edge.exclude_source not in li
-        ]
-
-    if edge.match_target is not None:
-        target_lindexes = [li for li in target_lindexes if edge.match_target in li]
-
-    if edge.exclude_target is not None:
-        target_lindexes = [
-            li for li in target_lindexes if edge.exclude_target not in li
-        ]
-
-    if edge.match is not None:
-        source_lindexes = [li for li in source_lindexes if edge.match in li]
-        target_lindexes = [li for li in target_lindexes if edge.match in li]
-
-    if not (source_lindexes and target_lindexes):
+    source_by_loc = acc_vertex[source]
+    target_by_loc = acc_vertex[target]
+    if not source_by_loc or not target_by_loc:
         return defaultdict(list)
 
-    source_items_ = defaultdict(list, {k: source_items_[k] for k in source_lindexes})
+    source_locs = list(source_by_loc)
+    target_locs = list(target_by_loc)
 
-    target_items_ = defaultdict(list, {k: target_items_[k] for k in target_lindexes})
+    if lindex is not None:
+        source_locs = sorted(lindex.filter(source_locs))
+        target_locs = sorted(lindex.filter(target_locs))
 
-    source_min_level = min([k.depth() for k in source_items_.keys()])
+    source_locs, target_locs = _filter_source_target_lindexes(
+        edge, source_locs, target_locs
+    )
 
-    target_min_level = min([k.depth() for k in target_items_.keys()])
+    if not (source_locs and target_locs):
+        return defaultdict(list)
 
-    # source/target items from many levels
+    source_by_loc = defaultdict(list, {loc: source_by_loc[loc] for loc in source_locs})
+    target_by_loc = defaultdict(list, {loc: target_by_loc[loc] for loc in target_locs})
 
-    source_items_tdressed = dress_vertices(source_items_, buffer_transforms)
-    target_items_tdressed = dress_vertices(target_items_, buffer_transforms)
+    source_min_depth = min(loc.depth() for loc in source_by_loc)
+    target_min_depth = min(loc.depth() for loc in target_by_loc)
 
-    source_items_tdressed = filter_nonindexed(source_items_tdressed, source_index)
-    target_items_tdressed = filter_nonindexed(target_items_tdressed, target_index)
+    source_dressed = dress_vertices(source_by_loc, buffer_transforms)
+    target_dressed = dress_vertices(target_by_loc, buffer_transforms)
+    source_dressed = filter_nonindexed(source_dressed, source_identity)
+    target_dressed = filter_nonindexed(target_dressed, target_identity)
 
     edges: defaultdict[str | None, list] = defaultdict(list)
 
-    source_spec = count_unique_by_position_variable([x.path for x in source_lindexes])
-    target_spec = count_unique_by_position_variable([x.path for x in target_lindexes])
-
-    source_uni = next(
-        (i for i, x in enumerate(source_spec) if x != 1), len(source_spec)
-    )
-    target_uni = next(
-        (i for i, x in enumerate(target_spec) if x != 1), len(target_spec)
-    )
-
-    casting = EdgeCastingType.PAIR
-    if set(source_lindexes) == set(target_lindexes):
-        source_groups, target_groups = [source_lindexes], [target_lindexes]
-        if len(source_lindexes) < 2:
-            casting = EdgeCastingType.PRODUCT
-        elif source == target and len(source_items_tdressed[source_lindexes[0]]) > 1:
-            casting = EdgeCastingType.COMBINATIONS
-    elif (
-        source_uni < len(source_spec) - 1
-        and target_uni < len(target_spec) - 1
-        and source_spec[source_uni] == target_spec[target_uni]
-    ):
-        # zip sources and targets in case there is a non-trivial brunching at a non-ultimate level
-        common_branching = source_uni
-        items_size = source_spec[source_uni]
-
-        source_groups_map: dict[int, list] = {ix: [] for ix in range(items_size)}
-        target_groups_map: dict[int, list] = {ix: [] for ix in range(items_size)}
-        for li in source_lindexes:
-            source_groups_map[li[common_branching]] += [li]
-        for li in target_lindexes:
-            target_groups_map[li[common_branching]] += [li]
-        source_groups = [source_groups_map[ix] for ix in range(items_size)]
-        target_groups = [target_groups_map[ix] for ix in range(items_size)]
+    if source == target and source_locs is target_locs:
+        path_spec = count_unique_by_position_variable([loc.path for loc in source_locs])
+        source_path_spec = target_path_spec = path_spec
     else:
-        source_groups = [source_lindexes]
-        target_groups = [target_lindexes]
+        source_path_spec = count_unique_by_position_variable(
+            [loc.path for loc in source_locs]
+        )
+        target_path_spec = count_unique_by_position_variable(
+            [loc.path for loc in target_locs]
+        )
 
-    for source_lis, target_lis in zip(source_groups, target_groups):
-        for source_lindex in source_lis:
-            source_items = source_items_tdressed[source_lindex]
-            for target_lindex in target_lis:
-                target_items = target_items_tdressed[target_lindex]
+    source_groups, target_groups = _compute_location_groups(
+        source_locs, target_locs, source_path_spec, target_path_spec
+    )
 
+    for source_group, target_group in _iter_emitter_receiver_group_pairs(
+        source_groups, target_groups, edge, source, target
+    ):
+        for source_loc in source_group:
+            source_items = source_dressed[source_loc]
+            for target_loc in target_group:
+                target_items = target_dressed[target_loc]
+
+                casting = _choose_casting(
+                    source_loc,
+                    target_loc,
+                    source,
+                    target,
+                )
                 iterator = select_iterator(casting)
 
-                for (u_, u_tr), (v_, v_tr) in iterator(source_items, target_items):
-                    u = u_.vertex
-                    v = v_.vertex
-                    # adding weight from source or target
-                    weight = dict()
+                for (u_rep, u_tr), (v_rep, v_tr) in iterator(
+                    source_items, target_items
+                ):
+                    u_doc = u_rep.vertex
+                    v_doc = v_rep.vertex
+
+                    weight: dict[str, Any] = {}
                     if edge.weights is not None:
                         for field in edge.weights.direct:
-                            # Use field.name for dictionary keys (JSON serialization requires strings)
                             field_name = field.name
-                            if field in u_.ctx:
-                                weight[field_name] = u_.ctx[field]
-
-                            if field in v_.ctx:
-                                weight[field_name] = v_.ctx[field]
-
+                            if field in u_rep.ctx:
+                                weight[field_name] = u_rep.ctx[field]
+                            if field in v_rep.ctx:
+                                weight[field_name] = v_rep.ctx[field]
                             if field in u_tr:
                                 weight[field_name] = u_tr[field]
                             if field in v_tr:
                                 weight[field_name] = v_tr[field]
 
-                    a = project_dict(u, source_index)
-                    b = project_dict(v, target_index)
+                    source_proj = project_dict(u_doc, source_identity)
+                    target_proj = project_dict(v_doc, target_identity)
 
-                    # For TigerGraph, extracted relations go to weight, not as relation key
-                    is_tigergraph = edge.store_extracted_relation_as_weight
                     extracted_relation = None
 
-                    # 1. Try to extract relation from data context
                     if edge.relation_field is not None:
-                        u_relation = u_.ctx.pop(edge.relation_field, None)
+                        u_relation = u_rep.ctx.pop(edge.relation_field, None)
                         if u_relation is None:
-                            v_relation = v_.ctx.pop(edge.relation_field, None)
+                            v_relation = v_rep.ctx.pop(edge.relation_field, None)
                             if v_relation is not None:
-                                a, b = b, a
+                                source_proj, target_proj = target_proj, source_proj
                                 extracted_relation = v_relation
                         else:
                             extracted_relation = u_relation
 
-                    # 2. Try to extract relation from keys (fallback)
                     if (
                         extracted_relation is None
                         and edge.relation_from_key
-                        and len(target_lindex) > 1
+                        and len(target_loc) > 1
                     ):
-                        if source_min_level <= target_min_level:
-                            if len(target_lindex) > 1:
-                                extracted_relation = target_lindex[-2]
-                        elif len(source_lindex) > 1:
-                            extracted_relation = source_lindex[-2]
+                        extracted_relation = _extract_relation_from_key(
+                            source_loc, target_loc, source_min_depth, target_min_depth
+                        )
 
-                        if extracted_relation is not None:
-                            extracted_relation = extracted_relation.replace("-", "_")
+                    if edge.relation_from_key and extracted_relation is None:
+                        continue
 
-                    # 3. Handle result
-                    if extracted_relation is not None:
-                        if is_tigergraph:
-                            # For TigerGraph, add extracted relation to weight
-                            # edge.relation_field is guaranteed to be set for TigerGraph
-                            # when extraction is requested (see Edge.finish_init)
-                            weight[edge.relation_field] = extracted_relation
-                            # Use the default relation from edge.relation (set in finish_init)
-                            relation = edge.relation
-                        else:
-                            # For other databases, use extracted relation as relation key
-                            relation = extracted_relation
-                    else:
-                        # No relation extracted, use edge.relation as-is
-                        relation = edge.relation
-
-                    edges[relation] += [(a, b, weight)]
+                    relation = (
+                        extracted_relation
+                        if extracted_relation is not None
+                        else edge.relation
+                    )
+                    edges[relation].append((source_proj, target_proj, weight))
     return edges
 
 
@@ -448,7 +524,7 @@ def render_weights(
                     try:
                         weight = {
                             f"{vertex}.{k}": doc[k]
-                            for k in vertex_config.index(vertex)
+                            for k in vertex_config.identity_fields(vertex)
                             if k in doc
                         }
                     except ValueError:

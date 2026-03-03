@@ -117,7 +117,11 @@ class SchemaSanitizer:
             if not edge.relation:
                 continue
 
-            original = edge.relation_dbname
+            original = schema.database_features.edge_relation_name(
+                edge.edge_id,
+                default_relation=edge.relation,
+                logical_relation=edge.relation,
+            )
             if original is None:
                 continue
 
@@ -142,7 +146,11 @@ class SchemaSanitizer:
 
             # Update only if needed
             if sanitized != original:
-                edge.relation_dbname = sanitized
+                schema.database_features.set_edge_name_spec(
+                    edge.edge_id,
+                    logical_relation=edge.relation,
+                    relation_name=sanitized,
+                )
 
         # Third pass: Normalize edge indexes for TigerGraph
         # TigerGraph requires that edges with the same relation have consistent source and target indexes
@@ -162,9 +170,12 @@ class SchemaSanitizer:
             for edge in schema.edge_config.edges:
                 # Use sanitized dbname when grouping by relation for TigerGraph
                 relation = (
-                    edge.relation_dbname
-                    if edge.relation_dbname is not None
-                    else edge.relation
+                    schema.database_features.edge_relation_name(
+                        edge.edge_id,
+                        default_relation=edge.relation,
+                        logical_relation=edge.relation,
+                    )
+                    or edge.relation
                 )
                 if relation not in edges_by_relation:
                     edges_by_relation[relation] = []
@@ -185,16 +196,20 @@ class SchemaSanitizer:
                     source_vertex = edge.source
                     target_vertex = edge.target
 
-                    # Get primary index for source vertex
-                    source_index = schema.vertex_config.index(source_vertex)
+                    # Get identity fields for source vertex
                     source_vertex_indexes.append(
-                        (source_vertex, tuple(source_index.fields))
+                        (
+                            source_vertex,
+                            tuple(schema.vertex_config.identity_fields(source_vertex)),
+                        )
                     )
 
-                    # Get primary index for target vertex
-                    target_index = schema.vertex_config.index(target_vertex)
+                    # Get identity fields for target vertex
                     target_vertex_indexes.append(
-                        (target_vertex, tuple(target_index.fields))
+                        (
+                            target_vertex,
+                            tuple(schema.vertex_config.identity_fields(target_vertex)),
+                        )
                     )
 
                 # Normalize source indexes
@@ -387,7 +402,22 @@ class SchemaSanitizer:
             # All available vertices = current level + parent levels
             all_available_vertices = current_level_vertices | parent_vertices
 
-            # Process TransformActor if present
+            # Process VertexActor with from_doc: apply field mappings to doc_field values
+            if isinstance(wrapper.actor, VertexActor) and wrapper.actor.from_doc:
+                vertex_name = wrapper.actor.name
+                if vertex_name in field_index_mappings:
+                    mappings = field_index_mappings[vertex_name]
+                    if mappings:
+                        from_doc = wrapper.actor.from_doc
+                        for v_f, d_f in list(from_doc.items()):
+                            if d_f in mappings:
+                                from_doc[v_f] = mappings[d_f]
+                        logger.debug(
+                            f"Updated VertexActor from_doc in resource '{resource.resource_name}' "
+                            f"for vertex '{vertex_name}': {mappings}"
+                        )
+
+            # Process TransformActor: apply mappings from all available vertices
             if isinstance(wrapper.actor, TransformActor):
                 transform_actor: TransformActor = wrapper.actor
 
@@ -427,49 +457,20 @@ class SchemaSanitizer:
                         f"for vertex '{vertex_name}': {mappings}"
                     )
 
-                target_vertex = transform_actor.vertex
-
-                if isinstance(target_vertex, str):
-                    # TransformActor has explicit target_vertex
-                    if (
-                        target_vertex in field_index_mappings
-                        and target_vertex in all_available_vertices
-                    ):
-                        mappings = field_index_mappings[target_vertex]
+                applied_any = False
+                for vertex in all_available_vertices:
+                    if vertex in field_index_mappings:
+                        mappings = field_index_mappings[vertex]
                         if mappings:
                             apply_mappings_to_transform(
-                                mappings, target_vertex, transform_actor
+                                mappings, vertex, transform_actor
                             )
-                        else:
-                            logger.debug(
-                                f"Skipping TransformActor for vertex '{target_vertex}' "
-                                f"in resource '{resource.resource_name}': no mappings needed"
-                            )
-                    else:
-                        logger.debug(
-                            f"Skipping TransformActor for vertex '{target_vertex}' "
-                            f"in resource '{resource.resource_name}': vertex not created at this level"
-                        )
-                else:
-                    # TransformActor has no target_vertex
-                    # Apply mappings from all available vertices (parent and current level)
-                    # since transformed fields will be attributed to those vertices
-                    applied_any = False
-                    for vertex in all_available_vertices:
-                        if vertex in field_index_mappings:
-                            mappings = field_index_mappings[vertex]
-                            if mappings:
-                                apply_mappings_to_transform(
-                                    mappings, vertex, transform_actor
-                                )
-                                applied_any = True
-
-                    if not applied_any:
-                        logger.debug(
-                            f"Skipping TransformActor without target_vertex "
-                            f"in resource '{resource.resource_name}': "
-                            f"no mappings found for available vertices {all_available_vertices}"
-                        )
+                            applied_any = True
+                if not applied_any:
+                    logger.debug(
+                        f"Skipping TransformActor in resource '{resource.resource_name}': "
+                        f"no mappings for vertices {all_available_vertices}"
+                    )
 
             # Recursively process nested structures (DescendActor)
             if isinstance(wrapper.actor, DescendActor):

@@ -4,27 +4,29 @@ from graflo.db import ConnectionManager
 
 
 def test_create_vertex_index(conn_conf, test_graph_name, schema_obj):
-    """Test creating vertex indices from schema."""
+    """Test creating vertex indexes from schema."""
     schema_o = schema_obj("review")
 
     with ConnectionManager(connection_config=conn_conf) as db_client:
-        db_client.define_vertex_indices(schema_o.vertex_config)
+        db_client.define_vertex_indexes(schema_o.vertex_config, schema=schema_o)
 
     # FalkorDB index verification
     # Note: FalkorDB doesn't have SHOW INDEX like Neo4j,
-    # but indices are created silently. We verify by checking
+    # but indexes are created silently. We verify by checking
     # that the operation completed without error.
     # The real test is whether queries using these fields perform well.
 
 
 def test_create_edge_index(conn_conf, test_graph_name, schema_obj):
-    """Test creating edge indices from schema."""
+    """Test creating edge indexes from schema."""
     schema_o = schema_obj("review")
 
     with ConnectionManager(connection_config=conn_conf) as db_client:
-        db_client.define_edge_indices(schema_o.edge_config.edges_list(include_aux=True))
+        db_client.define_edge_indexes(
+            schema_o.edge_config.edges_list(include_aux=True), schema=schema_o
+        )
 
-    # FalkorDB indices are created silently.
+    # FalkorDB indexes are created silently.
     # Verification is implicit - no errors means success.
 
 

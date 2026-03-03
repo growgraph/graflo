@@ -8,11 +8,11 @@ from graflo.db import ConnectionManager
 
 
 def test_create_vertex_index(conn_conf, test_graph_name, schema_obj):
-    """Test creating vertex indices from schema."""
+    """Test creating vertex indexes from schema."""
     schema_o = schema_obj("review")
 
     with ConnectionManager(connection_config=conn_conf) as db_client:
-        db_client.define_vertex_indices(schema_o.vertex_config)
+        db_client.define_vertex_indexes(schema_o.vertex_config, schema=schema_o)
 
     # Memgraph index verification:
     # Memgraph creates indices silently. We verify by checking
@@ -21,13 +21,15 @@ def test_create_vertex_index(conn_conf, test_graph_name, schema_obj):
 
 
 def test_create_edge_index(conn_conf, test_graph_name, schema_obj):
-    """Test creating edge indices from schema."""
+    """Test creating edge indexes from schema."""
     schema_o = schema_obj("review")
 
     with ConnectionManager(connection_config=conn_conf) as db_client:
-        db_client.define_edge_indices(schema_o.edge_config.edges_list(include_aux=True))
+        db_client.define_edge_indexes(
+            schema_o.edge_config.edges_list(include_aux=True), schema=schema_o
+        )
 
-    # Memgraph indices are created silently.
+    # Memgraph indexes are created silently.
     # Verification is implicit - no errors means success.
 
 

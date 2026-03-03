@@ -10,16 +10,16 @@ logger = logging.getLogger(__name__)
 
 @pytest.fixture
 def quoted_multi_row():
-    return """1486058874058,"['id:206158957580, name:Marcello Martini'
-    'id:360777873683, name:F. Giudicepietro'
-    "id:489626818966, name:Luca D'Auria"]",[127313418 165205528],2015,10.1038/SREP13100"""
+    return """1486058874058,"['id:206158957580, name:Author A'
+    'id:360777873683, name:Author B'
+    "id:489626818966, name:Author C"]",[127313418 165205528],2015,10.1038/SREP13100"""
 
 
 @pytest.fixture
 def quoted_multi_item():
-    return """['id:206158957580, name:Marcello Martini'
- 'id:360777873683, name:F. Giudicepietro'
- "id:489626818966, name:Luca D'Auria"]"""
+    return """['id:206158957580, name:Author A'
+ 'id:360777873683, name:Author B'
+ "id:489626818966, name:Author C"]"""
 
 
 def test_to_int():
@@ -68,7 +68,7 @@ def test_input_output():
 
 def test_parse_multi_item(quoted_multi_item):
     r = parse_multi_item(quoted_multi_item, mapper={"name": "full_name"}, direct=["id"])
-    assert r["full_name"][0] == "Luca D'Auria"
+    assert r["full_name"][0] == "Author C"
     assert r["id"][-1] == "360777873683"
 
 

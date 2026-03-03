@@ -7,7 +7,7 @@ high-performance, in-memory graph database that supports OpenCypher query langua
 Key Features:
     - Label-based node organization (like Neo4j)
     - Relationship type management
-    - Property indices
+    - Property indexes
     - Cypher query execution
     - Batch node and relationship operations
     - In-memory storage with optional persistence

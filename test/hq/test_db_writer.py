@@ -95,12 +95,12 @@ def test_blank_vertex_default_identity_depends_on_db_flavor():
         vertices=[Vertex(name="blank_v", fields=[], identity=[])],
         blank_vertices=["blank_v"],
     )
-    arango_cfg.finish_init(DBType.ARANGO)
     neo4j_cfg = VertexConfig(
         vertices=[Vertex(name="blank_v", fields=[], identity=[])],
         blank_vertices=["blank_v"],
     )
-    neo4j_cfg.finish_init(DBType.NEO4J)
+    arango_cfg.finish_init()
+    neo4j_cfg.finish_init()
 
-    assert arango_cfg["blank_v"].identity == ["_key"]
+    assert arango_cfg["blank_v"].identity == ["id"]
     assert neo4j_cfg["blank_v"].identity == ["id"]
