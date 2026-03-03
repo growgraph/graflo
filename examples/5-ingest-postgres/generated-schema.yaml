@@ -1,20 +1,20 @@
+database_features:
+    db_flavor: tigergraph
+    vertex_storage_names:
+        products: products
+        users: users
 edge_config:
     edges:
     -   relation: follows
-        relation_from_key: false
         source: users
         target: users
-        type: direct
         weights:
             direct:
             -   name: created_at
                 type: DATETIME
-            vertices: []
     -   relation: purchases
-        relation_from_key: false
         source: users
         target: products
-        type: direct
         weights:
             direct:
             -   name: purchase_date
@@ -23,52 +23,32 @@ edge_config:
                 type: INT
             -   name: total_amount
                 type: FLOAT
-            vertices: []
 general:
     name: accounting
 resources:
--   infer_edges: true
-    encoding: utf-8
-    extra_weights: []
-    merge_collections: []
-    pipeline:
+-   pipeline:
     -   vertex: products
     resource_name: products
-    types: {}
--   infer_edges: true
-    encoding: utf-8
-    extra_weights: []
-    merge_collections: []
-    pipeline:
+-   pipeline:
     -   vertex: users
     resource_name: users
-    types: {}
--   infer_edges: true
-    encoding: utf-8
-    extra_weights: []
-    merge_collections: []
-    pipeline:
-    -   vertex: users
-        "from": {id: follower_id}
-    -   vertex: users
-        "from": {id: followed_id}
+-   pipeline:
+    -   from:
+            id: follower_id
+        vertex: users
+    -   from:
+            id: followed_id
+        vertex: users
     resource_name: follows
-    types: {}
--   infer_edges: true
-    encoding: utf-8
-    extra_weights: []
-    merge_collections: []
-    pipeline:
-    -   vertex: users
-        "from": {id: user_id}
-    -   vertex: products
-        "from": {id: product_id}
+-   pipeline:
+    -   from:
+            id: user_id
+        vertex: users
+    -   from:
+            id: product_id
+        vertex: products
     resource_name: purchases
-    types: {}
-transforms: {}
 vertex_config:
-    blank_vertices: []
-    force_types: {}
     vertices:
     -   fields:
         -   name: id
@@ -81,7 +61,6 @@ vertex_config:
             type: STRING
         -   name: created_at
             type: DATETIME
-        filters: []
         identity:
         -   id
         name: products
@@ -94,12 +73,6 @@ vertex_config:
             type: STRING
         -   name: created_at
             type: DATETIME
-        filters: []
         identity:
         -   id
         name: users
-database_features:
-    db_flavor: tigergraph
-    vertex_storage_names:
-        products: products
-        users: users

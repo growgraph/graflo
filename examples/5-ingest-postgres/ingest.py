@@ -99,8 +99,7 @@ schema.general.name = "accounting"
 # Step 3.5: Dump inferred schema to YAML file
 schema_output_file = Path(__file__).parent / "generated-schema.yaml"
 
-# Convert schema to dict (enums are automatically converted to strings by BaseDataclass.to_dict())
-FileHandle.dump(schema.to_dict(), schema_output_file)
+FileHandle.dump(schema.model_dump(exclude_defaults=True), schema_output_file)
 
 logger.info(f"Inferred schema saved to {schema_output_file}")
 

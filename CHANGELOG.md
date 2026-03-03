@@ -37,6 +37,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added `resource.infer_edge_only` and `resource.infer_edge_except` selectors for fine-grained control of greedy/inferred edge emission
   - Added validation for contradictions (`infer_edge_only` and `infer_edge_except` are mutually exclusive)
   - Added validation that infer selectors reference existing schema edges
+- **Architecture phase separation**:
+  - Runtime flow is now explicitly split into extraction and assembly contexts (`ExtractionContext`, `AssemblyContext`)
+  - Actor orchestration was separated from wrapper structure by introducing `ActorExecutor`
+  - Edge assembly consumes explicit edge intents in addition to compatibility fallback paths
+- **Pipeline explicitness tightened**:
+  - Implicit vertex actor auto-creation during descend initialization was removed
+  - Pipelines using transform/map steps require explicit `vertex` steps to consume output
+  - Test schemas depending on implicit behavior were migrated to explicit vertex declarations
 
 ### Breaking
 - Schemas that still define `edge.indexes` under `edge_config.edges[*]` now fail validation.
@@ -50,22 +58,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Quote `from` in YAML (reserved word). Example: `vertex: person` with `"from": {id: person_id, name: person}`
   - `buffer_vertex` was removed from `ExtractionContext`; transforms always write to `buffer_transforms`
 
-### Changed (earlier in 1.6.5 cycle)
-- **Architecture phase separation**:
-  - Runtime flow is now explicitly split into extraction and assembly contexts (`ExtractionContext`, `AssemblyContext`)
-  - Actor orchestration was separated from wrapper structure by introducing `ActorExecutor`
-  - Edge assembly consumes explicit edge intents in addition to compatibility fallback paths
-- **Pipeline explicitness tightened**:
-  - Implicit vertex actor auto-creation during descend initialization was removed
-  - Pipelines using transform/map steps require explicit `vertex` steps to consume output
-  - Test schemas depending on implicit behavior were migrated to explicit vertex declarations
-
-### Added (earlier in 1.6.5 cycle)
+### Added
 - **Typed extraction artifacts**:
   - Added `VertexObservation`, `TransformObservation`, `EdgeIntent`, and `ProvenancePath`
   - Added regression tests for new context/artifact APIs in `test/architecture/test_onto.py`
 
-### Documentation (earlier in 1.6.5 cycle)
+### Documentation
 - Updated schema authoring docs to use canonical `infer_edges` naming and describe explicit vertex requirements for transform outputs
 - Added concepts documentation for the extraction/assembly runtime split and `ActorExecutor` ownership
 - Updated docs and README to describe the DB-aware projection layer and `Schema.resolve_db_aware(...)` flow

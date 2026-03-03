@@ -44,6 +44,10 @@ The graph structure is quite simple:
 
 ![People Resource Image](../assets/1-ingest-csv/figs/hr_vc2vc.png){ width="200" }
 
+Rendered graph:
+
+![Rendered Graph](../assets/1-ingest-csv/figs/graph.png){ width="700" }
+
 
 Let's define the mappings: we want to map document fields to vertex fields. Use vertex `from` to project document fields onto vertex fields and avoid name collisions (e.g. both `Person` and `Department` have a field called `name`):
 

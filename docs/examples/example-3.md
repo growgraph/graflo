@@ -76,6 +76,10 @@ The resulting graph structure shows multiple relationship types between the same
 
 ![Company Relationships](../assets/3-ingest-csv-edge-weights/figs/companies_vc2vc.png){ width="200" }
 
+Rendered graph:
+
+![Rendered Graph](../assets/3-ingest-csv-edge-weights/figs/graph.png){ width="700" }
+
 ## Resource Structure
 
 The resource mapping creates a clear structure for processing the CSV data:

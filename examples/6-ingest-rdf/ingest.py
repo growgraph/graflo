@@ -21,6 +21,8 @@ from pathlib import Path
 from graflo.db import ArangoConfig
 from graflo.hq import GraphEngine, IngestionParams
 from graflo.util.onto import Patterns, SparqlPattern
+from suthing import FileHandle
+
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +72,12 @@ schema = engine.infer_schema_from_rdf(
     source=ONTOLOGY_FILE,
     schema_name="academic_kg",
 )
+
+
+schema_output_file = Path(__file__).parent / "generated-schema.yaml"
+
+FileHandle.dump(schema.model_dump(exclude_defaults=True), schema_output_file)
+
 
 logger.info(
     "Inferred schema: %d vertices, %d edges",
