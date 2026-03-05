@@ -1,0 +1,8 @@
+source_id,target_id,relation_type,source_type,target_type
+ec3cd5f9-8a75-49af-adc8-654eab637ebc,eb463fbc-423c-4f82-a532-b21430325f15,EMPLOYED_BY,Person,Institution
+01dbf082-514a-4c6b-ae05-b0ec66c30f35,10c79d87-0954-4478-9dc4-e87810eb6dfd,EMPLOYED_BY,Person,Institution
+0d1c97b4-2be6-4f9c-af45-1e3a18d1513b,4a4bc6ca-7a1d-49b4-954b-c45a135a4cfa,OWNS,Person,Vehicle
+446a4f33-c041-4a02-8fe6-534fb93236ed,42aff834-909e-4a96-841d-6589ae1db546,OWNS,Person,Vehicle
+b4dc8ede-2875-4d8b-bfd6-3f07d5eddf5e,eb463fbc-423c-4f82-a532-b21430325f15,FUNDS,Institution,Institution
+ec3cd5f9-8a75-49af-adc8-654eab637ebc,01dbf082-514a-4c6b-ae05-b0ec66c30f35,COLLEAGUE_OF,Person,Person
+10c79d87-0954-4478-9dc4-e87810eb6dfd,eb463fbc-423c-4f82-a532-b21430325f15,INVESTS_IN,Institution,Institution

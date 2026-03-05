@@ -108,6 +108,7 @@ class GraphEngine:
         postgres_config: PostgresConfig,
         schema_name: str | None = None,
         datetime_columns: dict[str, str] | None = None,
+        type_lookup_overrides: dict[str, dict] | None = None,
     ) -> Patterns:
         """Create Patterns from PostgreSQL tables.
 
@@ -118,6 +119,10 @@ class GraphEngine:
                 column name for date-range filtering (sets date_field per
                 TablePattern). Use with IngestionParams.datetime_after /
                 datetime_before.
+            type_lookup_overrides: Optional mapping of table name to type_lookup
+                spec for edge tables where source/target types come from a
+                lookup table. Each value: {table, identity, type_column,
+                source, target, relation?}.
 
         Returns:
             Patterns: Patterns object with TablePattern instances for all tables
@@ -127,6 +132,7 @@ class GraphEngine:
                 conn=postgres_conn,
                 schema_name=schema_name,
                 datetime_columns=datetime_columns,
+                type_lookup_overrides=type_lookup_overrides,
             )
 
     def define_schema(

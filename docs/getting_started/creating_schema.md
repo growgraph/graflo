@@ -156,7 +156,7 @@ Resources define **how** each data stream is turned into vertices and edges. Eac
 
 ### Actor steps in `apply` / `pipeline`
 
-Each step is a dict. You can write steps in shorthand (e.g. `vertex: person`) or with an explicit **`type`** (`vertex`, `transform`, `edge`, `descend`). The system recognizes:
+Each step is a dict. You can write steps in shorthand (e.g. `vertex: person`) or with an explicit **`type`** (`vertex`, `transform`, `edge`, `descend`, `vertex_router`, `edge_router`). The system recognizes:
 
 1. **Vertex step** — create vertices of a given type from the current document level:
    ```yaml
@@ -243,6 +243,34 @@ Each step is a dict. You can write steps in shorthand (e.g. `vertex: person`) or
    - any_key: true
      apply: [...]
    ```
+
+5. **Vertex router step** — route documents to the correct vertex type based on a type field:
+   ```yaml
+   - vertex_router:
+       type_field: type
+       type_map:
+         Person: person
+         Vehicle: vehicle
+         Institution: institution
+   ```
+   Use when each row has a type discriminator (e.g. CSV with a `type` column). The router dispatches to the appropriate `VertexActor` per document.
+
+6. **Edge router step** — create edges with dynamic source/target types and optional relation from document fields:
+   ```yaml
+   - edge_router:
+       source_type_field: source_type
+       target_type_field: target_type
+       source_fields: {id: source_id}
+       target_fields: {id: target_id}
+       relation_field: relation_type
+       type_map:
+         Person: person
+         Vehicle: vehicle
+       relation_map:
+         EMPLOYED_BY: employed_by
+         OWNS: owns
+   ```
+   Use when each row describes a relation with source/target types and relation name in columns (e.g. a relations table).
 
 ### Rules for resources (for agents)
 
@@ -332,6 +360,15 @@ resources:
 ```
 
 This defines two vertex types (`person`, `department`), one edge type (`person` → `department`), and two resources: **people** (each row → one `person` vertex) and **departments** (transform + `department` vertices). Data sources are attached to these resources by name (e.g. via `Patterns` or `DataSourceRegistry`) as shown in the [Quick Start](quickstart.md).
+
+## Patterns and data source binding
+
+Schema defines *what* to extract; **Patterns** define *where* data comes from. For SQL tables, use `TablePattern` with optional `view: SelectSpec` for advanced control over the query:
+
+- **Default**: `TablePattern` with `table_name`, `joins`, `filters` builds a standard `SELECT` query.
+- **SelectSpec view**: Use `view: SelectSpec` for full control — either `kind="select"` (custom `from`, `joins`, `select`, `where`) or `kind="type_lookup"` (shorthand for edge tables where source/target types come from a lookup table via FK joins).
+
+See [filter.view](../reference/filter/view.md) for SelectSpec details.
 
 ## See also
 

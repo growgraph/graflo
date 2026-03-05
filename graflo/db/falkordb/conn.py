@@ -109,7 +109,8 @@ class FalkordbConnection(Connection):
         Returns:
             QueryResult: FalkorDB result object containing result_set and statistics
         """
-        assert self.graph is not None, "Connection is closed"
+        if self.graph is None:
+            raise RuntimeError("Connection is closed")
         # Pass params as keyword argument if the client supports it, otherwise as positional
         # Try params keyword first, fall back to positional
         if kwargs:
@@ -294,7 +295,8 @@ class FalkordbConnection(Connection):
         """
         # In FalkorDB, graphs are created implicitly when you first insert data
         # We just need to select the graph
-        assert self.client is not None, "Connection is closed"
+        if self.client is None:
+            raise RuntimeError("Connection is closed")
         self.graph = self.client.select_graph(name)
         self._graph_name = name
         logger.info(f"Selected FalkorDB graph '{name}'")
@@ -306,7 +308,8 @@ class FalkordbConnection(Connection):
             name: Name of the graph to delete (if empty, uses current graph)
         """
         graph_to_delete = name if name else self._graph_name
-        assert self.client is not None, "Connection is closed"
+        if self.client is None:
+            raise RuntimeError("Connection is closed")
         try:
             # Delete the graph using the FalkorDB API
             graph = self.client.select_graph(graph_to_delete)
@@ -462,7 +465,8 @@ class FalkordbConnection(Connection):
                     logger.warning(f"Failed to delete nodes with label '{label}': {e}")
 
         # Delete specific graphs
-        assert self.client is not None, "Connection is closed"
+        if self.client is None:
+            raise RuntimeError("Connection is closed")
         for graph_name in graph_names:
             try:
                 graph = self.client.select_graph(graph_name)
@@ -491,7 +495,8 @@ class FalkordbConnection(Connection):
             self.config.database = graph_name
 
         # Select/create the graph
-        assert self.client is not None, "Connection is closed"
+        if self.client is None:
+            raise RuntimeError("Connection is closed")
         self.graph = self.client.select_graph(graph_name)
         self._graph_name = graph_name
         logger.info(f"Initialized FalkorDB graph '{graph_name}'")

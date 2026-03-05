@@ -266,23 +266,22 @@ class FilterExpression(ConfigBaseModel):
     ) -> str | bool:
         if not self._is_null_operator() and not self.value:
             logger.warning(f"for {self} value is not set : {self.value}")
+        if self.cmp_operator is None and kind != ExpressionFlavor.PYTHON:
+            raise ValueError(
+                "leaf expression requires cmp_operator for non-PYTHON flavor"
+            )
         if kind == ExpressionFlavor.AQL:
-            assert self.cmp_operator is not None
             return self._cast_arango(doc_name)
         elif kind == ExpressionFlavor.CYPHER:
-            assert self.cmp_operator is not None
             return self._cast_cypher(doc_name)
         elif kind == ExpressionFlavor.NGQL:
-            assert self.cmp_operator is not None
             return self._cast_ngql(doc_name)
         elif kind == ExpressionFlavor.GSQL:
-            assert self.cmp_operator is not None
             if doc_name == "":
                 field_types = kwargs.get("field_types")
                 return self._cast_restpp(field_types=field_types)
             return self._cast_tigergraph(doc_name)
         elif kind == ExpressionFlavor.SQL:
-            assert self.cmp_operator is not None
             return self._cast_sql()
         elif kind == ExpressionFlavor.PYTHON:
             return self._cast_python(**kwargs)
@@ -482,7 +481,8 @@ class FilterExpression(ConfigBaseModel):
         return False
 
     def _cast_generic(self, doc_name: str, kind: ExpressionFlavor) -> str:
-        assert self.operator is not None
+        if self.operator is None:
+            raise ValueError("composite expression requires operator")
         if len(self.deps) == 1:
             if self.operator == LogicalOperator.NOT:
                 result = self.deps[0](kind=kind, doc_name=doc_name)
@@ -503,7 +503,8 @@ class FilterExpression(ConfigBaseModel):
         return f" {self.operator} ".join(deps_str_cast)
 
     def _cast_python_composite(self, kind: ExpressionFlavor, **kwargs: Any) -> bool:
-        assert self.operator is not None
+        if self.operator is None:
+            raise ValueError("composite expression requires operator")
         if len(self.deps) == 1:
             if self.operator == LogicalOperator.NOT:
                 return not self.deps[0](kind=kind, **kwargs)

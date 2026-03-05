@@ -17,7 +17,7 @@ import pathlib
 import re
 from typing import TYPE_CHECKING, Any, Self
 
-from pydantic import AliasChoices, Field, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.onto import BaseEnum
@@ -217,6 +217,21 @@ class TablePattern(ResourcePattern):
         default=None,
         description="Explicit SELECT columns. None = SELECT * (plus join aliases).",
     )
+    view: Any = Field(
+        default=None,
+        description="SelectSpec or dict for declarative view (alternative to table+joins+filters).",
+    )
+
+    @field_validator("view", mode="before")
+    @classmethod
+    def _coerce_view(cls, v: Any) -> Any:
+        if v is None:
+            return None
+        if isinstance(v, dict):
+            from graflo.filter.view import SelectSpec
+
+            return SelectSpec.from_dict(v)
+        return v
 
     @model_validator(mode="after")
     def _validate_table_pattern(self) -> Self:
@@ -316,7 +331,8 @@ class TablePattern(ResourcePattern):
     def build_query(self, effective_schema: str | None = None) -> str:
         """Build a complete SQL SELECT query.
 
-        Incorporates the base table, any JoinClauses, explicit select_columns,
+        When ``view`` is set, delegates to ``view.build_sql()``. Otherwise
+        incorporates the base table, any JoinClauses, explicit select_columns,
         date filters, and FilterExpression filters.
 
         Args:
@@ -326,6 +342,11 @@ class TablePattern(ResourcePattern):
             Complete SQL query string.
         """
         schema = self.schema_name or effective_schema or "public"
+        if self.view is not None:
+            from graflo.filter.view import SelectSpec
+
+            if isinstance(self.view, SelectSpec):
+                return self.view.build_sql(schema=schema, base_table=self.table_name)
         base_alias = "r" if self.joins else None
         base_ref = f'"{schema}"."{self.table_name}"'
         if base_alias:

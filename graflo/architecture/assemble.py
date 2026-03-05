@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from graflo.architecture.actor_util import render_edge, render_weights
+from graflo.architecture.actor.edge_render import render_edge, render_weights
 from graflo.architecture.edge import EdgeConfig
 from graflo.architecture.onto import AssemblyContext, EdgeId, LocationIndex
 from graflo.architecture.vertex import VertexConfig

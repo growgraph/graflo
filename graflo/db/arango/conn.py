@@ -1208,7 +1208,8 @@ class ArangoConnection(Connection):
             filters=filters,
         )
 
-        assert isinstance(present_docs_keys, dict)
+        if not isinstance(present_docs_keys, dict):
+            raise TypeError(f"expected dict, got {type(present_docs_keys).__name__}")
 
         if any([len(v) > 1 for v in present_docs_keys.values()]):
             logger.warning(

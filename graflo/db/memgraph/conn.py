@@ -260,7 +260,8 @@ class MemgraphConnection(Connection):
                 min_age=21
             )
         """
-        assert self.conn is not None, "Connection is closed"
+        if self.conn is None:
+            raise RuntimeError("Connection is closed")
         cursor = self.conn.cursor()
         try:
             if kwargs:
@@ -311,7 +312,8 @@ class MemgraphConnection(Connection):
         Args:
             name: Database name (ignored, clears current database)
         """
-        assert self.conn is not None, "Connection is closed"
+        if self.conn is None:
+            raise RuntimeError("Connection is closed")
         try:
             cursor = self.conn.cursor()
             cursor.execute("MATCH (n) DETACH DELETE n")
@@ -449,7 +451,8 @@ class MemgraphConnection(Connection):
         - Uses Memgraph syntax: ``CREATE INDEX ON :Label(property)``
         - Errors are logged but don't stop processing of other indexes
         """
-        assert self.conn is not None, "Connection is closed"
+        if self.conn is None:
+            raise RuntimeError("Connection is closed")
 
         if schema is None:
             logger.warning(
@@ -503,7 +506,8 @@ class MemgraphConnection(Connection):
         edges : list[Edge]
             List of edge configurations
         """
-        assert self.conn is not None, "Connection is closed"
+        if self.conn is None:
+            raise RuntimeError("Connection is closed")
         for edge in edges:
             if edge.relation is None:
                 continue
@@ -555,7 +559,8 @@ class MemgraphConnection(Connection):
         delete_all : bool
             If True, delete all nodes and relationships
         """
-        assert self.conn is not None, "Connection is closed"
+        if self.conn is None:
+            raise RuntimeError("Connection is closed")
 
         if delete_all:
             cursor = self.conn.cursor()
@@ -592,7 +597,8 @@ class MemgraphConnection(Connection):
             If True, delete all existing data before initialization.
             If False and database has nodes, raises SchemaExistsError.
         """
-        assert self.conn is not None, "Connection is closed"
+        if self.conn is None:
+            raise RuntimeError("Connection is closed")
 
         self._database_name = schema.general.name
         logger.info(f"Initialized Memgraph with schema '{self._database_name}'")
@@ -687,7 +693,8 @@ class MemgraphConnection(Connection):
                 match_keys=["tenant", "user_id"]
             )
         """
-        assert self.conn is not None, "Connection is closed"
+        if self.conn is None:
+            raise RuntimeError("Connection is closed")
         dry = kwargs.pop("dry", False)
 
         if not docs:
@@ -796,7 +803,8 @@ class MemgraphConnection(Connection):
                 match_keys_target=("id",),
             )
         """
-        assert self.conn is not None, "Connection is closed"
+        if self.conn is None:
+            raise RuntimeError("Connection is closed")
 
         if not docs_edges:
             return
@@ -907,7 +915,8 @@ class MemgraphConnection(Connection):
                 filters=["AND", [">", 100, "price"], ["==", "active", "status"]]
             )
         """
-        assert self.conn is not None, "Connection is closed"
+        if self.conn is None:
+            raise RuntimeError("Connection is closed")
 
         q = f"MATCH (n:{class_name})"
 
@@ -980,7 +989,8 @@ class MemgraphConnection(Connection):
         Returns:
             list: List of fetched edges as dictionaries
         """
-        assert self.conn is not None, "Connection is closed"
+        if self.conn is None:
+            raise RuntimeError("Connection is closed")
 
         # Build Cypher query starting from the source node
         # Use id property (common in Memgraph) or _key if needed
@@ -1144,7 +1154,8 @@ class MemgraphConnection(Connection):
             )
             # Returns: ["electronics", "furniture", "toys"]
         """
-        assert self.conn is not None, "Connection is closed"
+        if self.conn is None:
+            raise RuntimeError("Connection is closed")
 
         # Build filter clause
         filter_clause = ""
@@ -1256,7 +1267,8 @@ class MemgraphConnection(Connection):
         if not batch:
             return []
 
-        assert self.conn is not None, "Connection is closed"
+        if self.conn is None:
+            raise RuntimeError("Connection is closed")
         results = []
 
         for doc in batch:

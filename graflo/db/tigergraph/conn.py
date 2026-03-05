@@ -1773,7 +1773,8 @@ class TigerGraphConnection(Connection):
             edge.weights = WeightConfig()
 
         # Type assertion: weights is guaranteed to be WeightConfig after assignment
-        assert edge.weights is not None, "weights should be initialized"
+        if edge.weights is None:
+            raise RuntimeError("weights should be initialized")
         # Get existing weight field names
         existing_weight_names = set()
         if edge.weights.direct:
@@ -1889,7 +1890,8 @@ class TigerGraphConnection(Connection):
 
             first_edge.weights = WeightConfig()
 
-        assert first_edge.weights is not None, "weights should be initialized"
+        if first_edge.weights is None:
+            raise RuntimeError("weights should be initialized")
         existing_weight_names = set()
         if first_edge.weights.direct:
             existing_weight_names = {field.name for field in first_edge.weights.direct}

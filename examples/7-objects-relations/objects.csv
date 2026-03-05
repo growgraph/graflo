@@ -1,0 +1,11 @@
+id,type,name,age,birth_date,email,salary,license_plate,num_wheels,fuel_type,founded_year,num_employees,industry,color,weight_kg,address
+ec3cd5f9-8a75-49af-adc8-654eab637ebc,Person,Alice Martin,34.0,1991-02-14,alice@example.com,85000.0,,,,,,,,,12 Rue de Paris
+01dbf082-514a-4c6b-ae05-b0ec66c30f35,Person,Bob Smith,45.0,1980-09-03,bob@example.com,95000.0,,,,,,,,,45 Avenue Victor Hugo
+0d1c97b4-2be6-4f9c-af45-1e3a18d1513b,Person,Clara Rossi,29.0,1996-06-21,clara.rossi@example.com,72000.0,,,,,,,,,7 Via Milano
+446a4f33-c041-4a02-8fe6-534fb93236ed,Person,David Nguyen,38.0,1987-11-12,david.nguyen@example.com,105000.0,,,,,,,,,88 Market Street
+4a4bc6ca-7a1d-49b4-954b-c45a135a4cfa,Vehicle,Toyota Corolla,,,,,AB-123-CD,4.0,Petrol,,,,Blue,1300.0,
+73b1ceba-925d-44f0-91bc-2f452a550978,Vehicle,Yamaha MT-07,,,,,EF-456-GH,2.0,Petrol,,,,Black,184.0,
+42aff834-909e-4a96-841d-6589ae1db546,Vehicle,Tesla Model 3,,,,,EV-789-ZZ,4.0,Electric,,,,White,1625.0,
+eb463fbc-423c-4f82-a532-b21430325f15,Institution,TechNova Labs Europe,,,contact@technova-europe.com,,,,,2012.0,120.0,Biotechnology,,,1 Innovation Drive
+b4dc8ede-2875-4d8b-bfd6-3f07d5eddf5e,Institution,GreenCity Council,,,info@greencity.gov,,,,,1978.0,350.0,Public Administration,,,99 Civic Center Plaza
+10c79d87-0954-4478-9dc4-e87810eb6dfd,Institution,FinEdge Capital,,,contact@finedge-capital.com,,,,,2005.0,80.0,Finance,,,500 Wall Street

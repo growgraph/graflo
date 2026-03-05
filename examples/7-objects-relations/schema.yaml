@@ -1,0 +1,59 @@
+general:
+    name: objects_relations
+vertex_config:
+    vertices:
+    -   name: person
+        fields: [id, name, age, birth_date, email, salary, address]
+        identity: [id]
+    -   name: vehicle
+        fields: [id, name, license_plate, num_wheels, fuel_type, color, weight_kg]
+        identity: [id]
+    -   name: institution
+        fields: [id, name, email, founded_year, num_employees, industry, address]
+        identity: [id]
+edge_config:
+    edges:
+    -   source: person
+        target: institution
+        relation: employed_by
+    -   source: person
+        target: vehicle
+        relation: owns
+    -   source: institution
+        target: institution
+        relation: funds
+    -   source: person
+        target: person
+        relation: colleague_of
+    -   source: institution
+        target: institution
+        relation: invests_in
+resources:
+-   resource_name: objects
+    pipeline:
+    -   vertex_router:
+            type_field: type
+            type_map:
+                Person: person
+                Vehicle: vehicle
+                Institution: institution
+-   resource_name: relations
+    pipeline:
+    -   edge_router:
+            source_type_field: source_type
+            target_type_field: target_type
+            source_fields:
+                id: source_id
+            target_fields:
+                id: target_id
+            relation_field: relation_type
+            type_map:
+                Person: person
+                Vehicle: vehicle
+                Institution: institution
+            relation_map:
+                EMPLOYED_BY: employed_by
+                OWNS: owns
+                FUNDS: funds
+                COLLEAGUE_OF: colleague_of
+                INVESTS_IN: invests_in

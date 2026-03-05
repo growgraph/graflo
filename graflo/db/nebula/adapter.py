@@ -99,7 +99,8 @@ class NebulaV3Adapter(NebulaClientAdapter):
         logger.info("Connected to NebulaGraph 3.x at %s:%s", hostname, port)
 
     def execute(self, statement: str) -> NebulaResultSet:
-        assert self._session is not None, "Not connected"
+        if self._session is None:
+            raise RuntimeError("Not connected")
         result = self._session.execute(statement)
         rs = NebulaResultSet(result, is_v3=True)
         if not rs.is_succeeded():
@@ -142,7 +143,8 @@ class NebulaV5Adapter(NebulaClientAdapter):
         logger.info("Connected to NebulaGraph 5.x at %s:%s", hostname, port)
 
     def execute(self, statement: str) -> NebulaResultSet:
-        assert self._client is not None, "Not connected"
+        if self._client is None:
+            raise RuntimeError("Not connected")
         result = self._client.execute(statement)
         return NebulaResultSet(result, is_v3=False)
 

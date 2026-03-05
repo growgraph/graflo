@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.6.6] - 2026-03-05
+
+### Added
+- **SelectSpec**: Declarative view specification for advanced filtering and projection of data before feeding into Resources
+  - Alternative to `TablePattern`'s `table_name` + `joins` + `filters`; use `view: SelectSpec` for full control over the SQL query
+  - Two modes: `kind="select"` (full SQL-like spec with `from`, `joins`, `select`, `where`) and `kind="type_lookup"` (shorthand for edge tables where source/target types come from a lookup table via FK joins)
+  - `type_lookup` shorthand: specify `table`, `identity`, `type_column`, `source`, `target`, and optional `relation` to auto-build JOINs that resolve entity types from a discriminator table
+  - `FilterExpression`-based `where` clause support; YAML/JSON loading via `SelectSpec.from_dict()`
+  - Used by `TablePattern.view` and by `ResourceMapper.create_patterns_from_postgres()` for edge tables with type lookup metadata
+- **VertexRouterActor and EdgeRouterActor**: New router actors for dynamic type-based routing in resource pipelines
+  - `VertexRouterActor` routes documents to the correct `VertexActor` based on a `type_field` in the document (with optional `type_map`, `prefix`, `field_map`, `vertex_from_map`)
+  - `EdgeRouterActor` creates edges with dynamic source/target types from `source_type_field` and `target_type_field`, plus optional `relation_field` or static `relation` (with `type_map`, `relation_map`, `source_fields`, `target_fields`)
+  - Use `vertex_router` and `edge_router` steps in resource `apply`/`pipeline` for polymorphic data (e.g. CSV with type discriminator columns, relations tables)
+
+### Documentation
+- Updated docs and concepts to describe VertexRouter and EdgeRouter actor types
+- Added `vertex_router` and `edge_router` step examples to creating-schema guide
+- Schema architecture diagram now includes VertexRouterActor and EdgeRouterActor in the Actor hierarchy
+- Added SelectSpec documentation: filter view reference, TablePattern `view` usage in creating-schema guide, and Key Features mention
+
 ## [1.6.5] - 2026-03-02
 
 ### Changed

@@ -282,11 +282,14 @@ class GraphContainer(ConfigBaseModel):
                 if isinstance(k, str):
                     vdict[k].extend(v)
                 elif isinstance(k, tuple):
-                    assert (
+                    if not (
                         len(k) == 3
                         and all(isinstance(item, str) for item in k[:-1])
                         and isinstance(k[-1], (str, type(None)))
-                    )
+                    ):
+                        raise ValueError(
+                            f"edge key must be (str, str, str|None), got {k}"
+                        )
                     edict[k].extend(v)
         return GraphContainer(
             vertices=dict(vdict.items()),

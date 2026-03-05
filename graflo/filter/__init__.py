@@ -20,9 +20,11 @@ Example:
 """
 
 from .onto import ComparisonOperator, FilterExpression, LogicalOperator
+from .view import SelectSpec
 
 __all__ = [
     "ComparisonOperator",
     "FilterExpression",
     "LogicalOperator",
+    "SelectSpec",
 ]

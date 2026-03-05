@@ -352,7 +352,8 @@ class VertexConfig(ConfigBaseModel):
 
     def _get_vertices_map(self) -> dict[str, Vertex]:
         """Return the vertices map (set by model validator)."""
-        assert self._vertices_map is not None, "VertexConfig not fully initialized"
+        if self._vertices_map is None:
+            raise RuntimeError("VertexConfig not fully initialized")
         return self._vertices_map
 
     @property

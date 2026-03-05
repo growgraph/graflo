@@ -67,39 +67,47 @@ def merge_doc_basis(
     def get_index_tuple(doc: dict | VertexRep) -> tuple:
         """Extract index tuple from a document."""
         if is_vertexrep:
-            assert isinstance(doc, VertexRep)
+            if not isinstance(doc, VertexRep):
+                raise TypeError(f"expected VertexRep, got {type(doc).__name__}")
             data = doc.vertex
         else:
-            assert isinstance(doc, dict)
+            if not isinstance(doc, dict):
+                raise TypeError(f"expected dict, got {type(doc).__name__}")
             data = doc
         return tuple(sorted((k, v) for k, v in data.items() if k in index_keys))
 
     def has_index_keys(doc: dict | VertexRep) -> bool:
         """Check if document has any index keys."""
         if is_vertexrep:
-            assert isinstance(doc, VertexRep)
+            if not isinstance(doc, VertexRep):
+                raise TypeError(f"expected VertexRep, got {type(doc).__name__}")
             return any(k in doc.vertex for k in index_keys)
         else:
-            assert isinstance(doc, dict)
+            if not isinstance(doc, dict):
+                raise TypeError(f"expected dict, got {type(doc).__name__}")
             return any(k in doc for k in index_keys)
 
     def merge_doc(target: dict | VertexRep, source: dict | VertexRep) -> None:
         """Merge source into target."""
         if is_vertexrep:
-            assert isinstance(target, VertexRep) and isinstance(source, VertexRep)
+            if not (isinstance(target, VertexRep) and isinstance(source, VertexRep)):
+                raise TypeError("expected VertexRep for both target and source")
             target.vertex.update(source.vertex)
             target.ctx.update(source.ctx)
         else:
-            assert isinstance(target, dict) and isinstance(source, dict)
+            if not (isinstance(target, dict) and isinstance(source, dict)):
+                raise TypeError("expected dict for both target and source")
             target.update(source)
 
     def copy_doc(doc: dict | VertexRep) -> dict | VertexRep:
         """Create a copy of a document."""
         if is_vertexrep:
-            assert isinstance(doc, VertexRep)
+            if not isinstance(doc, VertexRep):
+                raise TypeError(f"expected VertexRep, got {type(doc).__name__}")
             return VertexRep(vertex=doc.vertex.copy(), ctx=doc.ctx.copy())
         else:
-            assert isinstance(doc, dict)
+            if not isinstance(doc, dict):
+                raise TypeError(f"expected dict, got {type(doc).__name__}")
             return doc.copy()
 
     for doc in docs:

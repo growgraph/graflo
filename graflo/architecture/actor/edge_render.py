@@ -1,33 +1,6 @@
-"""Edge creation and weight management utilities for graph actors.
+"""Edge creation and weight management for graph assembly."""
 
-This module provides core functionality for creating and managing edges in the graph
-database system. It handles edge rendering, weight management, and blank collection
-creation. The module is central to the graph construction process, implementing the
-logic for connecting vertices and managing their relationships.
-
-Key Components:
-    - add_blank_collections: Creates blank collections for vertices
-    - render_edge: Core edge creation logic, handling different edge types and weights
-    - render_weights: Manages edge weights and their relationships
-
-Edge Creation Process:
-    1. Edge rendering (render_edge):
-       - Handles both PAIR_LIKE and PRODUCT_LIKE edge types
-       - Manages source and target vertex relationships
-       - Processes edge weights and relation fields
-       - Creates edge documents with proper source/target mappings
-
-    2. Weight management (render_weights):
-       - Processes vertex-based weights
-       - Handles direct field mappings
-       - Manages weight filtering and transformation
-       - Applies weights to edge documents
-
-Example:
-    >>> edge = Edge(source="user", target="post")
-    >>> edges = render_edge(edge, vertex_config, acc_vertex)
-    >>> edges = render_weights(edge, vertex_config, acc_vertex, cdoc, edges)
-"""
+from __future__ import annotations
 
 import logging
 from collections import defaultdict
@@ -47,41 +20,19 @@ from graflo.architecture.onto import (
 from graflo.architecture.util import project_dict
 from graflo.architecture.vertex import VertexConfig
 
-
 logger = logging.getLogger(__name__)
 
 
 def add_blank_collections(
     ctx: AssemblyContext | ActionContext, vertex_conf: VertexConfig
 ) -> AssemblyContext | ActionContext:
-    """Add blank collections for vertices that require them.
-
-    This function creates blank collections for vertices marked as blank in the
-    vertex configuration. It copies relevant fields from the current document
-    to create the blank vertex documents.
-
-    Args:
-            ctx: Current action context containing document and accumulator
-            vertex_conf: Vertex configuration containing blank vertex definitions
-
-        Returns:
-            ActionContext: Updated context with new blank collections
-
-        Example:
-            >>> ctx = add_blank_collections(ctx, vertex_config)
-            >>> print(ctx.acc_global['blank_vertex'])
-            [{'field1': 'value1', 'field2': 'value2'}]
-    """
-
-    # add blank collections
+    """Add blank collections for vertices that require them."""
     buffer_transforms = [
         item for sublist in ctx.buffer_transforms.values() for item in sublist
     ]
-
     for vname in vertex_conf.blank_vertices:
         v = vertex_conf[vname]
         for item in buffer_transforms:
-            # Use field_names property for cleaner dict comprehension
             prep_doc = {f: item[f] for f in v.field_names if f in item}
             if vname not in ctx.acc_global:
                 ctx.acc_global[vname] = [prep_doc]
@@ -111,7 +62,6 @@ def dress_vertices(
             new_items_dd[va] = list(zip(vlist, transformed_docs))
         else:
             new_items_dd[va] = list(zip(vlist, [{}] * len(vlist)))
-
     return new_items_dd
 
 
@@ -130,17 +80,9 @@ def select_iterator(casting_type: EdgeCastingType):
 
 def filter_nonindexed(
     items_tdressed: defaultdict[LocationIndex, list[tuple[VertexRep, dict]]],
-    index,
+    index: Any,
 ) -> defaultdict[LocationIndex, list[tuple[VertexRep, dict]]]:
-    """Filter items to only include those with indexed fields.
-
-    Args:
-        items_tdressed: Dictionary of dressed vertex items
-        index: Index fields to check
-
-    Returns:
-        Filtered dictionary of dressed vertex items
-    """
+    """Filter items to only include those with indexed fields."""
     for va, vlist in items_tdressed.items():
         items_tdressed[va] = [
             item for item in vlist if any(k in item[0].vertex for k in index)
@@ -148,28 +90,12 @@ def filter_nonindexed(
     return items_tdressed
 
 
-def count_unique_by_position_variable(tuples_list, fillvalue=None):
-    """
-    For each position in the tuples, returns the number of different elements.
-    Handles tuples of different lengths using a fill value.
-
-    Args:
-        tuples_list: List of tuples (they can have different lengths)
-        fillvalue: Value to use for missing positions (default: None)
-
-    Returns:
-        List with counts of unique elements for each position
-    """
+def count_unique_by_position_variable(tuples_list: list, fillvalue: Any = None) -> list:
+    """For each position in the tuples, returns the number of different elements."""
     if not tuples_list:
         return []
-
-    # Transpose the list of tuples, filling missing positions
     transposed = zip_longest(*tuples_list, fillvalue=fillvalue)
-
-    # Count unique elements for each position
-    result = [len(set(position)) for position in transposed]
-
-    return result
+    return [len(set(position)) for position in transposed]
 
 
 def _filter_source_target_lindexes(
@@ -240,12 +166,7 @@ def _iter_emitter_receiver_group_pairs(
     source_name: str,
     target_name: str,
 ) -> Iterator[tuple[list[LocationIndex], list[LocationIndex]]]:
-    """Yield (emitter_group, receiver_group) pairs for edge iteration.
-
-    For self-edges, partitions groups into emitters vs receivers:
-    - Explicit (both match_source and match_target): groups already filtered, use as-is.
-    - Structural: first of source emits, target receives; or split same group.
-    """
+    """Yield (emitter_group, receiver_group) pairs for edge iteration."""
     if source_name != target_name:
         yield from zip(source_groups, target_groups)
         return
@@ -258,7 +179,6 @@ def _iter_emitter_receiver_group_pairs(
         same_group = set(source_group) == set(target_group)
         if same_group:
             if len(source_group) <= 1:
-                # Single location: pair with itself (e.g. company_a<->company_b per row)
                 if source_group:
                     yield (source_group, target_group)
             yield (source_group[:1], source_group[1:])
@@ -306,25 +226,7 @@ def render_edge(
     ctx: AssemblyContext | ActionContext,
     lindex: LocationIndex | None = None,
 ) -> defaultdict[str | None, list]:
-    """Create edges between source and target vertices.
-
-    Vertices come in groups from different levels of a nested doc, parametrized by
-    LocationIndex. Casting policy determines how we form edges from groups of
-    candidate vertices:
-
-    - PAIR (zip): 1:1 correspondence within the same group
-    - COMBINATIONS: edges within the same group when source==target and >1 item
-    - PRODUCT: cartesian product between different groups or different vertex types
-
-    Args:
-        edge: Edge configuration defining the relationship
-        vertex_config: Vertex configuration for source and target
-        ctx: Assembly or action context with acc_vertex and buffer_transforms
-        lindex: Optional location filter (only consider locations under this path)
-
-    Returns:
-        Edges organized by relation type: {relation: [(source_doc, target_doc, weight), ...]}
-    """
+    """Create edges between source and target vertices."""
     acc_vertex = ctx.acc_vertex
     buffer_transforms = ctx.buffer_transforms
     source = edge.source
@@ -457,30 +359,7 @@ def render_weights(
     acc_vertex: defaultdict[str, defaultdict[LocationIndex, list]],
     edges: defaultdict[str | None, list],
 ) -> defaultdict[str | None, list]:
-    """Process and apply weights to edge documents.
-
-    This function handles the complex weight management system, including:
-    - Vertex-based weights from related vertices
-    - Direct field mappings from the current document
-    - Weight filtering and transformation
-    - Application of weights to edge documents
-
-    Args:
-        edge: Edge configuration containing weight definitions
-        vertex_config: Vertex configuration for weight processing
-        acc_vertex: Accumulated vertex documents
-        edges: Edge documents to apply weights to
-
-    Returns:
-        defaultdict[str | None, list]: Updated edge documents with applied weights
-
-    Note:
-        Weights can come from:
-        1. Related vertices (vertex_classes)
-        2. Direct field mappings (direct)
-        3. Field transformations (map)
-        4. Default index fields
-    """
+    """Process and apply weights to edge documents."""
     vertex_weights = [] if edge.weights is None else edge.weights.vertices
     weights: list = []
 
@@ -490,13 +369,11 @@ def render_weights(
             continue
         vertex_lists = acc_vertex[vertex]
 
-        # TODO logic here may be potentially improved
         keys = sorted(vertex_lists)
         if not keys:
             continue
         vertex_sample = [item.vertex for item in vertex_lists[keys[0]]]
 
-        # find all vertices satisfying condition
         if w.filter:
             vertex_sample = [
                 doc
@@ -511,8 +388,7 @@ def render_weights(
                         **{
                             w.cfield(field): doc[field]
                             for field in w.fields
-                            if field
-                            in doc  # w.fields are strings from Weight, so this is fine
+                            if field in doc
                         },
                     }
                 if w.map:

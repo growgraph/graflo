@@ -10,7 +10,7 @@ from graflo.architecture.actor import (
 )
 from graflo.architecture.edge import EdgeConfig
 from graflo.architecture.onto import ActionContext, LocationIndex, VertexRep
-from graflo.architecture.actor_config import (
+from graflo.architecture.actor.config import (
     VertexActorConfig,
     normalize_actor_step,
     validate_actor_step,

@@ -355,7 +355,7 @@ class TestEdgeResourceAutoJoin:
     def test_vertex_router_extract_sub_doc_strips_prefix(self):
         """VertexRouterActor._extract_sub_doc strips prefix from field keys."""
         from graflo.architecture.actor import VertexRouterActor
-        from graflo.architecture.actor_config import VertexRouterActorConfig
+        from graflo.architecture.actor.config import VertexRouterActorConfig
 
         config = VertexRouterActorConfig(type_field="s__class_name", prefix="s__")
         router = VertexRouterActor(config)
@@ -384,7 +384,7 @@ class TestEdgeResourceAutoJoin:
     def test_vertex_router_extract_sub_doc_with_field_map(self):
         """VertexRouterActor._extract_sub_doc applies field_map when set."""
         from graflo.architecture.actor import VertexRouterActor
-        from graflo.architecture.actor_config import VertexRouterActorConfig
+        from graflo.architecture.actor.config import VertexRouterActorConfig
 
         config = VertexRouterActorConfig(
             type_field="src_type",
@@ -464,3 +464,109 @@ class TestEdgeResourceAutoJoin:
         )
         assert set(router_actors[0]._vertex_actors.keys()) == {"server"}
         assert set(router_actors[1]._vertex_actors.keys()) == {"database"}
+
+    def test_vertex_router_with_vertex_from_map_maps_doc_fields_to_vertex_fields(
+        self,
+    ):
+        """VertexRouterActor with vertex_from_map projects doc fields to vertex fields."""
+        schema = Schema.model_validate(
+            {
+                "general": {"name": "test", "version": "0.0.1"},
+                "vertex_config": {
+                    "vertices": [
+                        {
+                            "name": "person",
+                            "fields": ["id", "name"],
+                            "identity": ["id"],
+                        },
+                        {"name": "org", "fields": ["id", "name"], "identity": ["id"]},
+                    ],
+                },
+                "edge_config": {"edges": []},
+                "resources": [
+                    {
+                        "resource_name": "mixed",
+                        "pipeline": [
+                            {
+                                "vertex_router": {
+                                    "type_field": "kind",
+                                    "type_map": {"Person": "person", "Org": "org"},
+                                    "vertex_from_map": {
+                                        "person": {
+                                            "id": "user_id",
+                                            "name": "user_name",
+                                        },
+                                        "org": {"id": "org_id", "name": "org_name"},
+                                    },
+                                }
+                            },
+                        ],
+                    },
+                ],
+            }
+        )
+        resource = schema.fetch_resource("mixed")
+
+        doc = {"kind": "Person", "user_id": "u1", "user_name": "Alice"}
+        result = resource(doc)
+
+        assert "person" in result
+        person_docs = result["person"]
+        assert len(person_docs) >= 1
+        assert any(
+            d.get("id") == "u1" and d.get("name") == "Alice" for d in person_docs
+        )
+
+        doc_org = {"kind": "Org", "org_id": "o1", "org_name": "Acme"}
+        result_org = resource(doc_org)
+        assert "org" in result_org
+        org_docs = result_org["org"]
+        assert len(org_docs) >= 1
+        assert any(d.get("id") == "o1" and d.get("name") == "Acme" for d in org_docs)
+
+    def test_vertex_router_with_transform_consumes_transform_output(self):
+        """TransformActor runs before VertexRouterActor; routed VertexActor consumes buffer_transforms."""
+        schema = Schema.model_validate(
+            {
+                "general": {"name": "test", "version": "0.0.1"},
+                "vertex_config": {
+                    "vertices": [
+                        {
+                            "name": "item",
+                            "fields": ["id", "label"],
+                            "identity": ["id"],
+                        },
+                    ],
+                },
+                "edge_config": {"edges": []},
+                "resources": [
+                    {
+                        "resource_name": "transform_then_router",
+                        "pipeline": [
+                            {
+                                "transform": {
+                                    "map": {"raw_id": "id", "raw_label": "label"},
+                                }
+                            },
+                            {
+                                "vertex_router": {
+                                    "type_field": "kind",
+                                    "type_map": {"Item": "item"},
+                                }
+                            },
+                        ],
+                    },
+                ],
+            }
+        )
+        resource = schema.fetch_resource("transform_then_router")
+
+        doc = {"kind": "Item", "raw_id": "x1", "raw_label": "Transformed"}
+        result = resource(doc)
+
+        assert "item" in result
+        item_docs = result["item"]
+        assert len(item_docs) >= 1
+        assert any(
+            d.get("id") == "x1" and d.get("label") == "Transformed" for d in item_docs
+        )

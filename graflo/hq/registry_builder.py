@@ -122,7 +122,8 @@ class RegistryBuilder:
         Returns:
             Matching file paths.
         """
-        assert pattern.sub_path is not None
+        if pattern.sub_path is None:
+            raise ValueError("pattern.sub_path is required")
         path = Path(fpath) if isinstance(fpath, str) else fpath
 
         files = [
@@ -207,7 +208,7 @@ class RegistryBuilder:
 
         try:
             resource = self.schema.fetch_resource(resource_name)
-            if not pattern.joins:
+            if pattern.view is None and not pattern.joins:
                 enrich_edge_pattern_with_joins(
                     resource=resource,
                     pattern=pattern,
