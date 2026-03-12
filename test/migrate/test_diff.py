@@ -6,30 +6,35 @@ from graflo.migrate.models import OperationType
 def _schema_v1() -> Schema:
     return Schema.from_dict(
         {
-            "general": {"name": "kg", "version": "1.0.0"},
-            "vertex_config": {
-                "vertices": [
-                    {
-                        "name": "person",
-                        "fields": [{"name": "id", "type": "STRING"}, "name"],
-                        "identity": ["id"],
-                    },
-                    {
-                        "name": "company",
-                        "fields": [{"name": "id", "type": "STRING"}, "name"],
-                        "identity": ["id"],
-                    },
-                ]
+            "metadata": {"name": "kg", "version": "1.0.0"},
+            "graph": {
+                "vertex_config": {
+                    "vertices": [
+                        {
+                            "name": "person",
+                            "fields": [{"name": "id", "type": "STRING"}, "name"],
+                            "identity": ["id"],
+                        },
+                        {
+                            "name": "company",
+                            "fields": [{"name": "id", "type": "STRING"}, "name"],
+                            "identity": ["id"],
+                        },
+                    ]
+                },
+                "edge_config": {
+                    "edges": [
+                        {
+                            "source": "person",
+                            "target": "company",
+                            "relation": "works_at",
+                        }
+                    ]
+                },
             },
-            "edge_config": {
-                "edges": [
-                    {"source": "person", "target": "company", "relation": "works_at"}
-                ]
-            },
-            "database_features": {
+            "db_profile": {
                 "vertex_indexes": {"person": [{"fields": ["name"], "unique": False}]}
             },
-            "resources": [],
         }
     )
 
@@ -37,41 +42,47 @@ def _schema_v1() -> Schema:
 def _schema_v2() -> Schema:
     return Schema.from_dict(
         {
-            "general": {"name": "kg", "version": "1.1.0"},
-            "vertex_config": {
-                "vertices": [
-                    {
-                        "name": "person",
-                        "fields": [
-                            {"name": "id", "type": "STRING"},
-                            {"name": "full_name", "type": "STRING"},
-                            {"name": "age", "type": "INT"},
-                        ],
-                        "identity": ["id"],
-                    },
-                    {
-                        "name": "company",
-                        "fields": [{"name": "id", "type": "STRING"}, "name"],
-                        "identity": ["id"],
-                    },
-                    {
-                        "name": "country",
-                        "fields": [{"name": "code", "type": "STRING"}],
-                        "identity": ["code"],
-                    },
-                ]
+            "metadata": {"name": "kg", "version": "1.1.0"},
+            "graph": {
+                "vertex_config": {
+                    "vertices": [
+                        {
+                            "name": "person",
+                            "fields": [
+                                {"name": "id", "type": "STRING"},
+                                {"name": "full_name", "type": "STRING"},
+                                {"name": "age", "type": "INT"},
+                            ],
+                            "identity": ["id"],
+                        },
+                        {
+                            "name": "company",
+                            "fields": [{"name": "id", "type": "STRING"}, "name"],
+                            "identity": ["id"],
+                        },
+                        {
+                            "name": "country",
+                            "fields": [{"name": "code", "type": "STRING"}],
+                            "identity": ["code"],
+                        },
+                    ]
+                },
+                "edge_config": {
+                    "edges": [
+                        {
+                            "source": "person",
+                            "target": "company",
+                            "relation": "works_at",
+                        },
+                        {
+                            "source": "company",
+                            "target": "country",
+                            "relation": "located_in",
+                        },
+                    ]
+                },
             },
-            "edge_config": {
-                "edges": [
-                    {"source": "person", "target": "company", "relation": "works_at"},
-                    {
-                        "source": "company",
-                        "target": "country",
-                        "relation": "located_in",
-                    },
-                ]
-            },
-            "database_features": {
+            "db_profile": {
                 "vertex_indexes": {
                     "person": [
                         {"fields": ["full_name"], "unique": False},
@@ -79,7 +90,6 @@ def _schema_v2() -> Schema:
                     ]
                 }
             },
-            "resources": [],
         }
     )
 

@@ -20,13 +20,13 @@ Example:
     >>> resource = Resource(name="users", data=user_data)
 """
 
-from .database_features import DatabaseFeatures, EdgeIndexSpec
+from .database_features import DatabaseProfile, EdgeIndexSpec
 from .db_aware import EdgeConfigDBAware, SchemaDBAware, VertexConfigDBAware
 from .edge import Edge, EdgeConfig
 from .executor import ActorExecutor
 from .onto import Index
 from .resource import Resource
-from .schema import Schema
+from .schema import GraphMetadata, GraphModel, IngestionModel, Schema
 from .vertex import FieldType, Vertex, VertexConfig
 
 __all__ = [
@@ -37,7 +37,10 @@ __all__ = [
     "FieldType",
     "Index",
     "ActorExecutor",
-    "DatabaseFeatures",
+    "GraphMetadata",
+    "DatabaseProfile",
+    "GraphModel",
+    "IngestionModel",
     "Resource",
     "Schema",
     "SchemaDBAware",

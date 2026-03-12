@@ -8,10 +8,10 @@ import pytest
 import yaml
 from suthing import FileHandle, equals
 
-from graflo.architecture.schema import Schema
+from graflo.architecture.schema import IngestionModel, Schema
 from graflo.architecture.util import cast_graph_name_to_triple
 from graflo.util.misc import sorted_dicts
-from graflo.util.onto import Patterns, FilePattern
+from graflo.util.onto import Bindings, FilePattern
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +73,9 @@ def fetch_schema_dict(mode):
 
 def fetch_schema_obj(mode):
     schema_dict = fetch_schema_dict(mode)
-    schema_obj = Schema.from_dict(schema_dict)
+    schema_obj = Schema.from_config(schema_dict)
+    ingestion_model = IngestionModel.from_config(schema_dict)
+    schema_obj.bind_ingestion_model(ingestion_model)
     return schema_obj
 
 
@@ -92,10 +94,12 @@ def ingest_atomic(conn_conf, current_path, test_db_name, schema_o, mode, n_cores
 
     conn_conf.database = test_db_name
 
-    # Create Patterns for file-based resources
+    # Create Bindings for file-based resources
     # Map each resource to a FilePattern that matches files in the data directory
-    patterns = Patterns()
-    for resource in schema_o.resources:
+    bindings = Bindings()
+    if schema_o.ingestion_model is None:
+        raise ValueError("schema missing bound ingestion model")
+    for resource in schema_o.ingestion_model.resources:
         resource_name = resource.name
         # Create a FilePattern that matches files for this resource
         # Use resource name as part of the filename pattern (e.g., "resource_name.csv", "resource_name.json", etc.)
@@ -104,7 +108,7 @@ def ingest_atomic(conn_conf, current_path, test_db_name, schema_o, mode, n_cores
             sub_path=path,
             resource_name=resource_name,
         )
-        patterns.add_file_pattern(resource_name, file_pattern)
+        bindings.add_file_pattern(resource_name, file_pattern)
 
     # Determine DB flavor from connection config
     from graflo.hq import GraphEngine
@@ -126,8 +130,9 @@ def ingest_atomic(conn_conf, current_path, test_db_name, schema_o, mode, n_cores
     ingestion_params = IngestionParams(n_cores=n_cores, clear_data=False)
     engine.ingest(
         schema=schema_o,
+        ingestion_model=schema_o.ingestion_model,
         target_db_config=conn_conf,
-        patterns=patterns,
+        bindings=bindings,
         ingestion_params=ingestion_params,
     )
 

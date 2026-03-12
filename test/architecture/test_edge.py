@@ -3,7 +3,7 @@ import logging
 import pytest
 
 from graflo.architecture.edge import Edge, EdgeConfig
-from graflo.architecture.database_features import DatabaseFeatures
+from graflo.architecture.database_features import DatabaseProfile
 from graflo.architecture.db_aware import EdgeConfigDBAware, VertexConfigDBAware
 from graflo.architecture.onto import Weight
 from graflo.architecture.vertex import VertexConfig
@@ -105,7 +105,7 @@ def test_edge_finish_init_tigergraph_relation_artifacts_are_not_duplicated(
         }
     )
 
-    db_features = DatabaseFeatures(db_flavor=DBType.TIGERGRAPH)
+    db_features = DatabaseProfile(db_flavor=DBType.TIGERGRAPH)
     vc_db = VertexConfigDBAware(vertex_config, db_features)
     ec_db = EdgeConfigDBAware(EdgeConfig(edges=[e]), vc_db, db_features)
     first_weights = ec_db.effective_weights(e)

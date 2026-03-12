@@ -1,30 +1,35 @@
-general:
+metadata:
     name: hr
-resources:
--   resource_name: people
-    apply:
-    -   vertex: person
--   resource_name: departments
-    apply:
-    -   vertex: person
-        from: {id: person_id, name: person}
-    -   vertex: department
-        from: {name: department}
-vertex_config:
-    vertices:
-    -   name: person
-        fields:
-        -   id
-        -   name
-        -   age
-        identity:
-        -   id
-    -   name: department
-        fields:
-        -   name
-        identity:
-        -   name
-edge_config:
-    edges:
-    -   source: person
-        target: department
+graph:
+    vertex_config:
+        vertices:
+        -   name: person
+            fields:
+            -   id
+            -   name
+            -   age
+            identity:
+            -   id
+        -   name: department
+            fields:
+            -   name
+            identity:
+            -   name
+    edge_config:
+        edges:
+        -   source: person
+            target: department
+ingestion_model:
+    resources:
+    -   resource_name: people
+        apply:
+        -   vertex: person
+    -   resource_name: departments
+        apply:
+        -   vertex: person
+            from:
+                id: person_id
+                name: person
+        -   vertex: department
+            from:
+                name: department

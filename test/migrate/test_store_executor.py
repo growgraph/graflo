@@ -19,14 +19,20 @@ from graflo.migrate.store import FileMigrationStore
 def _schema() -> Schema:
     return Schema.from_dict(
         {
-            "general": {"name": "kg", "version": "1.0.0"},
-            "vertex_config": {
-                "vertices": [
-                    {"name": "person", "fields": ["id", "name"], "identity": ["id"]},
-                ]
+            "metadata": {"name": "kg", "version": "1.0.0"},
+            "graph": {
+                "vertex_config": {
+                    "vertices": [
+                        {
+                            "name": "person",
+                            "fields": ["id", "name"],
+                            "identity": ["id"],
+                        },
+                    ]
+                },
+                "edge_config": {"edges": []},
             },
-            "edge_config": {"edges": []},
-            "resources": [],
+            "db_profile": {},
         }
     )
 

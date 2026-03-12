@@ -4,7 +4,7 @@ import logging
 
 import pytest
 
-from graflo.architecture.database_features import DatabaseFeatures
+from graflo.architecture.database_features import DatabaseProfile
 from graflo.architecture.db_aware import VertexConfigDBAware
 from graflo.architecture.vertex import Field, FieldType, Vertex, VertexConfig
 from graflo.onto import DBType
@@ -306,7 +306,7 @@ def test_get_fields_with_defaults_tigergraph():
     config = VertexConfig(vertices=[vertex])
     db_cfg = VertexConfigDBAware(
         logical=config,
-        database_features=DatabaseFeatures(db_flavor=DBType.TIGERGRAPH),
+        database_features=DatabaseProfile(db_flavor=DBType.TIGERGRAPH),
     )
     fields = db_cfg.fields("user")
     assert len(fields) == 4
@@ -333,7 +333,7 @@ def test_get_fields_with_defaults_other_db():
     config = VertexConfig(vertices=[vertex])
     db_cfg = VertexConfigDBAware(
         logical=config,
-        database_features=DatabaseFeatures(db_flavor=DBType.ARANGO),
+        database_features=DatabaseProfile(db_flavor=DBType.ARANGO),
     )
     fields = db_cfg.fields("user")
     assert len(fields) == 2
@@ -343,7 +343,7 @@ def test_get_fields_with_defaults_other_db():
 
     db_cfg = VertexConfigDBAware(
         logical=config,
-        database_features=DatabaseFeatures(db_flavor=DBType.NEO4J),
+        database_features=DatabaseProfile(db_flavor=DBType.NEO4J),
     )
     fields = db_cfg.fields("user")
     assert fields[1].type is None  # Preserved
@@ -382,7 +382,7 @@ def test_vertex_config_fields_with_db_flavor():
 
     db_cfg = VertexConfigDBAware(
         logical=config,
-        database_features=DatabaseFeatures(db_flavor=DBType.TIGERGRAPH),
+        database_features=DatabaseProfile(db_flavor=DBType.TIGERGRAPH),
     )
     fields = db_cfg.fields("user")
     assert len(fields) == 2

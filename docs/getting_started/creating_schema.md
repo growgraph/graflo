@@ -6,28 +6,26 @@ This guide explains how to define a GraFlo **Schema** — the declarative, datab
 
 1. **Schema is the single source of truth** for the LPG: vertex types, edge types, identities, DB features, and the mapping from raw data to vertices/edges.
 2. **All schema configs are Pydantic models** (`ConfigBaseModel`). You can load from YAML or dicts; validation runs at load time.
-3. **Resources define transformation pipelines**: each `Resource` has a unique `resource_name` and an `apply` (or `pipeline`) list of **actor steps**. `AbstractDataSource` instances (files, APIs, SQL, SPARQL endpoints) bind to Resources by name via the `DataSourceRegistry`.
-4. **Order of definition is flexible** in YAML: `general`, `vertex_config`, `edge_config`, `resources`, and `transforms` can appear in any order. References (e.g. vertex names in edges or in `apply`) must refer to names defined in the same schema.
+3. **Resources define transformation pipelines**: each `Resource` has a unique `resource_name` and an `apply` (or `pipeline`) list of **actor steps**. `AbstractDataSource` instances (files, APIs, SQL, SPARQL endpoints) bind to resources by name via `Bindings` or `DataSourceRegistry`.
+4. **Canonical root contract is strict**: use `metadata`, `graph`, optional `db_profile`, and `ingestion_model`. No top-level `resources`/`transforms`.
 
 ## Schema structure
 
-A Schema has five top-level parts:
+A canonical root config has four top-level parts:
 
 | Section          | Required | Description |
 |------------------|----------|-------------|
-| `general`        | Yes      | Schema name and optional version. |
-| `vertex_config`  | Yes      | Vertex types, fields, logical identity, filters. |
-| `edge_config`    | Yes      | Edge types (source, target, weights). |
-| `database_features` | No    | Physical DB features (secondary indexes for vertices/edges). |
-| `resources`      | No       | List of resources: data pipelines (apply/pipeline) that map data to vertices and edges. |
-| `transforms`     | No       | Named transform functions used by resources. |
+| `metadata`       | Yes      | Schema name and optional version. |
+| `graph`          | Yes      | Logical graph (`vertex_config` + `edge_config`). |
+| `db_profile`     | No       | Physical DB features (secondary indexes, storage/index specs). |
+| `ingestion_model`| Yes      | Ingestion runtime contract (`resources`, optional `transforms`). |
 
-## `general` (SchemaMetadata)
+## `metadata` (SchemaMetadata)
 
 Identifies the schema. Used for versioning and as fallback graph/schema name when the database config does not set one.
 
 ```yaml
-general:
+metadata:
   name: my_graph          # required
   version: "1.0"          # optional
 ```
@@ -309,54 +307,50 @@ improves debuggability of actor pipelines.
 
 ## Loading a schema
 
-All schema configs are Pydantic models. You can load a Schema from a dict or YAML:
+All schema configs are Pydantic models. Load both schema and ingestion model from the canonical root config:
 
 ```python
-from graflo import Schema
+from graflo import IngestionModel, Schema
 from suthing import FileHandle
 
-# From dict (e.g. from YAML already parsed)
-schema = Schema.model_validate(FileHandle.load("schema.yaml"))
-# Or explicit method
-schema = Schema.from_dict(FileHandle.load("schema.yaml"))
-
-# From YAML file path (if your root is the schema dict)
-data = FileHandle.load("schema.yaml")
-schema = Schema.model_validate(data)
+schema_raw = FileHandle.load("schema.yaml")
+schema = Schema.from_config(schema_raw)
+ingestion_model = IngestionModel.from_config(schema_raw)
+schema.bind_ingestion_model(ingestion_model)
 ```
 
-After loading, the schema runs `finish_init()` (transform names, edge init, resource pipelines, and the internal resource name map). If you modify `resources` programmatically, call `schema.finish_init()` so that `fetch_resource(name)` and ingestion use the updated pipelines.
+After binding, ingestion resources are initialized against the graph model. Access resources via `schema.ingestion_model.fetch_resource(...)`.
 
 ## Minimal full example
 
 ```yaml
-general:
+metadata:
   name: hr
 
-vertex_config:
-  vertices:
-    - name: person
-      fields: [id, name, age]
-      identity: [id]
-    - name: department
-      fields: [name]
-      identity: [name]
-
-edge_config:
-  edges:
-    - source: person
-      target: department
-
-resources:
-  - resource_name: people
-    apply:
-      - vertex: person
-  - resource_name: departments
-    apply:
-      - vertex: person
-        "from": {id: person_id, name: person}
-      - vertex: department
-        "from": {name: department}
+graph:
+  vertex_config:
+    vertices:
+      - name: person
+        fields: [id, name, age]
+        identity: [id]
+      - name: department
+        fields: [name]
+        identity: [name]
+  edge_config:
+    edges:
+      - source: person
+        target: department
+ingestion_model:
+  resources:
+    - resource_name: people
+      apply:
+        - vertex: person
+    - resource_name: departments
+      apply:
+        - vertex: person
+          "from": {id: person_id, name: person}
+        - vertex: department
+          "from": {name: department}
 ```
 
 This defines two vertex types (`person`, `department`), one edge type (`person` → `department`), and two resources: **people** (each row → one `person` vertex) and **departments** (transform + `department` vertices). Data sources are attached to these resources by name (e.g. via `Patterns` or `DataSourceRegistry`) as shown in the [Quick Start](quickstart.md).

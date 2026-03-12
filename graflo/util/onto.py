@@ -8,7 +8,7 @@ Key Components:
     - ResourcePattern: Abstract base class for resource patterns
     - FilePattern: Configuration for file pattern matching
     - TablePattern: Configuration for database table pattern matching
-    - Patterns: Collection of named resource patterns with connection management
+    - Bindings: Collection of named resource patterns with connection management
 """
 
 import abc
@@ -478,7 +478,7 @@ class SparqlPattern(ResourcePattern):
         )
 
 
-class Patterns(ConfigBaseModel):
+class Bindings(ConfigBaseModel):
     """Collection of named resource patterns with connection management.
 
     This class manages a collection of resource patterns (files or tables),
@@ -545,11 +545,15 @@ class Patterns(ConfigBaseModel):
     def _populate_from_mappings(self) -> Self:
         """Populate file_patterns/table_patterns from resource mappings and PostgreSQL configs."""
         if self.postgres_connections:
-            for config_key, config in self.postgres_connections.items():
-                if config is not None:
-                    schema_name = getattr(config, "schema_name", None)
-                    self.postgres_configs[(config_key, schema_name)] = config
-
+            raise ValueError(
+                "Inline postgres_connections are not supported in Bindings. "
+                "Resolve credentials externally at runtime."
+            )
+        if self.sparql_configs:
+            raise ValueError(
+                "Inline sparql_configs are not supported in Bindings. "
+                "Resolve credentials externally at runtime."
+            )
         if self.resource_mapping:
             for resource_name, resource_spec in self.resource_mapping.items():
                 if isinstance(resource_spec, str):
@@ -603,7 +607,7 @@ class Patterns(ConfigBaseModel):
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | list[Any]) -> Self:
-        """Create Patterns from dictionary, supporting both old and new YAML formats.
+        """Create Bindings from dictionary, supporting both old and new YAML formats.
 
         Supports two formats:
         1. New format: Separate `file_patterns` and `table_patterns` fields
@@ -613,10 +617,22 @@ class Patterns(ConfigBaseModel):
             data: Dictionary containing patterns data (or list for base compatibility)
 
         Returns:
-            Patterns: New Patterns instance with properly deserialized patterns
+            Bindings: New Bindings instance with properly deserialized patterns
         """
         if isinstance(data, list):
             return cls.model_validate(data)
+        forbidden_credential_keys = {
+            "postgres_connections",
+            "_postgres_connections",
+            "sparql_configs",
+        }
+        found_forbidden = sorted(k for k in forbidden_credential_keys if k in data)
+        if found_forbidden:
+            joined = ", ".join(found_forbidden)
+            raise ValueError(
+                "Inline credential payload is not supported in Bindings. "
+                f"Remove keys: {joined}. Resolve credentials externally at runtime."
+            )
         if (
             "file_patterns" in data
             or "table_patterns" in data

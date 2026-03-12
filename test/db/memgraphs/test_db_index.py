@@ -12,7 +12,7 @@ def test_create_vertex_index(conn_conf, test_graph_name, schema_obj):
     schema_o = schema_obj("review")
 
     with ConnectionManager(connection_config=conn_conf) as db_client:
-        db_client.define_vertex_indexes(schema_o.vertex_config, schema=schema_o)
+        db_client.define_vertex_indexes(schema_o.graph.vertex_config, schema=schema_o)
 
     # Memgraph index verification:
     # Memgraph creates indices silently. We verify by checking
@@ -26,7 +26,7 @@ def test_create_edge_index(conn_conf, test_graph_name, schema_obj):
 
     with ConnectionManager(connection_config=conn_conf) as db_client:
         db_client.define_edge_indexes(
-            schema_o.edge_config.edges_list(include_aux=True), schema=schema_o
+            schema_o.graph.edge_config.edges_list(include_aux=True), schema=schema_o
         )
 
     # Memgraph indexes are created silently.

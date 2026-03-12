@@ -259,19 +259,19 @@ class NebulaConnection(Connection):
 
     def define_schema(self, schema: Schema) -> None:
         self.define_vertex_classes(schema)
-        edges = schema.edge_config.edges_list(include_aux=True)
+        edges = schema.graph.edge_config.edges_list(include_aux=True)
         self.define_edge_classes(edges)
 
     def define_vertex_classes(self, schema: Schema) -> None:
-        for vname in schema.vertex_config.vertex_set:
-            fields = schema.vertex_config.fields(vname)
+        for vname in schema.graph.vertex_config.vertex_set:
+            fields = schema.graph.vertex_config.fields(vname)
             stmt = create_tag_ngql(vname, fields)
             self._execute(stmt)
             self._tag_fields[vname] = [f.name for f in fields]
             logger.debug("Created tag '%s'", vname)
 
-        if schema.vertex_config.vertex_set:
-            sample_tag = next(iter(schema.vertex_config.vertex_set))
+        if schema.graph.vertex_config.vertex_set:
+            sample_tag = next(iter(schema.graph.vertex_config.vertex_set))
             self._wait_for_dml_ready(sample_tag)
 
     def define_edge_classes(self, edges: list[Edge]) -> None:
@@ -307,7 +307,7 @@ class NebulaConnection(Connection):
             fields = vertex_config.fields(vname)
             string_fields = {f.name for f in fields if f.type == FieldType.STRING}
             index_list = (
-                schema.database_features.vertex_secondary_indexes(vname)
+                schema.db_profile.vertex_secondary_indexes(vname)
                 if schema is not None
                 else []
             )
@@ -332,7 +332,7 @@ class NebulaConnection(Connection):
         for edge in edges:
             rel = edge.relation or f"{edge.source}_{edge.target}"
             index_list = (
-                schema.database_features.edge_secondary_indexes(
+                schema.db_profile.edge_secondary_indexes(
                     edge.edge_id,
                     logical_relation=edge.relation,
                 )
@@ -406,7 +406,7 @@ class NebulaConnection(Connection):
     def init_db(self, schema: Schema, recreate_schema: bool) -> None:
         space_name = self.config.schema_name
         if not space_name:
-            space_name = schema.general.name
+            space_name = schema.metadata.name
             self.config.schema_name = space_name
 
         if recreate_schema:
@@ -450,7 +450,7 @@ class NebulaConnection(Connection):
     # ------------------------------------------------------------------
 
     def clear_data(self, schema: Schema) -> None:
-        for vname in schema.vertex_config.vertex_set:
+        for vname in schema.graph.vertex_config.vertex_set:
             try:
                 self._execute(
                     f"LOOKUP ON `{vname}` YIELD id(vertex) AS vid "

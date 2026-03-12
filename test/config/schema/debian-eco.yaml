@@ -1,57 +1,59 @@
-general:
+metadata:
     name: debian-eco
     version: 0.0.1
-resources:
--   resource_name: package
-    pipeline:
-    -   vertex: package
-    -   key: dependencies
+graph:
+    vertex_config:
+        vertices:
+        -   name: package
+            fields:
+            -   name
+            -   version
+            identity:
+            -   name
+        -   name: maintainer
+            fields:
+            -   name
+            -   email
+            identity:
+            -   email
+        -   name: bug
+            fields:
+            -   id
+            -   subject
+            -   severity
+            -   date
+            identity:
+            -   id
+    edge_config:
+        edges:
+        -   source: package
+            target: package
+        -   source: maintainer
+            target: package
+        -   source: package
+            target: bug
+ingestion_model:
+    resources:
+    -   resource_name: package
         pipeline:
-        -   any_key: true
+        -   vertex: package
+        -   key: dependencies
             pipeline:
-            -   vertex: package
-    -   source: maintainer
-        target: package
-    -   source: package
-        target: package
-        relation_from_key: true
-    -   key: maintainer
+            -   any_key: true
+                pipeline:
+                -   vertex: package
+        -   source: maintainer
+            target: package
+        -   source: package
+            target: package
+            relation_from_key: true
+        -   key: maintainer
+            pipeline:
+            -   vertex: maintainer
+    -   resource_name: bug
         pipeline:
-        -   vertex: maintainer
--   resource_name: bug
-    pipeline:
-    -   map:
-            package: name
-            bug_num: id
-    -   vertex: package
-    -   vertex: bug
-vertex_config:
-    vertices:
-    -   name: package
-        fields:
-        -   name
-        -   version
-        identity:
-        -   name
-    -   name: maintainer
-        fields:
-        -   name
-        -   email
-        identity:
-        -   email
-    -   name: bug
-        fields:
-        -   id
-        -   subject
-        -   severity
-        -   date
-        identity:
-        -   id
-edge_config:
-    edges:
-    -   source: package
-        target: package
-    -   source: maintainer
-        target: package
-    -   source: package
-        target: bug
+        -   map:
+                package: name
+                bug_num: id
+        -   vertex: package
+        -   vertex: bug

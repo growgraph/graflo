@@ -97,7 +97,7 @@ class ProtoTransform(ConfigBaseModel):
 
     name: str | None = Field(
         default=None,
-        description="Optional name for this transform (e.g. for reference in schema.transforms).",
+        description="Optional name for this transform (e.g. for reference in ingestion_model.transforms).",
     )
     module: str | None = Field(
         default=None,

@@ -1,4 +1,4 @@
-"""Build a :class:`DataSourceRegistry` from :class:`Patterns` and :class:`Schema`.
+"""Build a :class:`DataSourceRegistry` from :class:`Bindings` and schema models.
 
 Handles file discovery, SQL table source creation (with auto-JOIN
 enrichment and datetime filtering), and pattern dispatch by resource type.
@@ -11,7 +11,7 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from graflo.architecture.schema import Schema
+from graflo.architecture.schema import IngestionModel, Schema
 from graflo.data_source import DataSourceFactory, DataSourceRegistry
 from graflo.data_source.sql import SQLConfig, SQLDataSource
 from graflo.filter.sql import datetime_range_where_sql
@@ -19,20 +19,21 @@ from graflo.util.onto import FilePattern, ResourceType, SparqlPattern, TablePatt
 
 if TYPE_CHECKING:
     from graflo.hq.caster import IngestionParams
-    from graflo.util.onto import Patterns
+    from graflo.util.onto import Bindings
 
 logger = logging.getLogger(__name__)
 
 
 class RegistryBuilder:
-    """Create a :class:`DataSourceRegistry` from :class:`Patterns`.
+    """Create a :class:`DataSourceRegistry` from :class:`Bindings`.
 
     Attributes:
         schema: Schema providing the resource definitions and vertex/edge config.
     """
 
-    def __init__(self, schema: Schema):
+    def __init__(self, schema: Schema, ingestion_model: IngestionModel):
         self.schema = schema
+        self.ingestion_model = ingestion_model
 
     # ------------------------------------------------------------------
     # Public API
@@ -40,7 +41,7 @@ class RegistryBuilder:
 
     def build(
         self,
-        patterns: Patterns,
+        bindings: Bindings,
         ingestion_params: IngestionParams,
     ) -> DataSourceRegistry:
         """Return a populated :class:`DataSourceRegistry`.
@@ -50,9 +51,9 @@ class RegistryBuilder:
         """
         registry = DataSourceRegistry()
 
-        for resource in self.schema.resources:
+        for resource in self.ingestion_model.resources:
             resource_name = resource.name
-            resource_type = patterns.get_resource_type(resource_name)
+            resource_type = bindings.get_resource_type(resource_name)
 
             if resource_type is None:
                 logger.warning(
@@ -60,7 +61,7 @@ class RegistryBuilder:
                 )
                 continue
 
-            pattern = patterns.patterns.get(resource_name)
+            pattern = bindings.patterns.get(resource_name)
             if pattern is None:
                 logger.warning(
                     f"No pattern found for resource '{resource_name}', skipping"
@@ -84,7 +85,7 @@ class RegistryBuilder:
                     )
                     continue
                 self._register_sql_table_sources(
-                    registry, resource_name, pattern, patterns, ingestion_params
+                    registry, resource_name, pattern, bindings, ingestion_params
                 )
 
             elif resource_type == ResourceType.SPARQL:
@@ -94,7 +95,7 @@ class RegistryBuilder:
                     )
                     continue
                 self._register_sparql_sources(
-                    registry, resource_name, pattern, patterns, ingestion_params
+                    registry, resource_name, pattern, bindings, ingestion_params
                 )
 
             else:
@@ -174,7 +175,7 @@ class RegistryBuilder:
         registry: DataSourceRegistry,
         resource_name: str,
         pattern: TablePattern,
-        patterns: Patterns,
+        bindings: Bindings,
         ingestion_params: IngestionParams,
     ) -> None:
         """Register SQL table data sources for a resource.
@@ -189,14 +190,14 @@ class RegistryBuilder:
         """
         from graflo.hq.auto_join import enrich_edge_pattern_with_joins
 
-        postgres_config = patterns.get_postgres_config(resource_name)
+        postgres_config = bindings.get_postgres_config(resource_name)
         if postgres_config is None:
             logger.warning(
                 f"PostgreSQL table '{resource_name}' has no connection config, skipping"
             )
             return
 
-        table_info = patterns.get_table_info(resource_name)
+        table_info = bindings.get_table_info(resource_name)
         if table_info is None:
             logger.warning(
                 f"Could not get table info for resource '{resource_name}', skipping"
@@ -207,13 +208,13 @@ class RegistryBuilder:
         effective_schema = schema_name or postgres_config.schema_name or "public"
 
         try:
-            resource = self.schema.fetch_resource(resource_name)
+            resource = self.ingestion_model.fetch_resource(resource_name)
             if pattern.view is None and not pattern.joins:
                 enrich_edge_pattern_with_joins(
                     resource=resource,
                     pattern=pattern,
-                    patterns=patterns,
-                    vertex_config=self.schema.vertex_config,
+                    patterns=bindings,
+                    vertex_config=self.schema.graph.vertex_config,
                 )
 
             date_column = pattern.date_field or ingestion_params.datetime_column
@@ -275,7 +276,7 @@ class RegistryBuilder:
         registry: DataSourceRegistry,
         resource_name: str,
         pattern: SparqlPattern,
-        patterns: "Patterns",
+        bindings: "Bindings",
         ingestion_params: "IngestionParams",
     ) -> None:
         """Register SPARQL data sources for a resource.
@@ -295,7 +296,7 @@ class RegistryBuilder:
                     SparqlSourceConfig,
                 )
 
-                sparql_config = patterns.get_sparql_config(resource_name)
+                sparql_config = bindings.get_sparql_config(resource_name)
                 username = (
                     getattr(sparql_config, "username", None) if sparql_config else None
                 )

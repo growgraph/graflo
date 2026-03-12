@@ -26,7 +26,7 @@ from pydantic import BaseModel
 from suthing import Timer
 
 from graflo.architecture.onto import EncodingType, GraphContainer
-from graflo.architecture.schema import Schema
+from graflo.architecture.schema import IngestionModel, Schema
 from graflo.data_source import (
     AbstractDataSource,
     DataSourceFactory,
@@ -36,7 +36,7 @@ from graflo.db import DBConfig
 from graflo.hq.db_writer import DBWriter
 from graflo.hq.registry_builder import RegistryBuilder
 from graflo.util.chunker import ChunkerType
-from graflo.util.onto import Patterns
+from graflo.util.onto import Bindings
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +92,7 @@ class Caster:
     def __init__(
         self,
         schema: Schema,
+        ingestion_model: IngestionModel,
         ingestion_params: IngestionParams | None = None,
         **kwargs,
     ):
@@ -112,6 +113,7 @@ class Caster:
             ingestion_params = IngestionParams(**kwargs)
         self.ingestion_params = ingestion_params
         self.schema = schema
+        self.ingestion_model = ingestion_model
 
     # ------------------------------------------------------------------
     # Casting
@@ -129,7 +131,7 @@ class Caster:
         Returns:
             GraphContainer: Container with cast graph data
         """
-        rr = self.schema.fetch_resource(resource_name)
+        rr = self.ingestion_model.fetch_resource(resource_name)
 
         semaphore = asyncio.Semaphore(self.ingestion_params.n_cores)
 
@@ -358,7 +360,7 @@ class Caster:
             sys.exit(0)
 
         tasks: list[AbstractDataSource] = []
-        for resource_name in self.schema._resources.keys():
+        for resource_name in self.ingestion_model._resources.keys():
             data_sources = data_source_registry.get_data_sources(resource_name)
             if data_sources:
                 logger.info(
@@ -391,7 +393,7 @@ class Caster:
     def ingest(
         self,
         target_db_config: DBConfig,
-        patterns: Patterns | None = None,
+        bindings: Bindings | None = None,
         ingestion_params: IngestionParams | None = None,
     ):
         """Ingest data into the graph database.
@@ -399,24 +401,27 @@ class Caster:
         This is the main ingestion method that takes:
         - Schema: Graph structure (already set in Caster)
         - OutputConfig: Target graph database configuration
-        - Patterns: Mapping of resources to physical data sources
+        - Bindings: Mapping of resources to physical data sources
         - IngestionParams: Parameters controlling the ingestion process
 
         Args:
             target_db_config: Target database connection configuration (for writing graph)
-            patterns: Patterns instance mapping resources to data sources
-                If None, defaults to empty Patterns()
+            bindings: Bindings instance mapping resources to data sources
+                If None, defaults to empty Bindings()
             ingestion_params: IngestionParams instance with ingestion configuration.
                 If None, uses default IngestionParams()
         """
-        patterns = patterns or Patterns()
+        bindings = bindings or Bindings()
         ingestion_params = ingestion_params or IngestionParams()
 
         db_flavor = target_db_config.connection_type
-        self.schema.database_features.db_flavor = db_flavor
+        self.schema.db_profile.db_flavor = db_flavor
         self.schema.finish_init()
+        self.ingestion_model.finish_init(self.schema.graph)
 
-        registry = RegistryBuilder(self.schema).build(patterns, ingestion_params)
+        registry = RegistryBuilder(self.schema, self.ingestion_model).build(
+            bindings, ingestion_params
+        )
 
         asyncio.run(
             self.ingest_data_sources(
@@ -439,6 +444,7 @@ class Caster:
         )
         return DBWriter(
             schema=self.schema,
+            ingestion_model=self.ingestion_model,
             dry=self.ingestion_params.dry,
             max_concurrent=max_concurrent,
         )

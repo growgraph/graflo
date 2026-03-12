@@ -69,23 +69,23 @@ def test_schema_creation(conn_conf, test_graph_name, schema_obj):
     """Test creating schema using init_db (follows ArangoDB pattern).
 
     Pattern: init_db creates graph, defines schema, then defines indexes.
-    Uses schema.general.name as the graph name (from test_graph fixture).
+    Uses schema.metadata.name as the graph name (from test_graph fixture).
 
     Note: In TigerGraph, vertex and edge types are global and shared between graphs.
     The test verifies that types are created and associated with the test graph.
     The test verifies that types are created and associated with the test graph.
     """
     schema_obj = schema_obj("review")
-    # Set graph name in schema.general.name; conn_conf.database is set by fixture
-    schema_obj.general.name = test_graph_name
+    # Set graph name in schema.metadata.name; conn_conf.database is set by fixture
+    schema_obj.metadata.name = test_graph_name
 
     with ConnectionManager(connection_config=conn_conf) as db_client:
         # init_db will: create graph, define schema, define indexes
-        # Graph name comes from schema.general.name
+        # Graph name comes from schema.metadata.name
         db_client.init_db(schema_obj, recreate_schema=True)
 
     with ConnectionManager(connection_config=conn_conf) as db_client:
-        # Verify graph exists (using name from schema.general.name)
+        # Verify graph exists (using name from schema.metadata.name)
         assert db_client.graph_exists(test_graph_name)
 
         # Use the graph context to verify schema
@@ -107,23 +107,23 @@ def test_schema_creation_edges(conn_conf, test_graph_name, schema_obj):
     """Test creating schema using init_db (follows ArangoDB pattern).
 
     Pattern: init_db creates graph, defines schema, then defines indexes.
-    Uses schema.general.name as the graph name (from test_graph fixture).
+    Uses schema.metadata.name as the graph name (from test_graph fixture).
 
     Note: In TigerGraph, vertex and edge types are global and shared between graphs.
     The test verifies that types are created and associated with the test graph.
     The test verifies that types are created and associated with the test graph.
     """
     schema_obj = schema_obj("review-tigergraph-edges")
-    # Set graph name in schema.general.name; conn_conf.database is set by fixture
-    schema_obj.general.name = test_graph_name
+    # Set graph name in schema.metadata.name; conn_conf.database is set by fixture
+    schema_obj.metadata.name = test_graph_name
 
     with ConnectionManager(connection_config=conn_conf) as db_client:
         # init_db will: create graph, define schema, define indexes
-        # Graph name comes from schema.general.name
+        # Graph name comes from schema.metadata.name
         db_client.init_db(schema_obj, recreate_schema=True)
 
     with ConnectionManager(connection_config=conn_conf) as db_client:
-        # Verify graph exists (using name from schema.general.name)
+        # Verify graph exists (using name from schema.metadata.name)
         assert db_client.graph_exists(test_graph_name)
 
         # Use the graph context to verify schema

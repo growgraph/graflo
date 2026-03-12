@@ -155,7 +155,8 @@ from graflo.hq import GraphEngine
 from graflo.hq.caster import IngestionParams
 from graflo.util.onto import FilePattern
 
-schema = Schema.from_dict(FileHandle.load("schema.yaml"))
+schema_raw = FileHandle.load("schema.yaml")
+schema = Schema.from_config(schema_raw)
 conn_conf = ArangoConfig.from_docker_env()
 db_type = conn_conf.connection_type
 

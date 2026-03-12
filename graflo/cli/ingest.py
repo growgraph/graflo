@@ -22,12 +22,13 @@ Example:
 
 import logging.config
 import pathlib
+import asyncio
 from os.path import dirname, join, realpath
 
 import click
 from suthing import FileHandle
 
-from graflo import DataSourceRegistry, Patterns, Schema, DBType
+from graflo import Bindings, DataSourceRegistry, DBType, IngestionModel, Schema
 from graflo.db import DBConfig
 from graflo.data_source import DataSourceFactory
 from graflo.hq import GraphEngine
@@ -124,18 +125,19 @@ def ingest(
 
     logging.basicConfig(level=logging.INFO)
 
-    schema = Schema.from_dict(FileHandle.load(schema_path))
+    schema_raw = FileHandle.load(schema_path)
+    schema = Schema.from_config(schema_raw)
+    ingestion_model = IngestionModel.from_config(schema_raw)
+    schema.bind_ingestion_model(ingestion_model)
 
     # Load config from file
     config_data = FileHandle.load(db_config_path)
     conn_conf = DBConfig.from_dict(config_data)
 
     if resource_pattern_config_path is not None:
-        patterns = Patterns.from_dict(FileHandle.load(resource_pattern_config_path))
+        bindings = Bindings.from_dict(FileHandle.load(resource_pattern_config_path))
     else:
-        patterns = Patterns()
-
-    schema.fetch_resource()
+        bindings = Bindings()
 
     # Determine DB type from connection config
     db_type = conn_conf.connection_type
@@ -201,18 +203,25 @@ def ingest(
         # since GraphEngine.ingest() uses patterns, not registry
         from graflo.hq.caster import Caster
 
-        caster = Caster(schema=schema, ingestion_params=ingestion_params)
-        caster.ingest_data_sources(
-            data_source_registry=registry,
-            conn_conf=conn_conf,
+        caster = Caster(
+            schema=schema,
+            ingestion_model=ingestion_model,
             ingestion_params=ingestion_params,
+        )
+        asyncio.run(
+            caster.ingest_data_sources(
+                data_source_registry=registry,
+                conn_conf=conn_conf,
+                ingestion_params=ingestion_params,
+            )
         )
     else:
         # Fall back to file-based ingestion using GraphEngine
         engine.ingest(
             schema=schema,
+            ingestion_model=ingestion_model,
             target_db_config=conn_conf,
-            patterns=patterns,
+            bindings=bindings,
             ingestion_params=ingestion_params,
         )
 

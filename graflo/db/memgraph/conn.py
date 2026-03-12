@@ -465,7 +465,7 @@ class MemgraphConnection(Connection):
                 else None
             )
             index_list = list(
-                schema.database_features.vertex_secondary_indexes(label)
+                schema.db_profile.vertex_secondary_indexes(label)
                 if schema is not None
                 else []
             )
@@ -512,7 +512,7 @@ class MemgraphConnection(Connection):
             if edge.relation is None:
                 continue
             index_list = (
-                schema.database_features.edge_secondary_indexes(
+                schema.db_profile.edge_secondary_indexes(
                     edge.edge_id,
                     logical_relation=edge.relation,
                 )
@@ -600,7 +600,7 @@ class MemgraphConnection(Connection):
         if self.conn is None:
             raise RuntimeError("Connection is closed")
 
-        self._database_name = schema.general.name
+        self._database_name = schema.metadata.name
         logger.info(f"Initialized Memgraph with schema '{self._database_name}'")
 
         # Check if database already has nodes (schema/graph exists)

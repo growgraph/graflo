@@ -1,51 +1,54 @@
-general:
+metadata:
     name: openalex
-resources:
--   resource_name: work
-    apply:
-    -   name: keep_suffix_id
-    -   name: keep_suffix_id
-        params:
-            sep: "/"
-            keep: [-2, -1]
-        input:
-        -   doi
-        output:
-        -   doi
-    -   key: referenced_works
-        apply:
-        -   vertex: work
-        -   name: keep_suffix_id
-    -   vertex: work
-    -   source: work
-        target: work
-vertex_config:
-    vertices:
-    -   name: work
-        fields:
-        -   _key
-        -   doi
-        -   title
-        -   created_date
-        identity:
-        -   _key
-edge_config:
-    edges: []
-database_features:
+graph:
+    vertex_config:
+        vertices:
+        -   name: work
+            fields:
+            -   _key
+            -   doi
+            -   title
+            -   created_date
+            identity:
+            -   _key
+    edge_config:
+        edges: []
+db_profile:
     vertex_indexes:
         work:
         -   unique: false
             fields:
             -   doi
-transforms:
-    keep_suffix_id:
-        foo: split_keep_part
-        module: graflo.util.transform
-        params:
-            sep: "/"
-            keep: -1
-        input:
-        -   id
-        output:
-        -   _key
-
+ingestion_model:
+    resources:
+    -   resource_name: work
+        apply:
+        -   name: keep_suffix_id
+        -   name: keep_suffix_id
+            params:
+                sep: /
+                keep:
+                -   -2
+                -   -1
+            input:
+            -   doi
+            output:
+            -   doi
+        -   key: referenced_works
+            apply:
+            -   vertex: work
+            -   name: keep_suffix_id
+        -   vertex: work
+        -   source: work
+            target: work
+    transforms:
+        keep_suffix_id:
+            foo: split_keep_part
+            module: graflo.util.transform
+            params:
+                sep: /
+                keep: -1
+            input:
+            -   id
+            output:
+            -   _key

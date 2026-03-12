@@ -39,7 +39,7 @@ from requests import exceptions as requests_exceptions
 
 
 from graflo.architecture.edge import Edge
-from graflo.architecture.database_features import DatabaseFeatures
+from graflo.architecture.database_features import DatabaseProfile
 from graflo.architecture.db_aware import VertexConfigDBAware
 from graflo.architecture.onto import Index
 from graflo.architecture.schema import Schema
@@ -2064,8 +2064,8 @@ class TigerGraphConnection(Connection):
         # Validate graph name
         _validate_tigergraph_schema_name(graph_name, "graph")
 
-        vertex_config = schema.vertex_config
-        edge_config = schema.edge_config
+        vertex_config = schema.graph.vertex_config
+        edge_config = schema.graph.edge_config
         db_schema = schema.resolve_db_aware(DBType.TIGERGRAPH)
 
         vertex_stmts = []
@@ -2318,16 +2318,16 @@ class TigerGraphConnection(Connection):
 
         If any step fails, the graph will be cleaned up gracefully.
         """
-        # Use schema.general.name for graph creation
+        # Use schema.metadata.name for graph creation
         graph_created = False
 
-        # Determine graph name: use config.database if set, otherwise use schema.general.name
+        # Determine graph name: use config.database if set, otherwise use schema.metadata.name
         graph_name = self.config.database
         if not graph_name:
-            graph_name = schema.general.name
+            graph_name = schema.metadata.name
             # Update config for subsequent operations
             self.config.database = graph_name
-            logger.info(f"Using schema name '{graph_name}' from schema.general.name")
+            logger.info(f"Using schema name '{graph_name}' from schema.metadata.name")
 
         # Validate graph name
         _validate_tigergraph_schema_name(graph_name, "graph")
@@ -2432,7 +2432,7 @@ class TigerGraphConnection(Connection):
         schema_change_stmts = []
         db_vertex = (
             VertexConfigDBAware(
-                vertex_config, DatabaseFeatures(db_flavor=DBType.TIGERGRAPH)
+                vertex_config, DatabaseProfile(db_flavor=DBType.TIGERGRAPH)
             )
             if not isinstance(vertex_config, VertexConfigDBAware)
             else vertex_config
@@ -2604,7 +2604,7 @@ class TigerGraphConnection(Connection):
                 db_vertex.vertex_dbname(vertex_class) if db_vertex else vertex_class
             )
             index_list = (
-                schema.database_features.vertex_secondary_indexes(vertex_class)
+                schema.db_profile.vertex_secondary_indexes(vertex_class)
                 if schema is not None
                 else []
             )
@@ -2619,7 +2619,7 @@ class TigerGraphConnection(Connection):
         """
         for edge in edges:
             index_list = (
-                schema.database_features.edge_secondary_indexes(
+                schema.db_profile.edge_secondary_indexes(
                     edge.edge_id,
                     logical_relation=edge.relation,
                 )
@@ -4241,8 +4241,10 @@ class TigerGraphConnection(Connection):
     def define_indexes(self, schema: Schema):
         """Define all indexes from schema."""
         try:
-            self.define_vertex_indexes(schema.vertex_config, schema=schema)
-            edges_for_indexes = list(schema.edge_config.edges_list(include_aux=True))
+            self.define_vertex_indexes(schema.graph.vertex_config, schema=schema)
+            edges_for_indexes = list(
+                schema.graph.edge_config.edges_list(include_aux=True)
+            )
             self.define_edge_indexes(edges_for_indexes, schema=schema)
         except Exception as e:
             logger.error(f"Error defining indexes: {e}")

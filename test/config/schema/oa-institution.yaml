@@ -1,36 +1,24 @@
-general:
+metadata:
     name: openalex
-resources:
--   resource_name: institutions
-    apply:
-    -   vertex: institution
-    -   name: keep_suffix_id
-    -   key: associated_institutions
-        apply:
-        -   vertex: institution
-        -   name: keep_suffix_id
-    -   source: institution
-        target: institution
-        match_target: associated_institutions
-        relation_field: relationship
-vertex_config:
-    vertices:
-    -   name: institution
-        fields:
-        -   _key
-        -   display_name
-        -   country
-        -   type
-        -   grid
-        -   wikidata
-        -   mag
-        -   created_date
-        -   updated_date
-        identity:
-        -   _key
-edge_config:
-    edges: []
-database_features:
+graph:
+    vertex_config:
+        vertices:
+        -   name: institution
+            fields:
+            -   _key
+            -   display_name
+            -   country
+            -   type
+            -   grid
+            -   wikidata
+            -   mag
+            -   created_date
+            -   updated_date
+            identity:
+            -   _key
+    edge_config:
+        edges: []
+db_profile:
     vertex_storage_names:
         institution: institutions
     vertex_indexes:
@@ -42,14 +30,28 @@ database_features:
         -   unique: false
             fields:
             -   type
-transforms:
-    keep_suffix_id:
-        foo: split_keep_part
-        module: graflo.util.transform
-        params:
-            sep: "/"
-            keep: -1
-        input:
-        -   id
-        output:
-        -   _key
+ingestion_model:
+    resources:
+    -   resource_name: institutions
+        apply:
+        -   vertex: institution
+        -   name: keep_suffix_id
+        -   key: associated_institutions
+            apply:
+            -   vertex: institution
+            -   name: keep_suffix_id
+        -   source: institution
+            target: institution
+            match_target: associated_institutions
+            relation_field: relationship
+    transforms:
+        keep_suffix_id:
+            foo: split_keep_part
+            module: graflo.util.transform
+            params:
+                sep: /
+                keep: -1
+            input:
+            -   id
+            output:
+            -   _key

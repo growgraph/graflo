@@ -170,7 +170,7 @@ class Neo4jConnection(Connection):
                 schema.resolve_db_aware(DBType.NEO4J).vertex_config if schema else None
             )
             index_list = list(
-                schema.database_features.vertex_secondary_indexes(c)
+                schema.db_profile.vertex_secondary_indexes(c)
                 if schema is not None
                 else []
             )
@@ -195,7 +195,7 @@ class Neo4jConnection(Connection):
         """
         for edge in edges:
             index_list = (
-                schema.database_features.edge_secondary_indexes(
+                schema.db_profile.edge_secondary_indexes(
                     edge.edge_id,
                     logical_relation=edge.relation,
                 )
@@ -287,7 +287,7 @@ class Neo4jConnection(Connection):
         """Initialize Neo4j with the given schema.
 
         Checks if the database exists and creates it if it doesn't.
-        Uses schema.general.name if database is not set in config.
+        Uses schema.metadata.name if database is not set in config.
         Note: Database creation is only supported in Neo4j Enterprise Edition.
 
         If the database already has nodes and recreate_schema is False, raises
@@ -298,10 +298,10 @@ class Neo4jConnection(Connection):
             recreate_schema: If True, delete all existing data before initialization.
                 If False and database has nodes, raises SchemaExistsError.
         """
-        # Determine database name: use config.database if set, otherwise use schema.general.name
+        # Determine database name: use config.database if set, otherwise use schema.metadata.name
         db_name = self.config.database
         if not db_name:
-            db_name = schema.general.name
+            db_name = schema.metadata.name
             # Update config for subsequent operations
             self.config.database = db_name
 

@@ -1,125 +1,63 @@
-general:
+metadata:
     name: kg
     version: 3.0.0
-resources:
--   resource_name: kg
-    infer_edge_except:
-    -   source: entity
-        target: entity
-    apply:
-    -   key: publication
-        apply:
-        -   vertex: publication
-    -   key: top_level_mention
-        apply:
-        -   vertex: mention
-        -   map:
-                hash: _key
-    -   source: publication
-        target: mention
-        match_target: top_level_mention
-    -   source: mention
-        target: entity
-        match: map_mention_entity
-    -   key: map_mention_entity
-        apply:
-        -   key: entity
-            apply:
-            -   vertex: entity
-            -   map:
-                    hash: _key
-        -   key: mention
-            apply:
-            -   vertex: mention
-            -   map:
-                    hash: _key
-    -   key: triples
-        apply:
-        -   key: triple_index
-            apply:
-            -   vertex: mention
-            -   map:
-                    hash: _key
-        -   key: triple
-            apply:
-            -   apply:
-                -   vertex: mention
-                -   map:
-                        hash: _key
-                        role: _role
-    -   source: mention
-        match_source: triple_index
-        target: mention
-        match_target: triple
-        weights:
-            direct:
-            -   _role
--   resource_name: communities
-    apply:
-    -   source: entity
-        target: community
-    -   key: entity
-        apply:
-        -   vertex: entity
-    -   key: community
-        apply:
-        -   vertex: community
-vertex_config:
-    vertices:
-    -   name: publication
-        fields:
-        -   arxiv
-        -   doi
-        -   created
-        -   data_source
-        identity:
-        -   arxiv
-        -   doi
-    -   name: entity
-        fields:
-        -   linker_type
-        -   ent_db_type
-        -   id
-        -   ent_type
-        -   original_form
-        -   description
-        identity:
-        -   _key
-    -   name: mention
-        fields:
-        -   text
-        identity:
-        -   _key
-    -   name: community
-        fields:
-        -   obs_date
-        -   t_window
-        -   comm_id
-        -   size
-        identity:
-        -   obs_date
-        -   t_window
-        -   comm_id
-edge_config:
-    edges:
-    -   source: entity
-        target: entity
-        identities:
-        -   -   source
-            -   target
-            -   publication@_id
-        weights:
-            direct:
-            -   publication@_id
+graph:
+    vertex_config:
+        vertices:
+        -   name: publication
+            fields:
+            -   arxiv
+            -   doi
+            -   created
+            -   data_source
+            identity:
+            -   arxiv
+            -   doi
+        -   name: entity
+            fields:
+            -   linker_type
+            -   ent_db_type
+            -   id
+            -   ent_type
+            -   original_form
+            -   description
+            identity:
+            -   _key
+        -   name: mention
+            fields:
+            -   text
+            identity:
+            -   _key
+        -   name: community
+            fields:
             -   obs_date
             -   t_window
-    -   source: mention
-        target: entity
-    -   source: entity
-        target: community
-    -   source: community
-        target: community
-database_features:
+            -   comm_id
+            -   size
+            identity:
+            -   obs_date
+            -   t_window
+            -   comm_id
+    edge_config:
+        edges:
+        -   source: entity
+            target: entity
+            identities:
+            -   -   source
+                -   target
+                -   publication@_id
+            weights:
+                direct:
+                -   publication@_id
+                -   obs_date
+                -   t_window
+        -   source: mention
+            target: entity
+        -   source: entity
+            target: community
+        -   source: community
+            target: community
+db_profile:
     vertex_storage_names:
         publication: publications
         entity: entities
@@ -195,3 +133,67 @@ database_features:
             -   _from
             -   _to
             -   _role
+ingestion_model:
+    resources:
+    -   resource_name: kg
+        infer_edge_except:
+        -   source: entity
+            target: entity
+        apply:
+        -   key: publication
+            apply:
+            -   vertex: publication
+        -   key: top_level_mention
+            apply:
+            -   vertex: mention
+            -   map:
+                    hash: _key
+        -   source: publication
+            target: mention
+            match_target: top_level_mention
+        -   source: mention
+            target: entity
+            match: map_mention_entity
+        -   key: map_mention_entity
+            apply:
+            -   key: entity
+                apply:
+                -   vertex: entity
+                -   map:
+                        hash: _key
+            -   key: mention
+                apply:
+                -   vertex: mention
+                -   map:
+                        hash: _key
+        -   key: triples
+            apply:
+            -   key: triple_index
+                apply:
+                -   vertex: mention
+                -   map:
+                        hash: _key
+            -   key: triple
+                apply:
+                -   apply:
+                    -   vertex: mention
+                    -   map:
+                            hash: _key
+                            role: _role
+        -   source: mention
+            match_source: triple_index
+            target: mention
+            match_target: triple
+            weights:
+                direct:
+                -   _role
+    -   resource_name: communities
+        apply:
+        -   source: entity
+            target: community
+        -   key: entity
+            apply:
+            -   vertex: entity
+        -   key: community
+            apply:
+            -   vertex: community

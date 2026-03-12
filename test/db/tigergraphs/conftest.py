@@ -35,7 +35,7 @@ def test_graph_name(conn_conf):
     After the test completes, the graph and all global vertex/edge types will be deleted.
 
     Note: For schema-based tests, use test_graph fixture instead and set
-    schema.general.name = test_graph.
+    schema.metadata.name = test_graph.
     """
     # Generate a less conspicuous graph name with UUID suffix
     graph_uuid = str(uuid.uuid4()).replace("-", "")[:8]

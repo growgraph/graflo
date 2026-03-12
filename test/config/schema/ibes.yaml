@@ -1,106 +1,66 @@
-general:
+metadata:
     name: ibes
-resources:
--   resource_name: ibes
-    encoding: ISO-8859-1
-    apply:
-    -   vertex: ticker
-    -   vertex: analyst
-    -   vertex: recommendation
-    -   vertex: agency
-    -   foo: parse_date_ibes
-        module: graflo.util.transform
-        input:
-        -   ANNDATS
-        -   ANNTIMS
-        output:
-        -   datetime_announce
-    -   foo: parse_date_ibes
-        module: graflo.util.transform
-        input:
-        -   REVDATS
-        -   REVTIMS
-        output:
-        -   datetime_review
-    -   foo: cast_ibes_analyst
-        module: graflo.util.transform
-        input:
-        -   ANALYST
-        output:
-        -   last_name
-        -   initial
-    -   map:
-            CUSIP: cusip
-            CNAME: cname
-            OFTIC: oftic
-    -   map:
-            ESTIMID: aname
-    -   map:
-            ERECCD: erec
-            ETEXT: etext
-            IRECCD: irec
-            ITEXT: itext
-    -   vertex: publication
-vertex_config:
-    blank_vertices:
-    -   publication
-    vertices:
-    -   name: publication
-        fields:
-        -   datetime_review
-        -   datetime_announce
-        identity:
-        -   _key
-    -   name: ticker
-        fields:
-        -   cusip
-        -   cname
-        -   oftic
-        identity:
-        -   cusip
-        -   cname
-        -   oftic
-    -   name: agency
-        fields:
-        -   aname
-        identity:
-        -   aname
-    -   name: analyst
-        fields:
-        -   last_name
-        -   initial
-        identity:
-        -   last_name
-        -   initial
-    -   name: recommendation
-        fields:
-        -   erec
-        -   etext
-        -   irec
-        -   itext
-        identity:
-        -   irec
-        -   erec
-        -   etext
-        -   itext
-edge_config:
-    edges:
-    -   source: publication
-        target: ticker
-    -   source: analyst
-        target: agency
-        weights:
-            vertices:
-            -   name: publication
-                keep_vertex_name: false
-                fields:
-                -   datetime_review
-                -   datetime_announce
-    -   source: analyst
-        target: publication
-    -   source: publication
-        target: recommendation
-database_features:
+graph:
+    vertex_config:
+        blank_vertices:
+        -   publication
+        vertices:
+        -   name: publication
+            fields:
+            -   datetime_review
+            -   datetime_announce
+            identity:
+            -   _key
+        -   name: ticker
+            fields:
+            -   cusip
+            -   cname
+            -   oftic
+            identity:
+            -   cusip
+            -   cname
+            -   oftic
+        -   name: agency
+            fields:
+            -   aname
+            identity:
+            -   aname
+        -   name: analyst
+            fields:
+            -   last_name
+            -   initial
+            identity:
+            -   last_name
+            -   initial
+        -   name: recommendation
+            fields:
+            -   erec
+            -   etext
+            -   irec
+            -   itext
+            identity:
+            -   irec
+            -   erec
+            -   etext
+            -   itext
+    edge_config:
+        edges:
+        -   source: publication
+            target: ticker
+        -   source: analyst
+            target: agency
+            weights:
+                vertices:
+                -   name: publication
+                    keep_vertex_name: false
+                    fields:
+                    -   datetime_review
+                    -   datetime_announce
+        -   source: analyst
+            target: publication
+        -   source: publication
+            target: recommendation
+db_profile:
     vertex_storage_names:
         publication: publications
         ticker: tickers
@@ -117,3 +77,45 @@ database_features:
             unique: false
             fields:
             -   datetime_announce
+ingestion_model:
+    resources:
+    -   resource_name: ibes
+        encoding: ISO-8859-1
+        apply:
+        -   vertex: ticker
+        -   vertex: analyst
+        -   vertex: recommendation
+        -   vertex: agency
+        -   foo: parse_date_ibes
+            module: graflo.util.transform
+            input:
+            -   ANNDATS
+            -   ANNTIMS
+            output:
+            -   datetime_announce
+        -   foo: parse_date_ibes
+            module: graflo.util.transform
+            input:
+            -   REVDATS
+            -   REVTIMS
+            output:
+            -   datetime_review
+        -   foo: cast_ibes_analyst
+            module: graflo.util.transform
+            input:
+            -   ANALYST
+            output:
+            -   last_name
+            -   initial
+        -   map:
+                CUSIP: cusip
+                CNAME: cname
+                OFTIC: oftic
+        -   map:
+                ESTIMID: aname
+        -   map:
+                ERECCD: erec
+                ETEXT: etext
+                IRECCD: irec
+                ITEXT: itext
+        -   vertex: publication

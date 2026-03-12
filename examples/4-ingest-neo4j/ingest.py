@@ -1,12 +1,14 @@
 import pathlib
 from suthing import FileHandle
-from graflo import Patterns, Schema
+from graflo import Bindings, IngestionModel, Schema
 from graflo.util.onto import FilePattern
 from graflo.db import Neo4jConfig
 from graflo.hq import GraphEngine
 from graflo.hq.caster import IngestionParams
 
-schema = Schema.from_dict(FileHandle.load("schema.yaml"))
+schema_raw = FileHandle.load("schema.yaml")
+schema = Schema.from_config(schema_raw)
+ingestion_model = IngestionModel.from_config(schema_raw)
 
 # Load config from docker/neo4j/.env (recommended)
 # This automatically reads NEO4J_BOLT_PORT, NEO4J_AUTH, etc.
@@ -26,9 +28,9 @@ conn_conf = Neo4jConfig.from_docker_env()
 # Determine DB type from connection config
 db_type = conn_conf.connection_type
 
-# Create Patterns with file patterns
-patterns = Patterns()
-patterns.add_file_pattern(
+# Create Bindings with file patterns
+bindings = Bindings()
+bindings.add_file_pattern(
     "package",
     FilePattern(
         # regex=r"^package\.meta.*\.json(?:\.gz)?$",
@@ -37,7 +39,7 @@ patterns.add_file_pattern(
         resource_name="package",
     ),
 )
-patterns.add_file_pattern(
+bindings.add_file_pattern(
     "bug",
     FilePattern(
         regex=r"^bugs.*\.json(?:\.gz)?$",
@@ -47,7 +49,7 @@ patterns.add_file_pattern(
 )
 
 # Or use resource_mapping for simpler initialization
-# patterns = Patterns(
+# bindings = Bindings(
 #     _resource_mapping={
 #         "package": "./data/package.meta.json",
 #         "bugs": "./data/bugs.head.json",
@@ -60,7 +62,8 @@ ingestion_params = IngestionParams(clear_data=True)
 engine.define_and_ingest(
     schema=schema,
     target_db_config=conn_conf,  # Target database config
-    patterns=patterns,  # Source data patterns
+    ingestion_model=ingestion_model,
+    bindings=bindings,  # Source data bindings
     ingestion_params=ingestion_params,
     recreate_schema=True,
 )

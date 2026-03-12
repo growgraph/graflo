@@ -124,7 +124,7 @@ class EdgeVariantSpec(ConfigBaseModel):
         return (self.source, self.target, self.relation)
 
 
-class DatabaseFeatures(ConfigBaseModel):
+class DatabaseProfile(ConfigBaseModel):
     """Container for DB-only physical features such as secondary indexes."""
 
     db_flavor: DBType = PydanticField(
@@ -153,7 +153,7 @@ class DatabaseFeatures(ConfigBaseModel):
     )
 
     @model_validator(mode="after")
-    def _migrate_legacy_edge_specs(self) -> "DatabaseFeatures":
+    def _migrate_legacy_edge_specs(self) -> "DatabaseProfile":
         def _variant_key(
             spec: EdgeVariantSpec,
         ) -> tuple[str, str, str | None, str | None, str | None]:

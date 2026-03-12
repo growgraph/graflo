@@ -1,88 +1,55 @@
-general:
+metadata:
     name: ticker_history
-resources:
--   resource_name: history
-    apply:
-    -   foo: round_str
-        module: graflo.util.transform
-        params:
-            ndigits: 3
-        input:
-        -   Open
-        dress:
-            key: name
-            value: value
-    -   foo: round_str
-        module: graflo.util.transform
-        params:
-            ndigits: 3
-        input:
-        -   Close
-        dress:
-            key: name
-            value: value
-    -   foo: int
-        module: builtins
-        input:
-        -   Volume
-        dress:
-            key: name
-            value: value
-    -   foo: parse_date_yahoo
-        module: graflo.util.transform
-        map:
-            Date: t_obs
-    -   map:
-            __ticker: oftic
-vertex_config:
-    vertices:
-    -   name: ticker
-        fields:
-        -   cusip
-        -   cname
-        -   oftic
-        identity:
-        -   cusip
-        -   cname
-        -   oftic
-    -   name: feature
-        fields:
-        -   name
-        -   value
-        identity:
-        -   name
-        -   value
-        filters:
-        -   or:
-            -   if_then:
-                -   field: name
-                    foo: __eq__
-                    value: Open
-                -   field: value
-                    foo: __gt__
-                    value: 0
-            -   if_then:
-                -   field: name
-                    foo: __eq__
-                    value: Close
-                -   field: value
-                    foo: __gt__
-                    value: 0
-        -   field: name
-            foo: __ne__
-            value: Volume
-edge_config:
-    edges:
-    -   source: ticker
-        target: feature
-        weights:
-            direct:
-            -   t_obs
-            vertices:
-            -   name: feature
-                fields:
-                -   name
-database_features:
+graph:
+    vertex_config:
+        vertices:
+        -   name: ticker
+            fields:
+            -   cusip
+            -   cname
+            -   oftic
+            identity:
+            -   cusip
+            -   cname
+            -   oftic
+        -   name: feature
+            fields:
+            -   name
+            -   value
+            identity:
+            -   name
+            -   value
+            filters:
+            -   or:
+                -   if_then:
+                    -   field: name
+                        foo: __eq__
+                        value: Open
+                    -   field: value
+                        foo: __gt__
+                        value: 0
+                -   if_then:
+                    -   field: name
+                        foo: __eq__
+                        value: Close
+                    -   field: value
+                        foo: __gt__
+                        value: 0
+            -   field: name
+                foo: __ne__
+                value: Volume
+    edge_config:
+        edges:
+        -   source: ticker
+            target: feature
+            weights:
+                direct:
+                -   t_obs
+                vertices:
+                -   name: feature
+                    fields:
+                    -   name
+db_profile:
     vertex_storage_names:
         ticker: tickers
         feature: features
@@ -106,3 +73,38 @@ database_features:
             -   _to
             -   t_obs
             -   name
+ingestion_model:
+    resources:
+    -   resource_name: history
+        apply:
+        -   foo: round_str
+            module: graflo.util.transform
+            params:
+                ndigits: 3
+            input:
+            -   Open
+            dress:
+                key: name
+                value: value
+        -   foo: round_str
+            module: graflo.util.transform
+            params:
+                ndigits: 3
+            input:
+            -   Close
+            dress:
+                key: name
+                value: value
+        -   foo: int
+            module: builtins
+            input:
+            -   Volume
+            dress:
+                key: name
+                value: value
+        -   foo: parse_date_yahoo
+            module: graflo.util.transform
+            map:
+                Date: t_obs
+        -   map:
+                __ticker: oftic

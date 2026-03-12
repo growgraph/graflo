@@ -1,14 +1,14 @@
 """DB-aware projections for logical graph configs.
 
 These wrappers materialize database-specific naming/defaults from logical
-`VertexConfig`/`EdgeConfig` and `DatabaseFeatures` without mutating logical models.
+`VertexConfig`/`EdgeConfig` and `DPProfile` without mutating logical models.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from graflo.architecture.database_features import DatabaseFeatures
+from graflo.architecture.database_features import DatabaseProfile
 from graflo.architecture.edge import (
     DEFAULT_TIGERGRAPH_RELATION,
     DEFAULT_TIGERGRAPH_RELATION_WEIGHTNAME,
@@ -31,14 +31,14 @@ class EdgeRuntime:
     relation_name: str | None
     store_extracted_relation_as_weight: bool
     effective_relation_field: str | None
-    database_features: DatabaseFeatures
+    db_profile: DatabaseProfile
 
     @property
     def edge_id(self) -> EdgeId:
         return self.edge.edge_id
 
     def storage_name(self, *, purpose: str | None = None) -> str | None:
-        return self.database_features.edge_storage_name(
+        return self.db_profile.edge_storage_name(
             self.edge.edge_id,
             source_storage=self.source_storage,
             target_storage=self.target_storage,
@@ -46,7 +46,7 @@ class EdgeRuntime:
         )
 
     def graph_name(self, *, purpose: str | None = None) -> str | None:
-        return self.database_features.edge_graph_name(
+        return self.db_profile.edge_graph_name(
             self.edge.edge_id,
             source_storage=self.source_storage,
             target_storage=self.target_storage,
@@ -54,7 +54,7 @@ class EdgeRuntime:
         )
 
     def physical_variants(self) -> list[dict[str, str | None | list[Index]]]:
-        return self.database_features.edge_physical_variants(
+        return self.db_profile.edge_physical_variants(
             self.edge.edge_id,
             source_storage=self.source_storage,
             target_storage=self.target_storage,
@@ -65,9 +65,9 @@ class EdgeRuntime:
 class VertexConfigDBAware:
     """DB-aware projection wrapper for `VertexConfig`."""
 
-    def __init__(self, logical: VertexConfig, database_features: DatabaseFeatures):
+    def __init__(self, logical: VertexConfig, database_features: DatabaseProfile):
         self.logical = logical
-        self.database_features = database_features
+        self.db_profile = database_features
 
     @property
     def vertex_set(self):
@@ -82,7 +82,7 @@ class VertexConfigDBAware:
         return self.logical.vertices
 
     def vertex_dbname(self, vertex_name: str) -> str:
-        return self.database_features.vertex_storage_name(vertex_name)
+        return self.db_profile.vertex_storage_name(vertex_name)
 
     def index(self, vertex_name: str) -> Index:
         """Get primary index for a vertex (DB layer needs Index for collection setup)."""
@@ -93,16 +93,12 @@ class VertexConfigDBAware:
         if identity:
             return identity
         if vertex_name in self.logical.blank_vertices:
-            return (
-                ["_key"]
-                if self.database_features.db_flavor == DBType.ARANGO
-                else ["id"]
-            )
+            return ["_key"] if self.db_profile.db_flavor == DBType.ARANGO else ["id"]
         return identity
 
     def fields(self, vertex_name: str) -> list[Field]:
         fields = self.logical.fields(vertex_name)
-        if self.database_features.db_flavor != DBType.TIGERGRAPH:
+        if self.db_profile.db_flavor != DBType.TIGERGRAPH:
             return fields
         # TigerGraph needs explicit scalar defaults for schema definition.
         return [
@@ -121,11 +117,11 @@ class EdgeConfigDBAware:
         self,
         logical: EdgeConfig,
         vertex_config: VertexConfigDBAware,
-        database_features: DatabaseFeatures,
+        database_features: DatabaseProfile,
     ):
         self.logical = logical
         self.vertex_config = vertex_config
-        self.database_features = database_features
+        self.db_profile = database_features
 
     @property
     def edges(self) -> list[Edge]:
@@ -145,16 +141,16 @@ class EdgeConfigDBAware:
 
     def relation_dbname(self, edge: Edge) -> str | None:
         relation = edge.relation
-        if self.database_features.db_flavor == DBType.TIGERGRAPH and relation is None:
+        if self.db_profile.db_flavor == DBType.TIGERGRAPH and relation is None:
             relation = DEFAULT_TIGERGRAPH_RELATION
-        return self.database_features.edge_relation_name(
+        return self.db_profile.edge_relation_name(
             edge.edge_id,
             default_relation=relation,
             logical_relation=edge.relation,
         )
 
     def effective_weights(self, edge: Edge) -> WeightConfig | None:
-        if self.database_features.db_flavor != DBType.TIGERGRAPH:
+        if self.db_profile.db_flavor != DBType.TIGERGRAPH:
             return edge.weights
 
         relation_field = edge.relation_field
@@ -180,24 +176,24 @@ class EdgeConfigDBAware:
             target_storage=self.vertex_config.vertex_dbname(edge.target),
             relation_name=self.relation_dbname(edge),
             store_extracted_relation_as_weight=(
-                self.database_features.db_flavor == DBType.TIGERGRAPH
+                self.db_profile.db_flavor == DBType.TIGERGRAPH
             ),
             effective_relation_field=(
                 edge.relation_field
                 if edge.relation_field is not None
                 else (
                     DEFAULT_TIGERGRAPH_RELATION_WEIGHTNAME
-                    if self.database_features.db_flavor == DBType.TIGERGRAPH
+                    if self.db_profile.db_flavor == DBType.TIGERGRAPH
                     and edge.relation_from_key
                     else None
                 )
             ),
-            database_features=self.database_features,
+            db_profile=self.db_profile,
         )
         return runtime
 
     def compile_identity_indexes(self) -> None:
-        db_flavor = self.database_features.db_flavor
+        db_flavor = self.db_profile.db_flavor
         for edge in self.logical.edges:
             for identity_key in edge.identities:
                 identity_fields = self._identity_key_index_fields(
@@ -205,7 +201,7 @@ class EdgeConfigDBAware:
                 )
                 if not identity_fields:
                     continue
-                self.database_features.add_edge_index(
+                self.db_profile.add_edge_index(
                     edge.edge_id,
                     Index(fields=identity_fields, unique=True),
                     logical_relation=edge.relation,
@@ -241,4 +237,4 @@ class SchemaDBAware:
 
     vertex_config: VertexConfigDBAware
     edge_config: EdgeConfigDBAware
-    database_features: DatabaseFeatures
+    db_profile: DatabaseProfile

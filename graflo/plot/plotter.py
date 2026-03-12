@@ -25,7 +25,7 @@ from pathlib import Path
 import networkx as nx
 from suthing import FileHandle
 
-from graflo.architecture import Schema
+from graflo.architecture import IngestionModel, Schema
 from graflo.architecture.actor import (
     ActorWrapper,
     DescendActor,
@@ -271,9 +271,11 @@ class SchemaPlotter:
 
         self.config = FileHandle.load(fpath=config_filename)
 
-        self.schema = Schema.from_dict(self.config)
+        self.schema = Schema.from_config(self.config)
+        self.ingestion_model = IngestionModel.from_config(self.config)
+        self.schema.bind_ingestion_model(self.ingestion_model)
 
-        self.name = self.schema.general.name
+        self.name = self.schema.metadata.name
         self.prefix = self.name
 
     def _discover_edges_from_resources(self):
@@ -288,7 +290,7 @@ class SchemaPlotter:
         """
         discovered_edges = {}
 
-        for resource in self.schema.resources:
+        for resource in self.ingestion_model.resources:
             # Collect all actors from the resource's ActorWrapper
             actors = resource.root.collect_actors()
 
@@ -313,8 +315,10 @@ class SchemaPlotter:
         g = nx.DiGraph()
         nodes = []
         edges = []
-        vconf = self.schema.vertex_config
-        vertex_prefix_dict = lto_dict([v for v in self.schema.vertex_config.vertex_set])
+        vconf = self.schema.graph.vertex_config
+        vertex_prefix_dict = lto_dict(
+            [v for v in self.schema.graph.vertex_config.vertex_set]
+        )
 
         kwargs = {"vfield": True, "vertex_sh": vertex_prefix_dict}
         for k in vconf.vertex_set:
@@ -406,18 +410,20 @@ class SchemaPlotter:
         separate PDF file.
         """
         resource_prefix_dict = lto_dict(
-            [resource.name for resource in self.schema.resources]
+            [resource.name for resource in self.ingestion_model.resources]
         )
-        vertex_prefix_dict = lto_dict([v for v in self.schema.vertex_config.vertex_set])
+        vertex_prefix_dict = lto_dict(
+            [v for v in self.schema.graph.vertex_config.vertex_set]
+        )
         kwargs = {"vertex_sh": vertex_prefix_dict, "resource_sh": resource_prefix_dict}
 
-        for resource in self.schema.resources:
+        for resource in self.ingestion_model.resources:
             kwargs["resource"] = resource.name
             assemble_tree(
                 resource.root,
                 os.path.join(
                     self.fig_path,
-                    f"{self.schema.general.name}.resource-{resource.resource_name}.pdf",
+                    f"{self.schema.metadata.name}.resource-{resource.resource_name}.pdf",
                 ),
             )
 
@@ -431,12 +437,14 @@ class SchemaPlotter:
         g = nx.MultiDiGraph()
         edges = []
         resource_prefix_dict = lto_dict(
-            [resource.name for resource in self.schema.resources]
+            [resource.name for resource in self.ingestion_model.resources]
         )
-        vertex_prefix_dict = lto_dict([v for v in self.schema.vertex_config.vertex_set])
+        vertex_prefix_dict = lto_dict(
+            [v for v in self.schema.graph.vertex_config.vertex_set]
+        )
         kwargs = {"vertex_sh": vertex_prefix_dict, "resource_sh": resource_prefix_dict}
 
-        for resource in self.schema.resources:
+        for resource in self.ingestion_model.resources:
             kwargs["resource"] = resource.name
 
             g = assemble_tree(resource.root)
@@ -520,7 +528,7 @@ class SchemaPlotter:
 
         # Collect all edges: from edge_config and discovered from resources
         all_edges = {}
-        for edge_id, e in self.schema.edge_config.edges_items():
+        for edge_id, e in self.schema.graph.edge_config.edges_items():
             all_edges[edge_id] = e
         # Add discovered edges (they may already be in edge_config, but that's fine)
         for edge_id, e in discovered_edges.items():

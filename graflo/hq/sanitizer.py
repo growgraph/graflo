@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 from collections import defaultdict
 
 from graflo.architecture.edge import Edge
-from graflo.architecture.schema import Schema
+from graflo.architecture.schema import IngestionModel, Schema
 from graflo.architecture.vertex import Field
 from graflo.onto import DBType
 
@@ -50,7 +50,11 @@ class SchemaSanitizer:
         )
         self.vertex_mappings: dict[str, str] = {}
 
-    def sanitize(self, schema: Schema) -> Schema:
+    def sanitize(
+        self,
+        schema: Schema,
+        ingestion_model: IngestionModel | None = None,
+    ) -> Schema:
         """Sanitize attribute names and vertex names in the schema to avoid reserved words.
 
         This method modifies:
@@ -72,8 +76,8 @@ class SchemaSanitizer:
             return schema
 
         # First pass: Sanitize physical vertex storage names
-        for vertex in schema.vertex_config.vertices:
-            dbname = schema.database_features.vertex_storage_name(vertex.name)
+        for vertex in schema.graph.vertex_config.vertices:
+            dbname = schema.db_profile.vertex_storage_name(vertex.name)
             sanitized_vertex_name = sanitize_attribute_name(
                 dbname, self.reserved_words, suffix=f"_{VERTEX_SUFFIX}"
             )
@@ -82,12 +86,12 @@ class SchemaSanitizer:
                     f"Sanitizing vertex name '{dbname}' -> '{sanitized_vertex_name}'"
                 )
                 self.vertex_mappings[dbname] = sanitized_vertex_name
-                schema.database_features.vertex_storage_names[vertex.name] = (
+                schema.db_profile.vertex_storage_names[vertex.name] = (
                     sanitized_vertex_name
                 )
 
         # Second pass: Sanitize vertex field names
-        for vertex in schema.vertex_config.vertices:
+        for vertex in schema.graph.vertex_config.vertices:
             for field in vertex.fields:
                 original_name = field.name
                 sanitized_name = sanitize_attribute_name(
@@ -109,15 +113,15 @@ class SchemaSanitizer:
             ]
 
         vertex_names = {
-            schema.database_features.vertex_storage_name(vertex.name)
-            for vertex in schema.vertex_config.vertices
+            schema.db_profile.vertex_storage_name(vertex.name)
+            for vertex in schema.graph.vertex_config.vertices
         }
 
-        for edge in schema.edge_config.edges:
+        for edge in schema.graph.edge_config.edges:
             if not edge.relation:
                 continue
 
-            original = schema.database_features.edge_relation_name(
+            original = schema.db_profile.edge_relation_name(
                 edge.edge_id,
                 default_relation=edge.relation,
                 logical_relation=edge.relation,
@@ -146,7 +150,7 @@ class SchemaSanitizer:
 
             # Update only if needed
             if sanitized != original:
-                schema.database_features.set_edge_name_spec(
+                schema.db_profile.set_edge_name_spec(
                     edge.edge_id,
                     logical_relation=edge.relation,
                     relation_name=sanitized,
@@ -164,13 +168,13 @@ class SchemaSanitizer:
             str, dict[str, str]
         ] = {}  # vertex_name -> {old_field: new_field}
 
-        if schema.database_features.db_flavor == DBType.TIGERGRAPH:
+        if schema.db_profile.db_flavor == DBType.TIGERGRAPH:
             # Group edges by relation
             edges_by_relation: dict[str | None, list[Edge]] = {}
-            for edge in schema.edge_config.edges:
+            for edge in schema.graph.edge_config.edges:
                 # Use sanitized dbname when grouping by relation for TigerGraph
                 relation = (
-                    schema.database_features.edge_relation_name(
+                    schema.db_profile.edge_relation_name(
                         edge.edge_id,
                         default_relation=edge.relation,
                         logical_relation=edge.relation,
@@ -200,7 +204,11 @@ class SchemaSanitizer:
                     source_vertex_indexes.append(
                         (
                             source_vertex,
-                            tuple(schema.vertex_config.identity_fields(source_vertex)),
+                            tuple(
+                                schema.graph.vertex_config.identity_fields(
+                                    source_vertex
+                                )
+                            ),
                         )
                     )
 
@@ -208,7 +216,11 @@ class SchemaSanitizer:
                     target_vertex_indexes.append(
                         (
                             target_vertex,
-                            tuple(schema.vertex_config.identity_fields(target_vertex)),
+                            tuple(
+                                schema.graph.vertex_config.identity_fields(
+                                    target_vertex
+                                )
+                            ),
                         )
                     )
 
@@ -232,8 +244,8 @@ class SchemaSanitizer:
 
         # Fourth pass: the field maps from edge/relation normalization should be applied to resources:
         # new transforms should be added mapping old index names to those identified in the previous step
-        if field_index_mappings:
-            for resource in schema.resources:
+        if field_index_mappings and ingestion_model is not None:
+            for resource in ingestion_model.resources:
                 self._apply_field_index_mappings_to_resource(
                     resource, field_index_mappings
                 )
@@ -313,7 +325,7 @@ class SchemaSanitizer:
                         field_index_mappings[vertex_name][old_fields[0]] = new_fields[0]
 
             # Update vertex index and fields
-            vertex = schema.vertex_config[vertex_name]
+            vertex = schema.graph.vertex_config[vertex_name]
             existing_field_names = {f.name for f in vertex.fields}
 
             # Add new fields that don't exist

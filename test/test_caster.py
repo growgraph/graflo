@@ -13,6 +13,12 @@ from graflo.hq.caster import Caster
 logger = logging.getLogger(__name__)
 
 
+def _require_ingestion_model(schema):
+    ingestion_model = schema.ingestion_model
+    assert ingestion_model is not None
+    return ingestion_model
+
+
 @pytest.fixture()
 def current_path():
     return dirname(realpath(__file__))
@@ -37,14 +43,14 @@ def cast(modes, schema_obj, current_path, level, reset, n_cores=1):
         try:
             from graflo.plot.plotter import assemble_tree
 
-            for r in schema.resources:
+            for r in schema.ingestion_model.resources:
                 assemble_tree(
                     r.root, f"{output_dir}/{mode}.resource-{r.resource_name}.pdf"
                 )
         except ImportError:
             # graphviz/pygraphviz not available, skip visualization
             logger.debug("graphviz not available, skipping tree visualization")
-        caster = Caster(schema, n_cores=n_cores)
+        caster = Caster(schema, _require_ingestion_model(schema), n_cores=n_cores)
 
         if level == 0:
             fname = os.path.join(

@@ -17,6 +17,12 @@ from graflo.data_source import (
 logger = logging.getLogger(__name__)
 
 
+def _require_ingestion_model(schema):
+    ingestion_model = schema.ingestion_model
+    assert ingestion_model is not None
+    return ingestion_model
+
+
 @pytest.fixture()
 def current_path():
     return dirname(realpath(__file__))
@@ -54,7 +60,7 @@ def test_api_data_source_basic(
     api_source.resource_name = resource_name
 
     # Create caster and process
-    caster = Caster(schema, n_cores=1)
+    caster = Caster(schema, _require_ingestion_model(schema), n_cores=1)
     asyncio.run(
         caster.process_data_source(data_source=api_source, resource_name=resource_name)
     )
@@ -73,7 +79,7 @@ def test_api_data_source_via_process_resource(
     schema = schema_obj(api_mode)
 
     # Create caster
-    caster = Caster(schema, n_cores=1)
+    caster = Caster(schema, _require_ingestion_model(schema), n_cores=1)
 
     # Process using configuration dict
     resource_config = {

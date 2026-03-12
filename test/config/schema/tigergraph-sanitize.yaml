@@ -1,40 +1,41 @@
-general:
+metadata:
     name: tigergraph-sanitize
-database_features:
+graph:
+    vertex_config:
+        vertices:
+        -   name: package
+            fields:
+            -   name: id
+                type: INT
+            -   name: SELECT
+                type: STRING
+            -   name: FROM
+                type: STRING
+            -   name: WHERE
+                type: STRING
+            -   name: name
+                type: STRING
+            identity:
+            -   id
+        -   name: users
+            fields:
+            -   name: id
+                type: INT
+            -   name: name
+                type: STRING
+            identity:
+            -   id
+    edge_config:
+        edges:
+        -   source: package
+            target: users
+db_profile:
     db_flavor: tigergraph
     vertex_storage_names:
         package: Package
         users: Users
-resources:
--   resource_name: package
-    apply:
-    -   vertex: package
-vertex_config:
-    vertices:
-    -   name: package
-        fields:
-        -   name: id
-            type: INT
-        -   name: SELECT
-            type: STRING
-        -   name: FROM
-            type: STRING
-        -   name: WHERE
-            type: STRING
-        -   name: name
-            type: STRING
-        identity:
-        -   id
-    -   name: users
-        fields:
-        -   name: id
-            type: INT
-        -   name: name
-            type: STRING
-        identity:
-        -   id
-edge_config:
-    edges:
-    -   source: package
-        target: users
-
+ingestion_model:
+    resources:
+    -   resource_name: package
+        apply:
+        -   vertex: package

@@ -1,5 +1,5 @@
 from suthing import FileHandle
-from graflo import Patterns, Schema
+from graflo import Bindings, IngestionModel, Schema
 from graflo.db import Neo4jConfig
 from graflo.hq import GraphEngine
 from graflo.hq.caster import IngestionParams
@@ -12,7 +12,9 @@ logging.basicConfig(level=logging.WARNING, handlers=[logging.StreamHandler()])
 # Set graflo module to INFO level
 logging.getLogger("graflo").setLevel(logging.DEBUG)
 
-schema = Schema.from_dict(FileHandle.load("schema.yaml"))
+schema_raw = FileHandle.load("schema.yaml")
+schema = Schema.from_config(schema_raw)
+ingestion_model = IngestionModel.from_config(schema_raw)
 
 # Load config from docker/neo4j/.env (recommended)
 # This automatically reads NEO4J_BOLT_PORT, NEO4J_AUTH, etc.
@@ -36,12 +38,12 @@ conn_conf = Neo4jConfig.from_docker_env()
 db_type = conn_conf.connection_type
 
 # Load patterns from YAML file (same pattern as Schema)
-patterns = Patterns.from_dict(FileHandle.load("patterns.yaml"))
+bindings = Bindings.from_dict(FileHandle.load("patterns.yaml"))
 
 # Alternative: Create patterns programmatically
 # from graflo.util.onto import FilePattern
 # import pathlib
-# patterns = Patterns()
+# bindings = Bindings()
 # patterns.add_file_pattern(
 #     "relations",
 #     FilePattern(regex="^relations.*\.csv$", sub_path=pathlib.Path("."), resource_name="relations")
@@ -53,7 +55,8 @@ ingestion_params = IngestionParams(clear_data=True)
 engine.define_and_ingest(
     schema=schema,
     target_db_config=conn_conf,
-    patterns=patterns,
+    ingestion_model=ingestion_model,
+    bindings=bindings,
     ingestion_params=ingestion_params,
     recreate_schema=True,
 )

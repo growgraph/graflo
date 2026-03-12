@@ -14,7 +14,7 @@ from uuid import uuid4
 from graflo.architecture.edge import Edge
 from graflo.architecture.db_aware import EdgeRuntime, SchemaDBAware
 from graflo.architecture.onto import GraphContainer
-from graflo.architecture.schema import Schema
+from graflo.architecture.schema import IngestionModel, Schema
 from graflo.db import ConnectionManager
 from graflo.db import DBConfig
 from graflo.onto import DBType
@@ -31,8 +31,16 @@ class DBWriter:
         max_concurrent: Upper bound on concurrent DB operations (semaphore size).
     """
 
-    def __init__(self, schema: Schema, *, dry: bool = False, max_concurrent: int = 1):
+    def __init__(
+        self,
+        schema: Schema,
+        ingestion_model: IngestionModel,
+        *,
+        dry: bool = False,
+        max_concurrent: int = 1,
+    ):
         self.schema = schema
+        self.ingestion_model = ingestion_model
         self.dry = dry
         self.max_concurrent = max_concurrent
         self._schema_db_aware: SchemaDBAware | None = None
@@ -54,8 +62,9 @@ class DBWriter:
             edges are extended after the vertex round-trip.
         """
         self.schema.finish_init()
+        self.ingestion_model.finish_init(self.schema.graph)
         self._schema_db_aware = self.schema.resolve_db_aware(conn_conf.connection_type)
-        resource = self.schema.fetch_resource(resource_name)
+        resource = self.ingestion_model.fetch_resource(resource_name)
 
         await self._push_vertices(gc, conn_conf)
         self._resolve_blank_edges(gc)
@@ -125,7 +134,7 @@ class DBWriter:
         """Extend edge lists for blank vertices after their keys are resolved."""
         vc = self._require_db_aware().vertex_config
         for vcol in vc.blank_vertices:
-            for edge_id, _edge in self.schema.edge_config.edges_items():
+            for edge_id, _edge in self.schema.graph.edge_config.edges_items():
                 vfrom, vto, _relation = edge_id
                 if vcol == vfrom or vcol == vto:
                     if vfrom not in gc.vertices or vto not in gc.vertices:
@@ -242,7 +251,7 @@ class DBWriter:
         await asyncio.gather(
             *[
                 _push_one(edge_id, edge)
-                for edge_id, edge in self.schema.edge_config.edges_items()
+                for edge_id, edge in self.schema.graph.edge_config.edges_items()
             ]
         )
 

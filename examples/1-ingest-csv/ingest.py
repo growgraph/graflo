@@ -1,12 +1,14 @@
 import pathlib
 from suthing import FileHandle
-from graflo import Patterns, Schema
+from graflo import Bindings, IngestionModel, Schema
 from graflo.util.onto import FilePattern
 from graflo.db import ArangoConfig
 from graflo.hq import GraphEngine
 from graflo.hq.caster import IngestionParams
 
-schema = Schema.from_dict(FileHandle.load("schema.yaml"))
+schema_raw = FileHandle.load("schema.yaml")
+schema = Schema.from_config(schema_raw)
+ingestion_model = IngestionModel.from_config(schema_raw)
 
 # Load config from docker/arango/.env (recommended)
 # This automatically reads ARANGO_URI, ARANGO_USERNAME, ARANGO_PASSWORD, etc.
@@ -26,15 +28,15 @@ conn_conf = ArangoConfig.from_docker_env()
 # Determine DB type from connection config
 db_type = conn_conf.connection_type
 
-# Create Patterns with file patterns
-patterns = Patterns()
-patterns.add_file_pattern(
+# Create Bindings with file patterns
+bindings = Bindings()
+bindings.add_file_pattern(
     "people",
     FilePattern(
         regex="^people.*\.csv$", sub_path=pathlib.Path("."), resource_name="people"
     ),
 )
-patterns.add_file_pattern(
+bindings.add_file_pattern(
     "departments",
     FilePattern(
         regex="^dep.*\.csv$", sub_path=pathlib.Path("."), resource_name="departments"
@@ -42,7 +44,7 @@ patterns.add_file_pattern(
 )
 
 # Or use resource_mapping for simpler initialization
-# patterns = Patterns(
+# bindings = Bindings(
 #     _resource_mapping={
 #         "people": "./people.csv",
 #         "departments": "./departments.csv",
@@ -55,7 +57,8 @@ ingestion_params = IngestionParams(clear_data=True)
 engine.define_and_ingest(
     schema=schema,
     target_db_config=conn_conf,
-    patterns=patterns,
+    ingestion_model=ingestion_model,
+    bindings=bindings,
     ingestion_params=ingestion_params,
     recreate_schema=True,
 )

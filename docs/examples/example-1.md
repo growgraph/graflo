@@ -79,7 +79,8 @@ from suthing import FileHandle
 from graflo import Caster, Patterns, Schema
 from graflo.db.connection.onto import ArangoConfig
 
-schema = Schema.from_dict(FileHandle.load("schema.yaml"))
+schema_raw = FileHandle.load("schema.yaml")
+schema = Schema.from_config(schema_raw)
 
 # Option 1: Load config from docker/arango/.env (recommended)
 conn_conf = ArangoConfig.from_docker_env()

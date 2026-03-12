@@ -1,77 +1,81 @@
-general:
+metadata:
     name: openalex
-resources:
-    tree_likes:
-    -   name: authors
-        root:
-            children:
-            -   type: vertex
-                name: author
-                transforms:
-                -   name: keep_suffix_id
-            -   key: ids
-                children: []
-            -   key: last_known_institution
-                children:
-                -   type: vertex
-                    name: institution
-                    transforms:
-                    -   name: keep_suffix_id
-                -   type: edge
-                    edge:
-                        source: author
-                        target: institution
-                    weights:
-                        direct:
-                        -   updated_date
-                        -   created_date
-    -   name: works
-        root:
-            children:
-            -   type: vertex
-                name: work
-                transforms:
-                -   name: keep_suffix_id
-                -   name: keep_suffix_id
-                    params:
-                        sep: "/"
-                        keep: [-2, -1]
-                    input:
-                    -   doi
-                    output:
-                    -   doi
-vertex_config:
-    vertices:
-    -   name: author
-        fields:
-        -   _key
-        identity:
-        -   _key
-    -   name: institution
-        fields:
-        -   _key
-        identity:
-        -   _key
-    -   name: work
-        fields:
-        -   _key
-        -   doi
-        identity:
-        -   _key
-transforms:
-    keep_suffix_id:
-        foo: split_keep_part
-        module: graflo.util.transform
-        params:
-            sep: "/"
-            keep: -1
-        input:
-        -   id
-        output:
-        -   _key
-database_features:
+graph:
+    vertex_config:
+        vertices:
+        -   name: author
+            fields:
+            -   _key
+            identity:
+            -   _key
+        -   name: institution
+            fields:
+            -   _key
+            identity:
+            -   _key
+        -   name: work
+            fields:
+            -   _key
+            -   doi
+            identity:
+            -   _key
+    edge_config: []
+db_profile:
     vertex_storage_names:
         author: authors
         institution: institutions
         work: works
-edge_config: []
+ingestion_model:
+    resources:
+        tree_likes:
+        -   name: authors
+            root:
+                children:
+                -   type: vertex
+                    name: author
+                    transforms:
+                    -   name: keep_suffix_id
+                -   key: ids
+                    children: []
+                -   key: last_known_institution
+                    children:
+                    -   type: vertex
+                        name: institution
+                        transforms:
+                        -   name: keep_suffix_id
+                    -   type: edge
+                        edge:
+                            source: author
+                            target: institution
+                        weights:
+                            direct:
+                            -   updated_date
+                            -   created_date
+        -   name: works
+            root:
+                children:
+                -   type: vertex
+                    name: work
+                    transforms:
+                    -   name: keep_suffix_id
+                    -   name: keep_suffix_id
+                        params:
+                            sep: /
+                            keep:
+                            -   -2
+                            -   -1
+                        input:
+                        -   doi
+                        output:
+                        -   doi
+    transforms:
+        keep_suffix_id:
+            foo: split_keep_part
+            module: graflo.util.transform
+            params:
+                sep: /
+                keep: -1
+            input:
+            -   id
+            output:
+            -   _key

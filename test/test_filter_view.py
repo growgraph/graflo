@@ -239,7 +239,7 @@ class TestCreatePatternsTypeLookup:
         mock_conn.config = MagicMock()
 
         mapper = ResourceMapper()
-        patterns = mapper.create_patterns_from_postgres(
+        patterns = mapper.create_bindings_from_postgres(
             conn=mock_conn,
             schema_name="public",
             type_lookup_overrides={

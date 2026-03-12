@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 def test_schema_tree(schema):
     sch = schema("kg")
-    mn = Resource.from_dict(sch["resources"][0])
+    mn = Resource.from_dict(sch["ingestion_model"]["resources"][0])
     assert mn.count() == 14
 
 

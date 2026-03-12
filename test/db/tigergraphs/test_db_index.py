@@ -12,7 +12,9 @@ def test_create_vertex_index(conn_conf, schema_obj, test_graph_name):
         db_client.init_db(schema_obj, recreate_schema=True)
 
         # Define vertex indexes (indexes should be created in init_db, but call explicitly)
-        db_client.define_vertex_indexes(schema_obj.vertex_config, schema=schema_obj)
+        db_client.define_vertex_indexes(
+            schema_obj.graph.vertex_config, schema=schema_obj
+        )
 
     # Verify indexes were created by attempting to create them again
     # If they already exist, we'll get an "already exists" error which confirms creation

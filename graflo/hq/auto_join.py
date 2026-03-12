@@ -19,7 +19,7 @@ from graflo.util.onto import JoinClause, TablePattern
 
 if TYPE_CHECKING:
     from graflo.architecture.vertex import VertexConfig
-    from graflo.util.onto import Patterns
+    from graflo.util.onto import Bindings
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ _TARGET_ALIAS = "t"
 def enrich_edge_pattern_with_joins(
     resource: Resource,
     pattern: TablePattern,
-    patterns: Patterns,
+    patterns: Bindings,
     vertex_config: VertexConfig,
 ) -> None:
     """Mutate *pattern* in-place, adding JoinClauses + IS_NOT_NULL filters.
@@ -47,7 +47,7 @@ def enrich_edge_pattern_with_joins(
     Args:
         resource: The Resource whose pipeline is inspected.
         pattern: The TablePattern to enrich (mutated in-place).
-        patterns: The Patterns collection holding all vertex TablePatterns.
+        patterns: The Bindings collection holding all vertex TablePatterns.
         vertex_config: VertexConfig for looking up primary keys.
     """
     if pattern.joins:
@@ -138,7 +138,7 @@ def _collect_edge_actors(wrapper: ActorWrapper) -> list[EdgeActor]:
 
 def _vertex_table_info(
     vertex_name: str,
-    patterns: Patterns,
+    patterns: Bindings,
     vertex_config: VertexConfig,
 ) -> tuple[str, str | None, str] | None:
     """Return (table_name, schema_name, primary_key_field) for a vertex.

@@ -32,10 +32,10 @@ def _set_purchase_dates(postgres_conn):
 
 
 def test_datetime_columns_sets_date_field_on_patterns(conn_conf, load_mock_schema):
-    """create_patterns(..., datetime_columns=...) sets date_field on TablePatterns."""
+    """create_bindings(..., datetime_columns=...) sets date_field on TablePatterns."""
     _ = load_mock_schema  # ensure tables exist
     engine = GraphEngine(target_db_flavor=DBType.ARANGO)
-    patterns = engine.create_patterns(
+    patterns = engine.create_bindings(
         conn_conf,
         schema_name="public",
         datetime_columns={

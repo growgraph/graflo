@@ -3,9 +3,14 @@ from __future__ import annotations
 import asyncio
 
 from graflo.architecture.edge import Edge, EdgeConfig
-from graflo.architecture.database_features import DatabaseFeatures
+from graflo.architecture.database_features import DatabaseProfile
 from graflo.architecture.onto import GraphContainer
-from graflo.architecture.schema import Schema, SchemaMetadata
+from graflo.architecture.schema import (
+    GraphMetadata,
+    GraphModel,
+    IngestionModel,
+    Schema,
+)
 from graflo.architecture.vertex import Vertex, VertexConfig, Field
 from graflo.db.connection import ArangoConfig
 from graflo.hq.db_writer import DBWriter
@@ -45,18 +50,29 @@ def _build_schema() -> Schema:
         blank_vertices=["blank_v"],
     )
     edge_config = EdgeConfig(edges=[Edge(source="blank_v", target="target_v")])
-    return Schema(
-        general=SchemaMetadata(name="test"),
-        vertex_config=vertex_config,
-        edge_config=edge_config,
-        database_features=DatabaseFeatures(db_flavor=DBType.NEO4J),
-        resources=[],
+    schema = Schema(
+        metadata=GraphMetadata(name="test"),
+        graph=GraphModel(vertex_config=vertex_config, edge_config=edge_config),
+        db_profile=DatabaseProfile(db_flavor=DBType.NEO4J),
     )
+    schema.bind_ingestion_model(IngestionModel(resources=[]))
+    return schema
+
+
+def _require_ingestion_model(schema: Schema) -> IngestionModel:
+    ingestion_model = schema.ingestion_model
+    assert ingestion_model is not None
+    return ingestion_model
 
 
 def test_push_vertices_blank_uses_python_generated_identity(monkeypatch):
     schema = _build_schema()
-    writer = DBWriter(schema=schema, dry=False, max_concurrent=1)
+    writer = DBWriter(
+        schema=schema,
+        ingestion_model=_require_ingestion_model(schema),
+        dry=False,
+        max_concurrent=1,
+    )
     gc = GraphContainer(vertices={"blank_v": [{}]}, edges={}, linear=[])
 
     monkeypatch.setattr("graflo.hq.db_writer.ConnectionManager", _FakeConnectionManager)
@@ -71,7 +87,12 @@ def test_push_vertices_blank_uses_python_generated_identity(monkeypatch):
 
 def test_resolve_blank_edges_prefers_identity_join_over_zip():
     schema = _build_schema()
-    writer = DBWriter(schema=schema, dry=False, max_concurrent=1)
+    writer = DBWriter(
+        schema=schema,
+        ingestion_model=_require_ingestion_model(schema),
+        dry=False,
+        max_concurrent=1,
+    )
     gc = GraphContainer(
         vertices={
             "blank_v": [{"id": "b-2"}, {"id": "b-1"}],

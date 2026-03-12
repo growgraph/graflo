@@ -1,12 +1,12 @@
 import pathlib
 import pytest
 
-from graflo.util.onto import Patterns, FilePattern, TablePattern
+from graflo.util.onto import Bindings, FilePattern, TablePattern
 
 
 def test_patterns():
-    # Create Patterns with FilePattern instances
-    patterns = Patterns()
+    # Create Bindings with FilePattern instances
+    patterns = Bindings()
 
     # Add file patterns directly
     pattern_a = FilePattern(
@@ -212,8 +212,8 @@ def test_table_pattern_build_where_clause_complex():
 
 
 def test_patterns_with_filtering():
-    """Test Patterns collection with filtering parameters."""
-    patterns = Patterns()
+    """Test Bindings collection with filtering parameters."""
+    patterns = Bindings()
 
     # Add file pattern
     file_pattern = FilePattern(

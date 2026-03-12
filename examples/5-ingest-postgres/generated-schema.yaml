@@ -1,78 +1,80 @@
-database_features:
+metadata:
+    name: accounting
+graph:
+    vertex_config:
+        vertices:
+        -   fields:
+            -   name: id
+                type: INT
+            -   name: name
+                type: STRING
+            -   name: price
+                type: FLOAT
+            -   name: description
+                type: STRING
+            -   name: created_at
+                type: DATETIME
+            identity:
+            -   id
+            name: products
+        -   fields:
+            -   name: id
+                type: INT
+            -   name: name
+                type: STRING
+            -   name: email
+                type: STRING
+            -   name: created_at
+                type: DATETIME
+            identity:
+            -   id
+            name: users
+    edge_config:
+        edges:
+        -   relation: follows
+            source: users
+            target: users
+            weights:
+                direct:
+                -   name: created_at
+                    type: DATETIME
+        -   relation: purchases
+            source: users
+            target: products
+            weights:
+                direct:
+                -   name: purchase_date
+                    type: DATETIME
+                -   name: quantity
+                    type: INT
+                -   name: total_amount
+                    type: FLOAT
+db_profile:
     db_flavor: tigergraph
     vertex_storage_names:
         products: products
         users: users
-edge_config:
-    edges:
-    -   relation: follows
-        source: users
-        target: users
-        weights:
-            direct:
-            -   name: created_at
-                type: DATETIME
-    -   relation: purchases
-        source: users
-        target: products
-        weights:
-            direct:
-            -   name: purchase_date
-                type: DATETIME
-            -   name: quantity
-                type: INT
-            -   name: total_amount
-                type: FLOAT
-general:
-    name: accounting
-resources:
--   pipeline:
-    -   vertex: products
-    resource_name: products
--   pipeline:
-    -   vertex: users
-    resource_name: users
--   pipeline:
-    -   from:
-            id: follower_id
-        vertex: users
-    -   from:
-            id: followed_id
-        vertex: users
-    resource_name: follows
--   pipeline:
-    -   from:
-            id: user_id
-        vertex: users
-    -   from:
-            id: product_id
-        vertex: products
-    resource_name: purchases
-vertex_config:
-    vertices:
-    -   fields:
-        -   name: id
-            type: INT
-        -   name: name
-            type: STRING
-        -   name: price
-            type: FLOAT
-        -   name: description
-            type: STRING
-        -   name: created_at
-            type: DATETIME
-        identity:
-        -   id
-        name: products
-    -   fields:
-        -   name: id
-            type: INT
-        -   name: name
-            type: STRING
-        -   name: email
-            type: STRING
-        -   name: created_at
-            type: DATETIME
-        identity:
-        -   id
-        name: users
+ingestion_model:
+    resources:
+    -   pipeline:
+        -   vertex: products
+        resource_name: products
+    -   pipeline:
+        -   vertex: users
+        resource_name: users
+    -   pipeline:
+        -   from:
+                id: follower_id
+            vertex: users
+        -   from:
+                id: followed_id
+            vertex: users
+        resource_name: follows
+    -   pipeline:
+        -   from:
+                id: user_id
+            vertex: users
+        -   from:
+                id: product_id
+            vertex: products
+        resource_name: purchases

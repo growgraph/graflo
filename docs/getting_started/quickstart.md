@@ -23,7 +23,8 @@ from graflo import Caster, Patterns, Schema
 from graflo.util.onto import FilePattern
 from graflo.db.connection.onto import ArangoConfig
 
-schema = Schema.from_dict(FileHandle.load("schema.yaml"))
+schema_raw = FileHandle.load("schema.yaml")
+schema = Schema.from_config(schema_raw)
 
 caster = Caster(schema)
 
@@ -183,7 +184,8 @@ You can also ingest data from REST API endpoints:
 from graflo import Caster, DataSourceRegistry, Schema
 from graflo.data_source import DataSourceFactory, APIConfig, PaginationConfig
 
-schema = Schema.from_dict(FileHandle.load("schema.yaml"))
+schema_raw = FileHandle.load("schema.yaml")
+schema = Schema.from_config(schema_raw)
 
 # Create API data source
 api_config = APIConfig(

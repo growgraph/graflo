@@ -194,7 +194,7 @@ class ArangoConnection(Connection):
         """Initialize ArangoDB with the given schema.
 
         Checks if the database exists and creates it if it doesn't.
-        Uses schema.general.name if database is not set in config.
+        Uses schema.metadata.name if database is not set in config.
 
         If the schema/graph already exists and recreate_schema is False, raises
         SchemaExistsError and the script halts.
@@ -204,10 +204,10 @@ class ArangoConnection(Connection):
             recreate_schema: If True, drop existing vertex/edge classes and define new ones.
                 If False and any collections or graphs exist, raises SchemaExistsError.
         """
-        # Determine database name: use config.database if set, otherwise use schema.general.name
+        # Determine database name: use config.database if set, otherwise use schema.metadata.name
         db_name = self.config.database
         if not db_name:
-            db_name = schema.general.name
+            db_name = schema.metadata.name
             # Update config for subsequent operations
             self.config.database = db_name
 
@@ -340,7 +340,7 @@ class ArangoConnection(Connection):
         """
         self.define_vertex_classes(schema)
         self.define_edge_classes(
-            list(schema.edge_config.edges_list(include_aux=True)), schema=schema
+            list(schema.graph.edge_config.edges_list(include_aux=True)), schema=schema
         )
 
     def define_vertex_classes(self, schema: Schema) -> None:
@@ -505,7 +505,7 @@ class ArangoConnection(Connection):
                         if isinstance(fields_value, (list, tuple)):
                             field_combinations.append(tuple(fields_value))
             index_list = (
-                schema.database_features.vertex_secondary_indexes(c)
+                schema.db_profile.vertex_secondary_indexes(c)
                 if schema is not None
                 else []
             )

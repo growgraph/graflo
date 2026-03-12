@@ -12,12 +12,41 @@ import os
 
 from sqlalchemy import create_engine, text
 
-from graflo.architecture.schema import Schema
+from graflo.architecture.schema import IngestionModel, Schema
 from graflo.data_source.sql import SQLConfig, SQLDataSource
 from graflo.filter.onto import ComparisonOperator, FilterExpression
 from graflo.util.onto import TablePattern
 from graflo.hq.auto_join import enrich_edge_pattern_with_joins
-from graflo.util.onto import Patterns
+from graflo.util.onto import Bindings
+
+
+def _bound_ingestion_model(schema: Schema) -> IngestionModel:
+    ingestion_model = schema.ingestion_model
+    assert ingestion_model is not None
+    return ingestion_model
+
+
+def _build_bound_schema(
+    *,
+    name: str,
+    vertex_config: dict,
+    edge_config: dict,
+    resources: list[dict],
+    db_profile: dict | None = None,
+) -> Schema:
+    schema = Schema.model_validate(
+        {
+            "metadata": {"name": name, "version": "0.0.1"},
+            "graph": {
+                "vertex_config": vertex_config,
+                "edge_config": edge_config,
+            },
+            "db_profile": db_profile or {},
+        }
+    )
+    ingestion_model = IngestionModel.model_validate({"resources": resources})
+    schema.bind_ingestion_model(ingestion_model)
+    return schema
 
 
 # ---------------------------------------------------------------
@@ -184,67 +213,65 @@ class TestEdgeResourceAutoJoin:
     """Edge resource with JOINs and dynamic vertex types through full pipeline."""
 
     def _build_schema(self) -> Schema:
-        return Schema.model_validate(
-            {
-                "general": {"name": "test", "version": "0.0.1"},
-                "vertex_config": {
-                    "vertices": [
-                        {
-                            "name": "server",
-                            "fields": ["id", "class_name", "description"],
-                        },
-                        {
-                            "name": "database",
-                            "fields": ["id", "class_name", "description"],
-                        },
-                        {
-                            "name": "network",
-                            "fields": ["id", "class_name", "description"],
-                        },
-                    ],
-                },
-                "edge_config": {
-                    "edges": [
-                        {"source": "server", "target": "database"},
-                        {"source": "server", "target": "network"},
-                    ],
-                },
-                "resources": [
+        return _build_bound_schema(
+            name="test",
+            vertex_config={
+                "vertices": [
                     {
-                        "resource_name": "relations",
-                        "pipeline": [
-                            {
-                                "vertex_router": {
-                                    "type_field": "s__class_name",
-                                    "prefix": "s__",
-                                }
-                            },
-                            {
-                                "vertex_router": {
-                                    "type_field": "t__class_name",
-                                    "prefix": "t__",
-                                }
-                            },
-                            {
-                                "edge": {
-                                    "from": "server",
-                                    "to": "database",
-                                    "match_source": "parent",
-                                    "match_target": "child",
-                                    "relation_field": "type_display",
-                                }
-                            },
-                        ],
+                        "name": "server",
+                        "fields": ["id", "class_name", "description"],
+                    },
+                    {
+                        "name": "database",
+                        "fields": ["id", "class_name", "description"],
+                    },
+                    {
+                        "name": "network",
+                        "fields": ["id", "class_name", "description"],
                     },
                 ],
-            }
+            },
+            edge_config={
+                "edges": [
+                    {"source": "server", "target": "database"},
+                    {"source": "server", "target": "network"},
+                ],
+            },
+            resources=[
+                {
+                    "resource_name": "relations",
+                    "pipeline": [
+                        {
+                            "vertex_router": {
+                                "type_field": "s__class_name",
+                                "prefix": "s__",
+                            }
+                        },
+                        {
+                            "vertex_router": {
+                                "type_field": "t__class_name",
+                                "prefix": "t__",
+                            }
+                        },
+                        {
+                            "edge": {
+                                "from": "server",
+                                "to": "database",
+                                "match_source": "parent",
+                                "match_target": "child",
+                                "relation_field": "type_display",
+                            }
+                        },
+                    ],
+                },
+            ],
         )
 
     def test_auto_join_query_generates_correct_sql(self):
         """Verify the auto-JOIN + build_query produces valid SQL structure."""
 
         schema = self._build_schema()
-        resource = schema.fetch_resource("relations")
+        resource = _bound_ingestion_model(schema).fetch_resource("relations")
 
         tp_edge = TablePattern(table_name="relations", schema_name="main")
         patterns_table = {
@@ -254,13 +281,13 @@ class TestEdgeResourceAutoJoin:
             "relations": tp_edge,
         }
 
-        patterns = Patterns(table_patterns=patterns_table)
+        patterns = Bindings(table_patterns=patterns_table)
 
         enrich_edge_pattern_with_joins(
             resource=resource,
             pattern=tp_edge,
             patterns=patterns,
-            vertex_config=schema.vertex_config,
+            vertex_config=schema.graph.vertex_config,
         )
 
         q = tp_edge.build_query("main")
@@ -273,11 +300,11 @@ class TestEdgeResourceAutoJoin:
     def test_auto_join_query_executes_on_sqlite(self):
         """Run the generated JOIN query against a real SQLite DB."""
         from graflo.hq.auto_join import enrich_edge_pattern_with_joins
-        from graflo.util.onto import Patterns
+        from graflo.util.onto import Bindings
 
         conn_str = _setup_db()
         schema = self._build_schema()
-        resource = schema.fetch_resource("relations")
+        resource = _bound_ingestion_model(schema).fetch_resource("relations")
 
         tp_edge = TablePattern(table_name="relations")
         patterns_table = {
@@ -286,13 +313,13 @@ class TestEdgeResourceAutoJoin:
             "network": TablePattern(table_name="classes"),
             "relations": tp_edge,
         }
-        patterns = Patterns(table_patterns=patterns_table)
+        patterns = Bindings(table_patterns=patterns_table)
 
         enrich_edge_pattern_with_joins(
             resource=resource,
             pattern=tp_edge,
             patterns=patterns,
-            vertex_config=schema.vertex_config,
+            vertex_config=schema.graph.vertex_config,
         )
 
         # SQLite doesn't use schema prefixes, so build query manually
@@ -338,7 +365,7 @@ class TestEdgeResourceAutoJoin:
         from graflo.architecture.actor import VertexRouterActor
 
         schema = self._build_schema()
-        resource = schema.fetch_resource("relations")
+        resource = _bound_ingestion_model(schema).fetch_resource("relations")
 
         all_actors = resource.root.collect_actors()
         router_actors = [a for a in all_actors if isinstance(a, VertexRouterActor)]
@@ -405,7 +432,7 @@ class TestEdgeResourceAutoJoin:
     def test_full_resource_call_produces_vertices_and_edges(self):
         """Resource.__call__ with dynamic types creates vertices and edges."""
         schema = self._build_schema()
-        resource = schema.fetch_resource("relations")
+        resource = _bound_ingestion_model(schema).fetch_resource("relations")
 
         doc = {
             "parent": "1",
@@ -440,7 +467,7 @@ class TestEdgeResourceAutoJoin:
         from graflo.architecture.actor import VertexRouterActor
 
         schema = self._build_schema()
-        resource = schema.fetch_resource("relations")
+        resource = _bound_ingestion_model(schema).fetch_resource("relations")
         router_actors = [
             a
             for a in resource.root.collect_actors()
@@ -469,43 +496,41 @@ class TestEdgeResourceAutoJoin:
         self,
     ):
         """VertexRouterActor with vertex_from_map projects doc fields to vertex fields."""
-        schema = Schema.model_validate(
-            {
-                "general": {"name": "test", "version": "0.0.1"},
-                "vertex_config": {
-                    "vertices": [
+        schema = _build_bound_schema(
+            name="test",
+            vertex_config={
+                "vertices": [
+                    {
+                        "name": "person",
+                        "fields": ["id", "name"],
+                        "identity": ["id"],
+                    },
+                    {"name": "org", "fields": ["id", "name"], "identity": ["id"]},
+                ],
+            },
+            edge_config={"edges": []},
+            resources=[
+                {
+                    "resource_name": "mixed",
+                    "pipeline": [
                         {
-                            "name": "person",
-                            "fields": ["id", "name"],
-                            "identity": ["id"],
+                            "vertex_router": {
+                                "type_field": "kind",
+                                "type_map": {"Person": "person", "Org": "org"},
+                                "vertex_from_map": {
+                                    "person": {
+                                        "id": "user_id",
+                                        "name": "user_name",
+                                    },
+                                    "org": {"id": "org_id", "name": "org_name"},
+                                },
+                            }
                         },
-                        {"name": "org", "fields": ["id", "name"], "identity": ["id"]},
                     ],
                 },
-                "edge_config": {"edges": []},
-                "resources": [
-                    {
-                        "resource_name": "mixed",
-                        "pipeline": [
-                            {
-                                "vertex_router": {
-                                    "type_field": "kind",
-                                    "type_map": {"Person": "person", "Org": "org"},
-                                    "vertex_from_map": {
-                                        "person": {
-                                            "id": "user_id",
-                                            "name": "user_name",
-                                        },
-                                        "org": {"id": "org_id", "name": "org_name"},
-                                    },
-                                }
-                            },
-                        ],
-                    },
-                ],
-            }
+            ],
         )
-        resource = schema.fetch_resource("mixed")
+        resource = _bound_ingestion_model(schema).fetch_resource("mixed")
 
         doc = {"kind": "Person", "user_id": "u1", "user_name": "Alice"}
         result = resource(doc)
@@ -526,40 +551,40 @@ class TestEdgeResourceAutoJoin:
 
     def test_vertex_router_with_transform_consumes_transform_output(self):
         """TransformActor runs before VertexRouterActor; routed VertexActor consumes buffer_transforms."""
-        schema = Schema.model_validate(
-            {
-                "general": {"name": "test", "version": "0.0.1"},
-                "vertex_config": {
-                    "vertices": [
+        schema = _build_bound_schema(
+            name="test",
+            vertex_config={
+                "vertices": [
+                    {
+                        "name": "item",
+                        "fields": ["id", "label"],
+                        "identity": ["id"],
+                    },
+                ],
+            },
+            edge_config={"edges": []},
+            resources=[
+                {
+                    "resource_name": "transform_then_router",
+                    "pipeline": [
                         {
-                            "name": "item",
-                            "fields": ["id", "label"],
-                            "identity": ["id"],
+                            "transform": {
+                                "map": {"raw_id": "id", "raw_label": "label"},
+                            }
+                        },
+                        {
+                            "vertex_router": {
+                                "type_field": "kind",
+                                "type_map": {"Item": "item"},
+                            }
                         },
                     ],
                 },
-                "edge_config": {"edges": []},
-                "resources": [
-                    {
-                        "resource_name": "transform_then_router",
-                        "pipeline": [
-                            {
-                                "transform": {
-                                    "map": {"raw_id": "id", "raw_label": "label"},
-                                }
-                            },
-                            {
-                                "vertex_router": {
-                                    "type_field": "kind",
-                                    "type_map": {"Item": "item"},
-                                }
-                            },
-                        ],
-                    },
-                ],
-            }
+            ],
         )
-        resource = schema.fetch_resource("transform_then_router")
+        resource = _bound_ingestion_model(schema).fetch_resource(
+            "transform_then_router"
+        )
 
         doc = {"kind": "Item", "raw_id": "x1", "raw_label": "Transformed"}
         result = resource(doc)

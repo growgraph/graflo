@@ -25,10 +25,14 @@ from .hq import Caster, GraphEngine, IngestionParams
 
 # --- Architecture ----------------------------------------------------------
 from .architecture import (
+    GraphMetadata,
+    DatabaseProfile,
     Edge,
     EdgeConfig,
     FieldType,
+    GraphModel,
     Index,
+    IngestionModel,
     Resource,
     Schema,
     Vertex,
@@ -61,7 +65,7 @@ from .filter import ComparisonOperator, FilterExpression, LogicalOperator
 
 # --- Enums & utilities -----------------------------------------------------
 from .onto import AggregationType, DBType
-from .util.onto import FilePattern, Patterns, ResourcePattern, TablePattern
+from .util.onto import Bindings, FilePattern, ResourcePattern, TablePattern
 
 __all__ = [
     # Orchestration
@@ -70,6 +74,10 @@ __all__ = [
     "IngestionParams",
     # Architecture
     "Schema",
+    "GraphMetadata",
+    "GraphModel",
+    "DatabaseProfile",
+    "IngestionModel",
     "Resource",
     "Vertex",
     "VertexConfig",
@@ -103,7 +111,7 @@ __all__ = [
     "AggregationType",
     "DBType",
     "FilePattern",
-    "Patterns",
+    "Bindings",
     "ResourcePattern",
     "TablePattern",
 ]

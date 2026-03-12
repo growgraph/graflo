@@ -110,7 +110,8 @@ from suthing import FileHandle
 from graflo import Caster, Patterns, Schema
 from graflo.db.connection.onto import ArangoConfig, DBConfig
 
-schema = Schema.from_dict(FileHandle.load("schema.yaml"))
+schema_raw = FileHandle.load("schema.yaml")
+schema = Schema.from_config(schema_raw)
 
 caster = Caster(schema)
 

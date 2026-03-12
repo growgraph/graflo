@@ -96,10 +96,12 @@ pip install graflo[sparql]
 ```python
 from suthing import FileHandle
 
-from graflo import Schema, Caster, Patterns
+from graflo import Bindings, IngestionModel, Schema
 from graflo.db.connection.onto import ArangoConfig
 
-schema = Schema.from_dict(FileHandle.load("schema.yaml"))
+schema_raw = FileHandle.load("schema.yaml")
+schema = Schema.from_config(schema_raw)
+ingestion_model = IngestionModel.from_config(schema_raw)
 
 # Option 1: Load config from docker/arango/.env (recommended)
 conn_conf = ArangoConfig.from_docker_env()
@@ -120,26 +122,24 @@ user_conn_conf = ArangoConfig.from_env(prefix="USER")
 #     database="mygraph",  # For ArangoDB, 'database' maps to schema/graph
 # )
 # Note: If 'database' (or 'schema_name' for TigerGraph) is not set,
-# Caster will automatically use Schema.general.name as fallback
+# Caster will automatically use Schema.metadata.name as fallback
 
 from graflo.util.onto import FilePattern
 import pathlib
 
-# Create Patterns with file patterns
-patterns = Patterns()
-patterns.add_file_pattern(
+# Create Bindings with file patterns
+bindings = Bindings()
+bindings.add_file_pattern(
     "work",
     FilePattern(regex="\Sjson$", sub_path=pathlib.Path("./data"), resource_name="work")
 )
 
 # Or use resource_mapping for simpler initialization
-# patterns = Patterns(
+# bindings = Bindings(
 #     _resource_mapping={
 #         "work": "./data/work.json",
 #     }
 # )
-
-schema.fetch_resource()
 
 from graflo.hq.caster import IngestionParams
 from graflo.hq import GraphEngine
@@ -154,8 +154,9 @@ ingestion_params = IngestionParams(
 
 engine.define_and_ingest(
     schema=schema,
+    ingestion_model=ingestion_model,
     target_db_config=conn_conf,  # Target database config
-    patterns=patterns,  # Source data patterns
+    bindings=bindings,  # Source data bindings
     ingestion_params=ingestion_params,
     recreate_schema=False,  # Set to True to drop and redefine schema (script halts if schema exists)
 )

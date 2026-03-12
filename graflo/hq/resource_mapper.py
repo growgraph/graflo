@@ -1,6 +1,6 @@
-"""Resource mapper for creating Patterns from different data sources.
+"""Resource mapper for creating Bindings from different data sources.
 
-This module provides functionality to create Patterns from various data sources
+This module provides functionality to create Bindings from various data sources
 (PostgreSQL, files, etc.) that can be used for graph ingestion.
 """
 
@@ -8,26 +8,26 @@ import logging
 
 from graflo.db import PostgresConnection
 from graflo.filter.view import SelectSpec
-from graflo.util.onto import Patterns, TablePattern
+from graflo.util.onto import Bindings, TablePattern
 
 logger = logging.getLogger(__name__)
 
 
 class ResourceMapper:
-    """Maps different data sources to Patterns for graph ingestion.
+    """Maps different data sources to Bindings for graph ingestion.
 
-    This class provides methods to create Patterns from various data sources,
+    This class provides methods to create Bindings from various data sources,
     enabling a unified interface for pattern creation regardless of the source type.
     """
 
-    def create_patterns_from_postgres(
+    def create_bindings_from_postgres(
         self,
         conn: PostgresConnection,
         schema_name: str | None = None,
         datetime_columns: dict[str, str] | None = None,
         type_lookup_overrides: dict[str, dict] | None = None,
-    ) -> Patterns:
-        """Create Patterns from PostgreSQL tables.
+    ) -> Bindings:
+        """Create Bindings from PostgreSQL tables.
 
         Args:
             conn: PostgresConnection instance
@@ -42,13 +42,13 @@ class ResourceMapper:
                 source, target, relation (optional).
 
         Returns:
-            Patterns: Patterns object with TablePattern instances for all tables
+            Bindings: Bindings object with TablePattern instances for all tables
         """
         # Introspect the schema
         introspection_result = conn.introspect_schema(schema_name=schema_name)
 
         # Create patterns
-        patterns = Patterns()
+        patterns = Bindings()
 
         # Get schema name
         effective_schema = schema_name or introspection_result.schema_name
@@ -100,6 +100,6 @@ class ResourceMapper:
         return patterns
 
     # Future methods can be added here for other resource types:
-    # def create_patterns_from_files(...) -> Patterns:
-    #     """Create Patterns from file sources."""
+    # def create_bindings_from_files(...) -> Bindings:
+    #     """Create Bindings from file sources."""
     #     ...

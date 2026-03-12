@@ -2,7 +2,7 @@
 
 Reads the TBox (class & property definitions) from an RDF source and
 produces a graflo :class:`Schema` with vertices, edges, resources, and
-:class:`Patterns`.
+:class:`Bindings`.
 
 The mapping follows these conventions:
 
@@ -24,12 +24,17 @@ from pathlib import Path
 from typing import Any
 
 from graflo.architecture.edge import Edge, EdgeConfig
-from graflo.architecture.database_features import DatabaseFeatures
+from graflo.architecture.database_features import DatabaseProfile
 from graflo.architecture.resource import Resource
-from graflo.architecture.schema import Schema, SchemaMetadata
+from graflo.architecture.schema import (
+    GraphMetadata,
+    GraphModel,
+    IngestionModel,
+    Schema,
+)
 from graflo.architecture.vertex import Field as VertexField, Vertex, VertexConfig
 from graflo.onto import DBType
-from graflo.util.onto import Patterns, SparqlPattern
+from graflo.util.onto import Bindings, SparqlPattern
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +114,7 @@ class RdfInferenceManager:
         endpoint_url: str | None = None,
         graph_uri: str | None = None,
         schema_name: str | None = None,
-    ) -> Schema:
+    ) -> tuple[Schema, IngestionModel]:
         """Infer a complete graflo Schema from an RDF/OWL ontology.
 
         Args:
@@ -119,7 +124,7 @@ class RdfInferenceManager:
             schema_name: Name for the resulting schema.
 
         Returns:
-            A fully initialised :class:`Schema`.
+            tuple[Schema, IngestionModel]: fully initialised schema and ingestion model.
         """
         from rdflib import OWL, RDF, RDFS
 
@@ -202,23 +207,22 @@ class RdfInferenceManager:
 
         effective_name = schema_name or "rdf_schema"
         schema = Schema(
-            general=SchemaMetadata(name=effective_name),
-            vertex_config=vertex_config,
-            edge_config=edge_config,
-            database_features=DatabaseFeatures(db_flavor=self.target_db_flavor),
-            resources=resources,
+            metadata=GraphMetadata(name=effective_name),
+            graph=GraphModel(vertex_config=vertex_config, edge_config=edge_config),
+            db_profile=DatabaseProfile(db_flavor=self.target_db_flavor),
         )
-        schema.finish_init()
-        return schema
+        ingestion_model = IngestionModel(resources=resources)
+        ingestion_model.finish_init(schema.graph)
+        return schema, ingestion_model
 
-    def create_patterns(
+    def create_bindings(
         self,
         source: str | Path,
         *,
         endpoint_url: str | None = None,
         graph_uri: str | None = None,
-    ) -> Patterns:
-        """Create :class:`Patterns` from an RDF ontology.
+    ) -> Bindings:
+        """Create :class:`Bindings` from an RDF ontology.
 
         One :class:`SparqlPattern` is created per ``owl:Class`` / ``rdfs:Class``.
         The ontology is always loaded from *source* (a local file).  The
@@ -231,7 +235,7 @@ class RdfInferenceManager:
             graph_uri: Named graph containing the data.
 
         Returns:
-            Patterns with one SparqlPattern per class.
+            Bindings with one SparqlPattern per class.
         """
         from rdflib import OWL, RDF, RDFS
 
@@ -251,7 +255,7 @@ class RdfInferenceManager:
             ):
                 classes[name] = uri_str
 
-        patterns = Patterns()
+        patterns = Bindings()
         for cls_name, cls_uri in classes.items():
             sp = SparqlPattern(
                 rdf_class=cls_uri,

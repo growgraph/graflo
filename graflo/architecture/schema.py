@@ -1,30 +1,8 @@
-"""Graph database schema management and configuration.
+"""Graph schema and ingestion model definitions.
 
-This module provides the core schema management functionality for graph databases.
-It defines the structure and configuration of vertices, edges, and resources
-that make up the graph database schema.
-
-Key Components:
-    - Schema: Main schema container with metadata and configurations
-    - SchemaMetadata: Schema versioning and naming information
-    - Resource: Resource definitions for data processing
-    - VertexConfig: Vertex collection configurations
-    - EdgeConfig: Edge collection configurations
-
-The schema system provides:
-    - Schema versioning and metadata
-    - Resource management and validation
-    - Vertex and edge configuration
-    - Transform registration and management
-
-Example:
-    >>> schema = Schema(
-    ...     general=SchemaMetadata(name="social_network", version="1.0.0"),
-    ...     vertex_config=VertexConfig(...),
-    ...     edge_config=EdgeConfig(...),
-    ...     resources=[Resource(...)]
-    ... )
-    >>> resource = schema.fetch_resource("users")
+This module defines:
+    - `Schema`: logical graph + DB profile (A+B)
+    - `IngestionModel`: ingestion resources and transforms (C)
 """
 
 from __future__ import annotations
@@ -49,7 +27,7 @@ from graflo.architecture.db_aware import (
     SchemaDBAware,
     VertexConfigDBAware,
 )
-from graflo.architecture.database_features import DatabaseFeatures
+from graflo.architecture.database_features import DatabaseProfile
 from graflo.architecture.edge import EdgeConfig
 from graflo.architecture.resource import Resource
 from graflo.architecture.transform import ProtoTransform
@@ -66,7 +44,58 @@ _SEMVER_RE = re.compile(
 )
 
 
-class SchemaMetadata(ConfigBaseModel):
+def _split_root_config(
+    data: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Split full config into Schema and IngestionModel payloads."""
+    if not isinstance(data, dict):
+        raise TypeError("Configuration payload must be a mapping")
+
+    top_level_keys = set(data.keys())
+    allowed_root_keys = {"metadata", "graph", "db_profile", "ingestion_model"}
+    unknown_root_keys = top_level_keys - allowed_root_keys
+    if unknown_root_keys:
+        unknown_s = ", ".join(sorted(unknown_root_keys))
+        raise ValueError(
+            f"Unknown top-level keys: {unknown_s}. "
+            "Allowed keys: metadata, graph, db_profile, ingestion_model."
+        )
+
+    if "ingestion_model" not in data:
+        raise ValueError(
+            "Missing required 'ingestion_model' section in config payload."
+        )
+
+    if "metadata" not in data:
+        raise ValueError("Missing required 'metadata' section in config payload.")
+    if "graph" not in data:
+        raise ValueError("Missing required 'graph' section in config payload.")
+
+    ingestion_model = data["ingestion_model"]
+    if not isinstance(ingestion_model, dict):
+        raise TypeError("'ingestion_model' must be a mapping")
+    allowed_ingestion_keys = {"resources", "transforms"}
+    unknown_ingestion_keys = set(ingestion_model.keys()) - allowed_ingestion_keys
+    if unknown_ingestion_keys:
+        unknown_s = ", ".join(sorted(unknown_ingestion_keys))
+        raise ValueError(
+            f"Unknown keys under ingestion_model: {unknown_s}. "
+            "Allowed keys: resources, transforms."
+        )
+
+    schema_payload = {
+        "metadata": data["metadata"],
+        "graph": data["graph"],
+        "db_profile": data.get("db_profile", {}),
+    }
+    ingestion_payload = {
+        "resources": ingestion_model.get("resources", []),
+        "transforms": ingestion_model.get("transforms", {}),
+    }
+    return schema_payload, ingestion_payload
+
+
+class GraphMetadata(ConfigBaseModel):
     """Schema metadata and versioning information.
 
     Holds metadata about the schema, including its name, version, and
@@ -98,18 +127,9 @@ class SchemaMetadata(ConfigBaseModel):
         return v
 
 
-class Schema(ConfigBaseModel):
-    """Graph database schema configuration.
+class GraphModel(ConfigBaseModel):
+    """Logical graph model (A): vertices and edges."""
 
-    Represents the complete schema configuration for a graph database.
-    Manages resources, vertex configurations, edge configurations, and transforms.
-    Suitable for LLM-generated schema constituents.
-    """
-
-    general: SchemaMetadata = PydanticField(
-        ...,
-        description="Schema metadata and versioning (name, version).",
-    )
     vertex_config: VertexConfig = PydanticField(
         ...,
         description="Configuration for vertex collections (vertices, identities, fields).",
@@ -118,10 +138,28 @@ class Schema(ConfigBaseModel):
         ...,
         description="Configuration for edge collections (edges, weights).",
     )
-    database_features: DatabaseFeatures = PydanticField(
-        default_factory=DatabaseFeatures,
-        description="Database-specific physical features (secondary indexes, etc.).",
-    )
+
+    @model_validator(mode="after")
+    def _init_graph(self) -> "GraphModel":
+        self.finish_init()
+        return self
+
+    def finish_init(self) -> None:
+        self.vertex_config.finish_init()
+        self.edge_config.finish_init(self.vertex_config)
+
+    def remove_disconnected_vertices(self) -> set[str]:
+        """Remove disconnected vertices and return removed names."""
+        connected = self.edge_config.vertices
+        disconnected = self.vertex_config.vertex_set - connected
+        if disconnected:
+            self.vertex_config.remove_vertices(disconnected)
+        return disconnected
+
+
+class IngestionModel(ConfigBaseModel):
+    """Ingestion model (C): resources and transform registry."""
+
     resources: list[Resource] = PydanticField(
         default_factory=list,
         description="List of resource definitions (data pipelines mapping to vertices/edges).",
@@ -133,56 +171,44 @@ class Schema(ConfigBaseModel):
 
     _resources: dict[str, Resource] = PrivateAttr()
 
-    @field_validator("resources", mode="before")
     @classmethod
-    def _coerce_resources_list(cls, v: Any) -> Any:
-        """Accept empty dict as empty list for backward compatibility."""
-        if isinstance(v, dict) and len(v) == 0:
-            return []
-        return v
+    def from_config(cls, data: dict[str, Any]) -> "IngestionModel":
+        """Load ingestion model from a canonical root config payload."""
+        _, ingestion_payload = _split_root_config(data)
+        return cls.model_validate(ingestion_payload)
 
     @model_validator(mode="after")
-    def _init_schema(self) -> Schema:
-        """Set transform names, finish edge/resource init, and build resource name map."""
-        self._rebuild_runtime_state()
-        return self
-
-    def finish_init(self) -> None:
-        """Complete schema initialization after construction or resource updates.
-
-        Sets transform names, initializes edge configuration with vertex config,
-        calls finish_init on each resource, validates unique resource names,
-        and builds the internal _resources name-to-Resource mapping.
-
-        Call this after assigning to resources (e.g. when inferring resources
-        from a database) so that _resources and resource pipelines are correct.
-
-        Raises:
-            ValueError: If duplicate resource names are found.
-        """
-        self._rebuild_runtime_state()
-
-    def _rebuild_runtime_state(self) -> None:
-        """Rebuild fully initialized runtime state for schema and resources."""
+    def _init_model(self) -> "IngestionModel":
+        """Set transform names and build resource lookup map."""
         for name, t in self.transforms.items():
             t.name = name
+        self._rebuild_resource_map()
+        return self
 
-        self.vertex_config.finish_init()
-        self.edge_config.finish_init(self.vertex_config)
-
-        for r in self.resources:
-            r.finish_init(
-                vertex_config=self.vertex_config,
-                edge_config=self.edge_config,
-                transforms=self.transforms,
-            )
-
+    def _rebuild_resource_map(self) -> None:
+        """Validate resource name uniqueness and refresh lookup map."""
         names = [r.name for r in self.resources]
         c = Counter(names)
         for k, v in c.items():
             if v > 1:
                 raise ValueError(f"resource name {k} used {v} times")
         object.__setattr__(self, "_resources", {r.name: r for r in self.resources})
+
+    def finish_init(self, graph: GraphModel) -> None:
+        """Initialize resources against graph model and transform library."""
+        self._rebuild_runtime_state()
+        for r in self.resources:
+            r.finish_init(
+                vertex_config=graph.vertex_config,
+                edge_config=graph.edge_config,
+                transforms=self.transforms,
+            )
+
+    def _rebuild_runtime_state(self) -> None:
+        """Rebuild transform names and name lookup map."""
+        for name, t in self.transforms.items():
+            t.name = name
+        self._rebuild_resource_map()
 
     def fetch_resource(self, name: str | None = None) -> Resource:
         """Fetch a resource by name or get the first available resource.
@@ -210,24 +236,14 @@ class Schema(ConfigBaseModel):
                 raise ValueError("Empty resource container 😕")
         return _current_resource
 
-    def remove_disconnected_vertices(self) -> None:
-        """Remove vertices that do not take part in any relation (disconnected).
-
-        Builds the set of vertex names that appear as source or target of any
-        edge, then removes from VertexConfig all other vertices.  For each
-        resource, removes actors that reference disconnected vertices from the
-        actor tree.  If a resource's root directly references a disconnected
-        vertex (single-step pipeline) or becomes empty after pruning, the
-        entire resource is removed.
-
-        Mutates this schema in place.
-        """
-        connected = self.edge_config.vertices
-        disconnected = self.vertex_config.vertex_set - connected
+    def prune_to_graph(
+        self, graph: GraphModel, disconnected: set[str] | None = None
+    ) -> None:
+        """Drop resource actors that reference disconnected vertices."""
+        if disconnected is None:
+            disconnected = graph.vertex_config.vertex_set - graph.edge_config.vertices
         if not disconnected:
             return
-
-        self.vertex_config.remove_vertices(disconnected)
 
         def _mentions_disconnected(wrapper) -> bool:
             return bool(wrapper.actor.references_vertices() & disconnected)
@@ -246,18 +262,76 @@ class Schema(ConfigBaseModel):
             self.resources.remove(r)
             self._resources.pop(r.name, None)
 
+
+class Schema(ConfigBaseModel):
+    """Graph schema (A+B): metadata, graph model, and DB profile."""
+
+    metadata: GraphMetadata = PydanticField(
+        ...,
+        description="Schema metadata and versioning (name, version).",
+    )
+    graph: GraphModel = PydanticField(
+        ...,
+        description="Logical graph model (vertices + edges).",
+    )
+    db_profile: DatabaseProfile = PydanticField(
+        default_factory=DatabaseProfile,
+        description="Database-specific physical profile (secondary indexes, naming, etc.).",
+    )
+    _ingestion_model: IngestionModel | None = PrivateAttr(default=None)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_ingestion_keys(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        invalid_keys = {"ingestion_model", "resources", "transforms"} & set(data.keys())
+        if invalid_keys:
+            invalid_s = ", ".join(sorted(invalid_keys))
+            raise ValueError(
+                "Schema payload must contain only metadata/graph/db_profile. "
+                f"Found ingestion key(s): {invalid_s}. "
+                "Load ingestion via IngestionModel.from_config(config)."
+            )
+        return data
+
+    @classmethod
+    def from_config(cls, data: dict[str, Any]) -> "Schema":
+        """Load schema from a canonical root config payload."""
+        schema_payload, _ = _split_root_config(data)
+        return cls.from_dict(schema_payload)
+
+    @model_validator(mode="after")
+    def _init_schema(self) -> "Schema":
+        self.finish_init()
+        return self
+
+    def finish_init(self) -> None:
+        self.graph.finish_init()
+
+    def remove_disconnected_vertices(self) -> set[str]:
+        return self.graph.remove_disconnected_vertices()
+
+    def bind_ingestion_model(self, ingestion_model: IngestionModel) -> None:
+        ingestion_model.finish_init(self.graph)
+        object.__setattr__(self, "_ingestion_model", ingestion_model)
+
+    @property
+    def ingestion_model(self) -> IngestionModel | None:
+        return self._ingestion_model
+
     def resolve_db_aware(self, db_flavor: DBType | None = None) -> SchemaDBAware:
         """Build DB-aware runtime wrappers without mutating logical schema."""
         if db_flavor is not None:
-            self.database_features.db_flavor = db_flavor
+            self.db_profile.db_flavor = db_flavor
 
-        vertex_db = VertexConfigDBAware(self.vertex_config, self.database_features)
-        edge_db = EdgeConfigDBAware(self.edge_config, vertex_db, self.database_features)
+        vertex_db = VertexConfigDBAware(self.graph.vertex_config, self.db_profile)
+        edge_db = EdgeConfigDBAware(self.graph.edge_config, vertex_db, self.db_profile)
         edge_db.compile_identity_indexes()
         return SchemaDBAware(
             vertex_config=vertex_db,
             edge_config=edge_db,
-            database_features=self.database_features,
+            db_profile=self.db_profile,
         )
 
     @staticmethod
@@ -268,9 +342,11 @@ class Schema(ConfigBaseModel):
 
     def default_dump_filename(self) -> str:
         """Return default schema dump filename: <name>-<version>.yaml."""
-        schema_name = self._slug_filename_token(self.general.name)
+        schema_name = self._slug_filename_token(self.metadata.name)
         version = (
-            self.general.version if self.general.version is not None else "unversioned"
+            self.metadata.version
+            if self.metadata.version is not None
+            else "unversioned"
         )
         schema_version = self._slug_filename_token(version)
         return f"{schema_name}-{schema_version}.yaml"

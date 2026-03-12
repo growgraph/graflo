@@ -1,4 +1,4 @@
-from graflo.architecture.schema import Schema
+from graflo.architecture.schema import IngestionModel, Schema
 from graflo.onto import DBType
 from graflo.architecture import Resource
 from graflo.db import PostgresConnection
@@ -75,14 +75,16 @@ class InferenceManager:
         """
         return self.mapper.create_resources_from_tables(
             introspection_result,
-            schema.vertex_config,
-            schema.edge_config,
+            schema.graph.vertex_config,
+            schema.graph.edge_config,
             vertex_attribute_mappings=self.sanitizer.vertex_attribute_mappings,
             fuzzy_threshold=self.mapper.fuzzy_threshold,
         )
 
-    def infer_complete_schema(self, schema_name: str | None = None) -> Schema:
-        """Infer a complete Schema from source and sanitize for target.
+    def infer_complete_schema(
+        self, schema_name: str | None = None
+    ) -> tuple[Schema, IngestionModel]:
+        """Infer a complete schema and ingestion model from source and sanitize for target.
 
         This is a convenience method that:
         1. Introspects the source schema
@@ -95,7 +97,7 @@ class InferenceManager:
             schema_name: Schema name to introspect (source-specific)
 
         Returns:
-            Schema: Complete inferred schema with vertices, edges, and resources
+            tuple[Schema, IngestionModel]: Complete schema and ingestion model
         """
         # Introspect the schema
         introspection_result = self.introspect(schema_name=schema_name)
@@ -106,14 +108,12 @@ class InferenceManager:
         # Sanitize for target database flavor
         schema = self.sanitizer.sanitize(schema)
 
-        # Create and add resources
+        # Create ingestion model from inferred resources.
         resources = self.create_resources(introspection_result, schema)
-        schema.resources = resources
+        ingestion_model = IngestionModel(resources=resources)
+        ingestion_model.finish_init(schema.graph)
 
-        # Re-initialize to set up resource mappings
-        schema.finish_init()
-
-        return schema
+        return schema, ingestion_model
 
     def create_resources_for_schema(
         self, schema: Schema, schema_name: str | None = None

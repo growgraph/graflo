@@ -1,35 +1,41 @@
-general:
+metadata:
     name: review
-resources:
--   resource_name: authors
-    apply:
-    -   vertex: author
-        "from": {id: author_id, full_name: FullName, hindex: HIndex}
-    -   vertex: researchField
-        "from": {id: research_sector}
-vertex_config:
-    vertices:
-    -   name: author
-        fields:
-        -   id
-        -   full_name
-        -   hindex
-        identity:
-        -   id
-    -   name: researchField
-        fields:
-        -   id
-        -   name
-        -   level
-        identity:
-        -   id
-edge_config:
-    edges:
-    -   source: author
-        target: researchField
-        relation: belongsTo
-database_features:
+graph:
+    vertex_config:
+        vertices:
+        -   name: author
+            fields:
+            -   id
+            -   full_name
+            -   hindex
+            identity:
+            -   id
+        -   name: researchField
+            fields:
+            -   id
+            -   name
+            -   level
+            identity:
+            -   id
+    edge_config:
+        edges:
+        -   source: author
+            target: researchField
+            relation: belongsTo
+db_profile:
     db_flavor: tigergraph
     vertex_storage_names:
         author: Author
         researchField: ResearchField
+ingestion_model:
+    resources:
+    -   resource_name: authors
+        apply:
+        -   vertex: author
+            from:
+                id: author_id
+                full_name: FullName
+                hindex: HIndex
+        -   vertex: researchField
+            from:
+                id: research_sector

@@ -345,7 +345,7 @@ class FalkordbConnection(Connection):
                 else None
             )
             index_list = list(
-                schema.database_features.vertex_secondary_indexes(c)
+                schema.db_profile.vertex_secondary_indexes(c)
                 if schema is not None
                 else []
             )
@@ -371,7 +371,7 @@ class FalkordbConnection(Connection):
         """
         for edge in edges:
             index_list = (
-                schema.database_features.edge_secondary_indexes(
+                schema.db_profile.edge_secondary_indexes(
                     edge.edge_id,
                     logical_relation=edge.relation,
                 )
@@ -478,7 +478,7 @@ class FalkordbConnection(Connection):
     def init_db(self, schema: Schema, recreate_schema: bool) -> None:
         """Initialize FalkorDB with the given schema.
 
-        Uses schema.general.name if database is not set in config.
+        Uses schema.metadata.name if database is not set in config.
 
         If the graph already has nodes and recreate_schema is False, raises
         SchemaExistsError and the script halts.
@@ -488,10 +488,10 @@ class FalkordbConnection(Connection):
             recreate_schema: If True, delete all existing data before initialization.
                 If False and graph has nodes, raises SchemaExistsError.
         """
-        # Determine graph name: use config.database if set, otherwise use schema.general.name
+        # Determine graph name: use config.database if set, otherwise use schema.metadata.name
         graph_name = self.config.database
         if not graph_name:
-            graph_name = schema.general.name
+            graph_name = schema.metadata.name
             self.config.database = graph_name
 
         # Select/create the graph

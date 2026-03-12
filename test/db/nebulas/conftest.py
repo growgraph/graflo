@@ -23,42 +23,44 @@ from graflo.db import NebulaConfig
 
 
 MINI_SCHEMA_DICT = {
-    "general": {"name": "test_graflo", "version": "1.0.0"},
-    "vertex_config": {
-        "vertices": [
-            {
-                "name": "Person",
-                "fields": [
-                    {"name": "name", "type": "STRING"},
-                    {"name": "age", "type": "INT"},
-                ],
-            },
-            {
-                "name": "City",
-                "fields": [
-                    {"name": "name", "type": "STRING"},
-                    {"name": "population", "type": "INT"},
-                ],
-            },
-        ],
-    },
-    "edge_config": {
-        "edges": [
-            {
-                "source": "Person",
-                "target": "City",
-                "relation": "lives_in",
-                "match_source": "name",
-                "match_target": "name",
-            },
-            {
-                "source": "Person",
-                "target": "Person",
-                "relation": "knows",
-                "match_source": "name",
-                "match_target": "name",
-            },
-        ],
+    "metadata": {"name": "test_graflo", "version": "1.0.0"},
+    "graph": {
+        "vertex_config": {
+            "vertices": [
+                {
+                    "name": "Person",
+                    "fields": [
+                        {"name": "name", "type": "STRING"},
+                        {"name": "age", "type": "INT"},
+                    ],
+                },
+                {
+                    "name": "City",
+                    "fields": [
+                        {"name": "name", "type": "STRING"},
+                        {"name": "population", "type": "INT"},
+                    ],
+                },
+            ],
+        },
+        "edge_config": {
+            "edges": [
+                {
+                    "source": "Person",
+                    "target": "City",
+                    "relation": "lives_in",
+                    "match_source": "name",
+                    "match_target": "name",
+                },
+                {
+                    "source": "Person",
+                    "target": "Person",
+                    "relation": "knows",
+                    "match_source": "name",
+                    "match_target": "name",
+                },
+            ],
+        },
     },
 }
 
@@ -129,7 +131,7 @@ def _session_db(_session_conn_conf, _session_schema):
 
 def _clear_test_data(db_client: Connection, schema: Schema) -> None:
     """Delete all vertices and their edges from every tag in the schema."""
-    for vname in schema.vertex_config.vertex_set:
+    for vname in schema.graph.vertex_config.vertex_set:
         try:
             db_client.execute(
                 f"LOOKUP ON `{vname}` YIELD id(vertex) AS vid "

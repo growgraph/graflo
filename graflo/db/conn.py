@@ -146,9 +146,9 @@ class Connection(abc.ABC):
         Args:
             schema: Schema containing vertex and edge configurations
         """
-        self.define_vertex_indexes(schema.vertex_config, schema=schema)
+        self.define_vertex_indexes(schema.graph.vertex_config, schema=schema)
         self.define_edge_indexes(
-            schema.edge_config.edges_list(include_aux=True), schema=schema
+            schema.graph.edge_config.edges_list(include_aux=True), schema=schema
         )
 
     @abc.abstractmethod

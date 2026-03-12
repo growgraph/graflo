@@ -21,7 +21,7 @@ def _field_map(fields: list[Field]) -> dict[str, str | None]:
 
 
 def _vertex_index_tuples(schema: Schema, vertex_name: str) -> set[tuple]:
-    indexes = schema.database_features.vertex_secondary_indexes(vertex_name)
+    indexes = schema.db_profile.vertex_secondary_indexes(vertex_name)
     return {
         (
             tuple(index.fields),
@@ -34,7 +34,7 @@ def _vertex_index_tuples(schema: Schema, vertex_name: str) -> set[tuple]:
 
 
 def _edge_index_tuples(schema: Schema, edge: Edge) -> set[tuple]:
-    indexes = schema.database_features.edge_secondary_indexes(
+    indexes = schema.db_profile.edge_secondary_indexes(
         edge.edge_id, logical_relation=edge.relation
     )
     return {
@@ -104,10 +104,12 @@ class SchemaDiff:
         self, conflicts: list[SchemaConflict]
     ) -> list[MigrationOperation]:
         old_vertices = {
-            vertex.name: vertex for vertex in self.schema_old.vertex_config.vertices
+            vertex.name: vertex
+            for vertex in self.schema_old.graph.vertex_config.vertices
         }
         new_vertices = {
-            vertex.name: vertex for vertex in self.schema_new.vertex_config.vertices
+            vertex.name: vertex
+            for vertex in self.schema_new.graph.vertex_config.vertices
         }
         old_names = set(old_vertices)
         new_names = set(new_vertices)
@@ -194,8 +196,12 @@ class SchemaDiff:
         return operations
 
     def _diff_edges(self, conflicts: list[SchemaConflict]) -> list[MigrationOperation]:
-        old_edges = {edge.edge_id: edge for edge in self.schema_old.edge_config.edges}
-        new_edges = {edge.edge_id: edge for edge in self.schema_new.edge_config.edges}
+        old_edges = {
+            edge.edge_id: edge for edge in self.schema_old.graph.edge_config.edges
+        }
+        new_edges = {
+            edge.edge_id: edge for edge in self.schema_new.graph.edge_config.edges
+        }
         old_ids = set(old_edges)
         new_ids = set(new_edges)
         operations: list[MigrationOperation] = []
@@ -282,19 +288,19 @@ class SchemaDiff:
     def _diff_database_features(self) -> list[MigrationOperation]:
         operations: list[MigrationOperation] = []
         all_vertices = (
-            self.schema_old.vertex_config.vertex_set
-            | self.schema_new.vertex_config.vertex_set
+            self.schema_old.graph.vertex_config.vertex_set
+            | self.schema_new.graph.vertex_config.vertex_set
         )
 
         for vertex_name in sorted(all_vertices):
             old_ix = (
                 _vertex_index_tuples(self.schema_old, vertex_name)
-                if vertex_name in self.schema_old.vertex_config.vertex_set
+                if vertex_name in self.schema_old.graph.vertex_config.vertex_set
                 else set()
             )
             new_ix = (
                 _vertex_index_tuples(self.schema_new, vertex_name)
-                if vertex_name in self.schema_new.vertex_config.vertex_set
+                if vertex_name in self.schema_new.graph.vertex_config.vertex_set
                 else set()
             )
             for ix in sorted(new_ix - old_ix):
@@ -316,8 +322,12 @@ class SchemaDiff:
                     )
                 )
 
-        old_edges = {edge.edge_id: edge for edge in self.schema_old.edge_config.edges}
-        new_edges = {edge.edge_id: edge for edge in self.schema_new.edge_config.edges}
+        old_edges = {
+            edge.edge_id: edge for edge in self.schema_old.graph.edge_config.edges
+        }
+        new_edges = {
+            edge.edge_id: edge for edge in self.schema_new.graph.edge_config.edges
+        }
         all_edge_ids = set(old_edges) | set(new_edges)
         for edge_id in sorted(all_edge_ids):
             old_ix = (

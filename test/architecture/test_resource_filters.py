@@ -273,42 +273,51 @@ class TestAutoJoin:
 
     def _make_schema_and_patterns(self):
         """Build a minimal Schema + Patterns for the CMDB-like scenario."""
-        from graflo.architecture.schema import Schema
-        from graflo.util.onto import Patterns
+        from graflo.architecture.schema import IngestionModel, Schema
+        from graflo.util.onto import Bindings
 
         schema = Schema.model_validate(
             {
-                "general": {"name": "test", "version": "0.0.1"},
-                "vertex_config": {
-                    "vertices": [
-                        {"name": "server", "fields": ["id", "class_name"]},
-                        {"name": "database", "fields": ["id", "class_name"]},
-                    ],
-                },
-                "edge_config": {
-                    "edges": [
-                        {"source": "server", "target": "database"},
-                    ],
-                },
-                "resources": [
-                    {
-                        "resource_name": "cmdb_relations",
-                        "pipeline": [
-                            {
-                                "edge": {
-                                    "from": "server",
-                                    "to": "database",
-                                    "match_source": "parent",
-                                    "match_target": "child",
-                                }
-                            }
+                "metadata": {"name": "test", "version": "0.0.1"},
+                "graph": {
+                    "vertex_config": {
+                        "vertices": [
+                            {"name": "server", "fields": ["id", "class_name"]},
+                            {"name": "database", "fields": ["id", "class_name"]},
                         ],
-                    }
-                ],
+                    },
+                    "edge_config": {
+                        "edges": [
+                            {"source": "server", "target": "database"},
+                        ],
+                    },
+                },
+                "db_profile": {},
             }
         )
+        schema.bind_ingestion_model(
+            IngestionModel.model_validate(
+                {
+                    "resources": [
+                        {
+                            "resource_name": "cmdb_relations",
+                            "pipeline": [
+                                {
+                                    "edge": {
+                                        "from": "server",
+                                        "to": "database",
+                                        "match_source": "parent",
+                                        "match_target": "child",
+                                    }
+                                }
+                            ],
+                        }
+                    ]
+                }
+            )
+        )
 
-        patterns = Patterns(
+        patterns = Bindings(
             table_patterns={
                 "server": TablePattern(table_name="classes", schema_name="sn"),
                 "database": TablePattern(table_name="classes", schema_name="sn"),
@@ -323,14 +332,16 @@ class TestAutoJoin:
         from graflo.hq.auto_join import enrich_edge_pattern_with_joins
 
         schema, patterns = self._make_schema_and_patterns()
-        resource = schema.fetch_resource("cmdb_relations")
+        ingestion_model = schema.ingestion_model
+        assert ingestion_model is not None
+        resource = ingestion_model.fetch_resource("cmdb_relations")
         pattern = patterns.table_patterns["cmdb_relations"]
 
         enrich_edge_pattern_with_joins(
             resource=resource,
             pattern=pattern,
             patterns=patterns,
-            vertex_config=schema.vertex_config,
+            vertex_config=schema.graph.vertex_config,
         )
 
         assert len(pattern.joins) == 2
@@ -344,14 +355,16 @@ class TestAutoJoin:
         from graflo.hq.auto_join import enrich_edge_pattern_with_joins
 
         schema, patterns = self._make_schema_and_patterns()
-        resource = schema.fetch_resource("cmdb_relations")
+        ingestion_model = schema.ingestion_model
+        assert ingestion_model is not None
+        resource = ingestion_model.fetch_resource("cmdb_relations")
         pattern = patterns.table_patterns["cmdb_relations"]
 
         enrich_edge_pattern_with_joins(
             resource=resource,
             pattern=pattern,
             patterns=patterns,
-            vertex_config=schema.vertex_config,
+            vertex_config=schema.graph.vertex_config,
         )
 
         assert len(pattern.filters) == 2
@@ -363,7 +376,9 @@ class TestAutoJoin:
         from graflo.hq.auto_join import enrich_edge_pattern_with_joins
 
         schema, patterns = self._make_schema_and_patterns()
-        resource = schema.fetch_resource("cmdb_relations")
+        ingestion_model = schema.ingestion_model
+        assert ingestion_model is not None
+        resource = ingestion_model.fetch_resource("cmdb_relations")
         pattern = patterns.table_patterns["cmdb_relations"]
         pattern.joins = [JoinClause(table="x", alias="x", on_self="a", on_other="b")]
 
@@ -371,7 +386,7 @@ class TestAutoJoin:
             resource=resource,
             pattern=pattern,
             patterns=patterns,
-            vertex_config=schema.vertex_config,
+            vertex_config=schema.graph.vertex_config,
         )
 
         # Should not have modified the existing join
@@ -382,14 +397,16 @@ class TestAutoJoin:
         from graflo.hq.auto_join import enrich_edge_pattern_with_joins
 
         schema, patterns = self._make_schema_and_patterns()
-        resource = schema.fetch_resource("cmdb_relations")
+        ingestion_model = schema.ingestion_model
+        assert ingestion_model is not None
+        resource = ingestion_model.fetch_resource("cmdb_relations")
         pattern = patterns.table_patterns["cmdb_relations"]
 
         enrich_edge_pattern_with_joins(
             resource=resource,
             pattern=pattern,
             patterns=patterns,
-            vertex_config=schema.vertex_config,
+            vertex_config=schema.graph.vertex_config,
         )
 
         q = pattern.build_query("sn")

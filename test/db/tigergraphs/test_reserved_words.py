@@ -28,6 +28,12 @@ from graflo.hq.sanitizer import SchemaSanitizer
 logger = logging.getLogger(__name__)
 
 
+def _require_ingestion_model(schema):
+    ingestion_model = schema.ingestion_model
+    assert ingestion_model is not None
+    return ingestion_model
+
+
 @pytest.fixture
 def schema_with_reserved_words():
     schema_o = fetch_schema_obj("tigergraph-sanitize")
@@ -46,11 +52,13 @@ def test_vertex_name_sanitization_for_tigergraph(schema_with_reserved_words):
 
     sanitizer = SchemaSanitizer(DBType.TIGERGRAPH)
 
-    sanitized_schema = sanitizer.sanitize(schema)
+    sanitized_schema = sanitizer.sanitize(
+        schema, ingestion_model=_require_ingestion_model(schema)
+    )
 
     vertex_dbnames = [
-        sanitized_schema.database_features.vertex_storage_name(v.name)
-        for v in sanitized_schema.vertex_config.vertices
+        sanitized_schema.db_profile.vertex_storage_name(v.name)
+        for v in sanitized_schema.graph.vertex_config.vertices
     ]
     assert "Package_vertex" in vertex_dbnames, (
         f"Expected 'package_vertex' in vertices after sanitization, got {vertex_dbnames}"
@@ -66,7 +74,9 @@ def test_edges_sanitization_for_tigergraph(schema_with_incompatible_edges):
 
     sanitizer = SchemaSanitizer(DBType.TIGERGRAPH)
 
-    sanitized_schema = sanitizer.sanitize(schema)
+    sanitized_schema = sanitizer.sanitize(
+        schema, ingestion_model=_require_ingestion_model(schema)
+    )
 
     # sanitized_schema.to_yaml_file(
     #     os.path.join(
@@ -75,16 +85,16 @@ def test_edges_sanitization_for_tigergraph(schema_with_incompatible_edges):
     #     )
     # )
 
-    assert sanitized_schema.resources[-1].root.actor.descendants[0].actor.t.map == {
-        "container_name": "id"
-    }
+    assert _require_ingestion_model(sanitized_schema).resources[
+        -1
+    ].root.actor.descendants[0].actor.t.map == {"container_name": "id"}
 
-    assert sanitized_schema.vertex_config.vertices[-1].fields[0].name == "id"
-    assert sanitized_schema.vertex_config.vertices[-1].identity[0] == "id"
-    edge_a = sanitized_schema.edge_config.edges[-2]
-    edge_b = sanitized_schema.edge_config.edges[-1]
+    assert sanitized_schema.graph.vertex_config.vertices[-1].fields[0].name == "id"
+    assert sanitized_schema.graph.vertex_config.vertices[-1].identity[0] == "id"
+    edge_a = sanitized_schema.graph.edge_config.edges[-2]
+    edge_b = sanitized_schema.graph.edge_config.edges[-1]
     assert (
-        sanitized_schema.database_features.edge_relation_name(
+        sanitized_schema.db_profile.edge_relation_name(
             edge_a.edge_id,
             default_relation=edge_a.relation,
             logical_relation=edge_a.relation,
@@ -92,7 +102,7 @@ def test_edges_sanitization_for_tigergraph(schema_with_incompatible_edges):
         == "package_relation"
     )
     assert (
-        sanitized_schema.database_features.edge_relation_name(
+        sanitized_schema.db_profile.edge_relation_name(
             edge_b.edge_id,
             default_relation=edge_b.relation,
             logical_relation=edge_b.relation,

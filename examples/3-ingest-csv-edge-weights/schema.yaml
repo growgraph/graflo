@@ -1,24 +1,28 @@
-general:
+metadata:
     name: companies
-resources:
--   resource_name: relations
-    apply:
-    -   vertex: company
-        "from": {name: company_a}
-    -   vertex: company
-        "from": {name: company_b}
-vertex_config:
-    vertices:
-    -   name: company
-        fields:
-        -   name
-        identity:
-        -   name
-edge_config:
-    edges:
-    -   source: company
-        target: company
-        relation_field: relation
-        weights:
-            direct:
-            -   date
+graph:
+    vertex_config:
+        vertices:
+        -   name: company
+            fields:
+            -   name
+            identity:
+            -   name
+    edge_config:
+        edges:
+        -   source: company
+            target: company
+            relation_field: relation
+            weights:
+                direct:
+                -   date
+ingestion_model:
+    resources:
+    -   resource_name: relations
+        apply:
+        -   vertex: company
+            from:
+                name: company_a
+        -   vertex: company
+            from:
+                name: company_b

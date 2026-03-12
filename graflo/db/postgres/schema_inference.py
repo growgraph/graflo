@@ -11,8 +11,8 @@ from typing import TYPE_CHECKING
 
 
 from graflo.architecture.edge import Edge, EdgeConfig, WeightConfig
-from graflo.architecture.database_features import DatabaseFeatures
-from graflo.architecture.schema import Schema, SchemaMetadata
+from graflo.architecture.database_features import DatabaseProfile
+from graflo.architecture.schema import GraphMetadata, GraphModel, Schema
 from graflo.architecture.vertex import Field, FieldType, Vertex, VertexConfig
 from graflo.onto import DBType
 
@@ -351,18 +351,16 @@ class PostgresSchemaInferencer:
         logger.info(f"Inferred {edges_count} edges")
 
         # Create schema metadata
-        metadata = SchemaMetadata(name=schema_name)
+        metadata = GraphMetadata(name=schema_name)
 
-        # Create schema (resources will be created separately)
+        # Create schema (ingestion model is created separately)
         schema = Schema(
-            general=metadata,
-            vertex_config=vertex_config,
-            edge_config=edge_config,
-            database_features=DatabaseFeatures(
+            metadata=metadata,
+            graph=GraphModel(vertex_config=vertex_config, edge_config=edge_config),
+            db_profile=DatabaseProfile(
                 db_flavor=self.db_flavor,
                 vertex_storage_names={v.name: v.name for v in vertex_config.vertices},
             ),
-            resources=[],  # Resources will be created separately
         )
 
         logger.info(
