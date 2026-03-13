@@ -2,7 +2,7 @@ import logging
 
 import pytest
 
-from graflo.architecture.transform import Transform
+from graflo.architecture.transform import KeyRuleConfig, Transform
 from graflo.util.transform import parse_multi_item
 
 logger = logging.getLogger(__name__)
@@ -184,3 +184,32 @@ def test_split_keep_part_longer():
     t = Transform(**kwargs)  # type: ignore
     r = t(doc)
     assert r["doi"] == "10.1007/978-3-123"
+
+
+def test_rule_snake_to_camel_all():
+    t = Transform(rule={"mode": "snake_to_camel"})  # type: ignore
+    r = t({"first_name": "Ada", "home_address": "London"})
+    assert r == {"firstName": "Ada", "homeAddress": "London"}
+
+
+def test_rule_strip_prefix_all():
+    t = Transform(rule={"mode": "strip_prefix", "value": "e_"})  # type: ignore
+    r = t({"e_name": "Ada", "e_age": 42, "city": "London"})
+    assert r == {"name": "Ada", "age": 42, "city": "London"}
+
+
+def test_rule_io_derives_output():
+    t = Transform(
+        rule=KeyRuleConfig(mode="snake_to_camel", apply_to="io"),
+        input=("first_name", "home_address"),
+    )
+    r = t({"first_name": "Ada", "home_address": "London"})
+    assert r == {"firstName": "Ada", "homeAddress": "London"}
+
+
+def test_map_rule_conflict():
+    with pytest.raises(ValueError, match="map and rule cannot be used together"):
+        Transform(
+            map={"x": "y"},
+            rule=KeyRuleConfig(mode="snake_to_camel", apply_to="all"),
+        )

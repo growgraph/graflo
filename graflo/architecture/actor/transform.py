@@ -34,6 +34,7 @@ class TransformActor(Actor):
             input=tuple(config.input) if config.input else (),
             output=tuple(config.output) if config.output else (),
             dress=config.dress,
+            rule=config.rule,
         )
 
     def fetch_important_items(self) -> dict[str, Any]:
@@ -68,23 +69,14 @@ class TransformActor(Actor):
         if self.name is not None:
             pt = self.transforms.get(self.name, None)
             if pt is not None:
-                next_params = self.t.params
-                next_input = self.t.input
-                next_output = self.t.output
-                if pt.params and not self.t.params:
-                    next_params = pt.params
-                    if (
-                        pt.input
-                        and not self.t.input
-                        and pt.output
-                        and not self.t.output
-                    ):
-                        next_input = pt.input
-                        next_output = pt.output
+                next_params = self.t.params if self.t.params else pt.params
+                next_input = self.t.input if self.t.input else pt.input
+                next_output = self.t.output if self.t.output else pt.output
                 self.t = Transform(
                     fields=self.t.fields,
                     map=self.t.map,
                     dress=self.t.dress,
+                    rule=self.t.rule,
                     name=self.t.name,
                     module=pt.module,
                     foo=pt.foo,

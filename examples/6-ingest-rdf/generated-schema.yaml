@@ -1,74 +1,51 @@
-schema:
-    metadata:
-        name: academic_kg
-    graph:
-        vertex_config:
-            vertices:
-            -   fields:
-                -   name: _key
-                -   name: _uri
-                -   name: title
-                -   name: year
-                -   name: doi
-                identity:
-                -   _key
-                -   _uri
-                -   title
-                -   year
-                -   doi
-                name: Publication
-            -   fields:
-                -   name: _key
-                -   name: _uri
-                -   name: instName
-                -   name: country
-                identity:
-                -   _key
-                -   _uri
-                -   instName
-                -   country
-                name: Institution
-            -   fields:
-                -   name: _key
-                -   name: _uri
-                -   name: fullName
-                -   name: orcid
-                identity:
-                -   _key
-                -   _uri
-                -   fullName
-                -   orcid
-                name: Researcher
-        edge_config:
-            edges:
-            -   relation: authorOf
-                source: Researcher
-                target: Publication
-            -   relation: affiliatedWith
-                source: Researcher
-                target: Institution
-            -   relation: cites
-                source: Publication
-                target: Publication
-    db_profile: {}
-ingestion_model:
-    resources:
-    -   pipeline:
-        -   vertex: Publication
-        -   relation: cites
-            source: Publication
-            target: Publication
-        resource_name: Publication
-    -   pipeline:
-        -   vertex: Institution
-        resource_name: Institution
-    -   pipeline:
-        -   vertex: Researcher
+graph:
+    edge_config:
+        edges:
         -   relation: authorOf
             source: Researcher
             target: Publication
         -   relation: affiliatedWith
             source: Researcher
             target: Institution
-        resource_name: Researcher
-bindings: {}
+        -   relation: cites
+            source: Publication
+            target: Publication
+    vertex_config:
+        vertices:
+        -   fields:
+            -   name: _key
+            -   name: _uri
+            -   name: title
+            -   name: year
+            -   name: doi
+            identity:
+            -   _key
+            -   _uri
+            -   title
+            -   year
+            -   doi
+            name: Publication
+        -   fields:
+            -   name: _key
+            -   name: _uri
+            -   name: instName
+            -   name: country
+            identity:
+            -   _key
+            -   _uri
+            -   instName
+            -   country
+            name: Institution
+        -   fields:
+            -   name: _key
+            -   name: _uri
+            -   name: fullName
+            -   name: orcid
+            identity:
+            -   _key
+            -   _uri
+            -   fullName
+            -   orcid
+            name: Researcher
+metadata:
+    name: academic_kg

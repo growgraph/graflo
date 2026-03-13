@@ -31,8 +31,9 @@ from __future__ import annotations
 
 import importlib
 import logging
+import re
 from copy import deepcopy
-from typing import Any, Self
+from typing import Any, Literal, Self
 
 from pydantic import Field, PrivateAttr, model_validator
 
@@ -57,6 +58,18 @@ def _tuple_it(x: str | list[str] | tuple[str, ...]) -> tuple[str, ...]:
     return x
 
 
+def _snake_to_camel(value: str) -> str:
+    parts = value.split("_")
+    if not parts:
+        return value
+    head, *tail = parts
+    return head + "".join(part.capitalize() for part in tail)
+
+
+def _camel_to_snake(value: str) -> str:
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", value).lower()
+
+
 class TransformException(BaseException):
     """Base exception for transform-related errors."""
 
@@ -77,6 +90,30 @@ class DressConfig(ConfigBaseModel):
 
     key: str = Field(description="Output field name for the input key.")
     value: str = Field(description="Output field name for the function result.")
+
+
+class KeyRuleConfig(ConfigBaseModel):
+    """Rule-based key renaming configuration."""
+
+    mode: Literal[
+        "snake_to_camel", "camel_to_snake", "strip_prefix", "strip_suffix"
+    ] = Field(description="Rule mode used to transform field names.")
+    value: str | None = Field(
+        default=None,
+        description="Argument for strip modes (prefix/suffix to remove).",
+    )
+    apply_to: Literal["all", "io"] = Field(
+        default="all",
+        description="Apply rule to all input doc keys or derive output from input.",
+    )
+
+    @model_validator(mode="after")
+    def validate_value(self) -> KeyRuleConfig:
+        if self.mode in {"strip_prefix", "strip_suffix"} and not self.value:
+            raise ValueError(
+                "rule.value is required for strip_prefix/strip_suffix modes."
+            )
+        return self
 
 
 class ProtoTransform(ConfigBaseModel):
@@ -217,6 +254,10 @@ class Transform(ProtoTransform):
             "input=(Open,) produces {name: 'Open', value: <result>}."
         ),
     )
+    rule: KeyRuleConfig | None = Field(
+        default=None,
+        description="Generic key renaming rule used instead of explicit map entries.",
+    )
 
     functional_transform: bool = Field(
         default=False,
@@ -252,6 +293,7 @@ class Transform(ProtoTransform):
         object.__setattr__(self, "functional_transform", self._foo is not None)
         self._init_input_from_fields()
         self._init_io_from_map()
+        self._init_io_from_rule()
         self._init_output_from_dress()
         self._default_output_from_input()
         self._init_map_from_io()
@@ -276,6 +318,17 @@ class Transform(ProtoTransform):
         elif not self.output:
             object.__setattr__(self, "output", tuple(self.map.values()))
 
+    def _init_io_from_rule(self) -> None:
+        """Derive output keys from input keys when rule applies to IO fields."""
+        if self.rule is None or self.rule.apply_to != "io":
+            return
+        if not self.input:
+            return
+        if self.output and self.output != self.input:
+            return
+        output_fields = tuple(self._apply_rule_to_key(key) for key in self.input)
+        object.__setattr__(self, "output", output_fields)
+
     def _init_output_from_dress(self) -> None:
         """Derive output from dress — always takes precedence when set."""
         if self.dress is not None:
@@ -298,10 +351,16 @@ class Transform(ProtoTransform):
 
     def _validate_configuration(self) -> None:
         """Validate that the transform has enough information to operate."""
-        if not self.input and not self.output and not self.name:
+        if self.map and self.rule is not None and self.rule.apply_to == "all":
             raise ValueError(
-                "Either input/output, fields, map or name must be provided in Transform "
-                "constructor."
+                "map and rule cannot be used together in the same Transform."
+            )
+        if not self.input and not self.output and not self.name:
+            if self.rule is not None and self.rule.apply_to == "all":
+                return
+            raise ValueError(
+                "Either input/output, fields, map, rule or name must be provided in "
+                "Transform constructor."
             )
 
     def _refresh_derived(self) -> None:
@@ -318,6 +377,14 @@ class Transform(ProtoTransform):
         Returns:
             dict: Transformed data
         """
+        if self._is_global_key_rule_only:
+            input_doc = nargs[0]
+            if not isinstance(input_doc, dict):
+                raise ValueError(
+                    "rule.apply_to='all' requires a dictionary input document."
+                )
+            return {self._apply_rule_to_key(k): v for k, v in input_doc.items()}
+
         if self.is_mapping:
             input_doc = nargs[0]
             if isinstance(input_doc, dict):
@@ -341,6 +408,31 @@ class Transform(ProtoTransform):
     def is_mapping(self) -> bool:
         """True when the transform is pure mapping (no function)."""
         return self._foo is None
+
+    @property
+    def _is_global_key_rule_only(self) -> bool:
+        return (
+            self.rule is not None
+            and self.rule.apply_to == "all"
+            and self._foo is None
+            and not self.map
+            and not self.input
+            and not self.output
+        )
+
+    def _apply_rule_to_key(self, key: str) -> str:
+        if self.rule is None:
+            return key
+        if self.rule.mode == "snake_to_camel":
+            return _snake_to_camel(key)
+        if self.rule.mode == "camel_to_snake":
+            return _camel_to_snake(key)
+        if self.rule.mode == "strip_prefix":
+            assert self.rule.value is not None
+            return key.removeprefix(self.rule.value)
+        assert self.rule.mode == "strip_suffix"
+        assert self.rule.value is not None
+        return key.removesuffix(self.rule.value)
 
     def _dress_as_dict(self, transform_result: Any) -> dict[str, Any]:
         """Convert transform result to dictionary format.
@@ -366,7 +458,12 @@ class Transform(ProtoTransform):
         Returns:
             bool: True if this is a dummy transform
         """
-        return (self.name is not None) and (not self.map and self._foo is None)
+        return (
+            self.name is not None
+            and not self.map
+            and self.rule is None
+            and self._foo is None
+        )
 
     def merge_from(self, t: Transform) -> Transform:
         """Merge another transform's configuration into a copy of it.

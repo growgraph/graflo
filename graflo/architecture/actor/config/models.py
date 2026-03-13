@@ -8,7 +8,7 @@ from pydantic import Field as PydanticField, TypeAdapter, model_validator
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.edge import EdgeBase
-from graflo.architecture.transform import DressConfig
+from graflo.architecture.transform import DressConfig, KeyRuleConfig
 
 from .normalize import normalize_actor_step
 
@@ -68,6 +68,10 @@ class TransformActorConfig(ConfigBaseModel):
     dress: DressConfig | None = PydanticField(
         default=None,
         description="Dressing spec for pivoted output.",
+    )
+    rule: KeyRuleConfig | None = PydanticField(
+        default=None,
+        description="Generic key renaming rule for transform.",
     )
 
     @model_validator(mode="before")

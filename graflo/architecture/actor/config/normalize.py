@@ -106,7 +106,11 @@ def normalize_actor_step(data: dict[str, Any]) -> dict[str, Any]:
         return data
 
     if "type" not in data and (
-        "name" in data or "map" in data or "switch" in data or "dress" in data
+        "name" in data
+        or "map" in data
+        or "rule" in data
+        or "switch" in data
+        or "dress" in data
     ):
         data = dict(data)
         if "switch" in data:

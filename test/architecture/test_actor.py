@@ -408,6 +408,62 @@ def test_transform_named_proto_binding_executes_with_registered_transform():
     assert payload.positional == ()
 
 
+def test_transform_named_proto_binding_inherits_input_output_from_library():
+    anw = ActorWrapper(pipeline=[{"name": "to_int"}])
+    transforms = {
+        "to_int": ProtoTransform(
+            name="to_int",
+            module="builtins",
+            foo="int",
+            params={},
+            input=("value",),
+            output=("v",),
+        )
+    }
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=VertexConfig(vertices=[]),
+            edge_config=EdgeConfig(),
+            transforms=transforms,
+        )
+    )
+
+    ctx = ActionContext()
+    ctx = anw(ctx, doc={"value": "7"})
+    payload = ctx.buffer_transforms[LocationIndex(path=(0,))][0]
+    assert payload.named == {"v": 7}
+    assert payload.positional == ()
+
+
+def test_transform_named_proto_binding_local_io_overrides_library_io():
+    anw = ActorWrapper(
+        pipeline=[{"name": "to_int", "input": ["raw_value"], "output": ["parsed"]}]
+    )
+    transforms = {
+        "to_int": ProtoTransform(
+            name="to_int",
+            module="builtins",
+            foo="int",
+            params={},
+            input=("value",),
+            output=("v",),
+        )
+    }
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=VertexConfig(vertices=[]),
+            edge_config=EdgeConfig(),
+            transforms=transforms,
+        )
+    )
+
+    ctx = ActionContext()
+    ctx = anw(ctx, doc={"raw_value": "8", "value": "7"})
+    payload = ctx.buffer_transforms[LocationIndex(path=(0,))][0]
+    assert payload.named == {"parsed": 8}
+    assert payload.positional == ()
+
+
 def test_multi_edges_from_row(resource_ticker, vc_ticker, ec_ticker, sample_ticker):
     ctx = ActionContext()
     anw = ActorWrapper(**resource_ticker)
