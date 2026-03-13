@@ -93,12 +93,14 @@ engine = GraphEngine(target_db_flavor=db_type)
 # - Higher values (e.g., 0.9) = stricter matching, fewer matches
 # - Lower values (e.g., 0.7) = more lenient matching, more matches
 # Default is 0.8
-manifest = engine.infer_schema(postgres_conf, schema_name="public", fuzzy_threshold=0.8)
+manifest = engine.infer_manifest(
+    postgres_conf, schema_name="public", fuzzy_threshold=0.8
+)
 schema = manifest.require_schema()
 ingestion_model = manifest.require_ingestion_model()
 schema.metadata.name = "accounting"
 # Step 3.5: Dump inferred schema to YAML file
-schema_output_file = Path(__file__).parent / "generated-schema.yaml"
+schema_output_file = Path(__file__).parent / "generated-manifest.yaml"
 
 FileHandle.dump(schema.model_dump(exclude_defaults=True), schema_output_file)
 

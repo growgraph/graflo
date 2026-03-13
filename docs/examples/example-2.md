@@ -110,7 +110,7 @@ from suthing import FileHandle
 from graflo import Caster, Bindings, GraphManifest
 from graflo.db.connection.onto import ArangoConfig, DBConfig
 
-manifest = GraphManifest.from_config(FileHandle.load("schema.yaml"))
+manifest = GraphManifest.from_config(FileHandle.load("manifest.yaml"))
 manifest.finish_init()
 schema = manifest.require_schema()
 ingestion_model = manifest.require_ingestion_model()

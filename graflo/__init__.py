@@ -16,7 +16,7 @@ Key Features:
 Example:
     >>> from graflo import GraphEngine, IngestionParams
     >>> engine = GraphEngine()
-    >>> manifest = engine.infer_schema(postgres_config)
+    >>> manifest = engine.infer_manifest(postgres_config)
     >>> engine.define_and_ingest(manifest, target_db_config)
 """
 

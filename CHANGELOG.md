@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [Unreleased]
+## [1.7.0]
 
 ### Added
 - **Schema migration framework (v1)**:
@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - `status` and `history` (migration state visibility)
   - New migration ADR in `planning/graflo-migration-adr.md` documenting normalization rules, risk policy, rename policy, and backend capability matrix
   - New migration test suite in `test/migrate/` (diff, planner, store, executor)
+- **Graph manifest contract**:
+  - Introduced `graflo.architecture.manifest.GraphManifest` in `graflo/architecture/manifest.py` as the canonical ingestion contract
+  - Unified configuration into manifest blocks (`schema`, `ingestion_model`, `bindings`) with explicit validation and initialization flow
 
 ### Documentation
 - Extended migration docs in Concepts:

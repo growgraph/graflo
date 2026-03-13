@@ -62,16 +62,16 @@ The example uses a PostgreSQL database with a typical 3NF (Third Normal Form) sc
 - `followed_id` (INTEGER, FOREIGN KEY → users.id) - User being followed
 - `created_at` (TIMESTAMP) - When the follow relationship was created
 
-## Automatic Schema Inference
+## Automatic Manifest Inference
 
-The `GraphEngine.infer_schema()` method automatically analyzes your PostgreSQL database and creates a complete `GraphManifest` (with `schema` + `ingestion_model`). This process involves several sophisticated steps:
+The `GraphEngine.infer_manifest()` method automatically analyzes your PostgreSQL database and creates a complete `GraphManifest` (with `schema` + `ingestion_model`). This process involves several sophisticated steps:
 
 ### How Schema Inference Works
 
 1. **Table Discovery**: The function queries PostgreSQL's information schema to discover all tables in the specified schema
 2. **Column Analysis**: For each table, it examines columns, data types, constraints (primary keys, foreign keys), and relationships
 3. **Table Classification**: Tables are classified as either vertex tables or edge tables using heuristics
-4. **Schema Generation**: A complete graflo Schema object is constructed with vertices, edges, resources, and type mappings
+4. **Manifest Generation**: A complete graflo Manifest object is constructed with vertices, edges, resources, and type mappings
 
 ### Detection Heuristics
 
@@ -278,7 +278,7 @@ db_type = target_config.connection_type
 # Connection is automatically managed inside infer_schema()
 postgres_conf = PostgresConfig.from_docker_env()
 engine = GraphEngine(target_db_flavor=db_type)
-manifest = engine.infer_schema(
+manifest = engine.infer_manifest(
     postgres_conf,
     schema_name="public",  # PostgreSQL schema name
 )
@@ -312,7 +312,7 @@ You can save the inferred schema to a YAML file for inspection or modification:
 import yaml
 from pathlib import Path
 
-schema_output_file = Path("generated-schema.yaml")
+schema_output_file = Path("generated-manifest.yaml")
 schema_dict = schema.to_dict()
 
 with open(schema_output_file, "w") as f:
@@ -454,7 +454,7 @@ db_type = target_config.connection_type
 
 # Create GraphEngine and infer schema
 engine = GraphEngine(target_db_flavor=db_type)
-manifest = engine.infer_schema(
+manifest = engine.infer_manifest(
     postgres_conf,
     schema_name="public",
 )
@@ -462,7 +462,7 @@ schema = manifest.require_schema()
 ingestion_model = manifest.require_ingestion_model()
 
 # Step 5: Save inferred schema to YAML (optional)
-schema_output_file = Path("generated-schema.yaml")
+schema_output_file = Path("generated-manifest.yaml")
 with open(schema_output_file, "w") as f:
     yaml.safe_dump(schema.to_dict(), f, default_flow_style=False, sort_keys=False)
 logger.info(f"Inferred schema saved to {schema_output_file}")
@@ -734,7 +734,7 @@ After inference, you can modify the schema:
 # Connection is automatically managed inside infer_schema()
 postgres_conf = PostgresConfig.from_docker_env()
 engine = GraphEngine()
-manifest = engine.infer_schema(postgres_conf, schema_name="public")
+manifest = engine.infer_manifest(postgres_conf, schema_name="public")
 schema = manifest.require_schema()
 ingestion_model = manifest.require_ingestion_model()
 

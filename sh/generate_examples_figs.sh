@@ -9,20 +9,20 @@ if [[ ! -d "$BASE_DIR" ]]; then
     exit 1
 fi
 
-# Find all subdirectories with schema.yaml files (ending with schema.yaml)
+# Find all subdirectories with manifest.yaml files
 for subdir in "$BASE_DIR"*/; do
     # Skip if not a directory
     [[ ! -d "$subdir" ]] && continue
 
-    # Find files ending with schema.yaml
-    schema_file=$(find "$subdir" -maxdepth 1 -type f -name "*schema.yaml" | head -n 1)
+    # Find manifest file
+    schema_file=$(find "$subdir" -maxdepth 1 -type f -name "manifest.yaml" | head -n 1)
     output_dir="${subdir}figs/"
 
     # Create assets dir path: strip BASE_DIR prefix and add docs/assets
     subdir_name=$(basename "$subdir")
     assets_dir="../docs/assets/${subdir_name}/figs/"
 
-    # Check if a schema file was found
+    # Check if a manifest file was found
     if [[ -n "$schema_file" && -f "$schema_file" ]]; then
         schema_basename=$(basename "$schema_file")
         echo "Processing: $(basename "$subdir") (using $schema_basename)"
@@ -52,7 +52,7 @@ for subdir in "$BASE_DIR"*/; do
 
         echo ""
     else
-        echo "Skipping $(basename "$subdir"): no *schema.yaml file found"
+        echo "Skipping $(basename "$subdir"): no manifest.yaml file found"
     fi
 done
 

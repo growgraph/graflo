@@ -74,7 +74,7 @@ class GraphEngine:
             )
             return inferencer.introspect(schema_name=schema_name)
 
-    def infer_schema(
+    def infer_manifest(
         self,
         postgres_config: PostgresConfig,
         schema_name: str | None = None,

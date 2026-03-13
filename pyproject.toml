@@ -70,7 +70,7 @@ sparql = [
 ingest = "graflo.cli.ingest:ingest"
 manage_dbs = "graflo.cli.manage_dbs:manage_dbs"
 migrate_schema = "graflo.cli.migrate_schema:migrate_schema"
-plot_schema = "graflo.cli.plot_schema:plot_schema"
+plot_manifest = "graflo.cli.plot_manifest:plot_manifest"
 xml2json = "graflo.cli.plot_schema:xml2json"
 
 [project.urls]

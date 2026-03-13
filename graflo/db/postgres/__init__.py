@@ -14,7 +14,7 @@ Example:
     >>> from graflo.db import PostgresConfig
     >>> config = PostgresConfig.from_docker_env()
     >>> engine = GraphEngine()
-    >>> manifest = engine.infer_schema(config, schema_name="public")
+    >>> manifest = engine.infer_manifest(config, schema_name="public")
 """
 
 from .conn import PostgresConnection

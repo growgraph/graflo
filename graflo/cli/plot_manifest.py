@@ -1,13 +1,13 @@
-"""Schema visualization tool for graph databases.
+"""manifest visualization tool for graph databases.
 
 This module provides functionality for visualizing graph database schemas using Graphviz.
 It includes tools for plotting vertex-to-vertex relationships, vertex fields, and resource
 mappings. The module supports various visualization options and graph layout customization.
 
 Key Components:
-    - SchemaPlotter: Main class for schema visualization
+    - manifestPlotter: Main class for manifest visualization
     - knapsack: Utility for optimizing graph layout
-    - plot_schema: CLI command for schema visualization
+    - plot_manifest: CLI command for manifest visualization
 
 Graphviz Attributes Reference:
     - https://renenyffenegger.ch/notes/tools/Graphviz/attributes/index
@@ -16,7 +16,7 @@ Graphviz Attributes Reference:
     - https://graphviz.org/doc/info/attrs.html
 
 Example:
-    >>> plot_schema(schema_path="schema.yaml", figure_output_path="schema.png")
+    >>> plot_manifest(manifest_path="manifest.yaml", figure_output_path="manifest.png")
 """
 
 import logging
@@ -24,7 +24,7 @@ import sys
 
 import click
 
-from graflo.plot.plotter import SchemaPlotter
+from graflo.plot.plotter import ManifestPlotter
 
 """
 
@@ -96,7 +96,7 @@ def knapsack(weights, ks_size=7):
 
 
 @click.command()
-@click.option("-c", "--schema-path", type=click.Path(), required=True)
+@click.option("-c", "--manifest-path", type=click.Path(), required=True)
 @click.option("-o", "--figure-output-path", type=click.Path(), required=True)
 @click.option("-p", "--prune-low-degree-nodes", type=bool, default=False)
 @click.option(
@@ -130,8 +130,8 @@ def knapsack(weights, ks_size=7):
     show_default=True,
     help="DPI used when output format is png.",
 )
-def plot_schema(
-    schema_path,
+def plot_manifest(
+    manifest_path,
     figure_output_path,
     prune_low_degree_nodes,
     group_vc_by_level,
@@ -140,9 +140,9 @@ def plot_schema(
     output_format,
     output_dpi,
 ):
-    """Generate visualizations of the graph database schema.
+    """Generate visualizations of the graph database manifest.
 
-    This command creates multiple visualizations of the schema:
+    This command creates multiple visualizations of the manifest:
     1. Vertex-to-vertex relationships
     2. Vertex fields and their relationships
     3. Resource mappings
@@ -150,7 +150,7 @@ def plot_schema(
     The visualizations are saved to the specified output path.
 
     Args:
-        schema_path: Path to the schema configuration file
+        manifest_path: Path to the manifest configuration file
         figure_output_path: Path where the visualization will be saved
         prune_low_degree_nodes: Whether to remove nodes with low connectivity
             from the visualization (default: False)
@@ -161,12 +161,12 @@ def plot_schema(
         output_dpi: DPI for raster outputs (png)
 
     Example:
-        $ uv run plot_schema -c schema.yaml -o schema.png
+        $ uv run plot_manifest -c manifest.yaml -o output_dir
     """
     logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 
-    plotter = SchemaPlotter(
-        schema_path,
+    plotter = ManifestPlotter(
+        manifest_path,
         figure_output_path,
         output_format=output_format.lower(),
         output_dpi=output_dpi if output_format.lower() == "png" else None,
@@ -185,4 +185,4 @@ def plot_schema(
 
 
 if __name__ == "__main__":
-    plot_schema()
+    plot_manifest()

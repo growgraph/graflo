@@ -8,10 +8,10 @@ Key Components:
     - SchemaPlotter: Creates visual representations of graph schemas
 
 Example:
-    >>> plotter = SchemaPlotter(schema)
+    >>> plotter = ManifestPlotter(schema)
     >>> plotter.plot("schema.png")
 """
 
-from .plotter import SchemaPlotter
+from .plotter import ManifestPlotter
 
-__all__ = ["SchemaPlotter"]
+__all__ = ["ManifestPlotter"]

@@ -75,7 +75,7 @@ schema, ingestion_model = engine.infer_schema_from_rdf(
 )
 
 
-schema_output_file = Path(__file__).parent / "generated-schema.yaml"
+schema_output_file = Path(__file__).parent / "generated-manifest.yaml"
 
 FileHandle.dump(schema.model_dump(exclude_defaults=True), schema_output_file)
 

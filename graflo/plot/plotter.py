@@ -11,7 +11,7 @@ Key Components:
     - Tree assembly and graph generation utilities
 
 Example:
-    >>> plotter = SchemaPlotter("config.json", "output/")
+    >>> plotter = ManifestPlotter("config.json", "output/")
     >>> plotter.plot_vc2fields()  # Plot vertex collections and their fields
     >>> plotter.plot_resources()  # Plot resource relationships
     >>> plotter.plot_vc2vc()      # Plot vertex collection relationships
@@ -266,7 +266,7 @@ def assemble_tree(
         return g
 
 
-class SchemaPlotter:
+class ManifestPlotter:
     """Main class for schema visualization.
 
     This class provides methods to visualize different aspects of a graph database

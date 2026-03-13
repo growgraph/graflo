@@ -19,7 +19,7 @@ def test_infer_schema_from_postgres(conn_conf, load_mock_schema):
     _ = load_mock_schema  # Ensure schema is loaded
 
     engine = GraphEngine(target_db_flavor=DBType.ARANGO)
-    manifest = engine.infer_schema(conn_conf, schema_name="public")
+    manifest = engine.infer_manifest(conn_conf, schema_name="public")
     schema = manifest.require_schema()
     ingestion_model = manifest.require_ingestion_model()
 
@@ -176,7 +176,7 @@ def test_infer_schema_returns_manifest(conn_conf, load_mock_schema):
     _ = load_mock_schema  # Ensure schema is loaded
 
     engine = GraphEngine(target_db_flavor=DBType.ARANGO)
-    manifest = engine.infer_schema(conn_conf, schema_name="public")
+    manifest = engine.infer_manifest(conn_conf, schema_name="public")
 
     assert isinstance(manifest, GraphManifest)
     schema = manifest.require_schema()
@@ -207,7 +207,7 @@ def test_infer_schema_with_pg_catalog_fallback(conn_conf, load_mock_schema):
     ):
         # Test that infer_schema_from_postgres works with pg_catalog fallback
         engine = GraphEngine(target_db_flavor=DBType.ARANGO)
-        manifest = engine.infer_schema(conn_conf, schema_name="public")
+        manifest = engine.infer_manifest(conn_conf, schema_name="public")
         schema = manifest.require_schema()
         ingestion_model = manifest.require_ingestion_model()
 

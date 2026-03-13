@@ -21,7 +21,7 @@ from graflo.hq import GraphEngine
 from graflo.hq.caster import IngestionParams
 from graflo.architecture.bindings import FileConnector
 
-manifest = GraphManifest.from_config(FileHandle.load("schema.yaml"))
+manifest = GraphManifest.from_config(FileHandle.load("manifest.yaml"))
 manifest.finish_init()
 schema = manifest.require_schema()
 ingestion_model = manifest.require_ingestion_model()

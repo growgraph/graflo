@@ -24,7 +24,7 @@ from graflo import Bindings, Caster, GraphManifest
 from graflo.architecture.bindings import FileConnector
 from graflo.db.connection.onto import ArangoConfig
 
-manifest = GraphManifest.from_config(FileHandle.load("schema.yaml"))
+manifest = GraphManifest.from_config(FileHandle.load("manifest.yaml"))
 manifest.finish_init()
 schema = manifest.require_schema()
 ingestion_model = manifest.require_ingestion_model()
@@ -110,7 +110,7 @@ engine.define_and_ingest(
 # )
 ```
 
-Here `schema` defines the logical graph, while `ingestion_model` defines resources/transforms and `bindings` maps resources to physical data sources. See [Creating a Schema](creating_schema.md) and [Concepts — Schema](../concepts/index.md#schema) for details.
+Here `schema` defines the logical graph, while `ingestion_model` defines resources/transforms and `bindings` maps resources to physical data sources. See [Creating a Manifest](creating_manifest.md) and [Concepts — Schema](../concepts/index.md#schema) for details.
 
 `Bindings` maps resource names (from `IngestionModel`) to their physical data sources:
 - **FileConnector**: For file-based resources with `regex` for matching filenames and `sub_path` for the directory to search
@@ -138,7 +138,7 @@ pg_config = PostgresConfig.from_docker_env()  # Or from_env(), or create directl
 # Create GraphEngine and infer schema from PostgreSQL (automatically detects vertices and edges)
 # Connection is automatically managed inside infer_schema()
 engine = GraphEngine()
-manifest = engine.infer_schema(pg_config, schema_name="public")
+manifest = engine.infer_manifest(pg_config, schema_name="public")
 
 # Create bindings from PostgreSQL tables
 engine = GraphEngine()
@@ -190,7 +190,7 @@ You can also ingest data from REST API endpoints:
 from graflo import Caster, DataSourceRegistry, GraphManifest
 from graflo.data_source import DataSourceFactory, APIConfig, PaginationConfig
 
-manifest = GraphManifest.from_config(FileHandle.load("schema.yaml"))
+manifest = GraphManifest.from_config(FileHandle.load("manifest.yaml"))
 manifest.finish_init()
 schema = manifest.require_schema()
 ingestion_model = manifest.require_ingestion_model()
@@ -268,7 +268,7 @@ Then use it with the CLI:
 ```bash
 uv run ingest \
     --db-config-path config/db.yaml \
-    --schema-path config/schema.yaml \
+    --schema-path config/manifest.yaml \
     --data-source-config-path data_sources.yaml
 ```
 

@@ -190,7 +190,7 @@ postgres_config = PostgresConfig.from_docker_env()  # or PostgresConfig.from_env
 # Create GraphEngine and infer schema from PostgreSQL 3NF database
 # Connection is automatically managed inside infer_schema()
 engine = GraphEngine(target_db_flavor=DBType.ARANGO)
-manifest = engine.infer_schema(
+manifest = engine.infer_manifest(
     postgres_config,
     schema_name="public",  # PostgreSQL schema name
 )

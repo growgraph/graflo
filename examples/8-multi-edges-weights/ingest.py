@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.WARNING, handlers=[logging.StreamHandler()])
 # Set graflo module to INFO level
 logging.getLogger("graflo").setLevel(logging.DEBUG)
 
-manifest = GraphManifest.from_config(FileHandle.load("schema.yaml"))
+manifest = GraphManifest.from_config(FileHandle.load("manifest.yaml"))
 manifest.finish_init()
 schema = manifest.require_schema()
 ingestion_model = manifest.require_ingestion_model()
