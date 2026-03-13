@@ -9,7 +9,7 @@ Instead of manually defining schemas and exporting data to files, this example s
 - **Automatically detect** vertex-like and edge-like tables in PostgreSQL using intelligent heuristics
 - **Infer the graph schema** from the database structure
 - **Map PostgreSQL types** to graflo Field types automatically
-- **Create patterns** that map PostgreSQL tables to graph resources
+- **Create bindings** that map PostgreSQL tables to graph resources
 - **Ingest data directly** from PostgreSQL into a graph database
 
 ## Requirements
