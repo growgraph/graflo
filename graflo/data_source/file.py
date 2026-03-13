@@ -6,7 +6,7 @@ chunker logic for efficient batch processing.
 """
 
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator
 
 from pydantic import field_validator
 
@@ -55,7 +55,7 @@ class FileDataSource(AbstractDataSource):
             chunker_type = ChunkerType(self.file_type.lower())
 
         # Create chunker using factory
-        chunker_kwargs = {
+        chunker_kwargs: dict[str, Any] = {
             "resource": self.path,
             "type": chunker_type,
             "batch_size": batch_size,

@@ -148,7 +148,7 @@ def test_weight_config_direct_backward_compatibility():
     ctx = {"date": "2023-01-01", "weight": 1.5}
     for field in wc.direct:
         assert field in ctx, f"Field {field} should be in ctx"
-        assert ctx[field] is not None
+        assert ctx[str(field)] is not None
 
     # Test dict key usage (used in transform.py)
     result_dict = {}

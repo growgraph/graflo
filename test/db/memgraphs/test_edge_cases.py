@@ -2387,7 +2387,7 @@ class TestBoundaryValueAnalysis:
             counts = [1, 10, 100, 500, 1000]
 
             for count in counts:
-                doc = {"id": f"props_{count}"}
+                doc: dict[str, str | int] = {"id": f"props_{count}"}
                 for i in range(count):
                     doc[f"p{i}"] = i
 

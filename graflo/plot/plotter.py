@@ -444,7 +444,7 @@ class ManifestPlotter:
 
         for n in g.nodes():
             props = g.nodes()[n]
-            upd_dict = props.copy()
+            upd_dict: dict[str, object] = dict(props)
             if "type" in upd_dict:
                 upd_dict["shape"] = map_type2shape[props["type"]]
                 upd_dict["color"] = map_type2color[props["type"]]
@@ -543,7 +543,7 @@ class ManifestPlotter:
 
         for n in g.nodes():
             props = g.nodes()[n]
-            upd_dict = {
+            upd_dict: dict[str, object] = {
                 "shape": map_type2shape[props["type"]],
                 "color": map_type2color[props["type"]],
                 "style": "filled",

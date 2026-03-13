@@ -22,7 +22,7 @@ def test_field_with_none_type():
 def test_field_with_explicit_type():
     """Test Field creation with explicit types."""
     for field_type in FieldType:
-        field = Field(name="test", type=field_type.value)
+        field = Field(name="test", type=field_type)
         assert field.name == "test"
         assert field.type == field_type.value
 
@@ -267,7 +267,7 @@ def test_vertex_with_explicit_identity():
 def test_field_all_types():
     """Test all allowed field types."""
     for field_type in FieldType:
-        field = Field(name=f"field_{field_type.value.lower()}", type=field_type.value)
+        field = Field(name=f"field_{field_type.value.lower()}", type=field_type)
         assert field.type == field_type.value
 
 

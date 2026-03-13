@@ -66,7 +66,10 @@ def parse_root_config(
             )
     elif args:
         if len(args) == 1 and isinstance(args[0], list):
-            pipeline = list(args[0])
+            list_arg = args[0]
+            if not all(isinstance(item, dict) for item in list_arg):
+                raise ValueError("pipeline must be a list of dict actor steps")
+            pipeline = [dict(item) for item in list_arg]
         elif len(args) == 1 and isinstance(args[0], dict):
             single = dict(args[0])
         elif args and all(isinstance(a, dict) for a in args):

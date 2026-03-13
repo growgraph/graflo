@@ -6,6 +6,7 @@ to graflo Resource objects that can be used for data ingestion.
 
 import logging
 from collections import defaultdict
+from typing import Any
 
 from graflo.architecture.resource import Resource
 from graflo.architecture.vertex import VertexConfig
@@ -52,7 +53,7 @@ class PostgresResourceMapper:
         Returns:
             Resource: Resource configured to ingest vertex data
         """
-        apply = [{"vertex": vertex_name}]
+        apply: list[dict[str, Any]] = [{"vertex": vertex_name}]
 
         field_mappings = vertex_attribute_mappings[vertex_name]
         if field_mappings:

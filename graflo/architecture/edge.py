@@ -18,7 +18,7 @@ Example:
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from pydantic import (
     Field as PydanticField,
@@ -218,7 +218,7 @@ class Edge(EdgeBase):
                     isinstance(token, str) for token in item
                 ):
                     raise ValueError("edge identities must be list[list[str]]")
-                normalized.append(list(item))
+                normalized.append(cast(list[str], item))
             return normalized
         raise ValueError("edge identities must be list[list[str]]")
 
