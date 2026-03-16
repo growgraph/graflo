@@ -347,7 +347,7 @@ class PostgresSchemaInferencer:
 
         # Infer edge configuration
         edge_config = self.infer_edge_config(introspection_result, vertex_config)
-        edges_count = len(list(edge_config.edges_list()))
+        edges_count = len(list(edge_config.values()))
         logger.info(f"Inferred {edges_count} edges")
 
         # Create schema metadata
@@ -366,7 +366,7 @@ class PostgresSchemaInferencer:
         logger.info(
             f"Successfully inferred schema '{schema_name}' with "
             f"{len(vertex_config.vertices)} vertices and "
-            f"{len(list(edge_config.edges_list()))} edges"
+            f"{len(list(edge_config.values()))} edges"
         )
 
         return schema

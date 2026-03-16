@@ -2081,7 +2081,7 @@ class TigerGraphConnection(Connection):
 
         # Edges - group by relation since TigerGraph requires edges of the same type
         # to be created in a single statement with multiple FROM/TO pairs
-        edges_to_create = list(edge_config.edges_list(include_aux=True))
+        edges_to_create = list(edge_config.values())
         source_vertices: dict[int, str] = {}
         target_vertices: dict[int, str] = {}
         relation_names: dict[int, str] = {}
@@ -4242,9 +4242,7 @@ class TigerGraphConnection(Connection):
         """Define all indexes from schema."""
         try:
             self.define_vertex_indexes(schema.graph.vertex_config, schema=schema)
-            edges_for_indexes = list(
-                schema.graph.edge_config.edges_list(include_aux=True)
-            )
+            edges_for_indexes = list(schema.graph.edge_config.values())
             self.define_edge_indexes(edges_for_indexes, schema=schema)
         except Exception as e:
             logger.error(f"Error defining indexes: {e}")

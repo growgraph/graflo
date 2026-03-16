@@ -22,35 +22,44 @@ schema:
                 -   doi
 ingestion_model:
     resources:
-    -   resource_name: work
+    -   name: work
         apply:
-        -   name: keep_suffix_id
-        -   name: keep_suffix_id
-            params:
-                sep: /
-                keep:
-                -   -2
-                -   -1
-            input:
-            -   doi
-            output:
-            -   doi
+        -   transform:
+                call:
+                    use: keep_suffix_id
+        -   transform:
+                call:
+                    use: keep_suffix_doi
         -   key: referenced_works
             apply:
             -   vertex: work
-            -   name: keep_suffix_id
+            -   transform:
+                    call:
+                        use: keep_suffix_id
         -   vertex: work
         -   source: work
             target: work
     transforms:
-        keep_suffix_id:
-            foo: split_keep_part
-            module: graflo.util.transform
-            params:
-                sep: /
-                keep: -1
-            input:
-            -   id
-            output:
-            -   _key
+    -   name: keep_suffix_id
+        foo: split_keep_part
+        module: graflo.util.transform
+        params:
+            sep: /
+            keep: -1
+        input:
+        -   id
+        output:
+        -   _key
+    -   name: keep_suffix_doi
+        foo: split_keep_part
+        module: graflo.util.transform
+        params:
+            sep: /
+            keep:
+            -   -2
+            -   -1
+        input:
+        -   doi
+        output:
+        -   doi
 bindings: {}

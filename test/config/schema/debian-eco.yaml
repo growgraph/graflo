@@ -36,7 +36,7 @@ schema:
     db_profile: {}
 ingestion_model:
     resources:
-    -   resource_name: package
+    -   name: package
         pipeline:
         -   vertex: package
         -   key: dependencies
@@ -52,11 +52,12 @@ ingestion_model:
         -   key: maintainer
             pipeline:
             -   vertex: maintainer
-    -   resource_name: bug
+    -   name: bug
         pipeline:
-        -   map:
-                package: name
-                bug_num: id
+        -   transform:
+                rename:
+                    package: name
+                    bug_num: id
         -   vertex: package
         -   vertex: bug
 bindings: {}

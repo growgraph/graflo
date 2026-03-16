@@ -70,7 +70,7 @@ def test_edge_key(vertex_config_kg, edge_config_kg):
     vertex_config = VertexConfig.from_dict(vertex_config_kg)
     e = EdgeConfig.from_dict(edge_config_kg)
     e.finish_init(vertex_config)
-    first_edge = next(iter(e.edges_list(include_aux=True)))
+    first_edge = next(e.values())
     assert first_edge.edge_id in e
 
 

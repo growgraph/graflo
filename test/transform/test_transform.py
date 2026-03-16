@@ -2,7 +2,7 @@ import logging
 
 import pytest
 
-from graflo.architecture.transform import KeyRuleConfig, Transform
+from graflo.architecture.transform import Transform
 from graflo.util.transform import parse_multi_item
 
 logger = logging.getLogger(__name__)
@@ -66,6 +66,18 @@ def test_input_output():
     assert t(0.1)["y"] == 0.1
 
 
+def test_functional_output_defaults_to_input_single():
+    kwargs = {"module": "builtins", "foo": "int", "input": "value"}
+    t = Transform(**kwargs)  # type: ignore
+    assert t({"value": "7"}) == {"value": 7}
+
+
+def test_mapping_output_defaults_to_input_list():
+    kwargs = {"input": ["x", "z"]}
+    t = Transform(**kwargs)  # type: ignore
+    assert t({"x": 1, "z": 2}) == {"x": 1, "z": 2}
+
+
 def test_parse_multi_item(quoted_multi_item):
     r = parse_multi_item(quoted_multi_item, mapper={"name": "full_name"}, direct=["id"])
     assert r["full_name"][0] == "Author C"
@@ -125,25 +137,18 @@ def test_dress_derives_output():
     assert t.dress.value == "value"
 
 
-def test_switch_legacy_compat():
-    """switch is still accepted and converted to input + dress internally."""
+def test_switch_legacy_rejected():
     kwargs = {
         "module": "builtins",
         "foo": "round",
         "switch": {"Open": ["name", "value"]},
         "params": {"ndigits": 3},
     }
-    t = Transform(**kwargs)  # type: ignore
-    r = t({"Open": 0.1234})
-    assert r == {"name": "Open", "value": 0.123}
-    assert t.dress is not None
-    assert t.dress.key == "name"
-    assert t.dress.value == "value"
-    assert t.input == ("Open",)
+    with pytest.raises(ValueError, match="Legacy `switch` is no longer supported"):
+        Transform(**kwargs)  # type: ignore
 
 
-def test_dress_list_legacy_compat():
-    """List-style dress is still accepted and converted to DressConfig."""
+def test_dress_list_legacy_rejected():
     kwargs = {
         "module": "builtins",
         "foo": "round",
@@ -151,11 +156,8 @@ def test_dress_list_legacy_compat():
         "dress": ["name", "value"],
         "params": {"ndigits": 3},
     }
-    t = Transform(**kwargs)  # type: ignore
-    r = t({"Open": 0.1234})
-    assert r == {"name": "Open", "value": 0.123}
-    assert t.dress is not None
-    assert t.dress.key == "name"
+    with pytest.raises(ValueError, match="List-style `dress` is no longer supported"):
+        Transform(**kwargs)  # type: ignore
 
 
 def test_split_keep_part():
@@ -186,30 +188,26 @@ def test_split_keep_part_longer():
     assert r["doi"] == "10.1007/978-3-123"
 
 
-def test_rule_snake_to_camel_all():
-    t = Transform(rule={"mode": "snake_to_camel"})  # type: ignore
-    r = t({"first_name": "Ada", "home_address": "London"})
-    assert r == {"firstName": "Ada", "homeAddress": "London"}
-
-
-def test_rule_strip_prefix_all():
-    t = Transform(rule={"mode": "strip_prefix", "value": "e_"})  # type: ignore
-    r = t({"e_name": "Ada", "e_age": 42, "city": "London"})
-    assert r == {"name": "Ada", "age": 42, "city": "London"}
-
-
-def test_rule_io_derives_output():
+def test_strategy_each_applies_function_per_input_field():
     t = Transform(
-        rule=KeyRuleConfig(mode="snake_to_camel", apply_to="io"),
-        input=("first_name", "home_address"),
+        module="builtins",
+        foo="int",
+        input=("x", "y"),
+        strategy="each",
     )
-    r = t({"first_name": "Ada", "home_address": "London"})
-    assert r == {"firstName": "Ada", "homeAddress": "London"}
+    r = t({"x": "1", "y": "2"})
+    assert r == {"x": 1, "y": 2}
 
 
-def test_map_rule_conflict():
-    with pytest.raises(ValueError, match="map and rule cannot be used together"):
-        Transform(
-            map={"x": "y"},
-            rule=KeyRuleConfig(mode="snake_to_camel", apply_to="all"),
-        )
+def test_strategy_all_passes_full_document():
+    t = Transform(module="builtins", foo="dict", strategy="all")
+    doc = {"first_name": "Ada", "home_address": "London"}
+    r = t(doc)
+    assert r == doc
+
+
+def test_map_and_function_conflict():
+    with pytest.raises(
+        ValueError, match="map and functional transform cannot be used together"
+    ):
+        Transform(map={"x": "y"}, module="builtins", foo="int", input=("x",))

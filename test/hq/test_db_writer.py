@@ -4,11 +4,11 @@ import asyncio
 
 from graflo.architecture.edge import Edge, EdgeConfig
 from graflo.architecture.database_features import DatabaseProfile
+from graflo.architecture.ingestion_model import IngestionModel
 from graflo.architecture.onto import GraphContainer
 from graflo.architecture.schema import (
     GraphMetadata,
     GraphModel,
-    IngestionModel,
     Schema,
 )
 from graflo.architecture.vertex import Vertex, VertexConfig, Field

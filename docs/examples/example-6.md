@@ -169,7 +169,7 @@ schema:
         relation: cites
 ingestion_model:
   resources:
-  - resource_name: Researcher
+  - name: Researcher
     apply:
     - vertex: Researcher
     - source: Researcher
@@ -178,13 +178,13 @@ ingestion_model:
     - source: Researcher
       target: Institution
       relation: affiliatedWith
-  - resource_name: Publication
+  - name: Publication
     apply:
     - vertex: Publication
     - source: Publication
       target: Publication
       relation: cites
-  - resource_name: Institution
+  - name: Institution
     apply:
     - vertex: Institution
 ```
@@ -335,7 +335,7 @@ engine.define_and_ingest(
 
 print(f"Schema: {schema.metadata.name}")
 print(f"Vertices: {len(schema.graph.vertex_config.vertices)}")
-print(f"Edges: {len(list(schema.graph.edge_config.edges_list()))}")
+print(f"Edges: {len(list(schema.graph.edge_config.values()))}")
 print(f"Resources: {len(ingestion_model.resources)}")
 ```
 

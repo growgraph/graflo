@@ -1,8 +1,7 @@
-"""Graph schema and ingestion model definitions.
+"""Graph schema definitions.
 
 This module defines:
     - `Schema`: logical graph + DB profile (A+B)
-    - `IngestionModel`: ingestion resources and transforms (C)
 """
 
 from __future__ import annotations
@@ -10,11 +9,9 @@ from __future__ import annotations
 import logging
 import pathlib
 import re
-from collections import Counter
 import yaml
 from pydantic import (
     Field as PydanticField,
-    PrivateAttr,
     field_validator,
     model_validator,
 )
@@ -27,8 +24,6 @@ from graflo.architecture.db_aware import (
 )
 from graflo.architecture.database_features import DatabaseProfile
 from graflo.architecture.edge import EdgeConfig
-from graflo.architecture.resource import Resource
-from graflo.architecture.transform import ProtoTransform
 from graflo.architecture.vertex import VertexConfig
 from graflo.onto import DBType
 
@@ -93,7 +88,22 @@ class GraphModel(ConfigBaseModel):
 
     def finish_init(self) -> None:
         self.vertex_config.finish_init()
+        self._validate_edge_vertices_defined()
         self.edge_config.finish_init(self.vertex_config)
+
+    def _validate_edge_vertices_defined(self) -> None:
+        """Ensure all edge endpoints reference defined vertex names."""
+        declared_vertices = self.vertex_config.vertex_set
+        edge_vertices = self.edge_config.vertices
+        undefined_vertices = edge_vertices - declared_vertices
+        if undefined_vertices:
+            undefined_vertices_list = sorted(undefined_vertices)
+            declared_vertices_list = sorted(declared_vertices)
+            raise ValueError(
+                "edge_config references undefined vertices: "
+                f"{undefined_vertices_list}. "
+                f"Declared vertices: {declared_vertices_list}"
+            )
 
     def remove_disconnected_vertices(self) -> set[str]:
         """Remove disconnected vertices and return removed names."""
@@ -102,106 +112,6 @@ class GraphModel(ConfigBaseModel):
         if disconnected:
             self.vertex_config.remove_vertices(disconnected)
         return disconnected
-
-
-class IngestionModel(ConfigBaseModel):
-    """Ingestion model (C): resources and transform registry."""
-
-    resources: list[Resource] = PydanticField(
-        default_factory=list,
-        description="List of resource definitions (data pipelines mapping to vertices/edges).",
-    )
-    transforms: dict[str, ProtoTransform] = PydanticField(
-        default_factory=dict,
-        description="Dictionary of named transforms available to resources (name -> ProtoTransform).",
-    )
-
-    _resources: dict[str, Resource] = PrivateAttr()
-
-    @model_validator(mode="after")
-    def _init_model(self) -> "IngestionModel":
-        """Set transform names and build resource lookup map."""
-        for name, t in self.transforms.items():
-            t.name = name
-        self._rebuild_resource_map()
-        return self
-
-    def _rebuild_resource_map(self) -> None:
-        """Validate resource name uniqueness and refresh lookup map."""
-        names = [r.name for r in self.resources]
-        c = Counter(names)
-        for k, v in c.items():
-            if v > 1:
-                raise ValueError(f"resource name {k} used {v} times")
-        object.__setattr__(self, "_resources", {r.name: r for r in self.resources})
-
-    def finish_init(self, graph: GraphModel) -> None:
-        """Initialize resources against graph model and transform library."""
-        self._rebuild_runtime_state()
-        for r in self.resources:
-            r.finish_init(
-                vertex_config=graph.vertex_config,
-                edge_config=graph.edge_config,
-                transforms=self.transforms,
-            )
-
-    def _rebuild_runtime_state(self) -> None:
-        """Rebuild transform names and name lookup map."""
-        for name, t in self.transforms.items():
-            t.name = name
-        self._rebuild_resource_map()
-
-    def fetch_resource(self, name: str | None = None) -> Resource:
-        """Fetch a resource by name or get the first available resource.
-
-        Args:
-            name: Optional name of the resource to fetch
-
-        Returns:
-            Resource: The requested resource
-
-        Raises:
-            ValueError: If the requested resource is not found or if no resources exist
-        """
-        _current_resource = None
-
-        if name is not None:
-            if name in self._resources:
-                _current_resource = self._resources[name]
-            else:
-                raise ValueError(f"Resource {name} not found")
-        else:
-            if self._resources:
-                _current_resource = self.resources[0]
-            else:
-                raise ValueError("Empty resource container 😕")
-        return _current_resource
-
-    def prune_to_graph(
-        self, graph: GraphModel, disconnected: set[str] | None = None
-    ) -> None:
-        """Drop resource actors that reference disconnected vertices."""
-        if disconnected is None:
-            disconnected = graph.vertex_config.vertex_set - graph.edge_config.vertices
-        if not disconnected:
-            return
-
-        def _mentions_disconnected(wrapper) -> bool:
-            return bool(wrapper.actor.references_vertices() & disconnected)
-
-        to_drop: list[Resource] = []
-        for resource in self.resources:
-            root = resource.root
-            if _mentions_disconnected(root):
-                to_drop.append(resource)
-                continue
-            root.remove_descendants_if(_mentions_disconnected)
-            if not any(a.references_vertices() for a in root.collect_actors()):
-                to_drop.append(resource)
-
-        for r in to_drop:
-            self.resources.remove(r)
-            self._resources.pop(r.name, None)
 
 
 class Schema(ConfigBaseModel):

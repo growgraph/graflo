@@ -13,8 +13,9 @@ from uuid import uuid4
 
 from graflo.architecture.edge import Edge
 from graflo.architecture.db_aware import EdgeRuntime, SchemaDBAware
+from graflo.architecture.ingestion_model import IngestionModel
 from graflo.architecture.onto import GraphContainer
-from graflo.architecture.schema import IngestionModel, Schema
+from graflo.architecture.schema import Schema
 from graflo.db import ConnectionManager
 from graflo.db import DBConfig
 from graflo.onto import DBType
@@ -134,7 +135,7 @@ class DBWriter:
         """Extend edge lists for blank vertices after their keys are resolved."""
         vc = self._require_db_aware().vertex_config
         for vcol in vc.blank_vertices:
-            for edge_id, _edge in self.schema.graph.edge_config.edges_items():
+            for edge_id, _edge in self.schema.graph.edge_config.items():
                 vfrom, vto, _relation = edge_id
                 if vcol == vfrom or vcol == vto:
                     if vfrom not in gc.vertices or vto not in gc.vertices:
@@ -251,7 +252,7 @@ class DBWriter:
         await asyncio.gather(
             *[
                 _push_one(edge_id, edge)
-                for edge_id, edge in self.schema.graph.edge_config.edges_items()
+                for edge_id, edge in self.schema.graph.edge_config.items()
             ]
         )
 

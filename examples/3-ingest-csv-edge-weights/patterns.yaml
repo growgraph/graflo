@@ -1,6 +1,5 @@
 file_connectors:
     relations:
-        __tag__: file
         regex: "^relations.*\\.csv$"
         sub_path: "."
         resource_name: "relations"

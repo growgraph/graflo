@@ -20,7 +20,7 @@ Example:
     >>> resource = Resource(name="users", data=user_data)
 """
 
-from .database_features import DatabaseProfile, EdgeIndexSpec
+from .database_features import DatabaseProfile
 from .db_aware import EdgeConfigDBAware, SchemaDBAware, VertexConfigDBAware
 from .edge import Edge, EdgeConfig
 from .executor import ActorExecutor
@@ -36,14 +36,14 @@ from .bindings import (
 from .onto import Index
 from .resource import Resource
 from .manifest import GraphManifest
-from .schema import GraphMetadata, GraphModel, IngestionModel, Schema
+from .ingestion_model import IngestionModel
+from .schema import GraphMetadata, GraphModel, Schema
 from .vertex import FieldType, Vertex, VertexConfig
 
 __all__ = [
     "Edge",
     "EdgeConfig",
     "EdgeConfigDBAware",
-    "EdgeIndexSpec",
     "FieldType",
     "Index",
     "ActorExecutor",

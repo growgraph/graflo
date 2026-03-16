@@ -146,3 +146,117 @@ class TestObjectsAndRelationsCombined:
         # Edges: 7 from relations (1 per row)
         total_edges = sum(len(edocs) for edocs in graph.edges.values() if edocs)
         assert total_edges == 7
+
+
+class TestRelationsResourceMixedTypeSources:
+    """EdgeRouterActor supports one dynamic side and one explicit side."""
+
+    @staticmethod
+    def _build_manifest_for_resource(
+        resource_name: str, edge_router_config: dict
+    ) -> GraphManifest:
+        manifest = GraphManifest.from_config(
+            {
+                "schema": {
+                    "metadata": {"name": "mixed_edge_router_types"},
+                    "graph": {
+                        "vertex_config": {
+                            "vertices": [
+                                {
+                                    "name": "person",
+                                    "fields": ["id"],
+                                    "identity": ["id"],
+                                },
+                                {
+                                    "name": "vehicle",
+                                    "fields": ["id"],
+                                    "identity": ["id"],
+                                },
+                                {
+                                    "name": "institution",
+                                    "fields": ["id"],
+                                    "identity": ["id"],
+                                },
+                            ]
+                        },
+                        "edge_config": {"edges": []},
+                    },
+                    "db_profile": {},
+                },
+                "ingestion_model": {
+                    "resources": [
+                        {
+                            "name": resource_name,
+                            "pipeline": [{"edge_router": edge_router_config}],
+                        }
+                    ]
+                },
+                "bindings": {},
+            }
+        )
+        manifest.finish_init()
+        return manifest
+
+    def test_edge_router_with_explicit_source_and_dynamic_target(self):
+        """source can be fixed while target comes from target_type_field."""
+        manifest = self._build_manifest_for_resource(
+            "relations_explicit_source",
+            {
+                "source": "person",
+                "target_type_field": "target_type",
+                "source_fields": {"id": "source_id"},
+                "target_fields": {"id": "target_id"},
+                "type_map": {"Vehicle": "vehicle", "Institution": "institution"},
+                "relation_field": "relation_type",
+                "relation_map": {"OWNS": "owns"},
+            },
+        )
+        resource = manifest.require_ingestion_model().fetch_resource(
+            "relations_explicit_source"
+        )
+        result = resource(
+            {
+                "source_id": "p1",
+                "target_id": "v1",
+                "target_type": "Vehicle",
+                "relation_type": "OWNS",
+            }
+        )
+        graph = GraphContainer.from_docs_list([result])
+
+        assert "person" in graph.vertices
+        assert "vehicle" in graph.vertices
+        assert ("person", "vehicle", "owns") in graph.edges
+        assert len(graph.edges[("person", "vehicle", "owns")]) == 1
+
+    def test_edge_router_with_dynamic_source_and_explicit_target(self):
+        """target can be fixed while source comes from source_type_field."""
+        manifest = self._build_manifest_for_resource(
+            "relations_explicit_target",
+            {
+                "source_type_field": "source_type",
+                "target": "institution",
+                "source_fields": {"id": "source_id"},
+                "target_fields": {"id": "target_id"},
+                "type_map": {"Person": "person", "Vehicle": "vehicle"},
+                "relation_field": "relation_type",
+                "relation_map": {"EMPLOYED_BY": "employed_by"},
+            },
+        )
+        resource = manifest.require_ingestion_model().fetch_resource(
+            "relations_explicit_target"
+        )
+        result = resource(
+            {
+                "source_id": "p1",
+                "target_id": "i1",
+                "source_type": "Person",
+                "relation_type": "EMPLOYED_BY",
+            }
+        )
+        graph = GraphContainer.from_docs_list([result])
+
+        assert "person" in graph.vertices
+        assert "institution" in graph.vertices
+        assert ("person", "institution", "employed_by") in graph.edges
+        assert len(graph.edges[("person", "institution", "employed_by")]) == 1

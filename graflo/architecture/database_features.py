@@ -15,71 +15,6 @@ from graflo.architecture.onto import EdgeId, Index
 from graflo.onto import DBType
 
 
-class EdgeIndexSpec(ConfigBaseModel):
-    """Secondary indexes for one edge definition."""
-
-    source: str = PydanticField(..., description="Edge source vertex name.")
-    target: str = PydanticField(..., description="Edge target vertex name.")
-    relation: str | None = PydanticField(
-        default=None,
-        description="Logical relation for edge identity (source, target, relation).",
-    )
-    purpose: str | None = PydanticField(
-        default=None,
-        description="DB-only purpose identifier for auxiliary physical storage naming.",
-    )
-    logical_relation: str | None = PydanticField(
-        default=None,
-        description="Legacy relation discriminator; merged into relation when omitted.",
-    )
-    indexes: list[Index] = PydanticField(
-        default_factory=list, description="Physical indexes for this edge."
-    )
-
-    @model_validator(mode="after")
-    def _normalize_relation(self) -> "EdgeIndexSpec":
-        if self.relation is None and self.logical_relation is not None:
-            self.relation = self.logical_relation
-        return self
-
-    @property
-    def edge_id(self) -> EdgeId:
-        return (self.source, self.target, self.relation)
-
-
-class EdgeNameSpec(ConfigBaseModel):
-    """Physical naming overrides for one edge definition."""
-
-    source: str = PydanticField(..., description="Edge source vertex name.")
-    target: str = PydanticField(..., description="Edge target vertex name.")
-    relation: str | None = PydanticField(
-        default=None,
-        description="Logical relation for edge identity (source, target, relation).",
-    )
-    purpose: str | None = PydanticField(
-        default=None,
-        description="DB-only purpose identifier for auxiliary physical storage naming.",
-    )
-    logical_relation: str | None = PydanticField(
-        default=None,
-        description="Legacy relation discriminator; merged into relation when omitted.",
-    )
-    relation_name: str | None = PydanticField(
-        default=None,
-        description="Database-specific relation/type name for the edge.",
-    )
-
-    @model_validator(mode="after")
-    def _normalize_relation(self) -> "EdgeNameSpec":
-        if self.relation is None and self.logical_relation is not None:
-            self.relation = self.logical_relation
-        return self
-
-    @property
-    def edge_id(self) -> EdgeId:
-        return (self.source, self.target, self.relation)
-
-
 class EdgeVariantSpec(ConfigBaseModel):
     """Unified edge physical variant spec keyed by edge identity + purpose."""
 
@@ -139,21 +74,13 @@ class DatabaseProfile(ConfigBaseModel):
         default_factory=dict,
         description="Secondary indexes per vertex name (identity excluded).",
     )
-    edge_indexes: list[EdgeIndexSpec] = PydanticField(
-        default_factory=list,
-        description="Deprecated: legacy secondary indexes per edge identity.",
-    )
-    edge_names: list[EdgeNameSpec] = PydanticField(
-        default_factory=list,
-        description="Deprecated: legacy edge naming overrides keyed by edge identity.",
-    )
     edge_specs: list[EdgeVariantSpec] = PydanticField(
         default_factory=list,
         description="Unified edge physical specs keyed by edge identity + purpose.",
     )
 
     @model_validator(mode="after")
-    def _migrate_legacy_edge_specs(self) -> "DatabaseProfile":
+    def _normalize_edge_specs(self) -> "DatabaseProfile":
         def _variant_key(
             spec: EdgeVariantSpec,
         ) -> tuple[str, str, str | None, str | None, str | None]:
@@ -209,35 +136,6 @@ class DatabaseProfile(ConfigBaseModel):
             if item.indexes_mode != "inherit" or variant.indexes_mode == "inherit":
                 variant.indexes_mode = item.indexes_mode
 
-        for item in self.edge_names:
-            variant = _ensure_variant(
-                merged,
-                source=item.source,
-                target=item.target,
-                relation=item.relation,
-                purpose=item.purpose,
-                logical_relation=item.logical_relation,
-            )
-            if item.relation_name is not None:
-                variant.relation_name = item.relation_name
-
-        for item in self.edge_indexes:
-            variant = _ensure_variant(
-                merged,
-                source=item.source,
-                target=item.target,
-                relation=item.relation,
-                purpose=item.purpose,
-                logical_relation=item.logical_relation,
-            )
-            existing = {tuple(ix.fields) for ix in variant.indexes}
-            for idx in item.indexes:
-                if tuple(idx.fields) not in existing:
-                    variant.indexes.append(idx)
-            # Legacy purpose-specific edge_indexes behaved as override when non-empty.
-            if item.purpose is not None:
-                variant.indexes_mode = "replace" if len(item.indexes) > 0 else "inherit"
-
         object.__setattr__(self, "edge_specs", list(merged.values()))
         return self
 
@@ -265,7 +163,7 @@ class DatabaseProfile(ConfigBaseModel):
         """Return declared physical purposes for an edge.
 
         The base variant (`None`) is always included; additional purposes are
-        collected from matching edge naming/index specs.
+        collected from matching edge variant specs.
         """
         purposes: list[str | None] = [None]
         seen: set[str | None] = {None}

@@ -52,10 +52,10 @@ Rendered graph:
 Let's define the mappings: we want to map document fields to vertex fields. Use vertex `from` to project document fields onto vertex fields and avoid name collisions (e.g. both `Person` and `Department` have a field called `name`):
 
 ```yaml
--   resource_name: people
+-   name: people
     apply:
     -   vertex: person
--   resource_name: departments
+-   name: departments
     apply:
     -   vertex: person
         "from": {id: person_id, name: person}

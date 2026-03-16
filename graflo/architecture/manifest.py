@@ -8,7 +8,8 @@ from pydantic import Field as PydanticField, model_validator, ConfigDict
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.bindings import Bindings
-from graflo.architecture.schema import IngestionModel, Schema
+from graflo.architecture.ingestion_model import IngestionModel
+from graflo.architecture.schema import Schema
 
 
 class GraphManifest(ConfigBaseModel):

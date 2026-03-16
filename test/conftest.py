@@ -285,16 +285,24 @@ def resource_with_dynamic_relations():
                 -   type: vertex
                     name: institution
                     transforms:
-                    -   name: keep_suffix_id
-                    -   name: keep_suffix_id
-                        fields:
-                        -   ror
+                    -   transform:
+                            call:
+                                use: keep_suffix_id
+                    -   transform:
+                            call:
+                                use: keep_suffix_id
+                                input:
+                                -   ror
+                                output:
+                                -   ror
                 -   key: associated_institutions
                     children:
                     -   type: vertex
                         name: institution
                         transforms:
-                        -   name: keep_suffix_id
+                        -   transform:
+                                call:
+                                    use: keep_suffix_id
                     -   type: edge
                         edge:
                             source: institution
@@ -328,26 +336,6 @@ def resource_with_dynamic_relations():
     edge_config:
         edges: []
     transforms:
-        keep_suffix_id:
-            foo: split_keep_part
-            module: graflo.util.transform
-            params:
-                sep: "/"
-                keep: -1
-            input:
-            -   id
-            output:
-            -   _key
-
-    """
-    )
-    return vc
-
-
-@pytest.fixture()
-def resource_openalex_works():
-    return yaml.safe_load("""
-    -   vertex: work
     -   name: keep_suffix_id
         foo: split_keep_part
         module: graflo.util.transform
@@ -358,18 +346,52 @@ def resource_openalex_works():
         -   id
         output:
         -   _key
-    -   name: keep_suffix_id
-        params:
-            sep: "/"
-            keep: [-2, -1]
-        input:
-        -   doi
-        output:
-        -   doi
+
+    """
+    )
+    return vc
+
+
+@pytest.fixture()
+def resource_openalex_works():
+    return yaml.safe_load("""
+    -   vertex: work
+    -   transform:
+            call:
+                module: graflo.util.transform
+                foo: split_keep_part
+                params:
+                    sep: "/"
+                    keep: -1
+                input:
+                -   id
+                output:
+                -   _key
+    -   transform:
+            call:
+                module: graflo.util.transform
+                foo: split_keep_part
+                params:
+                    sep: "/"
+                    keep: [-2, -1]
+                input:
+                -   doi
+                output:
+                -   doi
     -   key: referenced_works
         apply:
         -   vertex: work
-        -   name: keep_suffix_id
+        -   transform:
+                call:
+                    module: graflo.util.transform
+                    foo: split_keep_part
+                    params:
+                        sep: "/"
+                        keep: -1
+                    input:
+                    -   id
+                    output:
+                    -   _key
     -   source: work
         target: work
     """)
@@ -378,7 +400,7 @@ def resource_openalex_works():
 @pytest.fixture()
 def resource_deb():
     return yaml.safe_load("""
-    -   resource_name: package
+    -   name: package
         apply:
         -   vertex: package
         -   key: dependencies
@@ -416,7 +438,7 @@ def resource_deb():
 @pytest.fixture()
 def resource_deb_compact():
     return yaml.safe_load("""
-    -   resource_name: package
+    -   name: package
         apply:
         -   vertex: package
         -   key: dependencies
@@ -440,7 +462,7 @@ def resource_deb_compact():
 def resource_deb_package_only():
     """Package-package edges only via relation_from_key (example 4 style). No maintainer."""
     return yaml.safe_load("""
-    -   resource_name: package
+    -   name: package
         apply:
         -   vertex: package
         -   key: dependencies
@@ -457,39 +479,50 @@ def resource_deb_package_only():
 @pytest.fixture()
 def resource_ticker():
     return yaml.safe_load("""
-    resource_name: ticker_data
+    name: ticker_data
     apply:
-    -   foo: round_str
-        module: graflo.util.transform
-        params:
-            ndigits: 3
-        input:
-        -   Open
-        dress:
-            key: name
-            value: value
-    -   foo: round_str
-        module: graflo.util.transform
-        params:
-            ndigits: 3
-        input:
-        -   Close
-        dress:
-            key: name
-            value: value
-    -   foo: int
-        module: builtins
-        input:
-        -   Volume
-        dress:
-            key: name
-            value: value
-    -   foo: parse_date_yahoo
-        module: graflo.util.transform
-        map:
-            Date: t_obs
-    -   map:
-            ticker: oftic
+    -   transform:
+            call:
+                module: graflo.util.transform
+                foo: round_str
+                params:
+                    ndigits: 3
+                input:
+                -   Open
+                dress:
+                    key: name
+                    value: value
+    -   transform:
+            call:
+                module: graflo.util.transform
+                foo: round_str
+                params:
+                    ndigits: 3
+                input:
+                -   Close
+                dress:
+                    key: name
+                    value: value
+    -   transform:
+            call:
+                module: builtins
+                foo: int
+                input:
+                -   Volume
+                dress:
+                    key: name
+                    value: value
+    -   transform:
+            call:
+                module: graflo.util.transform
+                foo: parse_date_yahoo
+                input:
+                -   Date
+                output:
+                -   t_obs
+    -   transform:
+            rename:
+                ticker: oftic
     -   vertex: ticker
     - vertex: feature
     """)

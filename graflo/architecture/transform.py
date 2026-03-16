@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import importlib
 import logging
-import re
 from copy import deepcopy
 from typing import Any, Literal, Self
 
@@ -58,18 +57,6 @@ def _tuple_it(x: str | list[str] | tuple[str, ...]) -> tuple[str, ...]:
     return x
 
 
-def _snake_to_camel(value: str) -> str:
-    parts = value.split("_")
-    if not parts:
-        return value
-    head, *tail = parts
-    return head + "".join(part.capitalize() for part in tail)
-
-
-def _camel_to_snake(value: str) -> str:
-    return re.sub(r"(?<!^)(?=[A-Z])", "_", value).lower()
-
-
 class TransformException(BaseException):
     """Base exception for transform-related errors."""
 
@@ -90,30 +77,6 @@ class DressConfig(ConfigBaseModel):
 
     key: str = Field(description="Output field name for the input key.")
     value: str = Field(description="Output field name for the function result.")
-
-
-class KeyRuleConfig(ConfigBaseModel):
-    """Rule-based key renaming configuration."""
-
-    mode: Literal[
-        "snake_to_camel", "camel_to_snake", "strip_prefix", "strip_suffix"
-    ] = Field(description="Rule mode used to transform field names.")
-    value: str | None = Field(
-        default=None,
-        description="Argument for strip modes (prefix/suffix to remove).",
-    )
-    apply_to: Literal["all", "io"] = Field(
-        default="all",
-        description="Apply rule to all input doc keys or derive output from input.",
-    )
-
-    @model_validator(mode="after")
-    def validate_value(self) -> KeyRuleConfig:
-        if self.mode in {"strip_prefix", "strip_suffix"} and not self.value:
-            raise ValueError(
-                "rule.value is required for strip_prefix/strip_suffix modes."
-            )
-        return self
 
 
 class ProtoTransform(ConfigBaseModel):
@@ -243,7 +206,7 @@ class Transform(ProtoTransform):
     )
     map: dict[str, str] = Field(
         default_factory=dict,
-        description="Mapping of output_key -> input_key for pure field renaming (no function).",
+        description="Mapping of input_key -> output_key for pure field renaming (no function).",
     )
     dress: DressConfig | None = Field(
         default=None,
@@ -254,9 +217,14 @@ class Transform(ProtoTransform):
             "input=(Open,) produces {name: 'Open', value: <result>}."
         ),
     )
-    rule: KeyRuleConfig | None = Field(
-        default=None,
-        description="Generic key renaming rule used instead of explicit map entries.",
+    strategy: Literal["single", "each", "all"] = Field(
+        default="single",
+        description=(
+            "Functional call strategy. "
+            "single: call function once with all input values. "
+            "each: call function once per input field (unary). "
+            "all: pass full document as a single argument."
+        ),
     )
 
     functional_transform: bool = Field(
@@ -272,20 +240,15 @@ class Transform(ProtoTransform):
         data = dict(data)
         if "fields" in data and data["fields"] is not None:
             data["fields"] = _tuple_it(data["fields"])
-        # Legacy: convert switch → input + dress
         if "switch" in data:
-            switch = data.pop("switch")
-            if isinstance(switch, dict) and switch:
-                key = next(iter(switch))
-                vals = switch[key]
-                if isinstance(vals, (list, tuple)) and len(vals) >= 2:
-                    data.setdefault("input", [key])
-                    data.setdefault("dress", {"key": vals[0], "value": vals[1]})
-        # Legacy: convert list-style dress → dict-style
+            raise ValueError(
+                "Legacy `switch` is no longer supported. Use `input` + `dress`."
+            )
         if "dress" in data and isinstance(data["dress"], (list, tuple)):
-            vals = data["dress"]
-            if len(vals) >= 2:
-                data["dress"] = {"key": vals[0], "value": vals[1]}
+            raise ValueError(
+                "List-style `dress` is no longer supported. "
+                "Use a dict: dress={key: ..., value: ...}."
+            )
         return data
 
     @model_validator(mode="after")
@@ -293,7 +256,6 @@ class Transform(ProtoTransform):
         object.__setattr__(self, "functional_transform", self._foo is not None)
         self._init_input_from_fields()
         self._init_io_from_map()
-        self._init_io_from_rule()
         self._init_output_from_dress()
         self._default_output_from_input()
         self._init_map_from_io()
@@ -318,17 +280,6 @@ class Transform(ProtoTransform):
         elif not self.output:
             object.__setattr__(self, "output", tuple(self.map.values()))
 
-    def _init_io_from_rule(self) -> None:
-        """Derive output keys from input keys when rule applies to IO fields."""
-        if self.rule is None or self.rule.apply_to != "io":
-            return
-        if not self.input:
-            return
-        if self.output and self.output != self.input:
-            return
-        output_fields = tuple(self._apply_rule_to_key(key) for key in self.input)
-        object.__setattr__(self, "output", output_fields)
-
     def _init_output_from_dress(self) -> None:
         """Derive output from dress — always takes precedence when set."""
         if self.dress is not None:
@@ -351,15 +302,54 @@ class Transform(ProtoTransform):
 
     def _validate_configuration(self) -> None:
         """Validate that the transform has enough information to operate."""
-        if self.map and self.rule is not None and self.rule.apply_to == "all":
+        # Reject only user-specified map+function conflict. A derived map
+        # (from input/output defaults) is valid for functional transforms.
+        if "map" in self.model_fields_set and self.map and self._foo is not None:
+            raise ValueError("map and functional transform cannot be used together.")
+        if self.dress is not None:
+            if self._foo is None:
+                raise ValueError(
+                    "dress requires a functional transform (module + foo)."
+                )
+            if len(self.input) != 1:
+                raise ValueError("dress requires exactly one input field.")
+        if self.strategy != "single" and self._foo is None:
+            raise ValueError("strategy applies only to functional transforms.")
+        if self._foo is not None and not self.input:
+            if self.strategy != "all":
+                raise ValueError(
+                    "Functional transforms require `input` (string or list of field names)."
+                )
+        if self.strategy == "all":
+            if self.input or self.fields:
+                raise ValueError("strategy='all' does not accept input/fields.")
+            if self.dress is not None:
+                raise ValueError("strategy='all' is not compatible with dress.")
+        if self.strategy == "each":
+            if not self.input:
+                raise ValueError("strategy='each' requires one or more input fields.")
+            if self.output and len(self.input) != len(self.output):
+                raise ValueError(
+                    "strategy='each' requires output length to match input length."
+                )
+        if (
+            self._foo is None
+            and self.dress is None
+            and self.input
+            and self.output
+            and len(self.input) != len(self.output)
+        ):
             raise ValueError(
-                "map and rule cannot be used together in the same Transform."
+                "Non-functional transforms require input/output to have the same length."
             )
-        if not self.input and not self.output and not self.name:
-            if self.rule is not None and self.rule.apply_to == "all":
-                return
+        if (
+            not self.input
+            and not self.output
+            and not self.name
+            and not (self._foo is not None and self.strategy == "all")
+        ):
             raise ValueError(
-                "Either input/output, fields, map, rule or name must be provided in "
+                "Either input/output, fields, map or name must be provided in "
                 "Transform constructor."
             )
 
@@ -377,14 +367,6 @@ class Transform(ProtoTransform):
         Returns:
             dict: Transformed data
         """
-        if self._is_global_key_rule_only:
-            input_doc = nargs[0]
-            if not isinstance(input_doc, dict):
-                raise ValueError(
-                    "rule.apply_to='all' requires a dictionary input document."
-                )
-            return {self._apply_rule_to_key(k): v for k, v in input_doc.items()}
-
         if self.is_mapping:
             input_doc = nargs[0]
             if isinstance(input_doc, dict):
@@ -392,11 +374,24 @@ class Transform(ProtoTransform):
             else:
                 output_values = list(nargs)
         else:
-            if nargs and isinstance(input_doc := nargs[0], dict):
-                new_args = [input_doc[k] for k in self.input]
-                output_values = self.apply(*new_args, **kwargs)
+            if self.strategy == "all":
+                if nargs and isinstance(nargs[0], dict):
+                    output_values = self.apply(nargs[0], **kwargs)
+                else:
+                    output_values = self.apply(*nargs, **kwargs)
+            elif self.strategy == "each":
+                if nargs and isinstance(input_doc := nargs[0], dict):
+                    output_values = [
+                        self.apply(input_doc[k], **kwargs) for k in self.input
+                    ]
+                else:
+                    output_values = [self.apply(value, **kwargs) for value in nargs]
             else:
-                output_values = self.apply(*nargs, **kwargs)
+                if nargs and isinstance(input_doc := nargs[0], dict):
+                    new_args = [input_doc[k] for k in self.input]
+                    output_values = self.apply(*new_args, **kwargs)
+                else:
+                    output_values = self.apply(*nargs, **kwargs)
 
         if self.output:
             r = self._dress_as_dict(output_values)
@@ -408,31 +403,6 @@ class Transform(ProtoTransform):
     def is_mapping(self) -> bool:
         """True when the transform is pure mapping (no function)."""
         return self._foo is None
-
-    @property
-    def _is_global_key_rule_only(self) -> bool:
-        return (
-            self.rule is not None
-            and self.rule.apply_to == "all"
-            and self._foo is None
-            and not self.map
-            and not self.input
-            and not self.output
-        )
-
-    def _apply_rule_to_key(self, key: str) -> str:
-        if self.rule is None:
-            return key
-        if self.rule.mode == "snake_to_camel":
-            return _snake_to_camel(key)
-        if self.rule.mode == "camel_to_snake":
-            return _camel_to_snake(key)
-        if self.rule.mode == "strip_prefix":
-            assert self.rule.value is not None
-            return key.removeprefix(self.rule.value)
-        assert self.rule.mode == "strip_suffix"
-        assert self.rule.value is not None
-        return key.removesuffix(self.rule.value)
 
     def _dress_as_dict(self, transform_result: Any) -> dict[str, Any]:
         """Convert transform result to dictionary format.
@@ -458,12 +428,7 @@ class Transform(ProtoTransform):
         Returns:
             bool: True if this is a dummy transform
         """
-        return (
-            self.name is not None
-            and not self.map
-            and self.rule is None
-            and self._foo is None
-        )
+        return self.name is not None and not self.map and self._foo is None
 
     def merge_from(self, t: Transform) -> Transform:
         """Merge another transform's configuration into a copy of it.

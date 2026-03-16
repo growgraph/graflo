@@ -94,7 +94,7 @@ You can explicitly list each key you want to process:
 
 ```yaml
 resources:
--   resource_name: package
+-   name: package
     apply:
     -   vertex: package
     -   key: dependencies
@@ -132,7 +132,7 @@ Alternatively, you can use `any_key: true` to process all keys in the dictionary
 
 ```yaml
 resources:
--   resource_name: package
+-   name: package
     apply:
     -   vertex: package
     -   key: dependencies

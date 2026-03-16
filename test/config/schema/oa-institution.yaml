@@ -33,27 +33,31 @@ schema:
                 -   type
 ingestion_model:
     resources:
-    -   resource_name: institutions
+    -   name: institutions
         apply:
         -   vertex: institution
-        -   name: keep_suffix_id
+        -   transform:
+                call:
+                    use: keep_suffix_id
         -   key: associated_institutions
             apply:
             -   vertex: institution
-            -   name: keep_suffix_id
+            -   transform:
+                    call:
+                        use: keep_suffix_id
         -   source: institution
             target: institution
             match_target: associated_institutions
             relation_field: relationship
     transforms:
-        keep_suffix_id:
-            foo: split_keep_part
-            module: graflo.util.transform
-            params:
-                sep: /
-                keep: -1
-            input:
-            -   id
-            output:
-            -   _key
+    -   name: keep_suffix_id
+        foo: split_keep_part
+        module: graflo.util.transform
+        params:
+            sep: /
+            keep: -1
+        input:
+        -   id
+        output:
+        -   _key
 bindings: {}

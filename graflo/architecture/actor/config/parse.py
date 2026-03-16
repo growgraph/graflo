@@ -23,7 +23,7 @@ _STEP_STRIP_KEYS = frozenset(
         "infer_edge_only",
         "infer_edge_except",
         "transforms",
-        "resource_name",
+        "name",
     }
 )
 

@@ -1,6 +1,6 @@
 # Concepts
 
-GraFlo is a Graph Schema & Transformation Language (GSTL) for Labeled Property Graphs (LPG). It separates graph schema definition from data-source binding and database targeting, enabling a single declarative specification to drive ingestion across heterogeneous sources and databases.
+GraFlo is a Graph Schema Transformation Language (GSTL) for Labeled Property Graphs (LPG). As a domain-specific language (DSL), it separates graph schema definition from data-source binding and database targeting, enabling a single declarative specification to drive ingestion across heterogeneous sources and databases while keeping transformation logic portable across vendors.
 
 ## System Overview
 
@@ -209,7 +209,7 @@ classDiagram
 
     class IngestionModel {
         +resources: list~Resource~
-        +transforms: dict~str,ProtoTransform~
+        +transforms: list~ProtoTransform~
         +finish_init(graph)
         +fetch_resource(name) Resource
     }
@@ -702,12 +702,13 @@ flowchart LR
 
 #### Schema-level transforms
 
-Transforms can be defined at the schema level and referenced by name in
-resources, allowing reuse across multiple pipelines:
+Transforms are declared as a **list** under `ingestion_model.transforms` and
+referenced from resource steps via `transform.call.use`. This keeps ordering
+explicit and allows reuse across multiple pipelines:
 
 ```yaml
 transforms:
-  keep_suffix_id:
+  - name: keep_suffix_id
     foo: split_keep_part
     module: graflo.util.transform
     params: { sep: "/", keep: -1 }
@@ -715,12 +716,16 @@ transforms:
     output: [_key]
 
 resources:
-- resource_name: works
+- name: works
   apply:
-  - name: keep_suffix_id   # references the transform above
-    input: [doi]            # override input for this usage
+  - transform:
+      call:
+        use: keep_suffix_id      # references the transform above
+        input: [doi]             # override input for this usage
   - vertex: work
 ```
+
+Transform steps are executed in the order they appear in `apply`.
 
 ## Key Features
 

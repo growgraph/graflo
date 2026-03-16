@@ -20,6 +20,8 @@ class EdgeRouterActor(Actor):
     def __init__(self, config: EdgeRouterActorConfig):
         self.source_type_field = config.source_type_field
         self.target_type_field = config.target_type_field
+        self.source = config.source
+        self.target = config.target
         self.source_fields = config.source_fields
         self.target_fields = config.target_fields
         self.relation_field = config.relation_field
@@ -63,6 +65,36 @@ class EdgeRouterActor(Actor):
             return None
         return self._relation_map.get(raw, raw)
 
+    def _resolve_side_type(
+        self,
+        doc: dict[str, Any],
+        *,
+        explicit_type: str | None,
+        type_field: str | None,
+        type_map: dict[str, str],
+        side_name: str,
+    ) -> str | None:
+        if explicit_type is not None:
+            return self._resolve_type(explicit_type, type_map)
+
+        if type_field is None:
+            logger.debug(
+                "EdgeRouterActor: no %s type source configured, skipping",
+                side_name,
+            )
+            return None
+
+        raw_type = doc.get(type_field)
+        if raw_type is None:
+            logger.debug(
+                "EdgeRouterActor: missing %s type field '%s' in doc, skipping",
+                side_name,
+                type_field,
+            )
+            return None
+
+        return self._resolve_type(raw_type, type_map)
+
     def _get_or_create_edge(
         self,
         source_name: str,
@@ -104,14 +136,20 @@ class EdgeRouterActor(Actor):
     ) -> ExtractionContext:
         doc: dict[str, Any] = kwargs.get("doc", {})
 
-        raw_source = doc.get(self.source_type_field)
-        raw_target = doc.get(self.target_type_field)
-        if raw_source is None or raw_target is None:
-            logger.debug("EdgeRouterActor: missing type field(s) in doc, skipping")
-            return ctx
-
-        source_name = self._resolve_type(raw_source, self._source_type_map)
-        target_name = self._resolve_type(raw_target, self._target_type_map)
+        source_name = self._resolve_side_type(
+            doc,
+            explicit_type=self.source,
+            type_field=self.source_type_field,
+            type_map=self._source_type_map,
+            side_name="source",
+        )
+        target_name = self._resolve_side_type(
+            doc,
+            explicit_type=self.target,
+            type_field=self.target_type_field,
+            type_map=self._target_type_map,
+            side_name="target",
+        )
         if source_name is None or target_name is None:
             return ctx
 
@@ -151,6 +189,8 @@ class EdgeRouterActor(Actor):
 
     def fetch_important_items(self) -> dict[str, Any]:
         items: dict[str, Any] = {
+            "source": self.source or "",
+            "target": self.target or "",
             "source_type_field": self.source_type_field,
             "target_type_field": self.target_type_field,
             "relation_field": self.relation_field or "",

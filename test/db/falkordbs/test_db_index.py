@@ -23,7 +23,7 @@ def test_create_edge_index(conn_conf, test_graph_name, schema_obj):
 
     with ConnectionManager(connection_config=conn_conf) as db_client:
         db_client.define_edge_indexes(
-            schema_o.graph.edge_config.edges_list(include_aux=True), schema=schema_o
+            list(schema_o.graph.edge_config.values()), schema=schema_o
         )
 
     # FalkorDB indexes are created silently.

@@ -491,7 +491,7 @@ print("Ingestion complete!")
 print("=" * 80)
 print(f"Schema: {schema.metadata.name}")
 print(f"Vertices: {len(schema.graph.vertex_config.vertices)}")
-print(f"Edges: {len(list(schema.graph.edge_config.edges_list()))}")
+print(f"Edges: {len(list(schema.graph.edge_config.values()))}")
 print(f"Resources: {len(ingestion_model.resources)}")
 print("=" * 80)
 
@@ -611,19 +611,19 @@ schema:
           - name: created_at
 ingestion_model:
   resources:
-  - resource_name: products
+  - name: products
     apply:
     - vertex: products
-  - resource_name: users
+  - name: users
     apply:
     - vertex: users
-  - resource_name: purchases
+  - name: purchases
     apply:
     - vertex: users
       "from": {id: user_id}
     - vertex: products
       "from": {id: product_id}
-  - resource_name: follows
+  - name: follows
     apply:
     - vertex: users
       "from": {id: follower_id}

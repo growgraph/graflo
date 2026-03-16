@@ -12,7 +12,8 @@ import os
 
 from sqlalchemy import create_engine, text
 
-from graflo.architecture.schema import IngestionModel, Schema
+from graflo.architecture.ingestion_model import IngestionModel
+from graflo.architecture.schema import Schema
 from graflo.data_source.sql import SQLConfig, SQLDataSource
 from graflo.filter.onto import ComparisonOperator, FilterExpression
 from graflo.architecture.bindings import TableConnector
@@ -242,7 +243,7 @@ class TestEdgeResourceAutoJoin:
             },
             resources=[
                 {
-                    "resource_name": "relations",
+                    "name": "relations",
                     "pipeline": [
                         {
                             "vertex_router": {
@@ -514,7 +515,7 @@ class TestEdgeResourceAutoJoin:
             edge_config={"edges": []},
             resources=[
                 {
-                    "resource_name": "mixed",
+                    "name": "mixed",
                     "pipeline": [
                         {
                             "vertex_router": {
@@ -568,11 +569,11 @@ class TestEdgeResourceAutoJoin:
             edge_config={"edges": []},
             resources=[
                 {
-                    "resource_name": "transform_then_router",
+                    "name": "transform_then_router",
                     "pipeline": [
                         {
                             "transform": {
-                                "map": {"raw_id": "id", "raw_label": "label"},
+                                "rename": {"raw_id": "id", "raw_label": "label"}
                             }
                         },
                         {

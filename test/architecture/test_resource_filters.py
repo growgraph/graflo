@@ -273,7 +273,8 @@ class TestAutoJoin:
 
     def _make_schema_and_patterns(self):
         """Build a minimal Schema + Connectors for the CMDB-like scenario."""
-        from graflo.architecture.schema import IngestionModel, Schema
+        from graflo.architecture.ingestion_model import IngestionModel
+        from graflo.architecture.schema import Schema
         from graflo.architecture.bindings import Bindings
 
         schema = Schema.model_validate(
@@ -299,7 +300,7 @@ class TestAutoJoin:
             {
                 "resources": [
                     {
-                        "resource_name": "abc_relations",
+                        "name": "abc_relations",
                         "pipeline": [
                             {
                                 "edge": {

@@ -19,7 +19,7 @@ The resource system allows for:
 
 Example:
     >>> resource = Resource(
-    ...     resource_name="users",
+    ...     name="users",
     ...     pipeline=[{"vertex": "user"}, {"edge": {"from": "user", "to": "user"}}],
     ...     encoding=EncodingType.UTF_8
     ... )
@@ -119,7 +119,7 @@ class Resource(ConfigBaseModel):
 
     model_config = {"extra": "forbid"}
 
-    resource_name: str = PydanticField(
+    name: str = PydanticField(
         ...,
         description="Name of the resource (e.g. table or file identifier).",
     )
@@ -203,7 +203,7 @@ class Resource(ConfigBaseModel):
             )
 
     def _validate_infer_edge_spec_targets(self, edge_config: EdgeConfig) -> None:
-        known_edge_ids = {edge_id for edge_id, _ in edge_config.edges_items()}
+        known_edge_ids = {edge_id for edge_id, _ in edge_config.items()}
 
         def _validate_list(field_name: str, specs: list[EdgeInferSpec]) -> None:
             unknown: list[EdgeId] = []
@@ -232,11 +232,6 @@ class Resource(ConfigBaseModel):
     def root(self) -> ActorWrapper:
         """Root actor wrapper for the processing pipeline."""
         return self._root
-
-    @property
-    def name(self) -> str:
-        """Resource name (alias for resource_name)."""
-        return self.resource_name
 
     def finish_init(
         self,
@@ -271,6 +266,33 @@ class Resource(ConfigBaseModel):
         ]
         return {(ea.edge.source, ea.edge.target, None) for ea in edge_actors}
 
+    def _validate_dynamic_edge_vertices_exist(
+        self, vertex_config: VertexConfig
+    ) -> None:
+        """Ensure all vertices implied by dynamic edge controls are declared."""
+        known_vertices = set(vertex_config.vertex_set)
+        referenced_vertices: set[str] = set()
+
+        for spec in self.infer_edge_only:
+            referenced_vertices.add(spec.source)
+            referenced_vertices.add(spec.target)
+
+        for spec in self.infer_edge_except:
+            referenced_vertices.add(spec.source)
+            referenced_vertices.add(spec.target)
+
+        for source, target, _ in self._edge_ids_from_edge_actors():
+            referenced_vertices.add(source)
+            referenced_vertices.add(target)
+
+        missing_vertices = sorted(referenced_vertices - known_vertices)
+        if missing_vertices:
+            raise ValueError(
+                "Resource dynamic edge references undefined vertices: "
+                f"{missing_vertices}. "
+                "Declare these vertices in vertex_config before using dynamic/inferred edges."
+            )
+
     def _rebuild_runtime(
         self,
         *,
@@ -281,6 +303,7 @@ class Resource(ConfigBaseModel):
         """Rebuild runtime actor initialization state from typed context."""
         object.__setattr__(self, "_vertex_config", vertex_config)
         object.__setattr__(self, "_edge_config", edge_config)
+        self._validate_dynamic_edge_vertices_exist(vertex_config)
         self._validate_infer_edge_spec_targets(edge_config)
 
         infer_edge_except = {spec.edge_id for spec in self.infer_edge_except}

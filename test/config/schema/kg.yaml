@@ -136,7 +136,7 @@ schema:
                 -   _role
 ingestion_model:
     resources:
-    -   resource_name: kg
+    -   name: kg
         infer_edge_except:
         -   source: entity
             target: entity
@@ -147,8 +147,9 @@ ingestion_model:
         -   key: top_level_mention
             apply:
             -   vertex: mention
-            -   map:
-                    hash: _key
+            -   transform:
+                    rename:
+                        hash: _key
         -   source: publication
             target: mention
             match_target: top_level_mention
@@ -160,27 +161,31 @@ ingestion_model:
             -   key: entity
                 apply:
                 -   vertex: entity
-                -   map:
-                        hash: _key
+                -   transform:
+                        rename:
+                            hash: _key
             -   key: mention
                 apply:
                 -   vertex: mention
-                -   map:
-                        hash: _key
+                -   transform:
+                        rename:
+                            hash: _key
         -   key: triples
             apply:
             -   key: triple_index
                 apply:
                 -   vertex: mention
-                -   map:
-                        hash: _key
+                -   transform:
+                        rename:
+                            hash: _key
             -   key: triple
                 apply:
                 -   apply:
                     -   vertex: mention
-                    -   map:
-                            hash: _key
-                            role: _role
+                    -   transform:
+                            rename:
+                                hash: _key
+                                role: _role
         -   source: mention
             match_source: triple_index
             target: mention
@@ -188,7 +193,7 @@ ingestion_model:
             weights:
                 direct:
                 -   _role
-    -   resource_name: communities
+    -   name: communities
         apply:
         -   source: entity
             target: community

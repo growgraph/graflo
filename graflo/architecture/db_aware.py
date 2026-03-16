@@ -7,6 +7,7 @@ These wrappers materialize database-specific naming/defaults from logical
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Iterator
 
 from graflo.architecture.database_features import DatabaseProfile
 from graflo.architecture.edge import (
@@ -127,13 +128,14 @@ class EdgeConfigDBAware:
     def edges(self) -> list[Edge]:
         return self.logical.edges
 
-    def edges_list(self, include_aux: bool = False):
-        _ = include_aux
-        return self.logical.edges_list(include_aux=False)
+    def __iter__(self) -> Iterator[Edge]:
+        return self.values()
 
-    def edges_items(self, include_aux: bool = False):
-        _ = include_aux
-        return self.logical.edges_items(include_aux=False)
+    def values(self) -> Iterator[Edge]:
+        return self.logical.values()
+
+    def items(self) -> Iterator[tuple[EdgeId, Edge]]:
+        return self.logical.items()
 
     @property
     def vertices(self):

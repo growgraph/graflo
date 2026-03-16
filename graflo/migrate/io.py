@@ -10,7 +10,8 @@ from typing import Any
 from suthing import FileHandle
 
 from graflo.architecture.manifest import GraphManifest
-from graflo.architecture.schema import IngestionModel, Schema
+from graflo.architecture.ingestion_model import IngestionModel
+from graflo.architecture.schema import Schema
 
 
 def load_manifest(path: str | Path) -> GraphManifest:

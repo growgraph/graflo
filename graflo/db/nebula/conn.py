@@ -259,7 +259,7 @@ class NebulaConnection(Connection):
 
     def define_schema(self, schema: Schema) -> None:
         self.define_vertex_classes(schema)
-        edges = schema.graph.edge_config.edges_list(include_aux=True)
+        edges = list(schema.graph.edge_config.values())
         self.define_edge_classes(edges)
 
     def define_vertex_classes(self, schema: Schema) -> None:

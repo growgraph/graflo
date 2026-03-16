@@ -86,7 +86,7 @@ fillcolor_palette = {
 }
 
 # Mapping of node types to shapes
-map_type2shape = {
+NODE_SHAPE_BY_TYPE = {
     AuxNodeType.RESOURCE: "box",
     AuxNodeType.VERTEX_BLANK: "box",
     AuxNodeType.FIELD_DEFINITION: "trapezium",
@@ -97,7 +97,7 @@ map_type2shape = {
 }
 
 # Mapping of node types to colors
-map_type2color = {
+NODE_COLOR_BY_TYPE = {
     AuxNodeType.RESOURCE: fillcolor_palette["blue"],
     AuxNodeType.FIELD_DEFINITION: fillcolor_palette["red"],
     AuxNodeType.VERTEX_BLANK: "white",
@@ -116,7 +116,12 @@ map_class2color = {
 }
 
 # Edge style mapping
-edge_status = {AuxNodeType.VERTEX: "solid"}
+EDGE_STYLE_BY_SOURCE_TYPE = {AuxNodeType.VERTEX: "solid"}
+
+# Backward-compatible aliases.
+map_type2shape = NODE_SHAPE_BY_TYPE
+map_type2color = NODE_COLOR_BY_TYPE
+edge_status = EDGE_STYLE_BY_SOURCE_TYPE
 
 
 def get_auxnode_id(ntype: AuxNodeType, label=False, vfield=False, **kwargs):
@@ -177,7 +182,7 @@ def get_auxnode_id(ntype: AuxNodeType, label=False, vfield=False, **kwargs):
     return s
 
 
-def lto_dict(strings):
+def shortest_unique_prefix_map(strings):
     """Create a dictionary of string prefixes for shortening labels.
 
     Args:
@@ -214,6 +219,11 @@ def lto_dict(strings):
         else:
             r[k] = k
     return r
+
+
+def lto_dict(strings):
+    """Backward-compatible alias for shortest_unique_prefix_map."""
+    return shortest_unique_prefix_map(strings)
 
 
 def assemble_tree(
@@ -282,23 +292,35 @@ class ManifestPlotter:
 
     def __init__(
         self,
-        config_filename,
-        fig_path,
+        config_filename: str | os.PathLike[str] | None = None,
+        fig_path: str | os.PathLike[str] = ".",
         output_format: str = "pdf",
         output_dpi: int | None = None,
+        graph_manifest: GraphManifest | None = None,
     ):
         """Initialize the schema plotter.
 
         Args:
-            config_filename: Path to schema configuration file
+            config_filename: Optional path to schema configuration file
             fig_path: Path to save visualizations
+            graph_manifest: Optional pre-built graph manifest
         """
         self.fig_path = fig_path
         self.output_format = output_format.lower()
         self.output_dpi = output_dpi
 
-        self.config = FileHandle.load(fpath=config_filename)
-        manifest = GraphManifest.from_config(self.config)
+        manifest: GraphManifest
+        if graph_manifest is not None:
+            manifest = graph_manifest
+            self.config = None
+        elif config_filename is not None:
+            self.config = FileHandle.load(fpath=config_filename)
+            manifest = GraphManifest.from_config(self.config)
+        else:
+            raise ValueError(
+                "ManifestPlotter requires either `config_filename` or `graph_manifest`."
+            )
+
         manifest.finish_init()
         self.schema = manifest.require_schema()
         self.ingestion_model = manifest.require_ingestion_model()
@@ -308,6 +330,13 @@ class ManifestPlotter:
 
     def _figure_path(self, stem: str) -> str:
         return os.path.join(self.fig_path, f"{stem}.{self.output_format}")
+
+    def _versioned_stem(self, stem: str) -> str:
+        metadata = getattr(self.schema, "metadata", None)
+        version = getattr(metadata, "version", None)
+        if version is None:
+            return stem
+        return f"{stem}-v{version}"
 
     def _draw(self, ag, stem: str, prog: str = "dot") -> None:
         if self.output_format == "png" and self.output_dpi is not None:
@@ -344,6 +373,178 @@ class ManifestPlotter:
                         discovered_edges[edge_id] = edge
 
         return discovered_edges
+
+    @staticmethod
+    def _edge_label(edge) -> str | None:
+        """Build the human-readable edge label for plotting."""
+        if edge.relation is not None:
+            return edge.relation
+        if edge.relation_field is not None:
+            return f"[{edge.relation_field}]"
+        if edge.relation_from_key:
+            return "[key]"
+        return None
+
+    @staticmethod
+    def _merge_edges(primary_edges: dict, supplemental_edges: dict) -> dict:
+        """Merge edge dictionaries without replacing existing primary edges."""
+        merged = dict(primary_edges)
+        for edge_id, edge in supplemental_edges.items():
+            merged.setdefault(edge_id, edge)
+        return merged
+
+    @staticmethod
+    def _filter_edges_with_known_vertices(
+        edges: dict,
+        known_vertices: set[str],
+    ) -> tuple[dict, dict]:
+        """Split edges by whether both endpoints are known vertices."""
+        valid_edges = {}
+        invalid_edges = {}
+        for edge_id, edge in edges.items():
+            source, target, _ = edge_id
+            if source in known_vertices and target in known_vertices:
+                valid_edges[edge_id] = edge
+            else:
+                invalid_edges[edge_id] = edge
+        return valid_edges, invalid_edges
+
+    @staticmethod
+    def _style_nodes(
+        graph: nx.MultiDiGraph | nx.DiGraph,
+        *,
+        force_labels: bool = False,
+        partition_by_vertex: dict[str, str] | None = None,
+        partition_color_map: dict[str, str] | None = None,
+    ) -> None:
+        """Apply common visual styles to graph nodes."""
+        for node_id in graph.nodes():
+            props = graph.nodes()[node_id]
+            node_type = props.get("type")
+            if node_type is None:
+                logger.warning(
+                    "Skipping node style; missing 'type' for node %s", node_id
+                )
+                continue
+
+            shape = NODE_SHAPE_BY_TYPE.get(node_type)
+            color = NODE_COLOR_BY_TYPE.get(node_type)
+            if shape is None or color is None:
+                logger.warning(
+                    "Skipping node style; unsupported node type %s for node %s",
+                    node_type,
+                    node_id,
+                )
+                continue
+
+            updates: dict[str, object] = {
+                "shape": shape,
+                "color": color,
+                "style": "filled",
+            }
+            if force_labels and "label" in props:
+                updates["forcelabel"] = True
+
+            if partition_by_vertex and partition_color_map:
+                if isinstance(node_id, str) and node_id.startswith(
+                    f"{AuxNodeType.VERTEX}:"
+                ):
+                    vertex_name = node_id.split(":", maxsplit=1)[1]
+                    group = partition_by_vertex.get(vertex_name)
+                    if group is not None and group in partition_color_map:
+                        updates["fillcolor"] = partition_color_map[group]
+
+            for key, value in updates.items():
+                graph.nodes[node_id][key] = value
+
+    @staticmethod
+    def _style_edges(
+        graph: nx.MultiDiGraph | nx.DiGraph,
+        *,
+        default_style: str = "solid",
+        source_type_style_map: dict[AuxNodeType, str] | None = None,
+    ) -> None:
+        """Apply common visual styles to graph edges."""
+        if graph.is_multigraph():
+            edge_iterator = graph.edges(keys=True)
+        else:
+            edge_iterator = ((source, target, None) for source, target in graph.edges())
+
+        for source, target, key in edge_iterator:
+            if graph.is_multigraph():
+                edge_data = graph.edges[source, target, key]
+            else:
+                edge_data = graph.edges[source, target]
+            updates: dict[str, object] = {
+                "arrowhead": "vee",
+                "style": default_style,
+            }
+            if source_type_style_map is not None:
+                source_props = graph.nodes[source]
+                source_type = source_props.get("type")
+                if source_type in source_type_style_map:
+                    updates["style"] = source_type_style_map[source_type]
+            if "label" in edge_data:
+                updates["label"] = edge_data["label"]
+            for key_name, value in updates.items():
+                if graph.is_multigraph():
+                    graph.edges[source, target, key][key_name] = value
+                else:
+                    graph.edges[source, target][key_name] = value
+
+    @staticmethod
+    def _add_partition_subgraphs(
+        ag,
+        graph: nx.MultiDiGraph | nx.DiGraph,
+        partition_by_vertex: dict[str, str],
+    ) -> None:
+        """Add Graphviz subgraphs grouping vertices by partition labels."""
+        partition_to_nodes: dict[str, list[str]] = {}
+        for node_id in graph.nodes():
+            if not isinstance(node_id, str) or not node_id.startswith(
+                f"{AuxNodeType.VERTEX}:"
+            ):
+                continue
+            vertex_name = node_id.split(":", maxsplit=1)[1]
+            group = partition_by_vertex.get(vertex_name)
+            if group is None:
+                continue
+            partition_to_nodes.setdefault(group, []).append(node_id)
+
+        for group in sorted(partition_to_nodes):
+            ag.add_subgraph(
+                partition_to_nodes[group],
+                name=f"cluster_partition_{group}",
+                rank="same",
+                label=str(group),
+            )
+
+    def _add_resource_vertex_links(
+        self,
+        graph: nx.MultiDiGraph,
+        resource,
+    ) -> None:
+        """Add a resource node and its vertex links to a graph."""
+        resource_id = get_auxnode_id(
+            AuxNodeType.RESOURCE,
+            resource=resource.name,
+            resource_type="resource",
+        )
+        graph.add_node(
+            resource_id,
+            type=AuxNodeType.RESOURCE,
+            label=resource.name,
+        )
+
+        vertex_reasons = self._extract_resource_vertex_reasons(resource)
+        for vertex_name, reasons in sorted(vertex_reasons.items()):
+            vertex_id = get_auxnode_id(AuxNodeType.VERTEX, vertex=vertex_name)
+            graph.add_node(
+                vertex_id,
+                type=AuxNodeType.VERTEX,
+                label=vertex_name,
+            )
+            graph.add_edge(resource_id, vertex_id, label=", ".join(sorted(reasons)))
 
     @staticmethod
     def _node_id_to_vertex(node_id: str) -> str:
@@ -399,7 +600,7 @@ class ManifestPlotter:
         nodes = []
         edges = []
         vconf = self.schema.graph.vertex_config
-        vertex_prefix_dict = lto_dict(
+        vertex_prefix_dict = shortest_unique_prefix_map(
             [v for v in self.schema.graph.vertex_config.vertex_set]
         )
 
@@ -442,24 +643,8 @@ class ManifestPlotter:
         g.add_nodes_from(nodes)
         g.add_edges_from(edges)
 
-        for n in g.nodes():
-            props = g.nodes()[n]
-            upd_dict: dict[str, object] = dict(props)
-            if "type" in upd_dict:
-                upd_dict["shape"] = map_type2shape[props["type"]]
-                upd_dict["color"] = map_type2color[props["type"]]
-            if "label" in upd_dict:
-                upd_dict["forcelabel"] = True
-            upd_dict["style"] = "filled"
-
-            for k, v in upd_dict.items():
-                g.nodes[n][k] = v
-
-        for e in g.edges(data=True):
-            s, t, _ = e
-            upd_dict = {"style": "solid", "arrowhead": "vee"}
-            for k, v in upd_dict.items():
-                g.edges[s, t][k] = v
+        self._style_nodes(g, force_labels=True)
+        self._style_edges(g)
 
         ag = nx.nx_agraph.to_agraph(g)
 
@@ -479,7 +664,7 @@ class ManifestPlotter:
             index_subgraph.node_attr["label"] = "definition"
 
         ag = ag.unflatten("-l 5 -f -c 3")
-        self._draw(ag, f"{self.prefix}_vc2fields")
+        self._draw(ag, self._versioned_stem(f"{self.prefix}_vc2fields"))
 
     def plot_resources(self):
         """Plot resource relationships.
@@ -488,10 +673,10 @@ class ManifestPlotter:
         internal structure and relationships. Each resource is saved as a
         separate PDF file.
         """
-        resource_prefix_dict = lto_dict(
+        resource_prefix_dict = shortest_unique_prefix_map(
             [resource.name for resource in self.ingestion_model.resources]
         )
-        vertex_prefix_dict = lto_dict(
+        vertex_prefix_dict = shortest_unique_prefix_map(
             [v for v in self.schema.graph.vertex_config.vertex_set]
         )
         kwargs = {"vertex_sh": vertex_prefix_dict, "resource_sh": resource_prefix_dict}
@@ -501,7 +686,7 @@ class ManifestPlotter:
             assemble_tree(
                 resource.root,
                 self._figure_path(
-                    f"{self.schema.metadata.name}.resource-{resource.resource_name}"
+                    f"{self.schema.metadata.name}.resource-{resource.name}"
                 ),
                 output_format=self.output_format,
                 output_dpi=self.output_dpi,
@@ -514,55 +699,11 @@ class ManifestPlotter:
         and vertex collections. The visualization is saved as a PDF file.
         """
         g = nx.MultiDiGraph()
-        vertex_set = set(self.schema.graph.vertex_config.vertex_set)
-
         for resource in self.ingestion_model.resources:
-            resource_id = get_auxnode_id(
-                AuxNodeType.RESOURCE,
-                resource=resource.name,
-                resource_type="resource",
-            )
-            g.add_node(
-                resource_id,
-                type=AuxNodeType.RESOURCE,
-                label=resource.name,
-            )
+            self._add_resource_vertex_links(g, resource)
 
-            vertex_reasons = self._extract_resource_vertex_reasons(resource)
-            for vertex_name, reasons in sorted(vertex_reasons.items()):
-                if vertex_name not in vertex_set:
-                    continue
-                vertex_id = get_auxnode_id(AuxNodeType.VERTEX, vertex=vertex_name)
-                g.add_node(
-                    vertex_id,
-                    type=AuxNodeType.VERTEX,
-                    label=vertex_name,
-                )
-                edge_label = ", ".join(sorted(reasons))
-                g.add_edge(resource_id, vertex_id, label=edge_label)
-
-        for n in g.nodes():
-            props = g.nodes()[n]
-            upd_dict: dict[str, object] = {
-                "shape": map_type2shape[props["type"]],
-                "color": map_type2color[props["type"]],
-                "style": "filled",
-            }
-            if "label" in props:
-                upd_dict["forcelabel"] = True
-            for attr_key, attr_value in upd_dict.items():
-                g.nodes[n][attr_key] = attr_value
-
-        for s, t, k in g.edges:
-            edge_data = g.edges[s, t, k]
-            upd_dict = {
-                "arrowhead": "vee",
-                "style": "solid",
-            }
-            if "label" in edge_data:
-                upd_dict["label"] = edge_data["label"]
-            for attr_key, attr_value in upd_dict.items():
-                g.edges[s, t, k][attr_key] = attr_value
+        self._style_nodes(g, force_labels=True)
+        self._style_edges(g)
 
         ag = nx.nx_agraph.to_agraph(g)
         ag.graph_attr["rankdir"] = "LR"
@@ -623,47 +764,10 @@ class ManifestPlotter:
         """Plot per-resource source-to-vertex mappings as dedicated detail pages."""
         for resource in self.ingestion_model.resources:
             g = nx.MultiDiGraph()
-            resource_id = get_auxnode_id(
-                AuxNodeType.RESOURCE,
-                resource=resource.name,
-                resource_type="resource",
-            )
-            g.add_node(
-                resource_id,
-                type=AuxNodeType.RESOURCE,
-                label=resource.name,
-            )
+            self._add_resource_vertex_links(g, resource)
 
-            vertex_reasons = self._extract_resource_vertex_reasons(resource)
-            for vertex_name, reasons in sorted(vertex_reasons.items()):
-                vertex_id = get_auxnode_id(AuxNodeType.VERTEX, vertex=vertex_name)
-                g.add_node(
-                    vertex_id,
-                    type=AuxNodeType.VERTEX,
-                    label=vertex_name,
-                )
-                g.add_edge(resource_id, vertex_id, label=", ".join(sorted(reasons)))
-
-            for n in g.nodes():
-                props = g.nodes()[n]
-                upd_dict = {
-                    "shape": map_type2shape[props["type"]],
-                    "color": map_type2color[props["type"]],
-                    "style": "filled",
-                }
-                for attr_key, attr_value in upd_dict.items():
-                    g.nodes[n][attr_key] = attr_value
-
-            for s, t, k in g.edges:
-                edge_data = g.edges[s, t, k]
-                upd_dict = {
-                    "arrowhead": "vee",
-                    "style": "solid",
-                }
-                if "label" in edge_data:
-                    upd_dict["label"] = edge_data["label"]
-                for attr_key, attr_value in upd_dict.items():
-                    g.edges[s, t, k][attr_key] = attr_value
+            self._style_nodes(g, force_labels=True)
+            self._style_edges(g)
 
             ag = nx.nx_agraph.to_agraph(g)
             ag.graph_attr["rankdir"] = "LR"
@@ -700,54 +804,40 @@ class ManifestPlotter:
             >>> plotter.plot_vc2vc(prune_leaves=True)
         """
         g = nx.MultiDiGraph()
-        nodes = []
-        edges = []
+        nodes: list[tuple[str, dict[str, object]]] = []
+        rendered_edges: list[tuple] = []
 
-        # Discover edges from resources (may include edges not in edge_config)
         discovered_edges = self._discover_edges_from_resources()
+        configured_edges = dict(self.schema.graph.edge_config.items())
+        all_edges = self._merge_edges(configured_edges, discovered_edges)
 
-        # Collect all edges: from edge_config and discovered from resources
-        all_edges = {}
-        for edge_id, e in self.schema.graph.edge_config.edges_items():
-            all_edges[edge_id] = e
-        # Add discovered edges (they may already be in edge_config, but that's fine)
-        for edge_id, e in discovered_edges.items():
-            if edge_id not in all_edges:
-                all_edges[edge_id] = e
+        known_vertices = set(self.schema.graph.vertex_config.vertex_set)
+        valid_edges, invalid_edges = self._filter_edges_with_known_vertices(
+            all_edges,
+            known_vertices,
+        )
+        if invalid_edges:
+            sampled_invalid = sorted(invalid_edges)[:5]
+            logger.error(
+                "plot_vc2vc ignored %s edge(s) with unknown vertices not in vertex_config; sample=%s",
+                len(invalid_edges),
+                sampled_invalid,
+            )
 
-        edge_pairs = [(source, target) for (source, target, _relation) in all_edges]
-
-        # Create graph edges with relation labels
-        for (source, target, relation), e in all_edges.items():
-            # Determine label based on relation configuration
-            label = None
-            if e.relation is not None:
-                # Static relation
-                label = e.relation
-            elif e.relation_field is not None:
-                # Dynamic relation from field - show indicator
-                label = f"[{e.relation_field}]"
-            elif e.relation_from_key:
-                # Dynamic relation from key - show indicator
-                label = "[key]"
-
-            if label is not None:
-                ee = (
-                    get_auxnode_id(AuxNodeType.VERTEX, vertex=source),
-                    get_auxnode_id(AuxNodeType.VERTEX, vertex=target),
-                    {"label": label},
-                )
+        edge_pairs = [(source, target) for (source, target, _relation) in valid_edges]
+        for (source, target, _relation), edge in valid_edges.items():
+            label = self._edge_label(edge)
+            source_id = get_auxnode_id(AuxNodeType.VERTEX, vertex=source)
+            target_id = get_auxnode_id(AuxNodeType.VERTEX, vertex=target)
+            if label is None:
+                rendered_edges.append((source_id, target_id))
             else:
-                ee = (
-                    get_auxnode_id(AuxNodeType.VERTEX, vertex=source),
-                    get_auxnode_id(AuxNodeType.VERTEX, vertex=target),
-                )
-            edges += [ee]
+                rendered_edges.append((source_id, target_id, {"label": label}))
 
         # Create nodes for vertices involved in edges, optionally including all schema vertices
         vertices_in_edges = {
             vertex
-            for (source, target, _relation) in all_edges
+            for (source, target, _relation) in valid_edges
             for vertex in (source, target)
         }
         all_vertices = (
@@ -776,11 +866,8 @@ class ManifestPlotter:
                 )
             ]
 
-        for nid, weight in nodes:
-            g.add_node(nid, **weight)
-
         g.add_nodes_from(nodes)
-        g.add_edges_from(edges)
+        g.add_edges_from(rendered_edges)
 
         if prune_leaves:
             out_deg = g.out_degree()
@@ -800,53 +887,15 @@ class ManifestPlotter:
             else {}
         )
 
-        for n in g.nodes():
-            props = g.nodes()[n]
-            upd_dict = {
-                "shape": map_type2shape[props["type"]],
-                "color": map_type2color[props["type"]],
-                "style": "filled",
-            }
-            if partition_color_map:
-                vertex_name = self._node_id_to_vertex(n)
-                group_key = effective_partition.get(vertex_name)
-                if group_key is not None:
-                    upd_dict["fillcolor"] = partition_color_map[group_key]
-            for k, v in upd_dict.items():
-                g.nodes[n][k] = v
-
-        for e in g.edges:
-            s, t, ix = e
-            target_props = g.nodes[s]
-            edge_data = g.edges[s, t, ix]
-            upd_dict = {
-                "style": edge_status[target_props["type"]],
-                "arrowhead": "vee",
-            }
-            # Preserve existing label if present (for relation display)
-            if "label" in edge_data:
-                upd_dict["label"] = edge_data["label"]
-            for k, v in upd_dict.items():
-                g.edges[s, t, ix][k] = v
+        self._style_nodes(
+            g,
+            partition_by_vertex=effective_partition if partition_color_map else None,
+            partition_color_map=partition_color_map if partition_color_map else None,
+        )
+        self._style_edges(g, source_type_style_map=EDGE_STYLE_BY_SOURCE_TYPE)
 
         ag = nx.nx_agraph.to_agraph(g)
         if group_by_partition and effective_partition:
-            partition_to_nodes: dict[str, list[str]] = {}
-            for node_id in g.nodes():
-                vertex_name = self._node_id_to_vertex(node_id)
-                group = effective_partition.get(vertex_name)
-                if group is None:
-                    continue
-                if group not in partition_to_nodes:
-                    partition_to_nodes[group] = []
-                partition_to_nodes[group].append(node_id)
+            self._add_partition_subgraphs(ag, g, effective_partition)
 
-            for group in sorted(partition_to_nodes):
-                ag.add_subgraph(
-                    partition_to_nodes[group],
-                    name=f"cluster_partition_{group}",
-                    rank="same",
-                    label=str(group),
-                )
-
-        self._draw(ag, f"{self.prefix}_vc2vc")
+        self._draw(ag, self._versioned_stem(f"{self.prefix}_vc2vc"))

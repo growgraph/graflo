@@ -324,7 +324,7 @@ class ArangoConnection(Connection):
             if self.conn.has_collection(cname):
                 self.conn.collection(cname).truncate()
                 logger.debug(f"Truncated vertex collection '{cname}'")
-        for edge in db_schema.edge_config.edges_list(include_aux=True):
+        for edge in db_schema.edge_config.values():
             variants = db_schema.edge_config.runtime(edge).physical_variants()
             for variant in variants:
                 cname = cast(str | None, variant.get("storage_name"))
@@ -339,9 +339,7 @@ class ArangoConnection(Connection):
             schema: Schema containing collection definitions
         """
         self.define_vertex_classes(schema)
-        self.define_edge_classes(
-            list(schema.graph.edge_config.edges_list(include_aux=True)), schema=schema
-        )
+        self.define_edge_classes(list(schema.graph.edge_config.values()), schema=schema)
 
     def define_vertex_classes(self, schema: Schema) -> None:
         """Define vertex collections in ArangoDB.
@@ -357,7 +355,7 @@ class ArangoConnection(Connection):
         disconnected_vertex_collections = (
             set(vertex_config.vertex_set) - db_schema.edge_config.vertices
         )
-        for item in db_schema.edge_config.edges_list():
+        for item in db_schema.edge_config.values():
             u, v = item.source, item.target
             gname = db_schema.edge_config.runtime(item).graph_name()
             if not gname:

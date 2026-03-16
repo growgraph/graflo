@@ -23,10 +23,10 @@ schema:
     db_profile: {}
 ingestion_model:
     resources:
-    -   resource_name: people
+    -   name: people
         apply:
         -   vertex: person
-    -   resource_name: departments
+    -   name: departments
         apply:
         -   vertex: person
             from:

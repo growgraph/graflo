@@ -80,44 +80,53 @@ schema:
                 -   datetime_announce
 ingestion_model:
     resources:
-    -   resource_name: ibes
+    -   name: ibes
         encoding: ISO-8859-1
         apply:
         -   vertex: ticker
         -   vertex: analyst
         -   vertex: recommendation
         -   vertex: agency
-        -   foo: parse_date_ibes
-            module: graflo.util.transform
-            input:
-            -   ANNDATS
-            -   ANNTIMS
-            output:
-            -   datetime_announce
-        -   foo: parse_date_ibes
-            module: graflo.util.transform
-            input:
-            -   REVDATS
-            -   REVTIMS
-            output:
-            -   datetime_review
-        -   foo: cast_ibes_analyst
-            module: graflo.util.transform
-            input:
-            -   ANALYST
-            output:
-            -   last_name
-            -   initial
-        -   map:
-                CUSIP: cusip
-                CNAME: cname
-                OFTIC: oftic
-        -   map:
-                ESTIMID: aname
-        -   map:
-                ERECCD: erec
-                ETEXT: etext
-                IRECCD: irec
-                ITEXT: itext
+        -   transform:
+                call:
+                    module: graflo.util.transform
+                    foo: parse_date_ibes
+                    input:
+                    -   ANNDATS
+                    -   ANNTIMS
+                    output:
+                    -   datetime_announce
+        -   transform:
+                call:
+                    module: graflo.util.transform
+                    foo: parse_date_ibes
+                    input:
+                    -   REVDATS
+                    -   REVTIMS
+                    output:
+                    -   datetime_review
+        -   transform:
+                call:
+                    module: graflo.util.transform
+                    foo: cast_ibes_analyst
+                    input:
+                    -   ANALYST
+                    output:
+                    -   last_name
+                    -   initial
+        -   transform:
+                rename:
+                    CUSIP: cusip
+                    CNAME: cname
+                    OFTIC: oftic
+        -   transform:
+                rename:
+                    ESTIMID: aname
+        -   transform:
+                rename:
+                    ERECCD: erec
+                    ETEXT: etext
+                    IRECCD: irec
+                    ITEXT: itext
         -   vertex: publication
 bindings: {}

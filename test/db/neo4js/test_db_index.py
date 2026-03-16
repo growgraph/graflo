@@ -22,7 +22,7 @@ def test_create_edge_index(conn_conf, schema_obj):
     schema_obj = schema_obj("review")
     with ConnectionManager(connection_config=conn_conf) as db_client:
         db_client.define_edge_indexes(
-            schema_obj.graph.edge_config.edges_list(include_aux=True),
+            list(schema_obj.graph.edge_config.values()),
             schema=schema_obj,
         )
     with ConnectionManager(connection_config=conn_conf) as db_client:

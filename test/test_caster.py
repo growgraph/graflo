@@ -40,9 +40,7 @@ def cast(modes, current_path, level, reset, n_cores=1):
             from graflo.plot.plotter import assemble_tree
 
             for r in ingestion_model.resources:
-                assemble_tree(
-                    r.root, f"{output_dir}/{mode}.resource-{r.resource_name}.pdf"
-                )
+                assemble_tree(r.root, f"{output_dir}/{mode}.resource-{r.name}.pdf")
         except ImportError:
             # graphviz/pygraphviz not available, skip visualization
             logger.debug("graphviz not available, skipping tree visualization")

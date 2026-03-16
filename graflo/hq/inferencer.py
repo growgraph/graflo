@@ -1,4 +1,5 @@
-from graflo.architecture.schema import IngestionModel, Schema
+from graflo.architecture.ingestion_model import IngestionModel
+from graflo.architecture.schema import Schema
 from graflo.onto import DBType
 from graflo.architecture import Resource
 from graflo.db import PostgresConnection

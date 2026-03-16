@@ -18,7 +18,7 @@ Example:
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any, Iterator, cast
 
 from pydantic import (
     Field as PydanticField,
@@ -311,29 +311,13 @@ class EdgeConfig(ConfigBaseModel):
         for e in self.edges:
             e.finish_init(vertex_config=vc)
 
-    def edges_list(self, include_aux: bool = False):
-        """Get list of edges.
+    def values(self) -> Iterator[Edge]:
+        """Iterate over edge configurations."""
+        return iter(self._edges_map.values())
 
-        Args:
-            include_aux: Deprecated. Kept for backward compatibility.
-
-        Returns:
-            generator: Generator yielding edge configurations
-        """
-        _ = include_aux
-        return (e for e in self._edges_map.values())
-
-    def edges_items(self, include_aux: bool = False):
-        """Get items of edges.
-
-        Args:
-            include_aux: Deprecated. Kept for backward compatibility.
-
-        Returns:
-            generator: Generator yielding (edge_id, edge) tuples
-        """
-        _ = include_aux
-        return ((e.edge_id, e) for e in self._edges_map.values())
+    def items(self) -> Iterator[tuple[EdgeId, Edge]]:
+        """Iterate over ``(edge_id, edge)`` pairs."""
+        return iter(self._edges_map.items())
 
     def __contains__(self, item: EdgeId | EdgeId | Edge):
         """Check if edge exists in configuration.

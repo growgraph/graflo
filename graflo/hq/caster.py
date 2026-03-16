@@ -25,8 +25,9 @@ from pydantic import BaseModel
 
 from suthing import Timer
 
+from graflo.architecture.ingestion_model import IngestionModel
 from graflo.architecture.onto import EncodingType, GraphContainer
-from graflo.architecture.schema import IngestionModel, Schema
+from graflo.architecture.schema import Schema
 from graflo.data_source import (
     AbstractDataSource,
     DataSourceFactory,

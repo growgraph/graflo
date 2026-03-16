@@ -8,7 +8,8 @@ and data ingestion.
 import logging
 
 from graflo.architecture.manifest import GraphManifest
-from graflo.architecture.schema import IngestionModel, Schema
+from graflo.architecture.ingestion_model import IngestionModel
+from graflo.architecture.schema import Schema
 from graflo.onto import DBType
 from graflo.architecture.onto_sql import SchemaIntrospectionResult
 from graflo.db import ConnectionManager, PostgresConnection

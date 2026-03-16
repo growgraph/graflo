@@ -100,7 +100,7 @@ def assemble_edges(
         return
 
     populated = {v for v, dd in ctx.acc_vertex.items() if any(dd.values())}
-    for edge_id, edge in edge_config.edges_items():
+    for edge_id, edge in edge_config.items():
         s, t, _ = edge_id
         if (s, t) in emitted_pairs or s not in populated or t not in populated:
             continue

@@ -8,7 +8,7 @@ from pydantic import Field as PydanticField, TypeAdapter, model_validator
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.edge import EdgeBase
-from graflo.architecture.transform import DressConfig, KeyRuleConfig
+from graflo.architecture.transform import DressConfig
 
 from .normalize import normalize_actor_step
 
@@ -44,34 +44,13 @@ class TransformActorConfig(ConfigBaseModel):
     type: Literal["transform"] = PydanticField(
         default="transform", description="Actor type discriminator"
     )
-    map: dict[str, str] | None = PydanticField(
-        default=None, description="Field mapping: output_key -> input_key"
-    )
-    name: str | None = PydanticField(
-        default=None, description="Named transform function"
-    )
-    params: dict[str, Any] = PydanticField(
-        default_factory=dict, description="Transform function parameters"
-    )
-    module: str | None = PydanticField(
-        default=None, description="Module containing transform function"
-    )
-    foo: str | None = PydanticField(
-        default=None, description="Transform function name in module"
-    )
-    input: list[str] | None = PydanticField(
-        default=None, description="Input field names for functional transform"
-    )
-    output: list[str] | None = PydanticField(
-        default=None, description="Output field names for functional transform"
-    )
-    dress: DressConfig | None = PydanticField(
+    rename: dict[str, str] | None = PydanticField(
         default=None,
-        description="Dressing spec for pivoted output.",
+        description="Rename mapping in explicit DSL form: transform.rename.",
     )
-    rule: KeyRuleConfig | None = PydanticField(
+    call: TransformCallConfig | None = PydanticField(
         default=None,
-        description="Generic key renaming rule for transform.",
+        description="Function-call configuration in explicit DSL form: transform.call.",
     )
 
     @model_validator(mode="before")
@@ -80,7 +59,88 @@ class TransformActorConfig(ConfigBaseModel):
         if not isinstance(data, dict):
             return data
         normalized = normalize_actor_step(cast(dict[str, Any], data))
-        return normalized if normalized.get("type") == "transform" else data
+        if normalized.get("type") != "transform":
+            return data
+        normalized = dict(normalized)
+        call = normalized.get("call")
+        if isinstance(call, dict):
+            call = dict(call)
+            for key in ("input", "output"):
+                value = call.get(key)
+                if isinstance(value, str):
+                    call[key] = [value]
+                elif isinstance(value, tuple):
+                    call[key] = list(value)
+            normalized["call"] = call
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_mode(self) -> "TransformActorConfig":
+        enabled = sum([self.rename is not None, self.call is not None])
+        if enabled != 1:
+            raise ValueError(
+                "Transform step must define exactly one of rename or call."
+            )
+        return self
+
+
+class TransformCallConfig(ConfigBaseModel):
+    """Explicit function call transform DSL payload."""
+
+    use: str | None = PydanticField(
+        default=None,
+        description=(
+            "Named transform reference from ingestion_model.transforms. "
+            "When provided, module/foo must be omitted."
+        ),
+    )
+    module: str | None = PydanticField(
+        default=None, description="Module containing transform function."
+    )
+    foo: str | None = PydanticField(
+        default=None, description="Transform function name in module."
+    )
+    params: dict[str, Any] = PydanticField(
+        default_factory=dict, description="Function call keyword arguments."
+    )
+    input: list[str] | None = PydanticField(
+        default=None, description="Input field names for function execution."
+    )
+    output: list[str] | None = PydanticField(
+        default=None, description="Optional output field names."
+    )
+    strategy: Literal["single", "each", "all"] | None = PydanticField(
+        default=None, description="Execution strategy for function calls."
+    )
+    dress: DressConfig | None = PydanticField(
+        default=None, description="Pivot dressing output for scalar call results."
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_io(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        data = dict(data)
+        for key in ("input", "output"):
+            value = data.get(key)
+            if isinstance(value, str):
+                data[key] = [value]
+            elif isinstance(value, tuple):
+                data[key] = list(value)
+        return data
+
+    @model_validator(mode="after")
+    def validate_target(self) -> "TransformCallConfig":
+        if self.use is not None and (self.module is not None or self.foo is not None):
+            raise ValueError("call.use cannot be combined with call.module/call.foo.")
+        if self.use is None and (self.module is None or self.foo is None):
+            raise ValueError(
+                "call must provide either use, or both module and foo for inline function."
+            )
+        if self.strategy == "all" and self.input:
+            raise ValueError("call.strategy='all' does not accept call.input.")
+        return self
 
 
 class EdgeActorConfig(EdgeBase):
@@ -175,13 +235,31 @@ class EdgeRouterActorConfig(ConfigBaseModel):
     type: Literal["edge_router"] = PydanticField(
         default="edge_router", description="Actor type discriminator"
     )
-    source_type_field: str = PydanticField(
-        ...,
-        description="Document field whose value determines the source vertex type.",
+    source_type_field: str | None = PydanticField(
+        default=None,
+        description=(
+            "Document field whose value determines the source vertex type. "
+            "Provide this or source."
+        ),
     )
-    target_type_field: str = PydanticField(
-        ...,
-        description="Document field whose value determines the target vertex type.",
+    target_type_field: str | None = PydanticField(
+        default=None,
+        description=(
+            "Document field whose value determines the target vertex type. "
+            "Provide this or target."
+        ),
+    )
+    source: str | None = PydanticField(
+        default=None,
+        description=(
+            "Static source vertex type name. Provide this or source_type_field."
+        ),
+    )
+    target: str | None = PydanticField(
+        default=None,
+        description=(
+            "Static target vertex type name. Provide this or target_type_field."
+        ),
     )
     source_fields: dict[str, str] | None = PydanticField(
         default=None,
@@ -221,12 +299,34 @@ class EdgeRouterActorConfig(ConfigBaseModel):
     def set_type(cls, data: Any) -> Any:
         if (
             isinstance(data, dict)
-            and "source_type_field" in data
+            and (
+                "source_type_field" in data
+                or "target_type_field" in data
+                or "source" in data
+                or "target" in data
+            )
             and "type" not in data
         ):
             data = dict(data)
             data["type"] = "edge_router"
         return data
+
+    @model_validator(mode="after")
+    def validate_side_type_sources(self) -> "EdgeRouterActorConfig":
+        if self.source is None and self.source_type_field is None:
+            raise ValueError(
+                "edge_router requires source or source_type_field to be provided."
+            )
+        if self.target is None and self.target_type_field is None:
+            raise ValueError(
+                "edge_router requires target or target_type_field to be provided."
+            )
+        if self.source_type_field is None and self.target_type_field is None:
+            raise ValueError(
+                "edge_router requires at least one of "
+                "source_type_field or target_type_field."
+            )
+        return self
 
 
 ActorConfig = Annotated[
@@ -240,6 +340,7 @@ ActorConfig = Annotated[
 ]
 
 DescendActorConfig.model_rebuild()
+TransformActorConfig.model_rebuild()
 
 _actor_config_adapter: TypeAdapter[
     VertexActorConfig

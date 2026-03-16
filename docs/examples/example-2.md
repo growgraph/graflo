@@ -44,11 +44,11 @@ Rendered graph:
 
 ![Rendered Graph](../assets/2-ingest-self-references/figs/graph.png){ width="700" }
 
-We will be using a transformation that truncates the suffix from a url, e.g. "https://openalex.org/W4300681084" &rarr; "W4300681084". So let's define a section for transforms that will contain reusable transforms, specified by `name`:
+We will be using a transformation that truncates the suffix from a url, e.g. "https://openalex.org/W4300681084" &rarr; "W4300681084". Define reusable transforms as a list under `ingestion_model.transforms`, where each transform has a `name`:
 
 ```yaml
 transforms:
-    keep_suffix_id:
+    -   name: keep_suffix_id
         foo: split_keep_part
         module: graflo.util.transform
         params:
@@ -63,25 +63,30 @@ transforms:
 Let's define the mappings. We will apply `keep_suffix_id` to `id` and `doi` fields in several places with slightly different parameters. We will map the corresponding values to define instances of `work` vertex and define edges `work` &rarr; `work`. 
 
 ```yaml
--   resource_name: work
+-   name: work
     apply:
-    -   name: keep_suffix_id
-    -   name: keep_suffix_id
-        params:
-            sep: "/"
-            keep: [-2, -1]
-        input:
-        -   doi
-        output:
-        -   doi
+    -   transform:
+            call:
+                use: keep_suffix_id
+    -   transform:
+            call:
+                use: keep_suffix_id
+                params:
+                    sep: "/"
+                    keep: [-2, -1]
+                input:
+                -   doi
+                output:
+                -   doi
     -   vertex: work
     -   key: referenced_works
         apply:
         -   vertex: work
-        -   name: keep_suffix_id
+        -   transform:
+                call:
+                    use: keep_suffix_id
     -   source: work
         target: work
-        match_source: _top_level
 ```
 
 Works Resource
@@ -89,20 +94,7 @@ Works Resource
 ![Department Resource Image](../assets/2-ingest-self-references/figs/openalex.resource-work.png){ width="800" }
 
 
-Now as you noticed the document has a nested list under `referenced_works`. In order to deal with which we introduce a `DescendActor`, that contains a transform and a mapping to `Work` vertex under `apply`.
-
-Since we are defining a `refers to` relation, we need some extra configuration:
-- we temporarily split works into two groups by add a discriminant to the top level `Work` vertex:
-    ```yaml
-    vertex: work
-    discriminant: _top_level
-    ```
-- the edge is then defined by picking `_top_level` vertices as specified by `match_source` attribute:
-    ```yaml
-    source: work
-    target: work
-    match_source: _top_level
-    ```
+Now as you noticed the document has a nested list under `referenced_works`. To handle this, we use a `DescendActor` (`key: referenced_works`) that applies the same named transform and then maps nested values to `work` vertices. The final `source: work` / `target: work` step materializes work-to-work references.
 Transforming the data and ingesting it into an ArangoDB takes a few lines of code:
 
 ```python
