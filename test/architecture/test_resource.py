@@ -61,7 +61,26 @@ def test_resource_infer_edge_selector_references_unknown_edge():
         {"vertices": [{"name": "person", "fields": ["id"], "identity": ["id"]}]}
     )
     ec = EdgeConfig.from_dict({"edges": [{"source": "person", "target": "person"}]})
-    with pytest.raises(ValueError, match="unknown edge selectors"):
+    with pytest.raises(ValueError, match="undefined vertices"):
+        resource.finish_init(vertex_config=vc, edge_config=ec, transforms={})
+
+
+def test_resource_dynamic_edge_vertices_must_be_declared():
+    resource = Resource.from_dict(
+        {
+            "name": "dynamic_edges",
+            "pipeline": [
+                {"vertex": "person"},
+                {"edge": {"from": "person", "to": "company"}},
+            ],
+        }
+    )
+    vc = VertexConfig.from_dict(
+        {"vertices": [{"name": "person", "fields": ["id"], "identity": ["id"]}]}
+    )
+    ec = EdgeConfig.from_dict({"edges": []})
+
+    with pytest.raises(ValueError, match="undefined vertices"):
         resource.finish_init(vertex_config=vc, edge_config=ec, transforms={})
 
 

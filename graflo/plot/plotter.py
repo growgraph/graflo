@@ -292,23 +292,35 @@ class ManifestPlotter:
 
     def __init__(
         self,
-        config_filename,
-        fig_path,
+        config_filename: str | os.PathLike[str] | None = None,
+        fig_path: str | os.PathLike[str] = ".",
         output_format: str = "pdf",
         output_dpi: int | None = None,
+        graph_manifest: GraphManifest | None = None,
     ):
         """Initialize the schema plotter.
 
         Args:
-            config_filename: Path to schema configuration file
+            config_filename: Optional path to schema configuration file
             fig_path: Path to save visualizations
+            graph_manifest: Optional pre-built graph manifest
         """
         self.fig_path = fig_path
         self.output_format = output_format.lower()
         self.output_dpi = output_dpi
 
-        self.config = FileHandle.load(fpath=config_filename)
-        manifest = GraphManifest.from_config(self.config)
+        manifest: GraphManifest
+        if graph_manifest is not None:
+            manifest = graph_manifest
+            self.config = None
+        elif config_filename is not None:
+            self.config = FileHandle.load(fpath=config_filename)
+            manifest = GraphManifest.from_config(self.config)
+        else:
+            raise ValueError(
+                "ManifestPlotter requires either `config_filename` or `graph_manifest`."
+            )
+
         manifest.finish_init()
         self.schema = manifest.require_schema()
         self.ingestion_model = manifest.require_ingestion_model()
@@ -318,6 +330,13 @@ class ManifestPlotter:
 
     def _figure_path(self, stem: str) -> str:
         return os.path.join(self.fig_path, f"{stem}.{self.output_format}")
+
+    def _versioned_stem(self, stem: str) -> str:
+        metadata = getattr(self.schema, "metadata", None)
+        version = getattr(metadata, "version", None)
+        if version is None:
+            return stem
+        return f"{stem}-v{version}"
 
     def _draw(self, ag, stem: str, prog: str = "dot") -> None:
         if self.output_format == "png" and self.output_dpi is not None:
@@ -645,7 +664,7 @@ class ManifestPlotter:
             index_subgraph.node_attr["label"] = "definition"
 
         ag = ag.unflatten("-l 5 -f -c 3")
-        self._draw(ag, f"{self.prefix}_vc2fields")
+        self._draw(ag, self._versioned_stem(f"{self.prefix}_vc2fields"))
 
     def plot_resources(self):
         """Plot resource relationships.
@@ -879,4 +898,4 @@ class ManifestPlotter:
         if group_by_partition and effective_partition:
             self._add_partition_subgraphs(ag, g, effective_partition)
 
-        self._draw(ag, f"{self.prefix}_vc2vc")
+        self._draw(ag, self._versioned_stem(f"{self.prefix}_vc2vc"))

@@ -1,6 +1,7 @@
-from types import MethodType, SimpleNamespace
+from types import SimpleNamespace
 
 import networkx as nx
+import pytest
 
 from graflo.architecture.edge import Edge
 from graflo.plot.plotter import ManifestPlotter
@@ -14,13 +15,32 @@ class _EdgeConfigStub:
         return self._edges.items()
 
 
+class _VertexConfigStub:
+    def __init__(
+        self,
+        vertex_set: set[str],
+        identity_by_vertex: dict[str, list[str]] | None = None,
+        fields_by_vertex: dict[str, list[str]] | None = None,
+    ):
+        self.vertex_set = vertex_set
+        self._identity_by_vertex = identity_by_vertex or {}
+        self._fields_by_vertex = fields_by_vertex or {}
+
+    def identity_fields(self, vertex_name: str) -> list[str]:
+        return self._identity_by_vertex.get(vertex_name, [])
+
+    def fields_names(self, vertex_name: str) -> list[str]:
+        return self._fields_by_vertex.get(vertex_name, [])
+
+
 class _AgraphStub:
     def __init__(self, graph):
         self.graph = graph
         self.graph_attr = {}
         self.subgraphs: list[dict[str, object]] = []
+        self.draw_calls: list[dict[str, str]] = []
 
-    def add_subgraph(self, nodes, name, rank, label=None):
+    def add_subgraph(self, nodes, name, rank=None, label=None):
         self.subgraphs.append(
             {
                 "nodes": list(nodes),
@@ -31,10 +51,20 @@ class _AgraphStub:
         )
         return SimpleNamespace(node_attr={})
 
+    def unflatten(self, _args):
+        return self
+
+    def draw(self, path: str, output_format: str, prog: str = "dot"):
+        self.draw_calls.append(
+            {"path": path, "output_format": output_format, "prog": prog}
+        )
+
 
 def _build_plotter(
     configured_edges: dict,
     vertex_set: set[str],
+    identity_by_vertex: dict[str, list[str]] | None = None,
+    fields_by_vertex: dict[str, list[str]] | None = None,
 ) -> ManifestPlotter:
     plotter = ManifestPlotter.__new__(ManifestPlotter)
     plotter.output_format = "pdf"
@@ -46,11 +76,14 @@ def _build_plotter(
         metadata=SimpleNamespace(name="test_schema"),
         graph=SimpleNamespace(
             edge_config=_EdgeConfigStub(configured_edges),
-            vertex_config=SimpleNamespace(vertex_set=vertex_set),
+            vertex_config=_VertexConfigStub(
+                vertex_set=vertex_set,
+                identity_by_vertex=identity_by_vertex,
+                fields_by_vertex=fields_by_vertex,
+            ),
         ),
     )
     plotter.ingestion_model = SimpleNamespace(resources=[])
-    plotter._draw = MethodType(lambda self, ag, stem, prog="dot": None, plotter)
     return plotter
 
 
@@ -126,3 +159,48 @@ def test_plot_vc2vc_preserves_labels_and_partition_grouping(monkeypatch):
     subgraph_names = {entry["name"] for entry in captured["ag"].subgraphs}
     assert "cluster_partition_left" in subgraph_names
     assert "cluster_partition_right" in subgraph_names
+
+
+def test_manifest_plotter_requires_manifest_or_config():
+    with pytest.raises(ValueError, match="requires either `config_filename`"):
+        ManifestPlotter(config_filename=None, graph_manifest=None)
+
+
+def test_plot_vc2vc_appends_schema_version_to_stem(monkeypatch):
+    configured_edge = Edge.from_dict({"source": "a", "target": "b", "relation": "ab"})
+    plotter = _build_plotter(
+        configured_edges={configured_edge.edge_id: configured_edge},
+        vertex_set={"a", "b"},
+    )
+    plotter.schema.metadata.version = "2.3.4"
+    monkeypatch.setattr(plotter, "_discover_edges_from_resources", lambda: {})
+    captured = {}
+
+    def _fake_to_agraph(graph):
+        captured["ag"] = _AgraphStub(graph)
+        return captured["ag"]
+
+    monkeypatch.setattr(nx.nx_agraph, "to_agraph", _fake_to_agraph)
+    plotter.plot_vc2vc(include_all_vertices=False)
+
+    assert captured["ag"].draw_calls[0]["path"] == "./test_schema_vc2vc-v2.3.4.pdf"
+
+
+def test_plot_vc2fields_appends_schema_version_to_stem(monkeypatch):
+    plotter = _build_plotter(
+        configured_edges={},
+        vertex_set={"a"},
+        identity_by_vertex={"a": ["id"]},
+        fields_by_vertex={"a": ["id", "name"]},
+    )
+    plotter.schema.metadata.version = "2.3.4"
+    captured = {}
+
+    def _fake_to_agraph(graph):
+        captured["ag"] = _AgraphStub(graph)
+        return captured["ag"]
+
+    monkeypatch.setattr(nx.nx_agraph, "to_agraph", _fake_to_agraph)
+    plotter.plot_vc2fields()
+
+    assert captured["ag"].draw_calls[0]["path"] == "./test_schema_vc2fields-v2.3.4.pdf"
