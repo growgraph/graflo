@@ -54,9 +54,10 @@ ingestion_model:
             -   vertex: maintainer
     -   name: bug
         pipeline:
-        -   map:
-                package: name
-                bug_num: id
+        -   transform:
+                rename:
+                    package: name
+                    bug_num: id
         -   vertex: package
         -   vertex: bug
 bindings: {}

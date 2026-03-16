@@ -45,16 +45,19 @@ ingestion_model:
     -   name: parcels
         apply:
         -   vertex: parcel
-        -   map:
-                parcel_id: id
+        -   transform:
+                rename:
+                    parcel_id: id
     -   name: boxes
         apply:
         -   vertex: box
-        -   map:
-                box_id: id
+        -   transform:
+                rename:
+                    box_id: id
     -   name: containers
         apply:
         -   vertex: container
-        -   map:
-                container_name: name
+        -   transform:
+                rename:
+                    container_name: name
 bindings: {}

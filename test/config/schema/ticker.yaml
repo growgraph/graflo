@@ -78,35 +78,46 @@ ingestion_model:
     resources:
     -   name: history
         apply:
-        -   foo: round_str
-            module: graflo.util.transform
-            params:
-                ndigits: 3
-            input:
-            -   Open
-            dress:
-                key: name
-                value: value
-        -   foo: round_str
-            module: graflo.util.transform
-            params:
-                ndigits: 3
-            input:
-            -   Close
-            dress:
-                key: name
-                value: value
-        -   foo: int
-            module: builtins
-            input:
-            -   Volume
-            dress:
-                key: name
-                value: value
-        -   foo: parse_date_yahoo
-            module: graflo.util.transform
-            map:
-                Date: t_obs
-        -   map:
-                __ticker: oftic
+        -   transform:
+                call:
+                    module: graflo.util.transform
+                    foo: round_str
+                    params:
+                        ndigits: 3
+                    input:
+                    -   Open
+                    dress:
+                        key: name
+                        value: value
+        -   transform:
+                call:
+                    module: graflo.util.transform
+                    foo: round_str
+                    params:
+                        ndigits: 3
+                    input:
+                    -   Close
+                    dress:
+                        key: name
+                        value: value
+        -   transform:
+                call:
+                    module: builtins
+                    foo: int
+                    input:
+                    -   Volume
+                    dress:
+                        key: name
+                        value: value
+        -   transform:
+                call:
+                    module: graflo.util.transform
+                    foo: parse_date_yahoo
+                    input:
+                    -   Date
+                    output:
+                    -   t_obs
+        -   transform:
+                rename:
+                    __ticker: oftic
 bindings: {}

@@ -21,20 +21,29 @@ class TransformActor(Actor):
     """Actor for applying transformations to data."""
 
     def __init__(self, config: TransformActorConfig):
-        self._kwargs = config.model_dump(by_alias=True)
         self.transforms: dict[str, ProtoTransform] = {}
-        self.transform = config.transform
-        self.params = config.params
-        self.t: Transform = Transform(
-            map=config.map or {},
-            name=config.transform,
-            params=config.params,
-            module=config.module,
-            foo=config.foo,
-            input=tuple(config.input) if config.input else (),
-            output=tuple(config.output) if config.output else (),
-            dress=config.dress,
-            rule=config.rule,
+        self.call_use: str | None = None
+
+        if config.rename is not None:
+            self.t = Transform(map=config.rename)
+            return
+
+        if config.call is None:
+            raise ValueError(
+                "TransformActorConfig requires call when rename is absent."
+            )
+
+        call = config.call
+        self.call_use = call.use
+        self.t = Transform(
+            name=call.use,
+            params=call.params,
+            module=call.module,
+            foo=call.foo,
+            input=tuple(call.input) if call.input else (),
+            output=tuple(call.output) if call.output else (),
+            dress=call.dress,
+            strategy=call.strategy or "single",
         )
 
     def fetch_important_items(self) -> dict[str, Any]:
@@ -48,43 +57,28 @@ class TransformActor(Actor):
 
     def init_transforms(self, init_ctx: ActorInitContext) -> None:
         self.transforms = init_ctx.transforms
-        try:
-            pt_kwargs = {
-                k: self._kwargs[k]
-                for k in ProtoTransform.get_fields_members()
-                if k in self._kwargs
-            }
-            if "name" not in pt_kwargs and self.transform is not None:
-                pt_kwargs["name"] = self.transform
-            pt = ProtoTransform(**pt_kwargs)
-            if pt.name is not None and pt._foo is not None:
-                if pt.name not in self.transforms:
-                    self.transforms[pt.name] = pt
-                elif pt.params:
-                    self.transforms[pt.name] = pt
-        except (TypeError, ValueError, AttributeError) as e:
-            logger.debug("Failed to initialize ProtoTransform: %s", e)
 
     def finish_init(self, init_ctx: ActorInitContext) -> None:
         self.transforms = init_ctx.transforms
-        if self.transform is not None:
-            pt = self.transforms.get(self.transform, None)
-            if pt is not None:
-                next_params = self.t.params if self.t.params else pt.params
-                next_input = self.t.input if self.t.input else pt.input
-                next_output = self.t.output if self.t.output else pt.output
-                self.t = Transform(
-                    fields=self.t.fields,
-                    map=self.t.map,
-                    dress=self.t.dress,
-                    rule=self.t.rule,
-                    name=self.t.name,
-                    module=pt.module,
-                    foo=pt.foo,
-                    params=next_params,
-                    input=next_input,
-                    output=next_output,
-                )
+        if self.call_use is None or self.t._foo is not None:
+            return
+        pt = self.transforms.get(self.call_use, None)
+        if pt is None:
+            return
+        next_params = self.t.params if self.t.params else pt.params
+        next_input = self.t.input if self.t.input else pt.input
+        next_output = self.t.output if self.t.output else pt.output
+        transform_kwargs: dict[str, Any] = {
+            "dress": self.t.dress,
+            "name": self.t.name,
+            "module": pt.module,
+            "foo": pt.foo,
+            "params": next_params,
+            "input": next_input,
+            "output": next_output,
+            "strategy": self.t.strategy,
+        }
+        self.t = Transform(**transform_kwargs)
 
     def _extract_doc(self, nargs: tuple[Any, ...], **kwargs: Any) -> dict[str, Any]:
         if kwargs:

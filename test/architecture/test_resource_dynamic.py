@@ -571,7 +571,11 @@ class TestEdgeResourceAutoJoin:
                 {
                     "name": "transform_then_router",
                     "pipeline": [
-                        {"map": {"raw_id": "id", "raw_label": "label"}},
+                        {
+                            "transform": {
+                                "rename": {"raw_id": "id", "raw_label": "label"}
+                            }
+                        },
                         {
                             "vertex_router": {
                                 "type_field": "kind",

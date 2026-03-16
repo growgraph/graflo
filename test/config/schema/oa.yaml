@@ -33,7 +33,9 @@ ingestion_model:
             children:
             -   type: vertex
                 name: author
-            -   transform: keep_suffix_id
+            -   transform:
+                    call:
+                        use: keep_suffix_id
             -   key: ids
                 children: []
             -   key: last_known_institution
@@ -41,7 +43,9 @@ ingestion_model:
                 -   type: vertex
                     name: institution
                     transforms:
-                    -   transform: keep_suffix_id
+                    -   transform:
+                            call:
+                                use: keep_suffix_id
                 -   type: edge
                     edge:
                         source: author
@@ -56,17 +60,21 @@ ingestion_model:
             -   type: vertex
                 name: work
                 transforms:
-                -   transform: keep_suffix_id
-                -   transform: keep_suffix_id
-                    params:
-                        sep: /
-                        keep:
-                        -   -2
-                        -   -1
-                    input:
-                    -   doi
-                    output:
-                    -   doi
+                -   transform:
+                        call:
+                            use: keep_suffix_id
+                -   transform:
+                        call:
+                            use: keep_suffix_id
+                            params:
+                                sep: /
+                                keep:
+                                -   -2
+                                -   -1
+                            input:
+                            -   doi
+                            output:
+                            -   doi
     transforms:
     -   name: keep_suffix_id
         foo: split_keep_part

@@ -362,7 +362,10 @@ def test_transform_tuple_output_maps_to_vertex_index_fields_in_order():
             ]
         }
     )
-    pipeline = [{"map": {"unused": "unused"}}, {"vertex": "pair"}]
+    pipeline = [
+        {"transform": {"rename": {"unused": "unused"}}},
+        {"vertex": "pair"},
+    ]
     anw = ActorWrapper(pipeline=pipeline)
     anw.finish_init(
         init_ctx=ActorInitContext(
@@ -385,7 +388,13 @@ def test_transform_tuple_output_maps_to_vertex_index_fields_in_order():
 
 def test_transform_named_proto_binding_executes_with_registered_transform():
     anw = ActorWrapper(
-        pipeline=[{"transform": "to_int", "input": ["value"], "output": ["v"]}]
+        pipeline=[
+            {
+                "transform": {
+                    "call": {"use": "to_int", "input": ["value"], "output": ["v"]}
+                }
+            }
+        ]
     )
     transforms = {
         "to_int": ProtoTransform(name="to_int", module="builtins", foo="int", params={})
@@ -409,7 +418,7 @@ def test_transform_named_proto_binding_executes_with_registered_transform():
 
 
 def test_transform_named_proto_binding_inherits_input_output_from_library():
-    anw = ActorWrapper(pipeline=[{"transform": "to_int"}])
+    anw = ActorWrapper(pipeline=[{"transform": {"call": {"use": "to_int"}}}])
     transforms = {
         "to_int": ProtoTransform(
             name="to_int",
@@ -437,7 +446,17 @@ def test_transform_named_proto_binding_inherits_input_output_from_library():
 
 def test_transform_named_proto_binding_local_io_overrides_library_io():
     anw = ActorWrapper(
-        pipeline=[{"transform": "to_int", "input": ["raw_value"], "output": ["parsed"]}]
+        pipeline=[
+            {
+                "transform": {
+                    "call": {
+                        "use": "to_int",
+                        "input": ["raw_value"],
+                        "output": ["parsed"],
+                    }
+                }
+            }
+        ]
     )
     transforms = {
         "to_int": ProtoTransform(
@@ -461,6 +480,86 @@ def test_transform_named_proto_binding_local_io_overrides_library_io():
     ctx = anw(ctx, doc={"raw_value": "8", "value": "7"})
     payload = ctx.buffer_transforms[LocationIndex(path=(0,))][0]
     assert payload.named == {"parsed": 8}
+    assert payload.positional == ()
+
+
+def test_transform_inline_function_without_output_defaults_to_input():
+    anw = ActorWrapper(
+        pipeline=[
+            {
+                "transform": {
+                    "call": {"module": "builtins", "foo": "int", "input": "value"}
+                }
+            }
+        ]
+    )
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=VertexConfig(vertices=[]),
+            edge_config=EdgeConfig(),
+            transforms={},
+        )
+    )
+
+    ctx = ActionContext()
+    ctx = anw(ctx, doc={"value": "9"})
+    payload = ctx.buffer_transforms[LocationIndex(path=(0,))][0]
+    assert payload.named == {"value": 9}
+    assert payload.positional == ()
+
+
+def test_transform_inline_function_strategy_each_initializes_and_executes():
+    anw = ActorWrapper(
+        pipeline=[
+            {
+                "transform": {
+                    "call": {
+                        "module": "builtins",
+                        "foo": "int",
+                        "input": ["value"],
+                        "strategy": "each",
+                    }
+                }
+            }
+        ]
+    )
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=VertexConfig(vertices=[]),
+            edge_config=EdgeConfig(),
+            transforms={},
+        )
+    )
+
+    ctx = ActionContext()
+    ctx = anw(ctx, doc={"value": "11"})
+    payload = ctx.buffer_transforms[LocationIndex(path=(0,))][0]
+    assert payload.named == {"value": 11}
+    assert payload.positional == ()
+
+
+def test_transform_inline_function_strategy_all_receives_document():
+    anw = ActorWrapper(
+        pipeline=[
+            {
+                "transform": {
+                    "call": {"module": "builtins", "foo": "dict", "strategy": "all"}
+                }
+            }
+        ]
+    )
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=VertexConfig(vertices=[]),
+            edge_config=EdgeConfig(),
+            transforms={},
+        )
+    )
+
+    ctx = ActionContext()
+    ctx = anw(ctx, doc={"value": 11, "other": "x"})
+    payload = ctx.buffer_transforms[LocationIndex(path=(0,))][0]
+    assert payload.named == {"value": 11, "other": "x"}
     assert payload.positional == ()
 
 

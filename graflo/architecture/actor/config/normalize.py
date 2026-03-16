@@ -74,6 +74,14 @@ def normalize_actor_step(data: dict[str, Any]) -> dict[str, Any]:
         data["type"] = "edge_router"
         return data
 
+    if "transform" in data:
+        inner = data.pop("transform")
+        if not isinstance(inner, dict):
+            raise ValueError("transform step must be an object with rename or call.")
+        data.update(inner)
+        data["type"] = "transform"
+        return data
+
     if "apply" in data:
         data["type"] = "descend"
         data["pipeline"] = [normalize_actor_step(s) for s in _steps_list(data["apply"])]
@@ -86,26 +94,8 @@ def normalize_actor_step(data: dict[str, Any]) -> dict[str, Any]:
         ]
         return data
 
-    if "type" not in data and (
-        "transform" in data
-        or "map" in data
-        or "rule" in data
-        or "switch" in data
-        or "dress" in data
-    ):
+    if "type" not in data and ("rename" in data or "call" in data):
         data = dict(data)
-        if "switch" in data:
-            switch = data.pop("switch")
-            if isinstance(switch, dict) and switch:
-                key = next(iter(switch))
-                vals = switch[key]
-                if isinstance(vals, (list, tuple)) and len(vals) >= 2:
-                    data.setdefault("input", [key])
-                    data.setdefault("dress", {"key": vals[0], "value": vals[1]})
-        if "dress" in data and isinstance(data["dress"], (list, tuple)):
-            vals = data["dress"]
-            if len(vals) >= 2:
-                data["dress"] = {"key": vals[0], "value": vals[1]}
         data["type"] = "transform"
         return data
 

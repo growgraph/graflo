@@ -173,15 +173,17 @@ def resource_concept():
     mn = yaml.safe_load(
         """
         -   vertex: concept
-        -   foo: split_keep_part
-            module: graflo.util.transform
-            params:
-                sep: "/"
-                keep: -1
-            input:
-            -   wikidata
-            output:
-            -   wikidata
+        -   transform:
+                call:
+                    module: graflo.util.transform
+                    foo: split_keep_part
+                    params:
+                        sep: "/"
+                        keep: -1
+                    input:
+                    -   wikidata
+                    output:
+                    -   wikidata
     """
     )
     return mn
@@ -262,7 +264,9 @@ def resource_descend():
         apply:
         - key: abc
           apply:
-            transform: a
+            transform:
+              rename:
+                x: y
         - vertex: work
         """
     )
@@ -284,13 +288,15 @@ def action_node_edge():
 @pytest.fixture()
 def action_node_transform():
     an = yaml.safe_load("""
-        foo: parse_date_ibes
-        module: graflo.util.transform
-        input:
-        -   ANNDATS
-        -   ANNTIMS
-        output:
-        -   datetime_announce
+        transform:
+            call:
+                module: graflo.util.transform
+                foo: parse_date_ibes
+                input:
+                -   ANNDATS
+                -   ANNTIMS
+                output:
+                -   datetime_announce
     """)
     return an
 
@@ -338,9 +344,10 @@ def resource_cross():
     an = yaml.safe_load("""
     -   vertex: person
     -   vertex: company 
-    -   map:
-            name: id
-            id: name
+    -   transform:
+            rename:
+                name: id
+                id: name
     """)
     return an
 
@@ -377,9 +384,10 @@ def vertex_config_cross():
 @pytest.fixture()
 def resource_cross_implicit():
     an = yaml.safe_load("""
-    -   map:
-            name: id
-            id: name
+    -   transform:
+            rename:
+                name: id
+                id: name
     """)
     return an
 
@@ -420,20 +428,31 @@ def sample_openalex_authors():
 def resource_openalex_authors():
     an = yaml.safe_load("""
     -   vertex: author
-    -   transform: keep_suffix_id
-        foo: split_keep_part
-        module: graflo.util.transform
-        params:
-            sep: "/"
-            keep: -1
-        input:
-        -   id
-        output:
-        -   _key
+    -   transform:
+            call:
+                module: graflo.util.transform
+                foo: split_keep_part
+                params:
+                    sep: "/"
+                    keep: -1
+                input:
+                -   id
+                output:
+                -   _key
     -   key: last_known_institution
         apply:
         -   vertex: institution   
-        -   transform: keep_suffix_id
+        -   transform:
+                call:
+                    module: graflo.util.transform
+                    foo: split_keep_part
+                    params:
+                        sep: "/"
+                        keep: -1
+                    input:
+                    -   id
+                    output:
+                    -   _key
     -   source: author
         target: institution
         weights:
@@ -474,15 +493,17 @@ def resource_kg_menton_triple():
     -   key: triple_index
         apply:
         -   vertex: mention
-        -   map:
-                hash: _key
+        -   transform:
+                rename:
+                    hash: _key
     -   key: triple
         apply:
         -   apply:
             -   vertex: mention
-            -   map:
-                    hash: _key
-                    role: _role
+            -   transform:
+                    rename:
+                        hash: _key
+                        role: _role
     -   source: mention
         target: mention
         match_source: triple_index

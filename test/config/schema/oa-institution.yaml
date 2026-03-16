@@ -36,11 +36,15 @@ ingestion_model:
     -   name: institutions
         apply:
         -   vertex: institution
-        -   transform: keep_suffix_id
+        -   transform:
+                call:
+                    use: keep_suffix_id
         -   key: associated_institutions
             apply:
             -   vertex: institution
-            -   transform: keep_suffix_id
+            -   transform:
+                    call:
+                        use: keep_suffix_id
         -   source: institution
             target: institution
             match_target: associated_institutions
