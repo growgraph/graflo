@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.7.2]
+
+### Changed
+- **Transform declarations and actor DSL**:
+  - `ingestion_model.transforms` is now modeled and validated as an ordered list of named transforms (instead of map-like declarations)
+  - Transform execution and resolution preserve declaration/appearance order in resource pipelines
+  - Transform actor declarations use explicit call semantics (`transform.call.use`) for named transform references
+  - A single named transform can be reused across multiple attributes/fields by repeated transform steps with different `input` overrides
+- **Plotting defaults**:
+  - Default plot naming now includes schema version when available, improving traceability across manifest versions
+
+### Fixed
+- **Graph model consistency validation**:
+  - Added graph-level validation so vertex/edge config consistency is checked at `GraphModel` initialization time
+- **Plotting correctness**:
+  - Fixed plotting errors where vertices inferred from edge declarations could be handled incorrectly
+- **Transform + actor initialization**:
+  - Fixed actor loading failures when transform declarations specified `fields`
+  - Fixed transform initialization edge cases where declaration style caused inconsistent actor wiring
+
+### Documentation
+- Updated docs to clarify GraFlo as a graph schema transformation DSL and refreshed transform declaration examples for list-based transform registries and `transform.call.use` references
+
 ## [1.7.0]
 
 ### Added

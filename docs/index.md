@@ -1,8 +1,8 @@
 # GraFlo <img src="https://raw.githubusercontent.com/growgraph/graflo/main/docs/assets/favicon.ico" alt="graflo logo" style="height: 32px; width:32px;"/>
 
-GraFlo is a **Graph Schema & Transformation Language (GSTL)** for Labeled Property Graphs (LPG).
+GraFlo is a **Graph Schema Transformation Language (GSTL)** for Labeled Property Graphs (LPG) - a domain-specific language (DSL) for defining graph structure and transformation logic in one manifest.
 
-It combines a database independent graph model, db-specific details and ingestion pipeline into a graph manifest and runs it across many systems. With declarative schemas and reusable `Resource` pipelines, GraFlo maps CSV/SQL, JSON/XML, RDF/SPARQL, REST APIs, and in-memory data into a single database-independent LPG model (`GraphContainer`), then projects it to supported graph databases: ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, and NebulaGraph.
+It combines a database-independent graph model, DB-specific details, and ingestion pipeline into a graph manifest and runs it across many systems. With declarative schemas and reusable `Resource` pipelines, GraFlo maps CSV/SQL, JSON/XML, RDF/SPARQL, REST APIs, and in-memory data into a single database-independent LPG model (`GraphContainer`), then projects it to supported graph databases: ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, and NebulaGraph. This keeps schema and transform logic portable across targets and helps teams avoid vendor lock-in.
 
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg) 
 [![PyPI version](https://badge.fury.io/py/graflo.svg)](https://badge.fury.io/py/graflo)
@@ -69,8 +69,8 @@ The `DataSourceRegistry` manages `AbstractDataSource` adapters, each carrying a 
 
 ## Key Features
 
-- **Declarative LPG schema** — Define vertices, edges, indexes, weights, and transforms in YAML or Python. The `Schema` is the single source of truth, independent of source or target.
-- **Database abstraction** — One logical schema, one API. Target ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, or NebulaGraph without rewriting pipelines. DB idiosyncrasies are handled in DB-aware projection (`Schema.resolve_db_aware(...)`) and connector/writer stages.
+- **Declarative LPG schema DSL** — Define vertices, edges, indexes, weights, and transforms in YAML or Python. The `Schema` is the single source of truth, independent of source or target.
+- **Database abstraction** — One logical schema and transformation DSL, one API. Target ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, or NebulaGraph without rewriting pipelines. DB idiosyncrasies are handled in DB-aware projection (`Schema.resolve_db_aware(...)`) and connector/writer stages.
 - **Resource abstraction** — Each `Resource` defines a reusable actor pipeline that maps raw records to graph elements. Actor types include descend, transform, vertex, edge, plus **VertexRouter** and **EdgeRouter** for dynamic type-based routing (see [Concepts — Actor](concepts/index.md#actor)). Data sources bind to Resources by name via the `DataSourceRegistry`, decoupling transformation logic from data retrieval.
 - **DataSourceRegistry** — Register `FILE`, `SQL`, `API`, `IN_MEMORY`, or `SPARQL` data sources. Each `DataSourceType` plugs into the same Resource pipeline.
 - **SPARQL & RDF support** — Query SPARQL endpoints (e.g. Apache Fuseki), read `.ttl`/`.rdf`/`.n3` files, and auto-infer schemas from OWL/RDFS ontologies. Install with `pip install graflo[sparql]`.

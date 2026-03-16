@@ -47,7 +47,7 @@ ingestion_model:
           "from": {id: person_id, name: person}
         - vertex: department
           "from": {name: department}
-  transforms: {}
+  transforms: []
 
 bindings: {}
 ```
@@ -70,7 +70,7 @@ Use `schema` for **what graph exists**.
 Defines ingestion behavior.
 
 - `resources`: named pipelines (`name`) with ordered actor steps
-- `transforms`: reusable named transforms referenced from resources
+- `transforms`: reusable named transforms as a **list** (each entry must define `name`) and referenced from resources via `transform.call.use`
 
 Use `ingestion_model` for **how source records become vertices/edges**.
 
@@ -89,6 +89,7 @@ Use `bindings` for **where data comes from**.
 - Ensure every `vertex`/`source`/`target` referenced by resources exists in `schema.graph`.
 - Quote `"from"` in YAML because `from` is a reserved keyword.
 - Prefer explicit `relation` names for multi-edge models.
+- Keep `ingestion_model.transforms` ordered intentionally; transforms are applied in declaration/appearance order within pipelines.
 
 ## Load and validate
 
