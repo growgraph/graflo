@@ -1,6 +1,7 @@
 import pytest
 
 from graflo.architecture.manifest import GraphManifest
+from graflo.architecture.schema import Schema
 
 
 def _minimal_graph() -> dict:
@@ -102,3 +103,31 @@ def test_manifest_rejects_duplicate_ingestion_transform_names():
     }
     with pytest.raises(ValueError, match="Duplicate ingestion transform names found"):
         GraphManifest.from_config(cfg)
+
+
+def test_schema_rejects_edges_with_undefined_vertices():
+    with pytest.raises(
+        ValueError,
+        match=r"edge_config references undefined vertices: \['company', 'person'\]",
+    ) as exc_info:
+        Schema.model_validate(
+            {
+                "metadata": {"name": "kg"},
+                "graph": {
+                    "vertex_config": {
+                        "vertices": [
+                            {"name": "user", "fields": ["id"], "identity": ["id"]},
+                        ]
+                    },
+                    "edge_config": {
+                        "edges": [
+                            {"source": "user", "target": "person"},
+                            {"source": "company", "target": "user"},
+                        ]
+                    },
+                },
+            }
+        )
+
+    # Error details should include currently declared vertices for easier debugging.
+    assert "Declared vertices: ['user']" in str(exc_info.value)

@@ -43,7 +43,7 @@ ingestion_model:
         -   source: work
             target: work
     transforms:
-        name: keep_suffix_id
+    -   name: keep_suffix_id
         foo: split_keep_part
         module: graflo.util.transform
         params:
