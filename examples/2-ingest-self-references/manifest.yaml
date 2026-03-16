@@ -22,7 +22,7 @@ schema:
                 -   doi
 ingestion_model:
     resources:
-    -   resource_name: work
+    -   name: work
         apply:
         -   transform: keep_suffix_id
         -   transform: keep_suffix_id

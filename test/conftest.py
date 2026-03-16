@@ -378,7 +378,7 @@ def resource_openalex_works():
 @pytest.fixture()
 def resource_deb():
     return yaml.safe_load("""
-    -   resource_name: package
+    -   name: package
         apply:
         -   vertex: package
         -   key: dependencies
@@ -416,7 +416,7 @@ def resource_deb():
 @pytest.fixture()
 def resource_deb_compact():
     return yaml.safe_load("""
-    -   resource_name: package
+    -   name: package
         apply:
         -   vertex: package
         -   key: dependencies
@@ -440,7 +440,7 @@ def resource_deb_compact():
 def resource_deb_package_only():
     """Package-package edges only via relation_from_key (example 4 style). No maintainer."""
     return yaml.safe_load("""
-    -   resource_name: package
+    -   name: package
         apply:
         -   vertex: package
         -   key: dependencies
@@ -457,7 +457,7 @@ def resource_deb_package_only():
 @pytest.fixture()
 def resource_ticker():
     return yaml.safe_load("""
-    resource_name: ticker_data
+    name: ticker_data
     apply:
     -   foo: round_str
         module: graflo.util.transform

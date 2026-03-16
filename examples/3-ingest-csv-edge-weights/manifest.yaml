@@ -20,7 +20,7 @@ schema:
     db_profile: {}
 ingestion_model:
     resources:
-    -   resource_name: relations
+    -   name: relations
         apply:
         -   vertex: company
             from:

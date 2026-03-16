@@ -67,7 +67,7 @@ class PostgresResourceMapper:
             )
 
         resource = Resource(
-            resource_name=table_name,
+            name=table_name,
             pipeline=apply,
         )
 
@@ -202,7 +202,7 @@ class PostgresResourceMapper:
             apply.append(target_map_config)
 
         resource = Resource(
-            resource_name=table_name,
+            name=table_name,
             pipeline=apply,
         )
 

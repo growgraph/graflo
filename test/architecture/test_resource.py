@@ -28,7 +28,7 @@ def test_resolve_type_caster_rejects_expressions():
 def test_resource_types_uses_safe_caster_resolution():
     resource = Resource.from_dict(
         {
-            "resource_name": "typed_resource",
+            "name": "typed_resource",
             "pipeline": [{"vertex": "person"}],
             "types": {"age": "int", "unsafe": "__import__('os').system"},
         }
@@ -41,7 +41,7 @@ def test_resource_infer_edge_selectors_are_mutually_exclusive():
     with pytest.raises(ValueError, match="mutually exclusive"):
         Resource.from_dict(
             {
-                "resource_name": "typed_resource",
+                "name": "typed_resource",
                 "pipeline": [{"vertex": "person"}],
                 "infer_edge_only": [{"source": "a", "target": "b"}],
                 "infer_edge_except": [{"source": "a", "target": "c"}],
@@ -52,7 +52,7 @@ def test_resource_infer_edge_selectors_are_mutually_exclusive():
 def test_resource_infer_edge_selector_references_unknown_edge():
     resource = Resource.from_dict(
         {
-            "resource_name": "typed_resource",
+            "name": "typed_resource",
             "pipeline": [{"vertex": "person"}],
             "infer_edge_only": [{"source": "a", "target": "b"}],
         }
@@ -69,7 +69,7 @@ def test_resource_auto_adds_edge_actor_types_to_infer_edge_except():
     """When a Resource has EdgeActors for (s,t), (s,t, None) is auto-added to infer_edge_except."""
     resource = Resource.from_dict(
         {
-            "resource_name": "test",
+            "name": "test",
             "pipeline": [
                 {"vertex": "a", "from": {"id": "a"}},
                 {"vertex": "b", "from": {"id": "b"}},
@@ -106,7 +106,7 @@ def test_resource_infer_edge_except_excludes_edges_handled_by_edge_actors():
     # EdgeActor for (a,b) is inside a descend that never runs (doc has no "nested" key)
     resource = Resource.from_dict(
         {
-            "resource_name": "test",
+            "name": "test",
             "pipeline": [
                 {"vertex": "a", "from": {"id": "a"}},
                 {"vertex": "b", "from": {"id": "b"}},

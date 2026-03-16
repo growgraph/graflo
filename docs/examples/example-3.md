@@ -60,7 +60,7 @@ The resource configuration maps the CSV columns to vertices and edges:
 
 ```yaml
 resources:
--   resource_name: relations
+-   name: relations
     apply:
     -   vertex: company
         "from": {name: company_a}

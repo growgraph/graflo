@@ -47,7 +47,7 @@ schema:
                 -   t_obs
 ingestion_model:
     resources:
-    -   resource_name: authors
+    -   name: authors
         apply:
         -   vertex: author
             from:

@@ -203,7 +203,7 @@ class RdfInferenceManager:
                             "relation": edge_def.get("relation"),
                         }
                     )
-            resources.append(Resource(resource_name=cls_name, pipeline=pipeline))
+            resources.append(Resource(name=cls_name, pipeline=pipeline))
 
         effective_name = schema_name or "rdf_schema"
         schema = Schema(

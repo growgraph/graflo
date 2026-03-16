@@ -3,4 +3,4 @@ file_connectors:
         __tag__: file
         regex: "^relations.*\\.csv$"
         sub_path: "."
-        resource_name: "relations"
+        name: "relations"

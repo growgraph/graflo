@@ -38,10 +38,10 @@ schema:
 
 ingestion_model:
   resources:
-    - resource_name: people
+    - name: people
       apply:
         - vertex: person
-    - resource_name: departments
+    - name: departments
       apply:
         - vertex: person
           "from": {id: person_id, name: person}
@@ -69,7 +69,7 @@ Use `schema` for **what graph exists**.
 
 Defines ingestion behavior.
 
-- `resources`: named pipelines (`resource_name`) with ordered actor steps
+- `resources`: named pipelines (`name`) with ordered actor steps
 - `transforms`: reusable named transforms referenced from resources
 
 Use `ingestion_model` for **how source records become vertices/edges**.
@@ -78,7 +78,7 @@ Use `ingestion_model` for **how source records become vertices/edges**.
 
 Defines source wiring.
 
-- maps `resource_name` to files, tables, SPARQL endpoints, API sources, etc.
+- maps resource `name` to files, tables, SPARQL endpoints, API sources, etc.
 - can be left empty in-file and supplied at runtime (for env-specific deployments)
 
 Use `bindings` for **where data comes from**.

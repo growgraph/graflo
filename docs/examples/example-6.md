@@ -169,7 +169,7 @@ schema:
         relation: cites
 ingestion_model:
   resources:
-  - resource_name: Researcher
+  - name: Researcher
     apply:
     - vertex: Researcher
     - source: Researcher
@@ -178,13 +178,13 @@ ingestion_model:
     - source: Researcher
       target: Institution
       relation: affiliatedWith
-  - resource_name: Publication
+  - name: Publication
     apply:
     - vertex: Publication
     - source: Publication
       target: Publication
       relation: cites
-  - resource_name: Institution
+  - name: Institution
     apply:
     - vertex: Institution
 ```

@@ -42,7 +42,7 @@ schema:
     db_profile: {}
 ingestion_model:
     resources:
-    -   resource_name: objects
+    -   name: objects
         pipeline:
         -   vertex_router:
                 type_field: type
@@ -50,7 +50,7 @@ ingestion_model:
                     Person: person
                     Vehicle: vehicle
                     Institution: institution
-    -   resource_name: relations
+    -   name: relations
         pipeline:
         -   edge_router:
                 source_type_field: source_type

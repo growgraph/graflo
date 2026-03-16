@@ -19,7 +19,7 @@ The resource system allows for:
 
 Example:
     >>> resource = Resource(
-    ...     resource_name="users",
+    ...     name="users",
     ...     pipeline=[{"vertex": "user"}, {"edge": {"from": "user", "to": "user"}}],
     ...     encoding=EncodingType.UTF_8
     ... )
@@ -119,7 +119,7 @@ class Resource(ConfigBaseModel):
 
     model_config = {"extra": "forbid"}
 
-    resource_name: str = PydanticField(
+    name: str = PydanticField(
         ...,
         description="Name of the resource (e.g. table or file identifier).",
     )
@@ -232,11 +232,6 @@ class Resource(ConfigBaseModel):
     def root(self) -> ActorWrapper:
         """Root actor wrapper for the processing pipeline."""
         return self._root
-
-    @property
-    def name(self) -> str:
-        """Resource name (alias for resource_name)."""
-        return self.resource_name
 
     def finish_init(
         self,

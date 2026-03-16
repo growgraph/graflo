@@ -300,7 +300,7 @@ class TestAutoJoin:
             {
                 "resources": [
                     {
-                        "resource_name": "abc_relations",
+                        "name": "abc_relations",
                         "pipeline": [
                             {
                                 "edge": {

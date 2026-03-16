@@ -667,7 +667,7 @@ class ManifestPlotter:
             assemble_tree(
                 resource.root,
                 self._figure_path(
-                    f"{self.schema.metadata.name}.resource-{resource.resource_name}"
+                    f"{self.schema.metadata.name}.resource-{resource.name}"
                 ),
                 output_format=self.output_format,
                 output_dpi=self.output_dpi,

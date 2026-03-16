@@ -33,7 +33,7 @@ schema:
             researchField: ResearchField
 ingestion_model:
     resources:
-    -   resource_name: authors
+    -   name: authors
         apply:
         -   vertex: author
             from:

@@ -243,7 +243,7 @@ class TestEdgeResourceAutoJoin:
             },
             resources=[
                 {
-                    "resource_name": "relations",
+                    "name": "relations",
                     "pipeline": [
                         {
                             "vertex_router": {
@@ -515,7 +515,7 @@ class TestEdgeResourceAutoJoin:
             edge_config={"edges": []},
             resources=[
                 {
-                    "resource_name": "mixed",
+                    "name": "mixed",
                     "pipeline": [
                         {
                             "vertex_router": {
@@ -569,7 +569,7 @@ class TestEdgeResourceAutoJoin:
             edge_config={"edges": []},
             resources=[
                 {
-                    "resource_name": "transform_then_router",
+                    "name": "transform_then_router",
                     "pipeline": [
                         {"map": {"raw_id": "id", "raw_label": "label"}},
                         {

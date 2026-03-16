@@ -80,7 +80,7 @@ schema:
                 -   datetime_announce
 ingestion_model:
     resources:
-    -   resource_name: ibes
+    -   name: ibes
         encoding: ISO-8859-1
         apply:
         -   vertex: ticker

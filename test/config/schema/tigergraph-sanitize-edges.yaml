@@ -42,17 +42,17 @@ schema:
         db_flavor: tigergraph
 ingestion_model:
     resources:
-    -   resource_name: parcels
+    -   name: parcels
         apply:
         -   vertex: parcel
         -   map:
                 parcel_id: id
-    -   resource_name: boxes
+    -   name: boxes
         apply:
         -   vertex: box
         -   map:
                 box_id: id
-    -   resource_name: containers
+    -   name: containers
         apply:
         -   vertex: container
         -   map:

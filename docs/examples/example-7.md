@@ -49,7 +49,7 @@ ec3cd5f9-8a75-49af-adc8-654eab637ebc,01dbf082-514a-4c6b-ae05-b0ec66c30f35,COLLEA
 
 ```yaml
 resources:
-  - resource_name: objects
+  - name: objects
     pipeline:
       - vertex_router:
           type_field: type
@@ -69,7 +69,7 @@ Each row is dispatched to the correct `VertexActor` for that type. Fields are pr
 `edge_router` creates edges with dynamic source/target types and relation names from document fields:
 
 ```yaml
-  - resource_name: relations
+  - name: relations
     pipeline:
       - edge_router:
           source_type_field: source_type

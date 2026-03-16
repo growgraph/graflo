@@ -37,7 +37,7 @@ schema:
             users: Users
 ingestion_model:
     resources:
-    -   resource_name: package
+    -   name: package
         apply:
         -   vertex: package
 bindings: {}

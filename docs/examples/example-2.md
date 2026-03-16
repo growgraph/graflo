@@ -63,7 +63,7 @@ transforms:
 Let's define the mappings. We will apply `keep_suffix_id` to `id` and `doi` fields in several places with slightly different parameters. We will map the corresponding values to define instances of `work` vertex and define edges `work` &rarr; `work`. 
 
 ```yaml
--   resource_name: work
+-   name: work
     apply:
     -   transform: keep_suffix_id
     -   transform: keep_suffix_id

@@ -33,7 +33,7 @@ schema:
                 -   type
 ingestion_model:
     resources:
-    -   resource_name: institutions
+    -   name: institutions
         apply:
         -   vertex: institution
         -   transform: keep_suffix_id

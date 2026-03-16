@@ -76,7 +76,7 @@ schema:
                 -   name
 ingestion_model:
     resources:
-    -   resource_name: history
+    -   name: history
         apply:
         -   foo: round_str
             module: graflo.util.transform

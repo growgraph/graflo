@@ -426,7 +426,7 @@ class SchemaSanitizer:
                             if d_f in mappings:
                                 from_doc[v_f] = mappings[d_f]
                         logger.debug(
-                            f"Updated VertexActor from_doc in resource '{resource.resource_name}' "
+                            f"Updated VertexActor from_doc in resource '{resource.name}' "
                             f"for vertex '{vertex_name}': {mappings}"
                         )
 
@@ -466,7 +466,7 @@ class SchemaSanitizer:
                     actor.t._init_io_from_map(force_init=True)
 
                     logger.debug(
-                        f"Updated TransformActor map in resource '{resource.resource_name}' "
+                        f"Updated TransformActor map in resource '{resource.name}' "
                         f"for vertex '{vertex_name}': {mappings}"
                     )
 
@@ -481,7 +481,7 @@ class SchemaSanitizer:
                             applied_any = True
                 if not applied_any:
                     logger.debug(
-                        f"Skipping TransformActor in resource '{resource.resource_name}': "
+                        f"Skipping TransformActor in resource '{resource.name}': "
                         f"no mappings for vertices {all_available_vertices}"
                     )
 
@@ -508,6 +508,6 @@ class SchemaSanitizer:
             update_transform_actor_maps(resource.root)
         else:
             logger.warning(
-                f"Resource '{resource.resource_name}' does not have a root ActorWrapper. "
+                f"Resource '{resource.name}' does not have a root ActorWrapper. "
                 f"Skipping field index mapping updates."
             )
