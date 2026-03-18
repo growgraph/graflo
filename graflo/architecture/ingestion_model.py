@@ -66,7 +66,13 @@ class IngestionModel(ConfigBaseModel):
             {t.name: t for t in self.transforms if t.name is not None},
         )
 
-    def finish_init(self, graph: "GraphModel") -> None:
+    def finish_init(
+        self,
+        graph: "GraphModel",
+        *,
+        strict_references: bool = False,
+        dynamic_edge_feedback: bool = False,
+    ) -> None:
         """Initialize resources against graph model and transform library."""
         self._rebuild_runtime_state()
         for r in self.resources:
@@ -74,6 +80,8 @@ class IngestionModel(ConfigBaseModel):
                 vertex_config=graph.vertex_config,
                 edge_config=graph.edge_config,
                 transforms=self._transforms,
+                strict_references=strict_references,
+                dynamic_edge_feedback=dynamic_edge_feedback,
             )
 
     def _rebuild_runtime_state(self) -> None:

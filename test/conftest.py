@@ -71,14 +71,16 @@ def fetch_schema_dict(mode):
     return schema_dict
 
 
-def fetch_manifest_obj(mode) -> GraphManifest:
+def fetch_manifest_obj(mode, *, dynamic_edge_feedback: bool = False) -> GraphManifest:
     manifest = GraphManifest.from_config(fetch_schema_dict(mode))
-    manifest.finish_init()
+    manifest.finish_init(dynamic_edge_feedback=dynamic_edge_feedback)
     return manifest
 
 
-def fetch_schema_obj(mode):
-    return fetch_manifest_obj(mode).require_schema()
+def fetch_schema_obj(mode, *, dynamic_edge_feedback: bool = False):
+    return fetch_manifest_obj(
+        mode, dynamic_edge_feedback=dynamic_edge_feedback
+    ).require_schema()
 
 
 @pytest.fixture(scope="function")
@@ -99,8 +101,10 @@ def ingest_atomic(conn_conf, current_path, test_db_name, schema_o, mode, n_cores
     # Create Bindings for file-based resources
     # Map each resource to a FileConnector that matches files in the data directory
     bindings = Bindings()
-    ingestion_model = fetch_manifest_obj(mode).require_ingestion_model()
-    ingestion_model.finish_init(schema_o.graph)
+    ingestion_model = fetch_manifest_obj(
+        mode, dynamic_edge_feedback=True
+    ).require_ingestion_model()
+    ingestion_model.finish_init(schema_o.graph, dynamic_edge_feedback=True)
     for resource in ingestion_model.resources:
         resource_name = resource.name
         # Create a FileConnector that matches files for this resource

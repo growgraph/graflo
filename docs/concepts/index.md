@@ -28,7 +28,7 @@ flowchart LR
     GS["<b>Schema (logical)</b><br/>Vertex/Edge Definitions<br/>Identities · DB Profile"]
     IM["<b>IngestionModel</b><br/>Resources · Transforms"]
     BD["<b>Bindings</b><br/>Resource -> Data Source mapping"]
-    GC["<b>GraphContainer</b><br/>Covariant Graph Representation"]
+    GC["<b>GraphContainer</b><br/>Database-Independent Representation"]
     DB["<b>Graph DB (LPG)</b><br/>ArangoDB · Neo4j · TigerGraph · Others"]
 
     MF --> GS
@@ -47,7 +47,7 @@ flowchart LR
 - **Schema** — the declarative logical graph model (`Schema`): vertex/edge definitions, identities, typed fields, and DB profile.
 - **IngestionModel** — reusable resources and transforms used to map records into graph entities.
 - **Bindings** — resource-to-source mapping (`FileConnector`, `TableConnector`, `SparqlConnector`).
-- **Covariant Graph Representation** — a `GraphContainer` of vertices and edges, independent of any target database.
+- **Database-Independent Graph Representation** — a `GraphContainer` of vertices and edges, independent of any target database.
 - **Graph DB** — the target LPG store (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph).
 
 ### Data flow detail
@@ -99,6 +99,18 @@ flowchart LR
 - **Resources** define *what* to extract — each `Resource` is a reusable actor pipeline (descend → transform → vertex → edge) that maps raw records to graph elements.
 - **GraphContainer** (covariant graph representation) collects the resulting vertices and edges in a database-independent format.
 - **DBWriter** pushes the graph data into the target LPG store (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph).
+
+### Minimal canonical config contract
+
+GraFlo serializes configuration models in a minimal canonical form by default:
+
+- fields equal to defaults are omitted;
+- `None` values are omitted;
+- aliases and normalized DSL shapes are used.
+
+This is intentional for lightweight manifests and LLM-oriented workflows.
+The guaranteed invariant is semantic/idempotent canonical round-trip
+(`parse -> minimal dump -> parse`), not authored-style text preservation.
 
 ## Class Diagrams
 
@@ -636,6 +648,10 @@ flowchart TB
 A `Transform` defines data transforms, from renaming and type-casting to
 arbitrary Python functions. The transform system is built on two layers:
 
+For a dedicated guide covering all transform use cases and configuration
+options (inline/local usage, reusable `use` references, multi-field
+strategies, and key transforms), see [Transforms](transforms.md).
+
 - **ProtoTransform** — the raw function wrapper. It holds `module`, `foo`
   (function name), and `params`. Its `apply()` method invokes the function
   without caring about where the inputs come from or how the outputs are
@@ -692,6 +708,42 @@ A Transform can produce output in three ways:
     This cleanly separates *what function to apply* (ProtoTransform) from
     *how to present the result* (dressing).
 
+#### Key transforms
+
+Transforms can also target **document keys** (not values) using
+`transform.call.target: keys`. Key mode uses implicit per-key execution and a
+selector under `call.keys`:
+
+- `mode: all` — apply to all keys
+- `mode: include` — apply only to listed keys
+- `mode: exclude` — apply to all keys except listed keys
+
+Example: normalize all keys to snake case:
+
+```yaml
+- transform:
+    call:
+      module: graflo.util.transform
+      foo: camel_to_snake
+      target: keys
+      keys:
+        mode: all
+```
+
+Example: strip `raw_` only from selected keys:
+
+```yaml
+- transform:
+    call:
+      module: graflo.util.transform
+      foo: remove_prefix
+      params: {prefix: "raw_"}
+      target: keys
+      keys:
+        mode: include
+        names: [raw_id, raw_label]
+```
+
 ```mermaid
 flowchart LR
     Doc["Input Document"] -->|"extract input fields"| Proto["ProtoTransform.apply()"]
@@ -730,7 +782,7 @@ Transform steps are executed in the order they appear in `apply`.
 ## Key Features
 
 ### Schema & Abstraction
-- **Declarative LPG schema** — `Schema` defines vertices, edges, identity rules, weights, and transforms in YAML or Python; the single source of truth for the graph structure.
+- **Declarative LPG schema** — `Schema` defines vertices, edges, identity rules, and weights in YAML or Python; the single source of truth for graph structure. Transforms/resources are defined in `IngestionModel`.
 - **Database abstraction** — one logical schema, multiple backends; DB-specific behavior is applied in DB-aware projection/writer stages (`Schema.resolve_db_aware(...)`, `VertexConfigDBAware`, `EdgeConfigDBAware`).
 - **Resource abstraction** — each `Resource` is a reusable actor pipeline that maps raw records to graph elements, decoupled from data retrieval.
 - **DataSourceRegistry** — pluggable `AbstractDataSource` adapters (`FILE`, `SQL`, `API`, `SPARQL`, `IN_MEMORY`) bound to Resources by name.

@@ -63,6 +63,18 @@ class IngestionParams(BaseModel):
             Rows with date_column < datetime_before are included. Range is [datetime_after, datetime_before).
         datetime_column: Default column name for datetime filtering when the connector does not
             specify date_field. Per-table override: set date_field on TableConnector (or FileConnector).
+        strict_references: If True, fail fast during model/resource initialization when
+            named references cannot be resolved (for example, a
+            ``transform.call.use`` value that does not exist in
+            ``ingestion_model.transforms``). If False, unresolved references may be
+            tolerated by legacy paths.
+        strict_registry: If True, fail registry build when resources cannot be wired to
+            concrete sources/connectors (missing connector/type/mismatch/source build
+            errors). If False, those issues are logged and skipped, allowing partial
+            ingestion.
+        dynamic_edges: If True, feedback edge declarations discovered during resource
+            runtime initialization (e.g. edge actors) into the shared schema edge
+            config. Keep False to preserve pure logical-schema immutability.
     """
 
     clear_data: bool = False
@@ -76,6 +88,10 @@ class IngestionParams(BaseModel):
     datetime_after: str | None = None
     datetime_before: str | None = None
     datetime_column: str | None = None
+    # Strict contract checks for major-release style validation workflows.
+    strict_references: bool = True
+    strict_registry: bool = True
+    dynamic_edges: bool = False
 
 
 class Caster:
@@ -418,10 +434,14 @@ class Caster:
         db_flavor = target_db_config.connection_type
         self.schema.db_profile.db_flavor = db_flavor
         self.schema.finish_init()
-        self.ingestion_model.finish_init(self.schema.graph)
+        self.ingestion_model.finish_init(
+            self.schema.graph,
+            strict_references=ingestion_params.strict_references,
+            dynamic_edge_feedback=ingestion_params.dynamic_edges,
+        )
 
         registry = RegistryBuilder(self.schema, self.ingestion_model).build(
-            bindings, ingestion_params
+            bindings, ingestion_params, strict=ingestion_params.strict_registry
         )
 
         asyncio.run(
@@ -448,4 +468,5 @@ class Caster:
             ingestion_model=self.ingestion_model,
             dry=self.ingestion_params.dry,
             max_concurrent=max_concurrent,
+            dynamic_edges=self.ingestion_params.dynamic_edges,
         )

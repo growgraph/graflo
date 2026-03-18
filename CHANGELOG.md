@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.7.3]
+
+### Added
+- **Key-target transform support**:
+  - `transform.call.target: keys` enables key-level transforms in pipelines
+  - `transform.call.keys.mode` supports key selection via `all`, `include`, and `exclude`
+  - Added core key helpers in `graflo.util.transform`:
+    - `remove_prefix`
+    - `remove_suffix`
+    - `camel_to_snake`
+    - `snake_to_camel`
+
+### Changed
+- **Edge spec relation discriminator cleanup**:
+  - Removed legacy `logical_relation` from `database_features.edge_specs` and related API surfaces
+  - Edge spec/index/name resolution now relies on relation-aware `EdgeId` (`source`, `target`, `relation`) plus optional `purpose`
+
+### Documentation
+- Added concepts documentation examples for key-level transforms (`target: keys`).
+
 ## [1.7.2]
 
 ### Changed

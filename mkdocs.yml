@@ -56,6 +56,7 @@ nav:
     -   Creating a Manifest: getting_started/creating_manifest.md
 -   Concepts:
     -   Concepts Overview: concepts/index.md
+    -   Transforms: concepts/transforms.md
     -   Backend Index Behavior: concepts/backend_indexes.md
 -   Examples:
     -   Examples Index: examples/index.md

@@ -2,15 +2,18 @@
 
 This guide explains how to create a GraFlo `GraphManifest`, the canonical config artifact used for ingestion and orchestration.
 
-A manifest combines three concerns in one file:
+A full manifest combines three concerns in one file:
 
 - `schema`: logical graph model (metadata, vertices, edges, DB profile)
 - `ingestion_model`: resources and transforms
 - `bindings`: mapping resources to physical data sources
 
+`GraphManifest` also supports partial payloads (for example, schema-only or
+ingestion-only files). At least one block is required.
+
 ## Why manifest-first
 
-`GraphManifest` is the top-level contract passed through the runtime (`GraphEngine`, CLI ingest, plotting). Keeping everything in one document makes validation and execution deterministic.
+`GraphManifest` is the top-level contract passed through the runtime (`GraphEngine`, CLI ingest, plotting). Keeping all needed blocks in one document makes validation and execution deterministic.
 
 ## Manifest structure
 

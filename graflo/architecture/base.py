@@ -77,6 +77,21 @@ class ConfigBaseModel(BaseModel):
                 kwargs["exclude_defaults"] = True
         return self.model_dump(mode="json", by_alias=True, exclude_none=True, **kwargs)
 
+    def to_minimal_canonical_dict(self, **kwargs: Any) -> dict[str, Any]:
+        """Convert instance to minimal canonical dictionary form.
+
+        Minimal canonical form is intentionally compact:
+        - excludes values equal to defaults
+        - excludes ``None`` values
+        - uses aliases for stable external contract
+        """
+        kwargs = dict(kwargs)
+        kwargs.setdefault("exclude_defaults", True)
+        kwargs.setdefault("exclude_none", True)
+        kwargs.setdefault("by_alias", True)
+        kwargs.setdefault("mode", "json")
+        return self.model_dump(**kwargs)
+
     def update(self, other: Self) -> None:
         """Update this instance with values from another instance of the same type.
 

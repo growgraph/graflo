@@ -59,7 +59,6 @@ class EdgeRuntime:
             self.edge.edge_id,
             source_storage=self.source_storage,
             target_storage=self.target_storage,
-            logical_relation=self.edge.relation,
         )
 
 
@@ -148,7 +147,6 @@ class EdgeConfigDBAware:
         return self.db_profile.edge_relation_name(
             edge.edge_id,
             default_relation=relation,
-            logical_relation=edge.relation,
         )
 
     def effective_weights(self, edge: Edge) -> WeightConfig | None:
@@ -206,7 +204,6 @@ class EdgeConfigDBAware:
                 self.db_profile.add_edge_index(
                     edge.edge_id,
                     Index(fields=identity_fields, unique=True),
-                    logical_relation=edge.relation,
                     purpose=None,
                 )
 

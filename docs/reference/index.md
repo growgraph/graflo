@@ -11,7 +11,7 @@ Core architectural components that define the graflo framework:
 - **[Vertex](architecture/vertex.md)**: Vertex configuration and properties
 - **[Edge](architecture/edge.md)**: Edge configuration and relationship management
 - **[Resource](architecture/resource.md)**: Data source mapping and transformation
-- **[Actor](architecture/actor.md)**: Document processing pipeline components
+- **[Actor](architecture/actor/__init__.md)**: Document processing pipeline components
 - **[Transform](architecture/transform.md)**: Data transformation utilities
 - **[Ontology](architecture/onto.md)**: Core data structures and types
 - **[Utilities](architecture/util.md)**: Common utility functions
@@ -46,7 +46,7 @@ Database connection and management components:
 
 Main graflo functionality:
 
-- **[Caster](caster.md)**: Main data ingestion and transformation engine
+- **[Caster](hq/caster.md)**: Main data ingestion and transformation engine
 - **[Data Sources](data_source/index.md)**: Data source abstraction layer (files, APIs, SQL, in-memory)
 - **[Ontology](onto.md)**: Core data types and enums
 
@@ -77,7 +77,7 @@ CLI tools for graflo operations:
 
 - **[Ingest](cli/ingest.md)**: Data ingestion commands
 - **[Database Management](cli/manage_dbs.md)**: Database administration commands
-- **[Schema Visualization](cli/plot_schema.md)**: Schema visualization commands
+- **[Schema Visualization](cli/plot_manifest.md)**: Schema visualization commands
 - **[XML to JSON](cli/xml2json.md)**: XML data conversion utilities
 
 ## Getting Started

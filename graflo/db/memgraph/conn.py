@@ -512,10 +512,7 @@ class MemgraphConnection(Connection):
             if edge.relation is None:
                 continue
             index_list = (
-                schema.db_profile.edge_secondary_indexes(
-                    edge.edge_id,
-                    logical_relation=edge.relation,
-                )
+                schema.db_profile.edge_secondary_indexes(edge.edge_id)
                 if schema is not None
                 else []
             )

@@ -49,6 +49,8 @@ class RegistryBuilder:
         self,
         bindings: Bindings,
         ingestion_params: IngestionParams,
+        *,
+        strict: bool = False,
     ) -> DataSourceRegistry:
         """Return a populated :class:`DataSourceRegistry`.
 
@@ -56,58 +58,87 @@ class RegistryBuilder:
         resource type, then delegates to the appropriate registration helper.
         """
         registry = DataSourceRegistry()
+        failures: list[str] = []
 
         for resource in self.ingestion_model.resources:
             resource_name = resource.name
             resource_type = bindings.get_resource_type(resource_name)
 
             if resource_type is None:
-                logger.warning(
-                    f"No resource type found for resource '{resource_name}', skipping"
-                )
+                msg = f"No resource type found for resource '{resource_name}'"
+                logger.warning("%s, skipping", msg)
+                failures.append(msg)
                 continue
 
             connector = bindings.connectors.get(resource_name)
             if connector is None:
-                logger.warning(
-                    f"No connector found for resource '{resource_name}', skipping"
-                )
+                msg = f"No connector found for resource '{resource_name}'"
+                logger.warning("%s, skipping", msg)
+                failures.append(msg)
                 continue
 
             if resource_type == ResourceType.FILE:
                 if not isinstance(connector, FileConnector):
-                    logger.warning(
-                        f"Connector for resource '{resource_name}' is not a FileConnector, skipping"
-                    )
+                    msg = f"Connector for resource '{resource_name}' is not a FileConnector"
+                    logger.warning("%s, skipping", msg)
+                    failures.append(msg)
                     continue
-                self._register_file_sources(
-                    registry, resource_name, connector, ingestion_params
-                )
+                try:
+                    self._register_file_sources(
+                        registry, resource_name, connector, ingestion_params
+                    )
+                except Exception as e:
+                    msg = (
+                        f"Failed to register FILE source for resource "
+                        f"'{resource_name}': {e}"
+                    )
+                    failures.append(msg)
+                    if strict:
+                        continue
 
             elif resource_type == ResourceType.SQL_TABLE:
                 if not isinstance(connector, TableConnector):
-                    logger.warning(
-                        f"Connector for resource '{resource_name}' is not a TableConnector, skipping"
-                    )
+                    msg = f"Connector for resource '{resource_name}' is not a TableConnector"
+                    logger.warning("%s, skipping", msg)
+                    failures.append(msg)
                     continue
-                self._register_sql_table_sources(
-                    registry, resource_name, connector, bindings, ingestion_params
-                )
+                try:
+                    self._register_sql_table_sources(
+                        registry, resource_name, connector, bindings, ingestion_params
+                    )
+                except Exception as e:
+                    msg = f"Failed to register SQL source for resource '{resource_name}': {e}"
+                    failures.append(msg)
+                    if strict:
+                        continue
 
             elif resource_type == ResourceType.SPARQL:
                 if not isinstance(connector, SparqlConnector):
-                    logger.warning(
-                        f"Connector for resource '{resource_name}' is not a SparqlConnector, skipping"
-                    )
+                    msg = f"Connector for resource '{resource_name}' is not a SparqlConnector"
+                    logger.warning("%s, skipping", msg)
+                    failures.append(msg)
                     continue
-                self._register_sparql_sources(
-                    registry, resource_name, connector, bindings, ingestion_params
-                )
+                try:
+                    self._register_sparql_sources(
+                        registry, resource_name, connector, bindings, ingestion_params
+                    )
+                except Exception as e:
+                    msg = f"Failed to register SPARQL source for resource '{resource_name}': {e}"
+                    failures.append(msg)
+                    if strict:
+                        continue
 
             else:
-                logger.warning(
-                    f"Unsupported resource type '{resource_type}' for resource '{resource_name}', skipping"
+                msg = (
+                    f"Unsupported resource type '{resource_type}' "
+                    f"for resource '{resource_name}'"
                 )
+                logger.warning("%s, skipping", msg)
+                failures.append(msg)
+
+        if strict and failures:
+            details = "\n".join(f"- {item}" for item in failures)
+            raise ValueError(f"Registry build failed in strict mode:\n{details}")
 
         return registry
 
@@ -157,10 +188,9 @@ class RegistryBuilder:
         ingestion_params: IngestionParams,
     ) -> None:
         if connector.sub_path is None:
-            logger.warning(
-                f"FileConnector for resource '{resource_name}' has no sub_path, skipping"
+            raise ValueError(
+                f"FileConnector for resource '{resource_name}' has no sub_path"
             )
-            return
 
         path_obj = connector.sub_path.expanduser()
         files = self.discover_files(
@@ -272,6 +302,7 @@ class RegistryBuilder:
                 f"Failed to create data source for PostgreSQL table '{resource_name}': {e}",
                 exc_info=True,
             )
+            raise
 
     # ------------------------------------------------------------------
     # SPARQL / RDF sources
@@ -361,3 +392,4 @@ class RegistryBuilder:
                 e,
                 exc_info=True,
             )
+            raise

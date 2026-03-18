@@ -13,7 +13,9 @@ schema:
                 identity:
                 -   _key
         edge_config:
-            edges: []
+            edges:
+            -   source: work
+                target: work
     db_profile:
         vertex_indexes:
             work:

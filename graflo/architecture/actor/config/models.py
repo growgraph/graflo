@@ -71,6 +71,21 @@ class TransformActorConfig(ConfigBaseModel):
                     call[key] = [value]
                 elif isinstance(value, tuple):
                     call[key] = list(value)
+            keys = call.get("keys")
+            if isinstance(keys, str):
+                call["keys"] = {"mode": "include", "names": [keys]}
+            elif isinstance(keys, tuple):
+                call["keys"] = {"mode": "include", "names": list(keys)}
+            elif isinstance(keys, list):
+                call["keys"] = {"mode": "include", "names": keys}
+            elif isinstance(keys, dict):
+                keys = dict(keys)
+                names = keys.get("names")
+                if isinstance(names, str):
+                    keys["names"] = [names]
+                elif isinstance(names, tuple):
+                    keys["names"] = list(names)
+                call["keys"] = keys
             normalized["call"] = call
         return normalized
 
@@ -86,6 +101,34 @@ class TransformActorConfig(ConfigBaseModel):
 
 class TransformCallConfig(ConfigBaseModel):
     """Explicit function call transform DSL payload."""
+
+    class KeySelectionConfig(ConfigBaseModel):
+        """Selection of document keys for key-target transforms."""
+
+        mode: Literal["all", "include", "exclude"] = PydanticField(
+            default="all",
+            description=(
+                "How keys are selected when target='keys': "
+                "all=all keys, include=only provided keys, "
+                "exclude=all except provided keys."
+            ),
+        )
+        names: list[str] = PydanticField(
+            default_factory=list,
+            description="Key names used by include/exclude selection modes.",
+        )
+
+        @model_validator(mode="after")
+        def validate_mode_names(self) -> "TransformCallConfig.KeySelectionConfig":
+            if self.mode == "all" and self.names:
+                raise ValueError(
+                    "call.keys.names must be empty when call.keys.mode='all'."
+                )
+            if self.mode in {"include", "exclude"} and not self.names:
+                raise ValueError(
+                    "call.keys.names must be provided when call.keys.mode is include/exclude."
+                )
+            return self
 
     use: str | None = PydanticField(
         default=None,
@@ -109,6 +152,17 @@ class TransformCallConfig(ConfigBaseModel):
     output: list[str] | None = PydanticField(
         default=None, description="Optional output field names."
     )
+    target: Literal["values", "keys"] = PydanticField(
+        default="values",
+        description=(
+            "Transform target. values=transform input values, "
+            "keys=transform selected document keys."
+        ),
+    )
+    keys: KeySelectionConfig | None = PydanticField(
+        default=None,
+        description="Optional key selection for target='keys'.",
+    )
     strategy: Literal["single", "each", "all"] | None = PydanticField(
         default=None, description="Execution strategy for function calls."
     )
@@ -128,6 +182,21 @@ class TransformCallConfig(ConfigBaseModel):
                 data[key] = [value]
             elif isinstance(value, tuple):
                 data[key] = list(value)
+        keys = data.get("keys")
+        if isinstance(keys, str):
+            data["keys"] = {"mode": "include", "names": [keys]}
+        elif isinstance(keys, tuple):
+            data["keys"] = {"mode": "include", "names": list(keys)}
+        elif isinstance(keys, list):
+            data["keys"] = {"mode": "include", "names": keys}
+        elif isinstance(keys, dict):
+            keys = dict(keys)
+            names = keys.get("names")
+            if isinstance(names, str):
+                keys["names"] = [names]
+            elif isinstance(names, tuple):
+                keys["names"] = list(names)
+            data["keys"] = keys
         return data
 
     @model_validator(mode="after")
@@ -138,6 +207,21 @@ class TransformCallConfig(ConfigBaseModel):
             raise ValueError(
                 "call must provide either use, or both module and foo for inline function."
             )
+        if self.target == "keys":
+            if self.strategy is not None:
+                raise ValueError(
+                    "call.strategy is not allowed when call.target='keys'; key mode uses implicit per-key execution."
+                )
+            if self.input:
+                raise ValueError(
+                    "call.input is not allowed when call.target='keys'; use call.keys selection instead."
+                )
+            if self.output:
+                raise ValueError("call.output is not allowed when call.target='keys'.")
+            if self.dress is not None:
+                raise ValueError("call.dress is not supported when call.target='keys'.")
+        elif self.keys is not None:
+            raise ValueError("call.keys can only be used when call.target='keys'.")
         if self.strategy == "all" and self.input:
             raise ValueError("call.strategy='all' does not accept call.input.")
         return self

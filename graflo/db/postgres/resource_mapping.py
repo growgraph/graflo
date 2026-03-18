@@ -55,16 +55,21 @@ class PostgresResourceMapper:
         """
         apply: list[dict[str, Any]] = [{"vertex": vertex_name}]
 
-        field_mappings = vertex_attribute_mappings[vertex_name]
-        if field_mappings:
-            apply.append(
-                {
-                    "map": field_mappings,
-                }
-            )
-            logger.debug(
-                f"Added field mappings for vertex '{vertex_name}': {field_mappings}"
-            )
+        source_to_vertex_field_map = vertex_attribute_mappings[vertex_name]
+        if source_to_vertex_field_map:
+            # Vertex actor expects `from` in {vertex_field: doc_field} format.
+            vertex_field_to_source_map = {
+                vertex_field: source_field
+                for source_field, vertex_field in source_to_vertex_field_map.items()
+                if source_field != vertex_field
+            }
+            if vertex_field_to_source_map:
+                apply = [{"vertex": vertex_name, "from": vertex_field_to_source_map}]
+                logger.debug(
+                    "Added field mappings for vertex '%s': %s",
+                    vertex_name,
+                    vertex_field_to_source_map,
+                )
 
         resource = Resource(
             name=table_name,

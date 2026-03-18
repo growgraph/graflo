@@ -136,7 +136,7 @@ from graflo.db.connection.onto import PostgresConfig
 pg_config = PostgresConfig.from_docker_env()  # Or from_env(), or create directly
 
 # Create GraphEngine and infer schema from PostgreSQL (automatically detects vertices and edges)
-# Connection is automatically managed inside infer_schema()
+# Connection is automatically managed inside infer_manifest()
 engine = GraphEngine()
 manifest = engine.infer_manifest(pg_config, schema_name="public")
 
@@ -148,12 +148,9 @@ bindings = engine.create_bindings(pg_config, schema_name="public")
 from graflo.architecture.bindings import Bindings, TableConnector
 
 bindings = Bindings(
-    _resource_mapping={
-        "users": ("db1", "users"),  # (config_key, table_name) tuple
-        "products": ("db1", "products"),
-    },
-    _postgres_connections={
-        "db1": pg_config,  # Maps config_key to PostgresConfig
+    table_connectors={
+        "users": TableConnector(table_name="users", schema_name="public", resource_name="users"),
+        "products": TableConnector(table_name="products", schema_name="public", resource_name="products"),
     }
 )
 

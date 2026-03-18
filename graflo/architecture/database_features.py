@@ -28,10 +28,6 @@ class EdgeVariantSpec(ConfigBaseModel):
         default=None,
         description="DB-only purpose identifier for physical edge variant.",
     )
-    logical_relation: str | None = PydanticField(
-        default=None,
-        description="Legacy relation discriminator; merged into relation when omitted.",
-    )
     relation_name: str | None = PydanticField(
         default=None,
         description="Database-specific relation/type name override for the variant.",
@@ -47,12 +43,6 @@ class EdgeVariantSpec(ConfigBaseModel):
             "inherit=base only, append=base+variant, replace=variant only."
         ),
     )
-
-    @model_validator(mode="after")
-    def _normalize_relation(self) -> "EdgeVariantSpec":
-        if self.relation is None and self.logical_relation is not None:
-            self.relation = self.logical_relation
-        return self
 
     @property
     def edge_id(self) -> EdgeId:
@@ -83,40 +73,33 @@ class DatabaseProfile(ConfigBaseModel):
     def _normalize_edge_specs(self) -> "DatabaseProfile":
         def _variant_key(
             spec: EdgeVariantSpec,
-        ) -> tuple[str, str, str | None, str | None, str | None]:
+        ) -> tuple[str, str, str | None, str | None]:
             return (
                 spec.source,
                 spec.target,
                 spec.relation,
                 spec.purpose,
-                spec.logical_relation,
             )
 
         def _ensure_variant(
-            merged: dict[
-                tuple[str, str, str | None, str | None, str | None], EdgeVariantSpec
-            ],
+            merged: dict[tuple[str, str, str | None, str | None], EdgeVariantSpec],
             *,
             source: str,
             target: str,
             relation: str | None,
             purpose: str | None,
-            logical_relation: str | None,
         ) -> EdgeVariantSpec:
-            key = (source, target, relation, purpose, logical_relation)
+            key = (source, target, relation, purpose)
             if key not in merged:
                 merged[key] = EdgeVariantSpec(
                     source=source,
                     target=target,
                     relation=relation,
                     purpose=purpose,
-                    logical_relation=logical_relation,
                 )
             return merged[key]
 
-        merged: dict[
-            tuple[str, str, str | None, str | None, str | None], EdgeVariantSpec
-        ] = {}
+        merged: dict[tuple[str, str, str | None, str | None], EdgeVariantSpec] = {}
 
         for item in self.edge_specs:
             variant = _ensure_variant(
@@ -125,7 +108,6 @@ class DatabaseProfile(ConfigBaseModel):
                 target=item.target,
                 relation=item.relation,
                 purpose=item.purpose,
-                logical_relation=item.logical_relation,
             )
             if item.relation_name is not None:
                 variant.relation_name = item.relation_name
@@ -142,24 +124,17 @@ class DatabaseProfile(ConfigBaseModel):
     def _edge_variant_spec(
         self,
         edge_id: EdgeId,
-        logical_relation: str | None = None,
         purpose: str | None = None,
     ) -> EdgeVariantSpec | None:
-        fallback: EdgeVariantSpec | None = None
         for item in self.edge_specs:
             if item.edge_id != edge_id:
                 continue
             if item.purpose != purpose:
                 continue
-            if item.logical_relation == logical_relation:
-                return item
-            if item.logical_relation is None:
-                fallback = item
-        return fallback
+            return item
+        return None
 
-    def edge_purposes(
-        self, edge_id: EdgeId, logical_relation: str | None = None
-    ) -> list[str | None]:
+    def edge_purposes(self, edge_id: EdgeId) -> list[str | None]:
         """Return declared physical purposes for an edge.
 
         The base variant (`None`) is always included; additional purposes are
@@ -168,15 +143,8 @@ class DatabaseProfile(ConfigBaseModel):
         purposes: list[str | None] = [None]
         seen: set[str | None] = {None}
 
-        def _matches(item_edge_id: EdgeId, item_logical_relation: str | None) -> bool:
-            if item_edge_id != edge_id:
-                return False
-            if logical_relation is None:
-                return item_logical_relation is None
-            return item_logical_relation in (None, logical_relation)
-
         for item in self.edge_specs:
-            if not _matches(item.edge_id, item.logical_relation):
+            if item.edge_id != edge_id:
                 continue
             if item.purpose not in seen:
                 seen.add(item.purpose)
@@ -190,11 +158,10 @@ class DatabaseProfile(ConfigBaseModel):
         *,
         source_storage: str,
         target_storage: str,
-        logical_relation: str | None = None,
     ) -> list[dict[str, str | None | list[Index]]]:
         """Return resolved physical variants (base + purpose copies) for one edge."""
         variants: list[dict[str, str | None | list[Index]]] = []
-        for purpose in self.edge_purposes(edge_id, logical_relation=logical_relation):
+        for purpose in self.edge_purposes(edge_id):
             variants.append(
                 {
                     "purpose": purpose,
@@ -212,7 +179,6 @@ class DatabaseProfile(ConfigBaseModel):
                     ),
                     "indexes": self.edge_secondary_indexes(
                         edge_id,
-                        logical_relation=logical_relation,
                         purpose=purpose,
                     ),
                 }
@@ -228,20 +194,15 @@ class DatabaseProfile(ConfigBaseModel):
     def edge_secondary_indexes(
         self,
         edge_id: EdgeId,
-        logical_relation: str | None = None,
         purpose: str | None = None,
     ) -> list[Index]:
-        base_spec = self._edge_variant_spec(
-            edge_id=edge_id, logical_relation=logical_relation, purpose=None
-        )
+        base_spec = self._edge_variant_spec(edge_id=edge_id, purpose=None)
         base_indexes = list(base_spec.indexes) if base_spec is not None else []
 
         if purpose is None:
             effective = base_indexes
         else:
-            purpose_spec = self._edge_variant_spec(
-                edge_id=edge_id, logical_relation=logical_relation, purpose=purpose
-            )
+            purpose_spec = self._edge_variant_spec(edge_id=edge_id, purpose=purpose)
             if purpose_spec is None:
                 effective = base_indexes
             elif purpose_spec.indexes_mode == "replace":
@@ -265,40 +226,29 @@ class DatabaseProfile(ConfigBaseModel):
         self,
         edge_id: EdgeId,
         *,
-        logical_relation: str | None = None,
         purpose: str | None = None,
     ) -> bool:
-        """Return True when an exact purpose/logical_relation edge index spec exists."""
-        spec = self._edge_variant_spec(
-            edge_id=edge_id, logical_relation=logical_relation, purpose=purpose
-        )
+        """Return True when an exact purpose edge index spec exists."""
+        spec = self._edge_variant_spec(edge_id=edge_id, purpose=purpose)
         return spec is not None
 
     def has_explicit_edge_indexes(
         self,
         edge_id: EdgeId,
         *,
-        logical_relation: str | None = None,
         purpose: str | None = None,
     ) -> bool:
-        spec = self._edge_variant_spec(
-            edge_id=edge_id, logical_relation=logical_relation, purpose=purpose
-        )
+        spec = self._edge_variant_spec(edge_id=edge_id, purpose=purpose)
         return spec is not None and len(spec.indexes) > 0
 
     def edge_index_spec(
         self,
         edge_id: EdgeId,
-        logical_relation: str | None = None,
         purpose: str | None = None,
     ) -> EdgeVariantSpec | None:
-        spec = self._edge_variant_spec(
-            edge_id=edge_id, logical_relation=logical_relation, purpose=purpose
-        )
+        spec = self._edge_variant_spec(edge_id=edge_id, purpose=purpose)
         if spec is None and purpose is not None:
-            spec = self._edge_variant_spec(
-                edge_id=edge_id, logical_relation=logical_relation, purpose=None
-            )
+            spec = self._edge_variant_spec(edge_id=edge_id, purpose=None)
         return spec
 
     def add_edge_index(
@@ -306,19 +256,15 @@ class DatabaseProfile(ConfigBaseModel):
         edge_id: EdgeId,
         index: Index,
         *,
-        logical_relation: str | None = None,
         purpose: str | None = None,
     ) -> None:
-        spec = self._edge_variant_spec(
-            edge_id=edge_id, logical_relation=logical_relation, purpose=purpose
-        )
+        spec = self._edge_variant_spec(edge_id=edge_id, purpose=purpose)
         if spec is None:
             source, target, relation = edge_id
             spec = EdgeVariantSpec(
                 source=source,
                 target=target,
                 relation=relation,
-                logical_relation=logical_relation,
                 purpose=purpose,
             )
             # Auto-added indexes are additive by default.
@@ -331,36 +277,27 @@ class DatabaseProfile(ConfigBaseModel):
     def edge_name_spec(
         self,
         edge_id: EdgeId,
-        logical_relation: str | None = None,
         purpose: str | None = None,
     ) -> EdgeVariantSpec | None:
-        spec = self._edge_variant_spec(
-            edge_id=edge_id, logical_relation=logical_relation, purpose=purpose
-        )
+        spec = self._edge_variant_spec(edge_id=edge_id, purpose=purpose)
         if spec is None and purpose is not None:
-            spec = self._edge_variant_spec(
-                edge_id=edge_id, logical_relation=logical_relation, purpose=None
-            )
+            spec = self._edge_variant_spec(edge_id=edge_id, purpose=None)
         return spec
 
     def set_edge_name_spec(
         self,
         edge_id: EdgeId,
         *,
-        logical_relation: str | None = None,
         relation_name: str | None = None,
         purpose: str | None = None,
     ) -> None:
-        spec = self._edge_variant_spec(
-            edge_id=edge_id, logical_relation=logical_relation, purpose=purpose
-        )
+        spec = self._edge_variant_spec(edge_id=edge_id, purpose=purpose)
         if spec is None:
             source, target, relation = edge_id
             spec = EdgeVariantSpec(
                 source=source,
                 target=target,
                 relation=relation,
-                logical_relation=logical_relation,
                 purpose=purpose,
             )
             self.edge_specs.append(spec)
@@ -373,10 +310,9 @@ class DatabaseProfile(ConfigBaseModel):
         self,
         edge_id: EdgeId,
         default_relation: str | None = None,
-        logical_relation: str | None = None,
         purpose: str | None = None,
     ) -> str | None:
-        spec = self.edge_name_spec(edge_id, logical_relation, purpose=purpose)
+        spec = self.edge_name_spec(edge_id, purpose=purpose)
         if spec is not None and spec.relation_name is not None:
             return spec.relation_name
         return default_relation

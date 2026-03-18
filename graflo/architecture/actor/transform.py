@@ -35,15 +35,21 @@ class TransformActor(Actor):
 
         call = config.call
         self.call_use = call.use
+        transform_kwargs: dict[str, Any] = {
+            "name": call.use,
+            "params": call.params,
+            "module": call.module,
+            "foo": call.foo,
+            "input": tuple(call.input) if call.input else (),
+            "output": tuple(call.output) if call.output else (),
+            "dress": call.dress,
+            "strategy": call.strategy or "single",
+            "target": call.target,
+        }
+        if call.keys is not None:
+            transform_kwargs["keys"] = call.keys.model_dump()
         self.t = Transform(
-            name=call.use,
-            params=call.params,
-            module=call.module,
-            foo=call.foo,
-            input=tuple(call.input) if call.input else (),
-            output=tuple(call.output) if call.output else (),
-            dress=call.dress,
-            strategy=call.strategy or "single",
+            **transform_kwargs,
         )
 
     def fetch_important_items(self) -> dict[str, Any]:
@@ -64,10 +70,19 @@ class TransformActor(Actor):
             return
         pt = self.transforms.get(self.call_use, None)
         if pt is None:
+            if init_ctx.strict_references:
+                raise ValueError(
+                    f"Transform '{self.call_use}' referenced by transform.call.use "
+                    "was not found in ingestion_model.transforms."
+                )
             return
         next_params = self.t.params if self.t.params else pt.params
-        next_input = self.t.input if self.t.input else pt.input
-        next_output = self.t.output if self.t.output else pt.output
+        if self.t.target == "keys":
+            next_input: tuple[str, ...] = self.t.input
+            next_output: tuple[str, ...] = self.t.output
+        else:
+            next_input = self.t.input if self.t.input else pt.input
+            next_output = self.t.output if self.t.output else pt.output
         transform_kwargs: dict[str, Any] = {
             "dress": self.t.dress,
             "name": self.t.name,
@@ -77,6 +92,8 @@ class TransformActor(Actor):
             "input": next_input,
             "output": next_output,
             "strategy": self.t.strategy,
+            "target": self.t.target,
+            "keys": self.t.keys,
         }
         self.t = Transform(**transform_kwargs)
 

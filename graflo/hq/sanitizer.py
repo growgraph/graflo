@@ -125,7 +125,6 @@ class SchemaSanitizer:
             original = schema.db_profile.edge_relation_name(
                 edge.edge_id,
                 default_relation=edge.relation,
-                logical_relation=edge.relation,
             )
             if original is None:
                 continue
@@ -153,7 +152,6 @@ class SchemaSanitizer:
             if sanitized != original:
                 schema.db_profile.set_edge_name_spec(
                     edge.edge_id,
-                    logical_relation=edge.relation,
                     relation_name=sanitized,
                 )
 
@@ -178,7 +176,6 @@ class SchemaSanitizer:
                     schema.db_profile.edge_relation_name(
                         edge.edge_id,
                         default_relation=edge.relation,
-                        logical_relation=edge.relation,
                     )
                     or edge.relation
                 )

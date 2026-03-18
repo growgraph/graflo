@@ -563,6 +563,109 @@ def test_transform_inline_function_strategy_all_receives_document():
     assert payload.positional == ()
 
 
+def test_transform_target_keys_updates_vertex_fields():
+    vc = VertexConfig.from_dict(
+        {
+            "vertices": [
+                {
+                    "name": "entity",
+                    "fields": ["id", "label"],
+                    "identity": ["id"],
+                }
+            ]
+        }
+    )
+    anw = ActorWrapper(
+        pipeline=[
+            {
+                "transform": {
+                    "call": {
+                        "module": "graflo.util.transform",
+                        "foo": "remove_prefix",
+                        "params": {"prefix": "raw_"},
+                        "target": "keys",
+                        "keys": {"mode": "all"},
+                    }
+                }
+            },
+            {"vertex": "entity"},
+        ]
+    )
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=vc,
+            edge_config=EdgeConfig(),
+            transforms={},
+        )
+    )
+
+    ctx = ActionContext()
+    ctx = anw(ctx, doc={"raw_id": "1", "raw_label": "Alice"})
+    assert ctx.acc_vertex["entity"][LocationIndex(path=(0,))] == [
+        VertexRep(
+            vertex={"id": "1", "label": "Alice"},
+            ctx={"raw_id": "1", "raw_label": "Alice"},
+        ),
+    ]
+
+
+def test_transform_target_keys_multiple_steps_compose_for_vertex():
+    vc = VertexConfig.from_dict(
+        {
+            "vertices": [
+                {
+                    "name": "entity",
+                    "fields": ["id", "label"],
+                    "identity": ["id"],
+                }
+            ]
+        }
+    )
+    anw = ActorWrapper(
+        pipeline=[
+            {
+                "transform": {
+                    "call": {
+                        "module": "graflo.util.transform",
+                        "foo": "remove_prefix",
+                        "params": {"prefix": "raw_"},
+                        "target": "keys",
+                        "keys": {"mode": "include", "names": ["raw_id"]},
+                    }
+                }
+            },
+            {
+                "transform": {
+                    "call": {
+                        "module": "graflo.util.transform",
+                        "foo": "remove_prefix",
+                        "params": {"prefix": "raw_"},
+                        "target": "keys",
+                        "keys": {"mode": "include", "names": ["raw_label"]},
+                    }
+                }
+            },
+            {"vertex": "entity"},
+        ]
+    )
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=vc,
+            edge_config=EdgeConfig(),
+            transforms={},
+        )
+    )
+
+    ctx = ActionContext()
+    ctx = anw(ctx, doc={"raw_id": "1", "raw_label": "Alice"})
+    assert ctx.acc_vertex["entity"][LocationIndex(path=(0,))] == [
+        VertexRep(
+            vertex={"id": "1", "label": "Alice"},
+            ctx={"raw_id": "1", "raw_label": "Alice"},
+        ),
+    ]
+
+
 def test_multi_edges_from_row(resource_ticker, vc_ticker, ec_ticker, sample_ticker):
     ctx = ActionContext()
     anw = ActorWrapper(**resource_ticker)

@@ -190,7 +190,10 @@ class Schema(ConfigBaseModel):
             if target_path.is_dir():
                 target_path = target_path / self.default_dump_filename()
 
-        payload = self.to_dict(skip_defaults=exclude_defaults)
+        if exclude_defaults:
+            payload = self.to_minimal_canonical_dict()
+        else:
+            payload = self.to_dict(skip_defaults=False)
         target_path.parent.mkdir(parents=True, exist_ok=True)
         target_path.write_text(
             yaml.safe_dump(

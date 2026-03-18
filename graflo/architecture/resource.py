@@ -172,6 +172,7 @@ class Resource(ConfigBaseModel):
     _vertex_config: VertexConfig = PrivateAttr()
     _edge_config: EdgeConfig = PrivateAttr()
     _executor: ActorExecutor = PrivateAttr()
+    _initialized: bool = PrivateAttr(default=False)
 
     @model_validator(mode="after")
     def _build_root_and_types(self) -> Resource:
@@ -193,6 +194,7 @@ class Resource(ConfigBaseModel):
         # Placeholders until schema binds real configs.
         object.__setattr__(self, "_vertex_config", VertexConfig(vertices=[]))
         object.__setattr__(self, "_edge_config", EdgeConfig())
+        object.__setattr__(self, "_initialized", False)
         self._validate_infer_edge_spec_policy()
         return self
 
@@ -238,6 +240,9 @@ class Resource(ConfigBaseModel):
         vertex_config: VertexConfig,
         edge_config: EdgeConfig,
         transforms: dict[str, ProtoTransform],
+        *,
+        strict_references: bool = False,
+        dynamic_edge_feedback: bool = False,
     ) -> None:
         """Complete resource initialization.
 
@@ -253,6 +258,8 @@ class Resource(ConfigBaseModel):
             vertex_config=vertex_config,
             edge_config=edge_config,
             transforms=transforms,
+            strict_references=strict_references,
+            dynamic_edge_feedback=dynamic_edge_feedback,
         )
 
     def _edge_ids_from_edge_actors(self) -> set[EdgeId]:
@@ -299,13 +306,20 @@ class Resource(ConfigBaseModel):
         vertex_config: VertexConfig,
         edge_config: EdgeConfig,
         transforms: dict[str, ProtoTransform],
+        strict_references: bool = False,
+        dynamic_edge_feedback: bool = False,
     ) -> None:
         """Rebuild runtime actor initialization state from typed context."""
         object.__setattr__(self, "_vertex_config", vertex_config)
-        object.__setattr__(self, "_edge_config", edge_config)
+        # Runtime actors may register dynamic edges; keep per-resource edge state.
+        local_edge_config = EdgeConfig.model_validate(
+            edge_config.to_dict(skip_defaults=False)
+        )
+        object.__setattr__(self, "_edge_config", local_edge_config)
         self._validate_dynamic_edge_vertices_exist(vertex_config)
-        self._validate_infer_edge_spec_targets(edge_config)
+        self._validate_infer_edge_spec_targets(self._edge_config)
 
+        baseline_edge_ids = {edge_id for edge_id, _ in edge_config.items()}
         infer_edge_except = {spec.edge_id for spec in self.infer_edge_except}
         # When not using infer_edge_only, auto-add (s,t,None) to infer_edge_except
         # for any edge type handled by explicit EdgeActors in this resource.
@@ -315,13 +329,27 @@ class Resource(ConfigBaseModel):
         logger.debug("total resource actor count : %s", self.root.count())
         init_ctx = ActorInitContext(
             vertex_config=vertex_config,
-            edge_config=edge_config,
+            edge_config=self._edge_config,
             transforms=transforms,
             infer_edges=self.infer_edges,
             infer_edge_only={spec.edge_id for spec in self.infer_edge_only},
             infer_edge_except=infer_edge_except,
+            strict_references=strict_references,
         )
         self.root.finish_init(init_ctx=init_ctx)
+        object.__setattr__(self, "_initialized", True)
+
+        if dynamic_edge_feedback:
+            # Edge actors register static edge definitions into the resource-local edge
+            # config during finish_init(). Optionally propagate newly discovered edges
+            # to the shared schema-level edge_config so schema definition and DB
+            # writers can see them.
+            for edge_id, edge in self._edge_config.items():
+                if edge_id in baseline_edge_ids:
+                    continue
+                edge_config.update_edges(
+                    edge.model_copy(deep=True), vertex_config=vertex_config
+                )
 
         logger.debug("total resource actor count (after finit): %s", self.root.count())
 
@@ -337,6 +365,10 @@ class Resource(ConfigBaseModel):
         Returns:
             defaultdict[GraphEntity, list]: Processed graph entities
         """
+        if not self._initialized:
+            raise RuntimeError(
+                f"Resource '{self.name}' must be initialized via finish_init() before use."
+            )
         extraction_ctx = self._executor.extract(doc)
         result = self._executor.assemble_result(extraction_ctx)
         return result.entities

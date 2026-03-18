@@ -34,4 +34,10 @@ def test_index(
     _ = create_db
     conn_conf.database = test_db_name
     for m in modes:
-        init_db(m, conn_conf, schema_obj(m), current_path, reset)
+        init_db(
+            m,
+            conn_conf,
+            schema_obj(m, dynamic_edge_feedback=True),
+            current_path,
+            reset,
+        )

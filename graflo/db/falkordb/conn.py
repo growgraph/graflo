@@ -371,10 +371,7 @@ class FalkordbConnection(Connection):
         """
         for edge in edges:
             index_list = (
-                schema.db_profile.edge_secondary_indexes(
-                    edge.edge_id,
-                    logical_relation=edge.relation,
-                )
+                schema.db_profile.edge_secondary_indexes(edge.edge_id)
                 if schema is not None
                 else []
             )

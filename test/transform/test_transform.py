@@ -2,8 +2,14 @@ import logging
 
 import pytest
 
-from graflo.architecture.transform import Transform
-from graflo.util.transform import parse_multi_item
+from graflo.architecture.transform import KeySelectionConfig, Transform
+from graflo.util.transform import (
+    camel_to_snake,
+    parse_multi_item,
+    remove_prefix,
+    remove_suffix,
+    snake_to_camel,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -211,3 +217,68 @@ def test_map_and_function_conflict():
         ValueError, match="map and functional transform cannot be used together"
     ):
         Transform(map={"x": "y"}, module="builtins", foo="int", input=("x",))
+
+
+def test_remove_prefix_and_suffix_helpers():
+    assert remove_prefix("raw_id", "raw_") == "id"
+    assert remove_prefix("id", "raw_") == "id"
+    assert remove_suffix("name_raw", "_raw") == "name"
+    assert remove_suffix("name", "_raw") == "name"
+
+
+def test_camel_snake_helpers():
+    assert camel_to_snake("homeAddress") == "home_address"
+    assert camel_to_snake("HTTPServerID") == "http_server_id"
+    assert snake_to_camel("home_address") == "homeAddress"
+    assert snake_to_camel("home_address", upper_first=True) == "HomeAddress"
+
+
+def test_target_keys_all_transforms_every_key():
+    t = Transform(
+        module="graflo.util.transform",
+        foo="camel_to_snake",
+        target="keys",
+    )
+    r = t({"homeAddress": "London", "zipCode": "NW1"})
+    assert r == {"home_address": "London", "zip_code": "NW1"}
+
+
+def test_target_keys_include_exclude_modes():
+    include_t = Transform(
+        module="graflo.util.transform",
+        foo="remove_prefix",
+        params={"prefix": "raw_"},
+        target="keys",
+        keys=KeySelectionConfig(mode="include", names=("raw_id",)),
+    )
+    assert include_t({"raw_id": "1", "raw_label": "A"}) == {"id": "1", "raw_label": "A"}
+
+    exclude_t = Transform(
+        module="graflo.util.transform",
+        foo="remove_prefix",
+        params={"prefix": "raw_"},
+        target="keys",
+        keys=KeySelectionConfig(mode="exclude", names=("raw_id",)),
+    )
+    assert exclude_t({"raw_id": "1", "raw_label": "A"}) == {"raw_id": "1", "label": "A"}
+
+
+def test_target_keys_collision_raises():
+    t = Transform(
+        module="graflo.util.transform",
+        foo="remove_prefix",
+        params={"prefix": "raw_"},
+        target="keys",
+    )
+    with pytest.raises(BaseException, match="collision"):
+        t({"raw_id": "1", "id": "2"})
+
+
+def test_target_keys_rejects_explicit_strategy():
+    with pytest.raises(ValueError, match="implicit per-key execution"):
+        Transform(
+            module="graflo.util.transform",
+            foo="camel_to_snake",
+            target="keys",
+            strategy="each",
+        )

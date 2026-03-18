@@ -23,8 +23,13 @@ import re
 import time
 from collections import defaultdict
 from datetime import datetime
+from functools import lru_cache
 
 ORDINAL_SUFFIX = ["st", "nd", "rd", "th"]
+_CAMEL_TO_SNAKE_STEP1_RE = re.compile(r"(.)([A-Z][a-z]+)")
+_CAMEL_TO_SNAKE_STEP2_RE = re.compile(r"([a-z0-9])([A-Z])")
+_LEADING_UNDERSCORES_RE = re.compile(r"^_+")
+_TRAILING_UNDERSCORES_RE = re.compile(r"_+$")
 
 logger = logging.getLogger(__name__)
 
@@ -452,3 +457,48 @@ def split_keep_part(s: str, sep="/", keep=-1) -> str:
         return sep.join(items[k] for k in keep)
     else:
         return s.split(sep)[keep]
+
+
+@lru_cache(maxsize=32768)
+def remove_prefix(s: str, prefix: str) -> str:
+    """Remove a prefix from a string key when present."""
+    return s.removeprefix(prefix)
+
+
+@lru_cache(maxsize=32768)
+def remove_suffix(s: str, suffix: str) -> str:
+    """Remove a suffix from a string key when present."""
+    return s.removesuffix(suffix)
+
+
+@lru_cache(maxsize=32768)
+def camel_to_snake(s: str) -> str:
+    """Convert camelCase/PascalCase names to snake_case."""
+    if not s:
+        return s
+    step1 = _CAMEL_TO_SNAKE_STEP1_RE.sub(r"\1_\2", s)
+    step2 = _CAMEL_TO_SNAKE_STEP2_RE.sub(r"\1_\2", step1)
+    return step2.lower()
+
+
+@lru_cache(maxsize=32768)
+def snake_to_camel(s: str, upper_first: bool = False) -> str:
+    """Convert snake_case names to camelCase or PascalCase."""
+    if not s:
+        return s
+    leading = _LEADING_UNDERSCORES_RE.match(s)
+    trailing = _TRAILING_UNDERSCORES_RE.search(s)
+    leading_part = leading.group(0) if leading else ""
+    trailing_part = trailing.group(0) if trailing else ""
+
+    core = s.strip("_")
+    if not core:
+        return s
+
+    parts = [part for part in core.split("_") if part]
+    if not parts:
+        return s
+
+    head = parts[0].capitalize() if upper_first else parts[0].lower()
+    tail = "".join(part.capitalize() for part in parts[1:])
+    return f"{leading_part}{head}{tail}{trailing_part}"

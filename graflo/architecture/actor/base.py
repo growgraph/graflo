@@ -28,6 +28,7 @@ class ActorInitContext:
     infer_edges: bool = True
     infer_edge_only: set[EdgeId] = field(default_factory=set)
     infer_edge_except: set[EdgeId] = field(default_factory=set)
+    strict_references: bool = False
 
 
 class Actor(ABC):

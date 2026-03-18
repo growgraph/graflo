@@ -39,11 +39,13 @@ class DBWriter:
         *,
         dry: bool = False,
         max_concurrent: int = 1,
+        dynamic_edges: bool = False,
     ):
         self.schema = schema
         self.ingestion_model = ingestion_model
         self.dry = dry
         self.max_concurrent = max_concurrent
+        self.dynamic_edges = dynamic_edges
         self._schema_db_aware: SchemaDBAware | None = None
 
     # ------------------------------------------------------------------
@@ -63,7 +65,10 @@ class DBWriter:
             edges are extended after the vertex round-trip.
         """
         self.schema.finish_init()
-        self.ingestion_model.finish_init(self.schema.graph)
+        self.ingestion_model.finish_init(
+            self.schema.graph,
+            dynamic_edge_feedback=self.dynamic_edges,
+        )
         self._schema_db_aware = self.schema.resolve_db_aware(conn_conf.connection_type)
         resource = self.ingestion_model.fetch_resource(resource_name)
 

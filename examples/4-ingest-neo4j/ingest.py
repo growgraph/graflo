@@ -34,8 +34,7 @@ bindings = Bindings()
 bindings.add_file_connector(
     "package",
     FileConnector(
-        # regex=r"^package\.meta.*\.json(?:\.gz)?$",
-        regex=r"^package\.meta.*\.json$",
+        regex=r"^package\.meta.*\.json(?:\.gz)?$",
         sub_path=pathlib.Path("./data"),
         resource_name="package",
     ),
@@ -45,7 +44,7 @@ bindings.add_file_connector(
     FileConnector(
         regex=r"^bugs.*\.json(?:\.gz)?$",
         sub_path=pathlib.Path("./data"),
-        resource_name="bugs",
+        resource_name="bug",
     ),
 )
 

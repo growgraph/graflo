@@ -34,9 +34,7 @@ def _vertex_index_tuples(schema: Schema, vertex_name: str) -> set[tuple]:
 
 
 def _edge_index_tuples(schema: Schema, edge: Edge) -> set[tuple]:
-    indexes = schema.db_profile.edge_secondary_indexes(
-        edge.edge_id, logical_relation=edge.relation
-    )
+    indexes = schema.db_profile.edge_secondary_indexes(edge.edge_id)
     return {
         (
             tuple(index.fields),

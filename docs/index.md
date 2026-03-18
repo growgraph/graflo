@@ -42,9 +42,16 @@ The Schema is the single source of truth for the graph structure:
 
 - **Vertex definitions** — vertex types, fields (optionally typed: `INT`, `FLOAT`, `STRING`, `DATETIME`, `BOOL`), and indexes.
 - **Edge definitions** — relationships between vertex types, with optional weight fields.
-- **Resources** — reusable actor pipelines that map raw records to vertices and edges (see below).
-- **Transforms** — named data transformations referenced by Resources.
 - **Schema inference** — generate schemas from PostgreSQL 3NF databases (PK/FK heuristics) or from OWL/RDFS ontologies.
+
+Resources and transforms are part of `IngestionModel`, not `Schema`.
+
+### IngestionModel
+
+`IngestionModel` defines how source records are transformed into graph entities:
+
+- **Resources** — reusable actor pipelines that map raw records to vertices and edges.
+- **Transforms** — reusable named transforms referenced by resource steps.
 
 ### Resource
 

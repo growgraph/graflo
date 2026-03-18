@@ -79,6 +79,47 @@ class DressConfig(ConfigBaseModel):
     value: str = Field(description="Output field name for the function result.")
 
 
+class KeySelectionConfig(ConfigBaseModel):
+    """Selection of document keys for key-target transforms."""
+
+    mode: Literal["all", "include", "exclude"] = Field(
+        default="all",
+        description=(
+            "How keys are selected for target='keys': all=all keys, "
+            "include=only specified keys, exclude=all except specified keys."
+        ),
+    )
+    names: tuple[str, ...] = Field(
+        default_factory=tuple,
+        description="Keys used by include/exclude modes.",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_names(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        data = dict(data)
+        names = data.get("names")
+        if isinstance(names, str):
+            data["names"] = (names,)
+        elif isinstance(names, list):
+            data["names"] = tuple(names)
+        elif names is None:
+            data["names"] = ()
+        return data
+
+    @model_validator(mode="after")
+    def _validate_mode_names(self) -> Self:
+        if self.mode == "all" and self.names:
+            raise ValueError("keys.names must be empty when keys.mode='all'.")
+        if self.mode in {"include", "exclude"} and not self.names:
+            raise ValueError(
+                "keys.names must be provided when keys.mode is include/exclude."
+            )
+        return self
+
+
 class ProtoTransform(ConfigBaseModel):
     """Base class for transform definitions.
 
@@ -226,6 +267,17 @@ class Transform(ProtoTransform):
             "all: pass full document as a single argument."
         ),
     )
+    target: Literal["values", "keys"] = Field(
+        default="values",
+        description=(
+            "Transform target. values=apply function to input values; "
+            "keys=apply function to selected document keys."
+        ),
+    )
+    keys: KeySelectionConfig = Field(
+        default_factory=KeySelectionConfig,
+        description="Key selection for key-target transforms.",
+    )
 
     functional_transform: bool = Field(
         default=False,
@@ -249,6 +301,22 @@ class Transform(ProtoTransform):
                 "List-style `dress` is no longer supported. "
                 "Use a dict: dress={key: ..., value: ...}."
             )
+        if "keys" in data:
+            keys = data["keys"]
+            if isinstance(keys, str):
+                data["keys"] = {"mode": "include", "names": (keys,)}
+            elif isinstance(keys, list):
+                data["keys"] = {"mode": "include", "names": tuple(keys)}
+            elif isinstance(keys, tuple):
+                data["keys"] = {"mode": "include", "names": keys}
+            elif isinstance(keys, dict):
+                keys = dict(keys)
+                names = keys.get("names")
+                if isinstance(names, str):
+                    keys["names"] = (names,)
+                elif isinstance(names, list):
+                    keys["names"] = tuple(names)
+                data["keys"] = keys
         return data
 
     @model_validator(mode="after")
@@ -302,6 +370,23 @@ class Transform(ProtoTransform):
 
     def _validate_configuration(self) -> None:
         """Validate that the transform has enough information to operate."""
+        if self.target == "keys":
+            if self._foo is None:
+                raise ValueError("target='keys' requires a functional transform.")
+            if self.map:
+                raise ValueError("target='keys' cannot be combined with map.")
+            if self.input or self.output or self.fields:
+                raise ValueError(
+                    "target='keys' does not accept input/output/fields; use keys selector."
+                )
+            if self.dress is not None:
+                raise ValueError("target='keys' is not compatible with dress.")
+            if self.strategy != "single":
+                raise ValueError(
+                    "target='keys' uses implicit per-key execution and does not accept strategy."
+                )
+            return
+
         # Reject only user-specified map+function conflict. A derived map
         # (from input/output defaults) is valid for functional transforms.
         if "map" in self.model_fields_set and self.map and self._foo is not None:
@@ -367,6 +452,14 @@ class Transform(ProtoTransform):
         Returns:
             dict: Transformed data
         """
+        if self.target == "keys":
+            input_doc = nargs[0] if nargs and isinstance(nargs[0], dict) else None
+            if input_doc is None:
+                raise TransformException(
+                    "target='keys' requires a document dictionary."
+                )
+            return self._transform_keys(input_doc, **kwargs)
+
         if self.is_mapping:
             input_doc = nargs[0]
             if isinstance(input_doc, dict):
@@ -420,6 +513,30 @@ class Transform(ProtoTransform):
             return {k: v for k, v in zip(self.output, transform_result)}
         else:
             return {self.output[-1]: transform_result}
+
+    def _selected_keys(self, doc: dict[str, Any]) -> set[str]:
+        if self.keys.mode == "all":
+            return set(doc.keys())
+        selected = set(self.keys.names)
+        if self.keys.mode == "include":
+            return selected
+        return {k for k in doc if k not in selected}
+
+    def _transform_keys(self, doc: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+        selected = self._selected_keys(doc)
+        out: dict[str, Any] = {}
+        for key, value in doc.items():
+            new_key = self.apply(key, **kwargs) if key in selected else key
+            if not isinstance(new_key, str):
+                raise TransformException(
+                    "Key transform functions must return str values."
+                )
+            if new_key in out:
+                raise TransformException(
+                    f"Key transform collision detected for key '{new_key}'."
+                )
+            out[new_key] = value
+        return out
 
     @property
     def is_dummy(self) -> bool:

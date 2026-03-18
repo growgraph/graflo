@@ -90,7 +90,6 @@ def test_edges_sanitization_for_tigergraph(schema_with_incompatible_edges):
         sanitized_schema.db_profile.edge_relation_name(
             edge_a.edge_id,
             default_relation=edge_a.relation,
-            logical_relation=edge_a.relation,
         )
         == "package_relation"
     )
@@ -98,7 +97,6 @@ def test_edges_sanitization_for_tigergraph(schema_with_incompatible_edges):
         sanitized_schema.db_profile.edge_relation_name(
             edge_b.edge_id,
             default_relation=edge_b.relation,
-            logical_relation=edge_b.relation,
         )
         == "box_relation"
     )

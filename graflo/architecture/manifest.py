@@ -47,12 +47,21 @@ class GraphManifest(ConfigBaseModel):
             )
         return self
 
-    def finish_init(self) -> None:
+    def finish_init(
+        self,
+        *,
+        strict_references: bool = False,
+        dynamic_edge_feedback: bool = False,
+    ) -> None:
         """Initialize model internals and cross-block runtime links."""
         if self.graph_schema is not None:
             self.graph_schema.finish_init()
         if self.graph_schema is not None and self.ingestion_model is not None:
-            self.ingestion_model.finish_init(self.graph_schema.graph)
+            self.ingestion_model.finish_init(
+                self.graph_schema.graph,
+                strict_references=strict_references,
+                dynamic_edge_feedback=dynamic_edge_feedback,
+            )
 
     def require_schema(self) -> Schema:
         if self.graph_schema is None:
