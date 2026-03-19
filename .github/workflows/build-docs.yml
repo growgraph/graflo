@@ -35,7 +35,7 @@ jobs:
                 version: "0.9.28"
         -   name: Install dependencies
             run: |
-                uv sync --group docs --no-group dev
+                uv sync --extra docs
 
         -   name: Build site
             run: |
