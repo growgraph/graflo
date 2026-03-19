@@ -158,6 +158,50 @@ Call function once with all selected input values.
       output: datetime_announce
 ```
 
+### Explicit grouped calls (`input_groups`)
+
+When the same function should run repeatedly on explicit argument tuples, use
+`input_groups`.
+
+```yaml
+- transform:
+    call:
+      module: my_pkg.transforms
+      foo: join_name
+      input_groups:
+        - [fname_parent, lname_parent]
+        - [fname_child, lname_child]
+      output: [parent_name, child_name]
+```
+
+`input_groups` can also use grouped outputs:
+
+```yaml
+- transform:
+    call:
+      module: my_pkg.transforms
+      foo: split_name
+      input_groups:
+        - [parent_name]
+        - [child_name]
+      output_groups:
+        - [parent_fname, parent_lname]
+        - [child_fname, child_lname]
+```
+
+Grouped passthrough is supported when outputs are omitted and each group maps
+back to its own keys (for example unary casts):
+
+```yaml
+- transform:
+    call:
+      module: builtins
+      foo: int
+      input_groups:
+        - [age_parent]
+        - [age_child]
+```
+
 ### Strategy: `each`
 
 Call function independently for each selected input field.
@@ -229,6 +273,7 @@ Example with include:
 
 - requires a function transform
 - does not allow `input`, `output`, or `dress`
+- does not allow `input_groups` or `output_groups`
 - does not allow explicit `strategy` (key mode is implicit per-key execution)
 - transformed keys must remain unique (collisions raise an error)
 
@@ -247,6 +292,8 @@ Example with include:
 - `params: dict` - keyword args passed to function
 - `input: str | list[str] | null` - input fields (not used for key mode)
 - `output: str | list[str] | null` - output fields (not used for key mode)
+- `input_groups: list[list[str]] | null` - explicit repeated grouped calls (values mode only)
+- `output_groups: list[list[str]] | null` - grouped outputs aligned to `input_groups`
 - `strategy: single | each | all | null` - function execution mode
 - `target: values | keys` - operate on values (default) or keys
 - `keys`:
@@ -264,6 +311,10 @@ Example with include:
 - `call.use` cannot be combined with `call.module` or `call.foo`.
 - If `call.use` is absent, both `call.module` and `call.foo` are required.
 - `map`/rename and function mode are mutually exclusive.
+- Use either `call.input` or `call.input_groups`, not both.
+- For grouped calls, use either `call.output` (one output per input group) or
+  `call.output_groups` (full per-group output tuples), not both.
+- `call.output_groups` must have the same number of groups as `call.input_groups`.
 - Legacy `switch` is not supported.
 - List-style `dress` is not supported (`dress` must be a dict with `key` and `value`).
 

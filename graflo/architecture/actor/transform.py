@@ -42,6 +42,16 @@ class TransformActor(Actor):
             "foo": call.foo,
             "input": tuple(call.input) if call.input else (),
             "output": tuple(call.output) if call.output else (),
+            "input_groups": (
+                tuple(tuple(group) for group in call.input_groups)
+                if call.input_groups
+                else ()
+            ),
+            "output_groups": (
+                tuple(tuple(group) for group in call.output_groups)
+                if call.output_groups
+                else ()
+            ),
             "dress": call.dress,
             "strategy": call.strategy or "single",
             "target": call.target,
@@ -80,9 +90,17 @@ class TransformActor(Actor):
         if self.t.target == "keys":
             next_input: tuple[str, ...] = self.t.input
             next_output: tuple[str, ...] = self.t.output
+            next_input_groups: tuple[tuple[str, ...], ...] = ()
+            next_output_groups: tuple[tuple[str, ...], ...] = ()
         else:
             next_input = self.t.input if self.t.input else pt.input
             next_output = self.t.output if self.t.output else pt.output
+            next_input_groups = (
+                self.t.input_groups if self.t.input_groups else pt.input_groups
+            )
+            next_output_groups = (
+                self.t.output_groups if self.t.output_groups else pt.output_groups
+            )
         transform_kwargs: dict[str, Any] = {
             "dress": self.t.dress,
             "name": self.t.name,
@@ -91,6 +109,8 @@ class TransformActor(Actor):
             "params": next_params,
             "input": next_input,
             "output": next_output,
+            "input_groups": next_input_groups,
+            "output_groups": next_output_groups,
             "strategy": self.t.strategy,
             "target": self.t.target,
             "keys": self.t.keys,

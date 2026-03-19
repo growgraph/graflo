@@ -666,6 +666,82 @@ def test_transform_target_keys_multiple_steps_compose_for_vertex():
     ]
 
 
+def test_transform_grouped_input_call_outputs_named_payload():
+    anw = ActorWrapper(
+        pipeline=[
+            {
+                "transform": {
+                    "call": {
+                        "module": "operator",
+                        "foo": "add",
+                        "input_groups": [
+                            ["fname_parent", "lname_parent"],
+                            ["fname_child", "lname_child"],
+                        ],
+                        "output": ["parent_name", "child_name"],
+                    }
+                }
+            }
+        ]
+    )
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=VertexConfig(vertices=[]),
+            edge_config=EdgeConfig(),
+            transforms={},
+        )
+    )
+    ctx = ActionContext()
+    ctx = anw(
+        ctx,
+        doc={
+            "fname_parent": "Ada ",
+            "lname_parent": "Lovelace",
+            "fname_child": "Alan ",
+            "lname_child": "Turing",
+        },
+    )
+    payload = ctx.buffer_transforms[LocationIndex(path=(0,))][0]
+    assert payload.named == {"parent_name": "Ada Lovelace", "child_name": "Alan Turing"}
+    assert payload.positional == ()
+
+
+def test_transform_grouped_call_use_inherits_input_groups():
+    anw = ActorWrapper(pipeline=[{"transform": {"call": {"use": "join_name"}}}])
+    transforms = {
+        "join_name": ProtoTransform(
+            name="join_name",
+            module="operator",
+            foo="add",
+            input_groups=(
+                ("fname_parent", "lname_parent"),
+                ("fname_child", "lname_child"),
+            ),
+            output=("parent_name", "child_name"),
+        )
+    }
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=VertexConfig(vertices=[]),
+            edge_config=EdgeConfig(),
+            transforms=transforms,
+        )
+    )
+    ctx = ActionContext()
+    ctx = anw(
+        ctx,
+        doc={
+            "fname_parent": "Ada ",
+            "lname_parent": "Lovelace",
+            "fname_child": "Alan ",
+            "lname_child": "Turing",
+        },
+    )
+    payload = ctx.buffer_transforms[LocationIndex(path=(0,))][0]
+    assert payload.named == {"parent_name": "Ada Lovelace", "child_name": "Alan Turing"}
+    assert payload.positional == ()
+
+
 def test_multi_edges_from_row(resource_ticker, vc_ticker, ec_ticker, sample_ticker):
     ctx = ActionContext()
     anw = ActorWrapper(**resource_ticker)

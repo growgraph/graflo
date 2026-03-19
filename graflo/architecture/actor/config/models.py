@@ -152,6 +152,16 @@ class TransformCallConfig(ConfigBaseModel):
     output: list[str] | None = PydanticField(
         default=None, description="Optional output field names."
     )
+    input_groups: list[list[str]] | None = PydanticField(
+        default=None,
+        description=(
+            "Explicit groups of input fields for repeated tuple-style function calls."
+        ),
+    )
+    output_groups: list[list[str]] | None = PydanticField(
+        default=None,
+        description="Optional output field groups aligned with input_groups.",
+    )
     target: Literal["values", "keys"] = PydanticField(
         default="values",
         description=(
@@ -182,6 +192,22 @@ class TransformCallConfig(ConfigBaseModel):
                 data[key] = [value]
             elif isinstance(value, tuple):
                 data[key] = list(value)
+        for key in ("input_groups", "output_groups"):
+            value = data.get(key)
+            if value is None:
+                continue
+            if isinstance(value, tuple):
+                value = list(value)
+            if isinstance(value, list):
+                normalized_groups: list[Any] = []
+                for group in value:
+                    if isinstance(group, str):
+                        normalized_groups.append([group])
+                    elif isinstance(group, tuple):
+                        normalized_groups.append(list(group))
+                    else:
+                        normalized_groups.append(group)
+                data[key] = normalized_groups
         keys = data.get("keys")
         if isinstance(keys, str):
             data["keys"] = {"mode": "include", "names": [keys]}
@@ -218,12 +244,50 @@ class TransformCallConfig(ConfigBaseModel):
                 )
             if self.output:
                 raise ValueError("call.output is not allowed when call.target='keys'.")
+            if self.input_groups:
+                raise ValueError(
+                    "call.input_groups is not allowed when call.target='keys'."
+                )
+            if self.output_groups:
+                raise ValueError(
+                    "call.output_groups is not allowed when call.target='keys'."
+                )
             if self.dress is not None:
                 raise ValueError("call.dress is not supported when call.target='keys'.")
         elif self.keys is not None:
             raise ValueError("call.keys can only be used when call.target='keys'.")
+        if self.input is not None and self.input_groups is not None:
+            raise ValueError(
+                "Provide either call.input or call.input_groups, not both."
+            )
+        if self.output_groups is not None and self.input_groups is None:
+            raise ValueError("call.output_groups requires call.input_groups.")
+        if self.input_groups is not None:
+            if self.strategy not in {None, "single"}:
+                raise ValueError(
+                    "call.input_groups does not support call.strategy. "
+                    "Grouped mode is an explicit repeated execution."
+                )
+            if self.dress is not None:
+                raise ValueError("call.input_groups is not compatible with call.dress.")
+            if self.output is not None and self.output_groups is not None:
+                raise ValueError(
+                    "Provide either call.output or call.output_groups for grouped calls, not both."
+                )
+            if self.output_groups is not None and len(self.output_groups) != len(
+                self.input_groups
+            ):
+                raise ValueError(
+                    "call.output_groups must have the same number of groups as call.input_groups."
+                )
+            if self.output is not None and len(self.output) != len(self.input_groups):
+                raise ValueError(
+                    "For grouped scalar outputs, call.output length must equal number of call.input_groups."
+                )
         if self.strategy == "all" and self.input:
             raise ValueError("call.strategy='all' does not accept call.input.")
+        if self.strategy == "all" and self.input_groups:
+            raise ValueError("call.strategy='all' does not accept call.input_groups.")
         return self
 
 

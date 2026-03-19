@@ -744,6 +744,24 @@ Example: strip `raw_` only from selected keys:
         names: [raw_id, raw_label]
 ```
 
+#### Grouped value transforms
+
+For repeated tuple-style value calls, use explicit `input_groups` in
+`transform.call`:
+
+```yaml
+- transform:
+    call:
+      module: my_pkg.transforms
+      foo: join_name
+      input_groups:
+        - [fname_parent, lname_parent]
+        - [fname_child, lname_child]
+      output: [parent_name, child_name]
+```
+
+This executes one function call per group with deterministic output mapping.
+
 ```mermaid
 flowchart LR
     Doc["Input Document"] -->|"extract input fields"| Proto["ProtoTransform.apply()"]

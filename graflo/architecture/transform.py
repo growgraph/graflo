@@ -57,6 +57,16 @@ def _tuple_it(x: str | list[str] | tuple[str, ...]) -> tuple[str, ...]:
     return x
 
 
+def _tuple_groups_it(
+    groups: list[list[str] | tuple[str, ...]] | tuple[list[str] | tuple[str, ...], ...],
+) -> tuple[tuple[str, ...], ...]:
+    """Normalize nested group input into tuple-of-tuples."""
+    normalized: list[tuple[str, ...]] = []
+    for group in groups:
+        normalized.append(_tuple_it(group))
+    return tuple(normalized)
+
+
 class TransformException(BaseException):
     """Base exception for transform-related errors."""
 
@@ -160,6 +170,18 @@ class ProtoTransform(ConfigBaseModel):
         default_factory=tuple,
         description="Output field names produced by the transform (defaults to input if unset).",
     )
+    input_groups: tuple[tuple[str, ...], ...] = Field(
+        default_factory=tuple,
+        description=(
+            "Explicit groups of input fields for repeated tuple-style value calls."
+        ),
+    )
+    output_groups: tuple[tuple[str, ...], ...] = Field(
+        default_factory=tuple,
+        description=(
+            "Explicit output field groups aligned with input_groups for grouped value calls."
+        ),
+    )
 
     _foo: Any = PrivateAttr(default=None)
 
@@ -175,6 +197,12 @@ class ProtoTransform(ConfigBaseModel):
                     data[key] = _tuple_it(data[key])
                 else:
                     data[key] = ()
+        for key in ("input_groups", "output_groups"):
+            if key in data:
+                if data[key] is None:
+                    data[key] = ()
+                else:
+                    data[key] = _tuple_groups_it(data[key])
         return data
 
     @model_validator(mode="after")
@@ -278,6 +306,12 @@ class Transform(ProtoTransform):
         default_factory=KeySelectionConfig,
         description="Key selection for key-target transforms.",
     )
+    passthrough_group_output: bool = Field(
+        default=True,
+        description=(
+            "When grouped mode omits outputs, map function results back to input group keys."
+        ),
+    )
 
     functional_transform: bool = Field(
         default=False,
@@ -322,6 +356,7 @@ class Transform(ProtoTransform):
     @model_validator(mode="after")
     def _init_derived(self) -> Self:
         object.__setattr__(self, "functional_transform", self._foo is not None)
+        self._init_output_from_grouped_input()
         self._init_input_from_fields()
         self._init_io_from_map()
         self._init_output_from_dress()
@@ -353,6 +388,22 @@ class Transform(ProtoTransform):
         if self.dress is not None:
             object.__setattr__(self, "output", (self.dress.key, self.dress.value))
 
+    def _init_output_from_grouped_input(self) -> None:
+        """Default scalar output names for grouped calls when omitted."""
+        if not self.input_groups:
+            return
+        if self.output or self.output_groups:
+            return
+        if not self.passthrough_group_output:
+            return
+        scalar_names: list[str] = []
+        for group in self.input_groups:
+            if len(group) != 1:
+                return
+            scalar_names.append(group[0])
+        if scalar_names:
+            object.__setattr__(self, "output", tuple(scalar_names))
+
     def _default_output_from_input(self) -> None:
         """Ensure output mirrors input when not explicitly provided."""
         if not self.output and self.input:
@@ -371,6 +422,10 @@ class Transform(ProtoTransform):
     def _validate_configuration(self) -> None:
         """Validate that the transform has enough information to operate."""
         if self.target == "keys":
+            if self.input_groups or self.output_groups:
+                raise ValueError(
+                    "target='keys' does not accept input_groups/output_groups."
+                )
             if self._foo is None:
                 raise ValueError("target='keys' requires a functional transform.")
             if self.map:
@@ -400,8 +455,37 @@ class Transform(ProtoTransform):
                 raise ValueError("dress requires exactly one input field.")
         if self.strategy != "single" and self._foo is None:
             raise ValueError("strategy applies only to functional transforms.")
+        if self.input_groups:
+            if self._foo is None:
+                raise ValueError(
+                    "input_groups requires a functional transform (module + foo)."
+                )
+            if self.strategy != "single":
+                raise ValueError(
+                    "input_groups mode is explicit grouped execution and does not accept strategy."
+                )
+            if self.input or self.fields:
+                raise ValueError("input_groups cannot be combined with input/fields.")
+            if self.map:
+                raise ValueError("input_groups cannot be combined with map.")
+            if self.dress is not None:
+                raise ValueError("input_groups is not compatible with dress.")
+            if self.output_groups and self.output:
+                raise ValueError(
+                    "Provide either output or output_groups for input_groups mode, not both."
+                )
+            if self.output_groups and len(self.output_groups) != len(self.input_groups):
+                raise ValueError(
+                    "output_groups must have same number of groups as input_groups."
+                )
+            if self.output and len(self.output) != len(self.input_groups):
+                raise ValueError(
+                    "When using input_groups with scalar outputs, output length must match number of input_groups."
+                )
+        elif self.output_groups:
+            raise ValueError("output_groups requires input_groups.")
         if self._foo is not None and not self.input:
-            if self.strategy != "all":
+            if self.strategy != "all" and not self.input_groups:
                 raise ValueError(
                     "Functional transforms require `input` (string or list of field names)."
                 )
@@ -430,6 +514,8 @@ class Transform(ProtoTransform):
         if (
             not self.input
             and not self.output
+            and not self.input_groups
+            and not self.output_groups
             and not self.name
             and not (self._foo is not None and self.strategy == "all")
         ):
@@ -459,6 +545,14 @@ class Transform(ProtoTransform):
                     "target='keys' requires a document dictionary."
                 )
             return self._transform_keys(input_doc, **kwargs)
+
+        if self.input_groups:
+            input_doc = nargs[0] if nargs and isinstance(nargs[0], dict) else None
+            if input_doc is None:
+                raise TransformException(
+                    "input_groups transforms require a document dictionary."
+                )
+            return self._transform_input_groups(input_doc, **kwargs)
 
         if self.is_mapping:
             input_doc = nargs[0]
@@ -491,6 +585,70 @@ class Transform(ProtoTransform):
         else:
             r = output_values
         return r
+
+    def _apply_grouped_result(
+        self,
+        out: dict[str, Any],
+        result: Any,
+        input_group: tuple[str, ...],
+        output_group: tuple[str, ...] | None,
+        *,
+        group_index: int,
+    ) -> None:
+        if output_group is not None:
+            if isinstance(result, (list, tuple)):
+                values = list(result)
+            else:
+                values = [result]
+            if len(values) != len(output_group):
+                raise TransformException(
+                    f"input_groups[{group_index}] produced {len(values)} values, "
+                    f"but output_groups[{group_index}] expects {len(output_group)}."
+                )
+            pairs = zip(output_group, values)
+        elif self.output:
+            pairs = ((self.output[group_index], result),)
+        else:
+            if isinstance(result, (list, tuple)):
+                values = list(result)
+                if len(values) != len(input_group):
+                    raise TransformException(
+                        f"input_groups[{group_index}] has {len(input_group)} fields, "
+                        f"but transform returned {len(values)} values. "
+                        "Provide output/output_groups explicitly to resolve mapping."
+                    )
+                pairs = zip(input_group, values)
+            else:
+                if len(input_group) != 1:
+                    raise TransformException(
+                        f"input_groups[{group_index}] has {len(input_group)} fields "
+                        "but transform returned a scalar. "
+                        "Provide output/output_groups explicitly for scalar group results."
+                    )
+                pairs = ((input_group[0], result),)
+        for key, value in pairs:
+            if key in out:
+                raise TransformException(
+                    f"Grouped transform produced duplicate output key '{key}'."
+                )
+            out[key] = value
+
+    def _transform_input_groups(
+        self, doc: dict[str, Any], **kwargs: Any
+    ) -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        for idx, input_group in enumerate(self.input_groups):
+            values = [doc[k] for k in input_group]
+            result = self.apply(*values, **kwargs)
+            output_group = self.output_groups[idx] if self.output_groups else None
+            self._apply_grouped_result(
+                out,
+                result,
+                input_group,
+                output_group,
+                group_index=idx,
+            )
+        return out
 
     @property
     def is_mapping(self) -> bool:
