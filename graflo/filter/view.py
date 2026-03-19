@@ -14,7 +14,7 @@ from pydantic import Field
 from graflo.architecture.base import ConfigBaseModel
 from graflo.filter.onto import FilterExpression
 from graflo.onto import ExpressionFlavor
-from graflo.architecture.bindings import JoinClause
+from graflo.architecture.contract.bindings import JoinClause
 
 
 class SelectSpec(ConfigBaseModel):

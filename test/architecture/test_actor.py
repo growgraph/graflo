@@ -1,6 +1,6 @@
 import logging
 
-from graflo.architecture.actor import (
+from graflo.architecture.pipeline.runtime.actor import (
     ActorInitContext,
     ActorWrapper,
     DescendActor,
@@ -9,13 +9,16 @@ from graflo.architecture.actor import (
     VertexActor,
 )
 from graflo.architecture.schema.edge import EdgeConfig
-from graflo.architecture.onto import ActionContext, LocationIndex, VertexRep
-from graflo.architecture.actor.config import (
+from graflo.architecture.graph_types import ActionContext, LocationIndex, VertexRep
+from graflo.architecture.pipeline.runtime.actor.config import (
     VertexActorConfig,
     normalize_actor_step,
     validate_actor_step,
 )
-from graflo.architecture.transform import ProtoTransform
+from graflo.architecture.contract.declarations.transform import (
+    DressConfig,
+    ProtoTransform,
+)
 from graflo.architecture.schema.vertex import VertexConfig
 
 logger = logging.getLogger(__name__)
@@ -480,6 +483,43 @@ def test_transform_named_proto_binding_local_io_overrides_library_io():
     ctx = anw(ctx, doc={"raw_value": "8", "value": "7"})
     payload = ctx.buffer_transforms[LocationIndex(path=(0,))][0]
     assert payload.named == {"parsed": 8}
+    assert payload.positional == ()
+
+
+def test_transform_named_proto_binding_inherits_dress_from_library():
+    anw = ActorWrapper(
+        pipeline=[
+            {
+                "transform": {
+                    "call": {
+                        "use": "to_int_metric",
+                        "input": ["Volume"],
+                    }
+                }
+            }
+        ]
+    )
+    transforms = {
+        "to_int_metric": ProtoTransform(
+            name="to_int_metric",
+            module="builtins",
+            foo="int",
+            params={},
+            dress=DressConfig(key="name", value="value"),
+        )
+    }
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=VertexConfig(vertices=[]),
+            edge_config=EdgeConfig(),
+            transforms=transforms,
+        )
+    )
+
+    ctx = ActionContext()
+    ctx = anw(ctx, doc={"Volume": "9000"})
+    payload = ctx.buffer_transforms[LocationIndex(path=(0,))][0]
+    assert payload.named == {"name": "Volume", "value": 9000}
     assert payload.positional == ()
 
 

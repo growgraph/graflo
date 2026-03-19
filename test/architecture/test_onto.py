@@ -1,7 +1,7 @@
-from graflo.architecture.actor import ActorInitContext, ActorWrapper
+from graflo.architecture.pipeline.runtime.actor import ActorInitContext, ActorWrapper
 from graflo.architecture.schema.edge import EdgeConfig
-from graflo.architecture.executor import ActorExecutor
-from graflo.architecture.onto import (
+from graflo.architecture.pipeline.runtime.executor import ActorExecutor
+from graflo.architecture.graph_types import (
     AssemblyContext,
     ExtractionContext,
     GraphAssemblyResult,

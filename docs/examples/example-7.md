@@ -153,7 +153,7 @@ from graflo import Bindings, GraphManifest
 from graflo.db import ArangoConfig
 from graflo.hq import GraphEngine
 from graflo.hq.caster import IngestionParams
-from graflo.architecture.bindings import FileConnector
+from graflo.architecture.contract.bindings import FileConnector
 
 manifest = GraphManifest.from_config(FileHandle.load("manifest.yaml"))
 manifest.finish_init()
@@ -208,5 +208,5 @@ uv run python ingest.py
 
 ## Next Steps
 
-- Explore [vertex_router](../reference/architecture/actor/vertex_router.md) and [edge_router](../reference/architecture/actor/edge_router.md) in the API reference.
+- Explore [vertex_router](../reference/architecture/pipeline/runtime/actor/vertex_router.md) and [edge_router](../reference/architecture/pipeline/runtime/actor/edge_router.md) in the API reference.
 - See the [full example code](https://github.com/growgraph/graflo/tree/main/examples/7-objects-relations) for the complete implementation.

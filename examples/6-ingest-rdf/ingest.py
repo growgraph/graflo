@@ -20,8 +20,8 @@ from pathlib import Path
 
 from graflo.db import ArangoConfig
 from graflo.hq import GraphEngine, IngestionParams
-from graflo.architecture.bindings import Bindings, SparqlConnector
-from graflo.architecture.manifest import GraphManifest
+from graflo.architecture.contract.bindings import Bindings, SparqlConnector
+from graflo.architecture.contract.manifest import GraphManifest
 from suthing import FileHandle
 
 

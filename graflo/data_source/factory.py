@@ -10,7 +10,7 @@ from typing import Any
 
 import pandas as pd
 
-from graflo.architecture.onto import EncodingType
+from graflo.architecture.graph_types import EncodingType
 from graflo.data_source.api import APIConfig, APIDataSource
 from graflo.data_source.base import AbstractDataSource, DataSourceType
 from graflo.data_source.file import (

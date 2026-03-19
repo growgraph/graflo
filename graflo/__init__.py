@@ -18,6 +18,8 @@ Example:
     >>> engine = GraphEngine()
     >>> manifest = engine.infer_manifest(postgres_config)
     >>> engine.define_and_ingest(manifest, target_db_config)
+
+For targeted imports (smaller dependency graph), see ``docs/importing.md`` in the package repo.
 """
 
 # --- Core orchestration ---------------------------------------------------

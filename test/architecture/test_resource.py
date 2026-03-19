@@ -3,7 +3,10 @@ import logging
 import pytest
 
 from graflo.architecture.schema.edge import EdgeConfig
-from graflo.architecture.resource import Resource, _resolve_type_caster
+from graflo.architecture.contract.declarations.resource import (
+    Resource,
+    _resolve_type_caster,
+)
 from graflo.architecture.schema.vertex import VertexConfig
 
 logger = logging.getLogger(__name__)
@@ -103,7 +106,7 @@ def test_resource_auto_adds_edge_actor_types_to_infer_edge_except():
 
 def test_resource_infer_edge_except_excludes_edges_handled_by_edge_actors():
     """Resource with EdgeActor for (a,b) does not infer (a,b); (a,c) is still inferred."""
-    from graflo.architecture.onto import ActionContext
+    from graflo.architecture.graph_types import ActionContext
 
     vc = VertexConfig.from_dict(
         {

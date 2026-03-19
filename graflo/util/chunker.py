@@ -42,7 +42,8 @@ import ijson
 import pandas as pd
 import xmltodict
 
-from graflo.architecture.onto import BaseEnum, EncodingType
+from graflo.architecture.graph_types import EncodingType
+from graflo.onto import BaseEnum
 
 AbstractChunkerType = TypeVar("AbstractChunkerType", bound="AbstractChunker")
 

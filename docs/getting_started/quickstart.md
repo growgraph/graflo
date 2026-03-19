@@ -21,7 +21,7 @@ Here's a simple example of transforming CSV files of two types, `people` and `de
 import pathlib
 from suthing import FileHandle
 from graflo import Bindings, Caster, GraphManifest
-from graflo.architecture.bindings import FileConnector
+from graflo.architecture.contract.bindings import FileConnector
 from graflo.db.connection.onto import ArangoConfig
 
 manifest = GraphManifest.from_config(FileHandle.load("manifest.yaml"))
@@ -145,7 +145,7 @@ engine = GraphEngine()
 bindings = engine.create_bindings(pg_config, schema_name="public")
 
 # Or create bindings manually
-from graflo.architecture.bindings import Bindings, TableConnector
+from graflo.architecture.contract.bindings import Bindings, TableConnector
 
 bindings = Bindings(
     table_connectors={

@@ -1,7 +1,7 @@
 import pathlib
 from suthing import FileHandle
 from graflo import Bindings, GraphManifest
-from graflo.architecture.bindings import FileConnector
+from graflo.architecture.contract.bindings import FileConnector
 from graflo.db import ArangoConfig
 from graflo.hq import GraphEngine
 from graflo.hq.caster import IngestionParams
@@ -33,7 +33,7 @@ db_type = conn_conf.connection_type
 bindings = Bindings()
 bindings.add_file_connector(
     "work",
-    FileConnector(regex="\Sjson$", sub_path=pathlib.Path("."), resource_name="work"),
+    FileConnector(regex=r"\Sjson$", sub_path=pathlib.Path("."), resource_name="work"),
 )
 
 # Or use resource_mapping for simpler initialization

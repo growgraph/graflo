@@ -4,9 +4,9 @@
 
 This page documents the transform DSL as implemented in:
 
-- `graflo.architecture.transform.Transform`
-- `graflo.architecture.actor.transform.TransformActor`
-- `graflo.architecture.actor.config.models.TransformCallConfig`
+- `graflo.architecture.contract.declarations.transform.Transform`
+- `graflo.architecture.pipeline.runtime.actor.transform.TransformActor`
+- `graflo.architecture.pipeline.runtime.actor.config.models.TransformCallConfig`
 
 ## Mental model
 
@@ -65,7 +65,24 @@ resources:
 
 ### Local override of reusable transform
 
-A `call.use` step can override `input`, `output`, and/or `params` for local context while reusing the base function (`module` + `foo`):
+A `call.use` step can override `input`, `output`, `params`, and/or `dress` while reusing `module` + `foo` from the vocabulary entry. Put shared `dress` and `params` on the named transform when several steps only differ by `input`:
+
+```yaml
+# ingestion_model.transforms
+- name: round_metric
+  module: graflo.util.transform
+  foo: round_str
+  params: {ndigits: 3}
+  dress: {key: name, value: value}
+
+# resource apply
+- transform:
+    call: {use: round_metric, input: [Open]}
+- transform:
+    call: {use: round_metric, input: [Close]}
+```
+
+Rename-style override (same idea, different fields):
 
 ```yaml
 - transform:
@@ -335,5 +352,5 @@ Example with include:
 
 - [Concepts Overview](index.md)
 - [Creating a Manifest](../getting_started/creating_manifest.md)
-- [Architecture Transform API](../reference/architecture/transform.md)
-- [Transform Actor API](../reference/architecture/actor/transform.md)
+- [Architecture Transform API](../reference/architecture/contract/declarations/transform.md)
+- [Transform Actor API](../reference/architecture/pipeline/runtime/actor/transform.md)

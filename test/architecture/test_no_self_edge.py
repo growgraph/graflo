@@ -8,8 +8,8 @@ does not depend on itself. Related to actor_util._iter_emitter_receiver_group_pa
 import pytest
 from suthing import FileHandle
 
-from graflo.architecture.manifest import GraphManifest
-from graflo.architecture.onto import GraphContainer
+from graflo.architecture.contract.manifest import GraphManifest
+from graflo.architecture.graph_types import GraphContainer
 
 
 DOC_0XFFFF = {

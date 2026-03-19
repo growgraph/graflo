@@ -8,7 +8,7 @@ import logging
 
 from graflo.db import PostgresConnection
 from graflo.filter.view import SelectSpec
-from graflo.architecture.bindings import Bindings, TableConnector
+from graflo.architecture.contract.bindings import Bindings, TableConnector
 
 logger = logging.getLogger(__name__)
 

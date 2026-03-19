@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 from collections import defaultdict
 
 from graflo.architecture.schema.edge import Edge
-from graflo.architecture.ingestion_model import IngestionModel
+from graflo.architecture.contract.declarations.ingestion_model import IngestionModel
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.vertex import Field
 from graflo.onto import DBType
@@ -20,7 +20,7 @@ from graflo.onto import DBType
 from graflo.db.util import load_reserved_words, sanitize_attribute_name
 
 if TYPE_CHECKING:
-    from graflo.architecture.resource import Resource
+    from graflo.architecture.contract.declarations.resource import Resource
 
 logger = logging.getLogger(__name__)
 
@@ -364,7 +364,7 @@ class SchemaSanitizer:
             field_index_mappings: Dictionary mapping vertex names to field mappings
                                  (old_field -> new_field)
         """
-        from graflo.architecture.actor import (
+        from graflo.architecture.pipeline.runtime.actor import (
             ActorWrapper,
             DescendActor,
             TransformActor,

@@ -19,7 +19,7 @@ from graflo import Bindings, GraphManifest
 from graflo.db import ArangoConfig
 from graflo.hq import GraphEngine
 from graflo.hq.caster import IngestionParams
-from graflo.architecture.bindings import FileConnector
+from graflo.architecture.contract.bindings import FileConnector
 
 manifest = GraphManifest.from_config(FileHandle.load("manifest.yaml"))
 manifest.finish_init()

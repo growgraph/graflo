@@ -5,7 +5,7 @@ from graflo.hq import GraphEngine
 from graflo.hq.caster import IngestionParams
 
 import logging
-from graflo.architecture.bindings import FileConnector
+from graflo.architecture.contract.bindings import FileConnector
 import pathlib
 
 
@@ -32,7 +32,9 @@ bindings = Bindings()
 bindings.add_file_connector(
     "ticker_data",
     FileConnector(
-        regex="^data.*\.csv$", sub_path=pathlib.Path("."), resource_name="relations"
+        regex=r"^data.*\.csv$",
+        sub_path=pathlib.Path("."),
+        resource_name="ticker_data",
     ),
 )
 

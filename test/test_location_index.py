@@ -1,4 +1,4 @@
-from graflo.architecture.onto import (
+from graflo.architecture.graph_types import (
     LocationIndex,
 )
 

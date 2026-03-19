@@ -11,8 +11,8 @@ import pandas as pd
 import pytest
 from suthing import FileHandle
 
-from graflo.architecture.manifest import GraphManifest
-from graflo.architecture.onto import GraphContainer
+from graflo.architecture.contract.manifest import GraphManifest
+from graflo.architecture.graph_types import GraphContainer
 
 
 def _load_csv_as_dicts(csv_path: Path) -> list[dict]:

@@ -751,7 +751,7 @@ caster = Caster(schema=schema, ingestion_model=ingestion_model)
 You can also create bindings manually for more control:
 
 ```python
-from graflo.architecture.bindings import Bindings, TableConnector
+from graflo.architecture.contract.bindings import Bindings, TableConnector
 
 bindings = Bindings(
     _resource_mapping={

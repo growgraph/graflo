@@ -9,7 +9,7 @@ from graflo.filter.sql import datetime_range_where_sql
 from graflo.hq.caster import IngestionParams
 from graflo.hq.graph_engine import GraphEngine
 from graflo.onto import DBType
-from graflo.architecture.bindings import TableConnector
+from graflo.architecture.contract.bindings import TableConnector
 
 
 def _set_purchase_dates(postgres_conn):

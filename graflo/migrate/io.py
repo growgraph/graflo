@@ -9,8 +9,8 @@ from typing import Any
 
 from suthing import FileHandle
 
-from graflo.architecture.manifest import GraphManifest
-from graflo.architecture.ingestion_model import IngestionModel
+from graflo.architecture.contract.manifest import GraphManifest
+from graflo.architecture.contract.declarations.ingestion_model import IngestionModel
 from graflo.architecture.schema import Schema
 
 

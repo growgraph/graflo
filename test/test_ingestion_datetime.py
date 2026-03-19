@@ -2,7 +2,7 @@
 
 from graflo.filter.sql import datetime_range_where_sql
 from graflo.hq.caster import IngestionParams
-from graflo.architecture.bindings import TableConnector
+from graflo.architecture.contract.bindings import TableConnector
 
 
 def test_ingestion_params_datetime_defaults():

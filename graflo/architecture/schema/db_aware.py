@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Iterator
 
 from graflo.architecture.database_features import DatabaseProfile
-from graflo.architecture.onto import EdgeId, Index
+from graflo.architecture.graph_types import EdgeId, Index
 from graflo.onto import DBType
 
 from .edge import (

@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 from graflo.data_source.sql import SQLConfig, SQLDataSource
 from graflo.filter.view import SelectSpec
-from graflo.architecture.bindings import TableConnector
+from graflo.architecture.contract.bindings import TableConnector
 
 
 def _setup_test_db() -> str:

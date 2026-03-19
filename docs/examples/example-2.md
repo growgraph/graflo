@@ -119,7 +119,7 @@ if not isinstance(conn_conf, ArangoConfig):
 # Or use from_docker_env() (recommended)
 # conn_conf = ArangoConfig.from_docker_env()
 
-from graflo.architecture.bindings import FileConnector
+from graflo.architecture.contract.bindings import FileConnector
 import pathlib
 
 bindings = Bindings()

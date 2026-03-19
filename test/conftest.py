@@ -8,10 +8,10 @@ import pytest
 import yaml
 from suthing import FileHandle, equals
 
-from graflo.architecture.manifest import GraphManifest
+from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.util import cast_graph_name_to_triple
 from graflo.util.misc import sorted_dicts
-from graflo.architecture.bindings import Bindings, FileConnector
+from graflo.architecture.contract.bindings import Bindings, FileConnector
 
 logger = logging.getLogger(__name__)
 

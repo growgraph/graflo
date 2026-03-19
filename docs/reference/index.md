@@ -6,14 +6,15 @@ This section provides detailed API documentation for all graflo components and m
 
 Core architectural components that define the graflo framework:
 
-- **[Schema](architecture/schema.md)**: Graph schema definition and management
-- **[GraphManifest](architecture/manifest.md)**: Canonical top-level config contract
-- **[Vertex](architecture/vertex.md)**: Vertex configuration and properties
-- **[Edge](architecture/edge.md)**: Edge configuration and relationship management
-- **[Resource](architecture/resource.md)**: Data source mapping and transformation
-- **[Actor](architecture/actor/__init__.md)**: Document processing pipeline components
-- **[Transform](architecture/transform.md)**: Data transformation utilities
-- **[Ontology](architecture/onto.md)**: Core data structures and types
+- **[Schema](architecture/schema/__init__.md)**: Graph schema definition and management
+- **[GraphManifest](architecture/contract/manifest.md)**: Canonical top-level config contract
+- **[Vertex](architecture/schema/vertex.md)**: Vertex configuration and properties
+- **[Edge](architecture/schema/edge.md)**: Edge configuration and relationship management
+- **[Resource](architecture/contract/declarations/resource.md)**: Data source mapping and transformation
+- **[Actor](architecture/pipeline/runtime/actor/__init__.md)**: Document processing pipeline (runtime)
+- **[Transform](architecture/contract/declarations/transform.md)**: Transform definitions (`Transform`, `ProtoTransform`)
+- **[Pipeline runtime](architecture/pipeline/runtime/__init__.md)**: Executor and assembly
+- **[Graph types](architecture/graph_types.md)**: Runtime graph structures (contexts, containers, indexes)
 - **[Utilities](architecture/util.md)**: Common utility functions
 
 ## Database Operations

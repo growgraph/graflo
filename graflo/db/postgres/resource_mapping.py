@@ -8,7 +8,7 @@ import logging
 from collections import defaultdict
 from typing import Any
 
-from graflo.architecture.resource import Resource
+from graflo.architecture.contract.declarations.resource import Resource
 from graflo.architecture.schema.vertex import VertexConfig
 from .conn import EdgeTableInfo, SchemaIntrospectionResult
 from graflo.hq.fuzzy_matcher import FuzzyMatcher

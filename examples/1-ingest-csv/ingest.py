@@ -1,7 +1,7 @@
 import pathlib
 from suthing import FileHandle
 from graflo import Bindings, GraphManifest
-from graflo.architecture.bindings import FileConnector
+from graflo.architecture.contract.bindings import FileConnector
 from graflo.db import ArangoConfig
 from graflo.hq import GraphEngine
 from graflo.hq.caster import IngestionParams

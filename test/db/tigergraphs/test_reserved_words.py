@@ -23,7 +23,7 @@ import pytest
 from graflo.onto import DBType
 from test.conftest import fetch_manifest_obj
 from graflo.hq.sanitizer import SchemaSanitizer
-from graflo.architecture.manifest import GraphManifest
+from graflo.architecture.contract.manifest import GraphManifest
 
 
 logger = logging.getLogger(__name__)

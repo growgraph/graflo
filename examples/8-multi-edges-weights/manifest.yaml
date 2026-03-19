@@ -68,39 +68,38 @@ schema:
                 -   name
 ingestion_model:
     transforms:
-    -   name: round_metric_value
+    -   name: round_str_ndigits_3_metric
         module: graflo.util.transform
         foo: round_str
         params:
             ndigits: 3
+        dress:
+            key: name
+            value: value
+    -   name: int_metric_name_value
+        module: builtins
+        foo: int
+        dress:
+            key: name
+            value: value
     resources:
     -   name: ticker_data
         apply:
         -   transform:
                 call:
-                    use: round_metric_value
+                    use: round_str_ndigits_3_metric
                     input:
                     -   Open
-                    dress:
-                        key: name
-                        value: value
         -   transform:
                 call:
-                    use: round_metric_value
+                    use: round_str_ndigits_3_metric
                     input:
                     -   Close
-                    dress:
-                        key: name
-                        value: value
         -   transform:
                 call:
-                    module: builtins
-                    foo: int
+                    use: int_metric_name_value
                     input:
                     -   Volume
-                    dress:
-                        key: name
-                        value: value
         -   transform:
                 call:
                     module: graflo.util.transform

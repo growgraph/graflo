@@ -41,7 +41,7 @@ from requests import exceptions as requests_exceptions
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.database_features import DatabaseProfile
 from graflo.architecture.schema import VertexConfigDBAware
-from graflo.architecture.onto import Index
+from graflo.architecture.graph_types import Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.vertex import FieldType, Vertex, VertexConfig
 from graflo.db.conn import Connection, SchemaExistsError

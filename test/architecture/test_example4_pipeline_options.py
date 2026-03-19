@@ -2,7 +2,7 @@ from pathlib import Path
 
 import yaml
 
-from graflo.architecture.manifest import GraphManifest
+from graflo.architecture.contract.manifest import GraphManifest
 
 
 def _load_example4_manifest() -> GraphManifest:

@@ -1,42 +1,31 @@
-"""Graph database architecture components.
+"""Architecture façade.
 
-This package defines the core architecture components for graph database operations,
-including schema management, resource handling, and data transformations.
+For lighter imports, prefer:
 
-Key Components:
-    - Schema: Graph database schema definition and management
-    - Resource: Data resource management and processing
-    - Transform: Data transformation and standardization
-    - Vertex: Vertex collection configuration
-    - Edge: Edge collection configuration
+- ``graflo.architecture.schema`` — graph schema types
+- ``graflo.architecture.contract`` — manifest, bindings, resources, transforms
+- ``graflo.architecture.pipeline.runtime`` — actors and executor
 
-Example:
-    >>> from graflo.architecture import Schema, Resource
-    >>> schema = Schema(
-    ...     general={"name": "my_graph", "version": "1.0"},
-    ...     vertex_config=vertex_config,
-    ...     edge_config=edge_config
-    ... )
-    >>> resource = Resource(name="users", data=user_data)
+See ``docs/importing.md`` in the package.
 """
 
-from .database_features import DatabaseProfile
-from graflo.architecture.schema.edge import Edge, EdgeConfig
-from .executor import ActorExecutor
-from .bindings import (
+from .contract import (
     Bindings,
     FileConnector,
+    GraphManifest,
+    IngestionModel,
     JoinClause,
+    ProtoTransform,
+    Resource,
     ResourceConnector,
     ResourceType,
     SparqlConnector,
     TableConnector,
+    Transform,
 )
-from .onto import Index
-from .resource import Resource
-from .manifest import GraphManifest
-from .ingestion_model import IngestionModel
-from .schema import (
+from .database_features import DatabaseProfile
+from .graph_types import Index
+from graflo.architecture.schema import (
     CoreSchema,
     EdgeConfigDBAware,
     GraphMetadata,
@@ -45,31 +34,33 @@ from .schema import (
     SchemaDBAware,
     VertexConfigDBAware,
 )
+from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.schema.vertex import FieldType, Vertex, VertexConfig
 
 __all__ = [
+    "Bindings",
+    "CoreSchema",
+    "DatabaseProfile",
     "Edge",
     "EdgeConfig",
     "EdgeConfigDBAware",
     "FieldType",
-    "Index",
-    "ActorExecutor",
-    "GraphMetadata",
-    "DatabaseProfile",
-    "CoreSchema",
-    "GraphModel",
+    "FileConnector",
     "GraphManifest",
+    "GraphMetadata",
+    "GraphModel",
+    "Index",
     "IngestionModel",
-    "Bindings",
+    "JoinClause",
+    "ProtoTransform",
+    "Resource",
     "ResourceConnector",
     "ResourceType",
-    "FileConnector",
-    "JoinClause",
-    "TableConnector",
-    "SparqlConnector",
-    "Resource",
     "Schema",
     "SchemaDBAware",
+    "SparqlConnector",
+    "TableConnector",
+    "Transform",
     "Vertex",
     "VertexConfig",
     "VertexConfigDBAware",

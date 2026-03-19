@@ -11,12 +11,12 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from graflo.architecture.ingestion_model import IngestionModel
+from graflo.architecture.contract.declarations.ingestion_model import IngestionModel
 from graflo.architecture.schema import Schema
 from graflo.data_source import DataSourceFactory, DataSourceRegistry
 from graflo.data_source.sql import SQLConfig, SQLDataSource
 from graflo.filter.sql import datetime_range_where_sql
-from graflo.architecture.bindings import (
+from graflo.architecture.contract.bindings import (
     FileConnector,
     ResourceType,
     SparqlConnector,
@@ -25,7 +25,7 @@ from graflo.architecture.bindings import (
 
 if TYPE_CHECKING:
     from graflo.hq.caster import IngestionParams
-    from graflo.architecture.bindings import Bindings
+    from graflo.architecture.contract.bindings import Bindings
 
 logger = logging.getLogger(__name__)
 

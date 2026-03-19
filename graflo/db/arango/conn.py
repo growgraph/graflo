@@ -31,7 +31,7 @@ from arango import ArangoClient
 from arango.graph import Graph
 
 from graflo.architecture.schema.edge import Edge
-from graflo.architecture.onto import (
+from graflo.architecture.graph_types import (
     Index,
     IndexType,
 )

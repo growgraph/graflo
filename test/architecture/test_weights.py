@@ -1,10 +1,10 @@
 import logging
 from pathlib import Path
 
-from graflo.architecture.actor import ActorInitContext, ActorWrapper
+from graflo.architecture.pipeline.runtime.actor import ActorInitContext, ActorWrapper
 from graflo.architecture.schema.edge import EdgeConfig
 from graflo.architecture.schema.edge import WeightConfig
-from graflo.architecture.onto import ActionContext
+from graflo.architecture.graph_types import ActionContext
 from graflo.architecture.schema.vertex import Field, FieldType
 
 logger = logging.getLogger(__name__)

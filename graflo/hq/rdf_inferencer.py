@@ -25,8 +25,8 @@ from typing import Any
 
 from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.database_features import DatabaseProfile
-from graflo.architecture.ingestion_model import IngestionModel
-from graflo.architecture.resource import Resource
+from graflo.architecture.contract.declarations.ingestion_model import IngestionModel
+from graflo.architecture.contract.declarations.resource import Resource
 from graflo.architecture.schema import (
     CoreSchema,
     GraphMetadata,
@@ -34,7 +34,7 @@ from graflo.architecture.schema import (
 )
 from graflo.architecture.schema.vertex import Field as VertexField, Vertex, VertexConfig
 from graflo.onto import DBType
-from graflo.architecture.bindings import Bindings, SparqlConnector
+from graflo.architecture.contract.bindings import Bindings, SparqlConnector
 
 logger = logging.getLogger(__name__)
 

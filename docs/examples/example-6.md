@@ -194,7 +194,7 @@ ingestion_model:
 Instead of calling `engine.create_bindings_from_rdf()` (which does this automatically), we construct each `SparqlConnector` by hand. This gives full control over which `rdf:Class` URI maps to which resource and which file (or endpoint) provides the data:
 
 ```python
-from graflo.architecture.bindings import Bindings, SparqlConnector
+from graflo.architecture.contract.bindings import Bindings, SparqlConnector
 from pathlib import Path
 
 DATA_FILE = Path("data/data.ttl")
@@ -258,7 +258,7 @@ Finally, define the graph schema in the target database and ingest the data in o
 
 ```python
 from graflo.hq import IngestionParams
-from graflo.architecture.manifest import GraphManifest
+from graflo.architecture.contract.manifest import GraphManifest
 
 engine.define_and_ingest(
     manifest=GraphManifest(
@@ -288,8 +288,8 @@ from pathlib import Path
 
 from graflo.db.connection.onto import ArangoConfig
 from graflo.hq import GraphEngine, IngestionParams
-from graflo.architecture.manifest import GraphManifest
-from graflo.architecture.bindings import Bindings, SparqlConnector
+from graflo.architecture.contract.manifest import GraphManifest
+from graflo.architecture.contract.bindings import Bindings, SparqlConnector
 
 logging.basicConfig(level=logging.WARNING, handlers=[logging.StreamHandler()])
 logging.getLogger("graflo").setLevel(logging.DEBUG)

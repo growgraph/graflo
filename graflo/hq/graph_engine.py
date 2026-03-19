@@ -7,8 +7,8 @@ and data ingestion.
 
 import logging
 
-from graflo.architecture.manifest import GraphManifest
-from graflo.architecture.ingestion_model import IngestionModel
+from graflo.architecture.contract.manifest import GraphManifest
+from graflo.architecture.contract.declarations.ingestion_model import IngestionModel
 from graflo.architecture.schema import Schema
 from graflo.onto import DBType
 from graflo.architecture.onto_sql import SchemaIntrospectionResult
@@ -17,7 +17,7 @@ from graflo.db import DBConfig, PostgresConfig, SparqlEndpointConfig
 from graflo.hq.caster import Caster, IngestionParams
 from graflo.hq.inferencer import InferenceManager
 from graflo.hq.resource_mapper import ResourceMapper
-from graflo.architecture.bindings import Bindings
+from graflo.architecture.contract.bindings import Bindings
 
 from pathlib import Path
 

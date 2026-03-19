@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from graflo.filter.onto import ComparisonOperator, FilterExpression, LogicalOperator
 from graflo.onto import ExpressionFlavor
-from graflo.architecture.bindings import JoinClause, TableConnector
+from graflo.architecture.contract.bindings import JoinClause, TableConnector
 
 
 # ---------------------------------------------------------------
@@ -273,9 +273,11 @@ class TestAutoJoin:
 
     def _make_schema_and_patterns(self):
         """Build a minimal Schema + Connectors for the CMDB-like scenario."""
-        from graflo.architecture.ingestion_model import IngestionModel
+        from graflo.architecture.contract.declarations.ingestion_model import (
+            IngestionModel,
+        )
         from graflo.architecture.schema import Schema
-        from graflo.architecture.bindings import Bindings
+        from graflo.architecture.contract.bindings import Bindings
 
         schema = Schema.model_validate(
             {

@@ -100,7 +100,7 @@ conn_conf = ArangoConfig.from_docker_env()
 # )
 
 # Create bindings with file connectors
-from graflo.architecture.bindings import FileConnector
+from graflo.architecture.contract.bindings import FileConnector
 import pathlib
 
 bindings = Bindings()

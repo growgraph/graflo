@@ -26,7 +26,7 @@ import networkx as nx
 from suthing import FileHandle
 
 from graflo.architecture import GraphManifest
-from graflo.architecture.actor import (
+from graflo.architecture.pipeline.runtime.actor import (
     ActorWrapper,
     DescendActor,
     EdgeActor,

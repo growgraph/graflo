@@ -11,7 +11,7 @@ from pydantic import Field as PydanticField
 from pydantic import model_validator
 
 from graflo.architecture.base import ConfigBaseModel
-from graflo.architecture.onto import EdgeId, Index
+from graflo.architecture.graph_types import EdgeId, Index
 from graflo.onto import DBType
 
 

@@ -25,8 +25,8 @@ from pydantic import BaseModel
 
 from suthing import Timer
 
-from graflo.architecture.ingestion_model import IngestionModel
-from graflo.architecture.onto import EncodingType, GraphContainer
+from graflo.architecture.contract.declarations.ingestion_model import IngestionModel
+from graflo.architecture.graph_types import EncodingType, GraphContainer
 from graflo.architecture.schema import Schema
 from graflo.data_source import (
     AbstractDataSource,
@@ -37,7 +37,7 @@ from graflo.db import DBConfig
 from graflo.hq.db_writer import DBWriter
 from graflo.hq.registry_builder import RegistryBuilder
 from graflo.util.chunker import ChunkerType
-from graflo.architecture.bindings import Bindings
+from graflo.architecture.contract.bindings import Bindings
 
 logger = logging.getLogger(__name__)
 

@@ -6,8 +6,8 @@ import pytest
 import yaml
 
 from graflo.architecture import EdgeConfig, VertexConfig
-from graflo.architecture.actor import ActorWrapper
-from graflo.architecture.onto import ActionContext
+from graflo.architecture.pipeline.runtime.actor import ActorWrapper
+from graflo.architecture.graph_types import ActionContext
 
 logger = logging.getLogger(__name__)
 

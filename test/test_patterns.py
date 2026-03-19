@@ -1,7 +1,11 @@
 import pathlib
 import pytest
 
-from graflo.architecture.bindings import Bindings, FileConnector, TableConnector
+from graflo.architecture.contract.bindings import (
+    Bindings,
+    FileConnector,
+    TableConnector,
+)
 
 
 def test_connectors():

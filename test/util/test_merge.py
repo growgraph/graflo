@@ -1,4 +1,4 @@
-from graflo.architecture.onto import VertexRep
+from graflo.architecture.graph_types import VertexRep
 from graflo.util.merge import (
     merge_doc_basis,
 )

@@ -4,8 +4,8 @@ import asyncio
 
 from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.database_features import DatabaseProfile
-from graflo.architecture.ingestion_model import IngestionModel
-from graflo.architecture.onto import GraphContainer
+from graflo.architecture.contract.declarations.ingestion_model import IngestionModel
+from graflo.architecture.graph_types import GraphContainer
 from graflo.architecture.schema import (
     CoreSchema,
     GraphMetadata,

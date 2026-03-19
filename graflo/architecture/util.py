@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import Any, Collection, Literal
 
-from graflo.architecture.onto import GraphEntity
+from graflo.architecture.graph_types import GraphEntity
 
 
 def project_dict(

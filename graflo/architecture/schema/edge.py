@@ -28,7 +28,7 @@ from pydantic import (
 )
 
 from graflo.architecture.base import ConfigBaseModel
-from graflo.architecture.onto import (
+from graflo.architecture.graph_types import (
     EdgeId,
     EdgeType,
     Weight,

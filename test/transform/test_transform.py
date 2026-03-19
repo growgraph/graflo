@@ -2,7 +2,12 @@ import logging
 
 import pytest
 
-from graflo.architecture.transform import KeySelectionConfig, Transform
+from graflo.architecture.contract.declarations.transform import (
+    DressConfig,
+    KeySelectionConfig,
+    ProtoTransform,
+    Transform,
+)
 from graflo.util.transform import (
     camel_to_snake,
     parse_multi_item,
@@ -141,6 +146,17 @@ def test_dress_derives_output():
     assert t.dress is not None
     assert t.dress.key == "name"
     assert t.dress.value == "value"
+
+
+def test_proto_transform_dress_derives_output() -> None:
+    pt = ProtoTransform(
+        name="int_metric",
+        module="builtins",
+        foo="int",
+        dress=DressConfig(key="name", value="value"),
+    )
+    assert pt.output == ("name", "value")
+    assert pt.dress is not None
 
 
 def test_switch_legacy_rejected():

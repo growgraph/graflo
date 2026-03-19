@@ -1,7 +1,7 @@
 import pytest
 
-from graflo.architecture.actor.config import EdgeRouterActorConfig
-from graflo.architecture.manifest import GraphManifest
+from graflo.architecture.pipeline.runtime.actor.config import EdgeRouterActorConfig
+from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.schema import Schema
 
 
