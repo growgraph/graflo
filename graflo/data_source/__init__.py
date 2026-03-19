@@ -47,7 +47,7 @@ __all__ = [
     "TableFileDataSource",
 ]
 
-# RDF / SPARQL data sources are optional (require graflo[sparql])
+# RDF / SPARQL data sources (rdflib, SPARQLWrapper — core deps; optional import if missing)
 try:
     from .rdf import (  # noqa: F401
         RdfDataSource,

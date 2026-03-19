@@ -12,7 +12,7 @@ and cites relationships.
 Prerequisites:
 - Target graph database (ArangoDB or Neo4j) running
 - Environment variables or .env files configured for the target database
-- graflo[sparql] extra installed:  pip install graflo[sparql]
+- `pip install graflo` (RDF/SPARQL libraries are core dependencies)
 """
 
 import logging

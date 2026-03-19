@@ -13,13 +13,7 @@ Instead of manually writing a YAML schema, this example shows how to:
 ## Requirements
 
 - A target graph database running (ArangoDB, Neo4j, TigerGraph, or FalkorDB)
-- The `sparql` extra installed:
-
-```bash
-pip install graflo[sparql]
-```
-
-This pulls in `rdflib` (for local RDF file parsing) and `SPARQLWrapper` (for remote SPARQL endpoints).
+- GraFlo installed (`pip install graflo` or `uv add graflo`). RDF/SPARQL stacks (`rdflib`, `SPARQLWrapper`) are **core** dependencies—no separate extra is required.
 
 ## Dataset: Academic Knowledge Graph
 

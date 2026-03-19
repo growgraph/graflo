@@ -6,9 +6,7 @@ from pathlib import Path
 
 import pytest
 
-rdflib = pytest.importorskip(
-    "rdflib", reason="rdflib not installed (need graflo[sparql])"
-)
+rdflib = pytest.importorskip("rdflib", reason="rdflib not installed")
 
 from graflo.data_source.rdf import RdfFileDataSource, _triples_to_docs  # noqa: E402
 

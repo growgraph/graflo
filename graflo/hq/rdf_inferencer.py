@@ -12,9 +12,7 @@ The mapping follows these conventions:
   (source = domain class, target = range class)
 - Subject URI local name -> ``_key``
 
-Requires the ``sparql`` extra::
-
-    pip install graflo[sparql]
+Requires ``rdflib`` (a **core** dependency of ``graflo``).
 """
 
 from __future__ import annotations

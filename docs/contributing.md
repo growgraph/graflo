@@ -1,18 +1,19 @@
-# Contributing to Suthing
+# Contributing to GraFlo
 
-We welcome contributions to Suthing! This document provides guidelines and instructions for contributing to the project.
+We welcome contributions to GraFlo! This document provides guidelines and instructions for contributing to the project.
 
 ## Getting Started
 
 1. Fork the repository on GitHub
 2. Clone your fork locally
-3. Install the development dependencies:
+3. From the repository root (where `pyproject.toml` lives), install development dependencies:
    ```bash
-   uv sync --dev
+   uv sync --extra dev
    ```
+   Add `--extra docs` if you will build the documentation site locally.
 4. Install pre-commit hooks:
    ```bash
-   pre-commit install
+   uv run pre-commit install
    ```
 
 ## Development Workflow
@@ -24,7 +25,7 @@ We welcome contributions to Suthing! This document provides guidelines and instr
 
 2. Make your changes and ensure tests pass:
    ```bash
-   pytest test
+   uv run pytest test
    ```
 
 3. Commit your changes with a descriptive message:
@@ -74,7 +75,7 @@ We welcome contributions to Suthing! This document provides guidelines and instr
 When reporting issues, please include:
 
 - Python version
-- Suthing version
+- GraFlo version
 - Steps to reproduce
 - Expected behavior
 - Actual behavior

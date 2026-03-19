@@ -10,9 +10,8 @@ Provides two concrete data sources that share a common abstract parent:
 Both convert RDF triples into flat dictionaries grouped by subject URI, one
 dict per ``rdf:Class`` instance.
 
-Requires the ``sparql`` extra::
-
-    pip install graflo[sparql]
+Uses ``rdflib`` and ``SPARQLWrapper``, which are **core** dependencies of
+``graflo`` (see ``pyproject.toml``).
 """
 
 from __future__ import annotations
@@ -227,7 +226,8 @@ class RdfFileDataSource(RdfDataSource):
         except ImportError as exc:
             raise ImportError(
                 "rdflib is required for RDF data sources. "
-                "Install it with: pip install graflo[sparql]"
+                "It is a core dependency of graflo; reinstall with "
+                "`pip install --force-reinstall graflo` or install rdflib manually."
             ) from exc
 
         g = Graph()
@@ -316,7 +316,8 @@ class SparqlEndpointDataSource(RdfDataSource):
         except ImportError as exc:
             raise ImportError(
                 "SPARQLWrapper is required for SPARQL endpoint data sources. "
-                "Install it with: pip install graflo[sparql]"
+                "It is a core dependency of graflo; reinstall with "
+                "`pip install --force-reinstall graflo` or install SPARQLWrapper manually."
             ) from exc
 
         sparql = SPARQLWrapper(self.config.endpoint_url)

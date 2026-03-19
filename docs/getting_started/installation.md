@@ -27,30 +27,57 @@ git clone https://github.com/growgraph/graflo.git
 cd graflo
 ```
 
-2. Install with development dependencies:
-```bash
-uv sync --group dev
-```
-
-## Optional Dependencies
-
-graflo has optional dependency groups that can be installed based on your needs.
-
-### RDF / SPARQL support
-
-Adds `rdflib` and `SPARQLWrapper` for reading `.ttl`/`.rdf`/`.n3` files and querying SPARQL endpoints:
+2. Install with development dependencies (pytest, ty, pre-commit):
 
 ```bash
-pip install graflo[sparql]
+uv sync --extra dev
 ```
 
-### Schema visualisation
-
-For generating schema visualisations with graphviz (requires the system `graphviz` package, e.g. `apt install graphviz-dev`):
+To build the documentation locally, add the `docs` extra:
 
 ```bash
-pip install graflo[graphviz]
+uv sync --extra dev --extra docs
 ```
+
+## Optional extras
+
+The default package includes RDF/SPARQL support (`rdflib`, `SPARQLWrapper`) and graph database clients. Optional [project.optional-dependencies](https://docs.astral.sh/uv/concepts/projects/dependencies/#optional-dependencies) extras are **tooling only** (`dev`, `docs`, `plot`)—they do not toggle ingestion features:
+
+| Extra | Purpose |
+|-------|---------|
+| `dev` | Development: `pytest`, `ty`, `pre-commit` |
+| `docs` | Building this site: MkDocs and plugins |
+| `plot` | `plot_manifest` / schema diagrams via `pygraphviz` |
+
+### pip
+
+```bash
+pip install "graflo[dev]"
+pip install "graflo[docs]"
+pip install "graflo[plot]"
+# combine as needed, e.g.:
+pip install "graflo[dev,docs,plot]"
+```
+
+### uv
+
+From another project:
+
+```bash
+uv add graflo
+uv add "graflo[plot]"  # optional: plot_manifest
+```
+
+From a clone of this repository:
+
+```bash
+uv sync --extra dev
+uv sync --extra plot
+```
+
+### `plot` extra (Graphviz)
+
+Install the system Graphviz libraries first (e.g. Debian/Ubuntu: `apt install graphviz graphviz-dev`), then install `graflo[plot]`.
 
 ## Verifying Installation
 

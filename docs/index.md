@@ -80,7 +80,7 @@ The `DataSourceRegistry` manages `AbstractDataSource` adapters, each carrying a 
 - **Database abstraction** — One logical schema and transformation DSL, one API. Target ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, or NebulaGraph without rewriting pipelines. DB idiosyncrasies are handled in DB-aware projection (`Schema.resolve_db_aware(...)`) and connector/writer stages.
 - **Resource abstraction** — Each `Resource` defines a reusable actor pipeline that maps raw records to graph elements. Actor types include descend, transform, vertex, edge, plus **VertexRouter** and **EdgeRouter** for dynamic type-based routing (see [Concepts — Actor](concepts/index.md#actor)). Data sources bind to Resources by name via the `DataSourceRegistry`, decoupling transformation logic from data retrieval.
 - **DataSourceRegistry** — Register `FILE`, `SQL`, `API`, `IN_MEMORY`, or `SPARQL` data sources. Each `DataSourceType` plugs into the same Resource pipeline.
-- **SPARQL & RDF support** — Query SPARQL endpoints (e.g. Apache Fuseki), read `.ttl`/`.rdf`/`.n3` files, and auto-infer schemas from OWL/RDFS ontologies. Install with `pip install graflo[sparql]`.
+- **SPARQL & RDF support** — Query SPARQL endpoints (e.g. Apache Fuseki), read `.ttl`/`.rdf`/`.n3` files, and auto-infer schemas from OWL/RDFS ontologies (`rdflib` and `SPARQLWrapper` are included in the default install).
 - **Schema inference** — Generate graph schemas from PostgreSQL 3NF databases (PK/FK heuristics) or from OWL/RDFS ontologies. See [Example 5](examples/example-5.md).
 - **Schema migration planning/execution** — Generate typed migration plans between schema versions, apply low-risk additive changes with risk gates, and track revision history via `migrate_schema`.
   - Compare `from` and `to` schemas before execution to preview structural deltas and blocked high-risk operations.
@@ -114,7 +114,7 @@ The `DataSourceRegistry` manages `AbstractDataSource` adapters, each carrying a 
 - Python 3.11 or higher (3.11 and 3.12 officially supported)
 - A graph database (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, or NebulaGraph) as target
 - Optional: PostgreSQL for SQL data sources and schema inference
-- Optional: `rdflib` + `SPARQLWrapper` for RDF/SPARQL support (`pip install graflo[sparql]`)
+- Optional extras (see [Installation](getting_started/installation.md)): `dev` (tests and typing), `docs` (MkDocs), `plot` (`plot_manifest` via `pygraphviz`; system Graphviz required)
 - Full dependency list in `pyproject.toml`
 
 ## Contributing

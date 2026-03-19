@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.7.4] - 2026-03-19
+
+### Added
+- **Grouped value transforms** (`input_groups` / `output_groups`):
+  - Invoke the same function once per **group** of input fields; each group’s values are passed as positional arguments to the callable.
+  - Optional `output`: one scalar field name per group, aligned to `input_groups` order.
+  - Optional `output_groups`: per-group output field lists when the function returns a tuple (or multiple values) per call.
+  - When both `output` and `output_groups` are omitted, **unary groups** (exactly one input field per group) may **passthrough** results back onto those keys (see `Transform.passthrough_group_output` in `Transform`, default `true`). Multi-field groups require explicit `output` / `output_groups`.
+
+### Changed
+- **Packaging**: `[project.optional-dependencies]` is limited to tooling extras (`dev`, `docs`, `plot`). RDF/SPARQL libraries (`rdflib`, `SPARQLWrapper`) stay in the core dependency set. User-facing install docs, README, CI (`uv sync --extra dev`), and runtime error hints were updated to match.
+
+### Documentation
+- Concepts: [Transforms](docs/concepts/transforms.md) — grouped calls, YAML shorthands, strategy rules, and config reference tidying.
+
 ## [1.7.3]
 
 ### Added

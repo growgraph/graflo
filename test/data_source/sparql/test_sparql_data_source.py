@@ -10,11 +10,9 @@ from pathlib import Path
 
 import pytest
 
-rdflib = pytest.importorskip(
-    "rdflib", reason="rdflib not installed (need graflo[sparql])"
-)
+rdflib = pytest.importorskip("rdflib", reason="rdflib not installed")
 SPARQLWrapper = pytest.importorskip(
-    "SPARQLWrapper", reason="SPARQLWrapper not installed (need graflo[sparql])"
+    "SPARQLWrapper", reason="SPARQLWrapper not installed"
 )
 
 import requests  # noqa: E402

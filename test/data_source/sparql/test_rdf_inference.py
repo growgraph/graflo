@@ -6,9 +6,7 @@ from pathlib import Path
 
 import pytest
 
-rdflib = pytest.importorskip(
-    "rdflib", reason="rdflib not installed (need graflo[sparql])"
-)
+rdflib = pytest.importorskip("rdflib", reason="rdflib not installed")
 
 from graflo.hq.rdf_inferencer import RdfInferenceManager  # noqa: E402
 

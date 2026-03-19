@@ -72,7 +72,7 @@ ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph — same API for al
 - **Declarative LPG schema** — Define vertices, edges, vertex identity, secondary DB indexes, weights, and transforms in YAML or Python. The `Schema` is the single source of truth, independent of source or target.
 - **Database abstraction** — One logical schema, one API. Target ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, or NebulaGraph without rewriting pipelines. DB idiosyncrasies are handled in DB-aware projection (`Schema.resolve_db_aware(...)`) and connector/writer stages.
 - **Resource abstraction** — Each `Resource` defines a reusable actor pipeline (descend, transform, vertex, edge, plus **VertexRouter** and **EdgeRouter** for dynamic type-based routing) that maps raw records to graph elements. Data sources bind to Resources by name via the `DataSourceRegistry`, decoupling transformation logic from data retrieval.
-- **SPARQL & RDF support** — Query SPARQL endpoints (e.g. Apache Fuseki), read `.ttl`/`.rdf`/`.n3` files, and auto-infer schemas from OWL/RDFS ontologies. Install with `pip install graflo[sparql]`.
+- **SPARQL & RDF support** — Query SPARQL endpoints (e.g. Apache Fuseki), read `.ttl`/`.rdf`/`.n3` files, and auto-infer schemas from OWL/RDFS ontologies (`rdflib` and `SPARQLWrapper` ship with the default package).
 - **Schema inference** — Generate graph schemas from PostgreSQL 3NF databases (PK/FK heuristics) or from OWL/RDFS ontologies (`owl:Class` → vertices, `owl:ObjectProperty` → edges, `owl:DatatypeProperty` → vertex fields).
 - **Typed fields** — Vertex fields and edge weights carry types (`INT`, `FLOAT`, `STRING`, `DATETIME`, `BOOL`) for validation and database-specific optimisation.
 - **Parallel batch processing** — Configurable batch sizes and multi-core execution.
@@ -84,9 +84,17 @@ Full documentation is available at: [growgraph.github.io/graflo](https://growgra
 
 ```bash
 pip install graflo
+```
 
-# With RDF / SPARQL support (adds rdflib + SPARQLWrapper)
-pip install graflo[sparql]
+Optional extras (see `pyproject.toml` → `[project.optional-dependencies]`):
+
+- `dev` — pytest, ty, pre-commit
+- `docs` — MkDocs stack for building the documentation site
+- `plot` — `pygraphviz` for the `plot_manifest` CLI (install system Graphviz first)
+
+```bash
+pip install "graflo[dev]"
+pip install "graflo[dev,docs,plot]"
 ```
 
 ## Usage Examples
@@ -252,7 +260,7 @@ To install requirements
 
 ```shell
 git clone git@github.com:growgraph/graflo.git && cd graflo
-uv sync --dev
+uv sync --extra dev
 ```
 
 ### Tests
@@ -315,7 +323,7 @@ docker-compose --env-file .env up fuseki
 To run unit tests
 
 ```shell
-pytest test
+uv run pytest test
 ```
 
 > **Note**: Tests require external database containers (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph, Fuseki) to be running. CI builds intentionally skip test execution. Tests must be run locally with the required database images started (see [Test databases](#test-databases) section above). NebulaGraph tests are gated behind `pytest --run-nebula`.
@@ -327,7 +335,7 @@ pytest test
 - nebula3-python>=3.8.3 (NebulaGraph v3.x support)
 - nebula5-python>=5.2.1 (NebulaGraph v5.x support)
 - sqlalchemy>=2.0.0 (for PostgreSQL and SQL data sources)
-- rdflib>=7.0.0 + SPARQLWrapper>=2.0.0 (optional, install with `pip install graflo[sparql]`)
+- rdflib>=7.0.0 + SPARQLWrapper>=2.0.0 (included in the default install)
 
 ## Contributing
 
