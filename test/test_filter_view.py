@@ -1,14 +1,24 @@
-"""Tests for SelectSpec and TableConnector view (type_lookup)."""
+"""Tests for SelectSpec / TableConnector views and EdgeRouterActor row contract."""
 
 from __future__ import annotations
 
 import os
 import tempfile
+from collections import Counter
 from unittest.mock import MagicMock
 
-from graflo.data_source.sql import SQLConfig, SQLDataSource
-from graflo.filter.view import SelectSpec
 from graflo.architecture.contract.bindings import TableConnector
+from graflo.architecture.graph_types import ExtractionContext, LocationIndex
+from graflo.architecture.pipeline.runtime.actor.base import ActorInitContext
+from graflo.architecture.pipeline.runtime.actor.config import EdgeRouterActorConfig
+from graflo.architecture.pipeline.runtime.actor.edge_router import EdgeRouterActor
+from graflo.architecture.schema.edge import EdgeConfig
+from graflo.architecture.schema.vertex import Field as VertexField
+from graflo.architecture.schema.vertex import Vertex, VertexConfig
+from graflo.data_source.sql import SQLConfig, SQLDataSource
+from graflo.filter.onto import ComparisonOperator, FilterExpression
+from graflo.filter.select import SelectSpec
+from graflo.hq.resource_mapper import ResourceMapper
 
 
 def _setup_test_db() -> str:
@@ -68,22 +78,79 @@ def _setup_test_db() -> str:
     return conn_str
 
 
-class TestSelectSpecTypeLookup:
-    """SelectSpec with kind=type_lookup."""
+def _sql_for_sqlite(sql: str) -> str:
+    """Strip schema prefix for SQLite (mirrors resource loaders)."""
+    return sql.replace('"main".', "").replace("main.", "")
 
-    def test_from_dict_type_lookup(self):
-        """SelectSpec.from_dict parses type_lookup shorthand."""
-        spec = SelectSpec.from_dict(
-            {
-                "kind": "type_lookup",
-                "table": "entity_types",
-                "identity": "entity_id",
-                "type_column": "type_name",
-                "source": "parent",
-                "target": "child",
-                "relation": "link_type",
-            }
+
+def _fetch_rows(conn_str: str, sql: str) -> list[dict[str, object]]:
+    ds = SQLDataSource(
+        config=SQLConfig(
+            connection_string=conn_str,
+            query=sql,
+            pagination=False,
         )
+    )
+    return list(ds)
+
+
+def _vertex_config_fixture() -> VertexConfig:
+    id_field = VertexField(name="id")
+    return VertexConfig(
+        vertices=[
+            Vertex(name="project", fields=[id_field], identity=["id"]),
+            Vertex(name="task", fields=[id_field], identity=["id"]),
+            Vertex(name="milestone", fields=[id_field], identity=["id"]),
+        ]
+    )
+
+
+def _symmetric_edge_router() -> EdgeRouterActor:
+    cfg = EdgeRouterActorConfig(
+        source_type_field="source_type",
+        target_type_field="target_type",
+        source_fields={"id": "source_id"},
+        target_fields={"id": "target_id"},
+        relation_field="relation",
+    )
+    router = EdgeRouterActor.from_config(cfg)
+    router.finish_init(
+        ActorInitContext(
+            vertex_config=_vertex_config_fixture(),
+            edge_config=EdgeConfig(),
+            transforms={},
+        )
+    )
+    return router
+
+
+def _run_router_on_rows(
+    router: EdgeRouterActor, rows: list[dict[str, object]]
+) -> list[tuple[str, str, str | None]]:
+    ctx = ExtractionContext()
+    base = LocationIndex()
+    for i, row in enumerate(rows):
+        router(ctx, base.extend((i,)), doc=dict(row))
+    return [(edge.source, edge.target, edge.relation) for edge, _ in ctx.edge_requests]
+
+
+_TYPE_LOOKUP_VIEW: dict[str, object] = {
+    "kind": "type_lookup",
+    "table": "entity_types",
+    "identity": "entity_id",
+    "type_column": "type_name",
+    "source": "parent",
+    "target": "child",
+    "relation": "link_type",
+}
+
+
+class TestSelectSpecFromDict:
+    """Parsing SelectSpec from declarative dicts."""
+
+    def test_type_lookup_from_dict(self):
+        """type_lookup fields round-trip via from_dict."""
+        spec = SelectSpec.from_dict(_TYPE_LOOKUP_VIEW)
         assert spec.kind == "type_lookup"
         assert spec.table == "entity_types"
         assert spec.identity == "entity_id"
@@ -92,142 +159,125 @@ class TestSelectSpecTypeLookup:
         assert spec.target == "child"
         assert spec.relation == "link_type"
 
-    def test_build_sql_type_lookup_structure(self):
-        """type_lookup build_sql produces correct SQL structure."""
-        spec = SelectSpec.from_dict(
-            {
-                "kind": "type_lookup",
-                "table": "entity_types",
-                "identity": "entity_id",
-                "type_column": "type_name",
-                "source": "parent",
-                "target": "child",
-                "relation": "link_type",
-            }
-        )
-        sql = spec.build_sql(schema="main", base_table="entity_links")
 
-        assert "SELECT" in sql
-        assert "source_id" in sql
-        assert "source_type" in sql
-        assert "target_id" in sql
-        assert "target_type" in sql
-        assert "relation" in sql
-        assert "LEFT JOIN" in sql
-        assert "entity_types" in sql
-        assert "entity_links" in sql
-        assert "IS NOT NULL" in sql
-        assert "parent" in sql
-        assert "child" in sql
+class TestTypeLookupSqlFeedsEdgeRouter:
+    """type_lookup SQL rows match EdgeRouterActor field mapping (symmetric types)."""
 
-    def test_build_sql_type_lookup_executes_on_sqlite(self):
-        """type_lookup build_sql produces executable SQL on SQLite."""
+    def test_type_lookup_rows_produce_expected_edges(self):
+        """Rows from type_lookup view are consumed directly by edge_router config."""
         conn_str = _setup_test_db()
-        spec = SelectSpec.from_dict(
-            {
-                "kind": "type_lookup",
-                "table": "entity_types",
-                "identity": "entity_id",
-                "type_column": "type_name",
-                "source": "parent",
-                "target": "child",
-                "relation": "link_type",
-            }
-        )
-        sql = spec.build_sql(schema="main", base_table="entity_links")
-
-        # SQLite ignores schema prefix; strip it for compatibility
-        sql_sqlite = sql.replace('"main".', "").replace("main.", "")
-
-        ds = SQLDataSource(
-            config=SQLConfig(
-                connection_string=conn_str,
-                query=sql_sqlite,
-                pagination=False,
-            )
-        )
-        rows = list(ds)
+        spec = SelectSpec.from_dict(_TYPE_LOOKUP_VIEW)
+        sql = _sql_for_sqlite(spec.build_sql(schema="main", base_table="entity_links"))
+        rows = _fetch_rows(conn_str, sql)
 
         assert len(rows) == 3
-        assert "source_id" in rows[0]
-        assert "source_type" in rows[0]
-        assert "target_id" in rows[0]
-        assert "target_type" in rows[0]
-        assert "relation" in rows[0]
-        assert rows[0]["source_type"] == "project"
-        assert rows[0]["target_type"] == "task"
-        assert rows[0]["relation"] == "contains"
+        first = rows[0]
+        assert first["source_type"] == "project"
+        assert first["target_type"] == "task"
+        assert first["relation"] == "contains"
 
-
-class TestTableConnectorWithView:
-    """TableConnector with view=SelectSpec."""
-
-    def test_table_connector_build_query_uses_view(self):
-        """TableConnector.build_query when view is set delegates to view.build_sql."""
-        connector = TableConnector(
-            table_name="entity_links",
-            schema_name="public",
-            view={
-                "kind": "type_lookup",
-                "table": "entity_types",
-                "identity": "entity_id",
-                "type_column": "type_name",
-                "source": "parent",
-                "target": "child",
-                "relation": "link_type",
-            },
+        triples = _run_router_on_rows(_symmetric_edge_router(), rows)
+        assert Counter(triples) == Counter(
+            [
+                ("project", "task", "contains"),
+                ("project", "task", "contains"),
+                ("project", "milestone", "depends_on"),
+            ]
         )
-        sql = connector.build_query("public")
 
-        assert "source_id" in sql
-        assert "source_type" in sql
-        assert "target_id" in sql
-        assert "target_type" in sql
-        assert "entity_links" in sql
-        assert "entity_types" in sql
 
-    def test_table_connector_view_executes_on_sqlite(self):
-        """TableConnector with view produces executable SQL on SQLite."""
-        conn_str = _setup_test_db()
+class TestTableConnectorViewFeedsEdgeRouter:
+    """TableConnector.view build_query produces the same edge contract."""
+
+    def test_table_connector_query_rows_match_edge_router(self):
         connector = TableConnector(
             table_name="entity_links",
             schema_name="main",
-            view={
-                "kind": "type_lookup",
-                "table": "entity_types",
-                "identity": "entity_id",
-                "type_column": "type_name",
-                "source": "parent",
-                "target": "child",
-                "relation": "link_type",
-            },
+            view=_TYPE_LOOKUP_VIEW,
         )
-        sql = connector.build_query("main")
-        sql_sqlite = sql.replace('"main".', "").replace("main.", "")
+        conn_str = _setup_test_db()
+        sql = _sql_for_sqlite(connector.build_query("main"))
+        rows = _fetch_rows(conn_str, sql)
 
-        ds = SQLDataSource(
-            config=SQLConfig(
-                connection_string=conn_str,
-                query=sql_sqlite,
-                pagination=False,
-            )
+        triples = _run_router_on_rows(_symmetric_edge_router(), rows)
+        assert Counter(triples) == Counter(
+            [
+                ("project", "task", "contains"),
+                ("project", "task", "contains"),
+                ("project", "milestone", "depends_on"),
+            ]
         )
-        rows = list(ds)
+
+
+class TestSelectKindSelectAsymmetricLookup:
+    """kind=select with a single type join: static source vertex, dynamic target type."""
+
+    def test_single_join_select_static_source_dynamic_target(self):
+        """Only target side uses entity_types join; source type is fixed in SQL + config."""
+        conn_str = _setup_test_db()
+        spec = SelectSpec(
+            kind="select",
+            from_="entity_links",
+            joins=[
+                {
+                    "table": "entity_types",
+                    "alias": "t",
+                    "on_self": "child",
+                    "on_other": "entity_id",
+                    "join_type": "LEFT",
+                }
+            ],
+            select=[
+                'r."parent" AS source_id',
+                "'project' AS source_type",
+                'r."child" AS target_id',
+                't."type_name" AS target_type',
+                'r."link_type" AS relation',
+            ],
+            where=FilterExpression(
+                kind="leaf",
+                field="t.entity_id",
+                cmp_operator=ComparisonOperator.IS_NOT_NULL,
+                value=[],
+            ),
+        )
+        sql = _sql_for_sqlite(spec.build_sql(schema="main", base_table="entity_links"))
+        rows = _fetch_rows(conn_str, sql)
 
         assert len(rows) == 3
-        assert rows[0]["source_type"] == "project"
         assert rows[0]["target_type"] == "task"
 
+        cfg = EdgeRouterActorConfig(
+            source="project",
+            target_type_field="target_type",
+            source_fields={"id": "source_id"},
+            target_fields={"id": "target_id"},
+            relation_field="relation",
+        )
+        router = EdgeRouterActor.from_config(cfg)
+        router.finish_init(
+            ActorInitContext(
+                vertex_config=_vertex_config_fixture(),
+                edge_config=EdgeConfig(),
+                transforms={},
+            )
+        )
+        triples = _run_router_on_rows(router, rows)
+        assert Counter(triples) == Counter(
+            [
+                ("project", "task", "contains"),
+                ("project", "task", "contains"),
+                ("project", "milestone", "depends_on"),
+            ]
+        )
 
-class TestCreateBindingsTypeLookup:
-    """create_bindings_from_postgres with type_lookup_overrides."""
+
+class TestResourceMapperTypeLookupOverride:
+    """type_lookup_overrides attach a view to introspected edge tables."""
 
     def test_type_lookup_overrides_sets_view_on_connector(self):
-        """type_lookup_overrides sets view on matching edge table connectors."""
         from graflo.db import PostgresConnection
-        from graflo.hq.resource_mapper import ResourceMapper
 
-        # Mock introspection to return one edge table
         mock_conn = MagicMock(spec=PostgresConnection)
         mock_result = MagicMock()
         mock_result.schema_name = "public"

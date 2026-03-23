@@ -3,7 +3,7 @@ fail_fast: false
 repos:
   # Python linting and formatting
 -   repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.2
+    rev: v0.15.7
     hooks:
     -   id: ruff-check
         args: [--fix, --ignore, E722]

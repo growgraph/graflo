@@ -7,7 +7,7 @@ This module provides functionality to create Bindings from various data sources
 import logging
 
 from graflo.db import PostgresConnection
-from graflo.filter.view import SelectSpec
+from graflo.filter.select import SelectSpec
 from graflo.architecture.contract.bindings import Bindings, TableConnector
 
 logger = logging.getLogger(__name__)
