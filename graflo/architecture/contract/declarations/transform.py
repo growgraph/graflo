@@ -67,7 +67,28 @@ def _tuple_groups_it(
     return tuple(normalized)
 
 
-class TransformException(BaseException):
+def _normalize_keys_in_dict(data: dict[str, Any]) -> None:
+    """Normalize ``data['keys']`` in place for ProtoTransform / Transform YAML."""
+    if "keys" not in data:
+        return
+    keys = data["keys"]
+    if isinstance(keys, str):
+        data["keys"] = {"mode": "include", "names": (keys,)}
+    elif isinstance(keys, list):
+        data["keys"] = {"mode": "include", "names": tuple(keys)}
+    elif isinstance(keys, tuple):
+        data["keys"] = {"mode": "include", "names": keys}
+    elif isinstance(keys, dict):
+        keys = dict(keys)
+        names = keys.get("names")
+        if isinstance(names, str):
+            keys["names"] = (names,)
+        elif isinstance(names, list):
+            keys["names"] = tuple(names)
+        data["keys"] = keys
+
+
+class TransformException(Exception):
     """Base exception for transform-related errors."""
 
     pass
@@ -144,6 +165,8 @@ class ProtoTransform(ConfigBaseModel):
         input: Tuple of input field names
         output: Tuple of output field names
         dress: Optional pivot dressing for scalar functional results
+        target: Whether to transform field values or document keys
+        keys: Key selection when target is keys
         _foo: Internal reference to the transform function
     """
 
@@ -193,6 +216,17 @@ class ProtoTransform(ConfigBaseModel):
             "input=(Open,) produces {name: 'Open', value: <result>}."
         ),
     )
+    target: Literal["values", "keys"] = Field(
+        default="values",
+        description=(
+            "Transform target. values=apply function to input values; "
+            "keys=apply function to selected document keys."
+        ),
+    )
+    keys: KeySelectionConfig = Field(
+        default_factory=KeySelectionConfig,
+        description="Key selection for key-target transforms.",
+    )
 
     _foo: Any = PrivateAttr(default=None)
 
@@ -219,6 +253,7 @@ class ProtoTransform(ConfigBaseModel):
                     data[key] = ()
                 else:
                     data[key] = _tuple_groups_it(data[key])
+        _normalize_keys_in_dict(data)
         return data
 
     @model_validator(mode="after")
@@ -235,6 +270,8 @@ class ProtoTransform(ConfigBaseModel):
                     f"Could not instantiate transform function. Exception: {e}"
                 )
         if self.dress is not None:
+            if self.target == "keys":
+                raise ValueError("target='keys' is not compatible with dress.")
             object.__setattr__(self, "output", (self.dress.key, self.dress.value))
         elif not self.output and self.input:
             object.__setattr__(self, "output", self.input)
@@ -282,7 +319,7 @@ class Transform(ProtoTransform):
 
     Attributes:
         fields: Tuple of fields to transform
-        map: Dictionary mapping input fields to output fields
+        rename: Dictionary mapping input fields to output fields
         functional_transform: Whether this is a functional transform
     """
 
@@ -290,7 +327,7 @@ class Transform(ProtoTransform):
         default_factory=tuple,
         description="Field names for declarative transform (used to derive input when input unset).",
     )
-    map: dict[str, str] = Field(
+    rename: dict[str, str] = Field(
         default_factory=dict,
         description="Mapping of input_key -> output_key for pure field renaming (no function).",
     )
@@ -302,17 +339,6 @@ class Transform(ProtoTransform):
             "each: call function once per input field (unary). "
             "all: pass full document as a single argument."
         ),
-    )
-    target: Literal["values", "keys"] = Field(
-        default="values",
-        description=(
-            "Transform target. values=apply function to input values; "
-            "keys=apply function to selected document keys."
-        ),
-    )
-    keys: KeySelectionConfig = Field(
-        default_factory=KeySelectionConfig,
-        description="Key selection for key-target transforms.",
     )
     passthrough_group_output: bool = Field(
         default=True,
@@ -338,91 +364,82 @@ class Transform(ProtoTransform):
             raise ValueError(
                 "Legacy `switch` is no longer supported. Use `input` + `dress`."
             )
-        if "keys" in data:
-            keys = data["keys"]
-            if isinstance(keys, str):
-                data["keys"] = {"mode": "include", "names": (keys,)}
-            elif isinstance(keys, list):
-                data["keys"] = {"mode": "include", "names": tuple(keys)}
-            elif isinstance(keys, tuple):
-                data["keys"] = {"mode": "include", "names": keys}
-            elif isinstance(keys, dict):
-                keys = dict(keys)
-                names = keys.get("names")
-                if isinstance(names, str):
-                    keys["names"] = (names,)
-                elif isinstance(names, list):
-                    keys["names"] = tuple(names)
-                data["keys"] = keys
         return data
 
     @model_validator(mode="after")
     def _init_derived(self) -> Self:
+        explicit_map = bool(self.rename)
         object.__setattr__(self, "functional_transform", self._foo is not None)
-        self._init_output_from_grouped_input()
-        self._init_input_from_fields()
-        self._init_io_from_map()
-        self._init_output_from_dress()
-        self._default_output_from_input()
-        self._init_map_from_io()
-        self._validate_configuration()
+        next_input, next_output, next_map = self._derive_effective_io_and_map()
+        object.__setattr__(self, "input", next_input)
+        object.__setattr__(self, "output", next_output)
+        object.__setattr__(self, "map", next_map)
+        self._validate_configuration(explicit_map=explicit_map)
         return self
 
-    def _init_input_from_fields(self) -> None:
-        """Populate input from fields when provided."""
-        if self.fields and not self.input:
-            object.__setattr__(self, "input", self.fields)
-
-    def _init_io_from_map(self, force_init: bool = False) -> None:
-        """Populate input/output tuples from an explicit map."""
-        if not self.map:
-            return
-        if force_init or (not self.input and not self.output):
-            input_fields, output_fields = zip(*self.map.items())
-            object.__setattr__(self, "input", tuple(input_fields))
-            object.__setattr__(self, "output", tuple(output_fields))
-        elif not self.input:
-            object.__setattr__(self, "input", tuple(self.map.keys()))
-        elif not self.output:
-            object.__setattr__(self, "output", tuple(self.map.values()))
-
-    def _init_output_from_dress(self) -> None:
-        """Derive output from dress — always takes precedence when set."""
-        if self.dress is not None:
-            object.__setattr__(self, "output", (self.dress.key, self.dress.value))
-
-    def _init_output_from_grouped_input(self) -> None:
-        """Default scalar output names for grouped calls when omitted."""
-        if not self.input_groups:
-            return
-        if self.output or self.output_groups:
-            return
+    def _derive_grouped_default_output(self) -> tuple[str, ...]:
+        if not self.input_groups or self.output or self.output_groups:
+            return self.output
         if not self.passthrough_group_output:
-            return
+            return self.output
         scalar_names: list[str] = []
         for group in self.input_groups:
             if len(group) != 1:
-                return
+                return self.output
             scalar_names.append(group[0])
-        if scalar_names:
-            object.__setattr__(self, "output", tuple(scalar_names))
+        return tuple(scalar_names) if scalar_names else self.output
 
-    def _default_output_from_input(self) -> None:
-        """Ensure output mirrors input when not explicitly provided."""
-        if not self.output and self.input:
-            object.__setattr__(self, "output", self.input)
+    def _derive_effective_io_and_map(
+        self,
+    ) -> tuple[tuple[str, ...], tuple[str, ...], dict[str, str]]:
+        """Compute effective input/output/map once using explicit precedence."""
+        next_input = self.input
+        next_output = self._derive_grouped_default_output()
+        next_map = dict(self.rename)
 
-    def _init_map_from_io(self) -> None:
-        """Derive map from input/output when possible."""
-        if self.map or not self.input or not self.output:
+        if self.fields and not next_input:
+            next_input = self.fields
+
+        if next_map:
+            if not next_input and not next_output:
+                next_input = tuple(next_map.keys())
+                next_output = tuple(next_map.values())
+            elif not next_input:
+                next_input = tuple(next_map.keys())
+            elif not next_output:
+                next_output = tuple(next_map.values())
+
+        if self.dress is not None:
+            next_output = (self.dress.key, self.dress.value)
+        elif not next_output and next_input:
+            next_output = next_input
+
+        if (
+            not next_map
+            and next_input
+            and next_output
+            and len(next_input) == len(next_output)
+        ):
+            next_map = {src: dst for src, dst in zip(next_input, next_output)}
+
+        return next_input, next_output, next_map
+
+    def _init_io_from_map(self, force_init: bool = False) -> None:
+        """Backwards-compatible shim; prefer sync_io_from_map()."""
+        if not self.rename:
             return
-        if len(self.input) != len(self.output):
+        map_input = tuple(self.rename.keys())
+        map_output = tuple(self.rename.values())
+        if force_init or (not self.input and not self.output):
+            object.__setattr__(self, "input", map_input)
+            object.__setattr__(self, "output", map_output)
             return
-        object.__setattr__(
-            self, "map", {src: dst for src, dst in zip(self.input, self.output)}
-        )
+        if not self.input:
+            object.__setattr__(self, "input", map_input)
+        elif not self.output:
+            object.__setattr__(self, "output", map_output)
 
-    def _validate_configuration(self) -> None:
+    def _validate_configuration(self, *, explicit_map: bool) -> None:
         """Validate that the transform has enough information to operate."""
         if self.target == "keys":
             if self.input_groups or self.output_groups:
@@ -431,7 +448,7 @@ class Transform(ProtoTransform):
                 )
             if self._foo is None:
                 raise ValueError("target='keys' requires a functional transform.")
-            if self.map:
+            if self.rename:
                 raise ValueError("target='keys' cannot be combined with map.")
             if self.input or self.output or self.fields:
                 raise ValueError(
@@ -447,7 +464,7 @@ class Transform(ProtoTransform):
 
         # Reject only user-specified map+function conflict. A derived map
         # (from input/output defaults) is valid for functional transforms.
-        if "map" in self.model_fields_set and self.map and self._foo is not None:
+        if explicit_map and self.rename and self._foo is not None:
             raise ValueError("map and functional transform cannot be used together.")
         if self.dress is not None:
             if self._foo is None:
@@ -469,7 +486,7 @@ class Transform(ProtoTransform):
                 )
             if self.input or self.fields:
                 raise ValueError("input_groups cannot be combined with input/fields.")
-            if self.map:
+            if self.rename:
                 raise ValueError("input_groups cannot be combined with map.")
             if self.dress is not None:
                 raise ValueError("input_groups is not compatible with dress.")
@@ -529,7 +546,13 @@ class Transform(ProtoTransform):
 
     def _refresh_derived(self) -> None:
         """Re-run derived state (e.g. map from input/output) after mutating attributes."""
-        self._init_map_from_io()
+        if self.rename or not self.input or not self.output:
+            return
+        if len(self.input) != len(self.output):
+            return
+        object.__setattr__(
+            self, "map", {src: dst for src, dst in zip(self.input, self.output)}
+        )
 
     def __call__(self, *nargs: Any, **kwargs: Any) -> dict[str, Any] | Any:
         """Execute the transform.
@@ -706,7 +729,7 @@ class Transform(ProtoTransform):
         Returns:
             bool: True if this is a dummy transform
         """
-        return self.name is not None and not self.map and self._foo is None
+        return self.name is not None and not self.rename and self._foo is None
 
     def merge_from(self, t: Transform) -> Transform:
         """Merge another transform's configuration into a copy of it.

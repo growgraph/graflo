@@ -23,7 +23,14 @@ For targeted imports (smaller dependency graph), see ``docs/importing.md`` in th
 """
 
 # --- Core orchestration ---------------------------------------------------
-from .hq import Caster, GraphEngine, IngestionParams
+from .hq import (
+    CastBatchResult,
+    Caster,
+    GraphEngine,
+    IngestionParams,
+    RowCastFailure,
+    RowErrorBudgetExceeded,
+)
 
 # --- Architecture ----------------------------------------------------------
 from .architecture import (
@@ -81,7 +88,10 @@ __all__ = [
     # Orchestration
     "GraphEngine",
     "Caster",
+    "CastBatchResult",
     "IngestionParams",
+    "RowCastFailure",
+    "RowErrorBudgetExceeded",
     # Architecture
     "Schema",
     "GraphMetadata",

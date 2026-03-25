@@ -444,20 +444,20 @@ class SchemaSanitizer:
                         actor: The TransformActor instance to update
                     """
                     transform = actor.t
-                    if transform.map:
+                    if transform.rename:
                         # Update existing map: replace values and keys that match old field names
                         # First, update values
-                        for map_key, map_value in transform.map.items():
+                        for map_key, map_value in transform.rename.items():
                             if isinstance(map_value, str) and map_value in mappings:
-                                transform.map[map_key] = mappings[map_value]
+                                transform.rename[map_key] = mappings[map_value]
 
                         # if the terminal attr not in the map - add it
                         for k, v in mappings.items():
-                            if v not in transform.map.values():
-                                transform.map[k] = v
+                            if v not in transform.rename.values():
+                                transform.rename[k] = v
                     else:
                         # Create new map with all mappings
-                        transform.map = mappings.copy()
+                        transform.rename = mappings.copy()
 
                     # Update Transform object IO to reflect map edits
                     actor.t._init_io_from_map(force_init=True)

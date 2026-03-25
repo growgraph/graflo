@@ -263,7 +263,6 @@ def test_table_connector_sql_query_building():
     expected_where = "\"dt\" > '2020-10-10'"
     assert where_clause == expected_where
 
-    # Test that the query would include WHERE (LIMIT is now controlled by IngestionParams)
     base_query = 'SELECT * FROM "public"."events"'
     if where_clause:
         full_query = f"{base_query} WHERE {where_clause}"

@@ -78,7 +78,7 @@ def test_edges_sanitization_for_tigergraph(schema_with_incompatible_edges):
     #     )
     # )
 
-    assert ingestion_model.resources[-1].root.actor.descendants[0].actor.t.map == {
+    assert ingestion_model.resources[-1].root.actor.descendants[0].actor.t.rename == {
         "container_name": "id"
     }
 

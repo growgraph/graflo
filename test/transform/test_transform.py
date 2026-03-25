@@ -58,14 +58,14 @@ def test_round():
 
 
 def test_map():
-    kwargs = {"map": {"x": "y"}}
+    kwargs = {"rename": {"x": "y"}}
     t = Transform(**kwargs)  # type: ignore
     r = t(0.1234)
     assert r["y"] == 0.1234
 
 
 def test_map_doc():
-    kwargs = {"map": {"x": "y"}}
+    kwargs = {"rename": {"x": "y"}}
     t = Transform(**kwargs)  # type: ignore
     r = t({"x": 0.1234})
     assert r["y"] == 0.1234
@@ -159,6 +159,34 @@ def test_proto_transform_dress_derives_output() -> None:
     assert pt.dress is not None
 
 
+def test_proto_transform_vocabulary_may_define_target_keys() -> None:
+    pt = ProtoTransform(
+        name="snake_keys",
+        module="graflo.util.transform",
+        foo="camel_to_snake",
+        target="keys",
+    )
+    assert pt.target == "keys"
+    t = Transform(
+        module=pt.module,
+        foo=pt.foo,
+        target=pt.target,
+        keys=pt.keys,
+    )
+    assert t({"homeAddress": "London"}) == {"home_address": "London"}
+
+
+def test_proto_transform_target_keys_rejects_dress() -> None:
+    with pytest.raises(ValueError, match="not compatible with dress"):
+        ProtoTransform(
+            name="bad",
+            module="builtins",
+            foo="int",
+            target="keys",
+            dress=DressConfig(key="name", value="value"),
+        )
+
+
 def test_switch_legacy_rejected():
     kwargs = {
         "module": "builtins",
@@ -232,7 +260,7 @@ def test_map_and_function_conflict():
     with pytest.raises(
         ValueError, match="map and functional transform cannot be used together"
     ):
-        Transform(map={"x": "y"}, module="builtins", foo="int", input=("x",))
+        Transform(rename={"x": "y"}, module="builtins", foo="int", input=("x",))
 
 
 def test_remove_prefix_and_suffix_helpers():
@@ -339,6 +367,30 @@ def test_input_groups_rejects_strategy_each():
             foo="int",
             input_groups=(("value",),),
             strategy="each",
+        )
+
+
+def test_input_groups_rejects_output_and_output_groups_together():
+    with pytest.raises(ValueError, match="Provide either output or output_groups"):
+        Transform(
+            module="builtins",
+            foo="divmod",
+            input_groups=(("a", "b"),),
+            output=("scalar",),
+            output_groups=(("q", "r"),),
+        )
+
+
+def test_input_groups_rejects_dress():
+    with pytest.raises(
+        ValueError,
+        match="dress requires exactly one input field|not compatible with dress",
+    ):
+        Transform(
+            module="builtins",
+            foo="int",
+            input_groups=(("value",),),
+            dress=DressConfig(key="name", value="value"),
         )
 
 

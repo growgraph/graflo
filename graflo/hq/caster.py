@@ -15,13 +15,15 @@ Example:
 """
 
 import asyncio
+import json
 import logging
 import sys
+import traceback
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import pandas as pd
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from suthing import Timer
 
@@ -40,6 +42,97 @@ from graflo.util.chunker import ChunkerType
 from graflo.architecture.contract.bindings import Bindings
 
 logger = logging.getLogger(__name__)
+
+_ROW_ERROR_TRACEBACK_MAX_CHARS = 16_384
+
+
+class RowErrorBudgetExceeded(RuntimeError):
+    """Raised when total row cast failures exceed ``IngestionParams.max_row_errors``."""
+
+    def __init__(
+        self,
+        *,
+        total_failures: int,
+        limit: int,
+        dead_letter_path: Path | None,
+    ) -> None:
+        self.total_failures = total_failures
+        self.limit = limit
+        self.dead_letter_path = dead_letter_path
+        dl = str(dead_letter_path) if dead_letter_path else "(not configured)"
+        super().__init__(
+            f"Row error budget exceeded: {total_failures} total failures "
+            f"(limit {limit}). Dead letter: {dl}"
+        )
+
+
+class RowCastFailure(BaseModel):
+    """Structured record for a single row that failed during resource casting."""
+
+    resource_name: str
+    row_index: int
+    exception_type: str
+    message: str
+    traceback: str = Field(
+        default="",
+        description="Formatted traceback, truncated to the configured max length.",
+    )
+    doc_preview: Any = Field(
+        default=None,
+        description="Subset or truncated JSON of the source document for debugging.",
+    )
+
+
+class CastBatchResult(BaseModel):
+    """Outcome of casting a batch through a resource (possibly with skipped rows)."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    graph: GraphContainer
+    failures: list[RowCastFailure] = Field(default_factory=list)
+
+
+def _format_traceback(exc: BaseException) -> str:
+    tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    if len(tb) > _ROW_ERROR_TRACEBACK_MAX_CHARS:
+        return tb[:_ROW_ERROR_TRACEBACK_MAX_CHARS] + "\n...(traceback truncated)"
+    return tb
+
+
+def _build_doc_preview(
+    doc: dict[str, Any],
+    keys: tuple[str, ...] | None,
+    max_bytes: int,
+) -> Any:
+    if keys is not None:
+        preview_obj: Any = {k: doc[k] for k in keys if k in doc}
+    else:
+        preview_obj = doc
+    raw = json.dumps(preview_obj, default=str, sort_keys=True)
+    encoded = raw.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return json.loads(raw)
+    cut = raw.encode("utf-8")[:max_bytes].decode("utf-8", errors="replace")
+    return f"{cut}...(doc preview truncated)"
+
+
+def _row_failure_from_exception(
+    *,
+    resource_name: str,
+    row_index: int,
+    doc: dict[str, Any],
+    exc: BaseException,
+    doc_keys: tuple[str, ...] | None,
+    doc_preview_max_bytes: int,
+) -> RowCastFailure:
+    return RowCastFailure(
+        resource_name=resource_name,
+        row_index=row_index,
+        exception_type=type(exc).__name__,
+        message=str(exc),
+        traceback=_format_traceback(exc),
+        doc_preview=_build_doc_preview(doc, doc_keys, doc_preview_max_bytes),
+    )
 
 
 class IngestionParams(BaseModel):
@@ -75,6 +168,15 @@ class IngestionParams(BaseModel):
         dynamic_edges: If True, feedback edge declarations discovered during resource
             runtime initialization (e.g. edge actors) into the shared schema edge
             config. Keep False to preserve pure logical-schema immutability.
+        on_row_error: ``skip`` continues the batch on per-row cast errors (default);
+            ``fail`` fails the batch on the first error (legacy behavior).
+        row_error_dead_letter_path: If set, append one JSON line per failed row
+            (JSONL) for debugging.
+        max_row_errors: If set, total failed rows across the ingest run must not
+            exceed this value or :class:`RowErrorBudgetExceeded` is raised.
+        row_error_doc_preview_max_bytes: Max UTF-8 size for serialized ``doc_preview``.
+        row_error_doc_keys: If set, only these keys from the source doc appear in
+            ``doc_preview`` (recommended when documents may contain sensitive fields).
     """
 
     clear_data: bool = False
@@ -92,6 +194,11 @@ class IngestionParams(BaseModel):
     strict_references: bool = True
     strict_registry: bool = True
     dynamic_edges: bool = False
+    on_row_error: Literal["skip", "fail"] = "skip"
+    row_error_dead_letter_path: Path | None = None
+    max_row_errors: int | None = None
+    row_error_doc_preview_max_bytes: int = 4096
+    row_error_doc_keys: tuple[str, ...] | None = None
 
 
 class Caster:
@@ -131,35 +238,108 @@ class Caster:
         self.ingestion_params = ingestion_params
         self.schema = schema
         self.ingestion_model = ingestion_model
+        self._row_error_total = 0
+        self._row_error_io_lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
     # Casting
     # ------------------------------------------------------------------
 
+    async def _persist_row_failures(self, failures: list[RowCastFailure]) -> None:
+        if not failures:
+            return
+        params = self.ingestion_params
+        path = params.row_error_dead_letter_path
+
+        async with self._row_error_io_lock:
+            if path is not None:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                with path.open("a", encoding="utf-8") as f:
+                    for fail in failures:
+                        f.write(fail.model_dump_json() + "\n")
+
+            self._row_error_total += len(failures)
+            if params.max_row_errors is not None:
+                if self._row_error_total > params.max_row_errors:
+                    raise RowErrorBudgetExceeded(
+                        total_failures=self._row_error_total,
+                        limit=params.max_row_errors,
+                        dead_letter_path=path,
+                    )
+
+        if path is None:
+            for fail in failures:
+                logger.error(
+                    "Row cast failure resource=%s row_index=%s %s: %s",
+                    fail.resource_name,
+                    fail.row_index,
+                    fail.exception_type,
+                    fail.message,
+                    extra={"row_cast_failure": fail.model_dump(mode="json")},
+                )
+
     async def cast_normal_resource(
         self, data, resource_name: str | None = None
-    ) -> GraphContainer:
+    ) -> CastBatchResult:
         """Cast data into a graph container using a resource.
 
         Args:
-            data: Data to cast
+            data: Iterable of documents to cast
             resource_name: Optional name of the resource to use
 
         Returns:
-            GraphContainer: Container with cast graph data
+            CastBatchResult with graph and any per-row failures (empty when
+            ``on_row_error`` is ``fail`` and the batch succeeds).
         """
         rr = self.ingestion_model.fetch_resource(resource_name)
+        resolved_name = rr.name
+        params = self.ingestion_params
+        doc_list = list(data)
 
-        semaphore = asyncio.Semaphore(self.ingestion_params.n_cores)
+        semaphore = asyncio.Semaphore(params.n_cores)
 
-        async def process_doc(doc):
+        async def process_doc(doc: dict[str, Any]) -> Any:
             async with semaphore:
                 return await asyncio.to_thread(rr, doc)
 
-        docs = await asyncio.gather(*[process_doc(doc) for doc in data])
+        if params.on_row_error == "fail":
+            coros = [process_doc(doc) for doc in doc_list]
+            docs = await asyncio.gather(*coros)
+            graph = GraphContainer.from_docs_list(docs)
+            return CastBatchResult(graph=graph, failures=[])
+
+        raw = await asyncio.gather(
+            *[process_doc(doc) for doc in doc_list],
+            return_exceptions=True,
+        )
+        docs: list[Any] = []
+        failures: list[RowCastFailure] = []
+        for i, item in enumerate(raw):
+            doc_raw = doc_list[i]
+            doc = doc_raw if isinstance(doc_raw, dict) else {"_row": repr(doc_raw)}
+
+            if isinstance(item, asyncio.CancelledError):
+                raise item
+            if isinstance(item, (KeyboardInterrupt, SystemExit)):
+                raise item
+            if isinstance(item, BaseException):
+                failures.append(
+                    _row_failure_from_exception(
+                        resource_name=resolved_name,
+                        row_index=i,
+                        doc=doc,
+                        exc=item,
+                        doc_keys=params.row_error_doc_keys,
+                        doc_preview_max_bytes=params.row_error_doc_preview_max_bytes,
+                    )
+                )
+                continue
+            docs.append(item)
+
+        await self._persist_row_failures(failures)
 
         graph = GraphContainer.from_docs_list(docs)
-        return graph
+        return CastBatchResult(graph=graph, failures=failures)
 
     # ------------------------------------------------------------------
     # Processing pipeline
@@ -178,7 +358,16 @@ class Caster:
             resource_name: Optional name of the resource to use
             conn_conf: Optional database connection configuration
         """
-        gc = await self.cast_normal_resource(batch, resource_name=resource_name)
+        result = await self.cast_normal_resource(batch, resource_name=resource_name)
+        if result.failures:
+            logger.warning(
+                "Resource %r batch had %d row cast failure(s); first: %s: %s",
+                result.failures[0].resource_name,
+                len(result.failures),
+                result.failures[0].exception_type,
+                result.failures[0].message,
+            )
+        gc = result.graph
 
         if conn_conf is not None:
             writer = self._make_db_writer()
@@ -345,10 +534,6 @@ class Caster:
         rows_dressed = [{k: v for k, v in zip(columns, item)} for item in _data]
         return rows_dressed
 
-    # ------------------------------------------------------------------
-    # Ingestion orchestration
-    # ------------------------------------------------------------------
-
     async def ingest_data_sources(
         self,
         data_source_registry: DataSourceRegistry,
@@ -370,6 +555,7 @@ class Caster:
             ingestion_params = IngestionParams()
 
         self.ingestion_params = ingestion_params
+        self._row_error_total = 0
         init_only = ingestion_params.init_only
 
         if init_only:

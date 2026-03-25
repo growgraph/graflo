@@ -336,7 +336,7 @@ Example with include:
 - `input_groups: list[list[str]] | null` — grouped calls (values mode only); each entry is a group. YAML may use a **list of strings** as shorthand for unary groups (one field name per group).
 - `output_groups: list[list[str]] | null` - grouped outputs aligned to `input_groups`
 - `strategy: single | each | all | null` - function execution mode (with `input_groups`, omit or use `single` only; `each` / `all` are rejected)
-- `target: values | keys` - operate on values (default) or keys
+- `target: values | keys | null` - operate on values or keys. With `use`, omit to inherit defaults from the matching `ingestion_model.transforms` entry; inline calls (no `use`) default to `values` when omitted.
 - `keys`:
   - `mode: all | include | exclude`
   - `names: list[str]`
@@ -346,9 +346,11 @@ Example with include:
 
 ### `Transform` (Python API only)
 
-Named transforms in `ingestion_model.transforms` are `ProtoTransform` entries (`module`, `foo`, `params`, flat/grouped `input` / `output`, `dress`). Inline `transform.call` steps supply execution options (`target`, `keys`, `strategy`) and may override IO; `TransformActor` assembles a runtime `Transform`, which adds:
+Named transforms in `ingestion_model.transforms` are `ProtoTransform` entries (`module`, `foo`, `params`, flat/grouped `input` / `output`, `dress`, and optional `target` / `keys` for key-mode defaults). A `transform.call` with `use` inherits those defaults; set `call.target` or `call.keys` to override. Inline `transform.call` steps supply execution options (`target`, `keys`, `strategy`) and may override IO; `TransformActor` assembles a runtime `Transform`, which adds:
 
 - `passthrough_group_output: bool` (default `true`) — when `input_groups` is used and neither `output` nor `output_groups` is set, allow writing unary group results back onto the input keys. Not exposed on manifest `transform.call` today; omit outputs in YAML only for unary groups.
+
+When the effective target is `keys` (from the call or the named proto), `call.input` / `call.output` / `call.input_groups` / `call.output_groups` / `call.dress` are rejected at merge time so invalid combinations are not silently ignored.
 
 ## Validation and compatibility rules
 
@@ -375,6 +377,7 @@ Named transforms in `ingestion_model.transforms` are `ProtoTransform` entries (`
   - ID normalization
   - date/time parsing
   - repeated casting logic
+  - shared `target: keys` + `keys` selection so resources only reference `use:` without repeating key-mode config
 - Use local overrides when:
   - same function, different input/output fields per resource
 - Use `strategy: each` with a flat `input` list for repeated unary casting (for example, multiple numeric columns). For the same callable over **different argument tuples**, use `input_groups` instead.

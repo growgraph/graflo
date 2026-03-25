@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.7.5] - 2026-03-25
+
+### Added
+- **`SelectSpec` `type_lookup` per-side overrides** (edge SQL views / `TableConnector.view`): `source_table`, `target_table`, `source_identity`, `target_identity`, `source_type_column`, `target_type_column` (each falls back to `table`, `identity`, `type_column`) for different lookup tables, join keys, or discriminator columns on the two endpoints.
+- **Row-level cast errors**: `IngestionParams` gains `on_row_error` (`skip` | `fail`, default `skip`), optional `row_error_dead_letter_path` (JSONL), `max_row_errors`, `row_error_doc_preview_max_bytes`, and `row_error_doc_keys` for bounded, debug-friendly failure records. Skip mode logs each failure at ERROR when no dead-letter path is set.
+- **`CastBatchResult`**, **`RowCastFailure`**, and **`RowErrorBudgetExceeded`** exported from `graflo` / `graflo.hq`.
+- CLI `ingest`: `--on-row-error` and `--row-error-dead-letter`.
+
+### Changed
+- **`SelectSpec` `type_lookup`**: always emits both lookup joins and `source_type` / `target_type` columns. Static vertex types on one side belong only in `EdgeRouterActorConfig`; views that omit a type column or join use `kind="select"`. Removed `source_type_literal`, `target_type_literal`, `omit_source_type`, and `omit_target_type`.
+- **`ProtoTransform`**: **`target`** (`values` | `keys`) is defined on the proto/base transform model (with **`keys`** selection alongside it), not only on **`Transform`** — shared targeting semantics for vocabulary-style and full transform definitions.
+- **`Caster.cast_normal_resource`** now returns **`CastBatchResult`** with `.graph` and `.failures` instead of a bare `GraphContainer`.
+- **`TransformException`** subclasses **`Exception`** (was `BaseException`) so it is handled like other application errors.
+
 ## [1.7.4] - 2026-03-19
 
 ### Added

@@ -246,9 +246,9 @@ def row_resource_transform_collision():
         """
         name: pets
         transforms:
-        -   image: pet
-            map:
-                pet_name: name
+        -   transform:
+                rename:
+                    pet_name: name
     """
     )
     return tc

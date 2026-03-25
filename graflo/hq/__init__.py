@@ -4,7 +4,13 @@ This package provides high-level orchestration classes that coordinate
 multiple components for graph database operations.
 """
 
-from graflo.hq.caster import Caster, IngestionParams
+from graflo.hq.caster import (
+    CastBatchResult,
+    Caster,
+    IngestionParams,
+    RowCastFailure,
+    RowErrorBudgetExceeded,
+)
 from graflo.hq.db_writer import DBWriter
 from graflo.hq.graph_engine import GraphEngine
 from graflo.hq.inferencer import InferenceManager
@@ -13,10 +19,13 @@ from graflo.hq.resource_mapper import ResourceMapper
 from graflo.hq.sanitizer import SchemaSanitizer
 
 __all__ = [
+    "CastBatchResult",
     "Caster",
     "DBWriter",
     "GraphEngine",
     "IngestionParams",
+    "RowCastFailure",
+    "RowErrorBudgetExceeded",
     "InferenceManager",
     "RegistryBuilder",
     "ResourceMapper",

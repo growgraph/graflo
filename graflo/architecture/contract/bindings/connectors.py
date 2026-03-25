@@ -217,7 +217,7 @@ class TableConnector(ResourceConnector):
         if v is None:
             return None
         if isinstance(v, dict):
-            from graflo.filter.view import SelectSpec
+            from graflo.filter.select import SelectSpec
 
             return SelectSpec.from_dict(v)
         return v
@@ -328,7 +328,7 @@ class TableConnector(ResourceConnector):
         """
         schema = self.schema_name or effective_schema or "public"
         if self.view is not None:
-            from graflo.filter.view import SelectSpec
+            from graflo.filter.select import SelectSpec
 
             if isinstance(self.view, SelectSpec):
                 return self.view.build_sql(schema=schema, base_table=self.table_name)

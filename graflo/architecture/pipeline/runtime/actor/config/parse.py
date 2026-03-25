@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any, Never, cast
+
+from pydantic import ValidationError
 
 from .models import (
+    ActorConfig,
     DescendActorConfig,
-    EdgeActorConfig,
-    EdgeRouterActorConfig,
-    TransformActorConfig,
-    VertexActorConfig,
-    VertexRouterActorConfig,
     _actor_config_adapter,
 )
 from .normalize import normalize_actor_step
@@ -28,31 +26,51 @@ _STEP_STRIP_KEYS = frozenset(
 )
 
 
+def _raise_step_validation_error(data: dict[str, Any], err: ValidationError) -> Never:
+    """Raise a concise, user-facing validation error for malformed actor steps."""
+    keys = ", ".join(sorted(data.keys()))
+    is_legacy_map = "map" in data and "rename" not in data
+    if (
+        not is_legacy_map
+        and data.get("type") == "transform"
+        and isinstance(data.get("transform"), dict)
+    ):
+        inner = data["transform"]
+        is_legacy_map = "map" in inner and "rename" not in inner
+
+    if is_legacy_map:
+        raise ValueError(
+            "Invalid transform step: `map` is legacy syntax. "
+            "Use `rename` (for field renaming) or `call` (for function transforms). "
+            f"Step keys: [{keys}]."
+        ) from err
+    if data.get("type") == "transform":
+        raise ValueError(
+            "Invalid transform step. Expected exactly one of `rename` or `call`. "
+            f"Step keys: [{keys}]."
+        ) from err
+    raise ValueError(
+        "Invalid actor step configuration. "
+        "Supported step forms include `vertex`, `transform`, `edge`, `descend`, "
+        "`vertex_router`, and `edge_router`. "
+        f"Step keys: [{keys}]."
+    ) from err
+
+
 def validate_actor_step(
     data: dict[str, Any],
-) -> (
-    VertexActorConfig
-    | TransformActorConfig
-    | EdgeActorConfig
-    | DescendActorConfig
-    | VertexRouterActorConfig
-    | EdgeRouterActorConfig
-):
+) -> ActorConfig:
     """Validate a normalized step dict as ActorConfig (discriminated union)."""
-    return _actor_config_adapter.validate_python(data)
+    try:
+        return _actor_config_adapter.validate_python(data)
+    except ValidationError as err:
+        _raise_step_validation_error(data, err)
 
 
 def parse_root_config(
     *args: Any,
     **kwargs: Any,
-) -> (
-    VertexActorConfig
-    | TransformActorConfig
-    | EdgeActorConfig
-    | DescendActorConfig
-    | VertexRouterActorConfig
-    | EdgeRouterActorConfig
-):
+) -> ActorConfig:
     """Parse root input into a single ActorConfig (single step or descend pipeline)."""
     pipeline: list[dict[str, Any]] | None = None
     single: dict[str, Any] | None = None
@@ -76,10 +94,13 @@ def parse_root_config(
             pipeline = [dict(a) for a in args]
 
     if pipeline is not None:
-        configs = [
-            _actor_config_adapter.validate_python(normalize_actor_step(s))
-            for s in pipeline
-        ]
+        configs = []
+        for step in pipeline:
+            normalized = normalize_actor_step(step)
+            try:
+                configs.append(_actor_config_adapter.validate_python(normalized))
+            except ValidationError as err:
+                _raise_step_validation_error(normalized, err)
         return DescendActorConfig.model_validate(
             {
                 "type": "descend",
@@ -90,6 +111,6 @@ def parse_root_config(
         )
     if single is not None:
         step_dict = {k: v for k, v in single.items() if k not in _STEP_STRIP_KEYS}
-        return _actor_config_adapter.validate_python(normalize_actor_step(step_dict))
+        return validate_actor_step(normalize_actor_step(step_dict))
     step_kwargs = {k: v for k, v in kwargs.items() if k not in _STEP_STRIP_KEYS}
-    return _actor_config_adapter.validate_python(normalize_actor_step(step_kwargs))
+    return validate_actor_step(normalize_actor_step(step_kwargs))

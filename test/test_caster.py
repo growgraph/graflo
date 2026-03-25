@@ -72,9 +72,10 @@ def cast(modes, current_path, level, reset, n_cores=1):
                 )
             elif level == 2:
                 data = caster.normalize_resource(data_obj)
-                graph = asyncio.run(
+                result = asyncio.run(
                     caster.cast_normal_resource(data, resource_name=resource_name)
                 )
+                graph = result.graph
 
                 graph.pick_unique()
 

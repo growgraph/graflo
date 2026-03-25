@@ -20,7 +20,7 @@ Example:
 """
 
 from .onto import ComparisonOperator, FilterExpression, LogicalOperator
-from .view import SelectSpec
+from .select import SelectSpec
 
 __all__ = [
     "ComparisonOperator",

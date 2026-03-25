@@ -162,11 +162,12 @@ class TransformCallConfig(ConfigBaseModel):
         default=None,
         description="Optional output field groups aligned with input_groups.",
     )
-    target: Literal["values", "keys"] = PydanticField(
-        default="values",
+    target: Literal["values", "keys"] | None = PydanticField(
+        default=None,
         description=(
-            "Transform target. values=transform input values, "
-            "keys=transform selected document keys."
+            "Transform target. Omit with call.use to inherit from ingestion_model.transforms "
+            "entry. values=transform input values, keys=transform selected document keys. "
+            "Inline calls (no use) default to values when omitted."
         ),
     )
     keys: KeySelectionConfig | None = PydanticField(
@@ -233,7 +234,14 @@ class TransformCallConfig(ConfigBaseModel):
             raise ValueError(
                 "call must provide either use, or both module and foo for inline function."
             )
-        if self.target == "keys":
+        if self.use is None:
+            effective_target: Literal["values", "keys"] | None = (
+                self.target if self.target is not None else "values"
+            )
+        else:
+            effective_target = self.target
+
+        if effective_target == "keys":
             if self.strategy is not None:
                 raise ValueError(
                     "call.strategy is not allowed when call.target='keys'; key mode uses implicit per-key execution."
@@ -254,7 +262,7 @@ class TransformCallConfig(ConfigBaseModel):
                 )
             if self.dress is not None:
                 raise ValueError("call.dress is not supported when call.target='keys'.")
-        elif self.keys is not None:
+        elif effective_target == "values" and self.keys is not None:
             raise ValueError("call.keys can only be used when call.target='keys'.")
         if self.input is not None and self.input_groups is not None:
             raise ValueError(

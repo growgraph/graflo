@@ -2,14 +2,16 @@
 
 Provides SelectSpec for describing queries in a structured way, similar to
 FilterExpression. Supports type_lookup shorthand for edge tables where
-source/target types come from a lookup table via FK joins.
+source/target types come from lookup table(s) via FK joins, with optional
+per-side table / join key / discriminator column. Asymmetric edges (e.g. one
+static vertex type from EdgeRouterConfig only) use kind="select".
 """
 
 from __future__ import annotations
 
 from typing import Any, Literal, Self
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.filter.onto import FilterExpression
@@ -35,6 +37,14 @@ class SelectSpec(ConfigBaseModel):
         source: FK column on base table for source (type_lookup only)
         target: FK column on base table for target (type_lookup only)
         relation: Relation column in base table (type_lookup only, optional)
+        source_table: Lookup table for the source side (defaults to table).
+        target_table: Lookup table for the target side (defaults to table).
+        source_identity: Join column on the source lookup (defaults to identity).
+        target_identity: Join column on the target lookup (defaults to identity).
+        source_type_column: Type discriminator on source lookup (defaults to
+            type_column).
+        target_type_column: Type discriminator on target lookup (defaults to
+            type_column).
     """
 
     kind: Literal["select", "type_lookup"] = "select"
@@ -52,6 +62,61 @@ class SelectSpec(ConfigBaseModel):
     source: str | None = None
     target: str | None = None
     relation: str | None = None
+    source_table: str | None = None
+    target_table: str | None = None
+    source_identity: str | None = None
+    target_identity: str | None = None
+    source_type_column: str | None = None
+    target_type_column: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_type_lookup_side_options(self) -> Self:
+        if self.kind != "type_lookup":
+            return self
+
+        def eff_source_lookup() -> tuple[str | None, str | None, str | None]:
+            t = self.source_table if self.source_table is not None else self.table
+            i = (
+                self.source_identity
+                if self.source_identity is not None
+                else self.identity
+            )
+            c = (
+                self.source_type_column
+                if self.source_type_column is not None
+                else self.type_column
+            )
+            return (t, i, c)
+
+        def eff_target_lookup() -> tuple[str | None, str | None, str | None]:
+            t = self.target_table if self.target_table is not None else self.table
+            i = (
+                self.target_identity
+                if self.target_identity is not None
+                else self.identity
+            )
+            c = (
+                self.target_type_column
+                if self.target_type_column is not None
+                else self.type_column
+            )
+            return (t, i, c)
+
+        t, i, c = eff_source_lookup()
+        if not all([t, i, c]):
+            raise ValueError(
+                "type_lookup requires table, identity, type_column (or "
+                "source_table / source_identity / source_type_column) for the "
+                "source lookup join"
+            )
+        t, i, c = eff_target_lookup()
+        if not all([t, i, c]):
+            raise ValueError(
+                "type_lookup requires table, identity, type_column (or "
+                "target_table / target_identity / target_type_column) for the "
+                "target lookup join"
+            )
+        return self
 
     def build_sql(
         self,
@@ -73,43 +138,58 @@ class SelectSpec(ConfigBaseModel):
 
     def _build_type_lookup_sql(self, schema: str, base_table: str) -> str:
         """Expand type_lookup shorthand to full SQL."""
-        if not all(
-            [self.table, self.identity, self.type_column, self.source, self.target]
-        ):
-            raise ValueError(
-                "type_lookup requires table, identity, type_column, source, target"
-            )
-        lookup = self.table
-        ident = self.identity
-        type_col = self.type_column
+        if not self.source or not self.target:
+            raise ValueError("type_lookup requires source and target column names")
+
         src_fk = self.source
         tgt_fk = self.target
         rel_col = self.relation
 
-        base_ref = f'"{schema}"."{base_table}"'
-        lookup_ref = f'"{schema}"."{lookup}"'
+        src_tbl = self.source_table if self.source_table is not None else self.table
+        src_ident = (
+            self.source_identity if self.source_identity is not None else self.identity
+        )
+        src_type_col = (
+            self.source_type_column
+            if self.source_type_column is not None
+            else self.type_column
+        )
 
-        select_parts = [
-            f's."{ident}" AS source_id',
-            f's."{type_col}" AS source_type',
-            f't."{ident}" AS target_id',
-            f't."{type_col}" AS target_type',
+        tgt_tbl = self.target_table if self.target_table is not None else self.table
+        tgt_ident = (
+            self.target_identity if self.target_identity is not None else self.identity
+        )
+        tgt_type_col = (
+            self.target_type_column
+            if self.target_type_column is not None
+            else self.type_column
+        )
+
+        base_ref = f'"{schema}"."{base_table}"'
+
+        assert src_type_col is not None and tgt_type_col is not None
+        select_parts: list[str] = [
+            f'r."{src_fk}" AS source_id',
+            f's."{src_type_col}" AS source_type',
+            f'r."{tgt_fk}" AS target_id',
+            f't."{tgt_type_col}" AS target_type',
         ]
+
         if rel_col:
             select_parts.append(f'r."{rel_col}" AS relation')
         select_clause = ", ".join(select_parts)
 
-        from_clause = f"{base_ref} r"
-        join_s = f'LEFT JOIN {lookup_ref} s ON r."{src_fk}" = s."{ident}"'
-        join_t = f'LEFT JOIN {lookup_ref} t ON r."{tgt_fk}" = t."{ident}"'
-        from_clause += f" {join_s} {join_t}"
+        assert src_tbl is not None and src_ident is not None
+        assert tgt_tbl is not None and tgt_ident is not None
+        s_ref = f'"{schema}"."{src_tbl}"'
+        t_ref = f'"{schema}"."{tgt_tbl}"'
+        from_clause = (
+            f"{base_ref} r "
+            f'LEFT JOIN {s_ref} s ON r."{src_fk}" = s."{src_ident}" '
+            f'LEFT JOIN {t_ref} t ON r."{tgt_fk}" = t."{tgt_ident}"'
+        )
 
-        where_parts = [
-            f's."{ident}" IS NOT NULL',
-            f't."{ident}" IS NOT NULL',
-        ]
-        where_clause = " AND ".join(where_parts)
-
+        where_clause = f's."{src_ident}" IS NOT NULL AND t."{tgt_ident}" IS NOT NULL'
         return f"SELECT {select_clause} FROM {from_clause} WHERE {where_clause}"
 
     def _build_select_sql(self, schema: str, base_table: str) -> str:
@@ -171,7 +251,8 @@ class SelectSpec(ConfigBaseModel):
         """Create SelectSpec from dictionary (YAML/JSON friendly).
 
         Supports:
-        - kind="type_lookup": table, identity, type_column, source, target, relation
+        - kind="type_lookup": table, identity, type_column, source, target, relation,
+          optional per-side source_* / target_* lookup overrides
         - kind="select": from, joins, select, where
         """
         if isinstance(data, list):

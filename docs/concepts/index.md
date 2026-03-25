@@ -816,7 +816,7 @@ Transform steps are executed in the order they appear in `apply`.
 - **Vertex Filtering** — filter vertices based on custom conditions.
 - **PostgreSQL Schema Inference** — infer schemas from normalised PostgreSQL databases (3NF) with PK/FK constraints.
 - **RDF / OWL Schema Inference** — infer schemas from OWL/RDFS ontologies: `owl:Class` → vertices, `owl:ObjectProperty` → edges, `owl:DatatypeProperty` → vertex fields.
-- **SelectSpec** — declarative view specification for advanced filtering and projection of SQL data before feeding into Resources. Use `TableConnector.view` with `SelectSpec` (full SQL-like `select` or `type_lookup` shorthand for edge tables with FK-based type resolution) to control exactly what data is queried.
+- **SelectSpec** — declarative view specification for advanced filtering and projection of SQL data before feeding into Resources. Use `TableConnector.view` with `SelectSpec` (full SQL-like `select` or `type_lookup` shorthand for symmetric edge lookups with `source_type` / `target_type` columns) to control exactly what data is queried. Per-side `source_table` / `target_table` / `source_identity` / `target_identity` / `source_type_column` / `target_type_column` cover different lookup tables or join keys. When one endpoint’s type is static in `EdgeRouterActorConfig` only, use `kind="select"` for the view. Use `kind="select"` whenever the shorthand is not expressive enough.
 
 ### Schema Migration (v1)
 - **Read-only planning first** — use `migrate_schema plan --from-schema-path ... --to-schema-path ...` to generate a deterministic operation plan before any writes.

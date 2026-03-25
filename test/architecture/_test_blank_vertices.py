@@ -93,38 +93,47 @@ def resource_ibes():
         -   vertex: analyst
         -   vertex: recommendation
         -   vertex: agency
-        -   foo: parse_date_ibes
-            module: graflo.util.transform
-            input:
-            -   ANNDATS
-            -   ANNTIMS
-            output:
-            -   datetime_announce
-        -   foo: parse_date_ibes
-            module: graflo.util.transform
-            input:
-            -   REVDATS
-            -   REVTIMS
-            output:
-            -   datetime_review
-        -   foo: cast_ibes_analyst
-            module: graflo.util.transform
-            input:
-            -   ANALYST
-            output:
-            -   last_name
-            -   initial
-        -   map:
-                CUSIP: cusip
-                CNAME: cname
-                OFTIC: oftic
-        -   map:
-                ESTIMID: aname
-        -   map:
-                ERECCD: erec
-                ETEXT: etext
-                IRECCD: irec
-                ITEXT: itext
+        -   transform:
+                call:
+                    foo: parse_date_ibes
+                    module: graflo.util.transform
+                    input:
+                    -   ANNDATS
+                    -   ANNTIMS
+                    output:
+                    -   datetime_announce
+        -   transform:
+                call:
+                    foo: parse_date_ibes
+                    module: graflo.util.transform
+                    input:
+                    -   REVDATS
+                    -   REVTIMS
+                    output:
+                    -   datetime_review
+        -   transform:
+                call:
+                    foo: cast_ibes_analyst
+                    module: graflo.util.transform
+                    input:
+                    -   ANALYST
+                    output:
+                    -   last_name
+                    -   initial
+        -   transform:
+                rename:
+                    CUSIP: cusip
+                    CNAME: cname
+                    OFTIC: oftic
+        -   transform:
+                rename:
+                    ESTIMID: aname
+        -   transform:
+                rename:
+                    ERECCD: erec
+                    ETEXT: etext
+                    IRECCD: irec
+                    ITEXT: itext
     """)
     return an
 
