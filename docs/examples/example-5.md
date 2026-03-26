@@ -766,6 +766,13 @@ bindings = Bindings(
         {"resource": "users", "connector": "users_table"},
         {"resource": "products", "connector": "products_table"},
     ],
+    # Non-secret indirection: manifest stores proxy names only; register
+    # PostgresConfig (or other GeneralizedConnConfig) under each proxy at runtime
+    # via ConnectionProvider — same pattern GraphEngine uses for create_bindings().
+    connector_connection=[
+        {"connector": "users_table", "conn_proxy": "postgres_source"},
+        {"connector": "products_table", "conn_proxy": "postgres_source"},
+    ],
 )
 ```
 

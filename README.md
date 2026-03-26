@@ -76,6 +76,7 @@ ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph — same API for al
 - **Schema inference** — Generate graph schemas from PostgreSQL 3NF databases (PK/FK heuristics) or from OWL/RDFS ontologies (`owl:Class` → vertices, `owl:ObjectProperty` → edges, `owl:DatatypeProperty` → vertex fields).
 - **Typed fields** — Vertex fields and edge weights carry types (`INT`, `FLOAT`, `STRING`, `DATETIME`, `BOOL`) for validation and database-specific optimisation.
 - **Parallel batch processing** — Configurable batch sizes and multi-core execution.
+- **Credential-free source contracts** — `Bindings.connector_connection` maps each `TableConnector` / `SparqlConnector` (by name, hash, or resource alias) to a `conn_proxy` label. Manifests stay free of secrets; a runtime `ConnectionProvider` resolves each proxy to concrete `GeneralizedConnConfig` (for example PostgreSQL or SPARQL endpoint settings).
 
 ## Documentation
 Full documentation is available at: [growgraph.github.io/graflo](https://growgraph.github.io/graflo)
@@ -133,7 +134,7 @@ user_conn_conf = ArangoConfig.from_env(prefix="USER")
 # Note: If 'database' (or 'schema_name' for TigerGraph) is not set,
 # Caster will automatically use Schema.metadata.name as fallback
 
-from graflo.architecture.bindings import FileConnector
+from graflo.architecture.contract.bindings import FileConnector
 import pathlib
 
 # Create Bindings with file connectors
@@ -154,6 +155,8 @@ bindings.bind_resource("work", work_connector)
 #         )
 #     ],
 #     resource_connector=[{"resource": "work", "connector": "work_files"}],
+#     # Optional: for SQL/SPARQL connectors, name a proxy; register secrets via ConnectionProvider.
+#     # connector_connection=[{"connector": "work_files", "conn_proxy": "files_readonly"}],
 # )
 
 from graflo.hq.caster import IngestionParams

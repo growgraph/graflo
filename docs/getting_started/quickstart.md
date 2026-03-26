@@ -130,7 +130,10 @@ Here `schema` defines the logical graph, while `ingestion_model` defines resourc
 
 `Bindings` maps resource names (from `IngestionModel`) to their physical data sources:
 - **FileConnector**: For file-based resources with `regex` for matching filenames and `sub_path` for the directory to search
-- **TableConnector**: For PostgreSQL table resources with connection configuration
+- **TableConnector**: For PostgreSQL table resources (table/schema/view metadata on the connector; connection URLs and secrets are **not** stored in the manifest when using **`connector_connection`** — see below)
+- **SparqlConnector**: RDF class / SPARQL endpoint wiring (same proxy pattern as SQL when needed)
+
+For SQL and SPARQL sources, add **`connector_connection`**: a list of `{"connector": "<connector name or hash>", "conn_proxy": "<label>"}`. At runtime, register each `conn_proxy` on an `InMemoryConnectionProvider` (or your own `ConnectionProvider`) with `GeneralizedConnConfig`. `GraphEngine` / `ResourceMapper` call `bind_connector_to_conn_proxy` when building bindings from Postgres or RDF workflows so HQ and the manifest stay aligned.
 
 The `ingest()` method takes:
 - `target_db_config`: Target graph database configuration (where to write the graph)
