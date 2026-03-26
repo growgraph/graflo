@@ -9,11 +9,12 @@ services:
         container_name: ${CONTAINER_NAME}
         volumes:
         -   neo4j_data:/data
-        -   neo4j_plugins:/plugins
         -   neo4j_logs:/logs
         environment:
         -   NEO4J_AUTH=${NEO4J_AUTH}
-        -   NEO4J_PLUGINS=${NEO4J_PLUGINS}
+        -   NEO4JLABS_PLUGINS=${NEO4J_PLUGINS}
+        -   NEO4J_dbms_security_procedures_unrestricted=apoc.*,gds.*
+        -   NEO4J_dbms_security_procedures_allowlist=apoc.*,gds.*
 
 volumes:
     neo4j_data:
