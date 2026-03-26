@@ -24,7 +24,18 @@ Example:
 """
 
 from .arango.conn import ArangoConnection
-from .conn import Connection, ConnectionType
+from .conn import (
+    Connection,
+    ConnectionType,
+    InsertEdgesKwArgs,
+    consume_insert_edges_kwargs,
+)
+from .cypher import (
+    cypher_map_key,
+    cypher_string_literal,
+    rel_merge_props_map_from_row_index,
+    rel_merge_props_map_from_row_props,
+)
 from .connection import (
     ArangoConfig,
     DBConfig,
@@ -49,6 +60,12 @@ __all__ = [
     "ArangoConfig",
     "Connection",
     "ConnectionType",
+    "InsertEdgesKwArgs",
+    "consume_insert_edges_kwargs",
+    "cypher_map_key",
+    "cypher_string_literal",
+    "rel_merge_props_map_from_row_index",
+    "rel_merge_props_map_from_row_props",
     "DBConfig",
     "ConnectionManager",
     "FalkordbConfig",

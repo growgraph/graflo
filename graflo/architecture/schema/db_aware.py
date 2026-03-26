@@ -193,6 +193,43 @@ class EdgeConfigDBAware:
         )
         return runtime
 
+    def relationship_merge_property_names(self, edge: Edge) -> list[str]:
+        """Relationship properties that distinguish parallel edges (Cypher MERGE, etc.).
+
+        Uses the first logical ``identities`` key when present (endpoints omitted —
+        they are already matched on nodes). If that key yields no relationship
+        fields, or ``identities`` is empty, falls back to all direct weight names.
+        """
+        db_flavor = self.db_profile.db_flavor
+        if edge.identities:
+            props = self._identity_tokens_to_relationship_properties(
+                edge.identities[0], db_flavor
+            )
+            if props:
+                return props
+        if edge.weights is not None and edge.weights.direct_names:
+            return list(edge.weights.direct_names)
+        return []
+
+    @staticmethod
+    def _identity_tokens_to_relationship_properties(
+        identity_key: list[str], db_flavor: DBType
+    ) -> list[str]:
+        fields: list[str] = []
+        for token in identity_key:
+            if token in ("source", "target"):
+                continue
+            if token == "relation":
+                if db_flavor != DBType.TIGERGRAPH:
+                    fields.append("relation")
+                continue
+            fields.append(token)
+        deduped: list[str] = []
+        for field in fields:
+            if field not in deduped:
+                deduped.append(field)
+        return deduped
+
     def compile_identity_indexes(self) -> None:
         db_flavor = self.db_profile.db_flavor
         for edge in self.logical.edges:

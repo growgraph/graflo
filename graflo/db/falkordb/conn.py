@@ -35,7 +35,8 @@ from graflo.architecture.schema.edge import Edge
 from graflo.architecture.graph_types import Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.vertex import VertexConfig
-from graflo.db.conn import Connection, SchemaExistsError
+from graflo.db.conn import Connection, SchemaExistsError, consume_insert_edges_kwargs
+from graflo.db.cypher import rel_merge_props_map_from_row_index
 from graflo.db.util import serialize_value
 from graflo.filter.onto import FilterExpression
 from graflo.onto import AggregationType
@@ -616,15 +617,12 @@ class FalkordbConnection(Connection):
             match_keys_target: Properties to match target nodes
             filter_uniques: Unused in FalkorDB (MERGE handles uniqueness automatically)
             head: Optional limit on number of relationships to insert
-            **kwargs: Additional options:
-                - dry (bool): If True, build query but don't execute
+            **kwargs: See :meth:`graflo.db.conn.Connection.insert_edges_batch` /
+                :func:`graflo.db.conn.consume_insert_edges_kwargs`.
         """
-        dry = kwargs.pop("dry", False)
-        # Extract and ignore unused parameters (kept for interface compatibility)
-        kwargs.pop("collection_name", None)
-        kwargs.pop("uniq_weight_fields", None)
-        kwargs.pop("uniq_weight_collections", None)
-        kwargs.pop("upsert_option", None)
+        opts = consume_insert_edges_kwargs(kwargs)
+        dry = opts.dry
+        relationship_merge_properties_raw = opts.relationship_merge_properties
 
         # Apply head limit if specified
         if head is not None and isinstance(docs_edges, list):
@@ -675,12 +673,21 @@ class FalkordbConnection(Connection):
 
         match_clause = "WHERE " + " AND ".join(source_match_str + target_match_str)
 
+        merge_props: tuple[str, ...] | None = None
+        if relationship_merge_properties_raw:
+            merge_props = tuple(relationship_merge_properties_raw)
+        if merge_props:
+            map_clause = rel_merge_props_map_from_row_index(merge_props)
+            merge_pat = f"(source)-[r:{relation_name} {{{map_clause}}}]->(target)"
+        else:
+            merge_pat = f"(source)-[r:{relation_name}]->(target)"
+
         # Datetime objects are converted to ISO-8601 strings during sanitization
         q = f"""
             UNWIND $data AS row
             MATCH (source:{source_class}),
                   (target:{target_class}) {match_clause}
-            MERGE (source)-[r:{relation_name}]->(target)
+            MERGE {merge_pat}
             SET r += row[2]
         """
         if not dry:

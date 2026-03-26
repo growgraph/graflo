@@ -26,7 +26,8 @@ def test_create_edge_index(conn_conf, schema_obj):
             schema=schema_obj,
         )
     with ConnectionManager(connection_config=conn_conf) as db_client:
-        q = "SHOW INDEX;"
-        cursor = db_client.execute(q)
-        data = cursor.data()
-    assert any([item["name"] == "belongsTo_t_obs" for item in data])
+        idx_cursor = db_client.execute("SHOW INDEXES;")
+        idx_names = {row.get("name") for row in idx_cursor.data()}
+        con_cursor = db_client.execute("SHOW CONSTRAINTS;")
+        con_names = {row.get("name") for row in con_cursor.data()}
+    assert "belongsTo_t_obs" in idx_names or "belongsTo_t_obs" in con_names

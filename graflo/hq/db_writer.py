@@ -227,6 +227,15 @@ class DBWriter:
                 def _sync():
                     with ConnectionManager(connection_config=conn_conf) as db:
                         runtime = ec.runtime(edge)
+                        merge_props: tuple[str, ...] | None = None
+                        if conn_conf.connection_type in (
+                            DBType.NEO4J,
+                            DBType.FALKORDB,
+                            DBType.MEMGRAPH,
+                        ):
+                            mp = ec.relationship_merge_property_names(edge)
+                            if mp:
+                                merge_props = tuple(mp)
                         for ee in gc.loop_over_relations(edge_id):
                             _, _, relation = ee
                             if not self.dry:
@@ -236,6 +245,15 @@ class DBWriter:
                                     runtime=runtime,
                                     conn_type=conn_conf.connection_type,
                                 )
+                                edge_kw: dict = {
+                                    "filter_uniques": False,
+                                    "dry": self.dry,
+                                    "collection_name": runtime.storage_name(),
+                                }
+                                if merge_props is not None:
+                                    edge_kw["relationship_merge_properties"] = (
+                                        merge_props
+                                    )
                                 db.insert_edges_batch(
                                     docs_edges=data,
                                     source_class=vc.vertex_dbname(edge.source),
@@ -247,9 +265,7 @@ class DBWriter:
                                     match_keys_target=tuple(
                                         vc.identity_fields(edge.target)
                                     ),
-                                    filter_uniques=False,
-                                    dry=self.dry,
-                                    collection_name=runtime.storage_name(),
+                                    **edge_kw,
                                 )
 
                 await asyncio.to_thread(_sync)

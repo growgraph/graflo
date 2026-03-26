@@ -27,12 +27,14 @@ import logging
 from typing import Any
 
 from neo4j import GraphDatabase
+from neo4j.exceptions import ClientError
 
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.graph_types import Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.vertex import VertexConfig
-from graflo.db.conn import Connection, SchemaExistsError
+from graflo.db.conn import Connection, SchemaExistsError, consume_insert_edges_kwargs
+from graflo.db.cypher import rel_merge_props_map_from_row_index
 from graflo.filter.onto import FilterExpression
 from graflo.onto import AggregationType
 from graflo.onto import DBType
@@ -41,6 +43,20 @@ from graflo.onto import DBType
 from ..connection.onto import Neo4jConfig
 
 logger = logging.getLogger(__name__)
+
+_BENIGN_DUPLICATE_SCHEMA_CODES = frozenset(
+    {
+        "Neo.ClientError.Schema.IndexWithNameAlreadyExists",
+        "Neo.ClientError.Schema.EquivalentSchemaRuleAlreadyExists",
+        "Neo.ClientError.Schema.ConstraintAlreadyExists",
+        "Neo.ClientError.Schema.ConstraintWithNameAlreadyExists",
+        "Neo.ClientError.Schema.IndexAlreadyExists",
+    }
+)
+
+
+def _cypher_escape_identifier(name: str) -> str:
+    return name.replace("`", "``")
 
 
 class Neo4jConnection(Connection):
@@ -141,6 +157,7 @@ class Neo4jConnection(Connection):
             name: Name of the database to delete (unused, deletes all data)
         """
         try:
+            self._drop_all_user_indexes_and_constraints()
             self.execute("MATCH (n) DETACH DELETE n")
             logger.info("Successfully cleaned Neo4j database")
         except Exception as e:
@@ -200,11 +217,22 @@ class Neo4jConnection(Connection):
                 else []
             )
             for index_obj in index_list:
-                if edge.relation is not None:
-                    self._add_index(edge.relation, index_obj, is_vertex_index=False)
+                rel_label: str | None = None
+                if schema is not None:
+                    rel_label = schema.db_profile.edge_relation_name(
+                        edge.edge_id, default_relation=edge.relation
+                    )
+                if rel_label is None:
+                    rel_label = edge.relation
+                if rel_label is None:
+                    continue
+                self._add_index(rel_label, index_obj, is_vertex_index=False)
 
     def _add_index(self, obj_name, index: Index, is_vertex_index=True):
-        """Add an index to a label or relationship type.
+        """Add an index (or relationship uniqueness constraint) to label/rel type.
+
+        Vertex secondary indexes always use ``CREATE INDEX``. For relationships,
+        ``Index.unique`` emits a Neo4j uniqueness constraint when possible.
 
         Args:
             obj_name: Label or relationship type name
@@ -216,12 +244,69 @@ class Neo4jConnection(Connection):
         index_name = f"{obj_name}_{fields_str2}"
         if is_vertex_index:
             formula = f"(x:{obj_name})"
+            q = f"CREATE INDEX {index_name} IF NOT EXISTS FOR {formula} ON ({fields_str});"
+        elif index.unique and index.fields:
+            req = ", ".join([f"x.{f}" for f in index.fields])
+            q = (
+                f"CREATE CONSTRAINT {index_name} IF NOT EXISTS "
+                f"FOR ()-[x:{obj_name}]-() REQUIRE ({req}) IS UNIQUE;"
+            )
         else:
             formula = f"()-[x:{obj_name}]-()"
+            q = f"CREATE INDEX {index_name} IF NOT EXISTS FOR {formula} ON ({fields_str});"
 
-        q = f"CREATE INDEX {index_name} IF NOT EXISTS FOR {formula} ON ({fields_str});"
+        try:
+            self.execute(q)
+        except ClientError as e:
+            if e.code in _BENIGN_DUPLICATE_SCHEMA_CODES:
+                logger.debug(
+                    "Skipping index/constraint creation (already present): %s",
+                    e.message,
+                )
+                return
+            raise
 
-        self.execute(q)
+    def _drop_all_user_indexes_and_constraints(self) -> None:
+        """Remove non-system indexes and constraints for the active database.
+
+        Neo4j keeps indexes when only nodes are deleted; test ``clean_db`` and
+        ``recreate_schema`` expect a fully empty catalog. Builtin LOOKUP indexes
+        are not dropped.
+        """
+        try:
+            con_cursor = self.execute("SHOW CONSTRAINTS")
+            rows = con_cursor.data()
+        except ClientError as e:
+            logger.warning("Could not list constraints: %s", e)
+            rows = []
+        for row in rows:
+            name = row.get("name")
+            if not name:
+                continue
+            esc = _cypher_escape_identifier(str(name))
+            try:
+                self.execute(f"DROP CONSTRAINT `{esc}` IF EXISTS")
+            except ClientError as drop_exc:
+                logger.debug("DROP CONSTRAINT %s: %s", name, drop_exc)
+
+        try:
+            idx_cursor = self.execute("SHOW INDEXES")
+            idx_rows = idx_cursor.data()
+        except ClientError as e:
+            logger.warning("Could not list indexes: %s", e)
+            idx_rows = []
+        for row in idx_rows:
+            name = row.get("name")
+            if not name:
+                continue
+            idx_type = row.get("type") or row.get("indexType") or ""
+            if str(idx_type).upper() == "LOOKUP":
+                continue
+            esc = _cypher_escape_identifier(str(name))
+            try:
+                self.execute(f"DROP INDEX `{esc}` IF EXISTS")
+            except ClientError as drop_exc:
+                logger.debug("DROP INDEX %s: %s", name, drop_exc)
 
     def define_schema(self, schema: Schema):
         """Define vertex and edge classes based on schema.
@@ -277,8 +362,8 @@ class Neo4jConnection(Connection):
                 q = f"MATCH (n:{c}) DELETE n"
                 self.execute(q)
         else:
-            q = "MATCH (n) DELETE n"
-            self.execute(q)
+            self._drop_all_user_indexes_and_constraints()
+            self.execute("MATCH (n) DETACH DELETE n")
 
     def init_db(self, schema: Schema, recreate_schema: bool) -> None:
         """Initialize Neo4j with the given schema.
@@ -465,16 +550,15 @@ class Neo4jConnection(Connection):
             **kwargs: Additional options:
                 - dry: If True, don't execute the query
                 - collection_name: Unused in Neo4j (kept for interface compatibility)
-                - uniq_weight_fields: Unused in Neo4j (ArangoDB-specific)
+                - uniq_weight_fields: Unused (ArangoDB upsert); use relationship_merge_properties instead
                 - uniq_weight_collections: Unused in Neo4j (ArangoDB-specific)
                 - upsert_option: Unused in Neo4j (ArangoDB-specific, MERGE is always upsert)
+                - relationship_merge_properties: Property names included in ``MERGE`` so parallel
+                  edges (same endpoints and type, different weights) are distinct.
         """
-        dry = kwargs.pop("dry", False)
-        # Extract and ignore unused parameters (kept for interface compatibility)
-        kwargs.pop("collection_name", None)
-        kwargs.pop("uniq_weight_fields", None)
-        kwargs.pop("uniq_weight_collections", None)
-        kwargs.pop("upsert_option", None)
+        opts = consume_insert_edges_kwargs(kwargs)
+        dry = opts.dry
+        relationship_merge_properties_raw = opts.relationship_merge_properties
 
         # Apply head limit if specified
         if head is not None and isinstance(docs_edges, list):
@@ -487,12 +571,21 @@ class Neo4jConnection(Connection):
 
         match_clause = "WHERE " + " AND ".join(source_match_str + target_match_str)
 
+        merge_props: tuple[str, ...] | None = None
+        if relationship_merge_properties_raw:
+            merge_props = tuple(relationship_merge_properties_raw)
+        if merge_props:
+            map_clause = rel_merge_props_map_from_row_index(merge_props)
+            merge_pattern = f"(source)-[r:{relation_name} {{{map_clause}}}]->(target)"
+        else:
+            merge_pattern = f"(source)-[r:{relation_name}]->(target)"
+
         q = f"""
             WITH $batch AS batch 
             UNWIND batch as row 
             MATCH (source:{source_class}), 
                   (target:{target_class}) {match_clause} 
-                        MERGE (source)-[r:{relation_name}]->(target)
+                        MERGE {merge_pattern}
                 SET r += row[2]
         
         """

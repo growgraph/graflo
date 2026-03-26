@@ -1,5 +1,5 @@
 from suthing import FileHandle
-from graflo import Bindings, GraphManifest
+from graflo import GraphManifest
 from graflo.db import Neo4jConfig
 from graflo.hq import GraphEngine
 from graflo.hq.caster import IngestionParams
@@ -38,9 +38,6 @@ conn_conf = Neo4jConfig.from_docker_env()
 # Determine DB type from connection config
 db_type = conn_conf.connection_type
 
-# Load connectors from YAML file (same approach as Schema)
-bindings = Bindings.from_dict(FileHandle.load("patterns.yaml"))
-
 # Alternative: Create connectors programmatically
 # from graflo.util.onto import FileConnector
 # import pathlib
@@ -52,8 +49,6 @@ bindings = Bindings.from_dict(FileHandle.load("patterns.yaml"))
 # Create GraphEngine and define schema + ingest in one operation
 engine = GraphEngine(target_db_flavor=db_type)
 ingestion_params = IngestionParams(clear_data=True)
-manifest = manifest.model_copy(update={"bindings": bindings})
-manifest.finish_init()
 engine.define_and_ingest(
     manifest=manifest,
     target_db_config=conn_conf,

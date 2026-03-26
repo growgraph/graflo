@@ -87,7 +87,8 @@ from graflo.architecture.schema.edge import Edge
 from graflo.architecture.graph_types import Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.vertex import VertexConfig
-from graflo.db.conn import Connection, SchemaExistsError
+from graflo.db.conn import Connection, SchemaExistsError, consume_insert_edges_kwargs
+from graflo.db.cypher import rel_merge_props_map_from_row_props
 from graflo.filter.onto import FilterExpression
 from graflo.onto import AggregationType
 from graflo.onto import DBType
@@ -803,6 +804,10 @@ class MemgraphConnection(Connection):
         if self.conn is None:
             raise RuntimeError("Connection is closed")
 
+        opts = consume_insert_edges_kwargs(kwargs)
+        dry = opts.dry
+        relationship_merge_properties_raw = opts.relationship_merge_properties
+
         if not docs_edges:
             return
 
@@ -840,18 +845,28 @@ class MemgraphConnection(Connection):
         source_match = ", ".join([f"{k}: row.source.{k}" for k in match_keys_source])
         target_match = ", ".join([f"{k}: row.target.{k}" for k in match_keys_target])
 
+        merge_props: tuple[str, ...] | None = None
+        if relationship_merge_properties_raw:
+            merge_props = tuple(relationship_merge_properties_raw)
+        if merge_props:
+            map_clause = rel_merge_props_map_from_row_props(merge_props)
+            merge_line = f"MERGE (s)-[r:{relation_name} {{{map_clause}}}]->(t)"
+        else:
+            merge_line = f"MERGE (s)-[r:{relation_name}]->(t)"
+
         q = f"""
             UNWIND $batch AS row
             MATCH (s:{source_class} {{ {source_match} }})
             MATCH (t:{target_class} {{ {target_match} }})
-            MERGE (s)-[r:{relation_name}]->(t)
+            {merge_line}
             ON CREATE SET r = row.props
             ON MATCH SET r += row.props
         """
 
-        cursor = self.conn.cursor()
-        cursor.execute(q, {"batch": batch})
-        cursor.close()
+        if not dry:
+            cursor = self.conn.cursor()
+            cursor.execute(q, {"batch": batch})
+            cursor.close()
 
     def fetch_docs(
         self,

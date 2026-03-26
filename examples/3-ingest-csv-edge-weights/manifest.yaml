@@ -17,7 +17,6 @@ schema:
                 weights:
                     direct:
                     -   date
-#                    -   relation
     db_profile: {}
 ingestion_model:
     resources:
@@ -29,4 +28,9 @@ ingestion_model:
         -   vertex: company
             from:
                 name: company_b
-bindings: {}
+bindings:
+    connectors:
+    -   name: relations_files
+        regex: "^relations.*\\.csv$"
+        sub_path: "."
+        resource_name: "relations"

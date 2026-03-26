@@ -1,5 +1,0 @@
-connectors:
--   name: relations_files
-    regex: "^relations.*\\.csv$"
-    sub_path: "."
-    resource_name: "relations"

@@ -44,7 +44,7 @@ from graflo.architecture.schema import VertexConfigDBAware
 from graflo.architecture.graph_types import Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.vertex import FieldType, Vertex, VertexConfig
-from graflo.db.conn import Connection, SchemaExistsError
+from graflo.db.conn import Connection, SchemaExistsError, consume_insert_edges_kwargs
 from graflo.db.connection import TigergraphConfig
 from graflo.db.tigergraph.onto import (
     TIGERGRAPH_TYPE_ALIASES,
@@ -3539,13 +3539,11 @@ class TigerGraphConnection(Connection):
                 - uniq_weight_fields: Unused in TigerGraph (ArangoDB-specific)
                 - uniq_weight_collections: Unused in TigerGraph (ArangoDB-specific)
                 - upsert_option: Unused in TigerGraph (ArangoDB-specific, always upserts by default)
+                - relationship_merge_properties: Unused (Cypher property-graph backends only)
         """
-        dry = kwargs.pop("dry", False)
-        collection_name = kwargs.pop("collection_name", None)
-        # Extract and ignore ArangoDB-specific parameters
-        kwargs.pop("uniq_weight_fields", None)
-        kwargs.pop("uniq_weight_collections", None)
-        kwargs.pop("upsert_option", None)
+        opts = consume_insert_edges_kwargs(kwargs)
+        dry = opts.dry
+        collection_name = opts.collection_name
         if dry:
             if docs_edges is not None:
                 logger.debug(f"Dry run: would insert {len(docs_edges)} edges")
@@ -3584,6 +3582,13 @@ class TigerGraphConnection(Connection):
             logger.warning("No valid edges to insert")
             return
 
+        resolved_edge_type = (relation_name or collection_name or "").strip()
+        if not resolved_edge_type:
+            logger.error(
+                "Edge type must be specified via relation_name or collection_name"
+            )
+            return
+
         try:
             # Convert match_keys to tuples if they're lists
             match_keys_src = (
@@ -3597,12 +3602,7 @@ class TigerGraphConnection(Connection):
                 else match_keys_target
             )
 
-            edge_type = relation_name or collection_name
-            if not edge_type:
-                logger.error(
-                    "Edge type must be specified via relation_name or collection_name"
-                )
-                return
+            edge_type = resolved_edge_type
 
             # Generate multiple edge upsert payloads (one per unique attribute combination)
             payloads = self._generate_edge_upsert_payloads(
@@ -3692,13 +3692,23 @@ class TigerGraphConnection(Connection):
         except Exception as e:
             logger.error(f"Error batch inserting edges: {e}")
             # Fallback to individual operations
+            m_src = (
+                tuple(match_keys_source)
+                if isinstance(match_keys_source, list)
+                else match_keys_source
+            )
+            m_tgt = (
+                tuple(match_keys_target)
+                if isinstance(match_keys_target, list)
+                else match_keys_target
+            )
             self._fallback_individual_edge_upsert(
                 normalized_edges,
                 source_class,
                 target_class,
-                edge_type,
-                match_keys_src,
-                match_keys_tgt,
+                resolved_edge_type,
+                m_src,
+                m_tgt,
             )
 
     def _extract_id(self, doc, match_keys):

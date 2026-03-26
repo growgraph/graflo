@@ -52,6 +52,7 @@ Example:
 
 import abc
 import logging
+from dataclasses import dataclass
 from typing import Any, ClassVar, TypeVar
 
 from graflo.architecture.schema.edge import Edge
@@ -66,6 +67,42 @@ from graflo.onto import (
 
 logger = logging.getLogger(__name__)
 ConnectionType = TypeVar("ConnectionType", bound="Connection")
+
+
+@dataclass(frozen=True)
+class InsertEdgesKwArgs:
+    """Keyword arguments shared by :meth:`Connection.insert_edges_batch` implementations."""
+
+    dry: bool
+    collection_name: str | None
+    uniq_weight_fields: Any
+    uniq_weight_collections: Any
+    upsert_option: bool
+    relationship_merge_properties: Any
+
+
+def consume_insert_edges_kwargs(kwargs: dict[str, Any]) -> InsertEdgesKwArgs:
+    """Pop standard ``insert_edges_batch`` keys from *kwargs* and warn on unknown keys.
+
+    Mutates *kwargs* in place (removes consumed keys). Callers should not pass
+    additional keyword arguments beyond those documented on
+    :meth:`Connection.insert_edges_batch`.
+    """
+    result = InsertEdgesKwArgs(
+        dry=bool(kwargs.pop("dry", False)),
+        collection_name=kwargs.pop("collection_name", None),
+        uniq_weight_fields=kwargs.pop("uniq_weight_fields", None),
+        uniq_weight_collections=kwargs.pop("uniq_weight_collections", None),
+        upsert_option=bool(kwargs.pop("upsert_option", False)),
+        relationship_merge_properties=kwargs.pop("relationship_merge_properties", None),
+    )
+    if kwargs:
+        logger.warning(
+            "insert_edges_batch: unsupported keyword arguments ignored: %s",
+            sorted(kwargs.keys()),
+        )
+        kwargs.clear()
+    return result
 
 
 class SchemaExistsError(RuntimeError):
@@ -248,13 +285,15 @@ class Connection(abc.ABC):
             match_keys_target: Keys to match target vertices
             filter_uniques: Whether to filter unique edges
             head: Optional limit on number of edges to insert
-            **kwargs: Additional insertion parameters, including:
-                - collection_name: Name of the edge type (database-specific: collection/relationship type).
-                  Required for ArangoDB (defaults to {source_class}_{target_class}_edges if not provided),
-                  optional for other databases.
-                - uniq_weight_fields: Fields to consider for uniqueness (ArangoDB-specific)
-                - uniq_weight_collections: Vertex/edge types to consider for uniqueness (ArangoDB-specific)
-                - upsert_option: Whether to upsert existing edges (ArangoDB-specific)
+            **kwargs: Additional insertion parameters (see also
+                :func:`consume_insert_edges_kwargs`):
+                - dry: If True, do not execute writes (supported where implemented)
+                - collection_name: Edge collection (ArangoDB) or unused type-specific name
+                - uniq_weight_fields: Uniqueness fields (ArangoDB upsert)
+                - uniq_weight_collections: Uniqueness collections (ArangoDB upsert)
+                - upsert_option: Use upsert instead of insert (ArangoDB)
+                - relationship_merge_properties: Property names for Cypher MERGE
+                  (Neo4j, FalkorDB, Memgraph) so parallel edges differ by weights
         """
         pass
 

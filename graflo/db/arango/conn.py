@@ -39,7 +39,7 @@ from graflo.architecture.schema import Schema
 from graflo.architecture.schema.vertex import VertexConfig
 from graflo.db.arango.query import fetch_fields_query
 from graflo.db.arango.util import render_filters
-from graflo.db.conn import Connection, SchemaExistsError
+from graflo.db.conn import Connection, SchemaExistsError, consume_insert_edges_kwargs
 from graflo.db.util import get_data_from_cursor, json_serializer
 from graflo.filter.onto import FilterExpression
 from graflo.onto import AggregationType
@@ -821,18 +821,17 @@ class ArangoConnection(Connection):
                 - uniq_weight_fields: Fields to consider for uniqueness
                 - uniq_weight_collections: Classes to consider for uniqueness
                 - upsert_option: If True, use upsert instead of insert
+                - relationship_merge_properties: Ignored (Cypher backends only)
         """
-        dry = kwargs.pop("dry", False)
-
-        # Extract collection_name from kwargs, with default generation
-        collection_name = kwargs.pop("collection_name", None)
+        opts = consume_insert_edges_kwargs(kwargs)
+        dry = opts.dry
+        collection_name = opts.collection_name
         if collection_name is None:
             collection_name = f"{source_class}_{target_class}_edges"
 
-        # Extract ArangoDB-specific parameters from kwargs
-        uniq_weight_fields = kwargs.pop("uniq_weight_fields", None)
-        uniq_weight_collections = kwargs.pop("uniq_weight_collections", None)
-        upsert_option = kwargs.pop("upsert_option", False)
+        uniq_weight_fields = opts.uniq_weight_fields
+        uniq_weight_collections = opts.uniq_weight_collections
+        upsert_option = opts.upsert_option
 
         if isinstance(docs_edges, list):
             if docs_edges:

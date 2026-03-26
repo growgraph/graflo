@@ -13,7 +13,7 @@ from graflo.architecture.schema.edge import Edge
 from graflo.architecture.graph_types import Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.vertex import FieldType, VertexConfig
-from graflo.db.conn import Connection, SchemaExistsError
+from graflo.db.conn import Connection, SchemaExistsError, consume_insert_edges_kwargs
 from graflo.db.nebula.adapter import (
     NebulaClientAdapter,
     NebulaResultSet,
@@ -525,11 +525,8 @@ class NebulaConnection(Connection):
         head: int | None = None,
         **kwargs: Any,
     ) -> None:
-        dry = kwargs.pop("dry", False)
-        kwargs.pop("collection_name", None)
-        kwargs.pop("uniq_weight_fields", None)
-        kwargs.pop("uniq_weight_collections", None)
-        kwargs.pop("upsert_option", None)
+        opts = consume_insert_edges_kwargs(kwargs)
+        dry = opts.dry
 
         if not docs_edges:
             return

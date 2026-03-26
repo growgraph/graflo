@@ -118,3 +118,40 @@ def test_edge_finish_init_tigergraph_relation_artifacts_are_not_duplicated(
     )
 
     assert second_direct_names == first_direct_names
+
+
+def test_relationship_merge_property_names_defaults_to_direct_weights(
+    vertex_config_kg,
+):
+    vertex_config = VertexConfig.from_dict(vertex_config_kg)
+    edge = Edge.from_dict(
+        {
+            "source": "entity",
+            "target": "entity",
+            "weights": {"direct": ["date", "relation"]},
+        }
+    )
+    edge.finish_init(vertex_config)
+    profile = DatabaseProfile(db_flavor=DBType.NEO4J)
+    vc_db = VertexConfigDBAware(vertex_config, profile)
+    ec_db = EdgeConfigDBAware(EdgeConfig(edges=[edge]), vc_db, profile)
+    assert ec_db.relationship_merge_property_names(edge) == ["date", "relation"]
+
+
+def test_relationship_merge_property_names_prefers_first_identity(
+    vertex_config_kg,
+):
+    vertex_config = VertexConfig.from_dict(vertex_config_kg)
+    edge = Edge.from_dict(
+        {
+            "source": "entity",
+            "target": "entity",
+            "identities": [["source", "target", "relation", "pub_id"]],
+            "weights": {"direct": ["pub_id"]},
+        }
+    )
+    edge.finish_init(vertex_config)
+    profile = DatabaseProfile(db_flavor=DBType.NEO4J)
+    vc_db = VertexConfigDBAware(vertex_config, profile)
+    ec_db = EdgeConfigDBAware(EdgeConfig(edges=[edge]), vc_db, profile)
+    assert ec_db.relationship_merge_property_names(edge) == ["relation", "pub_id"]
