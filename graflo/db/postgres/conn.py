@@ -1093,7 +1093,9 @@ class PostgresConnection:
         return raw_tables
 
     def introspect_schema(
-        self, schema_name: str | None = None
+        self,
+        schema_name: str | None = None,
+        include_raw_tables: bool = False,
     ) -> SchemaIntrospectionResult:
         """Introspect the database schema and return structured information.
 
@@ -1113,7 +1115,9 @@ class PostgresConnection:
 
         vertex_tables = self.detect_vertex_tables(schema_name)
         edge_tables = self.detect_edge_tables(schema_name)
-        raw_tables = self._build_raw_tables(schema_name)
+        raw_tables: list[RawTableInfo] = []
+        if include_raw_tables:
+            raw_tables = self._build_raw_tables(schema_name)
 
         result = SchemaIntrospectionResult(
             vertex_tables=vertex_tables,

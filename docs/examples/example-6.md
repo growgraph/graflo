@@ -195,32 +195,26 @@ DATA_FILE = Path("data/data.ttl")
 
 bindings = Bindings()
 
-bindings.add_sparql_connector(
-    "Researcher",
-    SparqlConnector(
-        rdf_class="http://example.org/Researcher",
-        rdf_file=DATA_FILE,
-        resource_name="Researcher",
-    ),
+researcher_connector = SparqlConnector(
+    rdf_class="http://example.org/Researcher",
+    rdf_file=DATA_FILE,
 )
+bindings.add_connector(researcher_connector)
+bindings.bind_resource("Researcher", researcher_connector)
 
-bindings.add_sparql_connector(
-    "Publication",
-    SparqlConnector(
-        rdf_class="http://example.org/Publication",
-        rdf_file=DATA_FILE,
-        resource_name="Publication",
-    ),
+publication_connector = SparqlConnector(
+    rdf_class="http://example.org/Publication",
+    rdf_file=DATA_FILE,
 )
+bindings.add_connector(publication_connector)
+bindings.bind_resource("Publication", publication_connector)
 
-bindings.add_sparql_connector(
-    "Institution",
-    SparqlConnector(
-        rdf_class="http://example.org/Institution",
-        rdf_file=DATA_FILE,
-        resource_name="Institution",
-    ),
+institution_connector = SparqlConnector(
+    rdf_class="http://example.org/Institution",
+    rdf_file=DATA_FILE,
 )
+bindings.add_connector(institution_connector)
+bindings.bind_resource("Institution", institution_connector)
 ```
 
 Each `SparqlConnector` contains:
@@ -229,21 +223,19 @@ Each `SparqlConnector` contains:
 |---|---|
 | `rdf_class` | Full URI of the `rdf:Class` whose instances this connector fetches |
 | `rdf_file` | Path to the local RDF file containing the instance data |
-| `resource_name` | Name of the graflo resource this connector maps to |
+| Binding name | Resource linkage is defined via `bindings.bind_resource(...)` |
 
 **Alternative: Remote SPARQL Endpoint**
 
 To read data from a SPARQL endpoint (e.g. Apache Fuseki) instead of a local file, replace `rdf_file` with `endpoint_url`:
 
 ```python
-bindings.add_sparql_connector(
-    "Researcher",
-    SparqlConnector(
-        rdf_class="http://example.org/Researcher",
-        endpoint_url="http://localhost:3030/dataset/sparql",
-        resource_name="Researcher",
-    ),
+researcher_connector = SparqlConnector(
+    rdf_class="http://example.org/Researcher",
+    endpoint_url="http://localhost:3030/dataset/sparql",
 )
+bindings.add_connector(researcher_connector)
+bindings.bind_resource("Researcher", researcher_connector)
 ```
 
 ### Step 4: Define Schema and Ingest
@@ -306,14 +298,14 @@ schema, ingestion_model = engine.infer_schema_from_rdf(
 # Step 3: Explicit resource mapping
 bindings = Bindings()
 for cls_name in ("Researcher", "Publication", "Institution"):
-    bindings.add_sparql_connector(
-        cls_name,
-        SparqlConnector(
-            rdf_class=f"http://example.org/{cls_name}",
-            rdf_file=DATA_FILE,
-            resource_name=cls_name,
-        ),
+    connector = SparqlConnector(
+        rdf_class=f"http://example.org/{cls_name}",
+        rdf_file=DATA_FILE,
     )
+    bindings.add_connector(
+        connector,
+    )
+    bindings.bind_resource(cls_name, connector)
 
 # Step 4: Define schema and ingest
 engine.define_and_ingest(

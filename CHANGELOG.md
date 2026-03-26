@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.7.6] - 2026-03-26
+
+### Added
+- **Bindings `connector_connection`**: optional manifest block mapping each source connector to a non-secret `conn_proxy` name (`{"connector": ..., "conn_proxy": ...}`). Manifests describe *which* connector uses *which* proxy; credentials live in runtime configs resolved by `ConnectionProvider` (`GeneralizedConnConfig`).
+- **`ConnectorConnectionBinding`** and **`ResourceConnectorBinding`**: typed rows for `connector_connection` and `resource_connector` with dict coercion and index-scoped validation errors.
+- **`Bindings.connector_connection_bindings`** (typed view), **`get_conn_proxy_for_connector`**, and **`bind_connector_to_conn_proxy`**: API aligned with HQ loaders (`ResourceMapper`, `GraphEngine`) for proxy-based source wiring.
+
+### Changed
+- **Connector reference resolution**: `connector_connection` entries may reference a connector by canonical **hash**, declared **`name`**, or a **`resource` name** when that resource is already mapped to the connector (mirrors validation in `Bindings`).
+- **`Bindings` validation**: duplicate connector `name` values, conflicting resource→connector mappings, and conflicting `conn_proxy` for the same connector hash now fail fast with explicit errors.
+
+### Breaking
+- **`Bindings.from_dict` / manifest validation**: legacy top-level keys `postgres_connections`, `table_connectors`, `file_connectors`, and `sparql_connectors` are rejected. Migrate to the unified `connectors` + `resource_connector` (+ optional `connector_connection`) shape.
+
 ## [1.7.5] - 2026-03-25
 
 ### Added

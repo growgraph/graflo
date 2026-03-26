@@ -9,6 +9,10 @@ import logging
 from graflo.db import PostgresConnection
 from graflo.filter.select import SelectSpec
 from graflo.architecture.contract.bindings import Bindings, TableConnector
+from graflo.hq.connection_provider import (
+    InMemoryConnectionProvider,
+    PostgresGeneralizedConnConfig,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +30,25 @@ class ResourceMapper:
         schema_name: str | None = None,
         datetime_columns: dict[str, str] | None = None,
         type_lookup_overrides: dict[str, dict] | None = None,
+        include_raw_tables: bool = False,
     ) -> Bindings:
+        bindings, _ = self.create_bindings_with_provider_from_postgres(
+            conn=conn,
+            schema_name=schema_name,
+            datetime_columns=datetime_columns,
+            type_lookup_overrides=type_lookup_overrides,
+            include_raw_tables=include_raw_tables,
+        )
+        return bindings
+
+    def create_bindings_with_provider_from_postgres(
+        self,
+        conn: PostgresConnection,
+        schema_name: str | None = None,
+        datetime_columns: dict[str, str] | None = None,
+        type_lookup_overrides: dict[str, dict] | None = None,
+        include_raw_tables: bool = False,
+    ) -> tuple[Bindings, InMemoryConnectionProvider]:
         """Create Bindings from PostgreSQL tables.
 
         Args:
@@ -42,10 +64,15 @@ class ResourceMapper:
                 source, target, relation (optional).
 
         Returns:
-            Bindings: Bindings object with TableConnector instances for all tables
+            Tuple of:
+                - Bindings object with TableConnector instances for all tables
+                - InMemoryConnectionProvider containing connector->PostgresConfig mappings
         """
         # Introspect the schema
-        introspection_result = conn.introspect_schema(schema_name=schema_name)
+        introspection_result = conn.introspect_schema(
+            schema_name=schema_name,
+            include_raw_tables=include_raw_tables,
+        )
 
         # Create bindings
         bindings = Bindings()
@@ -53,9 +80,12 @@ class ResourceMapper:
         # Get schema name
         effective_schema = schema_name or introspection_result.schema_name
 
-        # Store the connection config
-        config_key = "default"
-        bindings.postgres_configs[(config_key, effective_schema)] = conn.config
+        provider = InMemoryConnectionProvider()
+        conn_proxy = "postgres_source"
+        provider.register_generalized_config(
+            conn_proxy=conn_proxy,
+            config=PostgresGeneralizedConnConfig(config=conn.config),
+        )
 
         date_cols = datetime_columns or {}
         type_lookup = type_lookup_overrides or {}
@@ -66,15 +96,15 @@ class ResourceMapper:
             table_connector = TableConnector(
                 table_name=table_name,
                 schema_name=effective_schema,
-                resource_name=table_name,
                 date_field=date_cols.get(table_name),
             )
-            bindings.table_connectors[table_name] = table_connector
-            bindings.postgres_table_configs[table_name] = (
-                config_key,
-                effective_schema,
-                table_name,
+            bindings.add_connector(table_connector)
+            bindings.bind_resource(table_name, table_connector)
+            bindings.bind_connector_to_conn_proxy(table_connector, conn_proxy)
+            provider.bind_connector_to_conn_proxy(
+                connector=table_connector, conn_proxy=conn_proxy
             )
+            provider.postgres_by_resource[table_name] = conn.config
 
         # Add bindings for edge tables
         for table_info in introspection_result.edge_tables:
@@ -86,18 +116,18 @@ class ResourceMapper:
             table_connector = TableConnector(
                 table_name=table_name,
                 schema_name=effective_schema,
-                resource_name=table_name,
                 date_field=date_cols.get(table_name),
                 view=view,
             )
-            bindings.table_connectors[table_name] = table_connector
-            bindings.postgres_table_configs[table_name] = (
-                config_key,
-                effective_schema,
-                table_name,
+            bindings.add_connector(table_connector)
+            bindings.bind_resource(table_name, table_connector)
+            bindings.bind_connector_to_conn_proxy(table_connector, conn_proxy)
+            provider.bind_connector_to_conn_proxy(
+                connector=table_connector, conn_proxy=conn_proxy
             )
+            provider.postgres_by_resource[table_name] = conn.config
 
-        return bindings
+        return bindings, provider
 
     # Future methods can be added here for other resource types:
     # def create_bindings_from_files(...) -> Bindings:

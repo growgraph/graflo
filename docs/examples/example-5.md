@@ -754,13 +754,25 @@ You can also create bindings manually for more control:
 from graflo.architecture.contract.bindings import Bindings, TableConnector
 
 bindings = Bindings(
-    _resource_mapping={
-        "users": ("db1", "users"),  # (config_key, table_name)
-        "products": ("db1", "products"),
-    },
-    _postgres_connections={
-        "db1": postgres_conf,  # Maps config_key to PostgresConfig
-    }
+    connectors=[
+        TableConnector(name="users_table", table_name="users", schema_name="public"),
+        TableConnector(
+            name="products_table",
+            table_name="products",
+            schema_name="public",
+        ),
+    ],
+    resource_connector=[
+        {"resource": "users", "connector": "users_table"},
+        {"resource": "products", "connector": "products_table"},
+    ],
+    # Non-secret indirection: manifest stores proxy names only; register
+    # PostgresConfig (or other GeneralizedConnConfig) under each proxy at runtime
+    # via ConnectionProvider — same pattern GraphEngine uses for create_bindings().
+    connector_connection=[
+        {"connector": "users_table", "conn_proxy": "postgres_source"},
+        {"connector": "products_table", "conn_proxy": "postgres_source"},
+    ],
 )
 ```
 

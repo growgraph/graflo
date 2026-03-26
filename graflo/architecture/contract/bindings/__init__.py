@@ -1,6 +1,6 @@
 """Resource connectors and named binding collections."""
 
-from .collection import Bindings
+from .core import Bindings, ResourceConnectorBinding
 from .connectors import (
     FileConnector,
     JoinClause,
@@ -12,6 +12,7 @@ from .connectors import (
 
 __all__ = [
     "Bindings",
+    "ResourceConnectorBinding",
     "FileConnector",
     "JoinClause",
     "ResourceConnector",

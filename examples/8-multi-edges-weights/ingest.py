@@ -29,14 +29,12 @@ db_type = conn_conf.connection_type
 
 # Alternative: Create connectors programmatically
 bindings = Bindings()
-bindings.add_file_connector(
-    "ticker_data",
-    FileConnector(
-        regex=r"^data.*\.csv$",
-        sub_path=pathlib.Path("."),
-        resource_name="ticker_data",
-    ),
+ticker_connector = FileConnector(
+    regex=r"^data.*\.csv$",
+    sub_path=pathlib.Path("."),
 )
+bindings.add_connector(ticker_connector)
+bindings.bind_resource("ticker_data", ticker_connector)
 
 # Create GraphEngine and define schema + ingest in one operation
 engine = GraphEngine(target_db_flavor=db_type)

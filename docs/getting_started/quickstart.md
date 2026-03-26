@@ -61,21 +61,37 @@ user_conn_conf = ArangoConfig.from_env(prefix="USER")
 # Create bindings with file connectors
 # FileConnector includes the path (sub_path) where files are located
 bindings = Bindings()
-bindings.add_file_connector(
-    "people",
-    FileConnector(regex="^people.*\.csv$", sub_path=pathlib.Path("."), resource_name="people")
+people_connector = FileConnector(regex="^people.*\.csv$", sub_path=pathlib.Path("."))
+bindings.add_connector(
+    people_connector,
 )
-bindings.add_file_connector(
-    "departments",
-    FileConnector(regex="^dep.*\.csv$", sub_path=pathlib.Path("."), resource_name="departments")
+bindings.bind_resource("people", people_connector)
+departments_connector = FileConnector(
+    regex="^dep.*\.csv$", sub_path=pathlib.Path(".")
 )
+bindings.add_connector(
+    departments_connector,
+)
+bindings.bind_resource("departments", departments_connector)
 
-# Or use resource_mapping for simpler initialization
+# Or initialize from explicit connector bindings
 bindings = Bindings(
-    _resource_mapping={
-        "people": "./people.csv",  # File path - creates FileConnector automatically
-        "departments": "./departments.csv",
-    }
+    connectors=[
+        FileConnector(
+            name="people_files",
+            regex="^people.*\\.csv$",
+            sub_path=pathlib.Path("."),
+        ),
+        FileConnector(
+            name="departments_files",
+            regex="^dep.*\\.csv$",
+            sub_path=pathlib.Path("."),
+        ),
+    ],
+    resource_connector=[
+        {"resource": "people", "connector": "people_files"},
+        {"resource": "departments", "connector": "departments_files"},
+    ],
 )
 
 from graflo.hq.caster import IngestionParams
@@ -114,7 +130,10 @@ Here `schema` defines the logical graph, while `ingestion_model` defines resourc
 
 `Bindings` maps resource names (from `IngestionModel`) to their physical data sources:
 - **FileConnector**: For file-based resources with `regex` for matching filenames and `sub_path` for the directory to search
-- **TableConnector**: For PostgreSQL table resources with connection configuration
+- **TableConnector**: For PostgreSQL table resources (table/schema/view metadata on the connector; connection URLs and secrets are **not** stored in the manifest when using **`connector_connection`** — see below)
+- **SparqlConnector**: RDF class / SPARQL endpoint wiring (same proxy pattern as SQL when needed)
+
+For SQL and SPARQL sources, add **`connector_connection`**: a list of `{"connector": "<connector name or hash>", "conn_proxy": "<label>"}`. At runtime, register each `conn_proxy` on an `InMemoryConnectionProvider` (or your own `ConnectionProvider`) with `GeneralizedConnConfig`. `GraphEngine` / `ResourceMapper` call `bind_connector_to_conn_proxy` when building bindings from Postgres or RDF workflows so HQ and the manifest stay aligned.
 
 The `ingest()` method takes:
 - `target_db_config`: Target graph database configuration (where to write the graph)
@@ -147,12 +166,17 @@ bindings = engine.create_bindings(pg_config, schema_name="public")
 # Or create bindings manually
 from graflo.architecture.contract.bindings import Bindings, TableConnector
 
-bindings = Bindings(
-    table_connectors={
-        "users": TableConnector(table_name="users", schema_name="public", resource_name="users"),
-        "products": TableConnector(table_name="products", schema_name="public", resource_name="products"),
-    }
+bindings = Bindings()
+users_connector = TableConnector(table_name="users", schema_name="public")
+bindings.add_connector(
+    users_connector,
 )
+bindings.bind_resource("users", users_connector)
+products_connector = TableConnector(table_name="products", schema_name="public")
+bindings.add_connector(
+    products_connector,
+)
+bindings.bind_resource("products", products_connector)
 
 # Ingest
 from graflo.db.connection.onto import ArangoConfig

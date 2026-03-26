@@ -79,12 +79,17 @@ Use `ingestion_model` for **how source records become vertices/edges**.
 
 ### `bindings`
 
-Defines source wiring.
+Defines source wiring (`Bindings`).
 
-- maps resource `name` to files, tables, SPARQL endpoints, API sources, etc.
-- can be left empty in-file and supplied at runtime (for env-specific deployments)
+- **`connectors`**: list of `FileConnector`, `TableConnector`, or `SparqlConnector` entries (where each row points at paths, tables, or RDF/SPARQL sources).
+- **`resource_connector`**: list of `{"resource": "<ingestion resource name>", "connector": "<connector name or reference>"}` rows linking `IngestionModel.resources[*].name` to a connector.
+- **`connector_connection`** (optional): list of `{"connector": "<name|hash|resource alias>", "conn_proxy": "<label>"}` rows. This keeps manifests **non-secret**: only proxy *names* appear in YAML; runtime code registers each `conn_proxy` on a `ConnectionProvider` with the real `GeneralizedConnConfig` (PostgreSQL, SPARQL, etc.).
 
-Use `bindings` for **where data comes from**.
+Connector references in `resource_connector` / `connector_connection` must match a connector `name` (or resolve via hash / resource alias as documented in `Bindings`). Duplicate connector names and conflicting resource or proxy mappings are rejected at validation time.
+
+The block can be left empty in-file (`bindings: {}`) and supplied at runtime for env-specific deployments.
+
+Use `bindings` for **where data comes from** (and optionally **which proxy label** supplies runtime credentials for each SQL/SPARQL connector).
 
 ## Authoring tips
 

@@ -137,4 +137,4 @@ def test_bindings_reject_inline_credentials_payload() -> None:
         )
         assert False, "Expected inline credentials to be rejected"
     except ValueError as exc:
-        assert "Inline credential payload is not supported in Bindings" in str(exc)
+        assert "Legacy Bindings init keys are not supported" in str(exc)

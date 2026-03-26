@@ -138,15 +138,15 @@ def _collect_edge_actors(wrapper: ActorWrapper) -> list[EdgeActor]:
 
 def _vertex_table_info(
     vertex_name: str,
-    patterns: Bindings,
+    bindings: Bindings,
     vertex_config: VertexConfig,
 ) -> tuple[str, str | None, str] | None:
     """Return (table_name, schema_name, primary_key_field) for a vertex.
 
-    Returns None if the vertex has no table connector in *patterns*.
+    Returns None if the vertex has no table connector in *bindings*.
     """
-    tp = patterns.table_connectors.get(vertex_name)
-    if tp is None:
+    connector = bindings.get_connector_for_resource(vertex_name)
+    if not isinstance(connector, TableConnector):
         return None
     try:
         pk_fields = vertex_config.identity_fields(vertex_name)
@@ -154,4 +154,4 @@ def _vertex_table_info(
         return None
     if not pk_fields:
         return None
-    return tp.table_name, tp.schema_name, pk_fields[0]
+    return connector.table_name, connector.schema_name, pk_fields[0]

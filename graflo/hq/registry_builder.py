@@ -16,6 +16,12 @@ from graflo.architecture.schema import Schema
 from graflo.data_source import DataSourceFactory, DataSourceRegistry
 from graflo.data_source.sql import SQLConfig, SQLDataSource
 from graflo.filter.sql import datetime_range_where_sql
+from graflo.hq.connection_provider import (
+    ConnectionProvider,
+    EmptyConnectionProvider,
+    PostgresGeneralizedConnConfig,
+    SparqlGeneralizedConnConfig,
+)
 from graflo.architecture.contract.bindings import (
     FileConnector,
     ResourceType,
@@ -49,6 +55,7 @@ class RegistryBuilder:
         self,
         bindings: Bindings,
         ingestion_params: IngestionParams,
+        connection_provider: ConnectionProvider | None = None,
         *,
         strict: bool = False,
     ) -> DataSourceRegistry:
@@ -58,6 +65,7 @@ class RegistryBuilder:
         resource type, then delegates to the appropriate registration helper.
         """
         registry = DataSourceRegistry()
+        provider = connection_provider or EmptyConnectionProvider()
         failures: list[str] = []
 
         for resource in self.ingestion_model.resources:
@@ -70,7 +78,7 @@ class RegistryBuilder:
                 failures.append(msg)
                 continue
 
-            connector = bindings.connectors.get(resource_name)
+            connector = bindings.get_connector_for_resource(resource_name)
             if connector is None:
                 msg = f"No connector found for resource '{resource_name}'"
                 logger.warning("%s, skipping", msg)
@@ -104,7 +112,12 @@ class RegistryBuilder:
                     continue
                 try:
                     self._register_sql_table_sources(
-                        registry, resource_name, connector, bindings, ingestion_params
+                        registry,
+                        resource_name,
+                        connector,
+                        bindings,
+                        ingestion_params,
+                        provider,
                     )
                 except Exception as e:
                     msg = f"Failed to register SQL source for resource '{resource_name}': {e}"
@@ -120,7 +133,12 @@ class RegistryBuilder:
                     continue
                 try:
                     self._register_sparql_sources(
-                        registry, resource_name, connector, bindings, ingestion_params
+                        registry,
+                        resource_name,
+                        connector,
+                        bindings,
+                        ingestion_params,
+                        provider,
                     )
                 except Exception as e:
                     msg = f"Failed to register SPARQL source for resource '{resource_name}': {e}"
@@ -213,6 +231,7 @@ class RegistryBuilder:
         connector: TableConnector,
         bindings: Bindings,
         ingestion_params: IngestionParams,
+        connection_provider: ConnectionProvider,
     ) -> None:
         """Register SQL table data sources for a resource.
 
@@ -226,7 +245,21 @@ class RegistryBuilder:
         """
         from graflo.hq.auto_join import enrich_edge_connector_with_joins
 
-        postgres_config = bindings.get_postgres_config(resource_name)
+        generalized = (
+            connection_provider.get_generalized_conn_config(connector)
+            if hasattr(connection_provider, "get_generalized_conn_config")
+            else None
+        )
+        postgres_config = (
+            generalized.config
+            if isinstance(generalized, PostgresGeneralizedConnConfig)
+            else None
+        )
+        if postgres_config is None:
+            # Legacy fallback: allow older ConnectionProvider implementations.
+            postgres_config = connection_provider.get_postgres_config(
+                resource_name, connector
+            )
         if postgres_config is None:
             logger.warning(
                 f"PostgreSQL table '{resource_name}' has no connection config, skipping"
@@ -315,6 +348,7 @@ class RegistryBuilder:
         connector: SparqlConnector,
         bindings: "Bindings",
         ingestion_params: "IngestionParams",
+        connection_provider: ConnectionProvider,
     ) -> None:
         """Register SPARQL data sources for a resource.
 
@@ -333,13 +367,22 @@ class RegistryBuilder:
                     SparqlSourceConfig,
                 )
 
-                sparql_config = bindings.get_sparql_config(resource_name)
-                username = (
-                    getattr(sparql_config, "username", None) if sparql_config else None
+                generalized = (
+                    connection_provider.get_generalized_conn_config(connector)
+                    if hasattr(connection_provider, "get_generalized_conn_config")
+                    else None
                 )
-                password = (
-                    getattr(sparql_config, "password", None) if sparql_config else None
-                )
+                if isinstance(generalized, SparqlGeneralizedConnConfig):
+                    cfg = generalized.config
+                    username = cfg.username
+                    password = cfg.password
+                else:
+                    # Legacy fallback: allow older ConnectionProvider implementations.
+                    sparql_auth = connection_provider.get_sparql_auth(
+                        resource_name, connector
+                    )
+                    username = sparql_auth.username if sparql_auth else None
+                    password = sparql_auth.password if sparql_auth else None
 
                 source_config = SparqlSourceConfig(
                     endpoint_url=connector.endpoint_url,

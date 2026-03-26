@@ -32,7 +32,10 @@ from graflo.architecture.schema import (
 )
 from graflo.architecture.schema.vertex import Field as VertexField, Vertex, VertexConfig
 from graflo.onto import DBType
-from graflo.architecture.contract.bindings import Bindings, SparqlConnector
+from graflo.architecture.contract.bindings import (
+    Bindings,
+    SparqlConnector,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -262,12 +265,12 @@ class RdfInferenceManager:
                 endpoint_url=endpoint_url,
                 graph_uri=graph_uri,
                 rdf_file=Path(source) if not endpoint_url else None,
-                resource_name=cls_name,
             )
-            bindings.add_sparql_connector(cls_name, connector)
+            bindings.add_connector(connector)
+            bindings.bind_resource(cls_name, connector)
 
         logger.info(
             "Created %d SPARQL connectors from ontology",
-            len(bindings.sparql_connectors),
+            len(classes),
         )
         return bindings

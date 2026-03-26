@@ -1,7 +1,5 @@
-import pathlib
 from suthing import FileHandle
-from graflo import Bindings, GraphManifest
-from graflo.architecture.contract.bindings import FileConnector
+from graflo import GraphManifest
 from graflo.db import ArangoConfig
 from graflo.hq import GraphEngine
 from graflo.hq.caster import IngestionParams
@@ -29,34 +27,9 @@ conn_conf = ArangoConfig.from_docker_env()
 # Determine DB type from connection config
 db_type = conn_conf.connection_type
 
-# Create Bindings with file connectors
-bindings = Bindings()
-bindings.add_file_connector(
-    "people",
-    FileConnector(
-        regex="^people.*\.csv$", sub_path=pathlib.Path("."), resource_name="people"
-    ),
-)
-bindings.add_file_connector(
-    "departments",
-    FileConnector(
-        regex="^dep.*\.csv$", sub_path=pathlib.Path("."), resource_name="departments"
-    ),
-)
-
-# Or use resource_mapping for simpler initialization
-# bindings = Bindings(
-#     _resource_mapping={
-#         "people": "./people.csv",
-#         "departments": "./departments.csv",
-#     }
-# )
-
 # Create GraphEngine and define schema + ingest in one operation
 engine = GraphEngine(target_db_flavor=db_type)
 ingestion_params = IngestionParams(clear_data=True)
-manifest = manifest.model_copy(update={"bindings": bindings})
-manifest.finish_init()
 engine.define_and_ingest(
     manifest=manifest,
     target_db_config=conn_conf,

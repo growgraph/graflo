@@ -4,6 +4,7 @@ import pytest
 from graflo.architecture.contract.bindings import (
     Bindings,
     FileConnector,
+    ResourceConnectorBinding,
     TableConnector,
 )
 
@@ -13,19 +14,17 @@ def test_connectors():
     bindings = Bindings()
 
     # Add file connectors directly
-    connector_a = FileConnector(
-        regex=".*", sub_path=pathlib.Path("dir_a/dir_b"), resource_name="a"
-    )
-    connector_b = FileConnector(
-        regex="^asd", sub_path=pathlib.Path("./"), resource_name="b"
-    )
+    connector_a = FileConnector(regex=".*", sub_path=pathlib.Path("dir_a/dir_b"))
+    connector_b = FileConnector(regex="^asd", sub_path=pathlib.Path("./"))
 
-    bindings.add_file_connector("a", connector_a)
-    bindings.add_file_connector("b", connector_b)
+    bindings.add_connector(connector_a)
+    bindings.add_connector(connector_b)
+    bindings.bind_resource("a", connector_a)
+    bindings.bind_resource("b", connector_b)
 
     # Test that connectors work correctly (narrow to FileConnector for .sub_path)
-    connector_a_loaded = bindings.connectors["a"]
-    connector_b_loaded = bindings.connectors["b"]
+    connector_a_loaded = bindings.get_connector_for_resource("a")
+    connector_b_loaded = bindings.get_connector_for_resource("b")
     assert isinstance(connector_a_loaded, FileConnector)
     assert isinstance(connector_b_loaded, FileConnector)
     assert connector_a_loaded.sub_path is not None
@@ -34,8 +33,8 @@ def test_connectors():
     assert str(connector_b_loaded.sub_path / "a") == "a"
 
     # Test that connectors can be accessed by name
-    assert "a" in bindings.connectors
-    assert "b" in bindings.connectors
+    assert bindings.get_connector_for_resource("a") is not None
+    assert bindings.get_connector_for_resource("b") is not None
     assert bindings.get_resource_type("a") == "file"
     assert bindings.get_resource_type("b") == "file"
 
@@ -223,9 +222,9 @@ def test_connectors_with_filtering():
     file_connector = FileConnector(
         regex=r".*\.csv$",
         sub_path=pathlib.Path("./data"),
-        resource_name="users",
     )
-    bindings.add_file_connector("users", file_connector)
+    bindings.add_connector(file_connector)
+    bindings.bind_resource("users", file_connector)
 
     # Add table pattern with date filter
     table_connector = TableConnector(
@@ -233,13 +232,13 @@ def test_connectors_with_filtering():
         schema_name="public",
         date_field="created_at",
         date_filter="> '2020-10-10'",
-        resource_name="events",
     )
-    bindings.add_table_connector("events", table_connector)
+    bindings.add_connector(table_connector)
+    bindings.bind_resource("events", table_connector)
 
     # Verify connectors are stored correctly (narrow with isinstance checks)
-    users_pattern = bindings.connectors["users"]
-    events_pattern = bindings.connectors["events"]
+    users_pattern = bindings.get_connector_for_resource("users")
+    events_pattern = bindings.get_connector_for_resource("events")
     assert isinstance(users_pattern, FileConnector)
     assert users_pattern.regex == r".*\.csv$"
     assert isinstance(events_pattern, TableConnector)
@@ -255,7 +254,6 @@ def test_table_connector_sql_query_building():
         schema_name="public",
         date_field="dt",
         date_filter="> '2020-10-10'",
-        resource_name="events",
     )
 
     # Test WHERE clause building
@@ -307,3 +305,105 @@ def test_table_connector_date_range_sql():
     full_query = f"{base_query} WHERE {where_clause}"
     assert "WHERE" in full_query
     assert where_clause.count("AND") == 1  # Should have exactly one AND
+
+
+def test_connector_hash_is_deterministic_for_defining_fields():
+    connector_a = FileConnector(
+        regex=r".*\.csv$",
+        sub_path=pathlib.Path("./data"),
+        name="files_a",
+    )
+    connector_b = FileConnector(
+        regex=r".*\.csv$",
+        sub_path=pathlib.Path("./data"),
+        name="files_b",
+    )
+    assert connector_a.hash == connector_b.hash
+
+
+def test_bindings_support_connector_resource_name_mapping():
+    bindings = Bindings(
+        connectors=[
+            FileConnector(
+                regex=r"^users.*\.csv$",
+                sub_path=pathlib.Path("."),
+                resource_name="users",
+            )
+        ]
+    )
+    connector = bindings.get_connector_for_resource("users")
+    assert isinstance(connector, FileConnector)
+    assert bindings.get_resource_type("users") == "file"
+
+
+def test_bindings_support_top_level_resource_connector_objects():
+    bindings = Bindings(
+        connectors=[
+            TableConnector(
+                name="orders_table", table_name="orders", schema_name="public"
+            ),
+        ],
+        resource_connector=[
+            ResourceConnectorBinding(resource="orders", connector="orders_table")
+        ],
+    )
+    connector = bindings.get_connector_for_resource("orders")
+    assert isinstance(connector, TableConnector)
+    assert connector.table_name == "orders"
+    assert connector.schema_name == "public"
+
+
+def test_bindings_reject_conflicting_resource_mappings():
+    with pytest.raises(ValueError, match="Conflicting resource binding"):
+        Bindings(
+            connectors=[
+                FileConnector(
+                    name="users_files",
+                    regex=r"^users.*\.csv$",
+                    sub_path=pathlib.Path("."),
+                    resource_name="users",
+                ),
+                FileConnector(
+                    name="users_backup_files",
+                    regex=r"^users_backup.*\.csv$",
+                    sub_path=pathlib.Path("."),
+                ),
+            ],
+            resource_connector=[
+                ResourceConnectorBinding(
+                    resource="users", connector="users_backup_files"
+                )
+            ],
+        )
+
+
+def test_bindings_resource_connector_accepts_dict_entries():
+    bindings = Bindings(
+        connectors=[
+            FileConnector(
+                name="openalex",
+                regex=r".*\.jsonl$",
+                sub_path=pathlib.Path("."),
+            )
+        ],
+        resource_connector=[{"resource": "work", "connector": "openalex"}],
+    )
+    connector = bindings.get_connector_for_resource("work")
+    assert isinstance(connector, FileConnector)
+    assert connector.name == "openalex"
+
+
+def test_bindings_resource_connector_validation_error_message():
+    with pytest.raises(
+        ValueError, match=r"Invalid resource_connector entry at index 0"
+    ):
+        Bindings(
+            connectors=[
+                FileConnector(
+                    name="openalex",
+                    regex=r".*\.jsonl$",
+                    sub_path=pathlib.Path("."),
+                )
+            ],
+            resource_connector=[{"resource": "work"}],
+        )

@@ -17,6 +17,7 @@ schema:
                 weights:
                     direct:
                     -   date
+#                    -   relation
     db_profile: {}
 ingestion_model:
     resources:
