@@ -31,29 +31,29 @@ db_type = conn_conf.connection_type
 
 # Create Bindings with file connectors
 bindings = Bindings()
-bindings.add_file_connector(
-    "package",
-    FileConnector(
-        regex=r"^package\.meta.*\.json(?:\.gz)?$",
-        sub_path=pathlib.Path("./data"),
-        resource_name="package",
-    ),
+package_connector = FileConnector(
+    regex=r"^package\.meta.*\.json(?:\.gz)?$",
+    sub_path=pathlib.Path("./data"),
 )
-bindings.add_file_connector(
-    "bug",
-    FileConnector(
-        regex=r"^bugs.*\.json(?:\.gz)?$",
-        sub_path=pathlib.Path("./data"),
-        resource_name="bug",
-    ),
+bindings.add_connector(package_connector)
+bindings.bind_resource("package", package_connector)
+bug_connector = FileConnector(
+    regex=r"^bugs.*\.json(?:\.gz)?$",
+    sub_path=pathlib.Path("./data"),
 )
+bindings.add_connector(bug_connector)
+bindings.bind_resource("bug", bug_connector)
 
-# Or use resource_mapping for simpler initialization
+# Or initialize via connectors + resource_connector
 # bindings = Bindings(
-#     _resource_mapping={
-#         "package": "./data/package.meta.json",
-#         "bugs": "./data/bugs.head.json",
-#     }
+#     connectors=[
+#         FileConnector(regex=r"^package\\.meta.*\\.json(?:\\.gz)?$", sub_path=pathlib.Path("./data")),
+#         FileConnector(regex=r"^bugs.*\\.json(?:\\.gz)?$", sub_path=pathlib.Path("./data")),
+#     ],
+#     resource_connector=[
+#         ("package", r"^package\\.meta.*\\.json(?:\\.gz)?$"),
+#         ("bug", r"^bugs.*\\.json(?:\\.gz)?$"),
+#     ],
 # )
 
 # Create GraphEngine and define schema + ingest in one operation

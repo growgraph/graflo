@@ -138,16 +138,22 @@ import pathlib
 
 # Create Bindings with file connectors
 bindings = Bindings()
-bindings.add_file_connector(
-    "work",
-    FileConnector(regex="\Sjson$", sub_path=pathlib.Path("./data"), resource_name="work")
+work_connector = FileConnector(regex="\Sjson$", sub_path=pathlib.Path("./data"))
+bindings.add_connector(
+    work_connector,
 )
+bindings.bind_resource("work", work_connector)
 
-# Or use resource_mapping for simpler initialization
+# Or initialize via connectors + resource_connector
 # bindings = Bindings(
-#     _resource_mapping={
-#         "work": "./data/work.json",
-#     }
+#     connectors=[
+#         FileConnector(
+#             name="work_files",
+#             regex="^work\\.json$",
+#             sub_path=pathlib.Path("./data"),
+#         )
+#     ],
+#     resource_connector=[{"resource": "work", "connector": "work_files"}],
 # )
 
 from graflo.hq.caster import IngestionParams

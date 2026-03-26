@@ -35,4 +35,12 @@ ingestion_model:
         -   vertex: department
             from:
                 name: department
-bindings: {}
+bindings:
+    connectors:
+    -   regex: "^people.*\\.csv$"
+        sub_path: .
+        resource_name: people
+    -   regex: "^dep.*\\.csv$"
+        sub_path: .
+        resource_name: departments
+

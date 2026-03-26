@@ -112,9 +112,9 @@ def ingest_atomic(conn_conf, current_path, test_db_name, schema_o, mode, n_cores
         file_connector = FileConnector(
             regex=f".*{resource_name}.*",
             sub_path=path,
-            resource_name=resource_name,
         )
-        bindings.add_file_connector(resource_name, file_connector)
+        bindings.add_connector(file_connector)
+        bindings.bind_resource(resource_name, file_connector)
 
     # Determine DB flavor from connection config
     from graflo.hq import GraphEngine

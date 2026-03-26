@@ -104,21 +104,37 @@ from graflo.architecture.contract.bindings import FileConnector
 import pathlib
 
 bindings = Bindings()
-bindings.add_file_connector(
-    "people",
-    FileConnector(regex="^people.*\.csv$", sub_path=pathlib.Path("."), resource_name="people")
+people_connector = FileConnector(regex="^people.*\.csv$", sub_path=pathlib.Path("."))
+bindings.add_connector(
+    people_connector,
 )
-bindings.add_file_connector(
-    "departments",
-    FileConnector(regex="^dep.*\.csv$", sub_path=pathlib.Path("."), resource_name="departments")
+bindings.bind_resource("people", people_connector)
+departments_connector = FileConnector(
+    regex="^dep.*\.csv$", sub_path=pathlib.Path(".")
 )
+bindings.add_connector(
+    departments_connector,
+)
+bindings.bind_resource("departments", departments_connector)
 
-# Or use resource_mapping for simpler initialization
+# Or initialize via connectors + resource_connector
 # bindings = Bindings(
-#     _resource_mapping={
-#         "people": "./people.csv",
-#         "departments": "./departments.csv",
-#     }
+#     connectors=[
+#         FileConnector(
+#             name="people_files",
+#             regex="^people.*\\.csv$",
+#             sub_path=pathlib.Path("."),
+#         ),
+#         FileConnector(
+#             name="departments_files",
+#             regex="^dep.*\\.csv$",
+#             sub_path=pathlib.Path("."),
+#         ),
+#     ],
+#     resource_connector=[
+#         {"resource": "people", "connector": "people_files"},
+#         {"resource": "departments", "connector": "departments_files"},
+#     ],
 # )
 
 from graflo.hq.caster import IngestionParams

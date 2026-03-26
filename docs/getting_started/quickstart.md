@@ -61,21 +61,37 @@ user_conn_conf = ArangoConfig.from_env(prefix="USER")
 # Create bindings with file connectors
 # FileConnector includes the path (sub_path) where files are located
 bindings = Bindings()
-bindings.add_file_connector(
-    "people",
-    FileConnector(regex="^people.*\.csv$", sub_path=pathlib.Path("."), resource_name="people")
+people_connector = FileConnector(regex="^people.*\.csv$", sub_path=pathlib.Path("."))
+bindings.add_connector(
+    people_connector,
 )
-bindings.add_file_connector(
-    "departments",
-    FileConnector(regex="^dep.*\.csv$", sub_path=pathlib.Path("."), resource_name="departments")
+bindings.bind_resource("people", people_connector)
+departments_connector = FileConnector(
+    regex="^dep.*\.csv$", sub_path=pathlib.Path(".")
 )
+bindings.add_connector(
+    departments_connector,
+)
+bindings.bind_resource("departments", departments_connector)
 
-# Or use resource_mapping for simpler initialization
+# Or initialize from explicit connector bindings
 bindings = Bindings(
-    _resource_mapping={
-        "people": "./people.csv",  # File path - creates FileConnector automatically
-        "departments": "./departments.csv",
-    }
+    connectors=[
+        FileConnector(
+            name="people_files",
+            regex="^people.*\\.csv$",
+            sub_path=pathlib.Path("."),
+        ),
+        FileConnector(
+            name="departments_files",
+            regex="^dep.*\\.csv$",
+            sub_path=pathlib.Path("."),
+        ),
+    ],
+    resource_connector=[
+        {"resource": "people", "connector": "people_files"},
+        {"resource": "departments", "connector": "departments_files"},
+    ],
 )
 
 from graflo.hq.caster import IngestionParams
@@ -147,12 +163,17 @@ bindings = engine.create_bindings(pg_config, schema_name="public")
 # Or create bindings manually
 from graflo.architecture.contract.bindings import Bindings, TableConnector
 
-bindings = Bindings(
-    table_connectors={
-        "users": TableConnector(table_name="users", schema_name="public", resource_name="users"),
-        "products": TableConnector(table_name="products", schema_name="public", resource_name="products"),
-    }
+bindings = Bindings()
+users_connector = TableConnector(table_name="users", schema_name="public")
+bindings.add_connector(
+    users_connector,
 )
+bindings.bind_resource("users", users_connector)
+products_connector = TableConnector(table_name="products", schema_name="public")
+bindings.add_connector(
+    products_connector,
+)
+bindings.bind_resource("products", products_connector)
 
 # Ingest
 from graflo.db.connection.onto import ArangoConfig

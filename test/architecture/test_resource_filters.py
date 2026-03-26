@@ -11,7 +11,11 @@ from __future__ import annotations
 
 from graflo.filter.onto import ComparisonOperator, FilterExpression, LogicalOperator
 from graflo.onto import ExpressionFlavor
-from graflo.architecture.contract.bindings import JoinClause, TableConnector
+from graflo.architecture.contract.bindings import (
+    Bindings,
+    JoinClause,
+    TableConnector,
+)
 
 
 # ---------------------------------------------------------------
@@ -277,7 +281,6 @@ class TestAutoJoin:
             IngestionModel,
         )
         from graflo.architecture.schema import Schema
-        from graflo.architecture.contract.bindings import Bindings
 
         schema = Schema.model_validate(
             {
@@ -319,23 +322,25 @@ class TestAutoJoin:
         )
         ingestion_model.finish_init(schema.core_schema)
 
-        patterns = Bindings(
-            table_connectors={
-                "server": TableConnector(table_name="classes", schema_name="sn"),
-                "database": TableConnector(table_name="classes", schema_name="sn"),
-                "abc_relations": TableConnector(
-                    table_name="cmdb_rel_ci", schema_name="sn"
-                ),
-            },
-        )
-        return schema, ingestion_model, patterns
+        bindings = Bindings()
+        server_connector = TableConnector(table_name="classes", schema_name="sn")
+        bindings.add_connector(server_connector)
+        bindings.bind_resource("server", server_connector)
+        database_connector = TableConnector(table_name="classes", schema_name="sn")
+        bindings.add_connector(database_connector)
+        bindings.bind_resource("database", database_connector)
+        relations_connector = TableConnector(table_name="cmdb_rel_ci", schema_name="sn")
+        bindings.add_connector(relations_connector)
+        bindings.bind_resource("abc_relations", relations_connector)
+        return schema, ingestion_model, bindings
 
     def test_enrichment_adds_joins(self):
         from graflo.hq.auto_join import enrich_edge_connector_with_joins
 
         schema, ingestion_model, bindings = self._make_schema_and_patterns()
         resource = ingestion_model.fetch_resource("abc_relations")
-        connector = bindings.table_connectors["abc_relations"]
+        connector = bindings.get_connector_for_resource("abc_relations")
+        assert isinstance(connector, TableConnector)
 
         enrich_edge_connector_with_joins(
             resource=resource,
@@ -356,7 +361,8 @@ class TestAutoJoin:
 
         schema, ingestion_model, bindings = self._make_schema_and_patterns()
         resource = ingestion_model.fetch_resource("abc_relations")
-        connector = bindings.table_connectors["abc_relations"]
+        connector = bindings.get_connector_for_resource("abc_relations")
+        assert isinstance(connector, TableConnector)
 
         enrich_edge_connector_with_joins(
             resource=resource,
@@ -375,7 +381,8 @@ class TestAutoJoin:
 
         schema, ingestion_model, bindings = self._make_schema_and_patterns()
         resource = ingestion_model.fetch_resource("abc_relations")
-        connector = bindings.table_connectors["abc_relations"]
+        connector = bindings.get_connector_for_resource("abc_relations")
+        assert isinstance(connector, TableConnector)
         connector.joins = [JoinClause(table="x", alias="x", on_self="a", on_other="b")]
 
         enrich_edge_connector_with_joins(
@@ -394,7 +401,8 @@ class TestAutoJoin:
 
         schema, ingestion_model, bindings = self._make_schema_and_patterns()
         resource = ingestion_model.fetch_resource("abc_relations")
-        connector = bindings.table_connectors["abc_relations"]
+        connector = bindings.get_connector_for_resource("abc_relations")
+        assert isinstance(connector, TableConnector)
 
         enrich_edge_connector_with_joins(
             resource=resource,

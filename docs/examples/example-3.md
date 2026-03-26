@@ -115,10 +115,11 @@ from graflo.architecture.contract.bindings import FileConnector
 import pathlib
 
 bindings = Bindings()
-bindings.add_file_connector(
-    "people",
-    FileConnector(regex="^relations.*\.csv$", sub_path=pathlib.Path("."), resource_name="people")
+people_connector = FileConnector(regex="^relations.*\.csv$", sub_path=pathlib.Path("."))
+bindings.add_connector(
+    people_connector,
 )
+bindings.bind_resource("people", people_connector)
 
 from graflo.hq.caster import IngestionParams
 

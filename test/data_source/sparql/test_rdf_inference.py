@@ -4,11 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
-rdflib = pytest.importorskip("rdflib", reason="rdflib not installed")
-
-from graflo.hq.rdf_inferencer import RdfInferenceManager  # noqa: E402
+from graflo.architecture.contract.bindings import SparqlConnector
+from graflo.hq.rdf_inferencer import RdfInferenceManager
 
 
 class TestRdfInferenceManager:
@@ -71,10 +68,10 @@ class TestRdfInferenceManager:
         mgr = RdfInferenceManager()
         bindings = mgr.create_bindings(sample_ontology_path)
 
-        assert "Person" in bindings.sparql_connectors
-        assert "Organization" in bindings.sparql_connectors
-
-        person_pat = bindings.sparql_connectors["Person"]
+        person_pat = bindings.get_connector_for_resource("Person")
+        org_pat = bindings.get_connector_for_resource("Organization")
+        assert isinstance(person_pat, SparqlConnector)
+        assert isinstance(org_pat, SparqlConnector)
         assert person_pat.rdf_class == "http://example.org/Person"
         assert person_pat.rdf_file is not None
 
@@ -84,7 +81,9 @@ class TestRdfInferenceManager:
         endpoint = "http://localhost:3030/test/sparql"
         bindings = mgr.create_bindings(sample_ontology_path, endpoint_url=endpoint)
 
-        for pat in bindings.sparql_connectors.values():
+        for resource_name in ("Person", "Organization"):
+            pat = bindings.get_connector_for_resource(resource_name)
+            assert isinstance(pat, SparqlConnector)
             assert pat.endpoint_url == endpoint
             assert pat.rdf_file is None
 

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import abc
+import hashlib
+import json
 import pathlib
 import re
 from typing import TYPE_CHECKING, Any, Self
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.onto import BaseEnum
@@ -45,11 +47,44 @@ class ResourceConnector(ConfigBaseModel, abc.ABC):
     Provides common API for connector matching and resource identification.
     All concrete connector types inherit from this class.
 
-    Attributes:
-        resource_name: Name of the resource this connector matches
+    Connectors only describe source-side matching/query behavior. Resource-to-
+    connector linkage is handled by ``Bindings``.
     """
 
-    resource_name: str | None = None
+    name: str | None = Field(
+        default=None,
+        description="Optional connector name used by top-level resource_connector mapping.",
+    )
+    resource_name: str | None = Field(
+        default=None,
+        description="Optional direct resource binding declared on the connector itself.",
+    )
+    hash: str = Field(
+        default="",
+        exclude=True,
+        description="Deterministic internal connector id derived from defining fields.",
+    )
+
+    def _hash_payload(self) -> dict[str, Any]:
+        payload = self.model_dump(
+            mode="json",
+            by_alias=True,
+            exclude={"hash", "name", "resource_name"},
+        )
+        payload["_connector_type"] = type(self).__name__
+        return payload
+
+    @model_validator(mode="after")
+    def _compute_hash(self) -> Self:
+        canonical = json.dumps(
+            self._hash_payload(), sort_keys=True, separators=(",", ":")
+        )
+        object.__setattr__(
+            self,
+            "hash",
+            hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+        )
+        return self
 
     @abc.abstractmethod
     def matches(self, resource_identifier: str) -> bool:
@@ -187,8 +222,12 @@ class TableConnector(ResourceConnector):
             base table (plus aliased columns from joins).
     """
 
-    table_name: str = ""
-    schema_name: str | None = None
+    table_name: str = Field(
+        default="", validation_alias=AliasChoices("table_name", "table")
+    )
+    schema_name: str | None = Field(
+        default=None, validation_alias=AliasChoices("schema_name", "schema")
+    )
     database: str | None = None
     date_field: str | None = None
     date_filter: str | None = None

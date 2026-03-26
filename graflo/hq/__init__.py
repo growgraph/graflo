@@ -11,6 +11,15 @@ from graflo.hq.caster import (
     RowCastFailure,
     RowErrorBudgetExceeded,
 )
+from graflo.hq.connection_provider import (
+    ConnectionProvider,
+    EmptyConnectionProvider,
+    InMemoryConnectionProvider,
+    GeneralizedConnConfig,
+    PostgresGeneralizedConnConfig,
+    SparqlGeneralizedConnConfig,
+    SparqlAuth,
+)
 from graflo.hq.db_writer import DBWriter
 from graflo.hq.graph_engine import GraphEngine
 from graflo.hq.inferencer import InferenceManager
@@ -21,11 +30,18 @@ from graflo.hq.sanitizer import SchemaSanitizer
 __all__ = [
     "CastBatchResult",
     "Caster",
+    "ConnectionProvider",
     "DBWriter",
+    "EmptyConnectionProvider",
     "GraphEngine",
     "IngestionParams",
+    "InMemoryConnectionProvider",
+    "GeneralizedConnConfig",
+    "PostgresGeneralizedConnConfig",
+    "SparqlGeneralizedConnConfig",
     "RowCastFailure",
     "RowErrorBudgetExceeded",
+    "SparqlAuth",
     "InferenceManager",
     "RegistryBuilder",
     "ResourceMapper",

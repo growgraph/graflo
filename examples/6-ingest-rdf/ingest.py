@@ -20,7 +20,10 @@ from pathlib import Path
 
 from graflo.db import ArangoConfig
 from graflo.hq import GraphEngine, IngestionParams
-from graflo.architecture.contract.bindings import Bindings, SparqlConnector
+from graflo.architecture.contract.bindings import (
+    Bindings,
+    SparqlConnector,
+)
 from graflo.architecture.contract.manifest import GraphManifest
 from suthing import FileHandle
 
@@ -94,41 +97,34 @@ logger.info(
 # the rdf:Class URI that each resource should fetch.
 bindings = Bindings()
 
-bindings.add_sparql_connector(
-    "Researcher",
-    SparqlConnector(
-        rdf_class="http://example.org/Researcher",
-        rdf_file=DATA_FILE,
-        resource_name="Researcher",
-    ),
+researcher_connector = SparqlConnector(
+    rdf_class="http://example.org/Researcher",
+    rdf_file=DATA_FILE,
 )
+bindings.add_connector(researcher_connector)
+bindings.bind_resource("Researcher", researcher_connector)
 
-bindings.add_sparql_connector(
-    "Publication",
-    SparqlConnector(
-        rdf_class="http://example.org/Publication",
-        rdf_file=DATA_FILE,
-        resource_name="Publication",
-    ),
+publication_connector = SparqlConnector(
+    rdf_class="http://example.org/Publication",
+    rdf_file=DATA_FILE,
 )
+bindings.add_connector(publication_connector)
+bindings.bind_resource("Publication", publication_connector)
 
-bindings.add_sparql_connector(
-    "Institution",
-    SparqlConnector(
-        rdf_class="http://example.org/Institution",
-        rdf_file=DATA_FILE,
-        resource_name="Institution",
-    ),
+institution_connector = SparqlConnector(
+    rdf_class="http://example.org/Institution",
+    rdf_file=DATA_FILE,
 )
+bindings.add_connector(institution_connector)
+bindings.bind_resource("Institution", institution_connector)
 
 # Alternative: point connectors at a remote SPARQL endpoint instead of a file
-# bindings.add_sparql_connector(
-#     "Researcher",
+# bindings.add_connector(
 #     SparqlConnector(
 #         rdf_class="http://example.org/Researcher",
 #         endpoint_url="http://localhost:3030/dataset/sparql",
 #         resource_name="Researcher",
-#     ),
+#     )
 # )
 
 # ---------------------------------------------------------------------------

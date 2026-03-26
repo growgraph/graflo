@@ -163,22 +163,22 @@ conn_conf = ArangoConfig.from_docker_env()
 db_type = conn_conf.connection_type
 
 bindings = Bindings()
-bindings.add_file_connector(
-    "objects",
-    FileConnector(
-        regex=r"^objects\.csv$",
-        sub_path=pathlib.Path("."),
-        resource_name="objects",
-    ),
+objects_connector = FileConnector(
+    regex=r"^objects\.csv$",
+    sub_path=pathlib.Path("."),
 )
-bindings.add_file_connector(
-    "relations",
-    FileConnector(
-        regex=r"^relations\.csv$",
-        sub_path=pathlib.Path("."),
-        resource_name="relations",
-    ),
+bindings.add_connector(
+    objects_connector,
 )
+bindings.bind_resource("objects", objects_connector)
+relations_connector = FileConnector(
+    regex=r"^relations\.csv$",
+    sub_path=pathlib.Path("."),
+)
+bindings.add_connector(
+    relations_connector,
+)
+bindings.bind_resource("relations", relations_connector)
 
 engine = GraphEngine(target_db_flavor=db_type)
 ingest_manifest = manifest.model_copy(update={"bindings": bindings})

@@ -15,6 +15,12 @@ from graflo.architecture.onto_sql import SchemaIntrospectionResult
 from graflo.db import ConnectionManager, PostgresConnection
 from graflo.db import DBConfig, PostgresConfig, SparqlEndpointConfig
 from graflo.hq.caster import Caster, IngestionParams
+from graflo.hq.connection_provider import (
+    ConnectionProvider,
+    EmptyConnectionProvider,
+    InMemoryConnectionProvider,
+    SparqlGeneralizedConnConfig,
+)
 from graflo.hq.inferencer import InferenceManager
 from graflo.hq.resource_mapper import ResourceMapper
 from graflo.architecture.contract.bindings import Bindings
@@ -52,11 +58,13 @@ class GraphEngine:
         """
         self.target_db_flavor = target_db_flavor
         self.resource_mapper = ResourceMapper()
+        self.connection_provider: ConnectionProvider = EmptyConnectionProvider()
 
     def introspect(
         self,
         postgres_config: PostgresConfig,
         schema_name: str | None = None,
+        include_raw_tables: bool = True,
     ) -> SchemaIntrospectionResult:
         """Introspect PostgreSQL schema and return a serializable result.
 
@@ -73,7 +81,10 @@ class GraphEngine:
                 conn=postgres_conn,
                 target_db_flavor=self.target_db_flavor,
             )
-            return inferencer.introspect(schema_name=schema_name)
+            return inferencer.introspect(
+                schema_name=schema_name,
+                include_raw_tables=include_raw_tables,
+            )
 
     def infer_manifest(
         self,
@@ -116,6 +127,7 @@ class GraphEngine:
         schema_name: str | None = None,
         datetime_columns: dict[str, str] | None = None,
         type_lookup_overrides: dict[str, dict] | None = None,
+        include_raw_tables: bool = False,
     ) -> Bindings:
         """Create Bindings from PostgreSQL tables.
 
@@ -135,12 +147,17 @@ class GraphEngine:
             Bindings: Bindings object with TableConnector instances for all tables
         """
         with PostgresConnection(postgres_config) as postgres_conn:
-            return self.resource_mapper.create_bindings_from_postgres(
-                conn=postgres_conn,
-                schema_name=schema_name,
-                datetime_columns=datetime_columns,
-                type_lookup_overrides=type_lookup_overrides,
+            bindings, provider = (
+                self.resource_mapper.create_bindings_with_provider_from_postgres(
+                    conn=postgres_conn,
+                    schema_name=schema_name,
+                    datetime_columns=datetime_columns,
+                    type_lookup_overrides=type_lookup_overrides,
+                    include_raw_tables=include_raw_tables,
+                )
             )
+        self.connection_provider = provider
+        return bindings
 
     def define_schema(
         self,
@@ -194,6 +211,7 @@ class GraphEngine:
         manifest: GraphManifest,
         target_db_config: DBConfig,
         ingestion_params: IngestionParams | None = None,
+        connection_provider: ConnectionProvider | None = None,
         recreate_schema: bool | None = None,
         clear_data: bool | None = None,
     ) -> None:
@@ -234,6 +252,7 @@ class GraphEngine:
             manifest=manifest,
             target_db_config=target_db_config,
             ingestion_params=ingestion_params,
+            connection_provider=connection_provider,
         )
 
     def ingest(
@@ -241,6 +260,7 @@ class GraphEngine:
         manifest: GraphManifest,
         target_db_config: DBConfig,
         ingestion_params: IngestionParams | None = None,
+        connection_provider: ConnectionProvider | None = None,
     ) -> None:
         """Ingest data into the graph database.
 
@@ -270,6 +290,7 @@ class GraphEngine:
             target_db_config=target_db_config,
             bindings=bindings or Bindings(),
             ingestion_params=ingestion_params,
+            connection_provider=connection_provider or self.connection_provider,
         )
 
     # ------------------------------------------------------------------
@@ -344,6 +365,25 @@ class GraphEngine:
         )
 
         if sparql_config:
-            bindings.sparql_configs["default"] = sparql_config
+            conn_proxy = "sparql_source"
+            provider = InMemoryConnectionProvider()
+            provider.register_generalized_config(
+                conn_proxy=conn_proxy,
+                config=SparqlGeneralizedConnConfig(config=sparql_config),
+            )
+            provider.default_sparql = sparql_config
 
+            # Wire all SPARQL connectors to the same credential proxy.
+            from graflo.architecture.contract.bindings import SparqlConnector
+
+            for connector in bindings.connectors:
+                if not isinstance(connector, SparqlConnector):
+                    continue
+                bindings.bind_connector_to_conn_proxy(connector, conn_proxy)
+                provider.bind_connector_to_conn_proxy(
+                    connector=connector, conn_proxy=conn_proxy
+                )
+        else:
+            provider = EmptyConnectionProvider()
+        self.connection_provider = provider
         return bindings

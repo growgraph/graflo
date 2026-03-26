@@ -203,14 +203,20 @@ from graflo.architecture.contract.bindings import FileConnector
 import pathlib
 
 bindings = Bindings()
-bindings.add_file_connector(
-    "package",
-    FileConnector(regex=r"^package\.meta.*\.json(?:\.gz)?$", sub_path=pathlib.Path("./data"), resource_name="package")
+package_connector = FileConnector(
+    regex=r"^package\.meta.*\.json(?:\.gz)?$", sub_path=pathlib.Path("./data")
 )
-bindings.add_file_connector(
-    "bug",
-    FileConnector(regex=r"^bugs.*\.json(?:\.gz)?$", sub_path=pathlib.Path("./data"), resource_name="bug")
+bindings.add_connector(
+    package_connector,
 )
+bindings.bind_resource("package", package_connector)
+bug_connector = FileConnector(
+    regex=r"^bugs.*\.json(?:\.gz)?$", sub_path=pathlib.Path("./data")
+)
+bindings.add_connector(
+    bug_connector,
+)
+bindings.bind_resource("bug", bug_connector)
 
 from graflo.hq.caster import IngestionParams
 

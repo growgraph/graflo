@@ -18,7 +18,7 @@ from graflo.data_source.sql import SQLConfig, SQLDataSource
 from graflo.filter.onto import ComparisonOperator, FilterExpression
 from graflo.architecture.contract.bindings import TableConnector
 from graflo.hq.auto_join import enrich_edge_connector_with_joins
-from graflo.architecture.contract.bindings import Bindings
+from graflo.architecture.contract.bindings import Bindings, ResourceConnectorBinding
 
 _INGESTION_BY_SCHEMA_ID: dict[int, IngestionModel] = {}
 
@@ -277,15 +277,31 @@ class TestEdgeResourceAutoJoin:
         schema = self._build_schema()
         resource = _bound_ingestion_model(schema).fetch_resource("relations")
 
-        tp_edge = TableConnector(table_name="relations", schema_name="main")
+        tp_edge = TableConnector(
+            name="relations_connector", table_name="relations", schema_name="main"
+        )
+        tp_classes = TableConnector(
+            name="classes_connector", table_name="classes", schema_name="main"
+        )
         patterns_table = {
-            "server": TableConnector(table_name="classes", schema_name="main"),
-            "database": TableConnector(table_name="classes", schema_name="main"),
-            "network": TableConnector(table_name="classes", schema_name="main"),
+            "server": tp_classes,
+            "database": tp_classes,
+            "network": tp_classes,
             "relations": tp_edge,
         }
 
-        patterns = Bindings(table_connectors=patterns_table)
+        patterns = Bindings(
+            connectors=[tp_classes, tp_edge],
+            resource_connector=[
+                ResourceConnectorBinding(
+                    resource=resource_name,
+                    connector="relations_connector"
+                    if resource_name == "relations"
+                    else "classes_connector",
+                )
+                for resource_name in patterns_table
+            ],
+        )
 
         enrich_edge_connector_with_joins(
             resource=resource,
@@ -310,14 +326,26 @@ class TestEdgeResourceAutoJoin:
         schema = self._build_schema()
         resource = _bound_ingestion_model(schema).fetch_resource("relations")
 
-        tp_edge = TableConnector(table_name="relations")
+        tp_edge = TableConnector(name="relations_connector", table_name="relations")
+        tp_classes = TableConnector(name="classes_connector", table_name="classes")
         patterns_table = {
-            "server": TableConnector(table_name="classes"),
-            "database": TableConnector(table_name="classes"),
-            "network": TableConnector(table_name="classes"),
+            "server": tp_classes,
+            "database": tp_classes,
+            "network": tp_classes,
             "relations": tp_edge,
         }
-        bindings = Bindings(table_connectors=patterns_table)
+        bindings = Bindings(
+            connectors=[tp_classes, tp_edge],
+            resource_connector=[
+                ResourceConnectorBinding(
+                    resource=resource_name,
+                    connector="relations_connector"
+                    if resource_name == "relations"
+                    else "classes_connector",
+                )
+                for resource_name in patterns_table
+            ],
+        )
 
         enrich_edge_connector_with_joins(
             resource=resource,

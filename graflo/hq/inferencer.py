@@ -35,16 +35,25 @@ class InferenceManager:
         )
         self.mapper = PostgresResourceMapper(fuzzy_threshold=fuzzy_threshold)
 
-    def introspect(self, schema_name: str | None = None) -> SchemaIntrospectionResult:
+    def introspect(
+        self,
+        schema_name: str | None = None,
+        include_raw_tables: bool = False,
+    ) -> SchemaIntrospectionResult:
         """Introspect PostgreSQL schema.
 
         Args:
             schema_name: Schema name to introspect
+            include_raw_tables: Whether to build sampled per-column raw table metadata.
+                Defaults to False for performance (binding/schema inference does not require it).
 
         Returns:
             SchemaIntrospectionResult: PostgreSQL schema introspection result
         """
-        return self.conn.introspect_schema(schema_name=schema_name)
+        return self.conn.introspect_schema(
+            schema_name=schema_name,
+            include_raw_tables=include_raw_tables,
+        )
 
     def infer_schema(
         self, introspection_result, schema_name: str | None = None

@@ -29,19 +29,12 @@ conn_conf = ArangoConfig.from_docker_env()
 # Determine DB type from connection config
 db_type = conn_conf.connection_type
 
-# Create Bindings with file connectors
-bindings = Bindings()
-bindings.add_file_connector(
-    "work",
-    FileConnector(regex=r"\Sjson$", sub_path=pathlib.Path("."), resource_name="work"),
+bindings = Bindings(
+    connectors=[
+        FileConnector(name="openalex", regex=r"\\Sjson$", sub_path=pathlib.Path("."))
+    ],
+    resource_connector=[{"resource": "work", "connector": "openalex"}],
 )
-
-# Or use resource_mapping for simpler initialization
-# bindings = Bindings(
-#     _resource_mapping={
-#         "work": "./work.json",
-#     }
-# )
 
 # Create GraphEngine and define schema + ingest in one operation
 engine = GraphEngine(target_db_flavor=db_type)

@@ -19,6 +19,7 @@ from graflo.data_source.sql import SQLConfig, SQLDataSource
 from graflo.filter.onto import ComparisonOperator, FilterExpression
 from graflo.filter.select import SelectSpec
 from graflo.hq.resource_mapper import ResourceMapper
+from graflo.db import PostgresConfig
 
 
 def _setup_test_db() -> str:
@@ -576,7 +577,13 @@ class TestResourceMapperTypeLookupOverride:
         mock_edge.name = "entity_links"
         mock_result.edge_tables = [mock_edge]
         mock_conn.introspect_schema.return_value = mock_result
-        mock_conn.config = MagicMock()
+        mock_conn.config = PostgresConfig(
+            uri="postgresql://localhost:5432/db",
+            username="u",
+            password="p",
+            database="db",
+            schema_name="public",
+        )
 
         mapper = ResourceMapper()
         bindings = mapper.create_bindings_from_postgres(
@@ -594,7 +601,8 @@ class TestResourceMapperTypeLookupOverride:
             },
         )
 
-        tp = bindings.table_connectors["entity_links"]
+        tp = bindings.get_connector_for_resource("entity_links")
+        assert isinstance(tp, TableConnector)
         assert tp.view is not None
         assert tp.view.kind == "type_lookup"
         assert tp.view.table == "entity_types"

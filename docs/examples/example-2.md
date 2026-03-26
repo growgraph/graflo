@@ -123,10 +123,11 @@ from graflo.architecture.contract.bindings import FileConnector
 import pathlib
 
 bindings = Bindings()
-bindings.add_file_connector(
-    "work",
-    FileConnector(regex="\Sjson$", sub_path=pathlib.Path("."), resource_name="work")
+work_connector = FileConnector(regex="\Sjson$", sub_path=pathlib.Path("."))
+bindings.add_connector(
+    work_connector,
 )
+bindings.bind_resource("work", work_connector)
 
 from graflo.hq.caster import IngestionParams
 

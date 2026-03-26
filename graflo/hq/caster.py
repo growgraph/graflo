@@ -40,6 +40,7 @@ from graflo.hq.db_writer import DBWriter
 from graflo.hq.registry_builder import RegistryBuilder
 from graflo.util.chunker import ChunkerType
 from graflo.architecture.contract.bindings import Bindings
+from graflo.hq.connection_provider import ConnectionProvider, EmptyConnectionProvider
 
 logger = logging.getLogger(__name__)
 
@@ -598,6 +599,7 @@ class Caster:
         target_db_config: DBConfig,
         bindings: Bindings | None = None,
         ingestion_params: IngestionParams | None = None,
+        connection_provider: ConnectionProvider | None = None,
     ):
         """Ingest data into the graph database.
 
@@ -627,7 +629,10 @@ class Caster:
         )
 
         registry = RegistryBuilder(self.schema, self.ingestion_model).build(
-            bindings, ingestion_params, strict=ingestion_params.strict_registry
+            bindings,
+            ingestion_params,
+            connection_provider=connection_provider or EmptyConnectionProvider(),
+            strict=ingestion_params.strict_registry,
         )
 
         asyncio.run(

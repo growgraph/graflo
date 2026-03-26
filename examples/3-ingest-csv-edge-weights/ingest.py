@@ -45,8 +45,7 @@ bindings = Bindings.from_dict(FileHandle.load("patterns.yaml"))
 # from graflo.util.onto import FileConnector
 # import pathlib
 # bindings = Bindings()
-# bindings.add_file_connector(
-#     "relations",
+# bindings.add_connector(
 #     FileConnector(regex="^relations.*\.csv$", sub_path=pathlib.Path("."), resource_name="relations")
 # )
 
