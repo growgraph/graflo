@@ -142,3 +142,66 @@ def test_schema_creation_edges(conn_conf, test_graph_name, schema_obj):
 
             print(f"Created vertex types: {vertex_types}")
             print(f"Created edge types: {edge_types}")
+
+
+def test_delete_database_keeps_other_graph_queries(conn_conf):
+    """Deleting one graph must not drop queries from unrelated graphs."""
+    graph_a = "g_query_scope_a"
+    graph_b = "g_query_scope_b"
+    query_a = "q_scope_a"
+    query_b = "q_scope_b"
+
+    with ConnectionManager(connection_config=conn_conf) as db_client:
+        try:
+            # Ensure both graphs exist
+            if not db_client.graph_exists(graph_a):
+                db_client.create_database(graph_a)
+            if not db_client.graph_exists(graph_b):
+                db_client.create_database(graph_b)
+
+            # Ensure queries do not pre-exist (best effort for idempotency)
+            for graph_name, query_name in ((graph_a, query_a), (graph_b, query_b)):
+                try:
+                    db_client._execute_gsql(
+                        f"USE GRAPH {graph_name}\nDROP QUERY {query_name} IF EXISTS"
+                    )
+                except Exception:
+                    pass
+
+            # Install one trivial query per graph
+            db_client._execute_gsql(
+                f"""
+                USE GRAPH {graph_a}
+                CREATE QUERY {query_a}() FOR GRAPH {graph_a} {{
+                    PRINT "ok";
+                }}
+                INSTALL QUERY {query_a}
+                """
+            )
+            db_client._execute_gsql(
+                f"""
+                USE GRAPH {graph_b}
+                CREATE QUERY {query_b}() FOR GRAPH {graph_b} {{
+                    PRINT "ok";
+                }}
+                INSTALL QUERY {query_b}
+                """
+            )
+
+            assert query_a in db_client._get_installed_queries(graph_name=graph_a)
+            assert query_b in db_client._get_installed_queries(graph_name=graph_b)
+
+            # Delete graph A and verify graph B query remains untouched.
+            db_client.delete_database(graph_a)
+
+            remaining_b_queries = db_client._get_installed_queries(graph_name=graph_b)
+            assert query_b in remaining_b_queries, (
+                f"Query '{query_b}' in graph '{graph_b}' should remain after deleting '{graph_a}'. "
+                f"Found: {remaining_b_queries}"
+            )
+        finally:
+            for graph_name in (graph_a, graph_b):
+                try:
+                    db_client.delete_database(graph_name)
+                except Exception:
+                    pass

@@ -982,6 +982,32 @@ class TigerGraphConnection(Connection):
             logger.debug(f"Failed to get installed queries via REST API: {e}")
             return []
 
+    def _drop_installed_queries_for_graph(self, graph_name: str) -> None:
+        """Drop only installed queries that belong to the provided graph."""
+        queries = self._get_installed_queries(graph_name=graph_name)
+        if not queries:
+            logger.debug(f"No installed queries found for graph '{graph_name}'")
+            return
+
+        logger.info(f"Dropping {len(queries)} queries from graph '{graph_name}'")
+        for query_name in queries:
+            try:
+                drop_query_cmd = (
+                    f"USE GRAPH {graph_name}\nDROP QUERY {query_name} IF EXISTS"
+                )
+                self._execute_gsql(drop_query_cmd)
+                logger.debug(f"Dropped query '{query_name}' from graph '{graph_name}'")
+            except Exception:
+                # Try without IF EXISTS for older TigerGraph versions
+                try:
+                    drop_query_cmd = f"USE GRAPH {graph_name}\nDROP QUERY {query_name}"
+                    self._execute_gsql(drop_query_cmd)
+                except Exception as query_error:
+                    logger.debug(
+                        f"Could not drop query '{query_name}' from graph "
+                        f"'{graph_name}': {query_error}"
+                    )
+
     def _run_installed_query(
         self, query_name: str, graph_name: str | None = None, **kwargs: Any
     ) -> dict[str, Any] | list[dict]:
@@ -1526,15 +1552,10 @@ class TigerGraphConnection(Connection):
         try:
             logger.debug(f"Attempting to drop graph '{name}'")
 
-            # The order matters for a clean teardown
-            cleanup_script = f"""
-                USE GRAPH {name}
-                DROP QUERY *
-                USE GLOBAL
-                DROP GRAPH {name}
-            """
-            result = self._execute_gsql(cleanup_script)
-            logger.info(f"Successfully dropped graph '{name}': {result}")
+            # Surgical teardown: only drop queries discovered for this graph.
+            self._drop_installed_queries_for_graph(name)
+            result = self._execute_gsql(f"USE GLOBAL\nDROP GRAPH {name}")
+            logger.info(f"Successfully dropped graph '{name}'")
             return result
         except Exception as e:
             error_str = str(e).lower()
@@ -1548,36 +1569,9 @@ class TigerGraphConnection(Connection):
                     f"Clean teardown failed for graph '{name}': {e}. "
                     f"Attempting fallback cleanup."
                 )
-                # Fallback: Try to drop queries individually, then drop graph
+                # Fallback: Retry surgical query cleanup, then drop graph
                 try:
-                    with self._ensure_graph_context(name):
-                        try:
-                            queries = self._get_installed_queries()
-                            if queries:
-                                logger.info(
-                                    f"Dropping {len(queries)} queries from graph '{name}'"
-                                )
-                                for query_name in queries:
-                                    try:
-                                        drop_query_cmd = f"USE GRAPH {name}\nDROP QUERY {query_name} IF EXISTS"
-                                        self._execute_gsql(drop_query_cmd)
-                                        logger.debug(
-                                            f"Dropped query '{query_name}' from graph '{name}'"
-                                        )
-                                    except Exception:
-                                        # Try without IF EXISTS for older TigerGraph versions
-                                        try:
-                                            drop_query_cmd = f"USE GRAPH {name}\nDROP QUERY {query_name}"
-                                            self._execute_gsql(drop_query_cmd)
-                                        except Exception as qe2:
-                                            logger.debug(
-                                                f"Could not drop query '{query_name}': {qe2}"
-                                            )
-                        except Exception as e2:
-                            logger.debug(
-                                f"Could not list queries for graph '{name}': {e2}"
-                            )
-
+                    self._drop_installed_queries_for_graph(name)
                     # Now try to drop the graph
                     drop_command = f"USE GLOBAL\nDROP GRAPH {name}"
                     result = self._execute_gsql(drop_command)
