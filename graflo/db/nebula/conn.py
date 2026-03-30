@@ -447,7 +447,9 @@ class NebulaConnection(Connection):
     # ------------------------------------------------------------------
 
     def clear_data(self, schema: Schema) -> None:
-        for vname in schema.core_schema.vertex_config.vertex_set:
+        vc = schema.resolve_db_aware(DBType.NEBULA).vertex_config
+        for vertex in vc.vertex_set:
+            vname = vc.vertex_dbname(vertex)
             try:
                 self._execute(
                     f"LOOKUP ON `{vname}` YIELD id(vertex) AS vid "

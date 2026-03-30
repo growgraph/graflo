@@ -359,11 +359,19 @@ class Neo4jConnection(Connection):
         cnames = vertex_types
         if cnames:
             for c in cnames:
-                q = f"MATCH (n:{c}) DELETE n"
+                q = f"MATCH (n:{c}) DETACH DELETE n"
                 self.execute(q)
-        else:
+            return
+
+        if delete_all:
+            logger.warning(
+                "delete_graph_structure(delete_all=True) will remove all nodes and relationships in the selected Neo4j database"
+            )
             self._drop_all_user_indexes_and_constraints()
             self.execute("MATCH (n) DETACH DELETE n")
+            return
+
+        logger.debug("No vertex_types provided and delete_all=False; no data deleted")
 
     def init_db(self, schema: Schema, recreate_schema: bool) -> None:
         """Initialize Neo4j with the given schema.
@@ -491,9 +499,12 @@ class Neo4jConnection(Connection):
     def clear_data(self, schema: Schema) -> None:
         """Remove all data from the graph without dropping the schema.
 
-        Deletes all nodes and relationships; labels (schema) remain.
+        Deletes nodes and relationships for schema-managed labels only.
         """
-        self.delete_graph_structure((), (), delete_all=True)
+        vc = schema.resolve_db_aware(DBType.NEO4J).vertex_config
+        vertex_types = tuple(vc.vertex_dbname(v) for v in vc.vertex_set)
+        if vertex_types:
+            self.delete_graph_structure(vertex_types=vertex_types)
 
     def upsert_docs_batch(self, docs, class_name, match_keys, **kwargs):
         """Upsert a batch of nodes using Cypher.

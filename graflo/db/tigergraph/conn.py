@@ -2881,7 +2881,12 @@ class TigerGraphConnection(Connection):
         """Parse SHOW JOB * output to extract job names."""
         return self._parse_show_output(result_str, "JOB")
 
-    def delete_graph_structure(self, vertex_types=(), graph_names=(), delete_all=False):
+    def delete_graph_structure(
+        self,
+        vertex_types: tuple[str, ...] | list[str] = (),
+        graph_names: tuple[str, ...] | list[str] = (),
+        delete_all: bool = False,
+    ) -> None:
         """
         Delete graph structure (graphs, vertex types, edge types) from TigerGraph.
 
@@ -2909,19 +2914,20 @@ class TigerGraphConnection(Connection):
                 # Step 1: Drop all graphs
                 graphs_to_drop = list(gnames) if gnames else []
 
-                # If no specific graphs provided, try to discover and drop all graphs
+                # Guardrail: never auto-discover and drop every graph by default.
+                # If no explicit graph target is provided, constrain to current graph.
                 if not graphs_to_drop:
-                    try:
-                        # Use GSQL to list all graphs
-                        show_graphs_cmd = "SHOW GRAPH *"
-                        result = self._execute_gsql(show_graphs_cmd)
-                        result_str = str(result)
-
-                        # Parse graph names using helper method
-                        graphs_to_drop = self._parse_show_graph_output(result_str)
-                    except Exception as e:
-                        logger.debug(f"Could not list graphs: {e}")
-                        graphs_to_drop = []
+                    current_graph = self.config.database
+                    if current_graph:
+                        graphs_to_drop = [current_graph]
+                        logger.warning(
+                            "delete_all=True without explicit graph_names: limiting TigerGraph teardown to current graph '%s'",
+                            current_graph,
+                        )
+                    else:
+                        raise ValueError(
+                            "Refusing global TigerGraph teardown without explicit graph_names or config.database"
+                        )
 
                 # Drop each graph
                 logger.info(
@@ -3100,9 +3106,11 @@ class TigerGraphConnection(Connection):
         Deletes vertices (and their edges) for all vertex types in the schema.
         """
         vc = schema.resolve_db_aware(DBType.TIGERGRAPH).vertex_config
+        graph_name = self.config.database or schema.metadata.name
         vertex_types = tuple(vc.vertex_dbname(v) for v in vc.vertex_set)
         if vertex_types:
-            self.delete_graph_structure(vertex_types=vertex_types)
+            with self._ensure_graph_context(graph_name=graph_name):
+                self.delete_graph_structure(vertex_types=vertex_types)
 
     def _generate_upsert_payload(
         self, data: list[dict[str, Any]], vname: str, vindex: tuple[str, ...]

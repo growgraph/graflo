@@ -628,9 +628,12 @@ class MemgraphConnection(Connection):
     def clear_data(self, schema: Schema) -> None:
         """Remove all data from the graph without dropping the schema.
 
-        Deletes all nodes and relationships; labels (schema) remain.
+        Deletes nodes and relationships for schema-managed labels only.
         """
-        self.delete_graph_structure(delete_all=True)
+        vc = schema.resolve_db_aware(DBType.MEMGRAPH).vertex_config
+        vertex_types = tuple(vc.vertex_dbname(v) for v in vc.vertex_set)
+        if vertex_types:
+            self.delete_graph_structure(vertex_types=vertex_types)
 
     def upsert_docs_batch(
         self,

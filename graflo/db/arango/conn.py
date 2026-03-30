@@ -639,6 +639,9 @@ class ArangoConnection(Connection):
             logger.info([])
 
         if delete_all:
+            logger.warning(
+                "delete_graph_structure(delete_all=True) will remove all non-system ArangoDB graphs and collections in the selected database"
+            )
             collections_result = self.conn.collections()
             graphs_result = self.conn.graphs()
             cnames = []

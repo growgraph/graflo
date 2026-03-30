@@ -446,7 +446,10 @@ class FalkordbConnection(Connection):
             graph_names: Graph names to delete entirely
             delete_all: If True, delete all nodes and relationships
         """
-        if delete_all or (not vertex_types and not graph_names):
+        if delete_all:
+            logger.warning(
+                "delete_graph_structure(delete_all=True) will remove all nodes and relationships in the selected FalkorDB graph"
+            )
             # Delete all nodes and relationships in current graph
             try:
                 self.execute("MATCH (n) DETACH DELETE n")
@@ -543,9 +546,12 @@ class FalkordbConnection(Connection):
     def clear_data(self, schema: Schema) -> None:
         """Remove all data from the graph without dropping the schema.
 
-        Deletes all nodes and relationships; labels (schema) remain.
+        Deletes nodes and relationships for schema-managed labels only.
         """
-        self.delete_graph_structure(delete_all=True)
+        vc = schema.resolve_db_aware(DBType.FALKORDB).vertex_config
+        vertex_types = tuple(vc.vertex_dbname(v) for v in vc.vertex_set)
+        if vertex_types:
+            self.delete_graph_structure(vertex_types=vertex_types)
 
     def upsert_docs_batch(
         self,

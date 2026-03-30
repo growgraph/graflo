@@ -216,7 +216,8 @@ class Connection(abc.ABC):
         Args:
             vertex_types: Vertex type names to delete (database-specific interpretation)
             graph_names: Graph/database names to delete
-            delete_all: If True, delete all graphs and their associated structures
+            delete_all: If True, delete all targeted graph structures.
+                This is destructive and should only be used with explicit intent.
         """
         pass
 
