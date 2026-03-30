@@ -25,6 +25,7 @@ class ActorInitContext:
     vertex_config: VertexConfig
     edge_config: EdgeConfig
     transforms: dict[str, ProtoTransform]
+    allowed_vertex_names: set[str] | None = None
     infer_edges: bool = True
     infer_edge_only: set[EdgeId] = field(default_factory=set)
     infer_edge_except: set[EdgeId] = field(default_factory=set)

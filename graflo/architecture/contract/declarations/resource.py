@@ -84,6 +84,34 @@ def _resolve_type_caster(name: str) -> Callable[..., Any] | None:
     return None
 
 
+def _filter_vertex_config_by_allowed(
+    vertex_config: VertexConfig,
+    *,
+    allowed_vertex_names: set[str] | None,
+) -> VertexConfig:
+    """Derive a filtered VertexConfig for runtime actor execution.
+
+    This intentionally filters only the vertex collections present in
+    *allowed_vertex_names*; it does not attempt to rewrite edge configs.
+    """
+    if allowed_vertex_names is None:
+        return vertex_config
+
+    allowed = allowed_vertex_names
+    filtered_vertices = [v for v in vertex_config.vertices if v.name in allowed]
+    filtered_blank_vertices = [b for b in vertex_config.blank_vertices if b in allowed]
+    filtered_force_types = {
+        name: types
+        for name, types in vertex_config.force_types.items()
+        if name in allowed
+    }
+    return VertexConfig(
+        vertices=filtered_vertices,
+        blank_vertices=filtered_blank_vertices,
+        force_types=filtered_force_types,
+    )
+
+
 class EdgeInferSpec(ConfigBaseModel):
     """Selector for controlling inferred edge emission."""
 
@@ -251,6 +279,7 @@ class Resource(ConfigBaseModel):
         *,
         strict_references: bool = False,
         dynamic_edge_feedback: bool = False,
+        allowed_vertex_names: set[str] | None = None,
     ) -> None:
         """Complete resource initialization.
 
@@ -268,6 +297,7 @@ class Resource(ConfigBaseModel):
             transforms=transforms,
             strict_references=strict_references,
             dynamic_edge_feedback=dynamic_edge_feedback,
+            allowed_vertex_names=allowed_vertex_names,
         )
 
     def _edge_ids_from_edge_actors(self) -> set[EdgeId]:
@@ -318,9 +348,15 @@ class Resource(ConfigBaseModel):
         transforms: dict[str, ProtoTransform],
         strict_references: bool = False,
         dynamic_edge_feedback: bool = False,
+        allowed_vertex_names: set[str] | None = None,
     ) -> None:
         """Rebuild runtime actor initialization state from typed context."""
-        object.__setattr__(self, "_vertex_config", vertex_config)
+        # Keep the full schema vertex_config for correctness validations, but
+        # use the filtered runtime vertex_config for actor execution.
+        runtime_vertex_config = _filter_vertex_config_by_allowed(
+            vertex_config, allowed_vertex_names=allowed_vertex_names
+        )
+        object.__setattr__(self, "_vertex_config", runtime_vertex_config)
         # Runtime actors may register dynamic edges; keep per-resource edge state.
         local_edge_config = EdgeConfig.model_validate(
             edge_config.to_dict(skip_defaults=False)
@@ -340,9 +376,10 @@ class Resource(ConfigBaseModel):
 
         logger.debug("total resource actor count : %s", self.root.count())
         init_ctx = ActorInitContext(
-            vertex_config=vertex_config,
+            vertex_config=runtime_vertex_config,
             edge_config=self._edge_config,
             transforms=transforms,
+            allowed_vertex_names=allowed_vertex_names,
             infer_edges=self.infer_edges,
             infer_edge_only={spec.edge_id for spec in self.infer_edge_only},
             infer_edge_except=infer_edge_except,

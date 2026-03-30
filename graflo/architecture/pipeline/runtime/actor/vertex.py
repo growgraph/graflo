@@ -27,6 +27,7 @@ class VertexActor(Actor):
             tuple(config.keep_fields) if config.keep_fields else None
         )
         self.vertex_config: VertexConfig
+        self.allowed_vertex_names: set[str] | None = None
 
     @classmethod
     def from_config(cls, config: VertexActorConfig) -> VertexActor:
@@ -37,6 +38,7 @@ class VertexActor(Actor):
 
     def finish_init(self, init_ctx: ActorInitContext) -> None:
         self.vertex_config = init_ctx.vertex_config
+        self.allowed_vertex_names = init_ctx.allowed_vertex_names
 
     def _filter_and_aggregate_vertex_docs(
         self, docs: list[dict[str, Any]], doc: dict[str, Any]
@@ -123,6 +125,20 @@ class VertexActor(Actor):
         self, ctx: ExtractionContext, lindex: LocationIndex, *nargs: Any, **kwargs: Any
     ) -> ExtractionContext:
         doc: dict[str, Any] = kwargs.get("doc", {})
+
+        # Early-exit for disallowed vertex types.
+        # This must happen before any ctx.acc_vertex[...] access.
+        if (
+            self.allowed_vertex_names is not None
+            and self.name not in self.allowed_vertex_names
+        ):
+            return ctx
+        if (
+            self.allowed_vertex_names is None
+            and self.name not in self.vertex_config.vertex_set
+        ):
+            return ctx
+
         vertex_keys_list = self.vertex_config.fields_names(self.name)
         vertex_keys: tuple[str, ...] = tuple(vertex_keys_list)
 

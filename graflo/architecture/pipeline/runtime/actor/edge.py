@@ -18,6 +18,7 @@ class EdgeActor(Actor):
         kwargs.pop("type", None)
         self.edge = Edge.from_dict(kwargs)
         self.vertex_config: Any = None
+        self.allowed_vertex_names: set[str] | None = None
 
     @classmethod
     def from_config(cls, config: EdgeActorConfig) -> EdgeActor:
@@ -32,6 +33,7 @@ class EdgeActor(Actor):
 
     def finish_init(self, init_ctx: ActorInitContext) -> None:
         self.vertex_config = init_ctx.vertex_config
+        self.allowed_vertex_names = init_ctx.allowed_vertex_names
         if self.vertex_config is not None:
             init_ctx.edge_config.update_edges(
                 self.edge, vertex_config=self.vertex_config
@@ -40,6 +42,22 @@ class EdgeActor(Actor):
     def __call__(
         self, ctx: ExtractionContext, lindex: LocationIndex, *nargs: Any, **kwargs: Any
     ) -> ExtractionContext:
+        # Early-exit for disallowed vertex endpoints.
+        if self.allowed_vertex_names is not None and (
+            self.edge.source not in self.allowed_vertex_names
+            or self.edge.target not in self.allowed_vertex_names
+        ):
+            return ctx
+        if (
+            self.allowed_vertex_names is None
+            and self.vertex_config is not None
+            and (
+                self.edge.source not in self.vertex_config.vertex_set
+                or self.edge.target not in self.vertex_config.vertex_set
+            )
+        ):
+            return ctx
+
         ctx.edge_requests.append((self.edge, lindex))
         ctx.record_edge_intent(edge=self.edge, location=lindex)
         return ctx

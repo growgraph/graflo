@@ -73,6 +73,7 @@ class IngestionModel(ConfigBaseModel):
         *,
         strict_references: bool = False,
         dynamic_edge_feedback: bool = False,
+        allowed_vertex_names: set[str] | None = None,
     ) -> None:
         """Initialize resources against graph model and transform library."""
         self._rebuild_runtime_state()
@@ -83,6 +84,7 @@ class IngestionModel(ConfigBaseModel):
                 transforms=self._transforms,
                 strict_references=strict_references,
                 dynamic_edge_feedback=dynamic_edge_feedback,
+                allowed_vertex_names=allowed_vertex_names,
             )
 
     def _rebuild_runtime_state(self) -> None:

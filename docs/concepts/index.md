@@ -417,6 +417,8 @@ classDiagram
     class IngestionParams {
         +clear_data: bool
         +n_cores: int
+        +resources: list[str]?
+        +vertices: list[str]?
         +batch_size: int
         +max_items: int?
         +dry: bool

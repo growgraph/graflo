@@ -109,6 +109,7 @@ class ActorWrapper:
             vertex_config=VertexConfig(vertices=[]),
             edge_config=EdgeConfig(),
             transforms={},
+            allowed_vertex_names=None,
             infer_edges=True,
             infer_edge_only=set(),
             infer_edge_except=set(),
