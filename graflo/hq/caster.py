@@ -47,6 +47,31 @@ logger = logging.getLogger(__name__)
 _ROW_ERROR_TRACEBACK_MAX_CHARS = 16_384
 
 
+def _filter_graph_container_by_vertices_inplace(
+    gc: GraphContainer, *, allowed_vertex_names: set[str] | None
+) -> None:
+    """Restrict persistence to a subset of vertex types.
+
+    Mutates *gc* in-place, removing:
+    - vertex collections whose names are not in *allowed_vertex_names*
+    - edge collections whose source/target vertex names are not allowed
+    """
+
+    if allowed_vertex_names is None:
+        return
+
+    gc.vertices = {
+        vcol: items
+        for vcol, items in gc.vertices.items()
+        if vcol in allowed_vertex_names
+    }
+    gc.edges = {
+        (vfrom, vto, rel): items
+        for (vfrom, vto, rel), items in gc.edges.items()
+        if vfrom in allowed_vertex_names and vto in allowed_vertex_names
+    }
+
+
 class RowErrorBudgetExceeded(RuntimeError):
     """Raised when total row cast failures exceed ``IngestionParams.max_row_errors``."""
 
@@ -148,6 +173,10 @@ class IngestionParams(BaseModel):
         dry: Whether to perform a dry run (no database changes)
         init_only: Whether to only initialize the database without ingestion
         limit_files: Optional limit on number of files to process
+        resources: Optional allow-list of resource names to ingest. When set, only
+            data sources mapped to these resources are processed.
+        vertices: Optional allow-list of vertex names to ingest. When set, only
+            these vertex types (and their incident edges) are persisted.
         max_concurrent_db_ops: Maximum number of concurrent database operations (for vertices/edges).
             If None, uses n_cores. Set to 1 to prevent deadlocks in databases that don't handle
             concurrent transactions well (e.g., Neo4j). Database-independent setting.
@@ -187,6 +216,8 @@ class IngestionParams(BaseModel):
     dry: bool = False
     init_only: bool = False
     limit_files: int | None = None
+    resources: list[str] | None = None
+    vertices: list[str] | None = None
     max_concurrent_db_ops: int | None = None
     datetime_after: str | None = None
     datetime_before: str | None = None
@@ -239,6 +270,7 @@ class Caster:
         self.ingestion_params = ingestion_params
         self.schema = schema
         self.ingestion_model = ingestion_model
+        self._allowed_vertex_names: set[str] | None = None
         self._row_error_total = 0
         self._row_error_io_lock = asyncio.Lock()
 
@@ -307,6 +339,9 @@ class Caster:
             coros = [process_doc(doc) for doc in doc_list]
             docs = await asyncio.gather(*coros)
             graph = GraphContainer.from_docs_list(docs)
+            _filter_graph_container_by_vertices_inplace(
+                graph, allowed_vertex_names=self._allowed_vertex_names
+            )
             return CastBatchResult(graph=graph, failures=[])
 
         raw = await asyncio.gather(
@@ -340,6 +375,9 @@ class Caster:
         await self._persist_row_failures(failures)
 
         graph = GraphContainer.from_docs_list(docs)
+        _filter_graph_container_by_vertices_inplace(
+            graph, allowed_vertex_names=self._allowed_vertex_names
+        )
         return CastBatchResult(graph=graph, failures=failures)
 
     # ------------------------------------------------------------------
@@ -559,12 +597,42 @@ class Caster:
         self._row_error_total = 0
         init_only = ingestion_params.init_only
 
+        if ingestion_params.resources is not None:
+            known_resources = set(self.ingestion_model._resources.keys())
+            requested = set(ingestion_params.resources)
+            unknown = requested - known_resources
+            if unknown:
+                raise ValueError(
+                    "Unknown resources in ingestion_params.resources: "
+                    + ", ".join(sorted(unknown))
+                )
+            resources_filter: set[str] | None = requested
+        else:
+            resources_filter = None
+
+        if ingestion_params.vertices is not None:
+            known_vertices = {
+                v.name for v in self.schema.core_schema.vertex_config.vertices
+            }
+            requested = set(ingestion_params.vertices)
+            unknown = requested - known_vertices
+            if unknown:
+                raise ValueError(
+                    "Unknown vertices in ingestion_params.vertices: "
+                    + ", ".join(sorted(unknown))
+                )
+            self._allowed_vertex_names = requested
+        else:
+            self._allowed_vertex_names = None
+
         if init_only:
             logger.info("ingest execution bound to init")
             sys.exit(0)
 
         tasks: list[AbstractDataSource] = []
         for resource_name in self.ingestion_model._resources.keys():
+            if resources_filter is not None and resource_name not in resources_filter:
+                continue
             data_sources = data_source_registry.get_data_sources(resource_name)
             if data_sources:
                 logger.info(

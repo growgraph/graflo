@@ -68,8 +68,14 @@ class RegistryBuilder:
         provider = connection_provider or EmptyConnectionProvider()
         failures: list[str] = []
 
+        resources_filter: set[str] | None = None
+        if ingestion_params.resources is not None:
+            resources_filter = set(ingestion_params.resources)
+
         for resource in self.ingestion_model.resources:
             resource_name = resource.name
+            if resources_filter is not None and resource_name not in resources_filter:
+                continue
             resource_type = bindings.get_resource_type(resource_name)
 
             if resource_type is None:

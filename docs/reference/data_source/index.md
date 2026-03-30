@@ -172,6 +172,12 @@ caster = Caster(schema=schema, ingestion_model=ingestion_model)
 ingestion_params = IngestionParams(
     batch_size=1000,  # Process 1000 items per batch
     clear_data=False,
+    # Optional: restrict ingestion scope.
+    # `resources` limits which logical resources (from the manifest) are processed.
+    # `vertices` limits which vertex types are persisted (and therefore which edges
+    # can be inserted).
+    resources=["your_resource_name"],
+    vertices=["your_vertex_name"],
 )
 
 asyncio.run(
