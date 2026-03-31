@@ -61,12 +61,29 @@ class CastBatchResult(BaseModel):
 
 
 class IngestionParams(BaseModel):
-    """Parameters for controlling the ingestion process."""
+    """Parameters for controlling the ingestion process.
+
+    ``max_items`` caps how many **source items** (rows, JSON objects, grouped
+    RDF subjects, …) are read per resource run. It maps to
+    ``AbstractDataSource.iter_batches(..., limit=...)``. ``batch_size`` is only
+    the maximum number of items per yielded batch, not a cap on total volume.
+    """
 
     clear_data: bool = False
     n_cores: int = 1
-    max_items: int | None = None
-    batch_size: int = 10000
+    max_items: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Maximum number of source items (rows / JSON objects / grouped "
+            "RDF subjects) to ingest for each resource. Not a batch count."
+        ),
+    )
+    batch_size: int = Field(
+        default=10000,
+        ge=1,
+        description="Number of source items to group per batch for casting and writes.",
+    )
     dry: bool = False
     init_only: bool = False
     limit_files: int | None = None

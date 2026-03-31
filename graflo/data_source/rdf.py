@@ -101,6 +101,42 @@ def _triples_to_docs(
     return docs
 
 
+def _sparql_object_binding_to_value(o_binding: dict[str, Any]) -> Any:
+    """Decode a SPARQL JSON result binding for ``?o`` into a Python value."""
+    if o_binding["type"] == "literal":
+        raw = o_binding["value"]
+        datatype = o_binding.get("datatype", "")
+        if "integer" in datatype:
+            return int(raw)
+        if "float" in datatype or "double" in datatype or "decimal" in datatype:
+            return float(raw)
+        if "boolean" in datatype:
+            return raw.lower() in ("true", "1")
+        return raw
+    return o_binding["value"]
+
+
+def _merge_sparql_binding_into_doc(
+    doc: dict[str, Any], binding: dict[str, Any]
+) -> None:
+    """Merge one ``?s ?p ?o`` binding into an existing subject document dict."""
+    p_val = binding["p"]["value"]
+    o_binding = binding["o"]
+    p_name = _local_name(p_val)
+    if p_name == "type":
+        return
+
+    value = _sparql_object_binding_to_value(o_binding)
+    if p_name in doc:
+        existing: Any = doc[p_name]
+        if isinstance(existing, list):
+            existing.append(value)
+        else:
+            doc[p_name] = [existing, value]
+    else:
+        doc[p_name] = value
+
+
 def _sparql_results_to_docs(results: dict[str, Any]) -> list[dict]:
     """Convert a SPARQL ``SELECT ?s ?p ?o`` result set to flat dicts.
 
@@ -110,40 +146,10 @@ def _sparql_results_to_docs(results: dict[str, Any]) -> list[dict]:
     subjects: dict[str, dict] = {}
     for binding in results.get("results", {}).get("bindings", []):
         s_val = binding["s"]["value"]
-        p_val = binding["p"]["value"]
-        o_binding = binding["o"]
-
-        p_name = _local_name(p_val)
-        if p_name == "type":
-            continue
-
-        value: Any
-        if o_binding["type"] == "literal":
-            raw = o_binding["value"]
-            datatype = o_binding.get("datatype", "")
-            if "integer" in datatype:
-                value = int(raw)
-            elif "float" in datatype or "double" in datatype or "decimal" in datatype:
-                value = float(raw)
-            elif "boolean" in datatype:
-                value = raw.lower() in ("true", "1")
-            else:
-                value = raw
-        else:
-            value = o_binding["value"]
-
         if s_val not in subjects:
             subjects[s_val] = {"_uri": s_val, "_key": _local_name(s_val)}
 
-        doc = subjects[s_val]
-        if p_name in doc:
-            existing = doc[p_name]
-            if isinstance(existing, list):
-                existing.append(value)
-            else:
-                doc[p_name] = [existing, value]
-        else:
-            doc[p_name] = value
+        _merge_sparql_binding_into_doc(subjects[s_val], binding)
 
     return list(subjects.values())
 
@@ -294,7 +300,10 @@ class SparqlSourceConfig(ConfigBaseModel):
             )
 
         effective_limit = limit if limit is not None else self.page_size
-        return f"{base} LIMIT {effective_limit} OFFSET {offset}"
+        # Group bindings by subject during streaming pagination; requires all
+        # triple rows for one ?s to appear contiguously in the result.
+        order_clause = "" if "ORDER BY" in base.upper() else " ORDER BY ?s"
+        return f"{base}{order_clause} LIMIT {effective_limit} OFFSET {offset}"
 
 
 class SparqlEndpointDataSource(RdfDataSource):
@@ -331,14 +340,35 @@ class SparqlEndpointDataSource(RdfDataSource):
     ) -> Iterator[list[dict]]:
         """Query the SPARQL endpoint and yield batches of flat dictionaries.
 
-        Paginates using SPARQL LIMIT/OFFSET.
+        Paginates with SPARQL LIMIT/OFFSET on **bindings** (triple rows), merges
+        rows into subject documents in a streaming fashion, and stops fetching
+        once *limit* subjects have been yielded (when set).
         """
         wrapper = self._create_wrapper()
         offset = 0
-        all_docs: list[dict] = []
+        page_size = self.config.page_size
+        open_uri: str | None = None
+        open_doc: dict[str, Any] | None = None
+        batch: list[dict] = []
+        total_emitted = 0
+
+        def subject_completed(doc: dict[str, Any]) -> Iterator[list[dict]]:
+            """Append a finished subject and yield when a batch is full."""
+            nonlocal batch, total_emitted
+            if limit is not None and total_emitted >= limit:
+                return
+            batch.append(doc)
+            total_emitted += 1
+            if len(batch) >= batch_size:
+                to_send = batch
+                batch = []
+                yield to_send
 
         while True:
-            query = self.config.build_query(offset=offset, limit=self.config.page_size)
+            if limit is not None and total_emitted >= limit:
+                break
+
+            query = self.config.build_query(offset=offset, limit=page_size)
             wrapper.setQuery(query)
 
             logger.debug("SPARQL query (offset=%d): %s", offset, query)
@@ -348,15 +378,42 @@ class SparqlEndpointDataSource(RdfDataSource):
             if not bindings:
                 break
 
-            page_docs = _sparql_results_to_docs(results)
-            all_docs.extend(page_docs)
+            stop_fetching = False
+            for binding in bindings:
+                s_val = binding["s"]["value"]
+                if open_uri is None:
+                    open_uri = s_val
+                    open_doc = {"_uri": s_val, "_key": _local_name(s_val)}
+                elif s_val != open_uri:
+                    assert open_doc is not None
+                    yield from subject_completed(open_doc)
+                    open_uri = None
+                    open_doc = None
+                    if limit is not None and total_emitted >= limit:
+                        stop_fetching = True
+                        break
+                    open_uri = s_val
+                    open_doc = {"_uri": s_val, "_key": _local_name(s_val)}
 
-            if len(bindings) < self.config.page_size:
+                assert open_doc is not None
+                _merge_sparql_binding_into_doc(open_doc, binding)
+
+            if stop_fetching:
                 break
 
-            offset += self.config.page_size
+            if len(bindings) < page_size:
+                break
 
-        yield from self._yield_batches(all_docs, batch_size, limit)
+            offset += page_size
+
+        if (
+            open_doc is not None
+            and open_uri is not None
+            and (limit is None or total_emitted < limit)
+        ):
+            batch.append(open_doc)
+        if batch:
+            yield batch
 
 
 # Backward-compatible alias

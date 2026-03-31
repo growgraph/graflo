@@ -256,21 +256,26 @@ class APIDataSource(AbstractDataSource):
             cursor: str | None = None
 
             while True:
+                if limit is not None and total_items >= limit:
+                    break
+
                 # Build request parameters
                 params = self.config.params.copy()
+
+                page_limit = (
+                    self.config.pagination.page_size if self.config.pagination else 0
+                )
+                if self.config.pagination is not None and limit is not None:
+                    page_limit = min(page_limit, limit - total_items)
 
                 # Add pagination parameters
                 if self.config.pagination:
                     if self.config.pagination.strategy == "offset":
                         params[self.config.pagination.offset_param] = offset
-                        params[self.config.pagination.limit_param] = (
-                            self.config.pagination.page_size
-                        )
+                        params[self.config.pagination.limit_param] = page_limit
                     elif self.config.pagination.strategy == "page":
                         params[self.config.pagination.page_param] = page
-                        params[self.config.pagination.per_page_param] = (
-                            self.config.pagination.page_size
-                        )
+                        params[self.config.pagination.per_page_param] = page_limit
                     elif self.config.pagination.strategy == "cursor" and cursor:
                         params[self.config.pagination.cursor_param] = cursor
 
@@ -295,7 +300,7 @@ class APIDataSource(AbstractDataSource):
                 # Process items in batches
                 batch = []
                 for item in items:
-                    if limit and total_items >= limit:
+                    if limit is not None and total_items >= limit:
                         break
                     batch.append(item)
                     total_items += 1
@@ -309,7 +314,7 @@ class APIDataSource(AbstractDataSource):
                     yield batch
 
                 # Check if we should continue
-                if limit and total_items >= limit:
+                if limit is not None and total_items >= limit:
                     break
 
                 # Update pagination state
@@ -317,7 +322,7 @@ class APIDataSource(AbstractDataSource):
                     if self.config.pagination.strategy == "offset":
                         if not self._has_more(data):
                             break
-                        offset += self.config.pagination.page_size
+                        offset += page_limit
                     elif self.config.pagination.strategy == "page":
                         if not self._has_more(data):
                             break

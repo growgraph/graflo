@@ -75,8 +75,11 @@ class AbstractDataSource(ConfigBaseModel, abc.ABC):
         Each batch is a list of dictionaries representing the data items.
 
         Args:
-            batch_size: Number of items per batch
-            limit: Maximum number of items to retrieve (None for no limit)
+            batch_size: Maximum number of items per yielded batch (last batch may
+                be smaller).
+            limit: Cap on **total items** read from this source (rows, JSON
+                documents, SPARQL subjects after grouping, etc.), not a cap on
+                batches. ``None`` means read until the source is exhausted.
 
         Yields:
             list[dict]: Batches of documents as dictionaries

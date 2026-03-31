@@ -46,7 +46,7 @@ flowchart LR
 - **GraphManifest** — the canonical top-level contract that composes `schema`, `ingestion_model`, and `bindings`.
 - **Schema** — the declarative logical graph model (`Schema`): vertex/edge definitions, identities, typed fields, and DB profile.
 - **IngestionModel** — reusable resources and transforms used to map records into graph entities.
-- **Bindings** — named `FileConnector` / `TableConnector` / `SparqlConnector` list plus `resource_connector` (resource→connector) and optional `connector_connection` (connector→`conn_proxy` for runtime `ConnectionProvider` resolution without secrets in the manifest).
+- **Bindings** — named `FileConnector` / `TableConnector` / `SparqlConnector` list plus `resource_connector` (many rows per resource allowed: resource→0..n connectors) and optional `connector_connection` (connector **name** or **hash**→`conn_proxy` for runtime `ConnectionProvider` resolution without secrets in the manifest). Each connector exposes a **bound source modality** (`BoundSourceKind`: file, SQL table, SPARQL) for dispatch, distinct from the abstract ingestion **Resource**.
 - **Database-Independent Graph Representation** — a `GraphContainer` of vertices and edges, independent of any target database.
 - **Graph DB** — the target LPG store (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph).
 
@@ -94,7 +94,7 @@ flowchart LR
     Res --> Ex --> Asm --> GC --> DBW
 ```
 
-- **Bindings** (`FileConnector`, `TableConnector`, `SparqlConnector`) describe *where* data comes from (file paths, SQL tables, SPARQL endpoints). Optional **`connector_connection`** entries assign each SQL/SPARQL connector a **`conn_proxy`** label; the `ConnectionProvider` turns that label into real connection config at runtime so manifests stay credential-free.
+- **Bindings** (`FileConnector`, `TableConnector`, `SparqlConnector`) describe *where* data comes from (file paths, SQL tables, SPARQL endpoints). Multiple connectors may attach to the same ingestion resource name; optional **`connector_connection`** entries assign each SQL/SPARQL connector a **`conn_proxy`** by **connector `name` or `hash`** (not by resource name). The `ConnectionProvider` turns that label into real connection config at runtime so manifests stay credential-free.
 - **DataSources** (`AbstractDataSource` subclasses) handle *how* to read data in batches. Each carries a `DataSourceType` and is registered in the `DataSourceRegistry`.
 - **Resources** define *what* to extract — each `Resource` is a reusable actor pipeline (descend → transform → vertex → edge) that maps raw records to graph elements.
 - **GraphContainer** (covariant graph representation) collects the resulting vertices and edges in a database-independent format.
@@ -176,6 +176,7 @@ classDiagram
         +connectors: list~ResourceConnector~
         +resource_connector: list~ResourceConnectorBinding~
         +connector_connection: list~ConnectorConnectionBinding~
+        +get_connectors_for_resource(name) list
         +get_conn_proxy_for_connector(connector) str?
         +bind_connector_to_conn_proxy(connector, conn_proxy)
     }

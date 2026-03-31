@@ -76,7 +76,7 @@ ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph — same API for al
 - **Schema inference** — Generate graph schemas from PostgreSQL 3NF databases (PK/FK heuristics) or from OWL/RDFS ontologies (`owl:Class` → vertices, `owl:ObjectProperty` → edges, `owl:DatatypeProperty` → vertex fields).
 - **Typed fields** — Vertex fields and edge weights carry types (`INT`, `FLOAT`, `STRING`, `DATETIME`, `BOOL`) for validation and database-specific optimisation.
 - **Parallel batch processing** — Configurable batch sizes and multi-core execution.
-- **Credential-free source contracts** — `Bindings.connector_connection` maps each `TableConnector` / `SparqlConnector` (by name, hash, or resource alias) to a `conn_proxy` label. Manifests stay free of secrets; a runtime `ConnectionProvider` resolves each proxy to concrete `GeneralizedConnConfig` (for example PostgreSQL or SPARQL endpoint settings).
+- **Credential-free source contracts** — `Bindings.connector_connection` maps each `TableConnector` / `SparqlConnector` (by **connector name** or **hash**) to a `conn_proxy` label. Manifests stay free of secrets; a runtime `ConnectionProvider` resolves each proxy to concrete `GeneralizedConnConfig` (for example PostgreSQL or SPARQL endpoint settings). Ingestion resource names are separate and may map to multiple connectors.
 
 ## Documentation
 Full documentation is available at: [growgraph.github.io/graflo](https://growgraph.github.io/graflo)

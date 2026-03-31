@@ -314,6 +314,7 @@ class Caster:
         """
         actual_resource_name = resource_name or data_source.resource_name
 
+        # Same semantics as AbstractDataSource.iter_batches(limit=...).
         limit = self.ingestion_params.max_items
 
         for batch in data_source.iter_batches(

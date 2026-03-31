@@ -8,7 +8,7 @@ The manifest stays credential-free: `bindings.connector_connection` only contain
 
 ## Manifest: what `connector_connection` looks like
 
-Inside `bindings` you explicitly map each connector to a proxy label:
+Inside `bindings` you explicitly map each connector to a proxy label. The `connector` field must be a **connector `name`** or **canonical hash**, not an ingestion resource name (a resource may be bound to several connectors).
 
 ```yaml
 bindings:
@@ -23,7 +23,7 @@ bindings:
       conn_proxy: postgres_source
 ```
 
-In the code, connectors omit `connector.name` and use `connector.resource_name` (so the manifest references are stable and human-readable).
+In the companion script, each `TableConnector` sets `name` to match those references (here they match the table/resource names only for readability).
 
 ## Runtime: how the proxy label becomes a real DB config
 

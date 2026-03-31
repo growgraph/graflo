@@ -102,8 +102,8 @@ class SQLDataSource(AbstractDataSource):
         """Iterate over SQL query results in batches.
 
         Args:
-            batch_size: Number of items per batch
-            limit: Maximum number of items to retrieve
+            batch_size: Target size of each yielded batch of row dicts.
+            limit: Maximum total rows to read (across all pages when paginating).
 
         Yields:
             list[dict]: Batches of rows as dictionaries
@@ -116,10 +116,17 @@ class SQLDataSource(AbstractDataSource):
         page_size = min(self.config.page_size, batch_size)
 
         while True:
+            if limit is not None and total_items >= limit:
+                break
+
+            chunk_limit = page_size
+            if limit is not None:
+                chunk_limit = min(chunk_limit, limit - total_items)
+
             # Build query
             if self.config.pagination:
                 query_str = self._add_pagination(
-                    self.config.query, offset=offset, limit=page_size
+                    self.config.query, offset=offset, limit=chunk_limit
                 )
             else:
                 query_str = self.config.query
@@ -135,9 +142,6 @@ class SQLDataSource(AbstractDataSource):
                     from decimal import Decimal
 
                     for row in rows:
-                        if limit and total_items >= limit:
-                            break
-
                         # Convert row to dictionary
                         row_dict = dict(row._mapping)
                         # Convert Decimal to float for JSON compatibility
@@ -157,17 +161,17 @@ class SQLDataSource(AbstractDataSource):
                         yield batch
 
                     # Check if we should continue
-                    if limit and total_items >= limit:
+                    if limit is not None and total_items >= limit:
                         break
 
                     # Check if there are more rows
-                    if len(rows) < page_size:
+                    if len(rows) < chunk_limit:
                         # No more rows
                         break
 
                     # Update offset for next iteration
                     if self.config.pagination:
-                        offset += page_size
+                        offset += chunk_limit
                     else:
                         # No pagination, single query
                         break

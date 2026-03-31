@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.7.9] - 2026-03-31
+
+### Added
+
+- **`Bindings.get_connectors_for_resource(name)`** returns an ordered list of connectors (unique by hash) for an ingestion resource, supporting **1→n** resource–connector wiring.
+- **`BoundSourceKind`** enum (`file`, `sql_table`, `sparql`) and **`ResourceConnector.bound_source_kind()`** describe the physical source modality of a connector (replacing the old “resource type” wording).
+
+### Changed
+
+- **Ingestion caps**: `IngestionParams.max_items` is documented and validated (`>= 1` when set). **`SparqlEndpointDataSource.iter_batches`** paginates without loading the full endpoint result into memory, uses **`ORDER BY ?s`** when the query has no `ORDER BY`, and honors **`limit`** as a subject count. **`SQLDataSource`** and offset/page **API** pagination pass a tighter per-request page size when a total cap is close (fewer over-fetched rows/items).
+- **`RegistryBuilder`** registers **every** connector bound to each resource and dispatches on **`connector.bound_source_kind()`**; SQL registration uses the connector’s own table/schema fields instead of a resource-level table lookup.
+- **Auto-join** (`_vertex_table_info`) resolves table metadata via the list API and **raises** if more than one `TableConnector` is bound to the same vertex/resource key used for disambiguation.
+
+### Breaking
+
+- **`ResourceType`** removed in favor of **`BoundSourceKind`**; **`get_resource_type()`** removed in favor of **`bound_source_kind()`** on connectors (update imports and call sites).
+- **`Bindings`**: **`get_connector_for_resource`**, **`get_resource_type`**, and **`get_table_info`** removed; use **`get_connectors_for_resource`** and connector fields / `bound_source_kind()` instead.
+- **`connector_connection` / internal connector refs**: resolution allows only **connector `name`** or **canonical `hash`**. Using an ingestion **resource name** as a `connector` reference is no longer supported (resource names are no longer 1:1 with connectors).
+- **`bind_resource`** and manifest **`resource_connector`** validation: additional rows for the same `resource` append connectors instead of replacing or conflicting.
+
+### Documentation
+
+- **Examples / docs**: `examples/9-connector-connection-proxy` and manifest guides updated for explicit connector names in `connector_connection`. Concepts and README clarify 1→n bindings and proxy wiring.
+
 ## [1.7.7] - 2026-03-27
 
 ### Changed
@@ -20,8 +44,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`Bindings.connector_connection_bindings`** (typed view), **`get_conn_proxy_for_connector`**, and **`bind_connector_to_conn_proxy`**: API aligned with HQ loaders (`ResourceMapper`, `GraphEngine`) for proxy-based source wiring.
 
 ### Changed
-- **Connector reference resolution**: `connector_connection` entries may reference a connector by canonical **hash**, declared **`name`**, or a **`resource` name** when that resource is already mapped to the connector (mirrors validation in `Bindings`).
-- **`Bindings` validation**: duplicate connector `name` values, conflicting resource→connector mappings, and conflicting `conn_proxy` for the same connector hash now fail fast with explicit errors.
+- **Connector reference resolution**: `connector_connection` entries may reference a connector by canonical **hash**, declared **`name`**, or a **`resource` name** when that resource is already mapped to the connector (mirrors validation in `Bindings`). **Update (1.7.8):** resource-name aliasing for `connector` refs was removed; use **connector `name` or `hash`** only.
+- **`Bindings` validation**: duplicate connector `name` values and conflicting `conn_proxy` for the same connector hash now fail fast with explicit errors. **Update (1.7.8):** many connectors may attach to the same ingestion resource (1→n); overlapping resource rows no longer raise “conflicting resource binding” for distinct connectors.
 
 ### Breaking
 - **`Bindings.from_dict` / manifest validation**: legacy top-level keys `postgres_connections`, `table_connectors`, `file_connectors`, and `sparql_connectors` are rejected. Migrate to the unified `connectors` + `resource_connector` (+ optional `connector_connection`) shape.

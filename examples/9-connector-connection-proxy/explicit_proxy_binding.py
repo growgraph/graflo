@@ -48,25 +48,30 @@ def _load_mock_postgres_schema(*, postgres_conf: PostgresConfig) -> None:
 
 def make_explicit_postgres_bindings(conn_proxy: str) -> Bindings:
     """Create manifest bindings with explicit connector_connection proxy labels."""
-    # In this example we keep `connector.name` omitted and rely on
-    # connector.resource_name as the stable manifest alias.
+    # Each connector has an explicit `name` so `connector_connection.connector`
+    # can reference it. Ingestion resource names still come from `resource_name`
+    # (or `resource_connector`); those names are not valid connector refs.
     connectors = [
         TableConnector(
+            name="users",
             table_name="users",
             schema_name="public",
             resource_name="users",
         ),
         TableConnector(
+            name="products",
             table_name="products",
             schema_name="public",
             resource_name="products",
         ),
         TableConnector(
+            name="purchases",
             table_name="purchases",
             schema_name="public",
             resource_name="purchases",
         ),
         TableConnector(
+            name="follows",
             table_name="follows",
             schema_name="public",
             resource_name="follows",
