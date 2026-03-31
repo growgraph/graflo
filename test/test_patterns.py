@@ -3,6 +3,7 @@ import pytest
 
 from graflo.architecture.contract.bindings import (
     Bindings,
+    BoundSourceKind,
     FileConnector,
     ResourceConnectorBinding,
     TableConnector,
@@ -23,8 +24,11 @@ def test_connectors():
     bindings.bind_resource("b", connector_b)
 
     # Test that connectors work correctly (narrow to FileConnector for .sub_path)
-    connector_a_loaded = bindings.get_connector_for_resource("a")
-    connector_b_loaded = bindings.get_connector_for_resource("b")
+    conns_a = bindings.get_connectors_for_resource("a")
+    conns_b = bindings.get_connectors_for_resource("b")
+    assert len(conns_a) == 1 and len(conns_b) == 1
+    connector_a_loaded = conns_a[0]
+    connector_b_loaded = conns_b[0]
     assert isinstance(connector_a_loaded, FileConnector)
     assert isinstance(connector_b_loaded, FileConnector)
     assert connector_a_loaded.sub_path is not None
@@ -32,11 +36,8 @@ def test_connectors():
     assert connector_b_loaded.sub_path is not None
     assert str(connector_b_loaded.sub_path / "a") == "a"
 
-    # Test that connectors can be accessed by name
-    assert bindings.get_connector_for_resource("a") is not None
-    assert bindings.get_connector_for_resource("b") is not None
-    assert bindings.get_resource_type("a") == "file"
-    assert bindings.get_resource_type("b") == "file"
+    assert connector_a_loaded.bound_source_kind() == BoundSourceKind.FILE
+    assert connector_b_loaded.bound_source_kind() == BoundSourceKind.FILE
 
 
 def test_file_connector_basic():
@@ -237,8 +238,8 @@ def test_connectors_with_filtering():
     bindings.bind_resource("events", table_connector)
 
     # Verify connectors are stored correctly (narrow with isinstance checks)
-    users_pattern = bindings.get_connector_for_resource("users")
-    events_pattern = bindings.get_connector_for_resource("events")
+    users_pattern = bindings.get_connectors_for_resource("users")[0]
+    events_pattern = bindings.get_connectors_for_resource("events")[0]
     assert isinstance(users_pattern, FileConnector)
     assert users_pattern.regex == r".*\.csv$"
     assert isinstance(events_pattern, TableConnector)
@@ -331,9 +332,10 @@ def test_bindings_support_connector_resource_name_mapping():
             )
         ]
     )
-    connector = bindings.get_connector_for_resource("users")
-    assert isinstance(connector, FileConnector)
-    assert bindings.get_resource_type("users") == "file"
+    conns = bindings.get_connectors_for_resource("users")
+    assert len(conns) == 1
+    assert isinstance(conns[0], FileConnector)
+    assert conns[0].bound_source_kind() == BoundSourceKind.FILE
 
 
 def test_bindings_support_top_level_resource_connector_objects():
@@ -347,33 +349,53 @@ def test_bindings_support_top_level_resource_connector_objects():
             ResourceConnectorBinding(resource="orders", connector="orders_table")
         ],
     )
-    connector = bindings.get_connector_for_resource("orders")
-    assert isinstance(connector, TableConnector)
-    assert connector.table_name == "orders"
-    assert connector.schema_name == "public"
+    conns = bindings.get_connectors_for_resource("orders")
+    assert len(conns) == 1
+    assert isinstance(conns[0], TableConnector)
+    assert conns[0].table_name == "orders"
+    assert conns[0].schema_name == "public"
 
 
-def test_bindings_reject_conflicting_resource_mappings():
-    with pytest.raises(ValueError, match="Conflicting resource binding"):
+def test_bindings_allow_multiple_resource_connector_mappings():
+    bindings = Bindings(
+        connectors=[
+            FileConnector(
+                name="users_files",
+                regex=r"^users.*\.csv$",
+                sub_path=pathlib.Path("."),
+                resource_name="users",
+            ),
+            FileConnector(
+                name="users_backup_files",
+                regex=r"^users_backup.*\.csv$",
+                sub_path=pathlib.Path("."),
+            ),
+        ],
+        resource_connector=[
+            ResourceConnectorBinding(resource="users", connector="users_backup_files")
+        ],
+    )
+    conns = bindings.get_connectors_for_resource("users")
+    assert len(conns) == 2
+    by_name = {c.name for c in conns if isinstance(c, FileConnector)}
+    assert by_name == {"users_files", "users_backup_files"}
+
+
+def test_bindings_connector_connection_rejects_resource_key_as_connector_ref():
+    """connector_connection.connector must name a connector (name or hash), not a resource."""
+    with pytest.raises(ValueError, match="Unknown connector reference"):
         Bindings(
             connectors=[
                 FileConnector(
-                    name="users_files",
-                    regex=r"^users.*\.csv$",
+                    name="openalex",
+                    regex=r".*\.jsonl$",
                     sub_path=pathlib.Path("."),
-                    resource_name="users",
-                ),
-                FileConnector(
-                    name="users_backup_files",
-                    regex=r"^users_backup.*\.csv$",
-                    sub_path=pathlib.Path("."),
-                ),
-            ],
-            resource_connector=[
-                ResourceConnectorBinding(
-                    resource="users", connector="users_backup_files"
                 )
             ],
+            resource_connector=[
+                ResourceConnectorBinding(resource="work", connector="openalex")
+            ],
+            connector_connection=[{"connector": "work", "conn_proxy": "main"}],
         )
 
 
@@ -388,9 +410,10 @@ def test_bindings_resource_connector_accepts_dict_entries():
         ],
         resource_connector=[{"resource": "work", "connector": "openalex"}],
     )
-    connector = bindings.get_connector_for_resource("work")
-    assert isinstance(connector, FileConnector)
-    assert connector.name == "openalex"
+    conns = bindings.get_connectors_for_resource("work")
+    assert len(conns) == 1
+    assert isinstance(conns[0], FileConnector)
+    assert conns[0].name == "openalex"
 
 
 def test_bindings_resource_connector_validation_error_message():

@@ -5,20 +5,20 @@ Internal code should import these classes from ``graflo.architecture.contract.bi
 
 from graflo.architecture.contract.bindings import (
     Bindings,
+    BoundSourceKind,
     FileConnector,
     JoinClause,
     ResourceConnector,
-    ResourceType,
     SparqlConnector,
     TableConnector,
 )
 
 __all__ = [
     "Bindings",
+    "BoundSourceKind",
     "FileConnector",
     "JoinClause",
     "ResourceConnector",
-    "ResourceType",
     "SparqlConnector",
     "TableConnector",
 ]

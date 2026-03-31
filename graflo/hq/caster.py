@@ -314,9 +314,7 @@ class Caster:
         """
         actual_resource_name = resource_name or data_source.resource_name
 
-        limit = getattr(data_source, "_pattern_limit", None)
-        if limit is None:
-            limit = self.ingestion_params.max_items
+        limit = self.ingestion_params.max_items
 
         for batch in data_source.iter_batches(
             batch_size=self.ingestion_params.batch_size, limit=limit

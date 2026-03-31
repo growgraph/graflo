@@ -601,7 +601,7 @@ class TestResourceMapperTypeLookupOverride:
             },
         )
 
-        tp = bindings.get_connector_for_resource("entity_links")
+        tp = bindings.get_connectors_for_resource("entity_links")[0]
         assert isinstance(tp, TableConnector)
         assert tp.view is not None
         assert tp.view.kind == "type_lookup"

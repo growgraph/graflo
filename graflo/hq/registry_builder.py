@@ -1,7 +1,7 @@
 """Build a :class:`DataSourceRegistry` from :class:`Bindings` and schema models.
 
 Handles file discovery, SQL table source creation (with auto-JOIN
-enrichment and datetime filtering), and connector dispatch by resource type.
+enrichment and datetime filtering), and connector dispatch by bound source kind.
 """
 
 from __future__ import annotations
@@ -23,8 +23,8 @@ from graflo.hq.connection_provider import (
     SparqlGeneralizedConnConfig,
 )
 from graflo.architecture.contract.bindings import (
+    BoundSourceKind,
     FileConnector,
-    ResourceType,
     SparqlConnector,
     TableConnector,
 )
@@ -61,8 +61,8 @@ class RegistryBuilder:
     ) -> DataSourceRegistry:
         """Return a populated :class:`DataSourceRegistry`.
 
-        Iterates over every resource in the schema, looks up its connector and
-        resource type, then delegates to the appropriate registration helper.
+        For each ingestion resource, registers every bound connector (same
+        resource may have multiple physical sources).
         """
         registry = DataSourceRegistry()
         provider = connection_provider or EmptyConnectionProvider()
@@ -76,89 +76,100 @@ class RegistryBuilder:
             resource_name = resource.name
             if resources_filter is not None and resource_name not in resources_filter:
                 continue
-            resource_type = bindings.get_resource_type(resource_name)
-
-            if resource_type is None:
-                msg = f"No resource type found for resource '{resource_name}'"
+            connectors = bindings.get_connectors_for_resource(resource_name)
+            if not connectors:
+                msg = f"No connectors bound for resource '{resource_name}'"
                 logger.warning("%s, skipping", msg)
                 failures.append(msg)
                 continue
 
-            connector = bindings.get_connector_for_resource(resource_name)
-            if connector is None:
-                msg = f"No connector found for resource '{resource_name}'"
-                logger.warning("%s, skipping", msg)
-                failures.append(msg)
-                continue
+            for connector in connectors:
+                cref = connector.name or connector.hash
+                kind = connector.bound_source_kind()
 
-            if resource_type == ResourceType.FILE:
-                if not isinstance(connector, FileConnector):
-                    msg = f"Connector for resource '{resource_name}' is not a FileConnector"
-                    logger.warning("%s, skipping", msg)
-                    failures.append(msg)
-                    continue
-                try:
-                    self._register_file_sources(
-                        registry, resource_name, connector, ingestion_params
-                    )
-                except Exception as e:
+                if kind == BoundSourceKind.FILE:
+                    if not isinstance(connector, FileConnector):
+                        msg = (
+                            f"Connector '{cref}' for resource '{resource_name}' "
+                            f"is not a FileConnector"
+                        )
+                        logger.warning("%s, skipping", msg)
+                        failures.append(msg)
+                        continue
+                    try:
+                        self._register_file_sources(
+                            registry, resource_name, connector, ingestion_params
+                        )
+                    except Exception as e:
+                        msg = (
+                            f"Failed to register FILE source for resource "
+                            f"'{resource_name}' (connector '{cref}'): {e}"
+                        )
+                        failures.append(msg)
+                        if strict:
+                            continue
+
+                elif kind == BoundSourceKind.SQL_TABLE:
+                    if not isinstance(connector, TableConnector):
+                        msg = (
+                            f"Connector '{cref}' for resource '{resource_name}' "
+                            f"is not a TableConnector"
+                        )
+                        logger.warning("%s, skipping", msg)
+                        failures.append(msg)
+                        continue
+                    try:
+                        self._register_sql_table_sources(
+                            registry,
+                            resource_name,
+                            connector,
+                            bindings,
+                            ingestion_params,
+                            provider,
+                        )
+                    except Exception as e:
+                        msg = (
+                            f"Failed to register SQL source for resource "
+                            f"'{resource_name}' (connector '{cref}'): {e}"
+                        )
+                        failures.append(msg)
+                        if strict:
+                            continue
+
+                elif kind == BoundSourceKind.SPARQL:
+                    if not isinstance(connector, SparqlConnector):
+                        msg = (
+                            f"Connector '{cref}' for resource '{resource_name}' "
+                            f"is not a SparqlConnector"
+                        )
+                        logger.warning("%s, skipping", msg)
+                        failures.append(msg)
+                        continue
+                    try:
+                        self._register_sparql_sources(
+                            registry,
+                            resource_name,
+                            connector,
+                            bindings,
+                            ingestion_params,
+                            provider,
+                        )
+                    except Exception as e:
+                        msg = (
+                            f"Failed to register SPARQL source for resource "
+                            f"'{resource_name}' (connector '{cref}'): {e}"
+                        )
+                        failures.append(msg)
+                        if strict:
+                            continue
+
+                else:
                     msg = (
-                        f"Failed to register FILE source for resource "
-                        f"'{resource_name}': {e}"
+                        f"Unsupported bound source kind '{kind}' "
+                        f"for resource '{resource_name}' (connector '{cref}')"
                     )
-                    failures.append(msg)
-                    if strict:
-                        continue
-
-            elif resource_type == ResourceType.SQL_TABLE:
-                if not isinstance(connector, TableConnector):
-                    msg = f"Connector for resource '{resource_name}' is not a TableConnector"
                     logger.warning("%s, skipping", msg)
                     failures.append(msg)
-                    continue
-                try:
-                    self._register_sql_table_sources(
-                        registry,
-                        resource_name,
-                        connector,
-                        bindings,
-                        ingestion_params,
-                        provider,
-                    )
-                except Exception as e:
-                    msg = f"Failed to register SQL source for resource '{resource_name}': {e}"
-                    failures.append(msg)
-                    if strict:
-                        continue
-
-            elif resource_type == ResourceType.SPARQL:
-                if not isinstance(connector, SparqlConnector):
-                    msg = f"Connector for resource '{resource_name}' is not a SparqlConnector"
-                    logger.warning("%s, skipping", msg)
-                    failures.append(msg)
-                    continue
-                try:
-                    self._register_sparql_sources(
-                        registry,
-                        resource_name,
-                        connector,
-                        bindings,
-                        ingestion_params,
-                        provider,
-                    )
-                except Exception as e:
-                    msg = f"Failed to register SPARQL source for resource '{resource_name}': {e}"
-                    failures.append(msg)
-                    if strict:
-                        continue
-
-            else:
-                msg = (
-                    f"Unsupported resource type '{resource_type}' "
-                    f"for resource '{resource_name}'"
-                )
-                logger.warning("%s, skipping", msg)
-                failures.append(msg)
 
         if strict and failures:
             details = "\n".join(f"- {item}" for item in failures)
@@ -272,14 +283,8 @@ class RegistryBuilder:
             )
             return
 
-        table_info = bindings.get_table_info(resource_name)
-        if table_info is None:
-            logger.warning(
-                f"Could not get table info for resource '{resource_name}', skipping"
-            )
-            return
-
-        table_name, schema_name = table_info
+        table_name = connector.table_name
+        schema_name = connector.schema_name
         effective_schema = schema_name or postgres_config.schema_name or "public"
 
         try:

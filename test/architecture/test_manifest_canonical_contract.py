@@ -102,7 +102,7 @@ def test_registry_builder_strict_mode_aggregates_missing_connectors() -> None:
         assert False, "Expected strict registry build to fail"
     except ValueError as exc:
         assert "Registry build failed in strict mode" in str(exc)
-        assert "No resource type found for resource 'r1'" in str(exc)
+        assert "No connectors bound for resource 'r1'" in str(exc)
 
 
 def test_resource_finish_init_does_not_mutate_shared_schema_edge_config() -> None:

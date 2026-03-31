@@ -144,10 +144,23 @@ def _vertex_table_info(
     """Return (table_name, schema_name, primary_key_field) for a vertex.
 
     Returns None if the vertex has no table connector in *bindings*.
+    Raises ValueError if more than one :class:`TableConnector` is bound to
+    the same *vertex_name* (auto-join requires a unique SQL source).
     """
-    connector = bindings.get_connector_for_resource(vertex_name)
-    if not isinstance(connector, TableConnector):
+    table_connectors = [
+        c
+        for c in bindings.get_connectors_for_resource(vertex_name)
+        if isinstance(c, TableConnector)
+    ]
+    if not table_connectors:
         return None
+    if len(table_connectors) > 1:
+        refs = ", ".join(c.name or c.hash for c in table_connectors)
+        raise ValueError(
+            f"Multiple TableConnectors bound to resource/vertex key '{vertex_name}' "
+            f"({refs}); disambiguate before using auto-join."
+        )
+    connector = table_connectors[0]
     try:
         pk_fields = vertex_config.identity_fields(vertex_name)
     except (KeyError, IndexError):

@@ -2,10 +2,10 @@
 
 from .bindings import (
     Bindings,
+    BoundSourceKind,
     FileConnector,
     JoinClause,
     ResourceConnector,
-    ResourceType,
     SparqlConnector,
     TableConnector,
 )
@@ -19,6 +19,7 @@ from .manifest import GraphManifest
 
 __all__ = [
     "Bindings",
+    "BoundSourceKind",
     "FileConnector",
     "GraphManifest",
     "IngestionModel",
@@ -26,7 +27,6 @@ __all__ = [
     "ProtoTransform",
     "Resource",
     "ResourceConnector",
-    "ResourceType",
     "SparqlConnector",
     "TableConnector",
     "Transform",

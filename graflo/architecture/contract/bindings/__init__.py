@@ -2,21 +2,21 @@
 
 from .core import Bindings, ResourceConnectorBinding
 from .connectors import (
+    BoundSourceKind,
     FileConnector,
     JoinClause,
     ResourceConnector,
-    ResourceType,
     SparqlConnector,
     TableConnector,
 )
 
 __all__ = [
     "Bindings",
+    "BoundSourceKind",
     "ResourceConnectorBinding",
     "FileConnector",
     "JoinClause",
     "ResourceConnector",
-    "ResourceType",
     "SparqlConnector",
     "TableConnector",
 ]

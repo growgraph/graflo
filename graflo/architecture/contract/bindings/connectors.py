@@ -23,17 +23,17 @@ else:
         PostgresConfig = Any
 
 
-class ResourceType(BaseEnum):
-    """Resource types for data sources.
+class BoundSourceKind(BaseEnum):
+    """Physical source modality for a bound connector (how rows are retrieved).
 
-    Resource types distinguish between different data source categories.
-    File type detection (CSV, JSON, JSONL, Parquet, etc.) is handled
-    automatically by the loader based on file extensions.
+    This describes the connector-backed access pattern, not the abstract
+    ingestion resource. File format (CSV, JSON, etc.) is chosen by the loader
+    from file extensions.
 
     Attributes:
-        FILE: File-based data source (any format: CSV, JSON, JSONL, Parquet, etc.)
-        SQL_TABLE: SQL database table (e.g., PostgreSQL table)
-        SPARQL: SPARQL / RDF data source (endpoint or .ttl/.rdf files via rdflib)
+        FILE: File-based connector (directory + pattern or paths).
+        SQL_TABLE: SQL table / database-backed connector.
+        SPARQL: SPARQL / RDF connector (endpoint or local RDF via rdflib).
     """
 
     FILE = "file"
@@ -99,12 +99,8 @@ class ResourceConnector(ConfigBaseModel, abc.ABC):
         pass
 
     @abc.abstractmethod
-    def get_resource_type(self) -> ResourceType:
-        """Get the type of resource this connector matches.
-
-        Returns:
-            ResourceType: Resource type enum value
-        """
+    def bound_source_kind(self) -> BoundSourceKind:
+        """Return the physical source kind for this connector."""
         pass
 
 
@@ -153,14 +149,9 @@ class FileConnector(ResourceConnector):
             return False
         return bool(re.match(self.regex, resource_identifier))
 
-    def get_resource_type(self) -> ResourceType:
-        """Get resource type.
-
-        FileConnector always represents a FILE resource type.
-        The specific file format (CSV, JSON, JSONL, Parquet, etc.) is
-        automatically detected by the loader based on file extensions.
-        """
-        return ResourceType.FILE
+    def bound_source_kind(self) -> BoundSourceKind:
+        """File connector always uses ``BoundSourceKind.FILE``."""
+        return BoundSourceKind.FILE
 
 
 class JoinClause(ConfigBaseModel):
@@ -306,9 +297,8 @@ class TableConnector(ResourceConnector):
 
         return False
 
-    def get_resource_type(self) -> ResourceType:
-        """Get resource type."""
-        return ResourceType.SQL_TABLE
+    def bound_source_kind(self) -> BoundSourceKind:
+        return BoundSourceKind.SQL_TABLE
 
     def build_where_clause(self) -> str:
         """Build SQL WHERE clause from date filtering parameters **and** general filters.
@@ -468,9 +458,9 @@ class SparqlConnector(ResourceConnector):
         local_name = self.rdf_class.rsplit("#", 1)[-1].rsplit("/", 1)[-1]
         return resource_identifier == local_name
 
-    def get_resource_type(self) -> ResourceType:
-        """Return ``ResourceType.SPARQL``."""
-        return ResourceType.SPARQL
+    def bound_source_kind(self) -> BoundSourceKind:
+        """Return ``BoundSourceKind.SPARQL``."""
+        return BoundSourceKind.SPARQL
 
     def build_select_query(self) -> str:
         """Build a SPARQL SELECT query for instances of ``rdf_class``.

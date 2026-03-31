@@ -43,16 +43,16 @@ def test_datetime_columns_sets_date_field_on_connectors(conn_conf, load_mock_sch
             "users": "created_at",
         },
     )
-    purchases = connectors.get_connector_for_resource("purchases")
-    users = connectors.get_connector_for_resource("users")
+    purchases = connectors.get_connectors_for_resource("purchases")[0]
+    users = connectors.get_connectors_for_resource("users")[0]
     assert isinstance(purchases, TableConnector)
     assert isinstance(users, TableConnector)
     assert purchases.date_field == "purchase_date"
     assert users.date_field == "created_at"
     # Tables not in the map have no date_field
-    follows = connectors.get_connector_for_resource("follows")
-    if isinstance(follows, TableConnector):
-        assert follows.date_field is None
+    follows_list = connectors.get_connectors_for_resource("follows")
+    if follows_list and isinstance(follows_list[0], TableConnector):
+        assert follows_list[0].date_field is None
 
 
 def test_ingest_datetime_range_postgres(postgres_conn, load_mock_schema):

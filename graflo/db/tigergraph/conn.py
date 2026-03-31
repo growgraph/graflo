@@ -3110,7 +3110,24 @@ class TigerGraphConnection(Connection):
         vertex_types = tuple(vc.vertex_dbname(v) for v in vc.vertex_set)
         if vertex_types:
             with self._ensure_graph_context(graph_name=graph_name):
-                self.delete_graph_structure(vertex_types=vertex_types)
+                for vertex_type in vertex_types:
+                    try:
+                        result = self._delete_vertices(
+                            vertex_type=vertex_type, graph_name=graph_name
+                        )
+                        logger.debug(
+                            "Deleted vertices from %s in graph %s: %s",
+                            vertex_type,
+                            graph_name,
+                            result,
+                        )
+                    except Exception as e:
+                        logger.error(
+                            "Error deleting vertices from %s in graph %s: %s",
+                            vertex_type,
+                            graph_name,
+                            e,
+                        )
 
     def _generate_upsert_payload(
         self, data: list[dict[str, Any]], vname: str, vindex: tuple[str, ...]

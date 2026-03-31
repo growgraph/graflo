@@ -27,8 +27,10 @@ def test_bindings_connector_connection_resolves_by_name_and_hash() -> None:
     assert bindings_by_hash.get_conn_proxy_for_connector(connector) == "pg2"
 
 
-def test_bindings_connector_connection_resolves_by_resource_name() -> None:
-    # connector.name omitted; manifests can use connector.resource_name as alias.
+def test_bindings_connector_connection_resolves_by_connector_hash_without_name() -> (
+    None
+):
+    """connector_connection must reference connector hash or name, not resource_name."""
     connector = TableConnector(
         table_name="t1",
         schema_name="public",
@@ -36,7 +38,7 @@ def test_bindings_connector_connection_resolves_by_resource_name() -> None:
     )
     bindings = Bindings(
         connectors=[connector],
-        connector_connection=[{"connector": "people", "conn_proxy": "pg"}],
+        connector_connection=[{"connector": connector.hash, "conn_proxy": "pg"}],
     )
     assert bindings.get_conn_proxy_for_connector(connector) == "pg"
 
@@ -81,8 +83,7 @@ def test_provider_resolves_connector_based_config_for_multiple_resources() -> No
     assert cfg2.uri == pg_cfg.uri
 
 
-def test_provider_bind_from_bindings_supports_resource_alias() -> None:
-    # connector.name omitted; manifests can use connector.resource_name as alias.
+def test_provider_bind_from_bindings_supports_connector_hash() -> None:
     connector = TableConnector(
         table_name="t1",
         schema_name="public",
@@ -98,7 +99,7 @@ def test_provider_bind_from_bindings_supports_resource_alias() -> None:
 
     bindings = Bindings(
         connectors=[connector],
-        connector_connection=[{"connector": "people", "conn_proxy": "pg"}],
+        connector_connection=[{"connector": connector.hash, "conn_proxy": "pg"}],
     )
 
     provider = InMemoryConnectionProvider()
@@ -183,7 +184,7 @@ def test_bind_single_config_for_bindings_binds_and_validates() -> None:
 
     bindings = Bindings(
         connectors=[connector],
-        connector_connection=[{"connector": "people", "conn_proxy": "pg"}],
+        connector_connection=[{"connector": connector.hash, "conn_proxy": "pg"}],
     )
 
     provider = InMemoryConnectionProvider()
@@ -203,17 +204,19 @@ def test_bind_single_config_for_bindings_binds_and_validates() -> None:
             TableConnector(
                 table_name="t1",
                 schema_name="public",
+                name="c_people",
                 resource_name="people",
             ),
             TableConnector(
                 table_name="t2",
                 schema_name="public",
+                name="c_products",
                 resource_name="products",
             ),
         ],
         connector_connection=[
-            {"connector": "people", "conn_proxy": "pg"},
-            {"connector": "products", "conn_proxy": "pg2"},
+            {"connector": "c_people", "conn_proxy": "pg"},
+            {"connector": "c_products", "conn_proxy": "pg2"},
         ],
     )
     provider_mismatch = InMemoryConnectionProvider()

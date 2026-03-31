@@ -68,8 +68,8 @@ class TestRdfInferenceManager:
         mgr = RdfInferenceManager()
         bindings = mgr.create_bindings(sample_ontology_path)
 
-        person_pat = bindings.get_connector_for_resource("Person")
-        org_pat = bindings.get_connector_for_resource("Organization")
+        person_pat = bindings.get_connectors_for_resource("Person")[0]
+        org_pat = bindings.get_connectors_for_resource("Organization")[0]
         assert isinstance(person_pat, SparqlConnector)
         assert isinstance(org_pat, SparqlConnector)
         assert person_pat.rdf_class == "http://example.org/Person"
@@ -82,7 +82,7 @@ class TestRdfInferenceManager:
         bindings = mgr.create_bindings(sample_ontology_path, endpoint_url=endpoint)
 
         for resource_name in ("Person", "Organization"):
-            pat = bindings.get_connector_for_resource(resource_name)
+            pat = bindings.get_connectors_for_resource(resource_name)[0]
             assert isinstance(pat, SparqlConnector)
             assert pat.endpoint_url == endpoint
             assert pat.rdf_file is None

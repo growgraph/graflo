@@ -10,7 +10,6 @@ from graflo.architecture.base import ConfigBaseModel
 from .connectors import (
     FileConnector,
     ResourceConnector,
-    ResourceType,
     SparqlConnector,
     TableConnector,
 )
@@ -59,7 +58,9 @@ class Bindings(ConfigBaseModel):
     )
     _connectors_index: dict[str, ResourceConnector] = PrivateAttr(default_factory=dict)
     _connectors_name_index: dict[str, str] = PrivateAttr(default_factory=dict)
-    _resource_to_connector_hash: dict[str, str] = PrivateAttr(default_factory=dict)
+    _resource_to_connector_hashes: dict[str, list[str]] = PrivateAttr(
+        default_factory=dict
+    )
     _connector_to_conn_proxy: dict[str, str] = PrivateAttr(default_factory=dict)
 
     @property
@@ -90,6 +91,14 @@ class Bindings(ConfigBaseModel):
                         f"Duplicate connector name '{connector.name}'."
                     )
                 self._connectors_name_index[connector.name] = connector.hash
+
+    def _append_resource_connector_hash(
+        self, resource_name: str, connector_hash: str
+    ) -> None:
+        """Append *connector_hash* for *resource_name* if not already present (order kept)."""
+        bucket = self._resource_to_connector_hashes.setdefault(resource_name, [])
+        if connector_hash not in bucket:
+            bucket.append(connector_hash)
 
     @field_validator("resource_connector", mode="before")
     @classmethod
@@ -189,7 +198,7 @@ class Bindings(ConfigBaseModel):
     @model_validator(mode="after")
     def _populate_resource_connector(self) -> Self:
         self._rebuild_indexes()
-        self._resource_to_connector_hash = {}
+        self._resource_to_connector_hashes = {}
 
         # Create typed views so internal code never has to handle dicts.
         self._resource_connector_typed = [
@@ -204,45 +213,37 @@ class Bindings(ConfigBaseModel):
         for connector in self.connectors:
             if connector.resource_name is None:
                 continue
-            existing_hash = self._resource_to_connector_hash.get(
-                connector.resource_name
+            self._append_resource_connector_hash(
+                connector.resource_name, connector.hash
             )
-            if existing_hash is not None and existing_hash != connector.hash:
-                raise ValueError(
-                    "Conflicting resource binding for resource "
-                    f"'{connector.resource_name}'."
-                )
-            self._resource_to_connector_hash[connector.resource_name] = connector.hash
 
         for mapping in self._resource_connector_typed:
             connector_hash = self._connectors_name_index.get(mapping.connector)
             if connector_hash is None:
-                raise ValueError(
-                    f"resource_connector references unknown connector '{mapping.connector}' "
-                    f"for resource '{mapping.resource}'."
-                )
-            existing_hash = self._resource_to_connector_hash.get(mapping.resource)
-            if existing_hash is not None and existing_hash != connector_hash:
-                raise ValueError(
-                    f"Conflicting resource binding for resource '{mapping.resource}'."
-                )
-            self._resource_to_connector_hash[mapping.resource] = connector_hash
+                if mapping.connector in self._connectors_index:
+                    connector_hash = mapping.connector
+                else:
+                    raise ValueError(
+                        f"resource_connector references unknown connector '{mapping.connector}' "
+                        f"for resource '{mapping.resource}'."
+                    )
+            self._append_resource_connector_hash(mapping.resource, connector_hash)
         self._rebuild_connector_to_conn_proxy()
         return self
 
     def _resolve_connector_ref_to_hash(self, connector_ref: str) -> str:
         """Resolve a connector reference to its canonical connector hash.
 
-        The contract allows referencing either:
+        Allowed references:
         - ``connector.hash`` (canonical internal id), or
         - ``connector.name`` (when a name is provided / auto-filled).
-        - ``resource_name`` (alias when ``connector.name`` is omitted in manifests).
+
+        Ingestion resource names are not valid connector references (a resource
+        may map to multiple connectors).
         """
         if connector_ref in self._connectors_index:
             return connector_ref
         resolved_hash = self._connectors_name_index.get(connector_ref)
-        if resolved_hash is None:
-            resolved_hash = self._resource_to_connector_hash.get(connector_ref)
         if resolved_hash is None:
             raise ValueError(f"Unknown connector reference '{connector_ref}'")
         return resolved_hash
@@ -358,15 +359,9 @@ class Bindings(ConfigBaseModel):
             self.connectors.append(connector)
         self._rebuild_indexes()
         if connector.resource_name is not None:
-            existing_hash = self._resource_to_connector_hash.get(
-                connector.resource_name
+            self._append_resource_connector_hash(
+                connector.resource_name, connector.hash
             )
-            if existing_hash is not None and existing_hash != connector.hash:
-                raise ValueError(
-                    "Conflicting resource binding for resource "
-                    f"'{connector.resource_name}'."
-                )
-            self._resource_to_connector_hash[connector.resource_name] = connector.hash
 
     def bind_resource(
         self,
@@ -375,43 +370,24 @@ class Bindings(ConfigBaseModel):
     ) -> None:
         if connector.hash not in self._connectors_index:
             raise KeyError(f"Connector not found for hash='{connector.hash}'")
-        self._resource_to_connector_hash[resource_name] = connector.hash
+        self._append_resource_connector_hash(resource_name, connector.hash)
         connector_name = connector.name or self.default_connector_name(connector)
-        mapping_idx = None
-        for idx, mapping in enumerate(self._resource_connector_typed):
-            if mapping.resource == resource_name:
-                mapping_idx = idx
-                break
-        new_mapping = ResourceConnectorBinding(
-            resource=resource_name,
-            connector=connector_name,
+        self._resource_connector_typed.append(
+            ResourceConnectorBinding(
+                resource=resource_name,
+                connector=connector_name,
+            )
         )
-        if mapping_idx is None:
-            self._resource_connector_typed.append(new_mapping)
-        else:
-            self._resource_connector_typed[mapping_idx] = new_mapping
         # Keep the public contract field in sync for serialization / downstream.
         self.resource_connector = list(self._resource_connector_typed)
 
-    def get_connector_for_resource(
+    def get_connectors_for_resource(
         self, resource_name: str
-    ) -> TableConnector | FileConnector | SparqlConnector | None:
-        connector_hash = self._resource_to_connector_hash.get(resource_name)
-        if connector_hash is None:
-            return None
-        connector = self._connectors_index.get(connector_hash)
-        if isinstance(connector, (TableConnector, FileConnector, SparqlConnector)):
-            return connector
-        return None
-
-    def get_resource_type(self, resource_name: str) -> ResourceType | None:
-        connector = self.get_connector_for_resource(resource_name)
-        if connector is None:
-            return None
-        return connector.get_resource_type()
-
-    def get_table_info(self, resource_name: str) -> tuple[str, str | None] | None:
-        connector = self.get_connector_for_resource(resource_name)
-        if isinstance(connector, TableConnector):
-            return (connector.table_name, connector.schema_name)
-        return None
+    ) -> list[TableConnector | FileConnector | SparqlConnector]:
+        """Return connectors bound to *resource_name*, in binding order (unique by hash)."""
+        result: list[TableConnector | FileConnector | SparqlConnector] = []
+        for h in self._resource_to_connector_hashes.get(resource_name, []):
+            c = self._connectors_index.get(h)
+            if isinstance(c, (TableConnector, FileConnector, SparqlConnector)):
+                result.append(c)
+        return result

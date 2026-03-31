@@ -8,6 +8,7 @@ Tests cover:
 
 from __future__ import annotations
 
+import pytest
 
 from graflo.filter.onto import ComparisonOperator, FilterExpression, LogicalOperator
 from graflo.onto import ExpressionFlavor
@@ -339,7 +340,7 @@ class TestAutoJoin:
 
         schema, ingestion_model, bindings = self._make_schema_and_patterns()
         resource = ingestion_model.fetch_resource("abc_relations")
-        connector = bindings.get_connector_for_resource("abc_relations")
+        connector = bindings.get_connectors_for_resource("abc_relations")[0]
         assert isinstance(connector, TableConnector)
 
         enrich_edge_connector_with_joins(
@@ -361,7 +362,7 @@ class TestAutoJoin:
 
         schema, ingestion_model, bindings = self._make_schema_and_patterns()
         resource = ingestion_model.fetch_resource("abc_relations")
-        connector = bindings.get_connector_for_resource("abc_relations")
+        connector = bindings.get_connectors_for_resource("abc_relations")[0]
         assert isinstance(connector, TableConnector)
 
         enrich_edge_connector_with_joins(
@@ -381,7 +382,7 @@ class TestAutoJoin:
 
         schema, ingestion_model, bindings = self._make_schema_and_patterns()
         resource = ingestion_model.fetch_resource("abc_relations")
-        connector = bindings.get_connector_for_resource("abc_relations")
+        connector = bindings.get_connectors_for_resource("abc_relations")[0]
         assert isinstance(connector, TableConnector)
         connector.joins = [JoinClause(table="x", alias="x", on_self="a", on_other="b")]
 
@@ -401,7 +402,7 @@ class TestAutoJoin:
 
         schema, ingestion_model, bindings = self._make_schema_and_patterns()
         resource = ingestion_model.fetch_resource("abc_relations")
-        connector = bindings.get_connector_for_resource("abc_relations")
+        connector = bindings.get_connectors_for_resource("abc_relations")[0]
         assert isinstance(connector, TableConnector)
 
         enrich_edge_connector_with_joins(
@@ -415,3 +416,22 @@ class TestAutoJoin:
         assert "LEFT JOIN" in q
         assert "IS NOT NULL" in q
         assert '"sn"."cmdb_rel_ci"' in q
+
+    def test_enrichment_raises_when_vertex_has_multiple_sql_sources(self):
+        from graflo.hq.auto_join import enrich_edge_connector_with_joins
+
+        schema, ingestion_model, bindings = self._make_schema_and_patterns()
+        extra = TableConnector(
+            name="server_alt", table_name="classes_alt", schema_name="sn"
+        )
+        bindings.add_connector(extra)
+        bindings.bind_resource("server", extra)
+        resource = ingestion_model.fetch_resource("abc_relations")
+        connector = bindings.get_connectors_for_resource("abc_relations")[0]
+        with pytest.raises(ValueError, match="Multiple TableConnectors"):
+            enrich_edge_connector_with_joins(
+                resource=resource,
+                connector=connector,
+                bindings=bindings,
+                vertex_config=schema.core_schema.vertex_config,
+            )
