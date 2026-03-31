@@ -57,6 +57,8 @@ Resources and transforms are part of `IngestionModel`, not `Schema`.
 
 A `Resource` is the central abstraction that bridges data sources and the graph schema. Each Resource defines a reusable pipeline of actors (descend, transform, vertex, edge) that maps raw records to graph elements. Data sources bind to Resources by name via the `DataSourceRegistry`, so the same transformation logic applies regardless of whether data arrives from a file, an API, or a SPARQL endpoint.
 
+For wide rows with many empty or null columns, **`drop_trivial_input_fields`** (default `false`) removes only **top-level** keys whose value is `null` or `""` before the pipeline runs—no recursion into nested structures.
+
 ### DataSourceRegistry
 
 The `DataSourceRegistry` manages `AbstractDataSource` adapters, each carrying a `DataSourceType`:

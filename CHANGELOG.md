@@ -6,32 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [1.7.10] - 2026-04-01
-
-### Changed
-
-- **`DBWriter`**: No longer calls `Schema.finish_init()` or `IngestionModel.finish_init()` on every `write()`. The orchestrator (e.g. **`Caster.ingest`**) is responsible for initializing schema and ingestion model for the target DB before writes. This avoids redundant work on each batch and prevents the writer from resetting ingestion flags (`strict_references`, `allowed_vertex_names`) that **`Caster`** had already applied.
-- **`DBWriter`**: Reuses a cached **`SchemaDBAware`** projection for a given connection DB type instead of rebuilding it on every `write()`.
-
-### Breaking
-
-- **`DBWriter`**: The **`dynamic_edges`** constructor argument was removed (it only drove the redundant `finish_init` call). Configure dynamic edge behavior via **`Caster`** / **`IngestionParams.dynamic_edges`** and ingestion **`finish_init`** as before.
-
-## [1.7.9] - 2026-03-31
+## [1.7.9] - 2026-04-01
 
 ### Added
 
 - **`Bindings.get_connectors_for_resource(name)`** returns an ordered list of connectors (unique by hash) for an ingestion resource, supporting **1→n** resource–connector wiring.
 - **`BoundSourceKind`** enum (`file`, `sql_table`, `sparql`) and **`ResourceConnector.bound_source_kind()`** describe the physical source modality of a connector (replacing the old “resource type” wording).
+- **`Resource.drop_trivial_input_fields`** (default `false`): when `true`, removes **top-level** keys whose value is `null` or `""` from each input record before the actor pipeline runs—useful for wide, sparse rows without custom transforms. Does not recurse into nested objects.
 
 ### Changed
 
+- **`DBWriter`**: No longer calls `Schema.finish_init()` or `IngestionModel.finish_init()` on every `write()`. The orchestrator (e.g. **`Caster.ingest`**) is responsible for initializing schema and ingestion model for the target DB before writes. This avoids redundant work on each batch and prevents the writer from resetting ingestion flags (`strict_references`, `allowed_vertex_names`) that **`Caster`** had already applied.
+- **`DBWriter`**: Reuses a cached **`SchemaDBAware`** projection for a given connection DB type instead of rebuilding it on every `write()`.
 - **Ingestion caps**: `IngestionParams.max_items` is documented and validated (`>= 1` when set). **`SparqlEndpointDataSource.iter_batches`** paginates without loading the full endpoint result into memory, uses **`ORDER BY ?s`** when the query has no `ORDER BY`, and honors **`limit`** as a subject count. **`SQLDataSource`** and offset/page **API** pagination pass a tighter per-request page size when a total cap is close (fewer over-fetched rows/items).
 - **`RegistryBuilder`** registers **every** connector bound to each resource and dispatches on **`connector.bound_source_kind()`**; SQL registration uses the connector’s own table/schema fields instead of a resource-level table lookup.
 - **Auto-join** (`_vertex_table_info`) resolves table metadata via the list API and **raises** if more than one `TableConnector` is bound to the same vertex/resource key used for disambiguation.
 
 ### Breaking
 
+
+- **`DBWriter`**: The **`dynamic_edges`** constructor argument was removed (it only drove the redundant `finish_init` call). Configure dynamic edge behavior via **`Caster`** / **`IngestionParams.dynamic_edges`** and ingestion **`finish_init`** as before.
 - **`ResourceType`** removed in favor of **`BoundSourceKind`**; **`get_resource_type()`** removed in favor of **`bound_source_kind()`** on connectors (update imports and call sites).
 - **`Bindings`**: **`get_connector_for_resource`**, **`get_resource_type`**, and **`get_table_info`** removed; use **`get_connectors_for_resource`** and connector fields / `bound_source_kind()` instead.
 - **`connector_connection` / internal connector refs**: resolution allows only **connector `name`** or **canonical `hash`**. Using an ingestion **resource name** as a `connector` reference is no longer supported (resource names are no longer 1:1 with connectors).
@@ -40,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Documentation
 
 - **Examples / docs**: `examples/9-connector-connection-proxy` and manifest guides updated for explicit connector names in `connector_connection`. Concepts and README clarify 1→n bindings and proxy wiring.
+- **`Resource.drop_trivial_input_fields`**: described in [Concepts](docs/concepts/index.md) (DataSources vs Resources) and [Documentation home — Resource](docs/index.md#resource).
 
 ## [1.7.7] - 2026-03-27
 

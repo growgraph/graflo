@@ -96,7 +96,7 @@ flowchart LR
 
 - **Bindings** (`FileConnector`, `TableConnector`, `SparqlConnector`) describe *where* data comes from (file paths, SQL tables, SPARQL endpoints). Multiple connectors may attach to the same ingestion resource name; optional **`connector_connection`** entries assign each SQL/SPARQL connector a **`conn_proxy`** by **connector `name` or `hash`** (not by resource name). The `ConnectionProvider` turns that label into real connection config at runtime so manifests stay credential-free.
 - **DataSources** (`AbstractDataSource` subclasses) handle *how* to read data in batches. Each carries a `DataSourceType` and is registered in the `DataSourceRegistry`.
-- **Resources** define *what* to extract — each `Resource` is a reusable actor pipeline (descend → transform → vertex → edge) that maps raw records to graph elements.
+- **Resources** define *what* to extract — each `Resource` is a reusable actor pipeline (descend → transform → vertex → edge) that maps raw records to graph elements. Set **`drop_trivial_input_fields`: `true`** on a resource to strip top-level `null` / `""` fields from each row before the pipeline (optional, default `false`).
 - **GraphContainer** (covariant graph representation) collects the resulting vertices and edges in a database-independent format.
 - **DBWriter** pushes the graph data into the target LPG store (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph).
 
@@ -480,6 +480,7 @@ These are the two key abstractions that decouple *data retrieval* from *graph tr
 - **DataSources** (`AbstractDataSource` subclasses) — handle *where* and *how* data is read. Each carries a `DataSourceType` (`FILE`, `SQL`, `SPARQL`, `API`, `IN_MEMORY`). Many DataSources can bind to the same Resource by name via the `DataSourceRegistry`.
 
 - **Resources** (`Resource`) — handle *what* the data becomes in the LPG. Each Resource is a reusable actor pipeline (descend → transform → vertex → edge) that maps raw records to graph elements. Because DataSources bind to Resources by name, the same transformation logic applies regardless of whether data arrives from a file, an API, or a SPARQL endpoint.
+  - Optional **`drop_trivial_input_fields`** (default `false` on the model): when `true`, each record is preprocessed by dropping **top-level** keys whose value is `null` or the empty string `""` before actors run. This trims sparse wide rows (many unused columns) without extra transforms; nested dicts and lists are not walked.
 
 ## Core Components
 

@@ -74,6 +74,7 @@ Defines ingestion behavior.
 
 - `resources`: named pipelines (`name`) with ordered actor steps
 - `transforms`: reusable named transforms as a **list** (each entry must define `name`) and referenced from resources via `transform.call.use`
+- Optional per-resource flags include **`drop_trivial_input_fields`** (default `false`): when `true`, top-level `null` or `""` fields are removed from each row before the pipeline—handy for sparse wide tables without extra transforms (shallow only; nested objects are unchanged).
 
 Use `ingestion_model` for **how source records become vertices/edges**.
 

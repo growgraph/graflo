@@ -84,6 +84,11 @@ def _resolve_type_caster(name: str) -> Callable[..., Any] | None:
     return None
 
 
+def _strip_trivial_top_level_fields(doc: dict[str, Any]) -> dict[str, Any]:
+    """Return a shallow copy of *doc* without None or empty-string values."""
+    return {k: v for k, v in doc.items() if v is not None and v != ""}
+
+
 def _filter_vertex_config_by_allowed(
     vertex_config: VertexConfig,
     *,
@@ -197,6 +202,13 @@ class Resource(ConfigBaseModel):
         description=(
             "Optional deny-list for inferred edges. Applies only to inferred (greedy) edges, "
             "not explicit edge actors."
+        ),
+    )
+    drop_trivial_input_fields: bool = PydanticField(
+        default=False,
+        description=(
+            "If True, drop top-level input keys whose value is None or '' before the pipeline runs. "
+            "Does not recurse into nested dicts or lists. Default False."
         ),
     )
 
@@ -418,7 +430,12 @@ class Resource(ConfigBaseModel):
             raise RuntimeError(
                 f"Resource '{self.name}' must be initialized via finish_init() before use."
             )
-        extraction_ctx = self._executor.extract(doc)
+        work_doc: dict[str, Any] = (
+            _strip_trivial_top_level_fields(doc)
+            if self.drop_trivial_input_fields
+            else doc
+        )
+        extraction_ctx = self._executor.extract(work_doc)
         result = self._executor.assemble_result(extraction_ctx)
         return result.entities
 

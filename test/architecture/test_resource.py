@@ -1,7 +1,9 @@
 import logging
+from typing import Any
 
 import pytest
 
+from graflo.architecture.graph_types import ExtractionContext
 from graflo.architecture.schema.edge import EdgeConfig
 from graflo.architecture.contract.declarations.resource import (
     Resource,
@@ -26,6 +28,93 @@ def test_resolve_type_caster_allowlist():
 
 def test_resolve_type_caster_rejects_expressions():
     assert _resolve_type_caster("__import__('os').system") is None
+
+
+def test_resource_drop_trivial_input_fields_strips_none_and_empty_string():
+    from graflo.architecture.contract.declarations.resource import (
+        _strip_trivial_top_level_fields,
+    )
+
+    assert _strip_trivial_top_level_fields(
+        {"a": 1, "b": None, "c": "", "d": "x", "nested": {"e": None}}
+    ) == {"a": 1, "d": "x", "nested": {"e": None}}
+
+
+def test_resource_drop_trivial_input_fields_passes_stripped_doc_to_executor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resource = Resource.from_dict(
+        {
+            "name": "wide_row",
+            "pipeline": [{"vertex": "person"}],
+            "drop_trivial_input_fields": True,
+        }
+    )
+    vc = VertexConfig.from_dict(
+        {
+            "vertices": [
+                {
+                    "name": "person",
+                    "fields": ["id", "note"],
+                    "identity": ["id"],
+                }
+            ]
+        }
+    )
+    ec = EdgeConfig.from_dict({"edges": []})
+    resource.finish_init(vertex_config=vc, edge_config=ec, transforms={})
+    doc = {"id": "1", "note": "hi", "empty": "", "nullish": None, "keep": 0}
+    real_extract = resource._executor.extract
+    snapshots: list[dict[str, Any]] = []
+
+    def capturing_extract(work: dict[str, Any]) -> ExtractionContext:
+        snapshots.append(dict(work))
+        return real_extract(work)
+
+    monkeypatch.setattr(resource._executor, "extract", capturing_extract)
+
+    resource(doc)
+
+    assert snapshots == [{"id": "1", "note": "hi", "keep": 0}]
+
+
+def test_resource_drop_trivial_input_fields_false_passes_doc_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resource = Resource.from_dict(
+        {
+            "name": "wide_row",
+            "pipeline": [{"vertex": "person"}],
+            "drop_trivial_input_fields": False,
+        }
+    )
+    vc = VertexConfig.from_dict(
+        {
+            "vertices": [
+                {
+                    "name": "person",
+                    "fields": ["id"],
+                    "identity": ["id"],
+                }
+            ]
+        }
+    )
+    ec = EdgeConfig.from_dict({"edges": []})
+    resource.finish_init(vertex_config=vc, edge_config=ec, transforms={})
+    doc = {"id": "1", "empty": ""}
+    expected_at_extract_entry = dict(doc)
+    real_extract = resource._executor.extract
+    snapshots: list[dict[str, Any]] = []
+
+    def capturing_extract(work: dict[str, Any]) -> ExtractionContext:
+        snapshots.append(dict(work))
+        return real_extract(work)
+
+    monkeypatch.setattr(resource._executor, "extract", capturing_extract)
+
+    resource(doc)
+
+    assert snapshots == [expected_at_extract_entry]
 
 
 def test_resource_types_uses_safe_caster_resolution():
