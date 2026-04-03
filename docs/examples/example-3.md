@@ -1,6 +1,6 @@
-# Example 3: CSV with Edge Weights and Multiple Relations
+# Example 3: CSV with Edge Properties and Multiple Relations
 
-This example demonstrates how to handle complex relationships where multiple edges can exist between the same pair of entities, each with different relation types and weights.
+This example demonstrates how to handle complex relationships where multiple edges can exist between the same pair of entities, each with different relation types and relationship attributes.
 
 ## Data Structure
 
@@ -20,39 +20,40 @@ We define a simple `company` vertex:
 vertex_config:
     vertices:
     -   name: company
-        fields:
+        properties:
+        -   name
+        identity:
         -   name
 ```
 
 ### Edges
-The key feature here is using `relation_field` to dynamically create different edge types:
+Logical edges declare **`properties`** (relationship attributes) and, when needed, an **`identities`** key so parallel relationships stay distinct. Dynamic relationship **types** from a CSV column are configured on the **edge step** in the resource pipeline with **`relation_field`** (not on the logical `Edge`).
 
 ```yaml
 edge_config:
     edges:
     -   source: company
         target: company
-        relation_field: relation
-        weights:
-            direct:
-            -   date
+        identities:
+        -   -   relation
+        properties:
+        -   date
 ```
 
 ## Key Concepts
 
-### `relation_field` Attribute
-The `relation_field: relation` tells graflo to:
+### `relation_field` on the edge step
+In the resource pipeline, `relation_field: relation` on the `source`/`target` step tells GraFlo to:
 
 - Read the `relation` column from the CSV
-- Create different edge types based on the values in that column
-- Instead of a single edge type, we get multiple edge types: `invests_in`, `partners_with`, `acquires`, etc.
+- Use its values as the relationship type for that row
+- Produce multiple relationship types from one edge definition: `invests_in`, `partners_with`, `acquires`, etc.
 
-### Edge Weights
-The `weights.direct: [date]` configuration:
+### Edge `properties`
+The `properties: [date]` entry on the edge:
 
-- Adds the `date` field as a weight property on each edge
-- This allows temporal analysis of relationships
-- The date becomes a property that can be used for filtering, sorting, or analysis
+- Declares `date` as a relationship attribute on each emitted edge
+- Supports temporal analysis and filtering/sorting on that attribute
 
 ## Resource Mapping
 
@@ -66,6 +67,9 @@ resources:
         "from": {name: company_a}
     -   vertex: company
         "from": {name: company_b}
+    -   source: company
+        target: company
+        relation_field: relation
 ```
 
 This creates two company vertices for each row and establishes the relationship between them.
@@ -115,11 +119,13 @@ from graflo.architecture.contract.bindings import FileConnector
 import pathlib
 
 bindings = Bindings()
-people_connector = FileConnector(regex="^relations.*\.csv$", sub_path=pathlib.Path("."))
-bindings.add_connector(
-    people_connector,
+relations_connector = FileConnector(
+    name="relations_files",
+    regex="^relations.*\\.csv$",
+    sub_path=pathlib.Path("."),
 )
-bindings.bind_resource("people", people_connector)
+bindings.add_connector(relations_connector)
+bindings.bind_resource("relations", relations_connector)
 
 from graflo.hq.caster import IngestionParams
 
@@ -147,9 +153,9 @@ This connector is particularly useful for:
 
 ## Key Takeaways
 
-1. **`relation_field`** enables dynamic edge type creation from data
+1. **`relation_field`** on the edge step enables dynamic relationship types from data
 2. **Multiple edges** can exist between the same vertex pair
-3. **Edge weights** add temporal or quantitative properties to relationships
+3. **Edge `properties`** declare temporal or quantitative attributes on relationships
 4. **Flexible modeling** supports complex real-world business scenarios
 
 Please refer to [examples](https://github.com/growgraph/graflo/tree/main/examples/3-ingest-csv-edge-weights)

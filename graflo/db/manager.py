@@ -63,13 +63,6 @@ class ConnectionManager:
         DBType.NEBULA: NebulaConnection,
     }
 
-    # Source database connections (INPUT) - to be implemented
-    # source_conn_mapping = {
-    #     DBType.POSTGRES: PostgresConnection,
-    #     DBType.MYSQL: MySQLConnection,
-    #     DBType.MONGODB: MongoDBConnection,
-    # }
-
     def __init__(
         self,
         connection_config: DBConfig,

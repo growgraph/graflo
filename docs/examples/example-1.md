@@ -17,19 +17,17 @@ Let's define vertices as
 ```yaml
  vertices:
  -   name: person
-     fields:
+     properties:
      -   id
      -   name
      -   age
-     indexes:
-     -   fields:
-         -   id
+     identity:
+     -   id
  -   name: department
-     fields:
+     properties:
      -   name
-     indexes:
-     -   fields:
-         -   name
+     identity:
+     -   name
 ```
 
 and edges as 
@@ -49,7 +47,7 @@ Rendered graph:
 ![Rendered Graph](../assets/1-ingest-csv/figs/graph.png){ width="700" }
 
 
-Let's define the mappings: we want to map document fields to vertex fields. Use vertex `from` to project document fields onto vertex fields and avoid name collisions (e.g. both `Person` and `Department` have a field called `name`):
+Let's define the mappings: we want to map document keys onto vertex **properties**. Use vertex `from` to project source columns onto schema property names and avoid name collisions (e.g. both `Person` and `Department` have a property called `name`):
 
 ```yaml
 -   name: people

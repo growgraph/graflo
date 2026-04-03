@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.7.10] - 2026-04-04
+
+### Changed
+
+- **Logical schema vocabulary**: Vertex payloads use **`properties`** (list of property names and/or typed `Field` entries) instead of **`fields`**. Edge payloads use **`properties`** for relationship attributes instead of nested **`weights`** / **`weights.direct`**. Internal DB projection still builds a `WeightConfig` where backends need it, but authored YAML/Python schema should declare edge attributes on `Edge.properties` only.
+
+### Breaking
+
+- **`Vertex`**: The `fields` attribute was removed; use **`properties`** everywhere (manifest `graph.vertex_config.vertices[*].properties`, Python `Vertex(properties=[...])`).
+- **`Edge`**: The `weights` / `WeightConfig` shape on logical edges was removed; use **`properties`** for the same data (strings, `Field`, or dicts). Vertex-sourced edge payload wiring belongs in ingestion (**`EdgeActor`** / **`EdgeDerivation`**, edge derivation registry), not on the logical `Edge` model.
+
+### Documentation
+
+- README, docs landing page, concepts, manifest guide, and examples updated for **`properties`**-first schema authoring and clearer “what this project is” intros.
+
 ## [1.7.9] - 2026-04-01
 
 ### Added

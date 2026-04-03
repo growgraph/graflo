@@ -23,17 +23,23 @@ In this example we will be interested in how to create vertices `Work` and `Work
 Let's define vertices as
 
 ```yaml
- vertices:
- -   name: work
-     fields:
-     -   _key
-     -   doi
-     indexes:
-     -   fields:
-         -   _key
-     -   unique: false
-         fields:
-         -   doi
+# fragment of schema.graph — vertex logical model + secondary index profile
+vertex_config:
+    vertices:
+    -   name: work
+        properties:
+        -   _key
+        -   doi
+        -   title
+        -   created_date
+        identity:
+        -   _key
+db_profile:
+    vertex_indexes:
+        work:
+        -   unique: false
+            fields:
+            -   doi
 ```
 
 The graph structure is quite simple:

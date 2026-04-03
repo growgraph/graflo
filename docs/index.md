@@ -1,8 +1,13 @@
 # GraFlo <img src="https://raw.githubusercontent.com/growgraph/graflo/main/docs/assets/favicon.ico" alt="graflo logo" style="height: 32px; width:32px;"/>
 
-GraFlo is a **Graph Schema Transformation Language (GSTL)** for Labeled Property Graphs (LPG) - a domain-specific language (DSL) for defining graph structure and transformation logic in one manifest.
+**GraFlo** is a **Python package** and **manifest format** (`GraphManifest`: YAML **`schema`** + **`ingestion_model`** + **`bindings`**) for **labeled property graphs**. It is a **Graph Schema & Transformation Language (GSTL)**: you encode the LPG **once** at the logical layer (vertices, edges, typed **`properties`**, identity), express **how** records become graph elements with **`Resource`** actor pipelines, and **project** that model per backend before load. **`GraphEngine`** covers inference, DDL, and ingest; **`Caster`** focuses on batching records into a **`GraphContainer`** and **`DBWriter`**.
 
-It combines a database-independent graph model, DB-specific details, and ingestion pipeline into a graph manifest and runs it across many systems. With declarative schemas and reusable `Resource` pipelines, GraFlo maps CSV/SQL, JSON/XML, RDF/SPARQL, REST APIs, and in-memory data into a single database-independent LPG model (`GraphContainer`), then projects it to supported graph databases: ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, and NebulaGraph. This keeps schema and transform logic portable across targets and helps teams avoid vendor lock-in.
+## Why GraFlo
+
+- **DB-agnostic LPG** — The **logical schema** describes an LPG independent of ArangoDB, Neo4j, Cypher-family stores, TigerGraph, and so on. You do not fork your “graph design” per vendor; you fork only **projection** and connectors.
+- **Expressive, composable transforms** — **`Resource`** pipelines chain **actors** (descend into nested data, apply named **transforms**, emit **vertices** and **edges**, route by type with **VertexRouter** / **EdgeRouter**). The same pipeline can be bound to CSV, PostgreSQL, SPARQL, or an API via **`Bindings`**.
+- **Clear boundaries** — **`Schema`** is structure only. **`IngestionModel`** holds resources and shared transforms. **`Bindings`** map ingestion resource names to one or more **connectors** and optional **`conn_proxy`** labels—so manifests stay credential-free at rest.
+- **Multi-target ingestion** — One code path and manifest can target **ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, or NebulaGraph**; backend quirks are handled in **DB-aware** types and writers, not in your logical model.
 
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg) 
 [![PyPI version](https://badge.fury.io/py/graflo.svg)](https://badge.fury.io/py/graflo)
@@ -16,13 +21,13 @@ It combines a database-independent graph model, DB-specific details, and ingesti
 
 ## Pipeline
 
-**Source Instance** → **Resource** → **Graph Schema** → **Covariant Graph Representation** → **Graph DB**
+**Source Instance** → **Resource** (actor pipeline) → **Logical Graph Schema** → **Covariant Graph Representation** (`GraphContainer`) → **DB-aware Projection** → **Graph DB**
 
 | Stage | Role | Code |
 |-------|------|------|
 | **Source Instance** | A concrete data artifact — a CSV file, a PostgreSQL table, a SPARQL endpoint, a `.ttl` file. | `AbstractDataSource` subclasses with a `DataSourceType` (`FILE`, `SQL`, `SPARQL`, `API`, `IN_MEMORY`). |
 | **Resource** | A reusable transformation pipeline — actor steps (descend, transform, vertex, edge, vertex_router, edge_router) that map raw records to graph elements. Data sources bind to Resources by name via the `DataSourceRegistry`. | `Resource` (part of `IngestionModel`). |
-| **Graph Schema** | Declarative logical vertex/edge definitions, identities, typed fields, and DB profile. | `Schema`, `VertexConfig`, `EdgeConfig`. |
+| **Graph Schema** | Declarative logical vertex/edge definitions, identities, typed **properties**, and DB profile. | `Schema`, `VertexConfig`, `EdgeConfig`. |
 | **Covariant Graph Representation** | A database-independent collection of vertices and edges. | `GraphContainer`. |
 | **DB-aware Projection** | Resolves DB-specific naming/default/index behavior from logical schema + `DatabaseProfile`. | `Schema.resolve_db_aware()`, `VertexConfigDBAware`, `EdgeConfigDBAware`. |
 | **Graph DB** | The target LPG store — same API for all supported databases. | `ConnectionManager`, `DBWriter`, DB connectors. |
@@ -33,15 +38,15 @@ It combines a database-independent graph model, DB-specific details, and ingesti
 
 GraFlo targets the LPG model:
 
-- **Vertices** — nodes with typed properties and unique identifiers.
-- **Edges** — directed relationships between vertices, carrying their own properties and weights.
+- **Vertices** — nodes with typed **properties** (manifest key: `properties`) and logical **identity** keys for upserts.
+- **Edges** — directed relationships between vertices; relationship attributes are declared as **`properties`** on the logical edge (same list-of-names-or-`Field` shape as vertices).
 
 ### Schema
 
 The Schema is the single source of truth for the graph structure:
 
-- **Vertex definitions** — vertex types, fields (optionally typed: `INT`, `FLOAT`, `STRING`, `DATETIME`, `BOOL`), and indexes.
-- **Edge definitions** — relationships between vertex types, with optional weight fields.
+- **Vertex definitions** — vertex types, **`properties`** (optionally typed: `INT`, `FLOAT`, `STRING`, `DATETIME`, `BOOL`), identity, and filters; secondary indexes live under **`database_features`**.
+- **Edge definitions** — source/target (and optional `relation`), **`properties`** for relationship payload, and optional **`identities`** for parallel-edge / MERGE semantics.
 - **Schema inference** — generate schemas from PostgreSQL 3NF databases (PK/FK heuristics) or from OWL/RDFS ontologies.
 
 Resources and transforms are part of `IngestionModel`, not `Schema`.
@@ -78,7 +83,7 @@ The `DataSourceRegistry` manages `AbstractDataSource` adapters, each carrying a 
 
 ## Key Features
 
-- **Declarative LPG schema DSL** — Define vertices, edges, indexes, weights, and transforms in YAML or Python. The `Schema` is the single source of truth, independent of source or target.
+- **Declarative LPG schema DSL** — Define vertices, edges, indexes, edge **properties**, and transforms in YAML or Python. The `Schema` is the single source of truth, independent of source or target.
 - **Database abstraction** — One logical schema and transformation DSL, one API. Target ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, or NebulaGraph without rewriting pipelines. DB idiosyncrasies are handled in DB-aware projection (`Schema.resolve_db_aware(...)`) and connector/writer stages.
 - **Resource abstraction** — Each `Resource` defines a reusable actor pipeline that maps raw records to graph elements. Actor types include descend, transform, vertex, edge, plus **VertexRouter** and **EdgeRouter** for dynamic type-based routing (see [Concepts — Actor](concepts/index.md#actor)). Data sources bind to Resources by name via the `DataSourceRegistry`, decoupling transformation logic from data retrieval.
 - **DataSourceRegistry** — Register `FILE`, `SQL`, `API`, `IN_MEMORY`, or `SPARQL` data sources. Each `DataSourceType` plugs into the same Resource pipeline.
@@ -86,7 +91,7 @@ The `DataSourceRegistry` manages `AbstractDataSource` adapters, each carrying a 
 - **Schema inference** — Generate graph schemas from PostgreSQL 3NF databases (PK/FK heuristics) or from OWL/RDFS ontologies. See [Example 5](examples/example-5.md).
 - **Schema migration planning/execution** — Generate typed migration plans between schema versions, apply low-risk additive changes with risk gates, and track revision history via `migrate_schema`.
   - Compare `from` and `to` schemas before execution to preview structural deltas and blocked high-risk operations.
-- **Typed fields** — Vertex fields and edge weights carry types for validation and database-specific optimisation.
+- **Typed properties** — Vertex and edge **`properties`** carry optional types for validation and database-specific optimisation.
 - **Parallel batch processing** — Configurable batch sizes and multi-core execution.
 - **Advanced filtering** — Server-side filtering (e.g. TigerGraph REST++ API), client-side filter expressions, and **SelectSpec** for declarative SQL view/filter control before data reaches Resources.
 - **Blank vertices** — Create intermediate nodes for complex relationship modelling.

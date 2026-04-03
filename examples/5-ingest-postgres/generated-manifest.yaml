@@ -1,25 +1,28 @@
 core_schema:
     edge_config:
         edges:
-        -   relation: follows
-            source: users
-            target: users
-            properties:
+        -   properties:
             -   name: created_at
                 type: DATETIME
-        -   relation: purchases
+            relation: follows
             source: users
-            target: products
-            properties:
+            target: users
+        -   properties:
             -   name: purchase_date
                 type: DATETIME
             -   name: quantity
                 type: INT
             -   name: total_amount
                 type: FLOAT
+            relation: purchases
+            source: users
+            target: products
     vertex_config:
         vertices:
-        -   properties:
+        -   identity:
+            -   id
+            name: products
+            properties:
             -   name: id
                 type: INT
             -   name: name
@@ -30,10 +33,10 @@ core_schema:
                 type: STRING
             -   name: created_at
                 type: DATETIME
-            identity:
+        -   identity:
             -   id
-            name: products
-        -   properties:
+            name: users
+            properties:
             -   name: id
                 type: INT
             -   name: name
@@ -42,9 +45,6 @@ core_schema:
                 type: STRING
             -   name: created_at
                 type: DATETIME
-            identity:
-            -   id
-            name: users
 db_profile:
     db_flavor: tigergraph
     vertex_storage_names:

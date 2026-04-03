@@ -21,7 +21,7 @@ The example models a small academic knowledge graph with three entity types and 
 
 ### Ontology (TBox) — `data/ontology.ttl`
 
-The ontology declares classes, datatype properties (vertex fields), and object properties (edges) using standard OWL vocabulary:
+The ontology declares classes, datatype properties (vertex **properties**), and object properties (edges) using standard OWL vocabulary:
 
 ```turtle
 @prefix owl:  <http://www.w3.org/2002/07/owl#> .
@@ -34,7 +34,7 @@ ex:Researcher   a owl:Class .
 ex:Publication   a owl:Class .
 ex:Institution   a owl:Class .
 
-# Datatype properties (become vertex fields)
+# Datatype properties (become vertex properties)
 ex:fullName  a owl:DatatypeProperty ; rdfs:domain ex:Researcher  ; rdfs:range xsd:string .
 ex:orcid     a owl:DatatypeProperty ; rdfs:domain ex:Researcher  ; rdfs:range xsd:string .
 ex:title     a owl:DatatypeProperty ; rdfs:domain ex:Publication ; rdfs:range xsd:string .
@@ -129,7 +129,7 @@ schema, ingestion_model = engine.infer_schema_from_rdf(
 **What happens during inference:**
 
 1. **Class discovery** — `owl:Class` declarations become **vertices** (`Researcher`, `Publication`, `Institution`)
-2. **Field discovery** — `owl:DatatypeProperty` declarations with `rdfs:domain` become **fields** on the corresponding vertex, plus automatic `_key` and `_uri` fields
+2. **Property discovery** — `owl:DatatypeProperty` declarations with `rdfs:domain` become **properties** on the corresponding vertex, plus automatic `_key` and `_uri` properties
 3. **Edge discovery** — `owl:ObjectProperty` declarations with `rdfs:domain` / `rdfs:range` become **edges** (`authorOf`, `affiliatedWith`, `cites`)
 4. **Resource creation** — One resource per class is created, wiring the vertex and its outgoing edges
 
@@ -145,11 +145,11 @@ schema:
     vertex_config:
       vertices:
       - name: Researcher
-        fields: [_key, _uri, fullName, orcid]
+        properties: [_key, _uri, fullName, orcid]
       - name: Publication
-        fields: [_key, _uri, title, year, doi]
+        properties: [_key, _uri, title, year, doi]
       - name: Institution
-        fields: [_key, _uri, instName, country]
+        properties: [_key, _uri, instName, country]
     edge_config:
       edges:
       - source: Researcher
@@ -369,7 +369,7 @@ These modes are mutually exclusive. Use file mode for small-to-medium datasets s
 
 ## Key Takeaways
 
-1. **OWL ontology inference** eliminates manual schema definition — `owl:Class` becomes vertices, `owl:DatatypeProperty` becomes fields, `owl:ObjectProperty` becomes edges
+1. **OWL ontology inference** eliminates manual schema definition — `owl:Class` becomes vertices, `owl:DatatypeProperty` becomes vertex **properties**, `owl:ObjectProperty` becomes edges
 2. **Explicit `SparqlConnector` mapping** gives full control over which class URI maps to which resource and data source
 3. **Local file and remote endpoint** modes are both supported via the same `SparqlConnector` abstraction
 4. **No intermediate formats** — RDF triples are converted directly to flat dicts and ingested into the graph database

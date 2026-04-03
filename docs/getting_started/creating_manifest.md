@@ -28,10 +28,10 @@ schema:
     vertex_config:
       vertices:
         - name: person
-          fields: [id, name, age]
+          properties: [id, name, age]
           identity: [id]
         - name: department
-          fields: [name]
+          properties: [name]
           identity: [name]
     edge_config:
       edges:
@@ -62,8 +62,8 @@ bindings: {}
 Defines the graph contract.
 
 - `metadata`: human-facing identity (`name`, optional `version`)
-- `graph.vertex_config`: vertex types, fields, identity keys
-- `graph.edge_config`: source/target relationships, optional relation/weights
+- `graph.vertex_config`: vertex types, **`properties`**, identity keys
+- `graph.edge_config`: source/target relationships, optional `relation`, edge **`properties`**, `identities`
 - `db_profile`: DB-specific physical behavior (indexes, naming, backend details)
 
 Use `schema` for **what graph exists**.

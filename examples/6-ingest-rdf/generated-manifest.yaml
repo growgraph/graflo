@@ -1,4 +1,4 @@
-graph:
+core_schema:
     edge_config:
         edges:
         -   relation: authorOf
@@ -12,40 +12,40 @@ graph:
             target: Publication
     vertex_config:
         vertices:
-        -   properties:
+        -   identity:
+            -   _key
+            -   _uri
+            -   fullName
+            -   orcid
+            name: Researcher
+            properties:
             -   name: _key
             -   name: _uri
-            -   name: title
-            -   name: year
-            -   name: doi
-            identity:
+            -   name: fullName
+            -   name: orcid
+        -   identity:
+            -   _key
+            -   _uri
+            -   instName
+            -   country
+            name: Institution
+            properties:
+            -   name: _key
+            -   name: _uri
+            -   name: instName
+            -   name: country
+        -   identity:
             -   _key
             -   _uri
             -   title
             -   year
             -   doi
             name: Publication
-        -   properties:
+            properties:
             -   name: _key
             -   name: _uri
-            -   name: instName
-            -   name: country
-            identity:
-            -   _key
-            -   _uri
-            -   instName
-            -   country
-            name: Institution
-        -   properties:
-            -   name: _key
-            -   name: _uri
-            -   name: fullName
-            -   name: orcid
-            identity:
-            -   _key
-            -   _uri
-            -   fullName
-            -   orcid
-            name: Researcher
+            -   name: title
+            -   name: year
+            -   name: doi
 metadata:
     name: academic_kg
