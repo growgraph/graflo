@@ -13,6 +13,8 @@ schema:
             edges:
             -   source: company
                 target: company
+                identities:
+                -   -   relation
                 weights:
                     direct:
                     -   date
