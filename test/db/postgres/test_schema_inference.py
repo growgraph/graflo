@@ -59,7 +59,7 @@ def test_infer_schema_from_postgres(conn_conf, load_mock_schema):
     users_vertex = next(
         v for v in schema.core_schema.vertex_config.vertices if v.name == "users"
     )
-    field_names = [f.name for f in users_vertex.fields]
+    field_names = [f.name for f in users_vertex.properties]
     assert "id" in field_names, f"Expected 'id' in users fields, got {field_names}"
     assert "name" in field_names, f"Expected 'name' in users fields, got {field_names}"
     assert "email" in field_names, (
@@ -67,11 +67,11 @@ def test_infer_schema_from_postgres(conn_conf, load_mock_schema):
     )
 
     # Verify field types (id should be INT, name/email should be STRING)
-    id_field = next(f for f in users_vertex.fields if f.name == "id")
+    id_field = next(f for f in users_vertex.properties if f.name == "id")
     assert id_field.type is not None, "id field should have a type"
     assert id_field.type == "INT", f"Expected id type to be INT, got {id_field.type}"
 
-    name_field = next(f for f in users_vertex.fields if f.name == "name")
+    name_field = next(f for f in users_vertex.properties if f.name == "name")
     assert name_field.type is not None, "name field should have a type"
     assert name_field.type == "STRING", (
         f"Expected name type to be STRING, got {name_field.type}"
@@ -79,7 +79,7 @@ def test_infer_schema_from_postgres(conn_conf, load_mock_schema):
 
     # Verify datetime field type (created_at should be DATETIME)
     created_at_field = next(
-        (f for f in users_vertex.fields if f.name == "created_at"), None
+        (f for f in users_vertex.properties if f.name == "created_at"), None
     )
     if created_at_field:
         assert created_at_field.type is not None, "created_at field should have a type"
@@ -106,12 +106,10 @@ def test_infer_schema_from_postgres(conn_conf, load_mock_schema):
 
     # Verify edge has weight configuration if applicable
     # (purchases might have quantity or price as weight)
-    if purchases_edge.weights:
-        # WeightConfig has 'direct' list for direct weights
-        assert (
-            len(purchases_edge.weights.direct) > 0
-            or len(purchases_edge.weights.vertices) > 0
-        ), "purchases edge should have weights"
+    if purchases_edge.properties:
+        assert len(purchases_edge.properties) > 0, (
+            "purchases edge should have attribute fields"
+        )
 
     # Verify resources were created
     assert len(ingestion_model.resources) > 0, "IngestionModel should have resources"
@@ -150,16 +148,16 @@ def test_infer_schema_from_postgres(conn_conf, load_mock_schema):
     print(f"\nVertices ({len(schema.core_schema.vertex_config.vertices)}):")
     for v in schema.core_schema.vertex_config.vertices:
         field_types = ", ".join(
-            [f"{f.name}:{f.type if f.type else 'None'}" for f in v.fields[:5]]
+            [f"{f.name}:{f.type if f.type else 'None'}" for f in v.properties[:5]]
         )
         print(f"  - {v.name}: {field_types}...")
 
     print(f"\nEdges ({len(schema.core_schema.edge_config._edges_map)}):")
     for edge_id, e in schema.core_schema.edge_config._edges_map.items():
         weights_info = ""
-        if e.weights:
-            weight_count = len(e.weights.direct) + len(e.weights.vertices)
-            weights_info = f" (weights: {weight_count})"
+        if e.properties:
+            weight_count = len(e.properties)
+            weights_info = f" (properties: {weight_count})"
         relation_info = f" [{e.relation}]" if e.relation else ""
         print(f"  - {edge_id}: {e.source} -> {e.target}{relation_info}{weights_info}")
 
@@ -261,7 +259,7 @@ def test_infer_schema_with_pg_catalog_fallback(conn_conf, load_mock_schema):
         users_vertex = next(
             v for v in schema.core_schema.vertex_config.vertices if v.name == "users"
         )
-        field_names = [f.name for f in users_vertex.fields]
+        field_names = [f.name for f in users_vertex.properties]
         assert "id" in field_names, (
             f"Expected 'id' in users fields when using pg_catalog, got {field_names}"
         )
@@ -273,7 +271,7 @@ def test_infer_schema_with_pg_catalog_fallback(conn_conf, load_mock_schema):
         )
 
         # Verify field types - should be correctly mapped via pg_catalog
-        id_field = next(f for f in users_vertex.fields if f.name == "id")
+        id_field = next(f for f in users_vertex.properties if f.name == "id")
         assert id_field.type is not None, (
             "id field should have a type when using pg_catalog"
         )
@@ -281,7 +279,7 @@ def test_infer_schema_with_pg_catalog_fallback(conn_conf, load_mock_schema):
             f"Expected id type to be INT when using pg_catalog, got {id_field.type}"
         )
 
-        name_field = next(f for f in users_vertex.fields if f.name == "name")
+        name_field = next(f for f in users_vertex.properties if f.name == "name")
         assert name_field.type is not None, (
             "name field should have a type when using pg_catalog"
         )
@@ -358,16 +356,16 @@ def test_infer_schema_with_pg_catalog_fallback(conn_conf, load_mock_schema):
         print(f"\nVertices ({len(schema.core_schema.vertex_config.vertices)}):")
         for v in schema.core_schema.vertex_config.vertices:
             field_types = ", ".join(
-                [f"{f.name}:{f.type if f.type else 'None'}" for f in v.fields[:5]]
+                [f"{f.name}:{f.type if f.type else 'None'}" for f in v.properties[:5]]
             )
             print(f"  - {v.name}: {field_types}...")
 
         print(f"\nEdges ({len(schema.core_schema.edge_config._edges_map)}):")
         for edge_id, e in schema.core_schema.edge_config._edges_map.items():
             weights_info = ""
-            if e.weights:
-                weight_count = len(e.weights.direct) + len(e.weights.vertices)
-                weights_info = f" (weights: {weight_count})"
+            if e.properties:
+                weight_count = len(e.properties)
+                weights_info = f" (properties: {weight_count})"
             relation_info = f" [{e.relation}]" if e.relation else ""
             print(
                 f"  - {edge_id}: {e.source} -> {e.target}{relation_info}{weights_info}"

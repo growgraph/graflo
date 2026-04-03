@@ -1,18 +1,18 @@
 """Vertex configuration and management for graph databases.
 
 This module provides classes and utilities for managing vertices in graph databases.
-It handles vertex configuration, field management, identity, and filtering operations.
+It handles vertex configuration, property management, identity, and filtering operations.
 The module supports both ArangoDB and Neo4j through the DBType enum.
 
 Key Components:
-    - Vertex: Represents a vertex with its fields and identity
+    - Vertex: Represents a vertex with its properties and identity
     - VertexConfig: Manages vertices and their configurations
 
 Example:
-    >>> vertex = Vertex(name="user", fields=["id", "name"])
+    >>> vertex = Vertex(name="user", properties=["id", "name"])
     >>> config = VertexConfig(vertices=[vertex])
-    >>> fields = config.fields("user")  # Returns list[Field]
-    >>> field_names = config.fields_names("user")  # Returns list[str]
+    >>> props = config.properties("user")  # Returns list[Field]
+    >>> prop_names = config.property_names("user")  # Returns list[str]
 """
 
 from __future__ import annotations
@@ -36,8 +36,8 @@ from graflo.onto import BaseEnum
 
 logger = logging.getLogger(__name__)
 
-# Type accepted for fields before normalization (for use by Edge/WeightConfig)
-FieldsInputType = list[str] | list["Field"] | list[dict[str, Any]]
+# Type accepted for vertex properties before normalization (for use by Edge/WeightConfig)
+PropertiesInputType = list[str] | list["Field"] | list[dict[str, Any]]
 
 
 class FieldType(BaseEnum):
@@ -187,30 +187,30 @@ def _normalize_fields_item(item: str | Field | dict[str, Any]) -> Field:
 class Vertex(ConfigBaseModel):
     """Represents a vertex in the graph database.
 
-    A vertex is a fundamental unit in the graph that can have fields, identity,
-    and filters. Fields can be specified as strings, Field objects, or dicts.
-    Internally, fields are stored as Field objects but behave like strings
-    for backward compatibility.
+    A vertex is a fundamental unit in the graph that can have properties, identity,
+    and filters. Properties can be specified as strings, Field objects, or dicts.
+    Internally, properties are stored as Field objects but behave like strings
+    where a string-like Field is needed.
 
     Attributes:
         name: Name of the vertex
-        fields: List of field names (str), Field objects, or dicts.
+        properties: List of field names (str), Field objects, or dicts.
                Will be normalized to Field objects by the validator.
-        identity: List of fields forming logical primary identity
+        identity: List of property names forming logical primary identity
         filters: List of filter expressions
 
     Examples:
-        >>> # Backward compatible: list of strings
-        >>> v1 = Vertex(name="user", fields=["id", "name"])
+        >>> # List of strings
+        >>> v1 = Vertex(name="user", properties=["id", "name"])
 
-        >>> # Typed fields: list of Field objects
-        >>> v2 = Vertex(name="user", fields=[
+        >>> # Typed properties: list of Field objects
+        >>> v2 = Vertex(name="user", properties=[
         ...     Field(name="id", type="INT"),
         ...     Field(name="name", type="STRING")
         ... ])
 
         >>> # From dicts (e.g., from YAML/JSON)
-        >>> v3 = Vertex(name="user", fields=[
+        >>> v3 = Vertex(name="user", properties=[
         ...     {"name": "id", "type": "INT"},
         ...     {"name": "name"}  # defaults to None type
         ... ])
@@ -223,13 +223,13 @@ class Vertex(ConfigBaseModel):
         ...,
         description="Name of the vertex type (e.g. user, post, company).",
     )
-    fields: list[Field] = PydanticField(
+    properties: list[Field] = PydanticField(
         default_factory=list,
         description="List of fields (names, Field objects, or dicts). Normalized to Field objects.",
     )
     identity: list[str] = PydanticField(
         default_factory=list,
-        description="Logical identity fields (primary key semantics for matching/upserts).",
+        description="Logical identity property names (primary key semantics for matching/upserts).",
     )
     filters: list[FilterExpression] = PydanticField(
         default_factory=list,
@@ -240,11 +240,11 @@ class Vertex(ConfigBaseModel):
         description="Optional semantic description of the vertex meaning, role, and intended interpretation.",
     )
 
-    @field_validator("fields", mode="before")
+    @field_validator("properties", mode="before")
     @classmethod
-    def convert_to_fields(cls, v: Any) -> Any:
+    def convert_to_properties(cls, v: Any) -> Any:
         if not isinstance(v, list):
-            raise ValueError("fields must be a list")
+            raise ValueError("properties must be a list")
         return [_normalize_fields_item(item) for item in v]
 
     @field_validator("filters", mode="before")
@@ -277,27 +277,27 @@ class Vertex(ConfigBaseModel):
 
     @model_validator(mode="after")
     def set_identity(self) -> "Vertex":
-        identity_fields = list(self.identity)
-        if not identity_fields:
-            identity_fields = [f.name for f in self.fields]
-        object.__setattr__(self, "identity", identity_fields)
+        identity_names = list(self.identity)
+        if not identity_names:
+            identity_names = [f.name for f in self.properties]
+        object.__setattr__(self, "identity", identity_names)
 
-        seen_names = {f.name for f in self.fields}
-        new_fields = list(self.fields)
-        for field_name in identity_fields:
-            if field_name not in seen_names:
-                new_fields.append(Field(name=field_name, type=None))
-                seen_names.add(field_name)
-        object.__setattr__(self, "fields", new_fields)
+        seen_names = {f.name for f in self.properties}
+        augmented = list(self.properties)
+        for name in identity_names:
+            if name not in seen_names:
+                augmented.append(Field(name=name, type=None))
+                seen_names.add(name)
+        object.__setattr__(self, "properties", augmented)
         return self
 
     @property
-    def field_names(self) -> list[str]:
-        """Get list of field names (as strings)."""
-        return [field.name for field in self.fields]
+    def property_names(self) -> list[str]:
+        """Property names as strings (Field.name for each entry)."""
+        return [field.name for field in self.properties]
 
-    def get_fields(self) -> list[Field]:
-        return self.fields
+    def get_properties(self) -> list[Field]:
+        return self.properties
 
     def finish_init(self):
         """Complete logical initialization for vertex."""
@@ -321,7 +321,7 @@ class VertexConfig(ConfigBaseModel):
 
     vertices: list[Vertex] = PydanticField(
         ...,
-        description="List of vertex type definitions (name, fields, identity, filters).",
+        description="List of vertex type definitions (name, properties, identity, filters).",
     )
     blank_vertices: list[str] = PydanticField(
         default_factory=list,
@@ -358,9 +358,9 @@ class VertexConfig(ConfigBaseModel):
                 vertex.identity = [blank_id_field]
             if not vertex.identity:
                 raise ValueError(f"Vertex '{vertex.name}' must define identity fields")
-            missing = [f for f in vertex.identity if f not in vertex.field_names]
+            missing = [f for f in vertex.identity if f not in vertex.property_names]
             for field_name in missing:
-                vertex.fields.append(Field(name=field_name, type=None))
+                vertex.properties.append(Field(name=field_name, type=None))
 
     def _get_vertices_map(self) -> dict[str, Vertex]:
         """Return the vertices map (set by model validator)."""
@@ -401,33 +401,21 @@ class VertexConfig(ConfigBaseModel):
         """Get identity fields for a vertex."""
         return list(self._get_vertices_map()[vertex_name].identity)
 
-    def fields(self, vertex_name: str) -> list[Field]:
-        """Get fields for a vertex.
+    def properties(self, vertex_name: str) -> list[Field]:
+        """Vertex properties as Field objects."""
 
-        Args:
-            vertex_name: Name of the vertex or storage name
-
-        Returns:
-            list[Field]: List of Field objects
-        """
         vertex = self._get_vertex_by_name(vertex_name)
 
-        return vertex.fields
+        return vertex.properties
 
-    def fields_names(
+    def property_names(
         self,
         vertex_name: str,
     ) -> list[str]:
-        """Get field names for a vertex as strings.
+        """Vertex property names as strings."""
 
-        Args:
-            vertex_name: Name of the vertex or storage name
-
-        Returns:
-            list[str]: List of field names as strings
-        """
         vertex = self._get_vertex_by_name(vertex_name)
-        return vertex.field_names
+        return vertex.property_names
 
     def numeric_fields_list(self, vertex_name):
         """Get list of numeric fields for a vertex.

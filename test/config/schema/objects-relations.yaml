@@ -5,7 +5,7 @@ schema:
         vertex_config:
             vertices:
             -   name: person
-                fields:
+                properties:
                 -   id
                 -   name
                 -   age
@@ -16,7 +16,7 @@ schema:
                 identity:
                 -   id
             -   name: vehicle
-                fields:
+                properties:
                 -   id
                 -   name
                 -   license_plate
@@ -27,7 +27,7 @@ schema:
                 identity:
                 -   id
             -   name: institution
-                fields:
+                properties:
                 -   id
                 -   name
                 -   email

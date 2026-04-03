@@ -223,15 +223,15 @@ class TestEdgeResourceAutoJoin:
                 "vertices": [
                     {
                         "name": "server",
-                        "fields": ["id", "class_name", "description"],
+                        "properties": ["id", "class_name", "description"],
                     },
                     {
                         "name": "database",
-                        "fields": ["id", "class_name", "description"],
+                        "properties": ["id", "class_name", "description"],
                     },
                     {
                         "name": "network",
-                        "fields": ["id", "class_name", "description"],
+                        "properties": ["id", "class_name", "description"],
                     },
                 ],
             },
@@ -538,10 +538,10 @@ class TestEdgeResourceAutoJoin:
                 "vertices": [
                     {
                         "name": "person",
-                        "fields": ["id", "name"],
+                        "properties": ["id", "name"],
                         "identity": ["id"],
                     },
-                    {"name": "org", "fields": ["id", "name"], "identity": ["id"]},
+                    {"name": "org", "properties": ["id", "name"], "identity": ["id"]},
                 ],
             },
             edge_config={"edges": []},
@@ -593,7 +593,7 @@ class TestEdgeResourceAutoJoin:
                 "vertices": [
                     {
                         "name": "item",
-                        "fields": ["id", "label"],
+                        "properties": ["id", "label"],
                         "identity": ["id"],
                     },
                 ],

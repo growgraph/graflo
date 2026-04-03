@@ -25,7 +25,7 @@ def _schema() -> Schema:
                     "vertices": [
                         {
                             "name": "person",
-                            "fields": ["id", "name"],
+                            "properties": ["id", "name"],
                             "identity": ["id"],
                         },
                     ]

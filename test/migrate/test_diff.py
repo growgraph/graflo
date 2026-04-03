@@ -12,12 +12,12 @@ def _schema_v1() -> Schema:
                     "vertices": [
                         {
                             "name": "person",
-                            "fields": [{"name": "id", "type": "STRING"}, "name"],
+                            "properties": [{"name": "id", "type": "STRING"}, "name"],
                             "identity": ["id"],
                         },
                         {
                             "name": "company",
-                            "fields": [{"name": "id", "type": "STRING"}, "name"],
+                            "properties": [{"name": "id", "type": "STRING"}, "name"],
                             "identity": ["id"],
                         },
                     ]
@@ -48,7 +48,7 @@ def _schema_v2() -> Schema:
                     "vertices": [
                         {
                             "name": "person",
-                            "fields": [
+                            "properties": [
                                 {"name": "id", "type": "STRING"},
                                 {"name": "full_name", "type": "STRING"},
                                 {"name": "age", "type": "INT"},
@@ -57,12 +57,12 @@ def _schema_v2() -> Schema:
                         },
                         {
                             "name": "company",
-                            "fields": [{"name": "id", "type": "STRING"}, "name"],
+                            "properties": [{"name": "id", "type": "STRING"}, "name"],
                             "identity": ["id"],
                         },
                         {
                             "name": "country",
-                            "fields": [{"name": "code", "type": "STRING"}],
+                            "properties": [{"name": "code", "type": "STRING"}],
                             "identity": ["code"],
                         },
                     ]

@@ -38,7 +38,8 @@ from requests import exceptions as requests_exceptions
 # Removed pyTigerGraph dependency - using direct REST API calls instead
 
 
-from graflo.architecture.schema.edge import Edge
+from graflo.architecture.schema.db_aware import EdgeConfigDBAware
+from graflo.architecture.schema.edge import DEFAULT_TIGERGRAPH_RELATION_WEIGHTNAME, Edge
 from graflo.architecture.database_features import DatabaseProfile
 from graflo.architecture.schema import VertexConfigDBAware
 from graflo.architecture.graph_types import Index
@@ -1075,9 +1076,11 @@ class TigerGraphConnection(Connection):
             Response from API
         """
         graph_name = graph_name or self.graphname
+        # TigerGraph 4.2+: .../edges/{source_type}/{source_id}/{edge_type}/{target_type}/{target_id}
         endpoint = (
-            f"/graph/{graph_name}/edges/{edge_type}/"
+            f"/graph/{graph_name}/edges/"
             f"{source_type}/{quote(str(source_id))}/"
+            f"{edge_type}/"
             f"{target_type}/{quote(str(target_id))}"
         )
         data = attributes if attributes else {}
@@ -1635,7 +1638,7 @@ class TigerGraphConnection(Connection):
 
         # Get field type for primary key field(s) - convert FieldType enum to string
         field_type_map = {}
-        for f in vertex.fields:
+        for f in vertex.properties:
             if f.type:
                 field_type_map[f.name] = (
                     f.type.value if hasattr(f.type, "value") else str(f.type)
@@ -1645,7 +1648,7 @@ class TigerGraphConnection(Connection):
 
         # Format all fields
         all_fields = []
-        for field in vertex.fields:
+        for field in vertex.properties:
             if field.type:
                 field_type = (
                     field.type.value
@@ -1694,6 +1697,16 @@ class TigerGraphConnection(Connection):
                 f'    ) WITH STATS="OUTDEGREE_BY_EDGETYPE"'
             )
 
+    def _edge_for_tigergraph_ddl(self, edge: Edge, ec_db: EdgeConfigDBAware) -> Edge:
+        """Deep-copy edge with TigerGraph-effective weights for GSQL (non-mutating on schema)."""
+        ew = ec_db.effective_weights(edge)
+        edge_copy = edge.model_copy(deep=True)
+        if ew is not None:
+            edge_copy.properties = [f.model_copy(deep=True) for f in ew.direct]
+        else:
+            edge_copy.properties = []
+        return edge_copy
+
     def _format_edge_attributes(
         self, edge: Edge, exclude_fields: set[str] | None = None
     ) -> str:
@@ -1706,14 +1719,14 @@ class TigerGraphConnection(Connection):
         Returns:
             str: Formatted attribute string (e.g., "    date STRING,\n    relation STRING")
         """
-        if not edge.weights or not edge.weights.direct:
+        if not edge.properties:
             return ""
 
         if exclude_fields is None:
             exclude_fields = set()
 
         attr_parts = []
-        for field in edge.weights.direct:
+        for field in edge.properties:
             field_name = field.name
             if field_name not in exclude_fields:
                 field_type = self._get_tigergraph_type(field.type)
@@ -1729,11 +1742,7 @@ class TigerGraphConnection(Connection):
                 if token in {"source", "target"}:
                     continue
                 if token == "relation":
-                    relation_field = edge.relation_field
-                    if relation_field is None and edge.relation_from_key:
-                        relation_field = "relation"
-                    if relation_field is not None:
-                        fields.add(relation_field)
+                    fields.add(DEFAULT_TIGERGRAPH_RELATION_WEIGHTNAME)
                     continue
                 if token not in {"_from", "_to"}:
                     fields.add(token)
@@ -1759,32 +1768,18 @@ class TigerGraphConnection(Connection):
         indexed_field_names = self._edge_identity_discriminator_fields(edge)
 
         # IMPORTANT: In TigerGraph, discriminator fields MUST also be edge attributes.
-        # If an indexed field is not in weights.direct, we need to add it.
-        # Initialize weights if not present
-        if edge.weights is None:
-            from graflo.architecture.schema.edge import WeightConfig, Field
+        # If an indexed field is not in attributes, we need to add it.
+        existing_weight_names = {f.name for f in edge.properties}
 
-            edge.weights = WeightConfig()
-
-        # Type assertion: weights is guaranteed to be WeightConfig after assignment
-        if edge.weights is None:
-            raise RuntimeError("weights should be initialized")
-        # Get existing weight field names
-        existing_weight_names = set()
-        if edge.weights.direct:
-            existing_weight_names = {field.name for field in edge.weights.direct}
-
-        # Add any indexed fields that are missing from weights
+        # Add any indexed fields that are missing from attributes
         for field_name in indexed_field_names:
             if field_name not in existing_weight_names:
-                # Add the field to weights with STRING type (default)
                 from graflo.architecture.schema.edge import Field
 
-                edge.weights.direct.append(
-                    Field(name=field_name, type=FieldType.STRING)
-                )
+                edge.properties.append(Field(name=field_name, type=FieldType.STRING))
+                existing_weight_names.add(field_name)
                 logger.info(
-                    f"Added indexed field '{field_name}' to edge weights for discriminator compatibility"
+                    f"Added indexed field '{field_name}' to edge attributes for discriminator compatibility"
                 )
 
         # Format edge attributes, excluding discriminator fields (they're in DISCRIMINATOR clause)
@@ -1798,8 +1793,8 @@ class TigerGraphConnection(Connection):
 
         # Get field types for discriminator fields
         field_types = {}
-        if edge.weights and edge.weights.direct:
-            for field in edge.weights.direct:
+        if edge.properties:
+            for field in edge.properties:
                 field_types[field.name] = self._get_tigergraph_type(field.type)
 
         # Use sanitized dbname for schema names when available
@@ -1826,8 +1821,7 @@ class TigerGraphConnection(Connection):
         else:
             logger.debug(
                 f"No identity discriminator fields found for edge {relation_db}. "
-                f"Identities: {edge.identities}, "
-                f"relation_field: {edge.relation_field}"
+                f"Identities: {edge.identities}, relation: {edge.relation}"
             )
 
         # Combine FROM/TO and discriminator with commas
@@ -1878,25 +1872,17 @@ class TigerGraphConnection(Connection):
         # Collect identity discriminator fields (same logic as _get_edge_add_statement)
         indexed_field_names = self._edge_identity_discriminator_fields(first_edge)
 
-        # Ensure indexed fields are in weights (same logic as _get_edge_add_statement)
-        if first_edge.weights is None:
-            from graflo.architecture.schema.edge import WeightConfig
-
-            first_edge.weights = WeightConfig()
-
-        if first_edge.weights is None:
-            raise RuntimeError("weights should be initialized")
-        existing_weight_names = set()
-        if first_edge.weights.direct:
-            existing_weight_names = {field.name for field in first_edge.weights.direct}
+        # Ensure indexed fields are in attributes (same logic as _get_edge_add_statement)
+        existing_weight_names = {f.name for f in first_edge.properties}
 
         for field_name in indexed_field_names:
             if field_name not in existing_weight_names:
                 from graflo.architecture.schema.edge import Field
 
-                first_edge.weights.direct.append(
+                first_edge.properties.append(
                     Field(name=field_name, type=FieldType.STRING)
                 )
+                existing_weight_names.add(field_name)
 
         # Format edge attributes, excluding discriminator fields
         edge_attrs = self._format_edge_attributes(
@@ -1905,8 +1891,8 @@ class TigerGraphConnection(Connection):
 
         # Get field types for discriminator fields
         field_types = {}
-        if first_edge.weights and first_edge.weights.direct:
-            for field in first_edge.weights.direct:
+        if first_edge.properties:
+            for field in first_edge.properties:
                 field_types[field.name] = self._get_tigergraph_type(field.type)
 
         # Build FROM/TO pairs for all edges, separated by |
@@ -2095,11 +2081,23 @@ class TigerGraphConnection(Connection):
 
         # Create one statement per relation with all FROM/TO pairs
         for relation, edge_group in edges_by_relation.items():
+            ddl_edges = [
+                self._edge_for_tigergraph_ddl(e, db_schema.edge_config)
+                for e in edge_group
+            ]
+            ddl_source_vertices = {
+                id(de): source_vertices[id(og)]
+                for de, og in zip(ddl_edges, edge_group, strict=True)
+            }
+            ddl_target_vertices = {
+                id(de): target_vertices[id(og)]
+                for de, og in zip(ddl_edges, edge_group, strict=True)
+            }
             stmt = self._get_edge_group_create_statement(
-                edge_group,
+                ddl_edges,
                 relation_name=relation,
-                source_vertices=source_vertices,
-                target_vertices=target_vertices,
+                source_vertices=ddl_source_vertices,
+                target_vertices=ddl_target_vertices,
             )
             edge_stmts.append(stmt)
 
@@ -2504,7 +2502,7 @@ class TigerGraphConnection(Connection):
         Returns:
             str: Formatted field definitions for GSQL CREATE VERTEX statement
         """
-        fields = vertex.fields
+        fields = vertex.properties
 
         if not fields:
             # Default fields if none specified
@@ -2524,14 +2522,13 @@ class TigerGraphConnection(Connection):
         """
         Format edge attributes for GSQL CREATE EDGE statement.
 
-        Edge weights/attributes come from edge.weights.direct (list of Field objects).
-        Each weight field needs to be included in the CREATE EDGE statement with its type.
+        Edge properties come from edge.properties (list of Field objects).
+        Each attribute field needs to be included in the CREATE EDGE statement with its type.
         """
         attrs = []
 
-        # Get weight fields from edge.weights.direct
-        if edge.weights and edge.weights.direct:
-            for field in edge.weights.direct:
+        if edge.properties:
+            for field in edge.properties:
                 # Field objects have name and type attributes
                 field_name = field.name
                 # Get TigerGraph type - FieldType enum values are already in TigerGraph format
@@ -3563,7 +3560,7 @@ class TigerGraphConnection(Connection):
                 - collection_name: Alternative edge type name (used if relation_name is None)
                 - uniq_weight_fields: Unused in TigerGraph (ArangoDB-specific)
                 - uniq_weight_collections: Unused in TigerGraph (ArangoDB-specific)
-                - upsert_option: Unused in TigerGraph (ArangoDB-specific, always upserts by default)
+                - on_duplicate: Unused in TigerGraph (ArangoDB-specific AQL policy)
                 - relationship_merge_properties: Unused (Cypher property-graph backends only)
         """
         opts = consume_insert_edges_kwargs(kwargs)
@@ -3842,7 +3839,9 @@ class TigerGraphConnection(Connection):
             vertex_config = kwargs.get("vertex_config")
 
             if field_types is None and vertex_config is not None:
-                field_types = {f.name: f.type for f in vertex_config.fields(class_name)}
+                field_types = {
+                    f.name: f.type for f in vertex_config.properties(class_name)
+                }
 
             # Build REST++ filter string with field type information
             filter_str = self._render_rest_filter(filters, field_types=field_types)

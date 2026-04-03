@@ -99,9 +99,9 @@ def _vertex_config_fixture() -> VertexConfig:
     id_field = VertexField(name="id")
     return VertexConfig(
         vertices=[
-            Vertex(name="project", fields=[id_field], identity=["id"]),
-            Vertex(name="task", fields=[id_field], identity=["id"]),
-            Vertex(name="milestone", fields=[id_field], identity=["id"]),
+            Vertex(name="project", properties=[id_field], identity=["id"]),
+            Vertex(name="task", properties=[id_field], identity=["id"]),
+            Vertex(name="milestone", properties=[id_field], identity=["id"]),
         ]
     )
 

@@ -31,7 +31,7 @@ db_type = conn_conf.connection_type
 
 bindings = Bindings(
     connectors=[
-        FileConnector(name="openalex", regex=r"\\Sjson$", sub_path=pathlib.Path("."))
+        FileConnector(name="openalex", regex=r"\Sjson$", sub_path=pathlib.Path("."))
     ],
     resource_connector=[{"resource": "work", "connector": "openalex"}],
 )

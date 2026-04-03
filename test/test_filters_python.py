@@ -385,7 +385,7 @@ def vertex_config_with_filters():
         """
     vertices:
     -   name: feature
-        fields:
+        properties:
         -   name
         -   value
         filters:
@@ -477,7 +477,7 @@ def test_vertex_filter_no_filters_passes_all(sample_vertex_docs):
     from graflo.architecture.schema.vertex import VertexConfig
 
     vc = VertexConfig.model_validate(
-        {"vertices": [{"name": "raw", "fields": ["name", "value"]}]}
+        {"vertices": [{"name": "raw", "properties": ["name", "value"]}]}
     )
     result = _apply_vertex_filters(vc, "raw", sample_vertex_docs)
     assert len(result) == len(sample_vertex_docs)

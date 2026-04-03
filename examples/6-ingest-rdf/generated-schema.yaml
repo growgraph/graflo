@@ -12,7 +12,7 @@ graph:
             target: Publication
     vertex_config:
         vertices:
-        -   fields:
+        -   properties:
             -   name: _key
             -   name: _uri
             -   name: title
@@ -25,7 +25,7 @@ graph:
             -   year
             -   doi
             name: Publication
-        -   fields:
+        -   properties:
             -   name: _key
             -   name: _uri
             -   name: instName
@@ -36,7 +36,7 @@ graph:
             -   instName
             -   country
             name: Institution
-        -   fields:
+        -   properties:
             -   name: _key
             -   name: _uri
             -   name: fullName

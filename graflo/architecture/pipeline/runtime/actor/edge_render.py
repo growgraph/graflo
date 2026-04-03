@@ -8,6 +8,7 @@ from functools import partial
 from itertools import combinations, product, zip_longest
 from typing import Any, Callable, Iterable, Iterator
 
+from graflo.architecture.edge_derivation import EdgeDerivation
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.graph_types import (
     ActionContext,
@@ -16,6 +17,7 @@ from graflo.architecture.graph_types import (
     LocationIndex,
     TransformPayload,
     VertexRep,
+    Weight,
 )
 from graflo.architecture.util import project_dict
 from graflo.architecture.schema.vertex import VertexConfig
@@ -33,7 +35,7 @@ def add_blank_collections(
     for vname in vertex_conf.blank_vertices:
         v = vertex_conf[vname]
         for item in buffer_transforms:
-            prep_doc = {f: item[f] for f in v.field_names if f in item}
+            prep_doc = {f: item[f] for f in v.property_names if f in item}
             if vname not in ctx.acc_global:
                 ctx.acc_global[vname] = [prep_doc]
     return ctx
@@ -99,22 +101,23 @@ def count_unique_by_position_variable(tuples_list: list, fillvalue: Any = None) 
 
 
 def _filter_source_target_lindexes(
-    edge: Edge,
+    derivation: EdgeDerivation | None,
     source_locs: list[LocationIndex],
     target_locs: list[LocationIndex],
 ) -> tuple[list[LocationIndex], list[LocationIndex]]:
-    """Apply match/exclude filters from edge config to source and target locations."""
-    if edge.match_source is not None:
-        source_locs = [loc for loc in source_locs if edge.match_source in loc]
-    if edge.exclude_source is not None:
-        source_locs = [loc for loc in source_locs if edge.exclude_source not in loc]
-    if edge.match_target is not None:
-        target_locs = [loc for loc in target_locs if edge.match_target in loc]
-    if edge.exclude_target is not None:
-        target_locs = [loc for loc in target_locs if edge.exclude_target not in loc]
-    if edge.match is not None:
-        source_locs = [loc for loc in source_locs if edge.match in loc]
-        target_locs = [loc for loc in target_locs if edge.match in loc]
+    """Apply match/exclude filters from ingestion derivation to source/target locations."""
+    d = derivation or EdgeDerivation()
+    if d.match_source is not None:
+        source_locs = [loc for loc in source_locs if d.match_source in loc]
+    if d.exclude_source is not None:
+        source_locs = [loc for loc in source_locs if d.exclude_source not in loc]
+    if d.match_target is not None:
+        target_locs = [loc for loc in target_locs if d.match_target in loc]
+    if d.exclude_target is not None:
+        target_locs = [loc for loc in target_locs if d.exclude_target not in loc]
+    if d.match is not None:
+        source_locs = [loc for loc in source_locs if d.match in loc]
+        target_locs = [loc for loc in target_locs if d.match in loc]
     return source_locs, target_locs
 
 
@@ -162,7 +165,7 @@ def _compute_location_groups(
 def _iter_emitter_receiver_group_pairs(
     source_groups: list[list[LocationIndex]],
     target_groups: list[list[LocationIndex]],
-    edge: Edge,
+    derivation: EdgeDerivation | None,
     source_name: str,
     target_name: str,
 ) -> Iterator[tuple[list[LocationIndex], list[LocationIndex]]]:
@@ -171,7 +174,8 @@ def _iter_emitter_receiver_group_pairs(
         yield from zip(source_groups, target_groups)
         return
 
-    if edge.match_source is not None and edge.match_target is not None:
+    d = derivation or EdgeDerivation()
+    if d.match_source is not None and d.match_target is not None:
         yield from zip(source_groups, target_groups)
         return
 
@@ -225,8 +229,17 @@ def render_edge(
     vertex_config: VertexConfig,
     ctx: AssemblyContext | ActionContext,
     lindex: LocationIndex | None = None,
+    *,
+    relation_input_field: str | None = None,
+    derivation: EdgeDerivation | None = None,
 ) -> defaultdict[str | None, list]:
-    """Create edges between source and target vertices."""
+    """Create edges between source and target vertices.
+
+    Args:
+        relation_input_field: Document/ctx field for per-row relationship labels when
+            ``edge.relation`` is unset (e.g. TigerGraph default column).
+        derivation: Ingestion-only location / field wiring (edge pipeline step).
+    """
     acc_vertex = ctx.acc_vertex
     buffer_transforms = ctx.buffer_transforms
     source = edge.source
@@ -248,7 +261,7 @@ def render_edge(
         target_locs = sorted(lindex.filter(target_locs))
 
     source_locs, target_locs = _filter_source_target_lindexes(
-        edge, source_locs, target_locs
+        derivation, source_locs, target_locs
     )
 
     if not (source_locs and target_locs):
@@ -283,7 +296,7 @@ def render_edge(
     )
 
     for source_group, target_group in _iter_emitter_receiver_group_pairs(
-        source_groups, target_groups, edge, source, target
+        source_groups, target_groups, derivation, source, target
     ):
         for source_loc in source_group:
             source_items = source_dressed[source_loc]
@@ -305,43 +318,50 @@ def render_edge(
                     v_doc = v_rep.vertex
 
                     weight: dict[str, Any] = {}
-                    if edge.weights is not None:
-                        for field in edge.weights.direct:
+                    if edge.properties:
+                        for field in edge.properties:
                             field_name = field.name
-                            if field in u_rep.ctx:
-                                weight[field_name] = u_rep.ctx[field]
-                            if field in v_rep.ctx:
-                                weight[field_name] = v_rep.ctx[field]
-                            if field in u_tr:
-                                weight[field_name] = u_tr[field]
-                            if field in v_tr:
-                                weight[field_name] = v_tr[field]
+                            # Direct weights may live on observation ctx (row leftovers) or on
+                            # merged vertex docs (passthrough fields merged in VertexActor).
+                            if field_name in u_rep.ctx:
+                                weight[field_name] = u_rep.ctx[field_name]
+                            if field_name in v_rep.ctx:
+                                weight[field_name] = v_rep.ctx[field_name]
+                            if field_name in u_doc:
+                                weight[field_name] = u_doc[field_name]
+                            if field_name in v_doc:
+                                weight[field_name] = v_doc[field_name]
+                            if field_name in u_tr:
+                                weight[field_name] = u_tr[field_name]
+                            if field_name in v_tr:
+                                weight[field_name] = v_tr[field_name]
 
                     source_proj = project_dict(u_doc, source_identity)
                     target_proj = project_dict(v_doc, target_identity)
 
                     extracted_relation = None
 
-                    if edge.relation_field is not None:
-                        u_relation = u_rep.ctx.pop(edge.relation_field, None)
+                    if relation_input_field is not None:
+                        u_relation = u_rep.ctx.pop(relation_input_field, None)
                         if u_relation is None:
-                            v_relation = v_rep.ctx.pop(edge.relation_field, None)
+                            v_relation = v_rep.ctx.pop(relation_input_field, None)
                             if v_relation is not None:
                                 source_proj, target_proj = target_proj, source_proj
                                 extracted_relation = v_relation
                         else:
                             extracted_relation = u_relation
 
-                    if (
-                        extracted_relation is None
-                        and edge.relation_from_key
-                        and len(target_loc) > 1
-                    ):
+                    use_key = (
+                        derivation.relation_from_key
+                        if derivation is not None
+                        else False
+                    )
+                    if extracted_relation is None and use_key and len(target_loc) > 1:
                         extracted_relation = _extract_relation_from_key(
                             source_loc, target_loc, source_min_depth, target_min_depth
                         )
 
-                    if edge.relation_from_key and extracted_relation is None:
+                    if use_key and extracted_relation is None:
                         continue
 
                     relation = (
@@ -358,9 +378,11 @@ def render_weights(
     vertex_config: VertexConfig,
     acc_vertex: defaultdict[str, defaultdict[LocationIndex, list]],
     edges: defaultdict[str | None, list],
+    *,
+    vertex_weights: list[Weight] | None = None,
 ) -> defaultdict[str | None, list]:
     """Process and apply weights to edge documents."""
-    vertex_weights = [] if edge.weights is None else edge.weights.vertices
+    vertex_weights = vertex_weights or []
     weights: list = []
 
     for w in vertex_weights:

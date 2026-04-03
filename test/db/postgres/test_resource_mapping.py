@@ -19,12 +19,16 @@ def _build_vertex_config() -> VertexConfig:
         vertices=[
             Vertex(
                 name="users",
-                fields=[Field(name="id"), Field(name="name"), Field(name="user_name")],
+                properties=[
+                    Field(name="id"),
+                    Field(name="name"),
+                    Field(name="user_name"),
+                ],
                 identity=["id"],
             ),
             Vertex(
                 name="products",
-                fields=[
+                properties=[
                     Field(name="product_code"),
                     Field(name="name"),
                     Field(name="product_name"),

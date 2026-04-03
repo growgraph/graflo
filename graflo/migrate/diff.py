@@ -155,8 +155,8 @@ class SchemaDiff:
                     )
                 )
 
-            old_fields = _field_map(old_vertex.fields)
-            new_fields = _field_map(new_vertex.fields)
+            old_fields = _field_map(old_vertex.properties)
+            new_fields = _field_map(new_vertex.properties)
             old_field_names = set(old_fields)
             new_field_names = set(new_fields)
 
@@ -245,8 +245,8 @@ class SchemaDiff:
                     )
                 )
 
-            old_direct = _field_map(old_edge.weights.direct if old_edge.weights else [])
-            new_direct = _field_map(new_edge.weights.direct if new_edge.weights else [])
+            old_direct = _field_map(old_edge.properties)
+            new_direct = _field_map(new_edge.properties)
             old_names = set(old_direct)
             new_names = set(new_direct)
 

@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from collections import Counter
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import Field as PydanticField, PrivateAttr, model_validator
 
 from graflo.architecture.base import ConfigBaseModel
+from graflo.onto import DBType
 
+from ..edge_derivation_registry import EdgeDerivationRegistry
 from ..resource import Resource
 from ..transform import ProtoTransform
 
@@ -19,6 +21,16 @@ if TYPE_CHECKING:
 class IngestionModel(ConfigBaseModel):
     """Ingestion model (C): resources and transform registry."""
 
+    edges_on_duplicate: Literal["ignore", "upsert"] = PydanticField(
+        default="ignore",
+        description=(
+            "How batch edge writes tolerate an already-matching edge. Passed through to "
+            ":meth:`~graflo.db.conn.Connection.insert_edges_batch` where the target backend "
+            "supports it. Today ArangoDB maps ``ignore`` to INSERT with ignoreErrors and "
+            "``upsert`` to AQL UPSERT (with schema merge keys as ``uniq_weight_fields`` when "
+            "present). Other databases may interpret the same values later."
+        ),
+    )
     resources: list[Resource] = PydanticField(
         default_factory=list,
         description="List of resource definitions (data pipelines mapping to vertices/edges).",
@@ -30,6 +42,9 @@ class IngestionModel(ConfigBaseModel):
 
     _resources: dict[str, Resource] = PrivateAttr()
     _transforms: dict[str, ProtoTransform] = PrivateAttr(default_factory=dict)
+    _combined_edge_derivation: EdgeDerivationRegistry = PrivateAttr(
+        default_factory=EdgeDerivationRegistry
+    )
 
     @model_validator(mode="after")
     def _init_model(self) -> IngestionModel:
@@ -74,6 +89,7 @@ class IngestionModel(ConfigBaseModel):
         strict_references: bool = False,
         dynamic_edge_feedback: bool = False,
         allowed_vertex_names: set[str] | None = None,
+        target_db_flavor: DBType | None = None,
     ) -> None:
         """Initialize resources against graph model and transform library."""
         self._rebuild_runtime_state()
@@ -85,6 +101,7 @@ class IngestionModel(ConfigBaseModel):
                 strict_references=strict_references,
                 dynamic_edge_feedback=dynamic_edge_feedback,
                 allowed_vertex_names=allowed_vertex_names,
+                target_db_flavor=target_db_flavor,
             )
 
     def _rebuild_runtime_state(self) -> None:

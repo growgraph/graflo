@@ -89,7 +89,7 @@ The inference engine uses intelligent heuristics to classify tables. **These heu
 
 - **Require**: 2+ foreign key (FK) constraints decorated on the table
 - Foreign keys represent relationships between entities
-- May have additional attributes (weights, timestamps, quantities)
+- May have additional columns (timestamps, quantities, etc.) that become edge **properties**
 - Represent relationships or transactions between entities
 - Foreign keys point to vertex tables and become edge source/target mappings
 
@@ -116,13 +116,13 @@ PostgreSQL types are automatically mapped to graflo Field types with proper type
 
 The inferred schema automatically includes:
 
-- **Vertices**: `users`, `products` (with typed fields matching PostgreSQL columns)
-- **Edges**: 
-  - `users → products` (from `purchases` table) with weights: `purchase_date`, `quantity`, `total_amount`
-  - `users → users` (from `follows` table) with weight: `created_at`
+- **Vertices**: `users`, `products` (with typed **properties** matching PostgreSQL columns)
+- **Edges**:
+  - `users → products` (from `purchases` table) with **properties**: `purchase_date`, `quantity`, `total_amount`
+  - `users → users` (from `follows` table) with **properties**: `created_at`
 - **Resources**: Automatically created for each table with appropriate actors
-- **Indexes**: Primary keys become vertex indexes, foreign keys become edge indexes
-- **Weights**: Additional columns in edge tables become edge weight properties
+- **Indexes**: Primary keys drive vertex identity / indexing; foreign keys drive edge mappings (see `database_features` for secondary indexes)
+- **Edge payload**: Additional columns in edge tables become edge **properties** on the logical `Edge`
 
 ### Graph Structure Visualization
 
@@ -139,7 +139,7 @@ This diagram shows:
 
 ### Vertex Fields Structure
 
-Each vertex includes typed fields inferred from PostgreSQL columns:
+Each vertex includes typed **properties** inferred from PostgreSQL columns:
 
 ![Vertex Fields](../assets/5-ingest-postgres/figs/public_vc2fields.png){ width="500" }
 
@@ -288,11 +288,11 @@ ingestion_model = manifest.require_ingestion_model()
 
 The inferred schema will have:
 
-- **Vertices**: `users`, `products` with typed fields matching PostgreSQL column types
+- **Vertices**: `users`, `products` with typed **properties** matching PostgreSQL column types
 - **Edges**:
 
-  - `users → products` (from `purchases` table) with weight properties
-  - `users → users` (from `follows` table) with weight properties
+  - `users → products` (from `purchases` table) with edge **properties** from non-FK columns
+  - `users → users` (from `follows` table) with edge **properties** from non-FK columns
 - **Resources**: Automatically created in `ingestion_model` for each table with appropriate actors
 
 **What happens during inference:**
@@ -570,7 +570,7 @@ schema:
     vertex_config:
       vertices:
       - name: products
-        fields:
+        properties:
         - name: id
           type: INT
         - name: name
@@ -581,10 +581,9 @@ schema:
           type: STRING
         - name: created_at
           type: DATETIME
-        indexes:
-        - fields: [id]
+        identity: [id]
       - name: users
-        fields:
+        properties:
         - name: id
           type: INT
         - name: name
@@ -593,22 +592,23 @@ schema:
           type: STRING
         - name: created_at
           type: DATETIME
-        indexes:
-        - fields: [id]
+        identity: [id]
     edge_config:
       edges:
       - source: users
         target: products
-        weights:
-          direct:
-          - name: purchase_date
-          - name: quantity
-          - name: total_amount
+        properties:
+        - name: purchase_date
+          type: DATETIME
+        - name: quantity
+          type: INT
+        - name: total_amount
+          type: FLOAT
       - source: users
         target: users
-        weights:
-          direct:
-          - name: created_at
+        properties:
+        - name: created_at
+          type: DATETIME
 ingestion_model:
   resources:
   - name: products
@@ -657,9 +657,9 @@ Resources are automatically created for each table with appropriate actors:
 - **Vertex tables**: Create `VertexActor` to map rows to vertices
 - **Edge tables**: Create `EdgeActor` with proper field mappings for source and target vertices
 
-### Type-Safe Field Definitions
+### Type-safe property definitions
 
-All fields in the inferred schema include type information, enabling:
+All **properties** in the inferred schema include type information, enabling:
 
 - Better validation during ingestion
 - Database-specific optimizations
@@ -848,7 +848,7 @@ After successful ingestion, you can explore your graph data using each database'
 2. **Type mapping** ensures proper type handling across PostgreSQL and graph databases
 3. **Direct database access** enables efficient data ingestion without intermediate files
 4. **Flexible heuristics** automatically detect vertices and edges from table structure
-5. **Type-safe fields** provide better validation and database-specific optimizations
+5. **Type-safe properties** provide better validation and database-specific optimizations
 6. **Resource generation** automatically creates appropriate actors for each table
 7. **Schema customization** allows modifications after inference for specific use cases
 8. **Multiple database support** allows you to try different graph databases and compare results

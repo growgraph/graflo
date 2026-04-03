@@ -55,7 +55,7 @@ def test_resource_drop_trivial_input_fields_passes_stripped_doc_to_executor(
             "vertices": [
                 {
                     "name": "person",
-                    "fields": ["id", "note"],
+                    "properties": ["id", "note"],
                     "identity": ["id"],
                 }
             ]
@@ -93,7 +93,7 @@ def test_resource_drop_trivial_input_fields_false_passes_doc_unchanged(
             "vertices": [
                 {
                     "name": "person",
-                    "fields": ["id"],
+                    "properties": ["id"],
                     "identity": ["id"],
                 }
             ]
@@ -150,7 +150,7 @@ def test_resource_infer_edge_selector_references_unknown_edge():
         }
     )
     vc = VertexConfig.from_dict(
-        {"vertices": [{"name": "person", "fields": ["id"], "identity": ["id"]}]}
+        {"vertices": [{"name": "person", "properties": ["id"], "identity": ["id"]}]}
     )
     ec = EdgeConfig.from_dict({"edges": [{"source": "person", "target": "person"}]})
     with pytest.raises(ValueError, match="undefined vertices"):
@@ -168,7 +168,7 @@ def test_resource_dynamic_edge_vertices_must_be_declared():
         }
     )
     vc = VertexConfig.from_dict(
-        {"vertices": [{"name": "person", "fields": ["id"], "identity": ["id"]}]}
+        {"vertices": [{"name": "person", "properties": ["id"], "identity": ["id"]}]}
     )
     ec = EdgeConfig.from_dict({"edges": []})
 
@@ -200,9 +200,9 @@ def test_resource_infer_edge_except_excludes_edges_handled_by_edge_actors():
     vc = VertexConfig.from_dict(
         {
             "vertices": [
-                {"name": "a", "fields": ["id"], "identity": ["id"]},
-                {"name": "b", "fields": ["id"], "identity": ["id"]},
-                {"name": "c", "fields": ["id"], "identity": ["id"]},
+                {"name": "a", "properties": ["id"], "identity": ["id"]},
+                {"name": "b", "properties": ["id"], "identity": ["id"]},
+                {"name": "c", "properties": ["id"], "identity": ["id"]},
             ]
         }
     )

@@ -289,8 +289,8 @@ class TestAutoJoin:
                 "core_schema": {
                     "vertex_config": {
                         "vertices": [
-                            {"name": "server", "fields": ["id", "class_name"]},
-                            {"name": "database", "fields": ["id", "class_name"]},
+                            {"name": "server", "properties": ["id", "class_name"]},
+                            {"name": "database", "properties": ["id", "class_name"]},
                         ],
                     },
                     "edge_config": {

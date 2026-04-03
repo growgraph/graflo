@@ -40,28 +40,25 @@ We define three vertex types:
 vertex_config:
     vertices:
     -   name: package
-        fields:
+        properties:
         -   name
         -   version
-        indexes:
-        -   fields:
-            -   name
+        identity:
+        -   name
     -   name: maintainer
-        fields:
+        properties:
         -   name
         -   email
-        indexes:
-        -   fields:
-            -   email
+        identity:
+        -   email
     -   name: bug
-        fields:
+        properties:
         -   id
         -   subject
         -   severity
         -   date
-        indexes:
-        -   fields:
-            -   id
+        identity:
+        -   id
 ```
 
 ### Edges

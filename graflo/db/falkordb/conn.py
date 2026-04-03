@@ -447,10 +447,6 @@ class FalkordbConnection(Connection):
             delete_all: If True, delete all nodes and relationships
         """
         if delete_all:
-            logger.warning(
-                "delete_graph_structure(delete_all=True) will remove all nodes and relationships in the selected FalkorDB graph"
-            )
-            # Delete all nodes and relationships in current graph
             try:
                 self.execute("MATCH (n) DETACH DELETE n")
                 logger.debug("Deleted all nodes and relationships from graph")

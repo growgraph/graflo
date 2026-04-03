@@ -33,7 +33,10 @@ def load_ingestion_model(
     manifest = load_manifest(path)
     ingestion_model = manifest.require_ingestion_model()
     if schema is not None:
-        ingestion_model.finish_init(schema.core_schema)
+        ingestion_model.finish_init(
+            schema.core_schema,
+            target_db_flavor=schema.db_profile.db_flavor,
+        )
     return ingestion_model
 
 

@@ -5,10 +5,10 @@ It handles edge configuration, weight management, indexing, and relationship ope
 The module supports both ArangoDB and Neo4j through the DBType enum.
 
 Key Components:
-    - EdgeBase: Shared base for edge-like configs (Edge and EdgeActorConfig)
-    - Edge: Represents an edge with its source, target, and configuration
+    - Edge: Abstract graph edge kind (schema / ``edge_config`` only)
+    - EdgeDerivation: Ingestion wiring (see ``graflo.architecture.edge_derivation``)
     - EdgeConfig: Manages collections of edges and their configurations
-    - WeightConfig: Configuration for edge weights and relationships
+    - WeightConfig: DTO for DB projection helpers (e.g. effective weights); schema uses ``properties``
 
 Example:
     >>> edge = Edge(source="user", target="post")
@@ -31,7 +31,6 @@ from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.graph_types import (
     EdgeId,
     EdgeType,
-    Weight,
 )
 from graflo.architecture.schema.vertex import Field, VertexConfig
 
@@ -61,66 +60,12 @@ def _normalize_direct_item(item: str | Field | dict[str, Any]) -> Field:
     raise TypeError(f"Field must be str, Field, or dict, got {type(item)}")
 
 
-class WeightConfig(ConfigBaseModel):
-    """Configuration for edge weights and relationships.
+class Edge(ConfigBaseModel):
+    """Abstract graph edge kind (schema / ``edge_config`` only).
 
-    This class manages the configuration of weights and relationships for edges,
-    including source and target field mappings.
-
-    Attributes:
-        vertices: List of weight configurations
-        direct: List of direct field mappings. Can be specified as strings, Field objects, or dicts.
-               Will be normalized to Field objects by the validator.
-               After initialization, this is always list[Field] (type checker sees this).
-
-    Examples:
-        >>> # Backward compatible: list of strings
-        >>> wc1 = WeightConfig(direct=["date", "weight"])
-
-        >>> # Typed fields: list of Field objects
-        >>> wc2 = WeightConfig(direct=[
-        ...     Field(name="date", type="DATETIME"),
-        ...     Field(name="weight", type="FLOAT")
-        ... ])
-
-        >>> # From dicts (e.g., from YAML/JSON)
-        >>> wc3 = WeightConfig(direct=[
-        ...     {"name": "date", "type": "DATETIME"},
-        ...     {"name": "weight"}  # defaults to None type
-        ... ])
-    """
-
-    vertices: list[Weight] = PydanticField(
-        default_factory=list,
-        description="List of weight definitions for vertex-based edge attributes.",
-    )
-    direct: list[Field] = PydanticField(
-        default_factory=list,
-        description="Direct edge attributes (field names, Field objects, or dicts). Normalized to Field objects.",
-    )
-
-    @field_validator("direct", mode="before")
-    @classmethod
-    def normalize_direct(cls, v: Any) -> Any:
-        if not isinstance(v, list):
-            return v
-        return [_normalize_direct_item(item) for item in v]
-
-    @property
-    def direct_names(self) -> list[str]:
-        """Get list of direct field names (as strings).
-
-        Returns:
-            list[str]: List of field names
-        """
-        return [field.name for field in self.direct]
-
-
-class EdgeBase(ConfigBaseModel):
-    """Shared base for edge-like configs (Edge schema and EdgeActorConfig).
-
-    Holds the common scalar fields so Edge and EdgeActorConfig stay in sync
-    without duplication.
+    Ingestion-only behavior (location filters, relation column, relation from
+    key, etc.) belongs on :class:`~graflo.architecture.edge_derivation.EdgeDerivation`
+    in pipeline edge steps, not on this model.
     """
 
     source: str = PydanticField(
@@ -131,72 +76,33 @@ class EdgeBase(ConfigBaseModel):
         ...,
         description="Target vertex type name (e.g. post, company).",
     )
-    match_source: str | None = PydanticField(
-        default=None,
-        description="Field used to match source vertices when creating edges.",
-    )
-    match_target: str | None = PydanticField(
-        default=None,
-        description="Field used to match target vertices when creating edges.",
-    )
     relation: str | None = PydanticField(
         default=None,
         description="Relation/edge type name (e.g. Neo4j relationship type). For ArangoDB used as weight.",
-    )
-    relation_field: str | None = PydanticField(
-        default=None,
-        description="Field name to store or read relation type (e.g. for TigerGraph).",
-    )
-    relation_from_key: bool = PydanticField(
-        default=False,
-        description="If True, derive relation value from the location key during ingestion.",
-    )
-    exclude_source: str | None = PydanticField(
-        default=None,
-        description="Exclude source vertices matching this field from edge creation.",
-    )
-    exclude_target: str | None = PydanticField(
-        default=None,
-        description="Exclude target vertices matching this field from edge creation.",
-    )
-    match: str | None = PydanticField(
-        default=None,
-        description="Match discriminant for edge creation.",
     )
     description: str | None = PydanticField(
         default=None,
         description="Optional semantic description of edge intent, direction semantics, and business meaning.",
     )
 
-
-class Edge(EdgeBase):
-    """Represents an edge in the graph database.
-
-    An edge connects two vertices and can have various configurations for
-    identities, weights, and relationship types.
-
-    Attributes:
-        source: Source vertex name
-        target: Target vertex name
-        identities: Logical candidate identity keys for the edge
-        weights: Optional weight configuration
-        relation: Optional relation name (for Neo4j)
-        match_source: Optional source discriminant field
-        match_target: Optional target discriminant field
-        type: Edge type (DIRECT or INDIRECT)
-        by: Optional vertex name for indirect edges
-    """
-
     identities: list[list[str]] = PydanticField(
         default_factory=list,
         description=(
-            "Logical candidate identity keys for this edge. "
-            "Each key is a list of identity tokens/fields."
+            "Logical uniqueness keys for this edge: each key names fields that, "
+            "together with the resolved source and target vertex ids, must be unique "
+            "(``source`` / ``target`` tokens stand for endpoints; other tokens are edge "
+            "attributes). Multiple keys define multiple uniqueness constraints. "
+            "Non-endpoint tokens are merged into ``properties`` during "
+            ":meth:`finish_init` if not already declared (same idea as vertex identity)."
         ),
     )
-    weights: WeightConfig | None = PydanticField(
-        default=None,
-        description="Optional edge weight/attribute configuration (direct fields and vertex-based weights).",
+    properties: list[Field] = PydanticField(
+        default_factory=list,
+        description=(
+            "Edge property names/types (relationship properties). "
+            "Vertex-derived bindings belong in ingestion (:class:`~graflo.architecture.contract."
+            "declarations.edge_derivation_registry.EdgeDerivationRegistry`)."
+        ),
     )
 
     type: EdgeType = PydanticField(
@@ -208,6 +114,13 @@ class Edge(EdgeBase):
         default=None,
         description="For INDIRECT edges: vertex type name used to define the edge.",
     )
+
+    @field_validator("properties", mode="before")
+    @classmethod
+    def normalize_properties(cls, v: Any) -> Any:
+        if not isinstance(v, list):
+            return v
+        return [_normalize_direct_item(item) for item in v]
 
     @field_validator("identities", mode="before")
     @classmethod
@@ -249,18 +162,35 @@ class Edge(EdgeBase):
     def finish_init(self, vertex_config: VertexConfig):
         """Complete logical edge initialization with vertex configuration."""
         _ = vertex_config
+        self._merge_identity_fields_into_properties()
         self._validate_identity_tokens()
+
+    def _merge_identity_fields_into_properties(self) -> None:
+        """Append :class:`Field` entries for identity tokens not already declared.
+
+        Endpoint tokens ``source`` and ``target`` are not edge properties; every
+        other token (including ``relation``) is materialized like vertex identity.
+        """
+        endpoint_tokens = frozenset({"source", "target"})
+        seen_names = {f.name for f in self.properties}
+        augmented = list(self.properties)
+        for key in self.identities:
+            for token in key:
+                if token in endpoint_tokens:
+                    continue
+                if token not in seen_names:
+                    augmented.append(Field(name=token, type=None))
+                    seen_names.add(token)
+        object.__setattr__(self, "properties", augmented)
 
     def _validate_identity_tokens(self) -> None:
         """Validate edge identity keys against reserved tokens and declared edge fields."""
         reserved = {"source", "target", "relation"}
-        direct_weight_fields = set()
-        if self.weights is not None:
-            direct_weight_fields = set(self.weights.direct_names)
-        relation_field = (
-            {self.relation_field} if self.relation_field is not None else set()
-        )
-        allowed_fields = reserved | direct_weight_fields | relation_field
+        direct_weight_fields = set(self.property_names)
+        # Identity token "relation" maps to the default TigerGraph attribute name
+        # when physical fields are declared (see EdgeConfigDBAware.effective_weights).
+        logical_relation_attr = {DEFAULT_TIGERGRAPH_RELATION_WEIGHTNAME}
+        allowed_fields = reserved | direct_weight_fields | logical_relation_attr
         unknown_by_key = [
             [token for token in key if token not in allowed_fields]
             for key in self.identities
@@ -269,7 +199,7 @@ class Edge(EdgeBase):
         if unknown_by_key:
             raise ValueError(
                 "Edge identity key fields must use reserved tokens "
-                "('source', 'target', 'relation') or declared edge direct/relation fields. "
+                "('source', 'target', 'relation') or declared edge property / relation fields. "
                 f"Edge ({self.source}, {self.target}, {self.relation}) has unknown identity fields: {unknown_by_key}"
             )
 
@@ -287,6 +217,11 @@ class Edge(EdgeBase):
         """Alias for edge_id."""
         return self.source, self.target, self.relation
 
+    @property
+    def property_names(self) -> list[str]:
+        """Declared materialized edge property names."""
+        return [f.name for f in self.properties]
+
 
 class EdgeConfig(ConfigBaseModel):
     """Configuration for managing collections of edges.
@@ -300,7 +235,7 @@ class EdgeConfig(ConfigBaseModel):
 
     edges: list[Edge] = PydanticField(
         default_factory=list,
-        description="List of edge definitions (source, target, identities, weights, relation, etc.).",
+        description="List of edge definitions (source, target, identities, properties, relation, etc.).",
     )
     _edges_map: dict[EdgeId, Edge] = PrivateAttr()
 
@@ -363,6 +298,16 @@ class EdgeConfig(ConfigBaseModel):
         self._edges_map[edge_key].finish_init(
             vertex_config=vertex_config,
         )
+
+    def edge_for(self, edge_id: EdgeId) -> Edge:
+        """Return the config-owned :class:`Edge` instance for ``edge_id`` after merges.
+
+        Pipeline actors may construct a partial :class:`Edge` that is merged into the
+        schema edge via :meth:`update_edges`. Callers that need properties, identities,
+        etc. must use this object (same reference as in :meth:`items`), not the
+        pre-merge actor copy.
+        """
+        return self._edges_map[edge_id]
 
     @property
     def vertices(self):

@@ -31,6 +31,7 @@ from graflo.architecture.graph_types import (
     LocationIndex,
 )
 from graflo.architecture.schema.vertex import VertexConfig
+from graflo.onto import DBType
 from graflo.util.merge import merge_doc_basis
 from graflo.util.transform import pick_unique_dict
 
@@ -70,6 +71,10 @@ class ActorWrapper:
     @property
     def infer_edge_except(self) -> set[EdgeId]:
         return self.init_ctx.infer_edge_except
+
+    @property
+    def target_db_flavor(self) -> DBType | None:
+        return self.init_ctx.target_db_flavor
 
     def init_transforms(self, init_ctx: ActorInitContext) -> None:
         self.init_ctx = init_ctx
@@ -145,6 +150,8 @@ class ActorWrapper:
             infer_edges=self.infer_edges,
             infer_edge_only=self.infer_edge_only,
             infer_edge_except=self.infer_edge_except,
+            target_db_flavor=self.target_db_flavor,
+            edge_derivation=self.init_ctx.edge_derivation,
         )
 
         for vertex_name, dd in assembly_ctx.acc_vertex.items():

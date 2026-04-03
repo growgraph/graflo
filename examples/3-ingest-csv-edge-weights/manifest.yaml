@@ -5,7 +5,7 @@ schema:
         vertex_config:
             vertices:
             -   name: company
-                fields:
+                properties:
                 -   name
                 identity:
                 -   name
@@ -13,10 +13,10 @@ schema:
             edges:
             -   source: company
                 target: company
-                relation_field: relation
-                weights:
-                    direct:
-                    -   date
+                identities:
+                -   -   relation
+                properties:
+                -   date
     db_profile: {}
 ingestion_model:
     resources:
@@ -28,6 +28,9 @@ ingestion_model:
         -   vertex: company
             from:
                 name: company_b
+        -   source: company
+            target: company
+            relation_field: relation
 bindings:
     connectors:
     -   name: relations_files

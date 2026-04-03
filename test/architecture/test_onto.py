@@ -1,5 +1,5 @@
 from graflo.architecture.pipeline.runtime.actor import ActorInitContext, ActorWrapper
-from graflo.architecture.schema.edge import EdgeConfig
+from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.pipeline.runtime.executor import ActorExecutor
 from graflo.architecture.graph_types import (
     AssemblyContext,
@@ -30,9 +30,7 @@ def test_extraction_context_record_helpers():
         vertex={"id": "a"},
         ctx={"full_name": "A"},
     )
-    ctx.record_edge_intent(
-        edge={"source": "author", "target": "paper"}, location=lindex
-    )
+    ctx.record_edge_intent(edge=Edge(source="author", target="paper"), location=lindex)
 
     assert len(ctx.transform_observations) == 1
     assert len(ctx.vertex_observations) == 1
@@ -50,7 +48,7 @@ def test_assembly_context_from_extraction_shares_vertex_accumulator():
 
 def test_actor_executor_assemble_result_returns_graph_result():
     vc = VertexConfig.from_dict(
-        {"vertices": [{"name": "author", "fields": ["id"], "identity": ["id"]}]}
+        {"vertices": [{"name": "author", "properties": ["id"], "identity": ["id"]}]}
     )
     ec = EdgeConfig.from_dict({"edges": []})
 

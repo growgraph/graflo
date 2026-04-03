@@ -30,6 +30,49 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+def _graph_target_namespace_unset(target_db_config: DBConfig) -> bool:
+    """Return True if the connection has no graph/database/space name yet (per DB kind)."""
+    db_type = target_db_config.connection_type
+    if db_type == DBType.MEMGRAPH:
+        return target_db_config.database is None
+    if db_type in (DBType.TIGERGRAPH, DBType.NEBULA):
+        return target_db_config.schema_name is None
+    return target_db_config.database is None
+
+
+def _assign_graph_target_namespace(target_db_config: DBConfig, namespace: str) -> None:
+    """Write ``namespace`` to the DB-specific field that names the target graph/space."""
+    db_type = target_db_config.connection_type
+    if db_type in (DBType.TIGERGRAPH, DBType.NEBULA):
+        target_db_config.schema_name = namespace
+    else:
+        target_db_config.database = namespace
+
+
+def _resolve_graph_target_namespace(
+    schema: Schema, graph_target_namespace: str | None
+) -> str:
+    """Prefer explicit call arg, then profile target_namespace, then metadata name."""
+    if graph_target_namespace is not None:
+        return graph_target_namespace
+    if schema.db_profile.target_namespace is not None:
+        return schema.db_profile.target_namespace
+    return schema.metadata.name
+
+
+def _ensure_graph_target_namespace(
+    schema: Schema,
+    target_db_config: DBConfig,
+    graph_target_namespace: str | None,
+) -> None:
+    if not target_db_config.can_be_target():
+        return
+    if not _graph_target_namespace_unset(target_db_config):
+        return
+    resolved = _resolve_graph_target_namespace(schema, graph_target_namespace)
+    _assign_graph_target_namespace(target_db_config, resolved)
+
+
 class GraphEngine:
     """Orchestrator for graph database operations.
 
@@ -164,6 +207,7 @@ class GraphEngine:
         manifest: GraphManifest,
         target_db_config: DBConfig,
         recreate_schema: bool = False,
+        graph_target_namespace: str | None = None,
     ) -> None:
         """Define schema in the target database.
 
@@ -179,22 +223,13 @@ class GraphEngine:
             target_db_config: Target database connection configuration
             recreate_schema: If True, drop existing schema and define new one.
                 If False and schema/graph already exists, raises SchemaExistsError.
+            graph_target_namespace: Optional target graph/database/space name (e.g. temp
+                schema). Overrides ``schema.db_profile.target_namespace`` and defaults
+                ahead of ``schema.metadata.name`` when the config omits the namespace.
         """
         schema = manifest.require_schema()
 
-        # If effective_schema is not set, use schema.metadata.name as fallback
-        if (
-            target_db_config.can_be_target()
-            and target_db_config.effective_schema is None
-        ):
-            schema_name = schema.metadata.name
-            # Map to the appropriate field based on DB type
-            if target_db_config.connection_type == DBType.TIGERGRAPH:
-                # TigerGraph uses 'schema_name' field
-                target_db_config.schema_name = schema_name
-            else:
-                # ArangoDB, Neo4j use 'database' field (which maps to effective_schema)
-                target_db_config.database = schema_name
+        _ensure_graph_target_namespace(schema, target_db_config, graph_target_namespace)
 
         # Ensure schema reflects target DB so finish_init applies DB-specific defaults.
         schema.db_profile.db_flavor = target_db_config.connection_type
@@ -214,6 +249,7 @@ class GraphEngine:
         connection_provider: ConnectionProvider | None = None,
         recreate_schema: bool | None = None,
         clear_data: bool | None = None,
+        graph_target_namespace: str | None = None,
     ) -> None:
         """Define schema and ingest data into the graph database in one operation.
 
@@ -230,6 +266,8 @@ class GraphEngine:
                 define_schema raises SchemaExistsError and the script halts.
             clear_data: If True, remove existing data before ingestion (schema unchanged).
                 If None, uses ingestion_params.clear_data.
+            graph_target_namespace: Optional target graph/database/space name; passed
+                to both ``define_schema`` and ``ingest`` for consistent resolution.
         """
         ingestion_params = ingestion_params or IngestionParams()
         if clear_data is None:
@@ -242,6 +280,7 @@ class GraphEngine:
             manifest=manifest,
             target_db_config=target_db_config,
             recreate_schema=recreate_schema,
+            graph_target_namespace=graph_target_namespace,
         )
 
         # Then ingest data (clear_data is applied inside ingest() when ingestion_params.clear_data)
@@ -253,6 +292,7 @@ class GraphEngine:
             target_db_config=target_db_config,
             ingestion_params=ingestion_params,
             connection_provider=connection_provider,
+            graph_target_namespace=graph_target_namespace,
         )
 
     def ingest(
@@ -261,6 +301,7 @@ class GraphEngine:
         target_db_config: DBConfig,
         ingestion_params: IngestionParams | None = None,
         connection_provider: ConnectionProvider | None = None,
+        graph_target_namespace: str | None = None,
     ) -> None:
         """Ingest data into the graph database.
 
@@ -272,10 +313,14 @@ class GraphEngine:
             target_db_config: Target database connection configuration
             ingestion_params: IngestionParams instance with ingestion configuration.
                 If None, uses default IngestionParams()
+            graph_target_namespace: Same semantics as ``define_schema``; use when
+                calling ``ingest`` without a prior ``define_schema`` on this config.
         """
         schema = manifest.require_schema()
         ingestion_model = manifest.require_ingestion_model()
         bindings = manifest.bindings
+
+        _ensure_graph_target_namespace(schema, target_db_config, graph_target_namespace)
 
         ingestion_params = ingestion_params or IngestionParams()
         if ingestion_params.clear_data:

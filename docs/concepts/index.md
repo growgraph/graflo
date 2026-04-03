@@ -44,7 +44,7 @@ flowchart LR
 - **Source Instance** — a concrete data artifact (a file, a table, a SPARQL endpoint), wrapped by an `AbstractDataSource` with a `DataSourceType` (`FILE`, `SQL`, `SPARQL`, `API`, `IN_MEMORY`).
 - **Resource** — a reusable transformation pipeline (actor steps: descend, transform, vertex, edge) that maps raw records to graph elements. Data sources bind to Resources by name via the `DataSourceRegistry`.
 - **GraphManifest** — the canonical top-level contract that composes `schema`, `ingestion_model`, and `bindings`.
-- **Schema** — the declarative logical graph model (`Schema`): vertex/edge definitions, identities, typed fields, and DB profile.
+- **Schema** — the declarative logical graph model (`Schema`): vertex/edge definitions, identities, typed **`properties`**, and DB profile.
 - **IngestionModel** — reusable resources and transforms used to map records into graph entities.
 - **Bindings** — named `FileConnector` / `TableConnector` / `SparqlConnector` list plus `resource_connector` (many rows per resource allowed: resource→0..n connectors) and optional `connector_connection` (connector **name** or **hash**→`conn_proxy` for runtime `ConnectionProvider` resolution without secrets in the manifest). Each connector exposes a **bound source modality** (`BoundSourceKind`: file, SQL table, SPARQL) for dispatch, distinct from the abstract ingestion **Resource**.
 - **Database-Independent Graph Representation** — a `GraphContainer` of vertices and edges, independent of any target database.
@@ -243,7 +243,7 @@ classDiagram
     class Vertex {
         +name: str
         +identity: list~str~
-        +fields: list~Field~
+        +properties: list~Field~
         +filters: FilterExpression?
     }
 
@@ -261,9 +261,8 @@ classDiagram
         +source: str
         +target: str
         +identities: list~list~str~~
-        +weights: WeightConfig?
+        +properties: list~Field~
         +relation: str?
-        +relation_field: str?
         +filters: FilterExpression?
     }
 
@@ -330,10 +329,11 @@ classDiagram
     IngestionModel *-- "0..*" ProtoTransform : transforms
 
     VertexConfig *-- "0..*" Vertex : vertices
-    Vertex *-- "0..*" Field : fields
+    Vertex *-- "0..*" Field : properties
     Vertex --> FilterExpression : filters
 
     EdgeConfig *-- "0..*" Edge : edges
+    Edge *-- "0..*" Field : properties
     Edge --> FilterExpression : filters
 
     Resource *-- ActorWrapper : root
@@ -512,81 +512,66 @@ A `Vertex` describes vertices and their logical identity. It supports:
 
 ### Edge
 An `Edge` describes edges and their logical identities. It allows:
- 
-- Definition at any level of a hierarchical document
-- Reliance on vertex principal index
-- Weight configuration using `direct` parameter (with optional type information)
-- Optional uniqueness semantics through `identities` (multiple candidate keys are allowed)
 
-### Edge Attributes and Configuration
+- Optional uniqueness semantics through **`identities`** (multiple candidate keys are allowed)
+- **`properties`**: relationship payload (names and optional types), same accepted forms as vertex properties (strings, `Field`, or dicts with at least `name`)
+- Optional static **`relation`** label (e.g. Neo4j relationship type) when it is not derived at ingest time
 
-Edges in graflo support a rich set of attributes that enable flexible relationship modeling:
+Ingestion-only controls (**`relation_field`**, **`relation_from_key`**, **`match_source`**, **`match_target`**, vertex-sourced edge payload) live on **`EdgeActor`** / **`EdgeRouterActor`** steps and **`EdgeDerivation`**, not on the logical `Edge` model.
 
-#### Basic Attributes
+### Edge properties and configuration
+
+#### Basic logical fields
 - **`source`**: Source vertex name (required)
 - **`target`**: Target vertex name (required)
 - **`identities`**: Logical identity keys for the edge (each key can induce uniqueness)
-- **`weights`**: Optional weight configuration for edge properties
+- **`properties`**: Declared relationship attributes (typed or untyped)
 
-**Neo4j, Memgraph, FalkorDB — relationship `MERGE` keys:** Writers match source and target nodes on vertex identity, then `MERGE` the relationship. Which **relationship properties** participate in that `MERGE` (so multiple edges between the same two vertices do not collapse) is derived as follows: use the **first** `identities` key, keep only tokens that refer to relationship payload (skip `source` and `target`; the `relation` token becomes the `relation` property on the relationship where used). If that produces no fields—e.g. `identities` is empty—the writer falls back to **all** names in `weights.direct`. Declare `identities` when direct weights are a superset of what should define edge uniqueness.
+**Neo4j, Memgraph, FalkorDB — relationship `MERGE` keys:** Writers match source and target nodes on vertex identity, then `MERGE` the relationship. Which **relationship properties** participate in that `MERGE` (so multiple edges between the same two vertices do not collapse) is derived as follows: use the **first** `identities` key, keep only tokens that refer to relationship payload (skip `source` and `target`; the `relation` token becomes the `relation` property on the relationship where used). If that produces no fields—e.g. `identities` is empty—the writer falls back to **all** names in **`Edge.properties`**. Declare `identities` when the full property list is a superset of what should define edge uniqueness.
 
-#### Relationship Type Configuration 
-- **`relation`**: Explicit relationship name (primarily for Neo4j)
-- **`relation_field`**: Field name containing relationship type values (for CSV/tabular data)
-- **`relation_from_key`**: Use JSON key names as relationship types (for nested JSON data)
+#### Relationship type at ingest time
+- **`relation`** on the logical edge: static relationship type when applicable
+- **`relation_field`** on an **edge actor** step: column/field holding dynamic relationship type values (CSV/tabular; see Example 3)
+- **`relation_from_key`** on an **edge actor** step: use JSON object keys as relationship types (nested JSON; see Example 4)
 
-#### Weight Configuration
-- **`weights.vertices`**: List of weight configurations from vertex properties
-- **`weights.direct`**: List of direct field mappings as edge properties
-  - Can be specified as strings (backward compatible), `Field` objects with types, or dicts
-  - Supports typed fields: `Field(name="date", type="DATETIME")` or `{"name": "date", "type": "DATETIME"}`
-  - Type information enables better validation and database-specific optimizations
-- **`weights.source_fields`**: Fields from source vertex to use as weights (deprecated)
-- **`weights.target_fields`**: Fields from target vertex to use as weights (deprecated)
+#### Payload from vertices at ingest time
+Vertex fields that should appear on edges are configured via **edge actor** options (e.g. **`vertex_weights`**, maps), not via a `weights` block on the logical `Edge`. DB layers may still use an internal `WeightConfig` built from `Edge.properties` for backends that need it.
 
-#### Edge Behavior Control
+#### Edge behavior control
 - Edge physical variants should be modeled with `database_features.edge_specs[*].purpose`.
 - `Edge.aux` is no longer a behavior switch.
 
 > DB-only physical edge metadata (including `purpose`) is configured under
 > `database_features.edge_specs`, not on `Edge`.
 
-#### Matching and Filtering
-- **`match_source`**: Select source items from a specific branch of json
-- **`match_target`**: Select target items from a specific branch of json
-- **`match`**: General matching field for edge creation
+#### Matching and filtering (ingestion)
+- **`match_source`** / **`match_target`** / **`match`**: edge **actor** options for branch selection when building edges from hierarchical documents
 
-#### Advanced Configuration
+#### Advanced logical configuration
 - **`type`**: Edge type (DIRECT or INDIRECT)
 - **`by`**: Vertex name for indirect edges
 - DB-specific edge storage/type names are resolved from `database_features`
   through DB-aware wrappers (`EdgeConfigDBAware`), not stored on `Edge`.
 
-#### When to Use Different Attributes
+#### When to use what
 
 **`relation_field`** (Example 3):
- 
-- Use with CSV/tabular data
-- When relationship types are stored in a dedicated column
-- For data like: `company_a, company_b, relation, date`
+
+- Set on the **`source` / `target` edge step** in the resource pipeline when relationship types live in a column (e.g. `company_a, company_b, relation, date`).
 
 **`relation_from_key`** (Example 4):
- 
-- Use with nested JSON data
-- When relationship types are implicit in the data structure
-- For data like: `{"dependencies": {"depends": [...], "conflicts": [...]}}`
 
-**`weights.direct`**:
- 
-- Use when you want to add properties directly to edges
-- For temporal data (dates), quantitative values, or metadata
-- Can specify types for better validation: `weights: {direct: [{"name": "date", "type": "DATETIME"}, {"name": "confidence_score", "type": "FLOAT"}]}`
-- Backward compatible with strings: `weights: {direct: ["date", "confidence_score"]}`
+- Set on the edge step for nested JSON where keys imply relationship types.
 
-**`match_source`/`match_target`**:
- 
-- For scenarios where we have multiple leaves of json containing the same vertex class
-- Example: Creating edges between specific subsets of vertices
+**`properties` on the logical edge:**
+
+- Declare every relationship attribute you want in the schema (dates, scores, metadata).
+- Typed example: `properties: [{name: date, type: DATETIME}, {name: confidence_score, type: FLOAT}]`
+- String list: `properties: [date, confidence_score]`
+
+**`match_source` / `match_target`:**
+
+- Edge **actor** options when multiple branches feed the same vertex types; use to restrict which branches participate in an edge.
 
 ### DataSource & DataSourceRegistry
 An `AbstractDataSource` subclass defines where data comes from and how it is retrieved. Each carries a `DataSourceType`. The `DataSourceRegistry` maps data sources to Resources by name.
@@ -808,22 +793,22 @@ Transform steps are executed in the order they appear in `apply`.
 ## Key Features
 
 ### Schema & Abstraction
-- **Declarative LPG schema** — `Schema` defines vertices, edges, identity rules, and weights in YAML or Python; the single source of truth for graph structure. Transforms/resources are defined in `IngestionModel`.
+- **Declarative LPG schema** — `Schema` defines vertices, edges, identity rules, and edge **`properties`** in YAML or Python; the single source of truth for graph structure. Transforms/resources are defined in `IngestionModel`.
 - **Database abstraction** — one logical schema, multiple backends; DB-specific behavior is applied in DB-aware projection/writer stages (`Schema.resolve_db_aware(...)`, `VertexConfigDBAware`, `EdgeConfigDBAware`).
 - **Resource abstraction** — each `Resource` is a reusable actor pipeline that maps raw records to graph elements, decoupled from data retrieval.
 - **DataSourceRegistry** — pluggable `AbstractDataSource` adapters (`FILE`, `SQL`, `API`, `SPARQL`, `IN_MEMORY`) bound to Resources by name.
 
 ### Schema Features
 - **Flexible Identity + Indexing** — logical identity plus DB-specific secondary indexes.
-- **Typed Fields** — optional type information for vertex fields and edge weights (INT, FLOAT, STRING, DATETIME, BOOL).
-- **Hierarchical Edge Definition** — define edges at any level of nested documents.
-- **Weighted Edges** — configure edge weights from document fields or vertex properties with optional type information.
+- **Typed properties** — optional type information on vertex and edge **`properties`** (INT, FLOAT, STRING, DATETIME, BOOL).
+- **Hierarchical Edge Definition** — define edges at any level of nested documents (via resource **edge** steps and actors).
+- **Relationship payload** — logical edges declare **`properties`**; additional payload from vertices or row shape is wired in **edge actors** (`vertex_weights`, maps, etc.) with optional types.
 - **Blank Vertices** — create intermediate vertices for complex relationships.
 - **Actor Pipeline** — process documents through a sequence of specialised actors (descend, transform, vertex, edge).
 - **Reusable Transforms** — define and reference transformations by name across Resources.
 - **Vertex Filtering** — filter vertices based on custom conditions.
 - **PostgreSQL Schema Inference** — infer schemas from normalised PostgreSQL databases (3NF) with PK/FK constraints.
-- **RDF / OWL Schema Inference** — infer schemas from OWL/RDFS ontologies: `owl:Class` → vertices, `owl:ObjectProperty` → edges, `owl:DatatypeProperty` → vertex fields.
+- **RDF / OWL Schema Inference** — infer schemas from OWL/RDFS ontologies: `owl:Class` → vertices, `owl:ObjectProperty` → edges, `owl:DatatypeProperty` → vertex **properties**.
 - **SelectSpec** — declarative view specification for advanced filtering and projection of SQL data before feeding into Resources. Use `TableConnector.view` with `SelectSpec` (full SQL-like `select` or `type_lookup` shorthand for symmetric edge lookups with `source_type` / `target_type` columns) to control exactly what data is queried. Per-side `source_table` / `target_table` / `source_identity` / `target_identity` / `source_type_column` / `target_type_column` cover different lookup tables or join keys. When one endpoint’s type is static in `EdgeRouterActorConfig` only, use `kind="select"` for the view. Use `kind="select"` whenever the shorthand is not expressive enough.
 
 ### Schema Migration (v1)
@@ -843,8 +828,8 @@ When you compare schemas, treat it like comparing two building blueprints:
 
 Another useful analogy is `git diff`, but for graph structure:
 
-- Additive changes (new vertex type, new edge, new field, new index) are similar to adding code in a backward-compatible way.
-- Destructive changes (removing fields/types, identity shifts) are similar to breaking API changes: they often require explicit migration steps, data sweeps, or rollouts.
+- Additive changes (new vertex type, new edge, new property, new index) are similar to adding code in a backward-compatible way.
+- Destructive changes (removing properties/types, identity shifts) are similar to breaking API changes: they often require explicit migration steps, data sweeps, or rollouts.
 
 Practical comparison checklist:
 
@@ -914,14 +899,14 @@ Schema comparison gives you a predictable transition path between versions. Inst
 4. Configure appropriate batch sizes based on your data volume
 5. Enable parallel processing for large datasets
 6. Choose the right relationship attribute based on your data format:
-   - `relation_field` - extract relation from document field
-   - `relation_from_key` - extract relation from the key above
-   - `relation` for explicit relationship names
-7. Use edge weights to capture temporal or quantitative relationship properties
-   - Specify types for weight fields when using databases that require type information (e.g., TigerGraph)
-   - Use typed `Field` objects or dicts with `type` key for better validation
-8. Leverage key matching (`match_source`, `match_target`) for complex matching scenarios
+   - **`relation_field`** on an edge **actor** step — relation from a column/field
+   - **`relation_from_key`** on an edge **actor** step — relation from JSON keys
+   - **`relation`** on the logical edge — static relationship name when applicable
+7. Use logical edge **`properties`** (and edge-actor payload options) for temporal or quantitative relationship attributes
+   - Specify types when the target DB requires them (e.g., TigerGraph)
+   - Use typed `Field` objects or dicts with a `type` key for better validation
+8. Leverage key matching (`match_source`, `match_target`) on edge steps for complex matching scenarios
 9. Use PostgreSQL schema inference for automatic schema generation from normalized databases (3NF) with proper PK/FK constraints
 10. Use RDF/OWL schema inference (`infer_schema_from_rdf`) when ingesting data from SPARQL endpoints or `.ttl` files with a well-defined ontology
-11. Specify field types for better validation and database-specific optimizations, especially when targeting TigerGraph
+11. Specify property types for better validation and database-specific optimizations, especially when targeting TigerGraph
 

@@ -13,8 +13,8 @@ def _minimal_schema() -> Schema:
             "core_schema": {
                 "vertex_config": {
                     "vertices": [
-                        {"name": "a", "fields": ["id"], "identity": ["id"]},
-                        {"name": "b", "fields": ["id"], "identity": ["id"]},
+                        {"name": "a", "properties": ["id"], "identity": ["id"]},
+                        {"name": "b", "properties": ["id"], "identity": ["id"]},
                     ]
                 },
                 "edge_config": {"edges": []},
@@ -30,7 +30,7 @@ def test_manifest_minimal_canonical_roundtrip_is_idempotent() -> None:
             "core_schema": {
                 "vertex_config": {
                     "vertices": [
-                        {"name": "person", "fields": ["id"], "identity": ["id"]}
+                        {"name": "person", "properties": ["id"], "identity": ["id"]}
                     ]
                 },
                 "edge_config": {"edges": []},

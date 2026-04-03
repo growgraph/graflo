@@ -3,7 +3,7 @@ from pathlib import Path
 
 from graflo.architecture.pipeline.runtime.actor import ActorInitContext, ActorWrapper
 from graflo.architecture.schema.edge import EdgeConfig
-from graflo.architecture.schema.edge import WeightConfig
+from graflo.architecture.schema.db_aware import WeightConfig
 from graflo.architecture.graph_types import ActionContext
 from graflo.architecture.schema.vertex import Field, FieldType
 
@@ -135,8 +135,8 @@ def test_weight_config_direct_names_property():
     assert all(isinstance(n, str) for n in names)
 
 
-def test_weight_config_direct_backward_compatibility():
-    """Test that Field objects in direct behave like strings for backward compatibility."""
+def test_weight_config_direct_field_string_like_behavior():
+    """Field objects in WeightConfig.direct support iteration and str-like use."""
     wc = WeightConfig(direct=["date", "weight"])  # type: ignore[arg-type]
 
     # Test iteration (used in actor_util.py)

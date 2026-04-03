@@ -93,7 +93,7 @@ class SchemaSanitizer:
 
         # Second pass: Sanitize vertex field names
         for vertex in schema.core_schema.vertex_config.vertices:
-            for field in vertex.fields:
+            for field in vertex.properties:
                 original_name = field.name
                 sanitized_name = sanitize_attribute_name(
                     original_name, self.reserved_words
@@ -324,22 +324,22 @@ class SchemaSanitizer:
 
             # Update vertex index and fields
             vertex = schema.core_schema.vertex_config[vertex_name]
-            existing_field_names = {f.name for f in vertex.fields}
+            existing_field_names = {f.name for f in vertex.properties}
 
             # Add new fields that don't exist
             for new_field in most_popular_index:
                 if new_field not in existing_field_names:
-                    vertex.fields.append(Field(name=new_field, type=None))
+                    vertex.properties.append(Field(name=new_field, type=None))
                     existing_field_names.add(new_field)
 
             # Remove old fields that are being replaced (not in new index)
             fields_to_remove = [
                 f
-                for f in vertex.fields
+                for f in vertex.properties
                 if f.name in old_fields and f.name not in new_fields
             ]
             for field_to_remove in fields_to_remove:
-                vertex.fields.remove(field_to_remove)
+                vertex.properties.remove(field_to_remove)
 
             # Update logical identity to match the most popular one.
             vertex.identity = list(most_popular_index)

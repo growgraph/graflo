@@ -364,9 +364,6 @@ class Neo4jConnection(Connection):
             return
 
         if delete_all:
-            logger.warning(
-                "delete_graph_structure(delete_all=True) will remove all nodes and relationships in the selected Neo4j database"
-            )
             self._drop_all_user_indexes_and_constraints()
             self.execute("MATCH (n) DETACH DELETE n")
             return
@@ -563,7 +560,7 @@ class Neo4jConnection(Connection):
                 - collection_name: Unused in Neo4j (kept for interface compatibility)
                 - uniq_weight_fields: Unused (ArangoDB upsert); use relationship_merge_properties instead
                 - uniq_weight_collections: Unused in Neo4j (ArangoDB-specific)
-                - upsert_option: Unused in Neo4j (ArangoDB-specific, MERGE is always upsert)
+                - on_duplicate: Unused in Neo4j (ArangoDB-specific AQL policy)
                 - relationship_merge_properties: Property names included in ``MERGE`` so parallel
                   edges (same endpoints and type, different weights) are distinct.
         """

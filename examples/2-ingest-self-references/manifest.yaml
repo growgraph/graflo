@@ -5,7 +5,7 @@ schema:
         vertex_config:
             vertices:
             -   name: work
-                fields:
+                properties:
                 -   _key
                 -   doi
                 -   title
@@ -39,8 +39,6 @@ ingestion_model:
                     call:
                         use: keep_suffix_id
         -   vertex: work
-        -   source: work
-            target: work
     transforms:
     -   name: keep_suffix_id
         foo: split_keep_part

@@ -177,7 +177,7 @@ class RdfInferenceManager:
         vertices = []
         for cls_name, fields in fields_by_class.items():
             vertex_fields = [VertexField(name=f) for f in fields]
-            vertices.append(Vertex(name=cls_name, fields=vertex_fields))
+            vertices.append(Vertex(name=cls_name, properties=vertex_fields))
 
         vertex_config = VertexConfig(vertices=vertices)
 

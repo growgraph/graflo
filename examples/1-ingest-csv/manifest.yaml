@@ -5,14 +5,14 @@ schema:
         vertex_config:
             vertices:
             -   name: person
-                fields:
+                properties:
                 -   id
                 -   name
                 -   age
                 identity:
                 -   id
             -   name: department
-                fields:
+                properties:
                 -   name
                 identity:
                 -   name

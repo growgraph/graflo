@@ -83,31 +83,28 @@ def test_field_dict_membership():
 
 def test_vertex_with_string_fields_backward_compatible():
     """Test Vertex creation with list of strings (backward compatible)."""
-    vertex = Vertex(name="user", fields=["id", "name", "email"])  # type: ignore[arg-type]
+    vertex = Vertex(name="user", properties=["id", "name", "email"])  # type: ignore[arg-type]
 
-    assert len(vertex.fields) == 3
-    assert all(isinstance(f, Field) for f in vertex.fields)
-    assert vertex.fields[0].name == "id"
-    assert vertex.fields[0].type is None  # Defaults to None
-    assert vertex.fields[1].name == "name"
-    assert vertex.fields[2].name == "email"
+    assert len(vertex.properties) == 3
+    assert all(isinstance(f, Field) for f in vertex.properties)
+    assert vertex.properties[0].name == "id"
+    assert vertex.properties[0].type is None  # Defaults to None
+    assert vertex.properties[1].name == "name"
+    assert vertex.properties[2].name == "email"
 
-    # field_names property
-    assert vertex.field_names == ["id", "name", "email"]
+    assert vertex.property_names == ["id", "name", "email"]
 
     # Fields work in sets
-    fields_set = set(vertex.fields)
+    fields_set = set(vertex.properties)
     assert len(fields_set) == 3
 
 
 def test_vertex_with_string_fields_dict_compatibility():
-    """Test that field_names property works for dict lookups (critical for backward compatibility)."""
-    vertex = Vertex(name="user", fields=["id", "name"])  # type: ignore[arg-type]
+    """Test that property_names works for dict lookups."""
+    vertex = Vertex(name="user", properties=["id", "name"])  # type: ignore[arg-type]
     test_dict = {"id": 1, "name": "John", "other": "ignored"}
 
-    # This is the clean usage pattern from actor_util.py
-    # Use field_names property directly - much cleaner than str(f)
-    result = {f: test_dict[f] for f in vertex.field_names if f in test_dict}
+    result = {f: test_dict[f] for f in vertex.property_names if f in test_dict}
     assert result == {"id": 1, "name": "John"}
 
 
@@ -119,13 +116,13 @@ def test_vertex_with_field_objects():
         Field(name="age", type=FieldType.INT),
         Field(name="active", type=FieldType.BOOL),
     ]
-    vertex = Vertex(name="user", fields=fields)
+    vertex = Vertex(name="user", properties=fields)
 
-    assert len(vertex.fields) == 4
-    assert vertex.fields[0].name == "id"
-    assert vertex.fields[0].type == FieldType.INT
-    assert vertex.fields[1].type == FieldType.STRING
-    assert vertex.fields[3].type == FieldType.BOOL
+    assert len(vertex.properties) == 4
+    assert vertex.properties[0].name == "id"
+    assert vertex.properties[0].type == FieldType.INT
+    assert vertex.properties[1].type == FieldType.STRING
+    assert vertex.properties[3].type == FieldType.BOOL
 
 
 def test_vertex_with_dict_fields():
@@ -135,14 +132,14 @@ def test_vertex_with_dict_fields():
         {"name": "name", "type": "STRING"},
         {"name": "email"},  # No type specified, defaults to None
     ]
-    vertex = Vertex(name="user", fields=fields)  # type: ignore[arg-type]
+    vertex = Vertex(name="user", properties=fields)  # type: ignore[arg-type]
 
-    assert len(vertex.fields) == 3
-    assert vertex.fields[0].name == "id"
-    assert vertex.fields[0].type == FieldType.INT
-    assert vertex.fields[1].type == FieldType.STRING
-    assert vertex.fields[2].name == "email"
-    assert vertex.fields[2].type is None
+    assert len(vertex.properties) == 3
+    assert vertex.properties[0].name == "id"
+    assert vertex.properties[0].type == FieldType.INT
+    assert vertex.properties[1].type == FieldType.STRING
+    assert vertex.properties[2].name == "email"
+    assert vertex.properties[2].type is None
 
 
 def test_vertex_mixed_field_inputs():
@@ -152,72 +149,66 @@ def test_vertex_mixed_field_inputs():
         Field(name="name", type=FieldType.STRING),  # Field object
         {"name": "email", "type": "STRING"},  # dict
     ]
-    vertex = Vertex(name="user", fields=fields)  # type: ignore[arg-type]
+    vertex = Vertex(name="user", properties=fields)  # type: ignore[arg-type]
 
-    assert len(vertex.fields) == 3
-    assert all(isinstance(f, Field) for f in vertex.fields)
-    assert vertex.fields[0].name == "id"
-    assert vertex.fields[0].type is None
-    assert vertex.fields[1].name == "name"
-    assert vertex.fields[1].type == FieldType.STRING
-    assert vertex.fields[2].name == "email"
-    assert vertex.fields[2].type == FieldType.STRING
+    assert len(vertex.properties) == 3
+    assert all(isinstance(f, Field) for f in vertex.properties)
+    assert vertex.properties[0].name == "id"
+    assert vertex.properties[0].type is None
+    assert vertex.properties[1].name == "name"
+    assert vertex.properties[1].type == FieldType.STRING
+    assert vertex.properties[2].name == "email"
+    assert vertex.properties[2].type == FieldType.STRING
 
 
-def test_vertex_config_fields_backward_compatible():
-    """Test VertexConfig.fields_names() method returns names (backward compatible)."""
-    vertex = Vertex(name="user", fields=["id", "name", "email"])  # type: ignore[arg-type]
+def test_vertex_config_property_names():
+    """Test VertexConfig.property_names() returns string names."""
+    vertex = Vertex(name="user", properties=["id", "name", "email"])  # type: ignore[arg-type]
     config = VertexConfig(vertices=[vertex])
 
-    # fields_names() returns names (strings) for backward compatibility
-    # Order may vary, so check membership and length
-    fields = config.fields_names("user")
-    assert len(fields) == 3
-    assert all(isinstance(f, str) for f in fields)
-    assert set(fields) == {"id", "name", "email"}
-    # Check that order is preserved from original fields
-    assert fields == ["id", "name", "email"]
+    names = config.property_names("user")
+    assert len(names) == 3
+    assert all(isinstance(f, str) for f in names)
+    assert set(names) == {"id", "name", "email"}
+    assert names == ["id", "name", "email"]
 
 
-def test_vertex_config_fields_with_objects():
-    """Test VertexConfig.fields() returns Field objects, fields_names() returns strings."""
+def test_vertex_config_properties_with_objects():
+    """Test VertexConfig.properties() returns Field objects; property_names() returns strings."""
     vertex = Vertex(
         name="user",
-        fields=[
+        properties=[
             Field(name="id", type=FieldType.INT),
             Field(name="name", type=FieldType.STRING),
         ],
     )
     config = VertexConfig(vertices=[vertex])
 
-    # fields() returns Field objects
-    fields = config.fields("user")
-    assert len(fields) == 2
-    assert all(isinstance(f, Field) for f in fields)
-    assert fields[0].type == FieldType.INT
-    assert fields[1].type == FieldType.STRING
+    props = config.properties("user")
+    assert len(props) == 2
+    assert all(isinstance(f, Field) for f in props)
+    assert props[0].type == FieldType.INT
+    assert props[1].type == FieldType.STRING
 
-    # fields_names() returns strings
-    field_names = config.fields_names("user")
-    assert field_names == ["id", "name"]
+    assert config.property_names("user") == ["id", "name"]
 
 
 def test_vertex_from_dict_with_string_fields():
     """Test Vertex.from_dict() with string fields (backward compatible)."""
-    vertex_dict = {"name": "user", "fields": ["id", "name", "email"]}
+    vertex_dict = {"name": "user", "properties": ["id", "name", "email"]}
     vertex = Vertex.from_dict(vertex_dict)
 
     assert vertex.name == "user"
-    assert len(vertex.fields) == 3
-    assert all(isinstance(f, Field) for f in vertex.fields)
-    assert all(f.type is None for f in vertex.fields)
+    assert len(vertex.properties) == 3
+    assert all(isinstance(f, Field) for f in vertex.properties)
+    assert all(f.type is None for f in vertex.properties)
 
 
 def test_vertex_from_dict_with_typed_fields():
     """Test Vertex.from_dict() with typed fields in dict."""
     vertex_dict = {
         "name": "user",
-        "fields": [
+        "properties": [
             {"name": "id", "type": "INT"},
             {"name": "name", "type": "STRING"},
             {"name": "email"},
@@ -226,17 +217,17 @@ def test_vertex_from_dict_with_typed_fields():
     vertex = Vertex.from_dict(vertex_dict)
 
     assert vertex.name == "user"
-    assert len(vertex.fields) == 3
-    assert vertex.fields[0].type == FieldType.INT
-    assert vertex.fields[1].type == FieldType.STRING
-    assert vertex.fields[2].type is None
+    assert len(vertex.properties) == 3
+    assert vertex.properties[0].type == FieldType.INT
+    assert vertex.properties[1].type == FieldType.STRING
+    assert vertex.properties[2].type is None
 
 
 def test_vertex_identity_defaults_to_fields():
     """Test that identity defaults to all fields when not specified."""
     vertex = Vertex(
         name="user",
-        fields=[
+        properties=[
             Field(name="id", type=FieldType.INT),
             Field(name="email", type=FieldType.STRING),
         ],
@@ -245,23 +236,23 @@ def test_vertex_identity_defaults_to_fields():
     assert vertex.identity == ["id", "email"]
 
     # Field objects should still be accessible
-    assert len(vertex.fields) == 2
-    assert vertex.fields[0].type == FieldType.INT
+    assert len(vertex.properties) == 2
+    assert vertex.properties[0].type == FieldType.INT
 
 
 def test_vertex_with_explicit_identity():
     """Test vertex with explicit identity fields."""
     vertex = Vertex(
         name="user",
-        fields=["id", "name", "email"],  # type: ignore[arg-type]
+        properties=["id", "name", "email"],  # type: ignore[arg-type]
         identity=["id", "email"],
     )
 
     assert vertex.identity == ["id", "email"]
-    field_names = vertex.field_names
-    assert "id" in field_names
-    assert "name" in field_names
-    assert "email" in field_names
+    names = vertex.property_names
+    assert "id" in names
+    assert "name" in names
+    assert "email" in names
 
 
 def test_field_all_types():
@@ -276,7 +267,7 @@ def test_invalid_field_type_in_dict():
     with pytest.raises(ValueError, match="not allowed"):
         Vertex(
             name="user",
-            fields=[{"name": "test", "type": "INVALID"}],  # type: ignore[arg-type]
+            properties=[{"name": "test", "type": "INVALID"}],  # type: ignore[arg-type]
         )
 
 
@@ -285,17 +276,17 @@ def test_init(vertex_pub):
     vc = Vertex.from_dict(vertex_pub)
     assert vc.identity == ["arxiv", "doi", "created", "data_source"]
     # Fields are now Field objects, so check count
-    assert len(vc.fields) == 4
+    assert len(vc.properties) == 4
     # Verify they're Field objects
-    assert all(isinstance(f, Field) for f in vc.fields)
+    assert all(isinstance(f, Field) for f in vc.properties)
 
 
-def test_get_fields_with_defaults_tigergraph():
-    """Test DB-aware vertex fields default None types to STRING for TigerGraph."""
+def test_get_properties_with_defaults_tigergraph():
+    """DB-aware vertex properties default None types to STRING for TigerGraph."""
     # Create vertex with some fields that have None type
     vertex = Vertex(
         name="user",
-        fields=[  # type: ignore[arg-type]
+        properties=[  # type: ignore[arg-type]
             Field(name="id", type=FieldType.INT),  # Already has type
             Field(name="name"),  # None type
             Field(name="email", type=FieldType.STRING),  # Already has type
@@ -308,23 +299,23 @@ def test_get_fields_with_defaults_tigergraph():
         logical=config,
         database_features=DatabaseProfile(db_flavor=DBType.TIGERGRAPH),
     )
-    fields = db_cfg.fields("user")
-    assert len(fields) == 4
-    assert fields[0].name == "id"
-    assert fields[0].type == "INT"
-    assert fields[1].name == "name"
-    assert fields[1].type == "STRING"  # Default applied
-    assert fields[2].name == "email"
-    assert fields[2].type == "STRING"
-    assert fields[3].name == "address"
-    assert fields[3].type == "STRING"  # Default applied
+    props = db_cfg.properties("user")
+    assert len(props) == 4
+    assert props[0].name == "id"
+    assert props[0].type == "INT"
+    assert props[1].name == "name"
+    assert props[1].type == "STRING"  # Default applied
+    assert props[2].name == "email"
+    assert props[2].type == "STRING"
+    assert props[3].name == "address"
+    assert props[3].type == "STRING"  # Default applied
 
 
-def test_get_fields_with_defaults_other_db():
-    """Test DB-aware vertex fields preserve None types for non-TigerGraph DBs."""
+def test_get_properties_with_defaults_other_db():
+    """DB-aware vertex properties preserve None types for non-TigerGraph DBs."""
     vertex = Vertex(
         name="user",
-        fields=[
+        properties=[
             Field(name="id", type=FieldType.INT),
             Field(name="name"),  # None type
         ],
@@ -335,70 +326,67 @@ def test_get_fields_with_defaults_other_db():
         logical=config,
         database_features=DatabaseProfile(db_flavor=DBType.ARANGO),
     )
-    fields = db_cfg.fields("user")
-    assert len(fields) == 2
-    assert fields[0].type == "INT"
-    assert fields[1].name == "name"
-    assert fields[1].type is None  # Preserved
+    props = db_cfg.properties("user")
+    assert len(props) == 2
+    assert props[0].type == "INT"
+    assert props[1].name == "name"
+    assert props[1].type is None  # Preserved
 
     db_cfg = VertexConfigDBAware(
         logical=config,
         database_features=DatabaseProfile(db_flavor=DBType.NEO4J),
     )
-    fields = db_cfg.fields("user")
-    assert fields[1].type is None  # Preserved
+    props = db_cfg.properties("user")
+    assert props[1].type is None  # Preserved
 
 
-def test_get_fields_with_defaults_none():
-    """Test logical vertex fields are preserved by default."""
+def test_get_properties_with_defaults_none():
+    """Logical vertex properties are preserved by default."""
     vertex = Vertex(
         name="user",
-        fields=[
+        properties=[
             Field(name="id", type=FieldType.INT),
             Field(name="name"),  # None type
         ],
     )
 
-    fields = vertex.get_fields()
-    assert len(fields) == 2
-    assert fields[0].type == "INT"
-    assert fields[1].type is None  # Preserved
+    props = vertex.get_properties()
+    assert len(props) == 2
+    assert props[0].type == "INT"
+    assert props[1].type is None  # Preserved
 
 
-def test_vertex_config_fields_with_db_flavor():
-    """Test DB-aware VertexConfig wrapper applies DB-specific defaults."""
+def test_vertex_config_properties_with_db_flavor():
+    """DB-aware VertexConfig wrapper applies DB-specific defaults."""
     vertex = Vertex(
         name="user",
-        fields=[
+        properties=[
             Field(name="id", type=FieldType.INT),
             Field(name="name"),  # None type
         ],
     )
     config = VertexConfig(vertices=[vertex])
 
-    # With ArangoDB, None types should remain None
-    fields = config.fields("user")
-    assert fields[1].type is None  # Preserved
+    props = config.properties("user")
+    assert props[1].type is None  # Preserved
 
     db_cfg = VertexConfigDBAware(
         logical=config,
         database_features=DatabaseProfile(db_flavor=DBType.TIGERGRAPH),
     )
-    fields = db_cfg.fields("user")
-    assert len(fields) == 2
-    assert fields[0].type == "INT"
-    assert fields[1].type == "STRING"  # Default applied
+    props = db_cfg.properties("user")
+    assert len(props) == 2
+    assert props[0].type == "INT"
+    assert props[1].type == "STRING"  # Default applied
 
-    # fields_names() returns strings
-    field_names = config.fields_names("user")
-    assert field_names == ["id", "name"]
+    assert config.property_names("user") == ["id", "name"]
 
 
 def test_vertex_config_remove_vertices():
     """Test VertexConfig.remove_vertices removes vertices and updates blank_vertices."""
-    v1 = Vertex.from_dict({"name": "a", "fields": ["id"]})
-    v2 = Vertex.from_dict({"name": "b", "fields": ["id"]})
-    v3 = Vertex.from_dict({"name": "c", "fields": ["id"]})
+    v1 = Vertex.from_dict({"name": "a", "properties": ["id"]})
+    v2 = Vertex.from_dict({"name": "b", "properties": ["id"]})
+    v3 = Vertex.from_dict({"name": "c", "properties": ["id"]})
     config = VertexConfig(
         vertices=[v1, v2, v3],
         blank_vertices=["b"],

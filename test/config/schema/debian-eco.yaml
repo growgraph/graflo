@@ -6,19 +6,19 @@ schema:
         vertex_config:
             vertices:
             -   name: package
-                fields:
+                properties:
                 -   name
                 -   version
                 identity:
                 -   name
             -   name: maintainer
-                fields:
+                properties:
                 -   name
                 -   email
                 identity:
                 -   email
             -   name: bug
-                fields:
+                properties:
                 -   id
                 -   subject
                 -   severity

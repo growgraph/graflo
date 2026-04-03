@@ -56,6 +56,14 @@ class DatabaseProfile(ConfigBaseModel):
         default=DBType.ARANGO,
         description="Target DB flavor used for physical naming and defaults.",
     )
+    target_namespace: str | None = PydanticField(
+        default=None,
+        description=(
+            "Runtime target LPG namespace when the connection config leaves it unset: "
+            "Arango/Neo4j/FalkorDB/Memgraph database, TigerGraph graph name, Nebula space. "
+            "GraphEngine uses this before falling back to schema.metadata.name."
+        ),
+    )
     vertex_storage_names: dict[str, str] = PydanticField(
         default_factory=dict,
         description="Physical vertex collection/label names keyed by logical vertex name.",

@@ -139,7 +139,7 @@ class VertexActor(Actor):
         ):
             return ctx
 
-        vertex_keys_list = self.vertex_config.fields_names(self.name)
+        vertex_keys_list = self.vertex_config.property_names(self.name)
         vertex_keys: tuple[str, ...] = tuple(vertex_keys_list)
 
         agg = []

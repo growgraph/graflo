@@ -310,7 +310,7 @@ def test_find_descendants_vertex_by_from_doc(
 def test_explicit_format_pipeline_vertex_from_create_edge():
     """Pipeline with vertex(from)+create_edge."""
 
-    vc = VertexConfig.from_dict({"vertices": [{"name": "users", "fields": ["id"]}]})
+    vc = VertexConfig.from_dict({"vertices": [{"name": "users", "properties": ["id"]}]})
     pipeline = [
         {"vertex": "users", "from": {"id": "follower_id"}},
         {"vertex": "users", "from": {"id": "followed_id"}},
@@ -372,7 +372,7 @@ def test_transform_tuple_output_maps_to_vertex_index_fields_in_order():
             "vertices": [
                 {
                     "name": "pair",
-                    "fields": ["left", "right"],
+                    "properties": ["left", "right"],
                     "indexes": [{"fields": ["left", "right"]}],
                 }
             ]
@@ -720,7 +720,7 @@ def test_transform_target_keys_updates_vertex_fields():
             "vertices": [
                 {
                     "name": "entity",
-                    "fields": ["id", "label"],
+                    "properties": ["id", "label"],
                     "identity": ["id"],
                 }
             ]
@@ -766,7 +766,7 @@ def test_transform_target_keys_multiple_steps_compose_for_vertex():
             "vertices": [
                 {
                     "name": "entity",
-                    "fields": ["id", "label"],
+                    "properties": ["id", "label"],
                     "identity": ["id"],
                 }
             ]
@@ -1096,12 +1096,12 @@ def test_transform_payload_consumption_avoids_cross_vertex_self_edge():
             "vertices": [
                 {
                     "name": "author",
-                    "fields": ["id", "full_name", "hindex"],
+                    "properties": ["id", "full_name", "hindex"],
                     "identity": ["id"],
                 },
                 {
                     "name": "researchField",
-                    "fields": ["id", "name", "level"],
+                    "properties": ["id", "name", "level"],
                     "identity": ["id"],
                 },
             ]
@@ -1147,9 +1147,9 @@ def test_infer_edge_only_filters_greedy_edges():
     vc = VertexConfig.from_dict(
         {
             "vertices": [
-                {"name": "a", "fields": ["id"], "identity": ["id"]},
-                {"name": "b", "fields": ["id"], "identity": ["id"]},
-                {"name": "c", "fields": ["id"], "identity": ["id"]},
+                {"name": "a", "properties": ["id"], "identity": ["id"]},
+                {"name": "b", "properties": ["id"], "identity": ["id"]},
+                {"name": "c", "properties": ["id"], "identity": ["id"]},
             ]
         }
     )
@@ -1188,9 +1188,9 @@ def test_infer_edge_except_filters_greedy_edges():
     vc = VertexConfig.from_dict(
         {
             "vertices": [
-                {"name": "a", "fields": ["id"], "identity": ["id"]},
-                {"name": "b", "fields": ["id"], "identity": ["id"]},
-                {"name": "c", "fields": ["id"], "identity": ["id"]},
+                {"name": "a", "properties": ["id"], "identity": ["id"]},
+                {"name": "b", "properties": ["id"], "identity": ["id"]},
+                {"name": "c", "properties": ["id"], "identity": ["id"]},
             ]
         }
     )

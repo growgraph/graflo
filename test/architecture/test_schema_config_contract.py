@@ -8,7 +8,7 @@ from graflo.architecture.schema import Schema
 def _minimal_graph() -> dict:
     return {
         "vertex_config": {
-            "vertices": [{"name": "person", "fields": ["id"], "identity": ["id"]}]
+            "vertices": [{"name": "person", "properties": ["id"], "identity": ["id"]}]
         },
         "edge_config": {"edges": []},
     }
@@ -117,7 +117,7 @@ def test_schema_rejects_edges_with_undefined_vertices():
                 "core_schema": {
                     "vertex_config": {
                         "vertices": [
-                            {"name": "user", "fields": ["id"], "identity": ["id"]},
+                            {"name": "user", "properties": ["id"], "identity": ["id"]},
                         ]
                     },
                     "edge_config": {

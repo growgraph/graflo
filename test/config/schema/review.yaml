@@ -5,7 +5,7 @@ schema:
         vertex_config:
             vertices:
             -   name: author
-                fields:
+                properties:
                 -   id
                 -   full_name
                 -   hindex
@@ -13,7 +13,7 @@ schema:
                 -   id
                 -   full_name
             -   name: researchField
-                fields:
+                properties:
                 -   id
                 -   name
                 -   level

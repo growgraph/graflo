@@ -55,6 +55,59 @@ logger = logging.getLogger(__name__)
 _json_serializer = json_serializer
 
 
+def _arango_edge_endpoint_aql(
+    vertex_class: str,
+    match_keys: tuple[str, ...],
+    slot: int,
+) -> tuple[str, str]:
+    """Build the endpoint _id expression and optional LET … FOR v IN … prefix."""
+    cell = f"edge[{slot}]"
+    if match_keys[0] == "_key":
+        return f'CONCAT("{vertex_class}/", {cell}._key)', ""
+    bind = "sources" if slot == 0 else "targets"
+    filt = " && ".join(f"v.{k} == {cell}.{k}" for k in match_keys)
+    prefix = f"LET {bind} = (FOR v IN {vertex_class} FILTER {filt} LIMIT 1 RETURN v)"
+    return f"{bind}[0]._id", prefix
+
+
+def _arango_edge_upsert_key_exprs(
+    result_from: str,
+    result_to: str,
+    source_prefix: str,
+    target_prefix: str,
+) -> tuple[str, str]:
+    """Use literal endpoint expressions when known; otherwise match on persisted doc."""
+    ups_from = result_from if source_prefix else "doc._from"
+    ups_to = result_to if target_prefix else "doc._to"
+    return ups_from, ups_to
+
+
+def _arango_edge_uniq_weight_keys(
+    uniq_weight_fields: Any,
+    uniq_weight_collections: Any,
+    relation_name: str | None,
+) -> list[str]:
+    keys: list[str] = []
+    if uniq_weight_fields is not None:
+        keys.extend(uniq_weight_fields)
+    if uniq_weight_collections is not None:
+        keys.extend(uniq_weight_collections)
+    if relation_name is not None:
+        keys.append("relation")
+    return keys
+
+
+def _arango_edge_upsert_match_literal(
+    ups_from: str,
+    ups_to: str,
+    weight_keys: list[str],
+) -> str:
+    inner = f"'_from': {ups_from}, '_to': {ups_to}"
+    if weight_keys:
+        inner += ", " + ", ".join(f"'{k}': edge.{k}" for k in weight_keys)
+    return "{" + inner + "}"
+
+
 class ArangoConnection(Connection):
     """ArangoDB-specific implementation of the Connection interface.
 
@@ -639,9 +692,6 @@ class ArangoConnection(Connection):
             logger.info([])
 
         if delete_all:
-            logger.warning(
-                "delete_graph_structure(delete_all=True) will remove all non-system ArangoDB graphs and collections in the selected database"
-            )
             collections_result = self.conn.collections()
             graphs_result = self.conn.graphs()
             cnames = []
@@ -821,101 +871,67 @@ class ArangoConnection(Connection):
             **kwargs: Additional options:
                 - dry: If True, don't execute the query
                 - collection_name: Edge collection name (defaults to {source_class}_{target_class}_edges if not provided)
-                - uniq_weight_fields: Fields to consider for uniqueness
-                - uniq_weight_collections: Classes to consider for uniqueness
-                - upsert_option: If True, use upsert instead of insert
+                - uniq_weight_fields: Fields included in UPSERT match (parallel edges)
+                - uniq_weight_collections: Extra match keys (legacy; list of names)
+                - on_duplicate: ``\"upsert\"`` (AQL UPSERT) or ``\"ignore\"`` (default:
+                  ``INSERT`` with ``ignoreErrors``)
                 - relationship_merge_properties: Ignored (Cypher backends only)
         """
         opts = consume_insert_edges_kwargs(kwargs)
-        dry = opts.dry
-        collection_name = opts.collection_name
-        if collection_name is None:
-            collection_name = f"{source_class}_{target_class}_edges"
+        collection_name = opts.collection_name or f"{source_class}_{target_class}_edges"
 
-        uniq_weight_fields = opts.uniq_weight_fields
-        uniq_weight_collections = opts.uniq_weight_collections
-        upsert_option = opts.upsert_option
-
-        if isinstance(docs_edges, list):
-            if docs_edges:
-                logger.debug(f" docs_edges[0] = {docs_edges[0]}")
-            if head is not None:
-                docs_edges = docs_edges[:head]
-            if filter_uniques:
-                docs_edges = pick_unique_dict(docs_edges)
-            docs_edges_str = json.dumps(docs_edges)
-        else:
+        if not isinstance(docs_edges, list):
             return
+        if docs_edges:
+            logger.debug(" docs_edges[0] = %s", docs_edges[0])
+        if head is not None:
+            docs_edges = docs_edges[:head]
+        if filter_uniques:
+            docs_edges = pick_unique_dict(docs_edges)
+        docs_edges_str = json.dumps(docs_edges)
 
-        if match_keys_source[0] == "_key":
-            result_from = f'CONCAT("{source_class}/", edge[0]._key)'
-            source_filter = ""
-        else:
-            result_from = "sources[0]._id"
-            filter_source = " && ".join(
-                [f"v.{k} == edge[0].{k}" for k in match_keys_source]
-            )
-            source_filter = (
-                f"LET sources = (FOR v IN {source_class} FILTER"
-                f" {filter_source} LIMIT 1 RETURN v)"
-            )
-
-        if match_keys_target[0] == "_key":
-            result_to = f'CONCAT("{target_class}/", edge[1]._key)'
-            target_filter = ""
-        else:
-            result_to = "targets[0]._id"
-            filter_target = " && ".join(
-                [f"v.{k} == edge[1].{k}" for k in match_keys_target]
-            )
-            target_filter = (
-                f"LET targets = (FOR v IN {target_class} FILTER"
-                f" {filter_target} LIMIT 1 RETURN v)"
-            )
-
+        result_from, source_filter = _arango_edge_endpoint_aql(
+            source_class, match_keys_source, 0
+        )
+        result_to, target_filter = _arango_edge_endpoint_aql(
+            target_class, match_keys_target, 1
+        )
         doc_definition = f"MERGE({{_from : {result_from}, _to : {result_to}}}, edge[2])"
+        logger.debug(" source_filter = %s", source_filter)
+        logger.debug(" target_filter = %s", target_filter)
+        logger.debug(" doc = %s", doc_definition)
 
-        logger.debug(f" source_filter = {source_filter}")
-        logger.debug(f" target_filter = {target_filter}")
-        logger.debug(f" doc = {doc_definition}")
-
-        if upsert_option:
-            ups_from = result_from if source_filter else "doc._from"
-            ups_to = result_to if target_filter else "doc._to"
-
-            weight_fs = []
-            if uniq_weight_fields is not None:
-                weight_fs += uniq_weight_fields
-            if uniq_weight_collections is not None:
-                weight_fs += uniq_weight_collections
-            if relation_name is not None:
-                weight_fs += ["relation"]
-
-            if weight_fs:
-                weights_clause = ", " + ", ".join(
-                    [f"'{x}' : edge.{x}" for x in weight_fs]
-                )
-            else:
-                weights_clause = ""
-
-            upsert = f"{{'_from': {ups_from}, '_to': {ups_to}" + weights_clause + "}"
-            logger.debug(f" upsert clause: {upsert}")
-            clauses = f"UPSERT {upsert} INSERT doc UPDATE {{}}"
+        if opts.on_duplicate == "upsert":
+            ups_from, ups_to = _arango_edge_upsert_key_exprs(
+                result_from, result_to, source_filter, target_filter
+            )
+            weight_keys = _arango_edge_uniq_weight_keys(
+                opts.uniq_weight_fields,
+                opts.uniq_weight_collections,
+                relation_name,
+            )
+            upsert_literal = _arango_edge_upsert_match_literal(
+                ups_from, ups_to, weight_keys
+            )
+            logger.debug(" upsert clause: %s", upsert_literal)
+            clauses = f"UPSERT {upsert_literal} INSERT doc UPDATE {{}}"
             options = "OPTIONS {exclusive: true}"
-        else:
+        elif opts.on_duplicate == "ignore":
             if relation_name is None:
                 doc_clause = "doc"
             else:
                 doc_clause = f"MERGE(doc, {{'relation': '{relation_name}' }})"
             clauses = f"INSERT {doc_clause}"
             options = "OPTIONS {exclusive: true, ignoreErrors: true}"
+        else:
+            raise AssertionError(f"unexpected on_duplicate: {opts.on_duplicate!r}")
 
         q_update = f"""
             FOR edge in {docs_edges_str} {source_filter} {target_filter}
                 LET doc = {doc_definition}
                 {clauses}
                 in {collection_name} {options}"""
-        if not dry:
+        if not opts.dry:
             self.execute(q_update)
 
     def insert_return_batch(self, docs: list[dict[str, Any]], class_name: str) -> str:

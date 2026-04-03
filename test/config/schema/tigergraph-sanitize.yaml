@@ -5,7 +5,7 @@ schema:
         vertex_config:
             vertices:
             -   name: package
-                fields:
+                properties:
                 -   name: id
                     type: INT
                 -   name: SELECT
@@ -19,7 +19,7 @@ schema:
                 identity:
                 -   id
             -   name: users
-                fields:
+                properties:
                 -   name: id
                     type: INT
                 -   name: name

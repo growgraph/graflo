@@ -83,7 +83,8 @@ def test_edges_sanitization_for_tigergraph(schema_with_incompatible_edges):
     }
 
     assert (
-        sanitized_schema.core_schema.vertex_config.vertices[-1].fields[0].name == "id"
+        sanitized_schema.core_schema.vertex_config.vertices[-1].properties[0].name
+        == "id"
     )
     assert sanitized_schema.core_schema.vertex_config.vertices[-1].identity[0] == "id"
     edge_a = sanitized_schema.core_schema.edge_config.edges[-2]

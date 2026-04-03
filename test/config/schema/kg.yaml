@@ -6,16 +6,14 @@ schema:
         vertex_config:
             vertices:
             -   name: publication
-                fields:
-                -   arxiv
-                -   doi
+                properties:
                 -   created
                 -   data_source
                 identity:
                 -   arxiv
                 -   doi
             -   name: entity
-                fields:
+                properties:
                 -   linker_type
                 -   ent_db_type
                 -   id
@@ -25,12 +23,12 @@ schema:
                 identity:
                 -   _key
             -   name: mention
-                fields:
+                properties:
                 -   text
                 identity:
                 -   _key
             -   name: community
-                fields:
+                properties:
                 -   obs_date
                 -   t_window
                 -   comm_id
@@ -47,13 +45,16 @@ schema:
                 -   -   source
                     -   target
                     -   publication@_id
-                weights:
-                    direct:
-                    -   publication@_id
-                    -   obs_date
-                    -   t_window
+                properties:
+                -   publication@_id
+                -   obs_date
+                -   t_window
             -   source: mention
                 target: entity
+            -   source: mention
+                target: mention
+                identities:
+                -   -   _role
             -   source: entity
                 target: community
             -   source: community
@@ -126,14 +127,6 @@ schema:
             -   fields:
                 -   publication@_id
                 unique: false
-        -   source: mention
-            target: mention
-            purpose:
-            indexes:
-            -   fields:
-                -   _from
-                -   _to
-                -   _role
 ingestion_model:
     resources:
     -   name: kg
@@ -190,9 +183,8 @@ ingestion_model:
             match_source: triple_index
             target: mention
             match_target: triple
-            weights:
-                direct:
-                -   _role
+            properties:
+            -   _role
     -   name: communities
         apply:
         -   source: entity

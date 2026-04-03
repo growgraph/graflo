@@ -5,10 +5,14 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
+from graflo.architecture.contract.declarations.edge_derivation_registry import (
+    EdgeDerivationRegistry,
+)
 from graflo.architecture.schema.edge import EdgeConfig
 from graflo.architecture.graph_types import EdgeId, ExtractionContext, LocationIndex
 from graflo.architecture.contract.declarations.transform import ProtoTransform
 from graflo.architecture.schema.vertex import VertexConfig
+from graflo.onto import DBType
 
 
 class ActorConstants:
@@ -25,11 +29,15 @@ class ActorInitContext:
     vertex_config: VertexConfig
     edge_config: EdgeConfig
     transforms: dict[str, ProtoTransform]
+    edge_derivation: EdgeDerivationRegistry = field(
+        default_factory=EdgeDerivationRegistry
+    )
     allowed_vertex_names: set[str] | None = None
     infer_edges: bool = True
     infer_edge_only: set[EdgeId] = field(default_factory=set)
     infer_edge_except: set[EdgeId] = field(default_factory=set)
     strict_references: bool = False
+    target_db_flavor: DBType | None = None
 
 
 class Actor(ABC):

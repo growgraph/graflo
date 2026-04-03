@@ -25,13 +25,13 @@ class TestRdfInferenceManager:
         mgr = RdfInferenceManager()
         schema, _ = mgr.infer_schema(sample_ontology_path, schema_name="test_rdf")
 
-        person_fields = schema.core_schema.vertex_config.fields_names("Person")
+        person_fields = schema.core_schema.vertex_config.property_names("Person")
         assert "name" in person_fields
         assert "age" in person_fields
         assert "_key" in person_fields
         assert "_uri" in person_fields
 
-        org_fields = schema.core_schema.vertex_config.fields_names("Organization")
+        org_fields = schema.core_schema.vertex_config.property_names("Organization")
         assert "orgName" in org_fields
         assert "founded" in org_fields
 

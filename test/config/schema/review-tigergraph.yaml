@@ -5,14 +5,14 @@ schema:
         vertex_config:
             vertices:
             -   name: author
-                fields:
+                properties:
                 -   id
                 -   full_name
                 -   hindex
                 identity:
                 -   id
             -   name: researchField
-                fields:
+                properties:
                 -   id
                 -   name
                 -   level

@@ -5,7 +5,7 @@ schema:
         vertex_config:
             vertices:
             -   name: institution
-                fields:
+                properties:
                 -   _key
                 -   display_name
                 -   country

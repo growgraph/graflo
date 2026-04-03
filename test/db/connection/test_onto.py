@@ -176,7 +176,7 @@ class TestNeo4jConfigFromEnv:
         monkeypatch.setenv("USER_NEO4J_USERNAME", "admin")
 
         # Load config with prefix
-        # Note: from_env with prefix returns a dynamically created subclass, but it has all Neo4jConfig attributes
+        # Note: from_env with prefix returns a dynamically created subclass, but it has all Neo4jConfig properties
         config = Neo4jConfig.from_env(prefix="USER")
 
         # Verify BOLT_PORT and username are read correctly

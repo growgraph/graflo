@@ -264,7 +264,7 @@ class NebulaConnection(Connection):
 
     def define_vertex_classes(self, schema: Schema) -> None:
         for vname in schema.core_schema.vertex_config.vertex_set:
-            fields = schema.core_schema.vertex_config.fields(vname)
+            fields = schema.core_schema.vertex_config.properties(vname)
             stmt = create_tag_ngql(vname, fields)
             self._execute(stmt)
             self._tag_fields[vname] = [f.name for f in fields]
@@ -281,8 +281,8 @@ class NebulaConnection(Connection):
             if rel in created:
                 continue
             edge_fields = []
-            if edge.weights and edge.weights.direct:
-                edge_fields = list(edge.weights.direct)
+            if edge.properties:
+                edge_fields = list(edge.properties)
             stmt = create_edge_type_ngql(rel, edge_fields)
             self._execute(stmt)
             created.add(rel)
@@ -304,7 +304,7 @@ class NebulaConnection(Connection):
                 "Schema is None: identity indexes cannot be ensured without schema"
             )
         for vname in vertex_config.vertex_set:
-            fields = vertex_config.fields(vname)
+            fields = vertex_config.properties(vname)
             string_fields = {f.name for f in fields if f.type == FieldType.STRING}
             index_list = (
                 schema.db_profile.vertex_secondary_indexes(vname)

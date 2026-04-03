@@ -5,12 +5,12 @@ schema:
         vertex_config:
             vertices:
             -   name: ticker
-                fields:
+                properties:
                 -   oftic
                 identity:
                 -   oftic
             -   name: metric
-                fields:
+                properties:
                 -   name
                 -   value
                 identity:
@@ -35,13 +35,8 @@ schema:
             edges:
             -   source: ticker
                 target: metric
-                weights:
-                    direct:
-                    -   t_obs
-                    vertices:
-                    -   name: metric
-                        fields:
-                        -   name
+                properties:
+                -   t_obs
     db_profile:
         vertex_storage_names:
             ticker: tickers
@@ -111,5 +106,14 @@ ingestion_model:
         -   transform:
                 rename:
                     ticker: oftic
+        -   vertex: ticker
         -   vertex: metric
+        -   source: ticker
+            target: metric
+            properties:
+            -   t_obs
+            vertex_weights:
+            -   name: metric
+                fields:
+                -   name
 bindings: {}

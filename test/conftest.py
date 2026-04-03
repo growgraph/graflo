@@ -262,95 +262,14 @@ def vertex_config_transform_collision():
         -
             name: person
             dbname: people
-            fields:
+            properties:
             -   id
             -   name
         -
             name: pet
             dbname: pets
-            fields:
+            properties:
             -   name
-    """
-    )
-    return vc
-
-
-@pytest.fixture()
-def resource_with_dynamic_relations():
-    vc = yaml.safe_load(
-        """
-    general:
-        name: openalex
-    resources:
-        tree_likes:
-           -   name: institutions
-            root:
-                children:
-                -   type: vertex
-                    name: institution
-                    transforms:
-                    -   transform:
-                            call:
-                                use: keep_suffix_id
-                    -   transform:
-                            call:
-                                use: keep_suffix_id
-                                input:
-                                -   ror
-                                output:
-                                -   ror
-                -   key: associated_institutions
-                    children:
-                    -   type: vertex
-                        name: institution
-                        transforms:
-                        -   transform:
-                                call:
-                                    use: keep_suffix_id
-                    -   type: edge
-                        edge:
-                            source: institution
-                            target: institution
-    #                        relation:
-    vertex_config:
-    vertices:
-    -   name: institution
-        dbname: institutions
-        fields:
-        -   _key
-        -   display_name
-        -   country
-        -   type
-        -   ror
-        -   grid
-        -   wikidata
-        -   mag
-        -   created_date
-        -   updated_date
-        indexes:
-        -   fields:
-            -   _key
-        -   unique: false
-            type: fulltext
-            fields:
-            -   display_name
-        -   unique: false
-            fields:
-            -   type
-    edge_config:
-        edges: []
-    transforms:
-    -   name: keep_suffix_id
-        foo: split_keep_part
-        module: graflo.util.transform
-        params:
-            sep: "/"
-            keep: -1
-        input:
-        -   id
-        output:
-        -   _key
-
     """
     )
     return vc
@@ -528,7 +447,15 @@ def resource_ticker():
             rename:
                 ticker: oftic
     -   vertex: ticker
-    - vertex: feature
+    -   vertex: feature
+    -   source: ticker
+        target: feature
+        properties:
+        -   t_obs
+        vertex_weights:
+        -   name: feature
+            fields:
+            -   name
     """)
 
 

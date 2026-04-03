@@ -7,13 +7,13 @@ schema:
             -   publication
             vertices:
             -   name: publication
-                fields:
+                properties:
                 -   datetime_review
                 -   datetime_announce
                 identity:
                 -   _key
             -   name: ticker
-                fields:
+                properties:
                 -   cusip
                 -   cname
                 -   oftic
@@ -22,19 +22,19 @@ schema:
                 -   cname
                 -   oftic
             -   name: agency
-                fields:
+                properties:
                 -   aname
                 identity:
                 -   aname
             -   name: analyst
-                fields:
+                properties:
                 -   last_name
                 -   initial
                 identity:
                 -   last_name
                 -   initial
             -   name: recommendation
-                fields:
+                properties:
                 -   erec
                 -   etext
                 -   irec
@@ -50,13 +50,9 @@ schema:
                 target: ticker
             -   source: analyst
                 target: agency
-                weights:
-                    vertices:
-                    -   name: publication
-                        keep_vertex_name: false
-                        fields:
-                        -   datetime_review
-                        -   datetime_announce
+                properties:
+                -   datetime_review
+                -   datetime_announce
             -   source: analyst
                 target: publication
             -   source: publication
@@ -129,4 +125,12 @@ ingestion_model:
                     IRECCD: irec
                     ITEXT: itext
         -   vertex: publication
+        -   source: analyst
+            target: agency
+            vertex_weights:
+            -   name: publication
+                keep_vertex_name: false
+                fields:
+                -   datetime_review
+                -   datetime_announce
 bindings: {}

@@ -14,7 +14,7 @@ class CoreSchema(ConfigBaseModel):
 
     vertex_config: VertexConfig = PydanticField(
         ...,
-        description="Configuration for vertex collections (vertices, identities, fields).",
+        description="Configuration for vertex collections (vertices, identities, properties).",
     )
     edge_config: EdgeConfig = PydanticField(
         ...,

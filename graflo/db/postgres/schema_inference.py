@@ -10,7 +10,7 @@ import logging
 from typing import TYPE_CHECKING
 
 
-from graflo.architecture.schema.edge import Edge, EdgeConfig, WeightConfig
+from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.database_features import DatabaseProfile
 from graflo.architecture.schema import CoreSchema, GraphMetadata, Schema
 from graflo.architecture.schema.vertex import Field, FieldType, Vertex, VertexConfig
@@ -78,7 +78,7 @@ class PostgresSchemaInferencer:
             # Create vertex
             vertex = Vertex(
                 name=table_name,
-                fields=fields,
+                properties=fields,
                 identity=list(pk_columns),
             )
 
@@ -220,8 +220,8 @@ class PostgresSchemaInferencer:
             )
             return mapped_type
 
-    def infer_edge_weights(self, edge_table_info: EdgeTableInfo) -> WeightConfig | None:
-        """Infer edge weights from edge table columns with types.
+    def infer_edge_weights(self, edge_table_info: EdgeTableInfo) -> list[Field] | None:
+        """Infer edge attributes from edge table columns with types.
 
         Uses PostgreSQL column types and optionally samples data to infer accurate types.
 
@@ -229,7 +229,7 @@ class PostgresSchemaInferencer:
             edge_table_info: Edge table information from introspection
 
         Returns:
-            WeightConfig if there are weight columns, None otherwise
+            List of attribute fields if there are non-key columns, None otherwise.
         """
         columns = edge_table_info.columns
         pk_columns = set(edge_table_info.primary_key)
@@ -264,7 +264,7 @@ class PostgresSchemaInferencer:
             f"'{edge_table_info.name}': {[f.name for f in direct_weights]}"
         )
 
-        return WeightConfig(direct=direct_weights)
+        return direct_weights
 
     def infer_edge_config(
         self,
@@ -305,13 +305,11 @@ class PostgresSchemaInferencer:
                 )
                 continue
 
-            # Infer weights
-            weights = self.infer_edge_weights(edge_table_info)
-            # Create edge
+            attrs = self.infer_edge_weights(edge_table_info) or []
             edge = Edge(
                 source=source_table,
                 target=target_table,
-                weights=weights,
+                properties=attrs,
                 relation=edge_table_info.relation,
             )
 

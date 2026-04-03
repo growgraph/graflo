@@ -164,17 +164,17 @@ class TestRelationsResourceMixedTypeSources:
                             "vertices": [
                                 {
                                     "name": "person",
-                                    "fields": ["id"],
+                                    "properties": ["id"],
                                     "identity": ["id"],
                                 },
                                 {
                                     "name": "vehicle",
-                                    "fields": ["id"],
+                                    "properties": ["id"],
                                     "identity": ["id"],
                                 },
                                 {
                                     "name": "institution",
-                                    "fields": ["id"],
+                                    "properties": ["id"],
                                     "identity": ["id"],
                                 },
                             ]

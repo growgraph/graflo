@@ -26,7 +26,7 @@ def vertex_pub():
         """
         name: publication
         dbname: publications
-        fields:
+        properties:
         -   arxiv
         -   doi
         -   created
@@ -93,34 +93,13 @@ def vertex_helper_b():
 
 
 @pytest.fixture()
-def edge_with_weights():
-    tc = yaml.safe_load(
-        """
-        source: analyst
-        target: agency
-        weights:
-            vertices:
-                -   
-                    name: ticker
-                    fields:
-                        - cusip
-                -
-                    fields:
-                        - datetime_review
-                        - datetime_announce
-    """
-    )
-    return tc
-
-
-@pytest.fixture()
 def vertex_config_kg():
     vc = yaml.safe_load(
         """
     vertices:
     -   name: publication
         dbname: publications
-        fields:
+        properties:
         -   arxiv
         -   doi
         -   created
@@ -130,7 +109,7 @@ def vertex_config_kg():
         -   doi
     -   name: entity
         dbname: entities
-        fields:
+        properties:
         -   linker_type
         -   ent_db_type
         -   id
@@ -142,7 +121,7 @@ def vertex_config_kg():
         -   ent_type
     -   name: mention
         dbname: mentions
-        fields:
+        properties:
         -   text
         identity:
         -   _key
@@ -195,7 +174,7 @@ def schema_vc_openalex():
     vertices:
     -   name: author
         dbname: authors
-        fields:
+        properties:
         -   _key
         -   display_name
         -   updated_date
@@ -203,7 +182,7 @@ def schema_vc_openalex():
         -   _key
     -   name: concept
         dbname: concepts
-        fields:
+        properties:
         -   _key
         -   wikidata
         -   display_name
@@ -215,7 +194,7 @@ def schema_vc_openalex():
         -   _key
     -   name: institution
         dbname: institutions
-        fields:
+        properties:
         -   _key
         -   display_name
         -   country
@@ -230,7 +209,7 @@ def schema_vc_openalex():
         -   _key
     -   name: source
         dbname: sources
-        fields:
+        properties:
         -   _key
         -   issn_l
         -   type
@@ -242,7 +221,7 @@ def schema_vc_openalex():
         -   _key
     -   name: work
         dbname: works
-        fields:
+        properties:
         -   _key
         -   doi
         -   title
@@ -313,13 +292,13 @@ def vertex_config_collision():
     vertex_config:
     vertices:
     -   name: person
-        fields:
+        properties:
         -   id
         indexes:
         -   fields:
             -   id
     -   name: company
-        fields:
+        properties:
         -   id
         indexes:
         -   fields:
@@ -366,13 +345,13 @@ def vertex_config_cross():
     vertex_config:
     vertices:
     -   name: person
-        fields:
+        properties:
         -   id
         indexes:
         -   fields:
             -   id
     -   name: company
-        fields:
+        properties:
         -   name
         indexes:
         -   fields:
@@ -398,7 +377,7 @@ def vc_openalex():
     vertices:
     -   name: author
         dbname: authors
-        fields:
+        properties:
         -   _key
         -   display_name
         indexes:
@@ -406,7 +385,7 @@ def vc_openalex():
             -   _key
     -   name: institution
         dbname: institutions
-        fields:
+        properties:
         -   _key
         -   display_name
         -   country
@@ -455,10 +434,9 @@ def resource_openalex_authors():
                     -   _key
     -   source: author
         target: institution
-        weights:
-            direct:
-            -   updated_date
-            -   created_date
+        properties:
+        -   updated_date
+        -   created_date
     """)
     return an
 
@@ -508,9 +486,8 @@ def resource_kg_menton_triple():
         target: mention
         match_source: triple_index
         match_target: triple
-        weights:
-            direct:
-            -   _role
+        properties:
+        -   _role
     """)
     return an
 
@@ -522,7 +499,7 @@ def vertex_config_kg_mention():
     vertices:
     -   name: mention
         dbname: mentions
-        fields:
+        properties:
         -   text
         identity:
         -   _key
@@ -562,7 +539,7 @@ def vertex_key_property():
     vertex_config:
     vertices:
         -   name: package
-            fields:
+            properties:
             -   name
             -   version
             indexes:
@@ -578,21 +555,21 @@ def schema_vc_deb():
     tc = yaml.safe_load("""
     vertices:
     -   name: package
-        fields:
+        properties:
         -   name
         -   version
         indexes:
         -   fields:
             -   name
     -   name: maintainer
-        fields:
+        properties:
         -   name
         -   email
         indexes:
         -   fields:
             -   email
     -   name: bug
-        fields:
+        properties:
         -   id
         -   subject
         -   severity
@@ -611,7 +588,7 @@ def vc_ticker():
         vertices:
         -   name: ticker
             dbname: tickers
-            fields:
+            properties:
             -   cusip
             -   cname
             -   oftic
@@ -622,7 +599,7 @@ def vc_ticker():
                 -   oftic
         -   name: feature
             dbname: features
-            fields:
+            properties:
             -   name
             -   value
             indexes:
@@ -649,13 +626,8 @@ def ec_ticker():
     edges:
     -   source: ticker
         target: feature
-        weights:
-            direct:
-            -   t_obs
-            vertices:
-            -   name: feature
-                fields:
-                -   name
+        properties:
+        -   t_obs
     """
     )
     return EdgeConfig.from_dict(tc)
@@ -668,7 +640,7 @@ def vc_ticker_filtered():
         vertices:
         -   name: ticker
             dbname: tickers
-            fields:
+            properties:
             -   cusip
             -   cname
             -   oftic
@@ -679,7 +651,7 @@ def vc_ticker_filtered():
                 -   oftic
         -   name: feature
             dbname: features
-            fields:
+            properties:
             -   name
             -   value
             indexes:

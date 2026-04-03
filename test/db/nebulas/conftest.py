@@ -29,14 +29,14 @@ MINI_SCHEMA_DICT = {
             "vertices": [
                 {
                     "name": "Person",
-                    "fields": [
+                    "properties": [
                         {"name": "name", "type": "STRING"},
                         {"name": "age", "type": "INT"},
                     ],
                 },
                 {
                     "name": "City",
-                    "fields": [
+                    "properties": [
                         {"name": "name", "type": "STRING"},
                         {"name": "population", "type": "INT"},
                     ],
@@ -49,15 +49,11 @@ MINI_SCHEMA_DICT = {
                     "source": "Person",
                     "target": "City",
                     "relation": "lives_in",
-                    "match_source": "name",
-                    "match_target": "name",
                 },
                 {
                     "source": "Person",
                     "target": "Person",
                     "relation": "knows",
-                    "match_source": "name",
-                    "match_target": "name",
                 },
             ],
         },

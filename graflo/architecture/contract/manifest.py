@@ -65,6 +65,7 @@ class GraphManifest(ConfigBaseModel):
                 self.graph_schema.core_schema,
                 strict_references=strict_references,
                 dynamic_edge_feedback=dynamic_edge_feedback,
+                target_db_flavor=self.graph_schema.db_profile.db_flavor,
             )
 
     def require_schema(self) -> Schema:

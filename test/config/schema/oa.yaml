@@ -5,17 +5,17 @@ schema:
         vertex_config:
             vertices:
             -   name: author
-                fields:
+                properties:
                 -   _key
                 identity:
                 -   _key
             -   name: institution
-                fields:
+                properties:
                 -   _key
                 identity:
                 -   _key
             -   name: work
-                fields:
+                properties:
                 -   _key
                 -   doi
                 identity:
@@ -50,10 +50,9 @@ ingestion_model:
                     edge:
                         source: author
                         target: institution
-                    weights:
-                        direct:
-                        -   updated_date
-                        -   created_date
+                    properties:
+                    -   updated_date
+                    -   created_date
     -   name: works
         root:
             children:

@@ -58,9 +58,9 @@ def _vertex_config_a_b_c() -> VertexConfig:
     return VertexConfig.from_dict(
         {
             "vertices": [
-                {"name": "A", "fields": ["id"], "identity": ["id"]},
-                {"name": "B", "fields": ["id"], "identity": ["id"]},
-                {"name": "C", "fields": ["id"], "identity": ["id"]},
+                {"name": "A", "properties": ["id"], "identity": ["id"]},
+                {"name": "B", "properties": ["id"], "identity": ["id"]},
+                {"name": "C", "properties": ["id"], "identity": ["id"]},
             ]
         }
     )

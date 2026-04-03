@@ -5,19 +5,19 @@ schema:
         vertex_config:
             vertices:
             -   name: parcel
-                fields:
+                properties:
                 -   name: id
                     type: INT
                 identity:
                 -   id
             -   name: box
-                fields:
+                properties:
                 -   name: id
                     type: INT
                 identity:
                 -   id
             -   name: container
-                fields:
+                properties:
                 -   name
                 identity:
                 -   name
