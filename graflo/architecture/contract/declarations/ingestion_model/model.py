@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from pydantic import Field as PydanticField, PrivateAttr, model_validator
 
 from graflo.architecture.base import ConfigBaseModel
+from graflo.onto import DBType
 
 from ..resource import Resource
 from ..transform import ProtoTransform
@@ -74,6 +75,7 @@ class IngestionModel(ConfigBaseModel):
         strict_references: bool = False,
         dynamic_edge_feedback: bool = False,
         allowed_vertex_names: set[str] | None = None,
+        target_db_flavor: DBType | None = None,
     ) -> None:
         """Initialize resources against graph model and transform library."""
         self._rebuild_runtime_state()
@@ -85,6 +87,7 @@ class IngestionModel(ConfigBaseModel):
                 strict_references=strict_references,
                 dynamic_edge_feedback=dynamic_edge_feedback,
                 allowed_vertex_names=allowed_vertex_names,
+                target_db_flavor=target_db_flavor,
             )
 
     def _rebuild_runtime_state(self) -> None:

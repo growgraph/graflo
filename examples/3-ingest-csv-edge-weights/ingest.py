@@ -1,8 +1,8 @@
 from suthing import FileHandle
 from graflo import GraphManifest
-from graflo.db import Neo4jConfig
 from graflo.hq import GraphEngine
 from graflo.hq.caster import IngestionParams
+from graflo.db import TigergraphConfig
 
 import logging
 
@@ -19,10 +19,12 @@ ingestion_model = manifest.require_ingestion_model()
 
 # Load config from docker/neo4j/.env (recommended)
 # This automatically reads NEO4J_BOLT_PORT, NEO4J_AUTH, etc.
-conn_conf = Neo4jConfig.from_docker_env()
 
-# from graflo.db import TigergraphConfig
-# conn_conf = TigergraphConfig.from_docker_env()
+# from graflo.db import Neo4jConfig
+# conn_conf = Neo4jConfig.from_docker_env()
+
+conn_conf = TigergraphConfig.from_docker_env()
+conn_conf.max_job_size = 5000
 
 # Alternative: Create config directly or use environment variables
 # Set NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD, NEO4J_BOLT_PORT env vars

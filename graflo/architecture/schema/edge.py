@@ -5,8 +5,8 @@ It handles edge configuration, weight management, indexing, and relationship ope
 The module supports both ArangoDB and Neo4j through the DBType enum.
 
 Key Components:
-    - EdgeBase: Shared base for edge-like configs (Edge and EdgeActorConfig)
-    - Edge: Represents an edge with its source, target, and configuration
+    - Edge: Abstract graph edge kind (schema / ``edge_config`` only)
+    - EdgeDerivation: Ingestion wiring (see ``graflo.architecture.edge_derivation``)
     - EdgeConfig: Manages collections of edges and their configurations
     - WeightConfig: Configuration for edge weights and relationships
 
@@ -116,11 +116,12 @@ class WeightConfig(ConfigBaseModel):
         return [field.name for field in self.direct]
 
 
-class EdgeBase(ConfigBaseModel):
-    """Shared base for edge-like configs (Edge schema and EdgeActorConfig).
+class Edge(ConfigBaseModel):
+    """Abstract graph edge kind (schema / ``edge_config`` only).
 
-    Holds the common scalar fields so Edge and EdgeActorConfig stay in sync
-    without duplication.
+    Ingestion-only behavior (location filters, relation column, relation from
+    key, etc.) belongs on :class:`~graflo.architecture.edge_derivation.EdgeDerivation`
+    in pipeline edge steps, not on this model.
     """
 
     source: str = PydanticField(
@@ -131,61 +132,14 @@ class EdgeBase(ConfigBaseModel):
         ...,
         description="Target vertex type name (e.g. post, company).",
     )
-    match_source: str | None = PydanticField(
-        default=None,
-        description="Field used to match source vertices when creating edges.",
-    )
-    match_target: str | None = PydanticField(
-        default=None,
-        description="Field used to match target vertices when creating edges.",
-    )
     relation: str | None = PydanticField(
         default=None,
         description="Relation/edge type name (e.g. Neo4j relationship type). For ArangoDB used as weight.",
-    )
-    relation_field: str | None = PydanticField(
-        default=None,
-        description="Field name to store or read relation type (e.g. for TigerGraph).",
-    )
-    relation_from_key: bool = PydanticField(
-        default=False,
-        description="If True, derive relation value from the location key during ingestion.",
-    )
-    exclude_source: str | None = PydanticField(
-        default=None,
-        description="Exclude source vertices matching this field from edge creation.",
-    )
-    exclude_target: str | None = PydanticField(
-        default=None,
-        description="Exclude target vertices matching this field from edge creation.",
-    )
-    match: str | None = PydanticField(
-        default=None,
-        description="Match discriminant for edge creation.",
     )
     description: str | None = PydanticField(
         default=None,
         description="Optional semantic description of edge intent, direction semantics, and business meaning.",
     )
-
-
-class Edge(EdgeBase):
-    """Represents an edge in the graph database.
-
-    An edge connects two vertices and can have various configurations for
-    identities, weights, and relationship types.
-
-    Attributes:
-        source: Source vertex name
-        target: Target vertex name
-        identities: Logical candidate identity keys for the edge
-        weights: Optional weight configuration
-        relation: Optional relation name (for Neo4j)
-        match_source: Optional source discriminant field
-        match_target: Optional target discriminant field
-        type: Edge type (DIRECT or INDIRECT)
-        by: Optional vertex name for indirect edges
-    """
 
     identities: list[list[str]] = PydanticField(
         default_factory=list,
@@ -257,10 +211,10 @@ class Edge(EdgeBase):
         direct_weight_fields = set()
         if self.weights is not None:
             direct_weight_fields = set(self.weights.direct_names)
-        relation_field = (
-            {self.relation_field} if self.relation_field is not None else set()
-        )
-        allowed_fields = reserved | direct_weight_fields | relation_field
+        # Identity token "relation" maps to the default TigerGraph attribute name
+        # when physical fields are declared (see EdgeConfigDBAware.effective_weights).
+        logical_relation_attr = {DEFAULT_TIGERGRAPH_RELATION_WEIGHTNAME}
+        allowed_fields = reserved | direct_weight_fields | logical_relation_attr
         unknown_by_key = [
             [token for token in key if token not in allowed_fields]
             for key in self.identities
@@ -303,12 +257,23 @@ class EdgeConfig(ConfigBaseModel):
         description="List of edge definitions (source, target, identities, weights, relation, etc.).",
     )
     _edges_map: dict[EdgeId, Edge] = PrivateAttr()
+    _relation_from_key_by_edge_id: dict[EdgeId, bool] = PrivateAttr(
+        default_factory=dict
+    )
 
     @model_validator(mode="after")
     def _build_edges_map(self) -> EdgeConfig:
         """Build internal mapping of edge IDs to edge configurations."""
         object.__setattr__(self, "_edges_map", {e.edge_id: e for e in self.edges})
         return self
+
+    def mark_relation_derived_from_key(self, edge_id: EdgeId) -> None:
+        """Record that an edge pipeline step derives relation labels from location keys."""
+        self._relation_from_key_by_edge_id[edge_id] = True
+
+    def uses_relation_from_key(self, edge_id: EdgeId) -> bool:
+        """True if any edge actor registered key-derived relations for this edge id."""
+        return self._relation_from_key_by_edge_id.get(edge_id, False)
 
     @staticmethod
     def _map_key(edge: Edge) -> EdgeId:
@@ -363,6 +328,16 @@ class EdgeConfig(ConfigBaseModel):
         self._edges_map[edge_key].finish_init(
             vertex_config=vertex_config,
         )
+
+    def edge_for(self, edge_id: EdgeId) -> Edge:
+        """Return the config-owned :class:`Edge` instance for ``edge_id`` after merges.
+
+        Pipeline actors may construct a partial :class:`Edge` that is merged into the
+        schema edge via :meth:`update_edges`. Callers that need weights, identities,
+        etc. must use this object (same reference as in :meth:`items`), not the
+        pre-merge actor copy.
+        """
+        return self._edges_map[edge_id]
 
     @property
     def vertices(self):

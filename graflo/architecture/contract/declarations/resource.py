@@ -43,6 +43,7 @@ from graflo.architecture.graph_types import (
 )
 from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.schema.vertex import VertexConfig
+from graflo.onto import DBType
 
 from .transform import ProtoTransform
 
@@ -153,6 +154,9 @@ class Resource(ConfigBaseModel):
 
     Dynamic vertex-type routing is handled by ``vertex_router`` steps in the
     pipeline (see :class:`~graflo.architecture.pipeline.runtime.actor.VertexRouterActor`).
+    Per-row relationship labels and location matching for edges belong on
+    ``edge`` pipeline steps (:class:`~graflo.architecture.edge_derivation.EdgeDerivation`),
+    not on ``Resource``.
     """
 
     model_config = {"extra": "forbid"}
@@ -292,6 +296,7 @@ class Resource(ConfigBaseModel):
         strict_references: bool = False,
         dynamic_edge_feedback: bool = False,
         allowed_vertex_names: set[str] | None = None,
+        target_db_flavor: DBType | None = None,
     ) -> None:
         """Complete resource initialization.
 
@@ -302,6 +307,7 @@ class Resource(ConfigBaseModel):
             vertex_config: Configuration for vertices
             edge_config: Configuration for edges
             transforms: Dictionary of available transforms
+            target_db_flavor: Target graph DB flavor (for ingestion-time defaults, e.g. TigerGraph).
         """
         self._rebuild_runtime(
             vertex_config=vertex_config,
@@ -310,6 +316,7 @@ class Resource(ConfigBaseModel):
             strict_references=strict_references,
             dynamic_edge_feedback=dynamic_edge_feedback,
             allowed_vertex_names=allowed_vertex_names,
+            target_db_flavor=target_db_flavor,
         )
 
     def _edge_ids_from_edge_actors(self) -> set[EdgeId]:
@@ -361,6 +368,7 @@ class Resource(ConfigBaseModel):
         strict_references: bool = False,
         dynamic_edge_feedback: bool = False,
         allowed_vertex_names: set[str] | None = None,
+        target_db_flavor: DBType | None = None,
     ) -> None:
         """Rebuild runtime actor initialization state from typed context."""
         # Keep the full schema vertex_config for correctness validations, but
@@ -396,6 +404,7 @@ class Resource(ConfigBaseModel):
             infer_edge_only={spec.edge_id for spec in self.infer_edge_only},
             infer_edge_except=infer_edge_except,
             strict_references=strict_references,
+            target_db_flavor=target_db_flavor,
         )
         self.root.finish_init(init_ctx=init_ctx)
         object.__setattr__(self, "_initialized", True)

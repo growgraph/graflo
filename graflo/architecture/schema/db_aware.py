@@ -154,11 +154,11 @@ class EdgeConfigDBAware:
         if self.db_profile.db_flavor != DBType.TIGERGRAPH:
             return edge.weights
 
-        relation_field = edge.relation_field
-        if relation_field is None and edge.relation_from_key:
-            relation_field = DEFAULT_TIGERGRAPH_RELATION_WEIGHTNAME
-
-        if relation_field is None:
+        # Typed TigerGraph edge: per-row relation label stored under a stable attribute.
+        needs_relation_attr = (
+            edge.relation is None or self.logical.uses_relation_from_key(edge.edge_id)
+        )
+        if not needs_relation_attr:
             return edge.weights
 
         base = (
@@ -166,28 +166,28 @@ class EdgeConfigDBAware:
             if edge.weights is not None
             else WeightConfig()
         )
-        if relation_field not in base.direct_names:
-            base.direct.append(Field(name=relation_field, type=FieldType.STRING))
+        if DEFAULT_TIGERGRAPH_RELATION_WEIGHTNAME not in base.direct_names:
+            base.direct.append(
+                Field(
+                    name=DEFAULT_TIGERGRAPH_RELATION_WEIGHTNAME, type=FieldType.STRING
+                )
+            )
         return base
 
     def runtime(self, edge: Edge) -> EdgeRuntime:
+        needs_tg_relation_attr = self.db_profile.db_flavor == DBType.TIGERGRAPH and (
+            edge.relation is None or self.logical.uses_relation_from_key(edge.edge_id)
+        )
         runtime = EdgeRuntime(
             edge=edge,
             source_storage=self.vertex_config.vertex_dbname(edge.source),
             target_storage=self.vertex_config.vertex_dbname(edge.target),
             relation_name=self.relation_dbname(edge),
-            store_extracted_relation_as_weight=(
-                self.db_profile.db_flavor == DBType.TIGERGRAPH
-            ),
+            store_extracted_relation_as_weight=needs_tg_relation_attr,
             effective_relation_field=(
-                edge.relation_field
-                if edge.relation_field is not None
-                else (
-                    DEFAULT_TIGERGRAPH_RELATION_WEIGHTNAME
-                    if self.db_profile.db_flavor == DBType.TIGERGRAPH
-                    and edge.relation_from_key
-                    else None
-                )
+                DEFAULT_TIGERGRAPH_RELATION_WEIGHTNAME
+                if needs_tg_relation_attr
+                else None
             ),
             db_profile=self.db_profile,
         )

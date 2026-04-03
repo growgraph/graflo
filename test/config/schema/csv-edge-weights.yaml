@@ -13,7 +13,6 @@ schema:
             edges:
             -   source: company
                 target: company
-                relation_field: relation
                 weights:
                     direct:
                     -   date
@@ -28,4 +27,7 @@ ingestion_model:
         -   vertex: company
             from:
                 name: company_b
+        -   source: company
+            target: company
+            relation_field: relation
 bindings: {}

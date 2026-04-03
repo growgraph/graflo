@@ -566,6 +566,7 @@ class Caster:
             strict_references=ingestion_params.strict_references,
             dynamic_edge_feedback=ingestion_params.dynamic_edges,
             allowed_vertex_names=self._allowed_vertex_names,
+            target_db_flavor=db_flavor,
         )
 
         registry = RegistryBuilder(self.schema, self.ingestion_model).build(

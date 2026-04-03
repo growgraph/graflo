@@ -38,7 +38,8 @@ from requests import exceptions as requests_exceptions
 # Removed pyTigerGraph dependency - using direct REST API calls instead
 
 
-from graflo.architecture.schema.edge import Edge
+from graflo.architecture.schema.db_aware import EdgeConfigDBAware
+from graflo.architecture.schema.edge import DEFAULT_TIGERGRAPH_RELATION_WEIGHTNAME, Edge
 from graflo.architecture.database_features import DatabaseProfile
 from graflo.architecture.schema import VertexConfigDBAware
 from graflo.architecture.graph_types import Index
@@ -1075,9 +1076,11 @@ class TigerGraphConnection(Connection):
             Response from API
         """
         graph_name = graph_name or self.graphname
+        # TigerGraph 4.2+: .../edges/{source_type}/{source_id}/{edge_type}/{target_type}/{target_id}
         endpoint = (
-            f"/graph/{graph_name}/edges/{edge_type}/"
+            f"/graph/{graph_name}/edges/"
             f"{source_type}/{quote(str(source_id))}/"
+            f"{edge_type}/"
             f"{target_type}/{quote(str(target_id))}"
         )
         data = attributes if attributes else {}
@@ -1694,6 +1697,13 @@ class TigerGraphConnection(Connection):
                 f'    ) WITH STATS="OUTDEGREE_BY_EDGETYPE"'
             )
 
+    def _edge_for_tigergraph_ddl(self, edge: Edge, ec_db: EdgeConfigDBAware) -> Edge:
+        """Deep-copy edge with TigerGraph-effective weights for GSQL (non-mutating on schema)."""
+        ew = ec_db.effective_weights(edge)
+        edge_copy = edge.model_copy(deep=True)
+        edge_copy.weights = ew
+        return edge_copy
+
     def _format_edge_attributes(
         self, edge: Edge, exclude_fields: set[str] | None = None
     ) -> str:
@@ -1729,11 +1739,7 @@ class TigerGraphConnection(Connection):
                 if token in {"source", "target"}:
                     continue
                 if token == "relation":
-                    relation_field = edge.relation_field
-                    if relation_field is None and edge.relation_from_key:
-                        relation_field = "relation"
-                    if relation_field is not None:
-                        fields.add(relation_field)
+                    fields.add(DEFAULT_TIGERGRAPH_RELATION_WEIGHTNAME)
                     continue
                 if token not in {"_from", "_to"}:
                     fields.add(token)
@@ -1826,8 +1832,7 @@ class TigerGraphConnection(Connection):
         else:
             logger.debug(
                 f"No identity discriminator fields found for edge {relation_db}. "
-                f"Identities: {edge.identities}, "
-                f"relation_field: {edge.relation_field}"
+                f"Identities: {edge.identities}, relation: {edge.relation}"
             )
 
         # Combine FROM/TO and discriminator with commas
@@ -2095,11 +2100,23 @@ class TigerGraphConnection(Connection):
 
         # Create one statement per relation with all FROM/TO pairs
         for relation, edge_group in edges_by_relation.items():
+            ddl_edges = [
+                self._edge_for_tigergraph_ddl(e, db_schema.edge_config)
+                for e in edge_group
+            ]
+            ddl_source_vertices = {
+                id(de): source_vertices[id(og)]
+                for de, og in zip(ddl_edges, edge_group, strict=True)
+            }
+            ddl_target_vertices = {
+                id(de): target_vertices[id(og)]
+                for de, og in zip(ddl_edges, edge_group, strict=True)
+            }
             stmt = self._get_edge_group_create_statement(
-                edge_group,
+                ddl_edges,
                 relation_name=relation,
-                source_vertices=source_vertices,
-                target_vertices=target_vertices,
+                source_vertices=ddl_source_vertices,
+                target_vertices=ddl_target_vertices,
             )
             edge_stmts.append(stmt)
 

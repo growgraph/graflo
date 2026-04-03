@@ -37,6 +37,7 @@ from typing import Any, TypeAlias
 from pydantic import ConfigDict, Field, model_validator
 
 from graflo.architecture.base import ConfigBaseModel
+from graflo.architecture.edge_derivation import EdgeDerivation
 from graflo.onto import BaseEnum
 from graflo.onto import DBType
 
@@ -418,6 +419,7 @@ class EdgeIntent(ConfigBaseModel):
     edge: Any
     location: LocationIndex | None = None
     provenance: ProvenancePath | None = None
+    derivation: EdgeDerivation | None = None
 
 
 class LocationIndex(ConfigBaseModel):
@@ -549,12 +551,19 @@ class ExtractionContext(ConfigBaseModel):
             )
         )
 
-    def record_edge_intent(self, *, edge: Any, location: LocationIndex) -> None:
+    def record_edge_intent(
+        self,
+        *,
+        edge: Any,
+        location: LocationIndex,
+        derivation: EdgeDerivation | None = None,
+    ) -> None:
         self.edge_intents.append(
             EdgeIntent(
                 edge=edge,
                 location=location,
                 provenance=ProvenancePath.from_lindex(location),
+                derivation=derivation,
             )
         )
 

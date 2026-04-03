@@ -9,6 +9,7 @@ from graflo.architecture.schema.edge import EdgeConfig
 from graflo.architecture.graph_types import EdgeId, ExtractionContext, LocationIndex
 from graflo.architecture.contract.declarations.transform import ProtoTransform
 from graflo.architecture.schema.vertex import VertexConfig
+from graflo.onto import DBType
 
 
 class ActorConstants:
@@ -30,6 +31,7 @@ class ActorInitContext:
     infer_edge_only: set[EdgeId] = field(default_factory=set)
     infer_edge_except: set[EdgeId] = field(default_factory=set)
     strict_references: bool = False
+    target_db_flavor: DBType | None = None
 
 
 class Actor(ABC):

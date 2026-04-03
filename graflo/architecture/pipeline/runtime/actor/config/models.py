@@ -7,8 +7,8 @@ from typing import Annotated, Any, Literal, cast
 from pydantic import Field as PydanticField, TypeAdapter, model_validator
 
 from graflo.architecture.base import ConfigBaseModel
-from graflo.architecture.schema.edge import EdgeBase
 from graflo.architecture.contract.declarations.transform import DressConfig
+from graflo.architecture.edge_derivation import EdgeDerivation
 
 from .normalize import normalize_actor_step
 
@@ -299,8 +299,8 @@ class TransformCallConfig(ConfigBaseModel):
         return self
 
 
-class EdgeActorConfig(EdgeBase):
-    """Configuration for an EdgeActor."""
+class EdgeActorConfig(ConfigBaseModel):
+    """Configuration for an EdgeActor (logical edge + ingestion derivation; flat YAML)."""
 
     type: Literal["edge"] = PydanticField(
         default="edge", description="Actor type discriminator"
@@ -309,9 +309,58 @@ class EdgeActorConfig(EdgeBase):
         ..., alias="from", description="Source vertex type name"
     )
     target: str = PydanticField(..., alias="to", description="Target vertex type name")
+    relation: str | None = PydanticField(
+        default=None,
+        description="Optional fixed logical relation / edge type name.",
+    )
+    relation_from_key: bool = PydanticField(
+        default=False,
+        description="Ingestion: derive per-row relation label from the location key during assembly.",
+    )
+    description: str | None = PydanticField(
+        default=None,
+        description="Optional semantic description (merged into schema Edge).",
+    )
+    relation_field: str | None = PydanticField(
+        default=None,
+        description="Ingestion: document field name for per-row relationship type.",
+    )
+    match_source: str | None = PydanticField(
+        default=None,
+        description="Ingestion: require this path segment in source locations.",
+    )
+    match_target: str | None = PydanticField(
+        default=None,
+        description="Ingestion: require this path segment in target locations.",
+    )
+    exclude_source: str | None = PydanticField(
+        default=None,
+        description="Ingestion: exclude source locations containing this segment.",
+    )
+    exclude_target: str | None = PydanticField(
+        default=None,
+        description="Ingestion: exclude target locations containing this segment.",
+    )
+    match: str | None = PydanticField(
+        default=None,
+        description="Ingestion: require this segment on both source and target locations.",
+    )
     weights: dict[str, list[str]] | None = PydanticField(
         default=None, description="Weight configuration"
     )
+
+    @property
+    def derivation(self) -> EdgeDerivation:
+        """Normalized ingestion-only fields for assembly/render."""
+        return EdgeDerivation(
+            match_source=self.match_source,
+            match_target=self.match_target,
+            exclude_source=self.exclude_source,
+            exclude_target=self.exclude_target,
+            match=self.match,
+            relation_field=self.relation_field,
+            relation_from_key=self.relation_from_key,
+        )
 
     @model_validator(mode="before")
     @classmethod

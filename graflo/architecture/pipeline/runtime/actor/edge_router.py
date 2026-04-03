@@ -7,6 +7,7 @@ from typing import Any
 
 from .base import Actor, ActorInitContext
 from .config import EdgeRouterActorConfig
+from graflo.architecture.edge_derivation import EdgeDerivation
 from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.graph_types import ExtractionContext, LocationIndex, VertexRep
 from graflo.architecture.schema.vertex import VertexConfig
@@ -181,7 +182,12 @@ class EdgeRouterActor(Actor):
 
         edge = self._get_or_create_edge(source_name, target_name, relation)
         ctx.edge_requests.append((edge, lindex))
-        ctx.record_edge_intent(edge=edge, location=lindex)
+        router_derivation = EdgeDerivation(relation_field=self.relation_field)
+        ctx.record_edge_intent(
+            edge=edge,
+            location=lindex,
+            derivation=None if router_derivation.is_empty() else router_derivation,
+        )
         return ctx
 
     def references_vertices(self) -> set[str]:

@@ -1,8 +1,13 @@
 import logging
 
 import pytest
+from pydantic import ValidationError
 
-from graflo.architecture.schema.edge import Edge, EdgeConfig
+from graflo.architecture.schema.edge import (
+    DEFAULT_TIGERGRAPH_RELATION_WEIGHTNAME,
+    Edge,
+    EdgeConfig,
+)
 from graflo.architecture.database_features import DatabaseProfile
 from graflo.architecture.schema import EdgeConfigDBAware, VertexConfigDBAware
 from graflo.architecture.graph_types import Weight
@@ -101,13 +106,15 @@ def test_edge_finish_init_tigergraph_relation_artifacts_are_not_duplicated(
         {
             "source": "entity",
             "target": "entity",
-            "relation_from_key": True,
         }
     )
+    e.finish_init(vertex_config)
+    ec = EdgeConfig(edges=[e])
+    ec.mark_relation_derived_from_key(e.edge_id)
 
     db_features = DatabaseProfile(db_flavor=DBType.TIGERGRAPH)
     vc_db = VertexConfigDBAware(vertex_config, db_features)
-    ec_db = EdgeConfigDBAware(EdgeConfig(edges=[e]), vc_db, db_features)
+    ec_db = EdgeConfigDBAware(ec, vc_db, db_features)
     first_weights = ec_db.effective_weights(e)
     second_weights = ec_db.effective_weights(e)
     first_direct_names = list(
@@ -118,6 +125,60 @@ def test_edge_finish_init_tigergraph_relation_artifacts_are_not_duplicated(
     )
 
     assert second_direct_names == first_direct_names
+
+
+def test_schema_edge_rejects_relation_field():
+    with pytest.raises(ValidationError):
+        Edge.from_dict(
+            {
+                "source": "entity",
+                "target": "entity",
+                "relation_field": "rel",
+            }
+        )
+
+
+def test_tigergraph_effective_weights_adds_default_relation_attr(vertex_config_kg):
+    vertex_config = VertexConfig.from_dict(vertex_config_kg)
+    edge = Edge.from_dict(
+        {
+            "source": "entity",
+            "target": "entity",
+            "weights": {"direct": ["date"]},
+        }
+    )
+    edge.finish_init(vertex_config)
+    db_features = DatabaseProfile(db_flavor=DBType.TIGERGRAPH)
+    vc_db = VertexConfigDBAware(vertex_config, db_features)
+    ec_db = EdgeConfigDBAware(EdgeConfig(edges=[edge]), vc_db, db_features)
+    w = ec_db.effective_weights(edge)
+    assert w is not None
+    assert DEFAULT_TIGERGRAPH_RELATION_WEIGHTNAME in w.direct_names
+    assert "date" in w.direct_names
+    rt = ec_db.runtime(edge)
+    assert rt.effective_relation_field == DEFAULT_TIGERGRAPH_RELATION_WEIGHTNAME
+    assert rt.store_extracted_relation_as_weight is True
+
+
+def test_tigergraph_runtime_fixed_relation_has_no_relation_attr(vertex_config_kg):
+    vertex_config = VertexConfig.from_dict(vertex_config_kg)
+    edge = Edge.from_dict(
+        {
+            "source": "entity",
+            "target": "entity",
+            "relation": "KNOWS",
+            "weights": {"direct": ["date"]},
+        }
+    )
+    edge.finish_init(vertex_config)
+    db_features = DatabaseProfile(db_flavor=DBType.TIGERGRAPH)
+    vc_db = VertexConfigDBAware(vertex_config, db_features)
+    ec_db = EdgeConfigDBAware(EdgeConfig(edges=[edge]), vc_db, db_features)
+    rt = ec_db.runtime(edge)
+    assert rt.effective_relation_field is None
+    assert rt.store_extracted_relation_as_weight is False
+    w = ec_db.effective_weights(edge)
+    assert w is not None and w.direct_names == ["date"]
 
 
 def test_relationship_merge_property_names_defaults_to_direct_weights(

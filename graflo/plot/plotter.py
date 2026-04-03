@@ -26,6 +26,8 @@ import networkx as nx
 from suthing import FileHandle
 
 from graflo.architecture import GraphManifest
+from graflo.architecture.graph_types import EdgeId
+from graflo.architecture.schema.edge import Edge
 from graflo.architecture.pipeline.runtime.actor import (
     ActorWrapper,
     DescendActor,
@@ -347,17 +349,23 @@ class ManifestPlotter:
             prog=prog,
         )
 
-    def _discover_edges_from_resources(self):
+    def _discover_edges_from_resources(
+        self,
+    ) -> tuple[dict[EdgeId, Edge], dict[EdgeId, str], dict[EdgeId, bool]]:
         """Discover edges from resources by walking through ActorWrappers.
 
         This method finds all EdgeActors in resources and extracts their edges,
-        which may include edges with dynamic relations (relation_field, relation_from_key)
-        that aren't fully represented in edge_config.
+        which may include edges with dynamic relations (EdgeActor derivation) that
+        aren't fully represented in edge_config.
 
         Returns:
-            dict: Dictionary mapping (source, target, relation) to Edge objects
+            discovered_edges: map edge_id → Edge
+            relation_source_by_edge_id: document field for per-row relation (plot hint).
+            relation_from_key_by_edge_id: True when an edge step derives relation from keys.
         """
-        discovered_edges = {}
+        discovered_edges: dict[EdgeId, Edge] = {}
+        relation_source_by_edge_id: dict[EdgeId, str] = {}
+        relation_from_key_by_edge_id: dict[EdgeId, bool] = {}
 
         for resource in self.ingestion_model.resources:
             # Collect all actors from the resource's ActorWrapper
@@ -371,17 +379,30 @@ class ManifestPlotter:
                     # but allowing resource edges to supplement
                     if edge_id not in discovered_edges:
                         discovered_edges[edge_id] = edge
+                    if actor.relation_field is not None:
+                        relation_source_by_edge_id[edge_id] = actor.relation_field
+                    if actor.derivation.relation_from_key:
+                        relation_from_key_by_edge_id[edge_id] = True
 
-        return discovered_edges
+        return (
+            discovered_edges,
+            relation_source_by_edge_id,
+            relation_from_key_by_edge_id,
+        )
 
     @staticmethod
-    def _edge_label(edge) -> str | None:
+    def _edge_label(
+        edge: Edge,
+        *,
+        relation_source_field: str | None = None,
+        relation_from_key: bool = False,
+    ) -> str | None:
         """Build the human-readable edge label for plotting."""
         if edge.relation is not None:
             return edge.relation
-        if edge.relation_field is not None:
-            return f"[{edge.relation_field}]"
-        if edge.relation_from_key:
+        if relation_source_field is not None:
+            return f"[{relation_source_field}]"
+        if relation_from_key:
             return "[key]"
         return None
 
@@ -807,7 +828,11 @@ class ManifestPlotter:
         nodes: list[tuple[str, dict[str, object]]] = []
         rendered_edges: list[tuple] = []
 
-        discovered_edges = self._discover_edges_from_resources()
+        (
+            discovered_edges,
+            relation_source_by_edge_id,
+            relation_from_key_by_edge_id,
+        ) = self._discover_edges_from_resources()
         configured_edges = dict(self.schema.core_schema.edge_config.items())
         all_edges = self._merge_edges(configured_edges, discovered_edges)
 
@@ -825,8 +850,13 @@ class ManifestPlotter:
             )
 
         edge_pairs = [(source, target) for (source, target, _relation) in valid_edges]
-        for (source, target, _relation), edge in valid_edges.items():
-            label = self._edge_label(edge)
+        for edge_id, edge in valid_edges.items():
+            label = self._edge_label(
+                edge,
+                relation_source_field=relation_source_by_edge_id.get(edge_id),
+                relation_from_key=relation_from_key_by_edge_id.get(edge_id, False),
+            )
+            source, target = edge_id[0], edge_id[1]
             source_id = get_auxnode_id(AuxNodeType.VERTEX, vertex=source)
             target_id = get_auxnode_id(AuxNodeType.VERTEX, vertex=target)
             if label is None:

@@ -6,6 +6,7 @@ from typing import Any
 
 from .base import Actor, ActorInitContext
 from .config import EdgeActorConfig
+from graflo.architecture.edge_derivation import EdgeDerivation
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.graph_types import ExtractionContext, LocationIndex
 
@@ -14,11 +15,25 @@ class EdgeActor(Actor):
     """Actor for processing edge data."""
 
     def __init__(self, config: EdgeActorConfig):
-        kwargs = config.model_dump(by_alias=False, exclude_none=True)
-        kwargs.pop("type", None)
-        self.edge = Edge.from_dict(kwargs)
+        self.derivation: EdgeDerivation = config.derivation
+        payload: dict[str, Any] = {
+            "source": config.source,
+            "target": config.target,
+        }
+        if config.relation is not None:
+            payload["relation"] = config.relation
+        if config.description is not None:
+            payload["description"] = config.description
+        if config.weights is not None:
+            payload["weights"] = config.weights
+        self.edge = Edge.from_dict(payload)
         self.vertex_config: Any = None
         self.allowed_vertex_names: set[str] | None = None
+
+    @property
+    def relation_field(self) -> str | None:
+        """Backward-compatible alias for tooling (e.g. plot labels)."""
+        return self.derivation.relation_field
 
     @classmethod
     def from_config(cls, config: EdgeActorConfig) -> EdgeActor:
@@ -26,18 +41,27 @@ class EdgeActor(Actor):
 
     def fetch_important_items(self) -> dict[str, Any]:
         return {
-            k: self.edge.__dict__[k]
-            for k in ["source", "target", "match_source", "match_target"]
-            if k in self.edge.__dict__
+            k: v
+            for k, v in {
+                "source": self.edge.source,
+                "target": self.edge.target,
+                "match_source": self.derivation.match_source,
+                "match_target": self.derivation.match_target,
+            }.items()
+            if v is not None
         }
 
     def finish_init(self, init_ctx: ActorInitContext) -> None:
         self.vertex_config = init_ctx.vertex_config
         self.allowed_vertex_names = init_ctx.allowed_vertex_names
         if self.vertex_config is not None:
+            edge_id = self.edge.edge_id
             init_ctx.edge_config.update_edges(
                 self.edge, vertex_config=self.vertex_config
             )
+            if self.derivation.relation_from_key:
+                init_ctx.edge_config.mark_relation_derived_from_key(edge_id)
+            self.edge = init_ctx.edge_config.edge_for(edge_id)
 
     def __call__(
         self, ctx: ExtractionContext, lindex: LocationIndex, *nargs: Any, **kwargs: Any
@@ -59,7 +83,12 @@ class EdgeActor(Actor):
             return ctx
 
         ctx.edge_requests.append((self.edge, lindex))
-        ctx.record_edge_intent(edge=self.edge, location=lindex)
+        der = None if self.derivation.is_empty() else self.derivation
+        ctx.record_edge_intent(
+            edge=self.edge,
+            location=lindex,
+            derivation=der,
+        )
         return ctx
 
     def references_vertices(self) -> set[str]:

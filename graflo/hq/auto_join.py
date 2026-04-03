@@ -1,6 +1,6 @@
 """Auto-JOIN generation for edge resources.
 
-When a Resource's pipeline contains an EdgeActor whose edge has
+When a Resource's pipeline contains an EdgeActor whose ``derivation`` declares
 ``match_source`` / ``match_target``, and the source/target vertex types
 have known table connectors, this module can auto-generate JoinClauses and
 IS_NOT_NULL filters on the edge resource's table connector so that the
@@ -62,7 +62,8 @@ def enrich_edge_connector_with_joins(
 
     for ea in edge_actors:
         edge = ea.edge
-        if not edge.match_source or not edge.match_target:
+        der = ea.derivation
+        if not der.match_source or not der.match_target:
             continue
 
         source_info = _vertex_table_info(edge.source, bindings, vertex_config)
@@ -86,7 +87,7 @@ def enrich_edge_connector_with_joins(
                 table=src_table,
                 schema_name=src_schema,
                 alias=src_alias,
-                on_self=edge.match_source,
+                on_self=der.match_source,
                 on_other=src_pk,
                 join_type="LEFT",
             )
@@ -96,7 +97,7 @@ def enrich_edge_connector_with_joins(
                 table=tgt_table,
                 schema_name=tgt_schema,
                 alias=tgt_alias,
-                on_self=edge.match_target,
+                on_self=der.match_target,
                 on_other=tgt_pk,
                 join_type="LEFT",
             )

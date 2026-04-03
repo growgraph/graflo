@@ -51,3 +51,10 @@ def test_csv_edge_weights_one_edge_per_row(
     assert total_edges == len(relations_data_csv_edge_weights), (
         f"Expected {len(relations_data_csv_edge_weights)} edges (1 per row), got {total_edges}"
     )
+
+    # Direct weights (e.g. date) must be copied onto the edge payload. They can live on
+    # merged vertex docs after VertexActor passthrough, not only on VertexRep.ctx; null
+    # merge keys break Neo4j MERGE on relationship properties.
+    for edocs in graph.edges.values():
+        for _u, _v, w in edocs:
+            assert w.get("date") is not None

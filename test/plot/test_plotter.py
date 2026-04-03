@@ -3,6 +3,8 @@ from types import SimpleNamespace
 import networkx as nx
 import pytest
 
+from graflo.architecture.pipeline.runtime.actor import EdgeActor
+from graflo.architecture.pipeline.runtime.actor.config import EdgeActorConfig
 from graflo.architecture.schema.edge import Edge
 from graflo.plot.plotter import ManifestPlotter
 
@@ -98,7 +100,11 @@ def test_plot_vc2vc_filters_unknown_endpoints_and_logs_error(monkeypatch, caplog
     monkeypatch.setattr(
         plotter,
         "_discover_edges_from_resources",
-        lambda: {discovered_invalid_edge.edge_id: discovered_invalid_edge},
+        lambda: (
+            {discovered_invalid_edge.edge_id: discovered_invalid_edge},
+            {},
+            {},
+        ),
     )
 
     captured = {}
@@ -119,21 +125,26 @@ def test_plot_vc2vc_filters_unknown_endpoints_and_logs_error(monkeypatch, caplog
 
 
 def test_plot_vc2vc_preserves_labels_and_partition_grouping(monkeypatch):
-    edge_relation_field = Edge.from_dict(
-        {"source": "a", "target": "b", "relation_field": "edge_kind"}
+    edge_ab_actor = EdgeActor(
+        EdgeActorConfig.model_validate(
+            {"from": "a", "to": "b", "relation_field": "edge_kind"}
+        )
     )
-    edge_relation_key = Edge.from_dict(
-        {"source": "b", "target": "c", "relation_from_key": True}
+    edge_bc_actor = EdgeActor(
+        EdgeActorConfig.model_validate(
+            {"from": "b", "to": "c", "relation_from_key": True}
+        )
+    )
+    resource = SimpleNamespace()
+    resource.root = SimpleNamespace(
+        collect_actors=lambda: [edge_ab_actor, edge_bc_actor]
     )
 
     plotter = _build_plotter(
-        configured_edges={
-            edge_relation_field.edge_id: edge_relation_field,
-            edge_relation_key.edge_id: edge_relation_key,
-        },
+        configured_edges={},
         vertex_set={"a", "b", "c"},
     )
-    monkeypatch.setattr(plotter, "_discover_edges_from_resources", lambda: {})
+    plotter.ingestion_model = SimpleNamespace(resources=[resource])
 
     captured = {}
 
@@ -173,7 +184,11 @@ def test_plot_vc2vc_appends_schema_version_to_stem(monkeypatch):
         vertex_set={"a", "b"},
     )
     plotter.schema.metadata.version = "2.3.4"
-    monkeypatch.setattr(plotter, "_discover_edges_from_resources", lambda: {})
+    monkeypatch.setattr(
+        plotter,
+        "_discover_edges_from_resources",
+        lambda: ({}, {}, {}),
+    )
     captured = {}
 
     def _fake_to_agraph(graph):
