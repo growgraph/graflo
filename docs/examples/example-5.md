@@ -121,7 +121,7 @@ The inferred schema automatically includes:
   - `users → products` (from `purchases` table) with **properties**: `purchase_date`, `quantity`, `total_amount`
   - `users → users` (from `follows` table) with **properties**: `created_at`
 - **Resources**: Automatically created for each table with appropriate actors
-- **Indexes**: Primary keys drive vertex identity / indexing; foreign keys drive edge mappings (see `database_features` for secondary indexes)
+- **Indexes**: Primary keys drive vertex identity / indexing; foreign keys drive edge mappings (see **`schema.db_profile`** / `vertex_indexes` for secondary indexes)
 - **Edge payload**: Additional columns in edge tables become edge **properties** on the logical `Edge`
 
 ### Graph Structure Visualization

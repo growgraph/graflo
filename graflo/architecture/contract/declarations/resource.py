@@ -246,8 +246,11 @@ class Resource(ConfigBaseModel):
     drop_trivial_input_fields: bool = PydanticField(
         default=False,
         description=(
-            "If True, drop top-level input keys whose value is None or '' before the pipeline runs. "
-            "Does not recurse into nested dicts or lists. Default False."
+            "If True, remove top-level input keys whose value is None or the empty string before "
+            "the actor pipeline runs. Only the outer dict is filtered: nested dicts and list "
+            "elements are left unchanged, and keys whose values are containers (dict/list) are "
+            "kept even when empty. Numeric 0 and boolean False are kept. Use with wide or "
+            "sparse tabular rows so VertexActor projection sees fewer irrelevant columns."
         ),
     )
 

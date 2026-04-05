@@ -42,11 +42,12 @@ from graflo.architecture.schema.db_aware import EdgeConfigDBAware
 from graflo.architecture.schema.edge import DEFAULT_TIGERGRAPH_RELATION_WEIGHTNAME, Edge
 from graflo.architecture.database_features import DatabaseProfile
 from graflo.architecture.schema import VertexConfigDBAware
-from graflo.architecture.graph_types import Index
+from graflo.architecture.graph_types import EdgeId, Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.vertex import FieldType, Vertex, VertexConfig
 from graflo.db.conn import Connection, SchemaExistsError, consume_insert_edges_kwargs
 from graflo.db.connection import TigergraphConfig
+from graflo.db.tigergraph.gsql_literals import gsql_default_literal
 from graflo.db.tigergraph.onto import (
     TIGERGRAPH_TYPE_ALIASES,
     VALID_TIGERGRAPH_TYPES,
@@ -1618,17 +1619,49 @@ class TigerGraphConnection(Connection):
         """Close connection - no cleanup needed (using direct REST API calls)."""
         pass
 
-    def _get_vertex_add_statement(self, vertex: Vertex, vertex_config) -> str:
+    def _gsql_vertex_field_def(
+        self,
+        *,
+        logical_vertex_name: str,
+        field_name: str,
+        tg_type: str,
+        db_profile: DatabaseProfile | None,
+    ) -> str:
+        """Single attribute fragment: ``name TYPE`` or ``name TYPE DEFAULT ...``."""
+        line = f"{field_name} {tg_type}"
+        if db_profile is None or not db_profile.has_vertex_property_default(
+            logical_vertex_name, field_name
+        ):
+            return line
+        raw = db_profile.vertex_property_default(logical_vertex_name, field_name)
+        if raw is None:
+            return line
+        lit = gsql_default_literal(raw)
+        return f"{line} DEFAULT {lit}"
+
+    def _get_vertex_add_statement(
+        self,
+        vertex: Vertex,
+        vertex_config,
+        *,
+        db_profile: DatabaseProfile | None = None,
+    ) -> str:
         """Generate ADD VERTEX statement for a schema change job.
 
         Args:
             vertex: Vertex object to generate statement for
             vertex_config: Vertex configuration
+            db_profile: Optional profile for ``default_property_values`` (GSQL DEFAULT clauses).
 
         Returns:
             str: GSQL ADD VERTEX statement
         """
+        profile = db_profile
+        if profile is None and hasattr(vertex_config, "db_profile"):
+            profile = getattr(vertex_config, "db_profile", None)
+
         vertex_dbname = vertex_config.vertex_dbname(vertex.name)
+        logical = vertex.name
         index_fields = vertex_config.identity_fields(vertex.name)
 
         if len(index_fields) == 0:
@@ -1672,9 +1705,22 @@ class TigerGraphConnection(Connection):
                 if name != primary_field_name
             ]
 
-            # Build field list: PRIMARY_ID comes first, then other fields
-            field_parts = [f"PRIMARY_ID {primary_field_name} {primary_field_type}"]
-            field_parts.extend([f"{name} {ftype}" for name, ftype in other_fields])
+            primary_attr = self._gsql_vertex_field_def(
+                logical_vertex_name=logical,
+                field_name=primary_field_name,
+                tg_type=primary_field_type,
+                db_profile=profile,
+            )
+            field_parts = [f"PRIMARY_ID {primary_attr}"]
+            for name, ftype in other_fields:
+                field_parts.append(
+                    self._gsql_vertex_field_def(
+                        logical_vertex_name=logical,
+                        field_name=name,
+                        tg_type=ftype,
+                        db_profile=profile,
+                    )
+                )
 
             field_definitions = ",\n        ".join(field_parts)
 
@@ -1685,7 +1731,15 @@ class TigerGraphConnection(Connection):
             )
         else:
             # Composite key: use PRIMARY KEY syntax
-            field_parts = [f"{name} {ftype}" for name, ftype in all_fields]
+            field_parts = [
+                self._gsql_vertex_field_def(
+                    logical_vertex_name=logical,
+                    field_name=name,
+                    tg_type=ftype,
+                    db_profile=profile,
+                )
+                for name, ftype in all_fields
+            ]
             vindex = "(" + ", ".join(index_fields) + ")"
             field_parts.append(f"PRIMARY KEY {vindex}")
 
@@ -1708,13 +1762,20 @@ class TigerGraphConnection(Connection):
         return edge_copy
 
     def _format_edge_attributes(
-        self, edge: Edge, exclude_fields: set[str] | None = None
+        self,
+        edge: Edge,
+        exclude_fields: set[str] | None = None,
+        *,
+        db_profile: DatabaseProfile | None = None,
+        edge_id: EdgeId | None = None,
     ) -> str:
         """Format edge attributes for GSQL ADD DIRECTED EDGE statement.
 
         Args:
             edge: Edge object to format attributes for
             exclude_fields: Optional set of field names to exclude from attributes
+            db_profile: Optional profile for ``default_property_values`` (GSQL DEFAULT).
+            edge_id: Logical edge identity; defaults to ``edge.edge_id``.
 
         Returns:
             str: Formatted attribute string (e.g., "    date STRING,\n    relation STRING")
@@ -1725,12 +1786,22 @@ class TigerGraphConnection(Connection):
         if exclude_fields is None:
             exclude_fields = set()
 
+        eid = edge_id if edge_id is not None else edge.edge_id
+
         attr_parts = []
         for field in edge.properties:
             field_name = field.name
             if field_name not in exclude_fields:
                 field_type = self._get_tigergraph_type(field.type)
-                attr_parts.append(f"    {field_name} {field_type}")
+                segment = f"{field_name} {field_type}"
+                if db_profile is not None and db_profile.has_edge_property_default(
+                    eid, field_name
+                ):
+                    raw = db_profile.edge_property_default(eid, field_name)
+                    if raw is not None:
+                        lit = gsql_default_literal(raw)
+                        segment = f"{segment} DEFAULT {lit}"
+                attr_parts.append(f"    {segment}")
 
         return ",\n".join(attr_parts)
 
@@ -1755,6 +1826,7 @@ class TigerGraphConnection(Connection):
         relation_name: str,
         source_vertex: str,
         target_vertex: str,
+        db_profile: DatabaseProfile | None = None,
     ) -> str:
         """Generate ADD DIRECTED EDGE statement for a schema change job.
 
@@ -1784,7 +1856,10 @@ class TigerGraphConnection(Connection):
 
         # Format edge attributes, excluding discriminator fields (they're in DISCRIMINATOR clause)
         edge_attrs = self._format_edge_attributes(
-            edge, exclude_fields=indexed_field_names
+            edge,
+            exclude_fields=indexed_field_names,
+            db_profile=db_profile,
+            edge_id=edge.edge_id,
         )
 
         # Build discriminator clause with all indexed fields
@@ -1849,6 +1924,7 @@ class TigerGraphConnection(Connection):
         relation_name: str,
         source_vertices: dict[int, str],
         target_vertices: dict[int, str],
+        db_profile: DatabaseProfile | None = None,
     ) -> str:
         """Generate ADD DIRECTED EDGE statement for a group of edges with the same relation.
 
@@ -1886,7 +1962,10 @@ class TigerGraphConnection(Connection):
 
         # Format edge attributes, excluding discriminator fields
         edge_attrs = self._format_edge_attributes(
-            first_edge, exclude_fields=indexed_field_names
+            first_edge,
+            exclude_fields=indexed_field_names,
+            db_profile=db_profile,
+            edge_id=first_edge.edge_id,
         )
 
         # Get field types for discriminator fields
@@ -2056,7 +2135,11 @@ class TigerGraphConnection(Connection):
             # Validate vertex name
             vertex_dbname = db_schema.vertex_config.vertex_dbname(vertex.name)
             _validate_tigergraph_schema_name(vertex_dbname, "vertex")
-            stmt = self._get_vertex_add_statement(vertex, db_schema.vertex_config)
+            stmt = self._get_vertex_add_statement(
+                vertex,
+                db_schema.vertex_config,
+                db_profile=db_schema.db_profile,
+            )
             vertex_stmts.append(stmt)
 
         # Edges - group by relation since TigerGraph requires edges of the same type
@@ -2098,6 +2181,7 @@ class TigerGraphConnection(Connection):
                 relation_name=relation,
                 source_vertices=ddl_source_vertices,
                 target_vertices=ddl_target_vertices,
+                db_profile=db_schema.db_profile,
             )
             edge_stmts.append(stmt)
 
@@ -2512,8 +2596,7 @@ class TigerGraphConnection(Connection):
         for field in fields:
             # Field type should already be set (STRING if was None)
             field_type = field.type or FieldType.STRING.value
-            # Format as: field_name TYPE
-            # TODO: Add DEFAULT clause support if needed in the future
+            # Format as: field_name TYPE (DEFAULT clauses live in schema.db_profile.default_property_values)
             field_list.append(f"{field.name} {field_type}")
 
         return ",\n    ".join(field_list)
@@ -3168,8 +3251,9 @@ class TigerGraphConnection(Connection):
 
                 # 4. Format attributes for TigerGraph REST++ API
                 # TigerGraph requires attribute values to be wrapped in {"value": ...}
+                # Include falsy but valid values (0, False, "") — only None is omitted.
                 formatted_attributes = {
-                    k: {"value": v} for k, v in clean_record.items() if v
+                    k: {"value": v} for k, v in clean_record.items() if v is not None
                 }
 
                 # 5. Add the record attributes to the map using the composite ID as the key
