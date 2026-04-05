@@ -96,7 +96,7 @@ flowchart LR
 
 - **Bindings** (`FileConnector`, `TableConnector`, `SparqlConnector`) describe *where* data comes from (file paths, SQL tables, SPARQL endpoints). Multiple connectors may attach to the same ingestion resource name; optional **`connector_connection`** entries assign each SQL/SPARQL connector a **`conn_proxy`** by **connector `name` or `hash`** (not by resource name). The `ConnectionProvider` turns that label into real connection config at runtime so manifests stay credential-free.
 - **DataSources** (`AbstractDataSource` subclasses) handle *how* to read data in batches. Each carries a `DataSourceType` and is registered in the `DataSourceRegistry`.
-- **Resources** define *what* to extract — each `Resource` is a reusable actor pipeline (descend → transform → vertex → edge) that maps raw records to graph elements. Set **`drop_trivial_input_fields`: `true`** on a resource to strip top-level `null` / `""` fields from each row before the pipeline (optional, default `false`).
+- **Resources** define *what* to extract — each `Resource` is a reusable actor pipeline (descend → transform → vertex → edge) that maps raw records to graph elements. Optional **`drop_trivial_input_fields`: `true`** removes top-level keys whose value is `null` or `""` **before** actors run (shallow only; `0` and `false` stay). **TigerGraph** physical defaults for missing attributes belong in **`schema.db_profile.default_property_values`** (GSQL `DEFAULT` at DDL time), not in the covariant `GraphContainer` assembly path.
 - **GraphContainer** (covariant graph representation) collects the resulting vertices and edges in a database-independent format.
 - **DBWriter** pushes the graph data into the target LPG store (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph).
 
@@ -538,11 +538,11 @@ Ingestion-only controls (**`relation_field`**, **`relation_from_key`**, **`match
 Vertex fields that should appear on edges are configured via **edge actor** options (e.g. **`vertex_weights`**, maps), not via a `weights` block on the logical `Edge`. DB layers may still use an internal `WeightConfig` built from `Edge.properties` for backends that need it.
 
 #### Edge behavior control
-- Edge physical variants should be modeled with `database_features.edge_specs[*].purpose`.
+- Edge physical variants should be modeled with `schema.db_profile.edge_specs[*].purpose` (YAML) / `db_profile.edge_specs[*].purpose` (in code).
 - `Edge.aux` is no longer a behavior switch.
 
 > DB-only physical edge metadata (including `purpose`) is configured under
-> `database_features.edge_specs`, not on `Edge`.
+> **`schema.db_profile.edge_specs`**, not on `Edge`.
 
 #### Matching and filtering (ingestion)
 - **`match_source`** / **`match_target`** / **`match`**: edge **actor** options for branch selection when building edges from hierarchical documents
@@ -550,7 +550,7 @@ Vertex fields that should appear on edges are configured via **edge actor** opti
 #### Advanced logical configuration
 - **`type`**: Edge type (DIRECT or INDIRECT)
 - **`by`**: Vertex name for indirect edges
-- DB-specific edge storage/type names are resolved from `database_features`
+- DB-specific edge storage/type names are resolved from **`schema.db_profile`**
   through DB-aware wrappers (`EdgeConfigDBAware`), not stored on `Edge`.
 
 #### When to use what
@@ -794,12 +794,12 @@ Transform steps are executed in the order they appear in `apply`.
 
 ### Schema & Abstraction
 - **Declarative LPG schema** — `Schema` defines vertices, edges, identity rules, and edge **`properties`** in YAML or Python; the single source of truth for graph structure. Transforms/resources are defined in `IngestionModel`.
-- **Database abstraction** — one logical schema, multiple backends; DB-specific behavior is applied in DB-aware projection/writer stages (`Schema.resolve_db_aware(...)`, `VertexConfigDBAware`, `EdgeConfigDBAware`).
+- **Database abstraction** — one logical schema, multiple backends; each target uses its own `Connection` type behind `ConnectionManager` / `DBWriter`, with DB-specific behavior applied in DB-aware projection (`Schema.resolve_db_aware(...)`, `VertexConfigDBAware`, `EdgeConfigDBAware`).
 - **Resource abstraction** — each `Resource` is a reusable actor pipeline that maps raw records to graph elements, decoupled from data retrieval.
 - **DataSourceRegistry** — pluggable `AbstractDataSource` adapters (`FILE`, `SQL`, `API`, `SPARQL`, `IN_MEMORY`) bound to Resources by name.
 
 ### Schema Features
-- **Flexible Identity + Indexing** — logical identity plus DB-specific secondary indexes.
+- **Flexible Identity + Indexing** — logical identity plus DB-specific secondary indexes (`schema.db_profile.vertex_indexes`, `edge_specs`, …).
 - **Typed properties** — optional type information on vertex and edge **`properties`** (INT, FLOAT, STRING, DATETIME, BOOL).
 - **Hierarchical Edge Definition** — define edges at any level of nested documents (via resource **edge** steps and actors).
 - **Relationship payload** — logical edges declare **`properties`**; additional payload from vertices or row shape is wired in **edge actors** (`vertex_weights`, maps, etc.) with optional types.
@@ -893,9 +893,9 @@ Schema comparison gives you a predictable transition path between versions. Inst
 - **Smart Caching**: Minimize redundant operations
 
 ## Best Practices
-1. Use compound identity fields for natural keys, and `database_features` indexes for query performance
+1. Use compound identity fields for natural keys, and **`schema.db_profile`** secondary indexes for query performance
 2. Leverage blank vertices for complex relationship modeling
-3. Define transforms at the schema level for reusability
+3. Define reusable transforms in **`ingestion_model.transforms`** and reference them from resource steps
 4. Configure appropriate batch sizes based on your data volume
 5. Enable parallel processing for large datasets
 6. Choose the right relationship attribute based on your data format:

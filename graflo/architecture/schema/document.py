@@ -33,7 +33,10 @@ class Schema(ConfigBaseModel):
     )
     db_profile: DatabaseProfile = PydanticField(
         default_factory=DatabaseProfile,
-        description="Database-specific physical profile (secondary indexes, naming, etc.).",
+        description=(
+            "Database-specific physical profile (secondary indexes, naming, TigerGraph GSQL "
+            "DEFAULT overrides via default_property_values, etc.)."
+        ),
     )
 
     @model_validator(mode="after")

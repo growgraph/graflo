@@ -64,7 +64,7 @@ Defines the graph contract.
 - `metadata`: human-facing identity (`name`, optional `version`)
 - `graph.vertex_config`: vertex types, **`properties`**, identity keys
 - `graph.edge_config`: source/target relationships, optional `relation`, edge **`properties`**, `identities`
-- `db_profile`: DB-specific physical behavior (indexes, naming, backend details)
+- `db_profile`: DB-specific physical behavior (indexes, naming, **`default_property_values`** for TigerGraph GSQL `DEFAULT` on vertex/edge attributes, backend details)
 
 Use `schema` for **what graph exists**.
 
@@ -74,7 +74,26 @@ Defines ingestion behavior.
 
 - `resources`: named pipelines (`name`) with ordered actor steps
 - `transforms`: reusable named transforms as a **list** (each entry must define `name`) and referenced from resources via `transform.call.use`
-- Optional per-resource flags include **`drop_trivial_input_fields`** (default `false`): when `true`, top-level `null` or `""` fields are removed from each row before the pipeline—handy for sparse wide tables without extra transforms (shallow only; nested objects are unchanged).
+- Optional per-resource flags include **`drop_trivial_input_fields`** (default `false`): when `true`, top-level keys whose value is `null` or `""` are removed **before** the actor pipeline runs. Only the top-level dict is filtered (nested structures are not recursed); numeric zero and boolean false are kept. Useful for sparse wide tables (CSV/SQL) without custom transforms.
+
+**TigerGraph attribute defaults (schema / `db_profile`, not ingestion):** under `schema.db_profile`, optional **`default_property_values`** declares GSQL `DEFAULT` literals per logical vertex property and per logical edge type, for example:
+
+```yaml
+db_profile:
+  db_flavor: tigergraph
+  default_property_values:
+    vertices:
+      Sensor:
+        reading: -1.0
+    edges:
+      - source: Person
+        target: Company
+        relation: works_at
+        values:
+          since_year: 0
+```
+
+This corresponds to overriding TigerGraph’s built-in defaults (e.g. `reading FLOAT DEFAULT -1.0`); see the [TigerGraph “Defining a Graph Schema”](https://docs.tigergraph.com/gsql-ref/4.2/ddl-and-loading/defining-a-graph-schema) documentation.
 
 Use `ingestion_model` for **how source records become vertices/edges**.
 

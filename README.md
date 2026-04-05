@@ -1,10 +1,5 @@
-# GraFlo <img src="https://raw.githubusercontent.com/growgraph/graflo/main/docs/assets/favicon.ico" alt="graflo logo" style="height: 32px; width:32px;"/>
+# GraFlo — Graph Schema & Transformation Language (GSTL) <img src="https://raw.githubusercontent.com/growgraph/graflo/main/docs/assets/favicon.ico" alt="graflo logo" style="height: 32px; width:32px;"/>
 
-**GraFlo** is a **Graph Schema & Transformation Language (GSTL)** for **labeled property graphs (LPGs)**. You describe the graph once—**vertices and edges**, typed **`properties`**, identity, and optional backend hints—in **YAML or Python**. You describe how raw records become that graph using **resource** pipelines (an expressive sequence of **actors**: descend, transform, vertex, edge, and routers). **Connectors** attach files, SQL tables, SPARQL/RDF, APIs, or in-memory data to those pipelines. **`GraphEngine`** and **`Caster`** then infer schema when possible, project the logical model for a chosen database, and ingest.
-
-**Why it matters:** the **logical graph** is **database-agnostic**; the same manifest can target **ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, or NebulaGraph** without rewriting your transformation story. Backend-specific names, defaults, and indexes are applied only at **DB-aware projection** (`Schema.resolve_db_aware(...)`).
-
-> **Package Renamed**: This package was formerly known as `graphcast`.
 
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg) 
 [![PyPI version](https://badge.fury.io/py/graflo.svg)](https://badge.fury.io/py/graflo)
@@ -13,60 +8,43 @@
 [![pre-commit](https://github.com/growgraph/graflo/actions/workflows/pre-commit.yml/badge.svg)](https://github.com/growgraph/graflo/actions/workflows/pre-commit.yml)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.15446131.svg)]( https://doi.org/10.5281/zenodo.15446131)
 
-## Core ideas
+**GraFlo** is a manifest-driven toolkit for **labeled property graphs (LPGs)**: describe vertices, edges, and ingestion (`GraphManifest` — YAML or Python), then project and load into a target graph database.
 
-| Idea | What you get |
-|------|----------------|
-| **Logical LPG first** | One declarative **schema** (`Vertex` / `Edge` with **`properties`**) is the source of truth—not a particular vendor’s DDL. |
-| **Expressive transformation** | **`Resource`** pipelines compose small **actors** so wide tables, nested JSON, RDF, or API payloads map cleanly to vertices and edges—reusable across sources. |
-| **Separation of concerns** | **Sources** (connectors + `DataSourceRegistry`), **shape of the graph** (`Schema`), and **ingestion steps** (`IngestionModel`) evolve independently. |
-| **Safe wiring** | Optional **`connector_connection`** maps connectors to **`conn_proxy`** labels so manifests stay free of secrets; a runtime **`ConnectionProvider`** supplies credentials. |
+### What you get
 
-## Overview
+- **One pipeline, several graph databases** — The same manifest targets ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, or NebulaGraph; `DatabaseProfile` and DB-aware types absorb naming, defaults, and indexing differences.
+- **Explicit identities** — Vertex identity fields and indexes back upserts so reloads merge on keys instead of blindly duplicating nodes.
+- **Reusable ingestion** — `Resource` actor pipelines (including **vertex_router** / **edge_router** steps) bind to files, SQL, SPARQL/RDF, APIs, or in-memory batches via `Bindings` and the `DataSourceRegistry`.
 
-GraFlo separates *what the graph looks like* from *where data comes from* and *which database stores it*.
+### What’s in the manifest
 
-```mermaid
-%%{ init: { 
-  "theme": "base",
-  "themeVariables": {
-    "primaryColor": "#90CAF9",
-    "primaryTextColor": "#111111",
-    "primaryBorderColor": "#1E88E5",
-    "lineColor": "#546E7A",
-    "secondaryColor": "#A5D6A7",
-    "tertiaryColor": "#CE93D8"
-  }
-} }%%
+- **`schema`** — `Schema`: metadata, **`core_schema`** (vertices, edges, typed **`properties`**, identities), and **`db_profile`** (`DatabaseProfile`: target flavor, storage names, secondary indexes, TigerGraph `default_property_values`, …).
+- **`ingestion_model`** — `IngestionModel`: named **`resources`** (actor sequences: *descend*, *transform*, *vertex*, *edge*, …) and a registry of reusable **`transforms`**.
+- **`bindings`** — Connectors (e.g. `FileConnector`, `TableConnector`, `SparqlConnector`) plus **`resource_connector`** wiring. Optional **`connector_connection`** maps connectors to **`conn_proxy`** labels so YAML stays secret-free; a runtime **`ConnectionProvider`** supplies credentials.
 
-flowchart LR
-    SI["<b>Source Instance</b><br/>File · SQL · SPARQL · API"]
-    R["<b>Resource</b><br/>Actor Pipeline"]
-    GS["<b>Logical Graph Schema</b><br/>Vertex/Edge Definitions<br/>Identities · DB Profile"]
-    DBA["<b>DB-aware Projection</b><br/>DatabaseProfile<br/>VertexConfigDBAware · EdgeConfigDBAware"]
-    GC["<b>GraphContainer</b><br/>Covariant Graph Representation"]
-    DB["<b>Graph DB (LPG)</b><br/>ArangoDB · Neo4j · TigerGraph · Others"]
+### Runtime path
 
-    SI --> R --> GS --> GC --> DBA --> DB
-```
+1. **Source instance** — Batches from a `DataSourceType` adapter (`FileDataSource`, `SQLDataSource`, `SparqlEndpointDataSource`, `APIDataSource`, …).
+2. **Resource (actors)** — Maps records to graph elements against the logical schema (validated during `IngestionModel.finish_init` / pipeline execution).
+3. **`GraphContainer`** — Intermediate, database-agnostic vertex/edge batches.
+4. **DB-aware projection** — `Schema.resolve_db_aware()` plus `VertexConfigDBAware` / `EdgeConfigDBAware` for the active `DBType`.
+5. **Graph DB** — `DBWriter` + `ConnectionManager` and the backend-specific `Connection` implementation.
 
-**Source Instance** → **Resource** (actors) → **Logical Graph Schema** → **Covariant Graph Representation** (`GraphContainer`) → **DB-aware Projection** → **Graph DB**
-
-| Stage | Role | Code |
+| Piece | Role | Code |
 |-------|------|------|
-| **Source Instance** | A concrete data artifact — a CSV file, a PostgreSQL table, a SPARQL endpoint, a `.ttl` file. | `AbstractDataSource` subclasses (`FileDataSource`, `SQLDataSource`, `SparqlEndpointDataSource`, …) with a `DataSourceType`. |
-| **Resource** | A reusable transformation pipeline — actor steps (descend, transform, vertex, edge, vertex_router, edge_router) that map raw records to graph elements. Data sources bind to Resources by name via the `DataSourceRegistry`. | `Resource` (part of `IngestionModel`). |
-| **Graph Schema** | Declarative logical vertex/edge definitions, identities, typed **properties**, and DB profile — defined in YAML or Python. | `Schema`, `VertexConfig`, `EdgeConfig`. |
-| **Covariant Graph Representation** | A database-independent collection of vertices and edges. | `GraphContainer`. |
-| **DB-aware Projection** | Resolves DB-specific naming/default/index behavior from logical schema + `DatabaseProfile`. | `Schema.resolve_db_aware()`, `VertexConfigDBAware`, `EdgeConfigDBAware`. |
-| **Graph DB** | The target LPG store — same API for all supported databases. | `ConnectionManager`, `DBWriter`, DB connectors. |
+| **Logical graph schema** | Manifest `schema`: vertex/edge definitions, identities, typed **properties**, DB profile. Constrains pipeline output and projection; not a separate queue between steps. | `Schema`, `VertexConfig`, `EdgeConfig` (under `core_schema`). |
+| **Source instance** | Concrete input: file, SQL table, SPARQL endpoint, API payload, in-memory rows. | `AbstractDataSource` + `DataSourceType`. |
+| **Resource** | Ordered actors; resources are looked up by name when sources are registered. | `Resource` in `IngestionModel`. |
+| **Covariant graph** (`GraphContainer`) | Batches of vertices/edges before load. | `GraphContainer`. |
+| **DB-aware projection** | Physical names, defaults, indexes for the target. | `Schema.resolve_db_aware()`, `VertexConfigDBAware`, `EdgeConfigDBAware`. |
+| **Graph DB** | Target LPG; each `DBType` has its own connector, orchestrated the same way. | `ConnectionManager`, `DBWriter`, per-backend `Connection`. |
 
 ### Supported source types (`DataSourceType`)
 
 | DataSourceType | Connector | DataSource | Schema inference |
 |---|---|---|---|
 | `FILE` — CSV / JSON / JSONL / Parquet | `FileConnector` | `FileDataSource` | manual |
-| `SQL` — PostgreSQL tables | `TableConnector` | `SQLDataSource` | automatic (3NF with PK/FK) |
+| `SQL` — relational tables (docs focus on PostgreSQL; other engines via SQLAlchemy where supported) | `TableConnector` | `SQLDataSource` | automatic for PostgreSQL-style 3NF (PK/FK heuristics) |
 | `SPARQL` — RDF files (`.ttl`, `.rdf`, `.n3`) | `SparqlConnector` | `RdfFileDataSource` | automatic (OWL/RDFS ontology) |
 | `SPARQL` — SPARQL endpoints (Fuseki, …) | `SparqlConnector` | `SparqlEndpointDataSource` | automatic (OWL/RDFS ontology) |
 | `API` — REST APIs | — | `APIDataSource` | manual |
@@ -74,18 +52,16 @@ flowchart LR
 
 ### Supported targets
 
-ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph — same API for all.
+The graph engines listed in **What you get** are the supported **output** `DBType` values in `graflo.onto`. Each backend uses its own `Connection` implementation under the shared `ConnectionManager` / `DBWriter` / `GraphEngine` flow.
 
-## Features
+## More capabilities
 
-- **Declarative LPG schema** — Define vertices, edges, vertex identity, secondary DB indexes, edge **properties**, and transforms in YAML or Python. The `Schema` is the single source of truth, independent of source or target.
-- **Database abstraction** — One logical schema, one API. Target ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, or NebulaGraph without rewriting pipelines. DB idiosyncrasies are handled in DB-aware projection (`Schema.resolve_db_aware(...)`) and connector/writer stages.
-- **Resource abstraction** — Each `Resource` defines a reusable actor pipeline (descend, transform, vertex, edge, plus **VertexRouter** and **EdgeRouter** for dynamic type-based routing) that maps raw records to graph elements. Data sources bind to Resources by name via the `DataSourceRegistry`, decoupling transformation logic from data retrieval.
-- **SPARQL & RDF support** — Query SPARQL endpoints (e.g. Apache Fuseki), read `.ttl`/`.rdf`/`.n3` files, and auto-infer schemas from OWL/RDFS ontologies (`rdflib` and `SPARQLWrapper` ship with the default package).
-- **Schema inference** — Generate graph schemas from PostgreSQL 3NF databases (PK/FK heuristics) or from OWL/RDFS ontologies (`owl:Class` → vertices, `owl:ObjectProperty` → edges, `owl:DatatypeProperty` → vertex properties).
-- **Typed properties** — Vertex and edge **`properties`** may carry types (`INT`, `FLOAT`, `STRING`, `DATETIME`, `BOOL`) for validation and database-specific optimisation.
-- **Parallel batch processing** — Configurable batch sizes and multi-core execution.
-- **Credential-free source contracts** — `Bindings.connector_connection` maps each `TableConnector` / `SparqlConnector` (by **connector name** or **hash**) to a `conn_proxy` label. Manifests stay free of secrets; a runtime `ConnectionProvider` resolves each proxy to concrete `GeneralizedConnConfig` (for example PostgreSQL or SPARQL endpoint settings). Ingestion resource names are separate and may map to multiple connectors.
+- **SPARQL & RDF** — Endpoints and RDF files (`.ttl`, `.rdf`, `.n3`, …); optional OWL/RDFS schema inference (`rdflib`, `SPARQLWrapper` in the default install).
+- **Schema inference** — From PostgreSQL-style 3NF layouts (PK/FK heuristics) or from OWL/RDFS (`owl:Class` → vertices, `owl:ObjectProperty` → edges, `owl:DatatypeProperty` → vertex fields).
+- **Schema migrations** — Plan and apply guarded schema deltas (`migrate_schema` console script → `graflo.cli.migrate_schema`; library in `graflo.migrate`; see docs).
+- **Typed `properties`** — Optional field types (`INT`, `FLOAT`, `STRING`, `DATETIME`, `BOOL`) on vertices and edges.
+- **Batching & concurrency** — Configurable batch sizes, worker counts, and DB write concurrency on `IngestionParams` / `DBWriter`.
+- **`GraphEngine`** — High-level orchestration for infer, define schema, and ingest (`define_and_ingest`, …); `Caster` stays available for lower-level control.
 
 ## Documentation
 Full documentation is available at: [growgraph.github.io/graflo](https://growgraph.github.io/graflo)

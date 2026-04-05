@@ -5,10 +5,9 @@ This module stores physical DB features that are separate from logical graph ide
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import Field as PydanticField
-from pydantic import model_validator
+from pydantic import AliasChoices, Field as PydanticField, model_validator
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.graph_types import EdgeId, Index
@@ -49,6 +48,41 @@ class EdgeVariantSpec(ConfigBaseModel):
         return (self.source, self.target, self.relation)
 
 
+class EdgePropertyDefaults(ConfigBaseModel):
+    """Per logical edge type: optional GSQL ``DEFAULT`` values for edge attributes."""
+
+    source: str = PydanticField(..., description="Logical source vertex name.")
+    target: str = PydanticField(..., description="Logical target vertex name.")
+    relation: str | None = PydanticField(
+        default=None,
+        description="Logical relation; must match edge identity (use null for default relation).",
+    )
+    values: dict[str, Any] = PydanticField(
+        default_factory=dict,
+        description="Edge attribute name to default value (YAML/JSON literals).",
+        validation_alias=AliasChoices("values", "properties"),
+    )
+
+
+class DefaultPropertyValues(ConfigBaseModel):
+    """TigerGraph-style attribute defaults for physical schema DDL (covariant profile).
+
+    Maps to GSQL ``attribute_name type [DEFAULT default_value]`` on vertices and edges;
+    see TigerGraph `Defining a Graph Schema`_.
+
+    .. _Defining a Graph Schema: https://docs.tigergraph.com/gsql-ref/4.2/ddl-and-loading/defining-a-graph-schema
+    """
+
+    vertices: dict[str, dict[str, Any]] = PydanticField(
+        default_factory=dict,
+        description="Logical vertex name -> property name -> default value for GSQL DEFAULT.",
+    )
+    edges: list[EdgePropertyDefaults] = PydanticField(
+        default_factory=list,
+        description="Per (source, target, relation) edge type: attribute defaults.",
+    )
+
+
 class DatabaseProfile(ConfigBaseModel):
     """Container for DB-only physical features such as secondary indexes."""
 
@@ -75,6 +109,14 @@ class DatabaseProfile(ConfigBaseModel):
     edge_specs: list[EdgeVariantSpec] = PydanticField(
         default_factory=list,
         description="Unified edge physical specs keyed by edge identity + purpose.",
+    )
+    default_property_values: DefaultPropertyValues | None = PydanticField(
+        default=None,
+        description=(
+            "Optional per-attribute GSQL DEFAULT values for TigerGraph (and similar) DDL. "
+            "Vertex keys are logical vertex names; edge entries match logical (source, target, relation). "
+            "Does not change logical LPG types—only physical schema projection."
+        ),
     )
 
     @model_validator(mode="after")
@@ -128,6 +170,55 @@ class DatabaseProfile(ConfigBaseModel):
 
         object.__setattr__(self, "edge_specs", list(merged.values()))
         return self
+
+    def vertex_property_default(
+        self, vertex_name: str, property_name: str
+    ) -> Any | None:
+        """Return declared default for a vertex property, or None if not specified."""
+        dpv = self.default_property_values
+        if dpv is None:
+            return None
+        per_vertex = dpv.vertices.get(vertex_name)
+        if per_vertex is None:
+            return None
+        return per_vertex.get(property_name)
+
+    def has_vertex_property_default(self, vertex_name: str, property_name: str) -> bool:
+        dpv = self.default_property_values
+        if dpv is None:
+            return False
+        per_vertex = dpv.vertices.get(vertex_name)
+        return per_vertex is not None and property_name in per_vertex
+
+    def edge_property_default(self, edge_id: EdgeId, property_name: str) -> Any | None:
+        """Return declared default for an edge attribute, or None if not specified."""
+        dpv = self.default_property_values
+        if dpv is None or not dpv.edges:
+            return None
+        source, target, relation = edge_id
+        for spec in reversed(dpv.edges):
+            if spec.source != source or spec.target != target:
+                continue
+            if spec.relation != relation:
+                continue
+            if property_name not in spec.values:
+                continue
+            return spec.values[property_name]
+        return None
+
+    def has_edge_property_default(self, edge_id: EdgeId, property_name: str) -> bool:
+        dpv = self.default_property_values
+        if dpv is None or not dpv.edges:
+            return False
+        source, target, relation = edge_id
+        for spec in reversed(dpv.edges):
+            if spec.source != source or spec.target != target:
+                continue
+            if spec.relation != relation:
+                continue
+            if property_name in spec.values:
+                return True
+        return False
 
     def _edge_variant_spec(
         self,
