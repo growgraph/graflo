@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.7.12] - 2026-04-06
+
+### Changed
+
+- **TigerGraph identifier validation**: Reserved-word, forbidden-prefix, and invalid-character checks load `reserved_words.json` once per process (cached). Validation now covers **vertex property** names and **edge attribute** names (including identity discriminators), in addition to graph, vertex, and edge relation names.
+
+### Fixed
+
+- **TigerGraph vertex DDL**: For a single-field primary key, GSQL does not allow `DEFAULT` on the `PRIMARY_ID name type` fragment. DDL generation uses the `name TYPE [DEFAULT …] PRIMARY KEY` form when the identity field has a default, and keeps `PRIMARY_ID` / `PRIMARY_ID_AS_ATTRIBUTE` only when the id field has no default.
+
+## [1.7.11] - 2026-04-06
+
+### Added
+
+- **`DatabaseProfile.default_property_values`**: optional **`DefaultPropertyValues`** model (with per-vertex maps and per-edge **`EdgePropertyDefaults`** entries) to declare **GSQL `DEFAULT`** literals for physical schema DDL—vertex keys are logical vertex names; edge entries match logical `(source, target, relation)`.
+
+
 ## [1.7.10] - 2026-04-04
 
 ### Changed

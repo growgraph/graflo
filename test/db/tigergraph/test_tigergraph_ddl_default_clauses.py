@@ -50,3 +50,29 @@ def test_vertex_field_def_helper() -> None:
         db_profile=profile,
     )
     assert line == "reading FLOAT DEFAULT -1.25"
+
+
+def test_vertex_add_statement_primary_id_string_default_uses_primary_key_syntax() -> (
+    None
+):
+    """GSQL rejects PRIMARY_ID name STRING DEFAULT ...; use ... PRIMARY KEY instead."""
+    conn = _bare_tg_conn()
+    vertex = Vertex(
+        name="company",
+        properties=[
+            Field(name="name", type=FieldType.STRING),
+        ],
+        identity=["name"],
+    )
+    profile = DatabaseProfile(
+        db_flavor=DBType.TIGERGRAPH,
+        default_property_values=DefaultPropertyValues(
+            vertices={"company": {"name": "ABC"}}
+        ),
+    )
+    vc = VertexConfigDBAware(VertexConfig(vertices=[vertex]), profile)
+    stmt = conn._get_vertex_add_statement(vertex, vc, db_profile=profile)
+    normalized = stmt.replace("\n", " ")
+    assert "PRIMARY_ID" not in normalized
+    assert 'name STRING DEFAULT "ABC" PRIMARY KEY' in normalized
+    assert "PRIMARY_ID_AS_ATTRIBUTE" not in normalized

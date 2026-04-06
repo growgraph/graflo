@@ -28,8 +28,9 @@ import json
 import logging
 import re
 from collections import defaultdict
+from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 
 import requests
@@ -118,64 +119,87 @@ def _wrap_tg_exception(func):
     return wrapper
 
 
-def _validate_tigergraph_schema_name(name: str, name_type: str) -> None:
-    """
-    Validate a TigerGraph schema name (graph, vertex, or edge) against reserved words
-    and invalid characters.
+class _TigerGraphNameRules(NamedTuple):
+    reserved_words_upper: frozenset[str]
+    forbidden_prefixes: tuple[str, ...]
+    invalid_characters: tuple[str, ...]
 
-    Args:
-        name: The schema name to validate
-        name_type: Type of schema name ("graph", "vertex", or "edge")
 
-    Raises:
-        ValueError: If the name contains reserved words, forbidden prefixes, or invalid characters
-    """
-    if not name:
-        raise ValueError(f"{name_type.capitalize()} name cannot be empty")
-
-    # Load reserved words from JSON file
+@lru_cache(maxsize=1)
+def _load_tigergraph_name_rules() -> _TigerGraphNameRules | None:
+    """Load ``reserved_words.json`` once per process (cached)."""
     json_path = Path(__file__).parent / "reserved_words.json"
     try:
         with open(json_path, "r") as f:
             reserved_data = json.load(f)
     except FileNotFoundError:
         logger.warning(
-            f"Could not find reserved_words.json at {json_path}, skipping validation"
+            "Could not find reserved_words.json at %s, skipping validation",
+            json_path,
         )
-        return
+        return None
     except json.JSONDecodeError as e:
-        logger.warning(f"Could not parse reserved_words.json: {e}, skipping validation")
-        return
+        logger.warning(
+            "Could not parse reserved_words.json: %s, skipping validation", e
+        )
+        return None
 
-    reserved_words = set()
+    reserved_words: set[str] = set()
     reserved_words.update(
         reserved_data.get("reserved_words", {}).get("gsql_keywords", [])
     )
     reserved_words.update(
         reserved_data.get("reserved_words", {}).get("cpp_keywords", [])
     )
+    reserved_upper = frozenset(w.upper() for w in reserved_words)
+    forbidden = tuple(reserved_data.get("forbidden_prefixes", []))
+    invalid_chars = tuple(
+        reserved_data.get("invalid_characters", {}).get("characters", [])
+    )
+    return _TigerGraphNameRules(
+        reserved_words_upper=reserved_upper,
+        forbidden_prefixes=forbidden,
+        invalid_characters=invalid_chars,
+    )
 
-    # Check for reserved words (case-insensitive)
+
+def _validate_tigergraph_schema_name(name: str, name_type: str) -> None:
+    """
+    Validate a TigerGraph identifier (graph, vertex, edge, or attribute name)
+    against reserved words and invalid characters.
+
+    Args:
+        name: The identifier to validate
+        name_type: Kind of identifier for error messages (e.g. ``"graph"``,
+            ``"vertex"``, ``"edge"``, ``"vertex property"``, ``"edge attribute"``)
+
+    Raises:
+        ValueError: If the name is empty, reserved, uses a forbidden prefix,
+            or contains invalid characters
+    """
+    if not name:
+        raise ValueError(f"{name_type.capitalize()} name cannot be empty")
+
+    rules = _load_tigergraph_name_rules()
+    if rules is None:
+        return
+
     name_upper = name.upper()
-    if name_upper in reserved_words:
+    if name_upper in rules.reserved_words_upper:
         raise ValueError(
             f"{name_type.capitalize()} name '{name}' is a TigerGraph reserved word. "
             f"Reserved words cannot be used as identifiers. "
             f"Please choose a different name."
         )
 
-    # Check for forbidden prefixes
-    forbidden_prefixes = reserved_data.get("forbidden_prefixes", [])
-    for prefix in forbidden_prefixes:
+    for prefix in rules.forbidden_prefixes:
         if name.startswith(prefix):
             raise ValueError(
                 f"{name_type.capitalize()} name '{name}' starts with forbidden prefix '{prefix}'. "
                 f"Please choose a different name."
             )
 
-    # Check for invalid characters
-    invalid_chars = reserved_data.get("invalid_characters", {}).get("characters", [])
-    found_chars = [char for char in invalid_chars if char in name]
+    found_chars = [char for char in rules.invalid_characters if char in name]
     if found_chars:
         raise ValueError(
             f"{name_type.capitalize()} name '{name}' contains invalid characters: {found_chars}. "
@@ -1693,7 +1717,8 @@ class TigerGraphConnection(Connection):
             all_fields.append((field.name, field_type))
 
         if len(index_fields) == 1:
-            # Single field: use PRIMARY_ID syntax (required by GSQL)
+            # Single field: PRIMARY_ID when no DEFAULT on the id; otherwise PRIMARY KEY
+            # (GSQL does not allow DEFAULT on the PRIMARY_ID id_name id_type fragment).
             primary_field_name = index_fields[0]
             primary_field_type = field_type_map.get(
                 primary_field_name, FieldType.STRING.value
@@ -1711,7 +1736,23 @@ class TigerGraphConnection(Connection):
                 tg_type=primary_field_type,
                 db_profile=profile,
             )
-            field_parts = [f"PRIMARY_ID {primary_attr}"]
+            # PRIMARY_ID form is `PRIMARY_ID id_name id_type` — DEFAULT is only valid on
+            # attributes in attribute_list, not on the PRIMARY_ID fragment (GSQL parse error).
+            # When the identity field needs DEFAULT, use PRIMARY KEY form instead:
+            # `name TYPE [DEFAULT ...] PRIMARY KEY`.
+            primary_default_val = (
+                profile.vertex_property_default(logical, primary_field_name)
+                if profile is not None
+                else None
+            )
+            if primary_default_val is not None:
+                field_parts = [f"{primary_attr} PRIMARY KEY"]
+                vertex_with = 'WITH STATS="OUTDEGREE_BY_EDGETYPE"'
+            else:
+                field_parts = [f"PRIMARY_ID {primary_attr}"]
+                vertex_with = (
+                    'WITH STATS="OUTDEGREE_BY_EDGETYPE", PRIMARY_ID_AS_ATTRIBUTE="true"'
+                )
             for name, ftype in other_fields:
                 field_parts.append(
                     self._gsql_vertex_field_def(
@@ -1727,7 +1768,7 @@ class TigerGraphConnection(Connection):
             return (
                 f"ADD VERTEX {vertex_dbname} (\n"
                 f"        {field_definitions}\n"
-                f'    ) WITH STATS="OUTDEGREE_BY_EDGETYPE", PRIMARY_ID_AS_ATTRIBUTE="true"'
+                f"    ) {vertex_with}"
             )
         else:
             # Composite key: use PRIMARY KEY syntax
@@ -1760,6 +1801,21 @@ class TigerGraphConnection(Connection):
         else:
             edge_copy.properties = []
         return edge_copy
+
+    def _validate_tigergraph_vertex_properties(self, vertex: Vertex) -> None:
+        """Reject reserved or invalid TigerGraph names on vertex attributes."""
+        for field in vertex.properties:
+            _validate_tigergraph_schema_name(field.name, "vertex property")
+
+    def _validate_tigergraph_edge_property_names(
+        self, edge: Edge, edge_config_db: EdgeConfigDBAware
+    ) -> None:
+        """Reject reserved or invalid names on edge attributes and discriminators."""
+        ddl_edge = self._edge_for_tigergraph_ddl(edge, edge_config_db)
+        names: set[str] = {f.name for f in ddl_edge.properties}
+        names.update(self._edge_identity_discriminator_fields(ddl_edge))
+        for attr in names:
+            _validate_tigergraph_schema_name(attr, "edge attribute")
 
     def _format_edge_attributes(
         self,
@@ -2135,6 +2191,7 @@ class TigerGraphConnection(Connection):
             # Validate vertex name
             vertex_dbname = db_schema.vertex_config.vertex_dbname(vertex.name)
             _validate_tigergraph_schema_name(vertex_dbname, "vertex")
+            self._validate_tigergraph_vertex_properties(vertex)
             stmt = self._get_vertex_add_statement(
                 vertex,
                 db_schema.vertex_config,
@@ -2155,6 +2212,7 @@ class TigerGraphConnection(Connection):
             edge_dbname = runtime.relation_name or f"{edge.source}_{edge.target}"
             relation_names[id(edge)] = edge_dbname
             _validate_tigergraph_schema_name(edge_dbname, "edge")
+            self._validate_tigergraph_edge_property_names(edge, db_schema.edge_config)
 
         # Group edges by relation
         edges_by_relation: dict[str, list[Edge]] = defaultdict(list)
