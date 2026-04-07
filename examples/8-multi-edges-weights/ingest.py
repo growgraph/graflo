@@ -23,6 +23,9 @@ ingestion_model = manifest.require_ingestion_model()
 # This automatically reads NEO4J_BOLT_PORT, NEO4J_AUTH, etc.
 conn_conf = Neo4jConfig.from_docker_env()
 
+# Alternative: Grafeo (embedded, no server needed)
+# from graflo.db import GrafeoConfig
+# conn_conf = GrafeoConfig(path="graph.grafeo")  # or GrafeoConfig.in_memory()
 
 # Determine DB type from connection config
 db_type = conn_conf.connection_type

@@ -29,6 +29,7 @@ from graflo.db.arango.conn import ArangoConnection
 from graflo.db.connection import DBConfig, TARGET_DATABASES
 from graflo.onto import DBType
 from graflo.db.falkordb.conn import FalkordbConnection
+from graflo.db.grafeo.conn import GrafeoConnection
 from graflo.db.memgraph.conn import MemgraphConnection
 from graflo.db.nebula.conn import NebulaConnection
 from graflo.db.neo4j.conn import Neo4jConnection
@@ -43,7 +44,7 @@ class ConnectionManager:
     connection handling and automatic cleanup.
 
     Supports:
-    - Target databases (OUTPUT): ArangoDB, Neo4j, TigerGraph
+    - Target databases (OUTPUT): ArangoDB, Neo4j, TigerGraph, Grafeo
     - Source databases (INPUT): PostgreSQL, MySQL, MongoDB, etc.
 
     Attributes:
@@ -59,6 +60,7 @@ class ConnectionManager:
         DBType.NEO4J: Neo4jConnection,
         DBType.TIGERGRAPH: TigerGraphConnection,
         DBType.FALKORDB: FalkordbConnection,
+        DBType.GRAFEO: GrafeoConnection,
         DBType.MEMGRAPH: MemgraphConnection,
         DBType.NEBULA: NebulaConnection,
     }

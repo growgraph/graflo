@@ -28,6 +28,9 @@ ingestion_model = manifest.require_ingestion_model()
 
 # Load config from docker/arango/.env (or neo4j, tigergraph, falkordb)
 conn_conf = ArangoConfig.from_docker_env()
+# Alternative: Grafeo (embedded, no server needed)
+# from graflo.db import GrafeoConfig
+# conn_conf = GrafeoConfig(path="graph.grafeo")  # or GrafeoConfig.in_memory()
 db_type = conn_conf.connection_type
 
 bindings = Bindings()

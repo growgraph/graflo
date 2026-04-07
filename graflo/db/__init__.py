@@ -40,6 +40,7 @@ from .connection import (
     ArangoConfig,
     DBConfig,
     FalkordbConfig,
+    GrafeoConfig,
     MemgraphConfig,
     NebulaConfig,
     Neo4jConfig,
@@ -48,6 +49,7 @@ from .connection import (
     TigergraphConfig,
 )
 from .falkordb.conn import FalkordbConnection
+from .grafeo.conn import GrafeoConnection
 from .manager import ConnectionManager
 from .memgraph.conn import MemgraphConnection
 from .nebula.conn import NebulaConnection
@@ -69,6 +71,7 @@ __all__ = [
     "DBConfig",
     "ConnectionManager",
     "FalkordbConfig",
+    "GrafeoConfig",
     "MemgraphConfig",
     "NebulaConfig",
     "Neo4jConfig",
@@ -77,6 +80,7 @@ __all__ = [
     "TigergraphConfig",
     "ArangoConnection",
     "FalkordbConnection",
+    "GrafeoConnection",
     "MemgraphConnection",
     "NebulaConnection",
     "Neo4jConnection",

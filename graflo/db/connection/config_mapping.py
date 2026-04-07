@@ -4,6 +4,7 @@ from .onto import (
     ArangoConfig,
     DBConfig,
     FalkordbConfig,
+    GrafeoConfig,
     MemgraphConfig,
     NebulaConfig,
     Neo4jConfig,
@@ -23,6 +24,7 @@ DB_TYPE_MAPPING: Dict[DBType, Type[DBConfig]] = {
     DBType.NEBULA: NebulaConfig,
     DBType.POSTGRES: PostgresConfig,
     DBType.SPARQL: SparqlEndpointConfig,
+    DBType.GRAFEO: GrafeoConfig,
 }
 
 

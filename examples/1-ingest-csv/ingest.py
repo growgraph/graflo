@@ -13,6 +13,10 @@ ingestion_model = manifest.require_ingestion_model()
 # This automatically reads ARANGO_URI, ARANGO_USERNAME, ARANGO_PASSWORD, etc.
 conn_conf = ArangoConfig.from_docker_env()
 
+# Alternative: Grafeo (embedded, no server needed)
+# from graflo.db import GrafeoConfig
+# conn_conf = GrafeoConfig(path="graph.grafeo")  # or GrafeoConfig.in_memory()
+
 # Alternative: Create config directly or use environment variables
 # Set ARANGO_URI, ARANGO_USERNAME, ARANGO_PASSWORD, ARANGO_DATABASE env vars
 # conn_conf = ArangoConfig()  # Reads from environment variables
