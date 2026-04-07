@@ -26,6 +26,10 @@ ingestion_model = manifest.require_ingestion_model()
 conn_conf = TigergraphConfig.from_docker_env()
 conn_conf.max_job_size = 5000
 
+# Alternative: Grafeo (embedded, no server needed)
+# from graflo.db import GrafeoConfig
+# conn_conf = GrafeoConfig(path="graph.grafeo")  # or GrafeoConfig.in_memory()
+
 # Alternative: Create config directly or use environment variables
 # Set NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD, NEO4J_BOLT_PORT env vars
 # conn_conf = Neo4jConfig()  # Reads from environment variables

@@ -373,6 +373,18 @@ export NEBULA_SCHEMA_NAME=mygraph
 export NEBULA_VERSION=3  # "3" for v3.x (nGQL) or "5" for v5.x (GQL)
 ```
 
+**Grafeo (embedded, no server required):**
+
+```python
+from graflo.db.connection.onto import GrafeoConfig
+
+# In-memory (no persistence)
+grafeo_conf = GrafeoConfig.in_memory(database="mygraph")
+
+# File-backed (persistent)
+grafeo_conf = GrafeoConfig(database="mygraph", path="/path/to/graph.db")
+```
+
 **PostgreSQL:**
 ```bash
 export POSTGRES_URI=postgresql://localhost:5432
@@ -385,7 +397,7 @@ export POSTGRES_SCHEMA_NAME=public
 Then load the config:
 
 ```python
-from graflo.db.connection.onto import ArangoConfig, Neo4jConfig, TigergraphConfig, FalkordbConfig, MemgraphConfig, NebulaConfig, PostgresConfig
+from graflo.db.connection.onto import ArangoConfig, Neo4jConfig, TigergraphConfig, FalkordbConfig, MemgraphConfig, NebulaConfig, PostgresConfig, GrafeoConfig
 
 # Load from default environment variables
 arango_conf = ArangoConfig.from_env()
@@ -395,6 +407,9 @@ falkordb_conf = FalkordbConfig.from_env()
 memgraph_conf = MemgraphConfig.from_env()
 nebula_conf = NebulaConfig.from_env()
 pg_conf = PostgresConfig.from_env()
+
+# Grafeo (no env vars needed — embedded)
+grafeo_conf = GrafeoConfig.in_memory(database="mygraph")
 ```
 
 ### Multiple Configurations with Prefixes

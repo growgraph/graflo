@@ -160,6 +160,9 @@ manifest.finish_init()
 schema = manifest.require_schema()
 ingestion_model = manifest.require_ingestion_model()
 conn_conf = ArangoConfig.from_docker_env()
+# Alternative: Grafeo (embedded, no server needed)
+# from graflo.db import GrafeoConfig
+# conn_conf = GrafeoConfig(path="graph.grafeo")  # or GrafeoConfig.in_memory()
 db_type = conn_conf.connection_type
 
 bindings = Bindings()

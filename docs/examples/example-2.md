@@ -125,6 +125,10 @@ if not isinstance(conn_conf, ArangoConfig):
 # Or use from_docker_env() (recommended)
 # conn_conf = ArangoConfig.from_docker_env()
 
+# Alternative: Grafeo (embedded, no server needed)
+# from graflo.db.connection.onto import GrafeoConfig
+# conn_conf = GrafeoConfig(path="graph.grafeo")  # or GrafeoConfig.in_memory()
+
 from graflo.architecture.contract.bindings import FileConnector
 import pathlib
 
