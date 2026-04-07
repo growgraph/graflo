@@ -148,6 +148,7 @@ class DBType(StrEnum, metaclass=MetaEnum):
     FALKORDB = "falkordb"
     MEMGRAPH = "memgraph"
     NEBULA = "nebula"
+    GRAFEO = "grafeo"
 
     # Source databases (SQL, NoSQL, RDF)
     POSTGRES = "postgres"
@@ -166,4 +167,5 @@ DB_TYPE_TO_EXPRESSION_FLAVOR: dict[DBType, ExpressionFlavor] = {
     DBType.MEMGRAPH: ExpressionFlavor.CYPHER,
     DBType.NEBULA: ExpressionFlavor.NGQL,
     DBType.TIGERGRAPH: ExpressionFlavor.GSQL,
+    DBType.GRAFEO: ExpressionFlavor.CYPHER,
 }

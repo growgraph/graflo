@@ -107,6 +107,10 @@ ingestion_model = manifest.require_ingestion_model()
 # Load config from docker/neo4j/.env (recommended)
 conn_conf = Neo4jConfig.from_docker_env()
 
+# Alternative: Grafeo (embedded, no server needed)
+# from graflo.db.connection.onto import GrafeoConfig
+# conn_conf = GrafeoConfig(path="graph.grafeo")  # or GrafeoConfig.in_memory()
+
 # Or create config directly
 # conn_conf = Neo4jConfig(
 #     uri="bolt://localhost:7688",

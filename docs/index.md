@@ -13,7 +13,7 @@ It is a **Python package** and **Graph Schema & Transformation Language (GSTL)**
 
 ### What you get
 
-- **One pipeline, several graph databases** — The same manifest targets ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, or NebulaGraph; `DatabaseProfile` and DB-aware types absorb naming, defaults, and indexing differences.
+- **One pipeline, several graph databases** — The same manifest targets ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph, or Grafeo; `DatabaseProfile` and DB-aware types absorb naming, defaults, and indexing differences.
 - **Explicit identities** — Vertex identity fields and indexes back upserts so reloads merge on keys instead of blindly duplicating nodes.
 - **Reusable ingestion** — `Resource` actor pipelines (including **vertex_router** / **edge_router** steps and the **`VertexRouterActor`** / **`EdgeRouterActor`** implementations) bind to files, SQL, SPARQL/RDF, APIs, or in-memory batches via `Bindings` and the `DataSourceRegistry`.
 
@@ -141,7 +141,7 @@ The `DataSourceRegistry` manages `AbstractDataSource` adapters, each carrying a 
 ## Requirements
 
 - Python 3.11 or higher (3.11 and 3.12 officially supported)
-- A graph database (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, or NebulaGraph) as target
+- A graph database (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph, or Grafeo) as target. Grafeo is embedded and ships as a core dependency, no external server needed.
 - Optional: PostgreSQL for SQL data sources and schema inference
 - Optional extras (see [Installation](getting_started/installation.md)): `dev` (tests and typing), `docs` (MkDocs), `plot` (`plot_manifest` via `pygraphviz`; system Graphviz required)
 - Full dependency list in `pyproject.toml`

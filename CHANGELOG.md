@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.8.0] - 2026-04-07
+
+### Added
+
+- **Grafeo embedded graph database backend**: New `GrafeoConnection` and `GrafeoConfig`, an in-process graph engine that requires no server, no Docker, and no network. Supports in-memory (`GrafeoConfig.in_memory()`) and file-backed persistent (`GrafeoConfig(path=...)`) storage. Uses GQL/Cypher-compatible queries. Ships as a core dependency (`grafeo>=0.5.33`) like the other databases.
+
+### Documentation
+
+- Installation, quickstart, landing page, and examples 1–3/6–8 updated with Grafeo configuration examples.
+- API reference stubs added for `graflo.db.grafeo` module.
+
 ## [1.7.12] - 2026-04-06
 
 ### Changed

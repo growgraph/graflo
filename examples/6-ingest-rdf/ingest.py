@@ -49,10 +49,12 @@ DATA_FILE = DATA_DIR / "data.ttl"
 conn_conf = ArangoConfig.from_docker_env()
 
 # Alternative targets – uncomment the one you need:
-# from graflo.db import Neo4jConfig, TigergraphConfig, FalkordbConfig
+# from graflo.db import Neo4jConfig, TigergraphConfig, FalkordbConfig, GrafeoConfig
 # conn_conf = Neo4jConfig.from_docker_env()
 # conn_conf = TigergraphConfig.from_docker_env()
 # conn_conf = FalkordbConfig.from_docker_env()
+# conn_conf = GrafeoConfig(path="graph.grafeo")
+# conn_conf = GrafeoConfig.in_memory()
 
 # Or specify directly:
 # conn_conf = ArangoConfig(
@@ -155,3 +157,4 @@ print("=" * 80)
 # - Neo4j: http://localhost:7475 (check NEO4J_PORT in docker/neo4j/.env)
 # - TigerGraph: http://localhost:14241 (check TG_WEB in docker/tigergraph/.env)
 # - FalkorDB: http://localhost:3001 (check FALKORDB_BROWSER_PORT in docker/falkordb/.env)
+# - Grafeo: embedded — data is in-process, no web UI needed

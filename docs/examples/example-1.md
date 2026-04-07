@@ -85,11 +85,15 @@ ingestion_model = manifest.require_ingestion_model()
 # Option 1: Load config from docker/arango/.env (recommended)
 conn_conf = ArangoConfig.from_docker_env()
 
-# Option 2: Load from environment variables
+# Option 2: Grafeo (embedded, no server needed)
+# from graflo.db.connection.onto import GrafeoConfig
+# conn_conf = GrafeoConfig(path="graph.grafeo")  # or GrafeoConfig.in_memory()
+
+# Option 3a: Load from environment variables
 # Set: ARANGO_URI, ARANGO_USERNAME, ARANGO_PASSWORD, ARANGO_DATABASE
 # conn_conf = ArangoConfig.from_env()
 
-# Option 3: Create config directly
+# Option 3b: Create config directly
 # conn_conf = ArangoConfig(
 #     uri="http://localhost:8535",
 #     username="root",

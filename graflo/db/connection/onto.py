@@ -40,6 +40,7 @@ TARGET_DATABASES: set[DBType] = {
     DBType.FALKORDB,
     DBType.MEMGRAPH,
     DBType.NEBULA,
+    DBType.GRAFEO,
 }
 
 
@@ -1350,3 +1351,49 @@ class SparqlEndpointConfig(DBConfig):
             config_data["dataset"] = env_vars["TS_DATASET"]
 
         return cls(**config_data)
+
+
+class GrafeoConfig(DBConfig):
+    """Configuration for Grafeo embedded graph database connections.
+
+    Grafeo is a high-performance, embeddable graph database with a Rust core.
+    It runs in-process (no server required) and supports GQL, Cypher, SPARQL,
+    and other query languages.
+
+    Grafeo structure: in-process database -> labels/relationships
+    Unified model: connection -> schema -> entities
+
+    Unlike server-based backends, Grafeo needs only an optional file path.
+    When no path is given, the database runs purely in memory.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="GRAFEO_",
+        case_sensitive=False,
+    )
+
+    path: str | None = Field(
+        default=None,
+        description="File path for persistent storage (None = in-memory)",
+    )
+
+    def _get_default_port(self) -> int:
+        """Get default Grafeo port (0 — embedded, no network)."""
+        return 0
+
+    def _get_effective_database(self) -> str | None:
+        """Grafeo doesn't have a database level (embedded, single graph per instance)."""
+        return None
+
+    def _get_effective_schema(self) -> str | None:
+        """For Grafeo, 'database' field maps to schema (graph name) in unified model."""
+        return self.database
+
+    @classmethod
+    def in_memory(cls, database: str | None = None) -> "GrafeoConfig":
+        """Create an in-memory Grafeo configuration.
+
+        Args:
+            database: Optional logical graph name.
+        """
+        return cls(database=database)
