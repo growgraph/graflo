@@ -255,7 +255,7 @@ class TestUnicodeTorture:
             variants = [
                 ("café", "cafe\u0301"),  # Composed vs decomposed
                 ("ﬁ", "fi"),  # Ligature vs separate
-                ("Ω", "Ω"),  # Greek vs Ohm sign (U+03A9 vs U+2126)
+                ("Ω", "\u2126"),  # Greek vs Ohm sign (U+03A9 vs U+2126)
                 ("㈱", "(株)"),  # Enclosed vs parenthesized
             ]
 
@@ -988,8 +988,8 @@ class TestAggregationEdgeCases:
             avg = db.aggregate(
                 "NullAgg", AggregationType.AVERAGE, aggregated_field="score"
             )
-            # Should handle nulls gracefully
-            assert avg is not None or avg == 0 or math.isnan(avg) if avg else True
+            # Should handle nulls gracefully – result must be a real number
+            assert avg is not None and not math.isnan(avg)
 
     def test_aggregate_discriminant_with_nulls(
         self, conn_conf, test_graph_name, clean_db

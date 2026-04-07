@@ -530,7 +530,7 @@ class TestETLScenarios:
 
             result = db.fetch_docs("User")
             # Grafeo is case-sensitive
-            assert len(result) >= 1
+            assert len(result) == 2
 
     def test_partial_field_import(self, conn_conf, test_graph_name, clean_db):
         """Verify partial imports preserve existing fields."""
@@ -729,11 +729,13 @@ class TestQueryEdgeCases:
             db.upsert_docs_batch(docs, "Mixed", match_keys=["id"])
 
             try:
-                _result = db.execute(
+                result = db.execute(
                     "MATCH (m:Mixed) WHERE m.value IS NOT NULL RETURN sum(m.value)"
                 )
             except Exception:
-                pass  # Expected behavior varies
+                pytest.xfail("Backend does not support sum() over mixed types")
+
+            assert result.result_set is not None, "Expected a non-null result set"
 
 
 class TestTraversalEdgeCases:

@@ -659,6 +659,14 @@ class TestSustainedLoad:
         total_docs = ops_count * batch_size
         actual_duration = time.perf_counter() - start_time
 
+        # Guard: if every operation failed, report errors instead of crashing
+        # on range(..., step=0) or statistics.mean([]).
+        if not latencies:
+            pytest.fail(
+                f"All sustained-write operations failed during {duration_sec}s run "
+                f"({len(errors)} errors). First error: {errors[0] if errors else 'N/A'}"
+            )
+
         # Analyze latency stability by time window
         window_size = len(latencies) // 5 if len(latencies) >= 5 else len(latencies)
         windows = [

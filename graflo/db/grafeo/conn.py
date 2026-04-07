@@ -394,7 +394,7 @@ class GrafeoConnection(Connection):
             result = self.execute(query)
             rows = result.to_list()
             if rows:
-                results.append(rows[0])
+                results.append(self._extract_node_props(rows[0].get("n", rows[0])))
         return results
 
     # ------------------------------------------------------------------
