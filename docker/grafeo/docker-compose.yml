@@ -1,0 +1,19 @@
+services:
+    grafeo:
+        image: ${IMAGE_VERSION}
+        restart: "no"
+        profiles: ["${SPEC}.grafeo"]
+        ports:
+        -   "${HTTP_PORT}:7474"
+        -   "${BOLT_PORT}:7687"
+        -   "${GWP_PORT}:7688"
+        container_name: ${CONTAINER_NAME}
+        volumes:
+        -   data_dir:/data_dir
+        environment:
+        -   AUTH_PASSWORD=${AUTH_PASSWORD}
+        -   AUTH_USER=${AUTH_USER}
+
+volumes:
+    data_dir:
+        driver: local
