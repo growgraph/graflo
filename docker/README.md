@@ -16,6 +16,7 @@ This will start all available graph database services:
 - FalkorDB (port 3001)
 - Memgraph (port 7687)
 - NebulaGraph (port 9669)
+- Grafeo (ports 7474/7687/7688)
 - PostgreSQL (port 5432)
 
 **Stop all services:**
@@ -171,4 +172,16 @@ Memgraph is a high-performance, in-memory graph database that supports OpenCyphe
 ```python
 from graflo.db.connection.onto import MemgraphConfig
 config = MemgraphConfig.from_docker_env()
+```
+
+## Grafeo
+
+Grafeo supports dual protocol access in graflo via `GrafeoConfig`:
+- `wire_protocol="bolt"` (default): shared Bolt/Cypher transport path
+- `wire_protocol="gwp"`: native GWP/GQL mode (no protocol emulation fallback)
+
+**Programmatic Connection:**
+```python
+from graflo.db.connection.onto import GrafeoConfig
+config = GrafeoConfig.from_docker_env()
 ```
