@@ -25,7 +25,7 @@ from graflo.hq.graph_engine import GraphEngine
 from graflo.hq.inferencer import InferenceManager
 from graflo.hq.registry_builder import RegistryBuilder
 from graflo.hq.resource_mapper import ResourceMapper
-from graflo.hq.sanitizer import SchemaSanitizer
+from graflo.hq.sanitizer import Sanitizer
 
 __all__ = [
     "CastBatchResult",
@@ -45,5 +45,5 @@ __all__ = [
     "InferenceManager",
     "RegistryBuilder",
     "ResourceMapper",
-    "SchemaSanitizer",
+    "Sanitizer",
 ]

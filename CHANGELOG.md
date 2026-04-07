@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+
+### Changed
+
+- **Sanitizer API is manifest-first**: `graflo.hq.sanitizer.Sanitizer` now exposes `sanitize_manifest(GraphManifest)` as the contract-level entrypoint, applying naming/index normalization on `schema` and synchronizing ingestion mappings in `ingestion_model` when needed.
+
+### Breaking
+
+- **Removed schema-only sanitizer API**: `SchemaSanitizer` and `sanitize(schema, ingestion_model=...)` were removed. Update call sites to create/use `GraphManifest` and call `Sanitizer.sanitize_manifest(manifest)`.
+
+### Documentation
+
+- Docs updated to describe manifest-level sanitization behavior and usage under `docs/index.md` and `docs/concepts/index.md`.
+
 ## [1.7.12] - 2026-04-06
 
 ### Changed

@@ -499,6 +499,17 @@ The `IngestionModel` is the source of truth for ingestion runtime behavior. It e
 - Reusable named transforms
 - Runtime initialization against the core schema (`finish_init(schema.core_schema)`)
 
+### Manifest-level sanitization
+
+When targeting stricter engines (notably TigerGraph), identifier normalization is handled at the
+manifest boundary:
+
+- `Sanitizer.sanitize_manifest(manifest)` mutates `manifest.graph_schema` and, when needed,
+  updates ingestion actor mappings in `manifest.ingestion_model`.
+- Sanitization covers reserved-word-safe vertex/property/relation names and relation-level index
+  harmonization required by TigerGraph.
+- The API is intentionally manifest-first so schema and ingestion updates remain consistent.
+
 ### Vertex
 A `Vertex` describes vertices and their logical identity. It supports:
 
