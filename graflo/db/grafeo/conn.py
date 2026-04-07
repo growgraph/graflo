@@ -57,9 +57,7 @@ def _gql_literal(value: Any) -> str:
         items = ", ".join(_gql_literal(v) for v in value)
         return f"[{items}]"
     if isinstance(value, dict):
-        pairs = ", ".join(
-            f"{k}: {_gql_literal(v)}" for k, v in value.items()
-        )
+        pairs = ", ".join(f"{k}: {_gql_literal(v)}" for k, v in value.items())
         return f"{{{pairs}}}"
     # Fallback: stringify
     return _gql_literal(str(value))
@@ -69,9 +67,7 @@ def _props_map(doc: dict[str, Any]) -> str:
     """Build a GQL map literal ``{k1: v1, k2: v2}`` from a dict."""
     if not doc:
         return "{}"
-    pairs = ", ".join(
-        f"`{k}`: {_gql_literal(v)}" for k, v in doc.items()
-    )
+    pairs = ", ".join(f"`{k}`: {_gql_literal(v)}" for k, v in doc.items())
     return f"{{{pairs}}}"
 
 
@@ -107,6 +103,7 @@ class GrafeoConnection(Connection):
             ) from exc
 
         # Create in-memory or persistent database
+        self.db: GrafeoDB | None
         if config.path:
             self.db = GrafeoDB(config.path)
         else:
@@ -135,6 +132,7 @@ class GrafeoConnection(Connection):
         Returns:
             ``QueryResult`` from the Grafeo Python bindings.
         """
+        assert self.db is not None, "Database connection is closed"
         params = kwargs if kwargs else None
         return self.db.execute(query, params)
 
@@ -236,9 +234,7 @@ class GrafeoConnection(Connection):
         # Check existing data
         if not recreate_schema:
             try:
-                result = self.execute(
-                    "MATCH (n) RETURN count(n) AS c"
-                )
+                result = self.execute("MATCH (n) RETURN count(n) AS c")
                 rows = result.to_list()
                 count = rows[0]["c"] if rows else 0
                 if count > 0:
@@ -303,7 +299,9 @@ class GrafeoConnection(Connection):
             for index_obj in index_list:
                 self._add_index(label, index_obj)
 
-    def define_edge_indexes(self, edges: list[Edge], schema: Schema | None = None) -> None:
+    def define_edge_indexes(
+        self, edges: list[Edge], schema: Schema | None = None
+    ) -> None:
         """Create property indexes for relationship types.
 
         Creates indexes for each relationship type based on the configuration.
@@ -404,10 +402,7 @@ class GrafeoConnection(Connection):
             sanitized = self._sanitize_doc(doc, match_keys_list)
             match_map = _match_clause(match_keys_list, sanitized)
             props = _props_map(sanitized)
-            query = (
-                f"MERGE (n:`{class_name}` {{{match_map}}})\n"
-                f"SET n += {props}"
-            )
+            query = f"MERGE (n:`{class_name}` {{{match_map}}})\nSET n += {props}"
             if not dry:
                 self.execute(query)
 
@@ -427,9 +422,7 @@ class GrafeoConnection(Connection):
         for doc in docs:
             sanitized = self._sanitize_doc(doc)
             props = _props_map(sanitized)
-            query = (
-                f"CREATE (n:`{class_name}` {props}) RETURN n"
-            )
+            query = f"CREATE (n:`{class_name}` {props}) RETURN n"
             result = self.execute(query)
             rows = result.to_list()
             if rows:
@@ -534,9 +527,7 @@ class GrafeoConnection(Connection):
             tgt_raw if isinstance(tgt_raw, dict) else {},
             list(match_keys_target),
         )
-        props = self._sanitize_doc(
-            props_raw if isinstance(props_raw, dict) else {}
-        )
+        props = self._sanitize_doc(props_raw if isinstance(props_raw, dict) else {})
 
         src_match = _match_clause(match_keys_source, src)
         tgt_match = _match_clause(match_keys_target, tgt)
@@ -597,7 +588,9 @@ class GrafeoConnection(Connection):
 
         limit_clause = f"LIMIT {int(limit)}" if limit and limit > 0 else ""
 
-        query = f"MATCH (n:`{class_name}`) {filter_clause} {return_clause} {limit_clause}"
+        query = (
+            f"MATCH (n:`{class_name}`) {filter_clause} {return_clause} {limit_clause}"
+        )
         result = self.execute(query)
         rows = result.to_list()
 
@@ -665,8 +658,7 @@ class GrafeoConnection(Connection):
         limit_clause = f"LIMIT {limit}" if limit and limit > 0 else ""
 
         query = (
-            f"MATCH {source}{rel}{target} {where_clause} "
-            f"{return_clause} {limit_clause}"
+            f"MATCH {source}{rel}{target} {where_clause} {return_clause} {limit_clause}"
         )
         result = self.execute(query)
         rows = result.to_list()
@@ -717,9 +709,7 @@ class GrafeoConnection(Connection):
             conditions = " AND ".join(
                 f"n.`{k}` = {_gql_literal(doc.get(k))}" for k in match_keys
             )
-            query = (
-                f"MATCH (n:`{class_name}`) WHERE {conditions} RETURN n LIMIT 1"
-            )
+            query = f"MATCH (n:`{class_name}`) WHERE {conditions} RETURN n LIMIT 1"
             try:
                 result = self.execute(query)
                 rows = result.to_list()
@@ -759,9 +749,7 @@ class GrafeoConnection(Connection):
         present = self.fetch_present_documents(
             batch, class_name, match_keys, match_keys, filters=filters
         )
-        present_keys = {
-            tuple(doc.get(k) for k in match_keys) for doc in present
-        }
+        present_keys = {tuple(doc.get(k) for k in match_keys) for doc in present}
 
         absent: list[dict[str, Any]] = []
         for doc in batch:
@@ -812,10 +800,7 @@ class GrafeoConnection(Connection):
                 )
                 rows = self.execute(q).to_list()
                 return {row["key"]: row["count"] for row in rows}
-            q = (
-                f"MATCH (n:`{class_name}`) {filter_clause} "
-                f"RETURN count(*) AS count"
-            )
+            q = f"MATCH (n:`{class_name}`) {filter_clause} RETURN count(*) AS count"
             rows = self.execute(q).to_list()
             return rows[0]["count"] if rows else 0
 

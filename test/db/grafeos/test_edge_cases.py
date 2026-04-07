@@ -937,7 +937,9 @@ class TestStateCorruption:
         # Second close should not crash
         db.__exit__(None, None, None)
 
-    @pytest.mark.xfail(reason="By design: Grafeo uses exclusive file lock for write safety")
+    @pytest.mark.xfail(
+        reason="By design: Grafeo uses exclusive file lock for write safety"
+    )
     def test_nested_context_managers(self, conn_conf, test_graph_name, clean_db):
         """Test nested connection managers."""
         _ = clean_db

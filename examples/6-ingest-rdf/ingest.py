@@ -53,7 +53,7 @@ conn_conf = ArangoConfig.from_docker_env()
 # conn_conf = Neo4jConfig.from_docker_env()
 # conn_conf = TigergraphConfig.from_docker_env()
 # conn_conf = FalkordbConfig.from_docker_env()
-# conn_conf = GrafeoConfig(path="graph.grafeo")     
+# conn_conf = GrafeoConfig(path="graph.grafeo")
 # conn_conf = GrafeoConfig.in_memory()
 
 # Or specify directly:

@@ -11,10 +11,10 @@ classifiers = [
   "Programming Language :: Python :: Implementation :: CPython"
 ]
 dependencies = [
-  "grafeo==0.5.34",
   "SPARQLWrapper>=2.0.0",
   "click>=8.2.0,<9",
   "falkordb>=1.0.9",
+  "grafeo==0.5.34",
   "ijson>=3.2.3,<4",
   "nebula3-python>=3.8.3",
   "nebula5-python>=5.2.1",

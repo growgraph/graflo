@@ -92,10 +92,14 @@ def test_ingest_ibes(
         assert len(analysts) == 476, f"Expected 476 analysts, got {len(analysts)}"
 
         publications = db.fetch_docs("publications")
-        assert len(publications) == 1000, f"Expected 1000 publications, got {len(publications)}"
+        assert len(publications) == 1000, (
+            f"Expected 1000 publications, got {len(publications)}"
+        )
 
         recommendations = db.fetch_docs("recommendations")
-        assert len(recommendations) == 106, f"Expected 106 recommendations, got {len(recommendations)}"
+        assert len(recommendations) == 106, (
+            f"Expected 106 recommendations, got {len(recommendations)}"
+        )
 
         tickers = db.fetch_docs("tickers")
         assert len(tickers) == 69, f"Expected 69 tickers, got {len(tickers)}"
@@ -134,14 +138,10 @@ def test_ingest_kg(
         )
 
         entities = db.fetch_docs("entities")
-        assert len(entities) == 80, (
-            f"Expected 80 entities, got {len(entities)}"
-        )
+        assert len(entities) == 80, f"Expected 80 entities, got {len(entities)}"
 
         mentions = db.fetch_docs("mentions")
-        assert len(mentions) == 124, (
-            f"Expected 124 mentions, got {len(mentions)}"
-        )
+        assert len(mentions) == 124, f"Expected 124 mentions, got {len(mentions)}"
 
         # Verify edges exist
         r = db.execute("MATCH ()-[r]->() RETURN count(r) AS c")
@@ -175,12 +175,11 @@ def test_ingest_ticker(
 
     schema_o = fetch_schema_obj("ticker")
     from test.conftest import fetch_manifest_obj
+
     ingestion_model = fetch_manifest_obj(
         "ticker", dynamic_edge_feedback=True
     ).require_ingestion_model()
-    ingestion_model.finish_init(
-        schema_o.core_schema, dynamic_edge_feedback=True
-    )
+    ingestion_model.finish_init(schema_o.core_schema, dynamic_edge_feedback=True)
 
     # Explicit binding: resource "history" -> ticker.csv.gz
     data_path = Path(current_path) / "data" / "ticker"
@@ -253,7 +252,9 @@ def test_ingest_csv_edge_weights(
 
     with ConnectionManager(connection_config=conn_conf) as db:
         companies = db.fetch_docs("company")
-        assert len(companies) >= 4, f"Expected at least 4 companies, got {len(companies)}"
+        assert len(companies) >= 4, (
+            f"Expected at least 4 companies, got {len(companies)}"
+        )
 
         # Verify edges
         r = db.execute("MATCH ()-[r]->() RETURN count(r) AS c")
@@ -295,7 +296,9 @@ def test_ingest_objects_relations(
         assert len(vehicles) == 3, f"Expected 3 vehicles, got {len(vehicles)}"
 
         institutions = db.fetch_docs("institution")
-        assert len(institutions) == 3, f"Expected 3 institutions, got {len(institutions)}"
+        assert len(institutions) == 3, (
+            f"Expected 3 institutions, got {len(institutions)}"
+        )
 
         # Note: edge_router creates edges dynamically without edge_config entries,
         # so _push_edges (which iterates edge_config) does not push them.
@@ -374,9 +377,16 @@ def test_aggregation_min_max_avg(conn_conf, test_graph_name, clean_db):
         ]
         db.upsert_docs_batch(docs, "Score", match_keys=["id"])
 
-        assert db.aggregate("Score", AggregationType.MIN, aggregated_field="score") == 10
-        assert db.aggregate("Score", AggregationType.MAX, aggregated_field="score") == 30
-        assert db.aggregate("Score", AggregationType.AVERAGE, aggregated_field="score") == 20.0
+        assert (
+            db.aggregate("Score", AggregationType.MIN, aggregated_field="score") == 10
+        )
+        assert (
+            db.aggregate("Score", AggregationType.MAX, aggregated_field="score") == 30
+        )
+        assert (
+            db.aggregate("Score", AggregationType.AVERAGE, aggregated_field="score")
+            == 20.0
+        )
 
 
 def test_aggregation_sorted_unique(conn_conf, test_graph_name, clean_db):

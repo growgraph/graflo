@@ -18,9 +18,7 @@ def test_delete_graph_structure(conn_conf, test_graph_name):
     with ConnectionManager(connection_config=conn_conf) as db_client:
         db_client.execute("CREATE (n:TestNode {name: 'test'})")
 
-        result = db_client.execute(
-            "MATCH (n:TestNode) RETURN count(n) AS count"
-        )
+        result = db_client.execute("MATCH (n:TestNode) RETURN count(n) AS count")
         assert result.to_list()[0]["count"] == 1
 
         db_client.delete_graph_structure(delete_all=True)
@@ -57,9 +55,7 @@ def test_upsert_updates_existing_node(conn_conf, test_graph_name, clean_db):
 def test_upsert_batch(conn_conf, test_graph_name, clean_db):
     """Test upserting multiple nodes in a batch."""
     with ConnectionManager(connection_config=conn_conf) as db_client:
-        docs = [
-            {"id": str(i), "name": f"User {i}"} for i in range(10)
-        ]
+        docs = [{"id": str(i), "name": f"User {i}"} for i in range(10)]
         db_client.upsert_docs_batch(docs, "User", match_keys=["id"])
 
         result = db_client.fetch_docs("User")
