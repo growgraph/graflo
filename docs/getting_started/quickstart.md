@@ -317,6 +317,21 @@ uv run ingest \
     --data-source-config-path data_sources.yaml
 ```
 
+## Document cast errors and `--doc-error-sink`
+
+If some source documents fail while casting a resource (bad shape, transform error, etc.), you can keep ingesting the rest with **`--on-doc-error skip`** (the default) and record each failure as gzip-compressed JSON lines:
+
+```bash
+uv run ingest \
+    --db-config-path config/db.yaml \
+    --schema-path config/manifest.yaml \
+    --source-path data/ \
+    --on-doc-error skip \
+    --doc-error-sink ./artifacts/doc_cast_failures.jsonl.gz
+```
+
+Inspect the file with **`zcat ./artifacts/doc_cast_failures.jsonl.gz | head`**. The same option exists on **`IngestionParams.doc_error_sink_path`** when you drive **`Caster`** or **`GraphEngine`** from Python. Full behavior (budget limits, document preview bounds, logging when no path is set) is described under [Document cast errors and doc error sink](../concepts/ingestion_doc_errors.md).
+
 ## Database Configuration Options
 
 graflo supports multiple ways to configure database connections:

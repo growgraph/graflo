@@ -13,7 +13,7 @@ Ingestion paths (:meth:`ingest`, :meth:`ingest_data_sources`, :meth:`process_res
 :meth:`process_data_source`, queue workers) all route batches through
 :meth:`process_batch` → :meth:`cast_normal_resource`, which loads the named
 ``Resource`` from the :class:`~graflo.architecture.contract.declarations.ingestion_model.IngestionModel`
-and invokes :meth:`~graflo.architecture.contract.declarations.resource.Resource.__call__` per row.
+and invokes :meth:`~graflo.architecture.contract.declarations.resource.Resource.__call__` per source document.
 
 Example:
     >>> caster = Caster(schema=schema)
@@ -46,16 +46,17 @@ from graflo.hq.registry_builder import RegistryBuilder
 from graflo.util.chunker import ChunkerType
 from graflo.architecture.contract.bindings import Bindings
 from graflo.hq.connection_provider import ConnectionProvider, EmptyConnectionProvider
+from graflo.hq.doc_error_sink import failure_sinks_from_ingestion_params
 from graflo.hq.ingestion_parameters import (
     CastBatchResult,
+    DocCastFailure,
+    DocErrorBudgetExceeded,
     IngestionParams,
-    RowCastFailure,
-    RowErrorBudgetExceeded,
 )
 
 logger = logging.getLogger(__name__)
 
-_ROW_ERROR_TRACEBACK_MAX_CHARS = 16_384
+_DOC_CAST_ERROR_TRACEBACK_MAX_CHARS = 16_384
 
 
 def _filter_graph_container_by_vertices_inplace(
@@ -85,8 +86,8 @@ def _filter_graph_container_by_vertices_inplace(
 
 def _format_traceback(exc: BaseException) -> str:
     tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
-    if len(tb) > _ROW_ERROR_TRACEBACK_MAX_CHARS:
-        return tb[:_ROW_ERROR_TRACEBACK_MAX_CHARS] + "\n...(traceback truncated)"
+    if len(tb) > _DOC_CAST_ERROR_TRACEBACK_MAX_CHARS:
+        return tb[:_DOC_CAST_ERROR_TRACEBACK_MAX_CHARS] + "\n...(traceback truncated)"
     return tb
 
 
@@ -107,18 +108,18 @@ def _build_doc_preview(
     return f"{cut}...(doc preview truncated)"
 
 
-def _row_failure_from_exception(
+def _doc_failure_from_exception(
     *,
     resource_name: str,
-    row_index: int,
+    doc_index: int,
     doc: dict[str, Any],
     exc: BaseException,
     doc_keys: tuple[str, ...] | None,
     doc_preview_max_bytes: int,
-) -> RowCastFailure:
-    return RowCastFailure(
+) -> DocCastFailure:
+    return DocCastFailure(
         resource_name=resource_name,
-        row_index=row_index,
+        doc_index=doc_index,
         exception_type=type(exc).__name__,
         message=str(exc),
         traceback=_format_traceback(exc),
@@ -164,44 +165,41 @@ class Caster:
         self.schema = schema
         self.ingestion_model = ingestion_model
         self._allowed_vertex_names: set[str] | None = None
-        self._row_error_total = 0
-        self._row_error_io_lock = asyncio.Lock()
+        self._doc_cast_error_total = 0
+        self._doc_cast_error_io_lock = asyncio.Lock()
+        self._failure_sinks = failure_sinks_from_ingestion_params(ingestion_params)
 
     # ------------------------------------------------------------------
     # Casting
     # ------------------------------------------------------------------
 
-    async def _persist_row_failures(self, failures: list[RowCastFailure]) -> None:
+    async def _persist_doc_failures(self, failures: list[DocCastFailure]) -> None:
         if not failures:
             return
         params = self.ingestion_params
-        path = params.row_error_dead_letter_path
 
-        async with self._row_error_io_lock:
-            if path is not None:
-                path.parent.mkdir(parents=True, exist_ok=True)
-                with path.open("a", encoding="utf-8") as f:
-                    for fail in failures:
-                        f.write(fail.model_dump_json() + "\n")
+        async with self._doc_cast_error_io_lock:
+            for sink in self._failure_sinks:
+                await sink.write_failures(failures)
 
-            self._row_error_total += len(failures)
-            if params.max_row_errors is not None:
-                if self._row_error_total > params.max_row_errors:
-                    raise RowErrorBudgetExceeded(
-                        total_failures=self._row_error_total,
-                        limit=params.max_row_errors,
-                        dead_letter_path=path,
+            self._doc_cast_error_total += len(failures)
+            if params.max_doc_errors is not None:
+                if self._doc_cast_error_total > params.max_doc_errors:
+                    raise DocErrorBudgetExceeded(
+                        total_failures=self._doc_cast_error_total,
+                        limit=params.max_doc_errors,
+                        doc_error_sink_path=params.doc_error_sink_path,
                     )
 
-        if path is None:
+        if not self._failure_sinks:
             for fail in failures:
                 logger.error(
-                    "Row cast failure resource=%s row_index=%s %s: %s",
+                    "Document cast failure resource=%s doc_index=%s %s: %s",
                     fail.resource_name,
-                    fail.row_index,
+                    fail.doc_index,
                     fail.exception_type,
                     fail.message,
-                    extra={"row_cast_failure": fail.model_dump(mode="json")},
+                    extra={"doc_cast_failure": fail.model_dump(mode="json")},
                 )
 
     async def cast_normal_resource(
@@ -214,8 +212,8 @@ class Caster:
             resource_name: Optional name of the resource to use
 
         Returns:
-            CastBatchResult with graph and any per-row failures (empty when
-            ``on_row_error`` is ``fail`` and the batch succeeds).
+            CastBatchResult with graph and any per-document failures (empty when
+            ``on_doc_error`` is ``fail`` and the batch succeeds).
         """
         rr = self.ingestion_model.fetch_resource(resource_name)
         resolved_name = rr.name
@@ -228,7 +226,7 @@ class Caster:
             async with semaphore:
                 return await asyncio.to_thread(rr, doc)
 
-        if params.on_row_error == "fail":
+        if params.on_doc_error == "fail":
             coros = [process_doc(doc) for doc in doc_list]
             docs = await asyncio.gather(*coros)
             graph = GraphContainer.from_docs_list(docs)
@@ -242,10 +240,14 @@ class Caster:
             return_exceptions=True,
         )
         docs: list[Any] = []
-        failures: list[RowCastFailure] = []
+        failures: list[DocCastFailure] = []
         for i, item in enumerate(raw):
             doc_raw = doc_list[i]
-            doc = doc_raw if isinstance(doc_raw, dict) else {"_row": repr(doc_raw)}
+            doc = (
+                doc_raw
+                if isinstance(doc_raw, dict)
+                else {"_source_repr": repr(doc_raw)}
+            )
 
             if isinstance(item, asyncio.CancelledError):
                 raise item
@@ -253,19 +255,19 @@ class Caster:
                 raise item
             if isinstance(item, BaseException):
                 failures.append(
-                    _row_failure_from_exception(
+                    _doc_failure_from_exception(
                         resource_name=resolved_name,
-                        row_index=i,
+                        doc_index=i,
                         doc=doc,
                         exc=item,
-                        doc_keys=params.row_error_doc_keys,
-                        doc_preview_max_bytes=params.row_error_doc_preview_max_bytes,
+                        doc_keys=params.doc_error_preview_keys,
+                        doc_preview_max_bytes=params.doc_error_preview_max_bytes,
                     )
                 )
                 continue
             docs.append(item)
 
-        await self._persist_row_failures(failures)
+        await self._persist_doc_failures(failures)
 
         graph = GraphContainer.from_docs_list(docs)
         _filter_graph_container_by_vertices_inplace(
@@ -293,7 +295,7 @@ class Caster:
         result = await self.cast_normal_resource(batch, resource_name=resource_name)
         if result.failures:
             logger.warning(
-                "Resource %r batch had %d row cast failure(s); first: %s: %s",
+                "Resource %r batch had %d document cast failure(s); first: %s: %s",
                 result.failures[0].resource_name,
                 len(result.failures),
                 result.failures[0].exception_type,
@@ -487,7 +489,7 @@ class Caster:
             ingestion_params = IngestionParams()
 
         self.ingestion_params = ingestion_params
-        self._row_error_total = 0
+        self._doc_cast_error_total = 0
         init_only = ingestion_params.init_only
 
         if init_only:

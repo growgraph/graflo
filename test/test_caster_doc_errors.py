@@ -1,8 +1,9 @@
-"""Tests for per-row cast error handling (skip vs fail, dead-letter, budget)."""
+"""Tests for per-document cast error handling (skip vs fail, doc error sink, budget)."""
 
 from __future__ import annotations
 
 import asyncio
+import gzip
 import json
 from collections import defaultdict
 from pathlib import Path
@@ -13,19 +14,36 @@ import pytest
 from graflo.hq.caster import (
     CastBatchResult,
     Caster,
+    DocErrorBudgetExceeded,
     IngestionParams,
-    RowErrorBudgetExceeded,
 )
 
 
+def _read_all_jsonl_gz_lines(path: Path) -> list[str]:
+    """Read every line from a file that may contain concatenated gzip members."""
+
+    lines: list[str] = []
+    with path.open("rb") as raw:
+        while True:
+            gzf = gzip.GzipFile(fileobj=raw, mode="rb")
+            try:
+                chunk = gzf.read()
+            finally:
+                gzf.close()
+            if not chunk:
+                break
+            lines.extend(chunk.decode("utf-8").splitlines())
+    return [ln for ln in lines if ln.strip()]
+
+
 class _FakeResource:
-    """Callable resource that fails rows containing ``_fail``."""
+    """Callable resource that fails documents containing ``_fail``."""
 
     name = "fake_resource"
 
     def __call__(self, doc: dict) -> defaultdict:
         if doc.get("_fail"):
-            raise ValueError("intentional row failure")
+            raise ValueError("intentional document failure")
         out: defaultdict = defaultdict(list)
         out["v_test"] = [{"id": doc.get("id")}]
         return out
@@ -43,16 +61,16 @@ def mock_schema() -> MagicMock:
     return MagicMock()
 
 
-def test_skip_continues_batch_and_dead_letter(
+def test_skip_continues_batch_and_doc_error_sink(
     mock_schema: MagicMock,
     mock_ingestion_model: MagicMock,
     tmp_path: Path,
 ) -> None:
-    dl = tmp_path / "errors.jsonl"
+    sink = tmp_path / "errors.jsonl.gz"
     params = IngestionParams(
         n_cores=1,
-        on_row_error="skip",
-        row_error_dead_letter_path=dl,
+        on_doc_error="skip",
+        doc_error_sink_path=sink,
     )
     caster = Caster(mock_schema, mock_ingestion_model, ingestion_params=params)
     data = [{"id": 1}, {"id": 2, "_fail": True}, {"id": 3}]
@@ -61,24 +79,24 @@ def test_skip_continues_batch_and_dead_letter(
 
     assert isinstance(result, CastBatchResult)
     assert len(result.failures) == 1
-    assert result.failures[0].row_index == 1
+    assert result.failures[0].doc_index == 1
     assert result.failures[0].exception_type == "ValueError"
     assert "v_test" in result.graph.vertices
     assert len(result.graph.vertices["v_test"]) == 2
 
-    lines = dl.read_text(encoding="utf-8").strip().splitlines()
+    lines = _read_all_jsonl_gz_lines(sink)
     assert len(lines) == 1
-    row = json.loads(lines[0])
-    assert row["row_index"] == 1
-    assert row["resource_name"] == "fake_resource"
-    assert row["exception_type"] == "ValueError"
+    rec = json.loads(lines[0])
+    assert rec["doc_index"] == 1
+    assert rec["resource_name"] == "fake_resource"
+    assert rec["exception_type"] == "ValueError"
 
 
 def test_fail_propagates(
     mock_schema: MagicMock,
     mock_ingestion_model: MagicMock,
 ) -> None:
-    params = IngestionParams(n_cores=1, on_row_error="fail")
+    params = IngestionParams(n_cores=1, on_doc_error="fail")
     caster = Caster(mock_schema, mock_ingestion_model, ingestion_params=params)
     data = [{"id": 1}, {"id": 2, "_fail": True}]
 
@@ -86,52 +104,53 @@ def test_fail_propagates(
         asyncio.run(caster.cast_normal_resource(data))
 
 
-def test_max_row_errors_exceeded(
+def test_max_doc_errors_exceeded(
     mock_schema: MagicMock,
     mock_ingestion_model: MagicMock,
     tmp_path: Path,
 ) -> None:
-    dl = tmp_path / "errors.jsonl"
+    sink = tmp_path / "errors.jsonl.gz"
     params = IngestionParams(
         n_cores=1,
-        on_row_error="skip",
-        max_row_errors=1,
-        row_error_dead_letter_path=dl,
+        on_doc_error="skip",
+        max_doc_errors=1,
+        doc_error_sink_path=sink,
     )
     caster = Caster(mock_schema, mock_ingestion_model, ingestion_params=params)
     data = [{"_fail": True}, {"_fail": True}]
 
-    with pytest.raises(RowErrorBudgetExceeded) as exc_info:
+    with pytest.raises(DocErrorBudgetExceeded) as exc_info:
         asyncio.run(caster.cast_normal_resource(data))
 
     assert exc_info.value.limit == 1
     assert exc_info.value.total_failures == 2
-    lines = dl.read_text(encoding="utf-8").strip().splitlines()
+    assert exc_info.value.doc_error_sink_path == sink
+    lines = _read_all_jsonl_gz_lines(sink)
     assert len(lines) == 2
 
 
-async def _two_concurrent_failed_rows(caster: Caster) -> None:
+async def _two_concurrent_failed_docs(caster: Caster) -> None:
     await asyncio.gather(
         caster.cast_normal_resource([{"_fail": True}]),
         caster.cast_normal_resource([{"_fail": True}]),
     )
 
 
-def test_concurrent_dead_letter_lines(
+def test_concurrent_doc_error_sink_lines(
     mock_schema: MagicMock,
     mock_ingestion_model: MagicMock,
     tmp_path: Path,
 ) -> None:
-    dl = tmp_path / "errors.jsonl"
+    sink = tmp_path / "errors.jsonl.gz"
     params = IngestionParams(
         n_cores=2,
-        on_row_error="skip",
-        row_error_dead_letter_path=dl,
+        on_doc_error="skip",
+        doc_error_sink_path=sink,
     )
     caster = Caster(mock_schema, mock_ingestion_model, ingestion_params=params)
-    asyncio.run(_two_concurrent_failed_rows(caster))
+    asyncio.run(_two_concurrent_failed_docs(caster))
 
-    lines = [ln for ln in dl.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    lines = _read_all_jsonl_gz_lines(sink)
     assert len(lines) == 2
     for ln in lines:
         json.loads(ln)

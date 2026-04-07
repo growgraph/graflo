@@ -58,6 +58,7 @@ nav:
     -   Concepts Overview: concepts/index.md
     -   Transforms: concepts/transforms.md
     -   Backend Index Behavior: concepts/backend_indexes.md
+    -   Document cast errors and doc error sink: concepts/ingestion_doc_errors.md
 -   Examples:
     -   Examples Index: examples/index.md
     -   1 - Ingest Multiple Tabular Sources (CSV, ArangoDB): examples/example-1.md

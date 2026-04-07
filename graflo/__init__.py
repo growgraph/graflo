@@ -28,8 +28,8 @@ from .hq import (
     Caster,
     GraphEngine,
     IngestionParams,
-    RowCastFailure,
-    RowErrorBudgetExceeded,
+    DocCastFailure,
+    DocErrorBudgetExceeded,
 )
 
 # --- Architecture ----------------------------------------------------------
@@ -90,8 +90,8 @@ __all__ = [
     "Caster",
     "CastBatchResult",
     "IngestionParams",
-    "RowCastFailure",
-    "RowErrorBudgetExceeded",
+    "DocCastFailure",
+    "DocErrorBudgetExceeded",
     # Architecture
     "Schema",
     "GraphMetadata",
