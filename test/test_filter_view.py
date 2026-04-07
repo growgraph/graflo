@@ -89,7 +89,6 @@ def _fetch_rows(conn_str: str, sql: str) -> list[dict[str, object]]:
         config=SQLConfig(
             connection_string=conn_str,
             query=sql,
-            pagination=False,
         )
     )
     return list(ds)

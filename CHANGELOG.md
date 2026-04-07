@@ -6,19 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [Unreleased]
+## [1.7.13] - 2026-04-07
+
 
 ### Changed
 
+- **`SQLDataSource`**: Executes the configured query once per `iter_batches` call and streams rows with SQLAlchemy **`stream_results`** and **`fetchmany`**, instead of mutating SQL with **`LIMIT`/`OFFSET`** and re-running per page. This avoids large-offset discarded scans on backends that support server-side cursors. Optional **`limit`** still caps the number of rows read in application code (no SQL **`OFFSET`** pagination).
+- **`SQLConfig`**: Fields **`pagination`** and **`page_size`** are deprecated and ignored (left optional so existing configs keep validating under **`extra="forbid"`**). Control batch size via **`iter_batches(batch_size=...)`** and total row cap via **`limit`**.
+- **`RegistryBuilder`**: No longer passes SQL pagination options into **`SQLConfig`** when registering PostgreSQL table sources.
 - **Sanitizer API is manifest-first**: `graflo.hq.sanitizer.Sanitizer` now exposes `sanitize_manifest(GraphManifest)` as the contract-level entrypoint, applying naming/index normalization on `schema` and synchronizing ingestion mappings in `ingestion_model` when needed.
+
+### Added
+
+- **Tests**: **`test_sql_data_source_postgres_streaming_limit_25`** in **`test/data_source/test_api_data_source.py`** hits a real PostgreSQL instance from **`PostgresConfig.from_docker_env()`** (skips when unavailable) and asserts **`iter_batches`** batching and **`limit`**.
 
 ### Breaking
 
 - **Removed schema-only sanitizer API**: `SchemaSanitizer` and `sanitize(schema, ingestion_model=...)` were removed. Update call sites to create/use `GraphManifest` and call `Sanitizer.sanitize_manifest(manifest)`.
-
-### Documentation
-
-- Docs updated to describe manifest-level sanitization behavior and usage under `docs/index.md` and `docs/concepts/index.md`.
 
 ## [1.7.12] - 2026-04-06
 

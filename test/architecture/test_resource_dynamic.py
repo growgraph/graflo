@@ -173,14 +173,12 @@ class TestFilteredVertexResources:
             config=SQLConfig(
                 connection_string=conn_str,
                 query=query_server,
-                pagination=False,
             )
         )
         ds_db = SQLDataSource(
             config=SQLConfig(
                 connection_string=conn_str,
                 query=query_db,
-                pagination=False,
             )
         )
 
@@ -381,7 +379,6 @@ class TestEdgeResourceAutoJoin:
             config=SQLConfig(
                 connection_string=conn_str,
                 query=query,
-                pagination=False,
             )
         )
         rows = list(ds)
