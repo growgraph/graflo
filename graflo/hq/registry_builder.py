@@ -329,8 +329,6 @@ class RegistryBuilder:
             sql_config = SQLConfig(
                 connection_string=connection_string,
                 query=query,
-                pagination=True,
-                page_size=ingestion_params.batch_size,
             )
             sql_source = SQLDataSource(config=sql_config)
 

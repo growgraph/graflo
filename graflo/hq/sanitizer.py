@@ -1,4 +1,4 @@
-"""Schema sanitization for PostgreSQL schema inference.
+"""Sanitization utilities for schema and ingestion contracts.
 
 This module provides functionality to sanitize schema attributes to avoid
 reserved words and normalize vertex indexes for specific database flavors.
@@ -7,11 +7,11 @@ reserved words and normalize vertex indexes for specific database flavors.
 from __future__ import annotations
 
 import logging
-from collections import Counter
+from collections import Counter, defaultdict
 from typing import TYPE_CHECKING
-from collections import defaultdict
 
 from graflo.architecture.schema.edge import Edge
+from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.contract.declarations.ingestion_model import IngestionModel
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.vertex import Field
@@ -28,8 +28,8 @@ VERTEX_SUFFIX = "vertex"
 RELATION_SUFFIX = "relation"
 
 
-class SchemaSanitizer:
-    """Sanitizes schema attributes to avoid reserved words and normalize indexes.
+class Sanitizer:
+    """Sanitize schema naming and ingestion mappings for target DB constraints.
 
     This class handles:
     - Sanitizing vertex names and field names to avoid reserved words
@@ -51,11 +51,26 @@ class SchemaSanitizer:
         )
         self.vertex_mappings: dict[str, str] = {}
 
-    def sanitize(
+    def sanitize_manifest(self, manifest: GraphManifest) -> GraphManifest:
+        """Sanitize a manifest in place and return it.
+
+        The schema block is required for sanitization work to happen. If the
+        manifest has no schema, the method is a no-op and returns the same object.
+        """
+        if manifest.graph_schema is None:
+            return manifest
+
+        self._sanitize_schema(
+            manifest.graph_schema,
+            ingestion_model=manifest.ingestion_model,
+        )
+        return manifest
+
+    def _sanitize_schema(
         self,
         schema: Schema,
         ingestion_model: IngestionModel | None = None,
-    ) -> Schema:
+    ) -> None:
         """Sanitize attribute names and vertex names in the schema to avoid reserved words.
 
         This method modifies:
@@ -69,12 +84,10 @@ class SchemaSanitizer:
         Args:
             schema: The schema to sanitize
 
-        Returns:
-            Schema with sanitized attribute names and vertex names
         """
         if not self.reserved_words:
-            # No reserved words to check, return schema as-is
-            return schema
+            # No reserved words to check.
+            return
 
         # First pass: Sanitize physical vertex storage names
         for vertex in schema.core_schema.vertex_config.vertices:
@@ -247,8 +260,6 @@ class SchemaSanitizer:
                 self._apply_field_index_mappings_to_resource(
                     resource, field_index_mappings
                 )
-
-        return schema
 
     def _normalize_vertex_indexes(
         self,

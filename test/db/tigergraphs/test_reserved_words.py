@@ -22,7 +22,7 @@ import pytest
 
 from graflo.onto import DBType
 from test.conftest import fetch_manifest_obj
-from graflo.hq.sanitizer import SchemaSanitizer
+from graflo.hq.sanitizer import Sanitizer
 from graflo.architecture.contract.manifest import GraphManifest
 
 
@@ -42,12 +42,9 @@ def schema_with_incompatible_edges():
 def test_vertex_name_sanitization_for_tigergraph(schema_with_reserved_words):
     """Test that vertex names with reserved words are sanitized for TigerGraph."""
     manifest: GraphManifest = schema_with_reserved_words
-    schema = manifest.require_schema()
-    ingestion_model = manifest.require_ingestion_model()
-
-    sanitizer = SchemaSanitizer(DBType.TIGERGRAPH)
-
-    sanitized_schema = sanitizer.sanitize(schema, ingestion_model=ingestion_model)
+    sanitizer = Sanitizer(DBType.TIGERGRAPH)
+    sanitizer.sanitize_manifest(manifest)
+    sanitized_schema = manifest.require_schema()
 
     vertex_dbnames = [
         sanitized_schema.db_profile.vertex_storage_name(v.name)
@@ -64,12 +61,10 @@ def test_vertex_name_sanitization_for_tigergraph(schema_with_reserved_words):
 def test_edges_sanitization_for_tigergraph(schema_with_incompatible_edges):
     """Test that vertex names with reserved words are sanitized for TigerGraph."""
     manifest: GraphManifest = schema_with_incompatible_edges
-    schema = manifest.require_schema()
+    sanitizer = Sanitizer(DBType.TIGERGRAPH)
+    sanitizer.sanitize_manifest(manifest)
+    sanitized_schema = manifest.require_schema()
     ingestion_model = manifest.require_ingestion_model()
-
-    sanitizer = SchemaSanitizer(DBType.TIGERGRAPH)
-
-    sanitized_schema = sanitizer.sanitize(schema, ingestion_model=ingestion_model)
 
     # sanitized_schema.to_yaml_file(
     #     os.path.join(
@@ -103,3 +98,19 @@ def test_edges_sanitization_for_tigergraph(schema_with_incompatible_edges):
         )
         == "box_relation"
     )
+
+
+def test_manifest_sanitization_for_tigergraph(schema_with_reserved_words):
+    """Test manifest-first sanitization updates schema and ingestion in place."""
+    manifest: GraphManifest = schema_with_reserved_words
+
+    sanitizer = Sanitizer(DBType.TIGERGRAPH)
+    result = sanitizer.sanitize_manifest(manifest)
+
+    assert result is manifest
+    schema = manifest.require_schema()
+    vertex_dbnames = [
+        schema.db_profile.vertex_storage_name(v.name)
+        for v in schema.core_schema.vertex_config.vertices
+    ]
+    assert "Package_vertex" in vertex_dbnames

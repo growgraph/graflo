@@ -7,9 +7,14 @@ multiple components for graph database operations.
 from graflo.hq.caster import (
     CastBatchResult,
     Caster,
+    DocCastFailure,
+    DocErrorBudgetExceeded,
     IngestionParams,
-    RowCastFailure,
-    RowErrorBudgetExceeded,
+)
+from graflo.hq.doc_error_sink import (
+    DocErrorSink,
+    JsonlGzDocErrorSink,
+    failure_sinks_from_ingestion_params,
 )
 from graflo.hq.connection_provider import (
     ConnectionProvider,
@@ -25,25 +30,28 @@ from graflo.hq.graph_engine import GraphEngine
 from graflo.hq.inferencer import InferenceManager
 from graflo.hq.registry_builder import RegistryBuilder
 from graflo.hq.resource_mapper import ResourceMapper
-from graflo.hq.sanitizer import SchemaSanitizer
+from graflo.hq.sanitizer import Sanitizer
 
 __all__ = [
     "CastBatchResult",
     "Caster",
+    "DocErrorSink",
     "ConnectionProvider",
     "DBWriter",
     "EmptyConnectionProvider",
     "GraphEngine",
     "IngestionParams",
+    "JsonlGzDocErrorSink",
     "InMemoryConnectionProvider",
     "GeneralizedConnConfig",
     "PostgresGeneralizedConnConfig",
     "SparqlGeneralizedConnConfig",
-    "RowCastFailure",
-    "RowErrorBudgetExceeded",
+    "DocCastFailure",
+    "DocErrorBudgetExceeded",
+    "failure_sinks_from_ingestion_params",
     "SparqlAuth",
     "InferenceManager",
     "RegistryBuilder",
     "ResourceMapper",
-    "SchemaSanitizer",
+    "Sanitizer",
 ]

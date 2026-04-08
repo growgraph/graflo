@@ -29,7 +29,12 @@ db_type = conn_conf.connection_type
 
 # Create GraphEngine and define schema + ingest in one operation
 engine = GraphEngine(target_db_flavor=db_type)
-ingestion_params = IngestionParams(clear_data=True)
+ingestion_params = IngestionParams(
+    clear_data=True,
+    # Optional: append per-document cast failures as gzip JSONL (see docs/concepts/ingestion_doc_errors.md).
+    # from pathlib import Path
+    # doc_error_sink_path=Path("row_failures.jsonl.gz"),
+)
 engine.define_and_ingest(
     manifest=manifest,
     target_db_config=conn_conf,

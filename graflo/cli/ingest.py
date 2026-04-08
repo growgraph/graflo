@@ -88,17 +88,17 @@ logger = logging.getLogger(__name__)
     help="skip ingestion; only init the db",
 )
 @click.option(
-    "--on-row-error",
+    "--on-doc-error",
     type=click.Choice(["skip", "fail"]),
     default="skip",
     show_default=True,
-    help="Per-row cast errors: skip (continue batch) or fail the whole batch.",
+    help="Per-source-document cast errors: skip (continue batch) or fail the whole batch.",
 )
 @click.option(
-    "--row-error-dead-letter",
+    "--doc-error-sink",
     type=click.Path(path_type=pathlib.Path),
     default=None,
-    help="Append JSONL row failure records to this path (optional).",
+    help="Append gzip-compressed JSONL row failure records (.jsonl.gz) to this path (optional).",
 )
 def ingest(
     db_config_path,
@@ -111,8 +111,8 @@ def ingest(
     init_only,
     resource_connector_config_path,
     data_source_config_path,
-    on_row_error,
-    row_error_dead_letter,
+    on_doc_error,
+    doc_error_sink,
 ):
     """Ingest data into a graph database.
 
@@ -188,8 +188,8 @@ def ingest(
         batch_size=batch_size,
         init_only=init_only,
         limit_files=limit_files,
-        on_row_error=on_row_error,
-        row_error_dead_letter_path=row_error_dead_letter,
+        on_doc_error=on_doc_error,
+        doc_error_sink_path=doc_error_sink,
     )
 
     # Define schema first (if recreate_schema is requested)

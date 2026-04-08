@@ -1,10 +1,11 @@
 from graflo.architecture.contract.declarations.ingestion_model import IngestionModel
+from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.schema import Schema
 from graflo.onto import DBType
 from graflo.architecture import Resource
 from graflo.db import PostgresConnection
 from graflo.db.postgres import PostgresSchemaInferencer, PostgresResourceMapper
-from graflo.hq.sanitizer import SchemaSanitizer
+from graflo.hq.sanitizer import Sanitizer
 import logging
 from graflo.architecture.onto_sql import SchemaIntrospectionResult
 
@@ -28,7 +29,7 @@ class InferenceManager:
             fuzzy_threshold: Similarity threshold for fuzzy matching (0.0 to 1.0, default 0.8)
         """
         self.target_db_flavor = target_db_flavor
-        self.sanitizer = SchemaSanitizer(target_db_flavor)
+        self.sanitizer = Sanitizer(target_db_flavor)
         self.conn = conn
         self.inferencer = PostgresSchemaInferencer(
             db_flavor=target_db_flavor, conn=conn
@@ -115,13 +116,14 @@ class InferenceManager:
         # Infer schema
         schema = self.infer_schema(introspection_result, schema_name=schema_name)
 
-        # Sanitize for target database flavor
-        schema = self.sanitizer.sanitize(schema)
-
         # Create ingestion model from inferred resources.
         resources = self.create_resources(introspection_result, schema)
         ingestion_model = IngestionModel(resources=resources)
         ingestion_model.finish_init(schema.core_schema)
+
+        # Sanitize for target database flavor at manifest level.
+        manifest = GraphManifest(graph_schema=schema, ingestion_model=ingestion_model)
+        self.sanitizer.sanitize_manifest(manifest)
 
         return schema, ingestion_model
 

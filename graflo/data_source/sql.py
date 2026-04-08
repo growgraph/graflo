@@ -1,10 +1,12 @@
 """SQL database data source implementation.
 
 This module provides a data source for SQL databases using SQLAlchemy-style
-configuration. It supports parameterized queries and pagination.
+configuration. It supports parameterized queries and streams rows in bounded
+memory using server-side cursor semantics where the driver supports them.
 """
 
 import logging
+from decimal import Decimal
 from typing import Any, Iterator
 
 from pydantic import Field, PrivateAttr
@@ -27,23 +29,24 @@ class SQLConfig(ConfigBaseModel):
             (e.g., 'postgresql://user:pass@localhost/dbname')
         query: SQL query string (supports parameterized queries)
         params: Query parameters as dictionary (for parameterized queries)
-        pagination: Whether to use pagination (default: True)
-        page_size: Number of rows per page (default: 1000)
+        pagination: Deprecated. Ignored; retained for config compatibility.
+        page_size: Deprecated. Ignored; use ``iter_batches(batch_size=...)``.
     """
 
     connection_string: str
     query: str
     params: dict[str, Any] = Field(default_factory=dict)
-    pagination: bool = True
-    page_size: int = 1000
+    pagination: bool | None = None
+    page_size: int | None = None
 
 
 class SQLDataSource(AbstractDataSource):
     """Data source for SQL databases.
 
     This class provides a data source for SQL databases using SQLAlchemy.
-    It supports parameterized queries and pagination. Returns rows as
-    dictionaries with column names as keys.
+    Results are streamed with ``stream_results`` and ``fetchmany`` so large
+    queries avoid OFFSET-based re-scans and bounded memory per chunk.
+    Rows are returned as dictionaries with column names as keys.
 
     Attributes:
         config: SQL configuration
@@ -64,118 +67,70 @@ class SQLDataSource(AbstractDataSource):
             self._engine = create_engine(self.config.connection_string)
         return self._engine
 
-    def _add_pagination(self, query: str, offset: int, limit: int) -> str:
-        """Add pagination to SQL query.
-
-        Args:
-            query: Original SQL query
-            offset: Offset value
-            limit: Limit value
-
-        Returns:
-            Query with pagination added
-        """
-        # Check if query already has LIMIT/OFFSET
-        query_upper = query.upper().strip()
-        if "LIMIT" in query_upper or "OFFSET" in query_upper:
-            # Query already has pagination, return as-is
-            return query
-
-        # Add pagination based on database type
-        # For most SQL databases, use LIMIT/OFFSET
-        # For SQL Server, use TOP and OFFSET/FETCH
-        connection_string_lower = self.config.connection_string.lower()
-
-        if "sqlserver" in connection_string_lower or "mssql" in connection_string_lower:
-            # SQL Server syntax
-            return f"{query} OFFSET {offset} ROWS FETCH NEXT {limit} ROWS ONLY"
-        elif "oracle" in connection_string_lower:
-            # Oracle syntax (using ROWNUM or FETCH)
-            return f"{query} OFFSET {offset} ROWS FETCH NEXT {limit} ROWS ONLY"
-        else:
-            # Standard SQL (PostgreSQL, MySQL, SQLite, etc.)
-            return f"{query} LIMIT {limit} OFFSET {offset}"
+    @staticmethod
+    def _row_to_json_dict(row: Any) -> dict[str, Any]:
+        """Map one result row to a plain dict with JSON-friendly values."""
+        row_dict: dict[str, Any] = dict(row._mapping)
+        for key, value in row_dict.items():
+            if isinstance(value, Decimal):
+                row_dict[key] = float(value)
+        return row_dict
 
     def iter_batches(
         self, batch_size: int = 1000, limit: int | None = None
     ) -> Iterator[list[dict]]:
         """Iterate over SQL query results in batches.
 
+        Executes the configured query once per call and reads via
+        ``fetchmany`` on a streaming result. Optional ``limit`` stops after
+        that many rows without adding LIMIT/OFFSET to the SQL text.
+
         Args:
-            batch_size: Target size of each yielded batch of row dicts.
-            limit: Maximum total rows to read (across all pages when paginating).
+            batch_size: Target size of each yielded batch of row dicts
+                (last batch may be smaller).
+            limit: Maximum total rows to read, or ``None`` for full result.
 
         Yields:
             list[dict]: Batches of rows as dictionaries
         """
+        effective_batch = max(1, batch_size)
         engine = self._get_engine()
         total_items = 0
-        offset = 0
 
-        # Use configured page size or batch size, whichever is smaller
-        page_size = min(self.config.page_size, batch_size)
+        try:
+            with engine.connect() as conn:
+                stream = conn.execution_options(stream_results=True)
+                result = stream.execute(text(self.config.query), self.config.params)
+                try:
+                    while True:
+                        if limit is not None and total_items >= limit:
+                            break
 
-        while True:
-            if limit is not None and total_items >= limit:
-                break
+                        remaining = None if limit is None else limit - total_items
+                        fetch_n = (
+                            effective_batch
+                            if remaining is None
+                            else min(effective_batch, remaining)
+                        )
 
-            chunk_limit = page_size
-            if limit is not None:
-                chunk_limit = min(chunk_limit, limit - total_items)
+                        rows = result.fetchmany(fetch_n)
+                        if not rows:
+                            break
 
-            # Build query
-            if self.config.pagination:
-                query_str = self._add_pagination(
-                    self.config.query, offset=offset, limit=chunk_limit
-                )
-            else:
-                query_str = self.config.query
+                        batch: list[dict] = []
+                        for row in rows:
+                            batch.append(self._row_to_json_dict(row))
+                            total_items += 1
+                            if limit is not None and total_items >= limit:
+                                break
 
-            # Execute query
-            try:
-                with engine.connect() as conn:
-                    result = conn.execute(text(query_str), self.config.params)
-                    rows = result.fetchall()
-
-                    # Convert rows to dictionaries
-                    batch = []
-                    from decimal import Decimal
-
-                    for row in rows:
-                        # Convert row to dictionary
-                        row_dict = dict(row._mapping)
-                        # Convert Decimal to float for JSON compatibility
-                        for key, value in row_dict.items():
-                            if isinstance(value, Decimal):
-                                row_dict[key] = float(value)
-                        batch.append(row_dict)
-                        total_items += 1
-
-                        # Yield when batch is full
-                        if len(batch) >= batch_size:
+                        if batch:
                             yield batch
-                            batch = []
 
-                    # Yield remaining items
-                    if batch:
-                        yield batch
+                        if limit is not None and total_items >= limit:
+                            break
+                finally:
+                    result.close()
 
-                    # Check if we should continue
-                    if limit is not None and total_items >= limit:
-                        break
-
-                    # Check if there are more rows
-                    if len(rows) < chunk_limit:
-                        # No more rows
-                        break
-
-                    # Update offset for next iteration
-                    if self.config.pagination:
-                        offset += chunk_limit
-                    else:
-                        # No pagination, single query
-                        break
-
-            except Exception as e:
-                logger.error(f"SQL query execution failed: {e}")
-                break
+        except Exception as e:
+            logger.error("SQL query execution failed: %s", e)
