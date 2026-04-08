@@ -28,6 +28,8 @@ class TransformActor(Actor):
         self.transforms: dict[str, ProtoTransform] = {}
         self.call_use: str | None = None
         self._call_config = None
+        self._skip_on_missing_input_keys = False
+        self._required_doc_keys: frozenset[str] = frozenset()
 
         if config.rename is not None:
             self.t = Transform(rename=config.rename)
@@ -81,6 +83,20 @@ class TransformActor(Actor):
             self.t = Transform(name=call.use)
             return
         self.t = Transform(**transform_kwargs)
+
+    def _refresh_missing_key_guard(self, init_ctx: ActorInitContext) -> None:
+        self._skip_on_missing_input_keys = init_ctx.skip_actors_on_missing_input_keys
+        if (
+            not self._skip_on_missing_input_keys
+            or self.t.target == "keys"
+            or self.t.strategy == "all"
+        ):
+            self._required_doc_keys = frozenset()
+            return
+        required: set[str] = set(self.t.input)
+        for group in self.t.input_groups:
+            required.update(group)
+        self._required_doc_keys = frozenset(required)
 
     def fetch_important_items(self) -> dict[str, Any]:
         items = self._fetch_items_from_dict(("transform",))
@@ -174,8 +190,10 @@ class TransformActor(Actor):
     def finish_init(self, init_ctx: ActorInitContext) -> None:
         self.transforms = init_ctx.transforms
         if self.call_use is None or self.t._foo is not None:
+            self._refresh_missing_key_guard(init_ctx)
             return
         if self._call_config is None:
+            self._refresh_missing_key_guard(init_ctx)
             return
         pt = self.transforms.get(self.call_use, None)
         if pt is None:
@@ -184,10 +202,12 @@ class TransformActor(Actor):
                     f"Transform '{self.call_use}' referenced by transform.call.use "
                     "was not found in ingestion_model.transforms."
                 )
+            self._refresh_missing_key_guard(init_ctx)
             return
         call = self._call_config
         transform_kwargs = self._merge_call_with_proto(call, pt)
         self.t = Transform(**transform_kwargs)
+        self._refresh_missing_key_guard(init_ctx)
 
     def _extract_doc(self, nargs: tuple[Any, ...], **kwargs: Any) -> dict[str, Any]:
         if kwargs:
@@ -208,6 +228,9 @@ class TransformActor(Actor):
     ) -> ExtractionContext:
         logger.debug("transforms : %s %s", id(self.transforms), len(self.transforms))
         doc = self._extract_doc(nargs, **kwargs)
+        if self._skip_on_missing_input_keys and self._required_doc_keys:
+            if not self._required_doc_keys.issubset(doc):
+                return ctx
         transform_result = self.t(doc)
         _update_doc = self._format_transform_result(transform_result)
         ctx.buffer_transforms[lindex].append(_update_doc)

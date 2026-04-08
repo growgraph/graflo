@@ -27,6 +27,7 @@ import contextlib
 import json
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import defaultdict
 from functools import lru_cache
 from pathlib import Path
@@ -265,11 +266,18 @@ class TigerGraphConnection(Connection):
         self.config = config
         self.ssl_verify = getattr(config, "ssl_verify", True)
 
+        # Keep legacy and unified graph namespace fields aligned.
+        if self.config.database is None and self.config.schema_name is not None:
+            self.config.database = self.config.schema_name
+        elif self.config.schema_name is None and self.config.database is not None:
+            self.config.schema_name = self.config.database
+
         # Store connection configuration (no longer using pyTigerGraph)
         # For TigerGraph 4+, both ports typically route through the GSQL server
         # Port 9000 (REST++) is internal-only in TG 4.1+
+        configured_graph = self._configured_graph_name()
         self.graphname: str = (
-            config.database if config.database is not None else "DefaultGraph"
+            configured_graph if configured_graph is not None else "DefaultGraph"
         )
 
         # Initialize URLs (ports come from config, no hardcoded defaults)
@@ -378,6 +386,19 @@ class TigerGraphConnection(Connection):
                     "Note: For best results, provide both username/password AND secret. "
                     "Username/password is used for GSQL operations, secret generates token for REST API."
                 )
+
+    def _configured_graph_name(self) -> str | None:
+        """Return the configured TigerGraph graph name from either config field."""
+        return self.config.database or self.config.schema_name
+
+    def _require_configured_graph_name(self) -> str:
+        """Return graph name or raise if neither database nor schema_name is set."""
+        graph_name = self._configured_graph_name()
+        if not graph_name:
+            raise ValueError(
+                "Graph name must be configured via config.database or config.schema_name"
+            )
+        return graph_name
 
     def _get_auth_headers(self, use_basic_auth: bool = False) -> dict[str, str]:
         """Get authentication headers for REST API calls.
@@ -1411,15 +1432,16 @@ class TigerGraphConnection(Connection):
         Stores graph name for operations that need it.
 
         Args:
-            graph_name: Name of the graph to use. If None, uses self.config.database.
+            graph_name: Name of the graph to use. If None, uses configured graph name.
 
         Yields:
             The graph name that was set.
         """
-        graph_name = graph_name or self.config.database
+        graph_name = graph_name or self._configured_graph_name()
         if not graph_name:
             raise ValueError(
-                "Graph name must be provided via graph_name parameter or config.database"
+                "Graph name must be provided via graph_name parameter "
+                "or config.database/config.schema_name"
             )
 
         old_graphname = self.graphname
@@ -2172,9 +2194,7 @@ class TigerGraphConnection(Connection):
         Args:
             schema: Schema definition
         """
-        graph_name = self.config.database
-        if not graph_name:
-            raise ValueError("Graph name (database) must be configured")
+        graph_name = self._require_configured_graph_name()
 
         # Validate graph name
         _validate_tigergraph_schema_name(graph_name, "graph")
@@ -2455,12 +2475,13 @@ class TigerGraphConnection(Connection):
         # Use schema.metadata.name for graph creation
         graph_created = False
 
-        # Determine graph name: use config.database if set, otherwise use schema.metadata.name
-        graph_name = self.config.database
+        # Determine graph name from config; fallback to schema.metadata.name.
+        graph_name = self._configured_graph_name()
         if not graph_name:
             graph_name = schema.metadata.name
             # Update config for subsequent operations
             self.config.database = graph_name
+            self.config.schema_name = graph_name
             logger.info(f"Using schema name '{graph_name}' from schema.metadata.name")
 
         # Validate graph name
@@ -2559,9 +2580,7 @@ class TigerGraphConnection(Connection):
         Args:
             vertex_config: Vertex configuration containing vertices to create
         """
-        graph_name = self.config.database
-        if not graph_name:
-            raise ValueError("Graph name (database) must be configured")
+        graph_name = self._require_configured_graph_name()
 
         schema_change_stmts = []
         db_vertex = (
@@ -2597,9 +2616,7 @@ class TigerGraphConnection(Connection):
         Args:
             edges: List of edges to create
         """
-        graph_name = self.config.database
-        if not graph_name:
-            raise ValueError("Graph name (database) must be configured")
+        graph_name = self._require_configured_graph_name()
 
         # Need vertex_config for dbname lookup if finish_init hasn't been called
         # But edges should ideally already be initialized.
@@ -2822,7 +2839,7 @@ class TigerGraphConnection(Connection):
             job_name = f"add_{obj_name}_{field_name}_index"
 
             # Build the ALTER command (single field only)
-            graph_name = self.config.database
+            graph_name = self._configured_graph_name()
 
             if not graph_name:
                 logger.warning(
@@ -3055,7 +3072,7 @@ class TigerGraphConnection(Connection):
                 # Guardrail: never auto-discover and drop every graph by default.
                 # If no explicit graph target is provided, constrain to current graph.
                 if not graphs_to_drop:
-                    current_graph = self.config.database
+                    current_graph = self._configured_graph_name()
                     if current_graph:
                         graphs_to_drop = [current_graph]
                         logger.warning(
@@ -3064,7 +3081,8 @@ class TigerGraphConnection(Connection):
                         )
                     else:
                         raise ValueError(
-                            "Refusing global TigerGraph teardown without explicit graph_names or config.database"
+                            "Refusing global TigerGraph teardown without explicit "
+                            "graph_names or config.database/config.schema_name"
                         )
 
                 # Drop each graph
@@ -3244,15 +3262,23 @@ class TigerGraphConnection(Connection):
         Deletes vertices (and their edges) for all vertex types in the schema.
         """
         vc = schema.resolve_db_aware(DBType.TIGERGRAPH).vertex_config
-        graph_name = self.config.database or schema.metadata.name
+        graph_name = self._configured_graph_name() or schema.metadata.name
         vertex_types = tuple(vc.vertex_dbname(v) for v in vc.vertex_set)
         if vertex_types:
-            with self._ensure_graph_context(graph_name=graph_name):
-                for vertex_type in vertex_types:
+            max_workers = min(8, len(vertex_types))
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_vertex_type = {
+                    executor.submit(
+                        self._delete_vertices,
+                        vertex_type=vertex_type,
+                        graph_name=graph_name,
+                    ): vertex_type
+                    for vertex_type in vertex_types
+                }
+                for future in as_completed(future_to_vertex_type):
+                    vertex_type = future_to_vertex_type[future]
                     try:
-                        result = self._delete_vertices(
-                            vertex_type=vertex_type, graph_name=graph_name
-                        )
+                        result = future.result()
                         logger.debug(
                             "Deleted vertices from %s in graph %s: %s",
                             vertex_type,
@@ -3338,9 +3364,7 @@ class TigerGraphConnection(Connection):
         Returns:
             Dictionary containing the response from TigerGraph
         """
-        graph_name = self.config.database
-        if not graph_name:
-            raise ValueError("Graph name (database) must be configured")
+        graph_name = self._require_configured_graph_name()
 
         # Use restpp_url which handles version-specific prefixes (e.g., /restpp for 4.2.1)
         url = f"{self.restpp_url}/graph/{graph_name}"
@@ -3972,9 +3996,7 @@ class TigerGraphConnection(Connection):
             list: List of fetched documents
         """
         try:
-            graph_name = self.config.database
-            if not graph_name:
-                raise ValueError("Graph name (database) must be configured")
+            graph_name = self._require_configured_graph_name()
 
             # Get field_types from kwargs or auto-detect from vertex_config
             field_types = kwargs.get("field_types")

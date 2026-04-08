@@ -37,6 +37,7 @@ class ActorInitContext:
     infer_edge_only: set[EdgeId] = field(default_factory=set)
     infer_edge_except: set[EdgeId] = field(default_factory=set)
     strict_references: bool = False
+    skip_actors_on_missing_input_keys: bool = False
     target_db_flavor: DBType | None = None
 
 
