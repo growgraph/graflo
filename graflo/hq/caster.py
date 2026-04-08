@@ -218,7 +218,6 @@ class Caster:
         rr = self.ingestion_model.fetch_resource(resource_name)
         resolved_name = rr.name
         params = self.ingestion_params
-        doc_list = list(data)
 
         semaphore = asyncio.Semaphore(params.n_cores)
 
@@ -227,7 +226,7 @@ class Caster:
                 return await asyncio.to_thread(rr, doc)
 
         if params.on_doc_error == "fail":
-            coros = [process_doc(doc) for doc in doc_list]
+            coros = [process_doc(doc) for doc in data]
             docs = await asyncio.gather(*coros)
             graph = GraphContainer.from_docs_list(docs)
             _filter_graph_container_by_vertices_inplace(
@@ -235,6 +234,7 @@ class Caster:
             )
             return CastBatchResult(graph=graph, failures=[])
 
+        doc_list = list(data)
         raw = await asyncio.gather(
             *[process_doc(doc) for doc in doc_list],
             return_exceptions=True,

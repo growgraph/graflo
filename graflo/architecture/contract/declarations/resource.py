@@ -253,6 +253,14 @@ class Resource(ConfigBaseModel):
             "sparse tabular rows so VertexActor projection sees fewer irrelevant columns."
         ),
     )
+    skip_actors_on_missing_input_keys: bool | None = PydanticField(
+        default=None,
+        description=(
+            "If True, actors that declare required input keys may skip execution when keys are "
+            "missing in the current document instead of raising indexing errors. "
+            "If None, defaults to drop_trivial_input_fields."
+        ),
+    )
 
     _root: ActorWrapper = PrivateAttr()
     _types: dict[str, Callable[..., Any]] = PrivateAttr(default_factory=dict)
@@ -437,6 +445,11 @@ class Resource(ConfigBaseModel):
         object.__setattr__(self, "_edge_derivation_registry", edge_derivation_registry)
 
         logger.debug("total resource actor count : %s", self.root.count())
+        skip_on_missing_input_keys = (
+            self.skip_actors_on_missing_input_keys
+            if self.skip_actors_on_missing_input_keys is not None
+            else self.drop_trivial_input_fields
+        )
         init_ctx = ActorInitContext(
             vertex_config=runtime_vertex_config,
             edge_config=self._edge_config,
@@ -447,6 +460,7 @@ class Resource(ConfigBaseModel):
             infer_edge_only={spec.edge_id for spec in self.infer_edge_only},
             infer_edge_except=infer_edge_except,
             strict_references=strict_references,
+            skip_actors_on_missing_input_keys=skip_on_missing_input_keys,
             target_db_flavor=target_db_flavor,
         )
         self.root.finish_init(init_ctx=init_ctx)
