@@ -39,7 +39,7 @@ description = "A framework for transforming tabular (CSV, SQL) and hierarchical 
 name = "graflo"
 readme = "README.md"
 requires-python = ">=3.11"
-version = "1.7.14"
+version = "1.7.15"
 
 [project.optional-dependencies]
 dev = [
