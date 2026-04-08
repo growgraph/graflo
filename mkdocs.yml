@@ -59,6 +59,7 @@ nav:
     -   Transforms: concepts/transforms.md
     -   Backend Index Behavior: concepts/backend_indexes.md
     -   Document cast errors and doc error sink: concepts/ingestion_doc_errors.md
+    -   TigerGraph bulk load (CSV + LOADING JOB): concepts/tigergraph_bulk_load.md
 -   Examples:
     -   Examples Index: examples/index.md
     -   1 - Ingest Multiple Tabular Sources (CSV, ArangoDB): examples/example-1.md
@@ -70,6 +71,7 @@ nav:
     -   7 - Polymorphic Objects and Relations (vertex_router / edge_router): examples/example-7.md
     -   8 - Multi-Edge Weights with Filters and dress Transform: examples/example-8.md
     -   9 - Explicit connector_connection Proxy Wiring: examples/example-9.md
+    -   10 - TigerGraph bulk load and S3 staging: examples/example-10.md
 -   API Reference: reference/
 -   Contributing: contributing.md
 markdown_extensions:

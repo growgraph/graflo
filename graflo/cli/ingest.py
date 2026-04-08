@@ -32,6 +32,7 @@ from graflo import Bindings, DataSourceRegistry, DBType, GraphManifest
 from graflo.db import DBConfig
 from graflo.data_source import DataSourceFactory
 from graflo.hq import GraphEngine
+from graflo.hq.connection_provider import EmptyConnectionProvider
 
 logger = logging.getLogger(__name__)
 
@@ -240,6 +241,8 @@ def ingest(
                 data_source_registry=registry,
                 conn_conf=conn_conf,
                 ingestion_params=ingestion_params,
+                bindings=bindings,
+                connection_provider=EmptyConnectionProvider(),
             )
         )
     else:

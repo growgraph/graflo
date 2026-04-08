@@ -1,0 +1,46 @@
+# Minimal graph + file bindings. TigerGraph bulk_load + S3 staging are applied in ingest.py
+# (target DB options are not part of GraphManifest).
+schema:
+    metadata:
+        name: companies
+        version: 1.0.0
+    graph:
+        vertex_config:
+            vertices:
+            -   name: company
+                properties:
+                -   name
+                identity:
+                -   name
+        edge_config:
+            edges:
+            -   source: company
+                target: company
+                identities:
+                -   -   relation
+                properties:
+                -   date
+    db_profile: {}
+ingestion_model:
+    resources:
+    -   name: relations
+        apply:
+        -   vertex: company
+            from:
+                name: company_a
+        -   vertex: company
+            from:
+                name: company_b
+        -   source: company
+            target: company
+            relation_field: relation
+bindings:
+    connectors:
+    -   name: relations_files
+        regex: "^relations.*\\.csv$"
+        sub_path: "."
+        resource_name: "relations"
+  # Maps logical name "bulk_s3" -> runtime conn_proxy key "minio_bulk" (registered in ingest.py).
+    staging_proxy:
+    -   name: bulk_s3
+        conn_proxy: minio_bulk

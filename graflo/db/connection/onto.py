@@ -3,12 +3,14 @@ import logging
 import os
 import warnings
 from pathlib import Path
-from typing import Any, Dict, Type, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Dict, Literal, Type, TypeVar, cast
 from urllib.parse import urlparse
 
-from pydantic import Field, model_validator
-from pydantic import AliasChoices
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+if TYPE_CHECKING:
+    from graflo.architecture.contract.bindings import Bindings
 
 from graflo.onto import DBType
 
@@ -41,6 +43,82 @@ TARGET_DATABASES: set[DBType] = {
     DBType.MEMGRAPH,
     DBType.NEBULA,
 }
+
+
+class TigergraphBulkLoadJobOptions(BaseModel):
+    """Options passed to TigerGraph ``RUN LOADING JOB``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    concurrency: int = Field(default=4, ge=1, description="LOADING JOB CONCURRENCY")
+    batch_size: int = Field(default=50_000, ge=1, description="LOADING JOB BATCH_SIZE")
+    job_name_prefix: str = Field(
+        default="graflo_bulk",
+        description="Loading job name prefix (unique suffix is appended per session).",
+    )
+    run_mode: Literal["create_and_run", "run_only"] = Field(
+        default="create_and_run",
+        description="create_and_run issues CREATE then RUN; run_only expects job to exist.",
+    )
+    drop_job_after_run: bool = Field(
+        default=True,
+        description="If True, DROP JOB after a successful RUN (keeps graph catalog tidy).",
+    )
+
+
+class TigergraphBulkLoadConfig(BaseModel):
+    """TigerGraph-native bulk ingest: stage CSV then ``CREATE/RUN LOADING JOB``.
+
+    This is independent of the REST++ upsert path. When enabled, Graflo appends rows
+    to per-type CSV files under ``staging_dir``, then runs one loading job per ingest
+    session at finalize time.
+
+    S3 staging uses :class:`S3GeneralizedConnConfig` registered under
+    ``s3_conn_proxy`` or under the name resolved via manifest
+    :class:`StagingProxyBinding` and ``s3_staging_name``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = Field(
+        default=False,
+        description="When True and target is TigerGraph, use CSV + LOADING JOB for writes.",
+    )
+    staging_dir: str | None = Field(
+        default=None,
+        description="Local directory for CSV staging (required when enabled).",
+    )
+    separator: str = Field(default=",", min_length=1, max_length=1)
+    quote_char: str = Field(default='"', min_length=1, max_length=1)
+    line_terminator: str = Field(default="\n")
+    include_header: bool = Field(default=True)
+    loading_job: TigergraphBulkLoadJobOptions = Field(
+        default_factory=TigergraphBulkLoadJobOptions
+    )
+    s3_staging_name: str | None = Field(
+        default=None,
+        description="If set, resolve ``conn_proxy`` from Bindings.staging_proxy by this name.",
+    )
+    s3_conn_proxy: str | None = Field(
+        default=None,
+        description="Runtime connection-provider key for S3 credentials (non-secret).",
+    )
+    s3_bucket: str | None = Field(
+        default=None,
+        description="Target bucket for staged objects (may override S3GeneralizedConnConfig.bucket).",
+    )
+    s3_key_prefix: str = Field(
+        default="graflo-bulk",
+        description="S3 key prefix for uploaded CSV files (session id is appended).",
+    )
+
+    def resolve_s3_conn_proxy(self, bindings: "Bindings | None") -> str | None:
+        """Resolve the runtime S3 proxy key from explicit config or ``staging_proxy`` bindings."""
+        if self.s3_conn_proxy:
+            return self.s3_conn_proxy
+        if self.s3_staging_name is not None and bindings is not None:
+            return bindings.get_staging_conn_proxy(self.s3_staging_name)
+        return None
 
 
 class DBConfig(BaseSettings, abc.ABC):
@@ -734,6 +812,10 @@ class TigergraphConfig(DBConfig):
         description="Maximum size (in characters) for a single SCHEMA_CHANGE JOB. "
         "Large jobs (>30k chars) can cause parser failures. The schema change will be split "
         "into multiple batches if the estimated size exceeds this limit. Default: 1000.",
+    )
+    bulk_load: TigergraphBulkLoadConfig | None = Field(
+        default=None,
+        description="Optional native CSV + LOADING JOB ingest (see TigergraphBulkLoadConfig).",
     )
 
     def _get_default_port(self) -> int:

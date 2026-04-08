@@ -27,11 +27,15 @@ import contextlib
 import json
 import logging
 import re
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import defaultdict
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, NamedTuple
+
+from graflo.architecture.contract.bindings import Bindings
+from graflo.hq.connection_provider import ConnectionProvider
 
 
 import requests
@@ -44,12 +48,19 @@ from graflo.architecture.schema.db_aware import EdgeConfigDBAware
 from graflo.architecture.schema.edge import DEFAULT_TIGERGRAPH_RELATION_WEIGHTNAME, Edge
 from graflo.architecture.database_features import DatabaseProfile
 from graflo.architecture.schema import VertexConfigDBAware
-from graflo.architecture.graph_types import EdgeId, Index
+from graflo.architecture.graph_types import EdgeId, GraphContainer, Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.vertex import FieldType, Vertex, VertexConfig
 from graflo.db.conn import Connection, SchemaExistsError, consume_insert_edges_kwargs
-from graflo.db.connection import TigergraphConfig
+from graflo.db.connection import TigergraphBulkLoadConfig, TigergraphConfig
+from graflo.db.tigergraph.bulk_csv import BulkCsvAppender
+from graflo.db.tigergraph.bulk_gsql import (
+    build_create_and_run_loading_job,
+    build_run_loading_job_only,
+)
 from graflo.db.tigergraph.gsql_literals import gsql_default_literal
+from graflo.db.tigergraph.s3_staging import upload_staged_csvs
+from graflo.hq.connection_provider import S3GeneralizedConnConfig
 from graflo.db.tigergraph.onto import (
     TIGERGRAPH_TYPE_ALIASES,
     VALID_TIGERGRAPH_TYPES,
@@ -279,6 +290,9 @@ class TigerGraphConnection(Connection):
         self.graphname: str = (
             configured_graph if configured_graph is not None else "DefaultGraph"
         )
+        self._bulk_sessions: dict[
+            str, tuple[BulkCsvAppender, TigergraphBulkLoadConfig, Any, Path]
+        ] = {}
 
         # Initialize URLs (ports come from config, no hardcoded defaults)
         # Set GSQL URL first as it's needed for token generation
@@ -1664,6 +1678,98 @@ class TigerGraphConnection(Connection):
     def close(self):
         """Close connection - no cleanup needed (using direct REST API calls)."""
         pass
+
+    def bulk_load_begin(
+        self, schema: Schema, bulk_cfg: TigergraphBulkLoadConfig
+    ) -> str:
+        """Start CSV staging session under ``bulk_cfg.staging_dir /<session_id>``."""
+        if not bulk_cfg.enabled:
+            raise ValueError(
+                "bulk_load_begin requires TigergraphBulkLoadConfig.enabled=True"
+            )
+        if not bulk_cfg.staging_dir:
+            raise ValueError(
+                "TigergraphBulkLoadConfig.staging_dir is required for bulk load"
+            )
+        schema_db = schema.resolve_db_aware(DBType.TIGERGRAPH)
+        if schema_db.vertex_config.blank_vertices:
+            raise ValueError(
+                "TigerGraph bulk_load does not support blank_vertices in this release; "
+                "use REST ingest or remove blank vertex placeholders."
+            )
+        session_id = uuid.uuid4().hex[:12]
+        staging_root = Path(bulk_cfg.staging_dir) / session_id
+        staging_root.mkdir(parents=True, exist_ok=True)
+        appender = BulkCsvAppender(
+            staging_dir=staging_root,
+            bulk_cfg=bulk_cfg,
+            schema_db=schema_db,
+        )
+        self._bulk_sessions[session_id] = (appender, bulk_cfg, schema_db, staging_root)
+        return session_id
+
+    def bulk_load_append(
+        self, session_id: str, gc: GraphContainer, schema: Schema
+    ) -> None:
+        if session_id not in self._bulk_sessions:
+            raise KeyError(f"Unknown TigerGraph bulk session {session_id!r}")
+        appender, _, _, _ = self._bulk_sessions[session_id]
+        appender.append_graph_container(gc, schema)
+
+    def bulk_load_finalize(  # noqa: PLR0912
+        self,
+        session_id: str,
+        schema: Schema,
+        *,
+        bindings: Bindings | None = None,
+        connection_provider: ConnectionProvider | None = None,
+    ) -> str:
+        """Upload to S3 when configured, then CREATE/RUN/DROP LOADING JOB."""
+        _ = schema
+        if session_id not in self._bulk_sessions:
+            raise KeyError(f"Unknown TigerGraph bulk session {session_id!r}")
+        appender, bulk_cfg, schema_db, _staging_root = self._bulk_sessions.pop(
+            session_id
+        )
+        appender.close()
+        staged = appender.staged_file_paths
+        if not staged:
+            return ""
+        graph_name = self._require_configured_graph_name()
+        job_name = f"{bulk_cfg.loading_job.job_name_prefix}_{session_id}"
+        path_for_gsql: dict[str, str] = {k: str(v.resolve()) for k, v in staged.items()}
+        proxy = bulk_cfg.resolve_s3_conn_proxy(bindings)
+        bucket = bulk_cfg.s3_bucket
+        if proxy and connection_provider is not None:
+            gen = connection_provider.get_generalized_config_by_proxy(proxy)
+            if isinstance(gen, S3GeneralizedConnConfig):
+                resolved_bucket = bucket or gen.bucket
+                if not resolved_bucket:
+                    raise ValueError(
+                        "S3 bulk staging requires TigergraphBulkLoadConfig.s3_bucket "
+                        "or S3GeneralizedConnConfig.bucket"
+                    )
+                path_for_gsql = upload_staged_csvs(
+                    staged_files=staged,
+                    bucket=resolved_bucket,
+                    key_prefix=bulk_cfg.s3_key_prefix,
+                    session_id=session_id,
+                    s3_cfg=gen,
+                )
+        if bulk_cfg.loading_job.run_mode == "run_only":
+            gsql = build_run_loading_job_only(
+                job_name=job_name, opts=bulk_cfg.loading_job
+            )
+        else:
+            gsql = build_create_and_run_loading_job(
+                graph_name=graph_name,
+                job_name=job_name,
+                schema_db=schema_db,
+                staged_files=staged,
+                bulk_cfg=bulk_cfg,
+                path_for_gsql=path_for_gsql,
+            )
+        return str(self._execute_gsql(gsql))
 
     def _gsql_vertex_field_def(
         self,

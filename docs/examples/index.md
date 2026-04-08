@@ -9,3 +9,4 @@
 7. **[Polymorphic Objects and Relations](example-7.md)** — **Route polymorphic entities and dynamic relations** using `vertex_router` and `edge_router`. One objects table (Person, Vehicle, Institution) and one relations table (EMPLOYED_BY, OWNS, FUNDS, etc.) map to a rich graph with type discriminators and `relation_map`.
 8. **[Multi-edge properties with filters and `dress` transforms](example-8.md)** — **Ticker-style CSV to Neo4j** with vertex filters, rich relationship payload, and `dress`-scoped transforms on metric name/value pairs.
 9. **[Explicit `connector_connection` Proxy Wiring](example-9.md)** — Show how manifest proxy labels (`conn_proxy`) are resolved at runtime into real DB configs via `ConnectionProvider`.
+10. **[TigerGraph bulk load and S3 staging](example-10.md)** — Opt-in CSV staging and native `LOADING JOB`, with `bindings.staging_proxy` and `S3GeneralizedConnConfig` (MinIO, AWS S3, or other S3-compatible endpoints).

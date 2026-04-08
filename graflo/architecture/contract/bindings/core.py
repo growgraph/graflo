@@ -35,6 +35,17 @@ class ConnectorConnectionBinding(ConfigBaseModel):
     conn_proxy: str
 
 
+class StagingProxyBinding(ConfigBaseModel):
+    """Named staging profile -> runtime connection-proxy (e.g. S3 credentials).
+
+    Used by TigerGraph bulk ingest to resolve ``S3GeneralizedConnConfig`` without
+    putting secrets in the manifest.
+    """
+
+    name: str
+    conn_proxy: str
+
+
 class Bindings(ConfigBaseModel):
     """Named resource connectors with explicit resource linkage."""
 
@@ -62,6 +73,12 @@ class Bindings(ConfigBaseModel):
         default_factory=dict
     )
     _connector_to_conn_proxy: dict[str, str] = PrivateAttr(default_factory=dict)
+    staging_proxy: list[StagingProxyBinding | dict[str, str]] = Field(
+        default_factory=list,
+        description="Optional named staging endpoints (S3) -> conn_proxy wiring.",
+    )
+    _staging_proxy_typed: list[StagingProxyBinding] = PrivateAttr(default_factory=list)
+    _staging_name_to_conn_proxy: dict[str, str] = PrivateAttr(default_factory=dict)
 
     @property
     def connector_connection_bindings(
@@ -69,6 +86,49 @@ class Bindings(ConfigBaseModel):
     ) -> list[ConnectorConnectionBinding]:
         # Expose typed entries for downstream components (type-checker friendly).
         return self._connector_connection_typed
+
+    @field_validator("staging_proxy", mode="before")
+    @classmethod
+    def _coerce_staging_proxy_entries(
+        cls, v: Any
+    ) -> list[StagingProxyBinding | dict[str, str]]:
+        if v is None:
+            return []
+        if not isinstance(v, list):
+            raise ValueError(
+                "staging_proxy must be a list of {name, conn_proxy} entries"
+            )
+        coerced: list[StagingProxyBinding | dict[str, str]] = []
+        for i, item in enumerate(v):
+            if isinstance(item, StagingProxyBinding):
+                coerced.append(item)
+                continue
+            if isinstance(item, dict):
+                missing = [k for k in ("name", "conn_proxy") if k not in item]
+                if missing:
+                    raise ValueError(
+                        f"Invalid staging_proxy entry at index {i}: missing {missing}."
+                    )
+                coerced.append(StagingProxyBinding.model_validate(item))
+                continue
+            raise ValueError(
+                f"Invalid staging_proxy entry at index {i}: got {type(item).__name__}."
+            )
+        return coerced
+
+    def _rebuild_staging_proxy_index(self) -> None:
+        self._staging_name_to_conn_proxy = {}
+        for m in self._staging_proxy_typed:
+            existing = self._staging_name_to_conn_proxy.get(m.name)
+            if existing is not None and existing != m.conn_proxy:
+                raise ValueError(
+                    f"Duplicate staging_proxy name '{m.name}' with conflicting conn_proxy."
+                )
+            self._staging_name_to_conn_proxy[m.name] = m.conn_proxy
+
+    def get_staging_conn_proxy(self, name: str) -> str | None:
+        """Return ``conn_proxy`` for a staging profile name, if declared."""
+        return self._staging_name_to_conn_proxy.get(name)
 
     def _rebuild_indexes(self) -> None:
         self._connectors_index = {}
@@ -209,6 +269,11 @@ class Bindings(ConfigBaseModel):
             ConnectorConnectionBinding.model_validate(m) if isinstance(m, dict) else m
             for m in self.connector_connection
         ]
+        self._staging_proxy_typed = [
+            StagingProxyBinding.model_validate(m) if isinstance(m, dict) else m
+            for m in self.staging_proxy
+        ]
+        self._rebuild_staging_proxy_index()
 
         for connector in self.connectors:
             if connector.resource_name is None:
