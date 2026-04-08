@@ -8,6 +8,8 @@ from .onto import (
     Neo4jConfig,
     PostgresConfig,
     SparqlEndpointConfig,
+    TigergraphBulkLoadConfig,
+    TigergraphBulkLoadJobOptions,
     TigergraphConfig,
 )
 
@@ -21,5 +23,7 @@ __all__ = [
     "Neo4jConfig",
     "PostgresConfig",
     "SparqlEndpointConfig",
+    "TigergraphBulkLoadConfig",
+    "TigergraphBulkLoadJobOptions",
     "TigergraphConfig",
 ]

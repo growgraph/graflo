@@ -40,7 +40,7 @@ from graflo.data_source import (
     DataSourceFactory,
     DataSourceRegistry,
 )
-from graflo.db import DBConfig
+from graflo.db import ConnectionManager, DBConfig, TigergraphConfig
 from graflo.hq.db_writer import DBWriter
 from graflo.hq.registry_builder import RegistryBuilder
 from graflo.util.chunker import ChunkerType
@@ -168,10 +168,51 @@ class Caster:
         self._doc_cast_error_total = 0
         self._doc_cast_error_io_lock = asyncio.Lock()
         self._failure_sinks = failure_sinks_from_ingestion_params(ingestion_params)
+        self._tigergraph_bulk_session_id: str | None = None
+        self._bulk_begin_lock = asyncio.Lock()
+        self._ingest_bindings: Bindings | None = None
+        self._connection_provider: ConnectionProvider = EmptyConnectionProvider()
 
     # ------------------------------------------------------------------
     # Casting
     # ------------------------------------------------------------------
+
+    async def _ensure_tigergraph_bulk_session(self, conn_conf: DBConfig) -> str | None:
+        """Return active CSV bulk session id, starting one if needed."""
+        if not isinstance(conn_conf, TigergraphConfig):
+            return None
+        cfg = conn_conf.bulk_load
+        if cfg is None or not cfg.enabled:
+            return None
+        async with self._bulk_begin_lock:
+            if self._tigergraph_bulk_session_id is not None:
+                return self._tigergraph_bulk_session_id
+
+            def _begin() -> str:
+                with ConnectionManager(connection_config=conn_conf) as db:
+                    return db.bulk_load_begin(self.schema, cfg)
+
+            self._tigergraph_bulk_session_id = await asyncio.to_thread(_begin)
+        return self._tigergraph_bulk_session_id
+
+    async def _finalize_tigergraph_bulk(self, conn_conf: DBConfig) -> None:
+        sid = self._tigergraph_bulk_session_id
+        self._tigergraph_bulk_session_id = None
+        if sid is None:
+            return
+        bindings = self._ingest_bindings
+        provider = self._connection_provider
+
+        def _finalize() -> None:
+            with ConnectionManager(connection_config=conn_conf) as db:
+                db.bulk_load_finalize(
+                    sid,
+                    self.schema,
+                    bindings=bindings,
+                    connection_provider=provider,
+                )
+
+        await asyncio.to_thread(_finalize)
 
     async def _persist_doc_failures(self, failures: list[DocCastFailure]) -> None:
         if not failures:
@@ -305,7 +346,15 @@ class Caster:
 
         if conn_conf is not None:
             writer = self._make_db_writer()
-            await writer.write(gc=gc, conn_conf=conn_conf, resource_name=resource_name)
+            bulk_sid = await self._ensure_tigergraph_bulk_session(conn_conf)
+            await writer.write(
+                gc=gc,
+                conn_conf=conn_conf,
+                resource_name=resource_name,
+                bulk_session_id=bulk_sid,
+                bindings=self._ingest_bindings,
+                connection_provider=self._connection_provider,
+            )
 
     async def process_data_source(
         self,
@@ -473,6 +522,8 @@ class Caster:
         conn_conf: DBConfig,
         ingestion_params: IngestionParams | None = None,
         allowed_resource_names: set[str] | None = None,
+        bindings: Bindings | None = None,
+        connection_provider: ConnectionProvider | None = None,
     ):
         """Ingest data from data sources in a registry.
 
@@ -484,6 +535,8 @@ class Caster:
             conn_conf: Database connection configuration
             ingestion_params: IngestionParams instance with ingestion configuration.
                 If None, uses default IngestionParams()
+            bindings: Optional manifest bindings (used to resolve S3 staging proxies).
+            connection_provider: Runtime credential provider for source connectors and S3.
         """
         if ingestion_params is None:
             ingestion_params = IngestionParams()
@@ -496,41 +549,48 @@ class Caster:
             logger.info("ingest execution bound to init")
             sys.exit(0)
 
-        tasks: list[AbstractDataSource] = []
-        for resource_name in self.ingestion_model._resources.keys():
-            if (
-                allowed_resource_names is not None
-                and resource_name not in allowed_resource_names
-            ):
-                continue
-            data_sources = data_source_registry.get_data_sources(resource_name)
-            if data_sources:
-                logger.info(
-                    f"For resource name {resource_name} {len(data_sources)} data sources were found"
-                )
-                tasks.extend(data_sources)
-
-        with Timer() as klepsidra:
-            if self.ingestion_params.n_cores > 1:
-                queue_tasks: asyncio.Queue = asyncio.Queue()
-                for item in tasks:
-                    await queue_tasks.put(item)
-
-                for _ in range(self.ingestion_params.n_cores):
-                    await queue_tasks.put(None)
-
-                worker_tasks = [
-                    self.process_with_queue(queue_tasks, conn_conf=conn_conf)
-                    for _ in range(self.ingestion_params.n_cores)
-                ]
-
-                await asyncio.gather(*worker_tasks)
-            else:
-                for data_source in tasks:
-                    await self.process_data_source(
-                        data_source=data_source, conn_conf=conn_conf
+        self._ingest_bindings = bindings
+        self._connection_provider = connection_provider or EmptyConnectionProvider()
+        try:
+            tasks: list[AbstractDataSource] = []
+            for resource_name in self.ingestion_model._resources.keys():
+                if (
+                    allowed_resource_names is not None
+                    and resource_name not in allowed_resource_names
+                ):
+                    continue
+                data_sources = data_source_registry.get_data_sources(resource_name)
+                if data_sources:
+                    logger.info(
+                        f"For resource name {resource_name} {len(data_sources)} data sources were found"
                     )
-        logger.info(f"Processing took {klepsidra.elapsed:.1f} sec")
+                    tasks.extend(data_sources)
+
+            with Timer() as klepsidra:
+                if self.ingestion_params.n_cores > 1:
+                    queue_tasks: asyncio.Queue = asyncio.Queue()
+                    for item in tasks:
+                        await queue_tasks.put(item)
+
+                    for _ in range(self.ingestion_params.n_cores):
+                        await queue_tasks.put(None)
+
+                    worker_tasks = [
+                        self.process_with_queue(queue_tasks, conn_conf=conn_conf)
+                        for _ in range(self.ingestion_params.n_cores)
+                    ]
+
+                    await asyncio.gather(*worker_tasks)
+                else:
+                    for data_source in tasks:
+                        await self.process_data_source(
+                            data_source=data_source, conn_conf=conn_conf
+                        )
+            logger.info(f"Processing took {klepsidra.elapsed:.1f} sec")
+        finally:
+            await self._finalize_tigergraph_bulk(conn_conf)
+            self._ingest_bindings = None
+            self._connection_provider = EmptyConnectionProvider()
 
     def ingest(
         self,
@@ -584,6 +644,8 @@ class Caster:
                 conn_conf=target_db_config,
                 ingestion_params=ingestion_params,
                 allowed_resource_names=allowed_resource_names,
+                bindings=bindings,
+                connection_provider=connection_provider or EmptyConnectionProvider(),
             )
         )
 

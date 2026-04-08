@@ -40,7 +40,27 @@ class SparqlGeneralizedConnConfig(BaseModel):
     config: SparqlEndpointConfig
 
 
-GeneralizedConnConfig = PostgresGeneralizedConnConfig | SparqlGeneralizedConnConfig
+class S3GeneralizedConnConfig(BaseModel):
+    """Runtime credentials and defaults for S3 staging (TigerGraph bulk ingest)."""
+
+    kind: Literal["s3"] = "s3"
+    bucket: str | None = Field(
+        default=None,
+        description="Default bucket when TigergraphBulkLoadConfig.s3_bucket is unset.",
+    )
+    region: str | None = Field(default=None)
+    aws_access_key_id: str | None = Field(default=None)
+    aws_secret_access_key: str | None = Field(default=None)
+    endpoint_url: str | None = Field(
+        default=None, description="For S3-compatible endpoints (MinIO, etc.)."
+    )
+
+
+GeneralizedConnConfig = (
+    PostgresGeneralizedConnConfig
+    | SparqlGeneralizedConnConfig
+    | S3GeneralizedConnConfig
+)
 
 
 class ConnectionProvider(Protocol):
@@ -70,6 +90,11 @@ class ConnectionProvider(Protocol):
     ) -> SparqlAuth | None:
         """Return source auth payload for a SPARQL resource (legacy)."""
 
+    def get_generalized_config_by_proxy(
+        self, conn_proxy: str
+    ) -> GeneralizedConnConfig | None:
+        """Resolve a non-secret proxy name to runtime config (S3, etc.)."""
+
 
 class EmptyConnectionProvider:
     """No-op provider when no source credentials/config are configured."""
@@ -87,6 +112,11 @@ class EmptyConnectionProvider:
     def get_sparql_auth(
         self, resource_name: str, connector: SparqlConnector
     ) -> SparqlAuth | None:
+        return None
+
+    def get_generalized_config_by_proxy(
+        self, conn_proxy: str
+    ) -> GeneralizedConnConfig | None:
         return None
 
 
@@ -174,6 +204,17 @@ class InMemoryConnectionProvider(BaseModel):
         if proxy is None:
             return None
         return self.configs_by_proxy.get(proxy)
+
+    def get_generalized_config_by_proxy(
+        self, conn_proxy: str
+    ) -> GeneralizedConnConfig | None:
+        return self.configs_by_proxy.get(conn_proxy)
+
+    def register_s3_config(
+        self, *, conn_proxy: str, config: S3GeneralizedConnConfig
+    ) -> None:
+        """Store S3 staging credentials/config under *conn_proxy*."""
+        self.configs_by_proxy[conn_proxy] = config
 
     # ------------------------------------------------------------------
     # Legacy API

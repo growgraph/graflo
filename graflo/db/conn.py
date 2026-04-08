@@ -53,17 +53,24 @@ Example:
 import abc
 import logging
 from dataclasses import dataclass
-from typing import Any, ClassVar, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeVar
 
+from graflo.architecture.graph_types import GraphContainer
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.vertex import VertexConfig
+from graflo.db.bulk_exc import UnsupportedBulkLoad
+from graflo.db.connection import TigergraphBulkLoadConfig
 from graflo.onto import (
     AggregationType,
     DB_TYPE_TO_EXPRESSION_FLAVOR,
     DBType,
     ExpressionFlavor,
 )
+
+if TYPE_CHECKING:
+    from graflo.architecture.contract.bindings import Bindings
+    from graflo.hq.connection_provider import ConnectionProvider
 
 logger = logging.getLogger(__name__)
 ConnectionType = TypeVar("ConnectionType", bound="Connection")
@@ -506,3 +513,36 @@ class Connection(abc.ABC):
             edges: List of edge configurations to create
         """
         pass
+
+    def bulk_load_begin(
+        self, schema: Schema, bulk_cfg: TigergraphBulkLoadConfig
+    ) -> str:
+        """Start a native bulk-load session (CSV staging + LOADING JOB).
+
+        Raises:
+            UnsupportedBulkLoad: For backends that only support REST/document APIs.
+        """
+        raise UnsupportedBulkLoad(
+            f"Database flavor {self.flavor!r} does not support native bulk load"
+        )
+
+    def bulk_load_append(
+        self, session_id: str, gc: GraphContainer, schema: Schema
+    ) -> None:
+        """Append one cast batch to the active bulk-load session."""
+        raise UnsupportedBulkLoad(
+            f"Database flavor {self.flavor!r} does not support native bulk load"
+        )
+
+    def bulk_load_finalize(
+        self,
+        session_id: str,
+        schema: Schema,
+        *,
+        bindings: "Bindings | None" = None,
+        connection_provider: "ConnectionProvider | None" = None,
+    ) -> str:
+        """Close staging files, optionally upload to S3, run LOADING JOB, return GSQL log text."""
+        raise UnsupportedBulkLoad(
+            f"Database flavor {self.flavor!r} does not support native bulk load"
+        )
