@@ -3,7 +3,7 @@
 This example shows how to combine:
 
 - **`TigergraphConfig.bulk_load`** — CSV staging + native `LOADING JOB` instead of REST++ upserts for the ingest run.
-- **`Bindings.staging_proxy`** — manifest-visible **names** that map to **`S3GeneralizedConnConfig`** on an [`InMemoryConnectionProvider`](../../reference/hq/connection_provider.md) (no secrets in YAML).
+- **`Bindings.staging_proxy`** — manifest-visible **names** that map to **`S3GeneralizedConnConfig`** on an [`InMemoryConnectionProvider`](../reference/hq/connection_provider.md) (no secrets in YAML).
 
 The companion directory is:
 
