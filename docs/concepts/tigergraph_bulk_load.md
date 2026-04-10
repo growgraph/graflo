@@ -42,6 +42,8 @@ Call `register_generalized_config(conn_proxy="minio_bulk", config=S3GeneralizedC
 
 ## Execution flow
 
+Ingestion coordinates begin/finalize through the backend-agnostic **`BulkSessionCoordinator`** (`graflo.hq.bulk_session`); each cast batch appends via **`DBWriter.write(..., bulk_session_id=...)`** when a session is active.
+
 1. **Begin** — First batch opens a bulk session (CSV writers under `staging_dir/<session_id>/`).
 2. **Append** — Each cast batch appends rows per physical vertex/edge type.
 3. **Finalize** — After all resources: optionally **upload** to S3, build GSQL with `DEFINE FILENAME` pointing at `file://` or `s3://` URLs, **`RUN LOADING JOB`**, optionally **`DROP JOB`**.

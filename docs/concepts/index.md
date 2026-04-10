@@ -422,6 +422,7 @@ classDiagram
         +resources: list[str]?
         +vertices: list[str]?
         +batch_size: int
+        +batch_prefetch: int
         +max_items: int?
         +dry: bool
         +datetime_after: str?
@@ -916,10 +917,10 @@ uv run migrate_schema history
 Schema comparison gives you a predictable transition path between versions. Instead of discovering incompatibilities during ingestion, you see structural deltas in advance, gate risky steps, and execute a controlled rollout.
 
 ### Performance Optimization
-- **Batch Processing**: Process large datasets in configurable batches (`batch_size` parameter of `Caster`)
+- **Batch Processing**: Process large datasets in configurable batches (`IngestionParams.batch_size` on `Caster` / `GraphEngine`)
+- **Batch Prefetch**: While one batch is cast and written, `Caster.process_data_source` can prefetch up to `IngestionParams.batch_prefetch` additional batches from `AbstractDataSource.iter_batches` (bounded memory, overlapped I/O)
 - **Parallel Execution**: Utilize multiple cores for faster processing (`n_cores` parameter of `Caster`)
 - **Efficient Resource Handling**: Optimized processing of both table and tree-like data
-- **Smart Caching**: Minimize redundant operations
 
 ## Best Practices
 1. Use compound identity fields for natural keys, and **`schema.db_profile`** secondary indexes for query performance
