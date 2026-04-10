@@ -15,9 +15,9 @@ from graflo.architecture.graph_types import (
     AssemblyContext,
     EdgeCastingType,
     LocationIndex,
-    TransformPayload,
     VertexRep,
     Weight,
+    context_dict_from_transform_buffer_item,
 )
 from graflo.architecture.util import project_dict
 from graflo.architecture.schema.vertex import VertexConfig
@@ -41,14 +41,6 @@ def add_blank_collections(
     return ctx
 
 
-def _transform_context_doc(item: Any) -> dict[str, Any]:
-    if isinstance(item, TransformPayload):
-        return item.context_doc()
-    if isinstance(item, dict):
-        return dict(item)
-    return {}
-
-
 def dress_vertices(
     items_dd: defaultdict[LocationIndex, list[VertexRep]],
     buffer_transforms: defaultdict[LocationIndex, list[Any]],
@@ -59,7 +51,8 @@ def dress_vertices(
     for va, vlist in items_dd.items():
         if va in buffer_transforms and len(buffer_transforms[va]) == len(vlist):
             transformed_docs = [
-                _transform_context_doc(x) for x in buffer_transforms[va]
+                context_dict_from_transform_buffer_item(x)
+                for x in buffer_transforms[va]
             ]
             new_items_dd[va] = list(zip(vlist, transformed_docs))
         else:

@@ -1,4 +1,4 @@
-"""Edge router actor for routing documents to dynamically created edges."""
+"""Edge router actor for routing nested JSON observations to dynamic edges."""
 
 from __future__ import annotations
 
@@ -9,7 +9,12 @@ from .base import Actor, ActorInitContext
 from .config import EdgeRouterActorConfig
 from graflo.architecture.edge_derivation import EdgeDerivation
 from graflo.architecture.schema.edge import Edge, EdgeConfig
-from graflo.architecture.graph_types import ExtractionContext, LocationIndex, VertexRep
+from graflo.architecture.graph_types import (
+    ExtractionContext,
+    LocationIndex,
+    VertexRep,
+    merge_observation_with_transform_buffer,
+)
 from graflo.architecture.schema.vertex import VertexConfig
 
 logger = logging.getLogger(__name__)
@@ -135,7 +140,15 @@ class EdgeRouterActor(Actor):
         *nargs: Any,
         **kwargs: Any,
     ) -> ExtractionContext:
-        doc: dict[str, Any] = kwargs.get("doc", {})
+        raw_observation = kwargs.get("doc", {})
+        if not isinstance(raw_observation, dict):
+            logger.debug(
+                "EdgeRouterActor: expected dict observation slice, got %s, skipping",
+                type(raw_observation).__name__,
+            )
+            return ctx
+        buffer_items: list[Any] = list(ctx.buffer_transforms.get(lindex, []))
+        doc = merge_observation_with_transform_buffer(raw_observation, buffer_items)
 
         source_name = self._resolve_side_type(
             doc,
