@@ -373,13 +373,64 @@ class Caster:
 
         # Same semantics as AbstractDataSource.iter_batches(limit=...).
         limit = self.ingestion_params.max_items
+        batch_prefetch = self.ingestion_params.batch_prefetch
+        queue: asyncio.Queue[list[dict] | object] = asyncio.Queue(
+            maxsize=batch_prefetch
+        )
+        sentinel = object()
+        fetch_error: Exception | None = None
 
-        for batch in data_source.iter_batches(
-            batch_size=self.ingestion_params.batch_size, limit=limit
-        ):
-            await self.process_batch(
-                batch, resource_name=actual_resource_name, conn_conf=conn_conf
-            )
+        batches_iter = data_source.iter_batches(
+            batch_size=self.ingestion_params.batch_size,
+            limit=limit,
+        )
+
+        def _next_batch_or_sentinel() -> list[dict] | object:
+            try:
+                return next(batches_iter)
+            except StopIteration:
+                return sentinel
+
+        async def _produce_batches() -> None:
+            nonlocal fetch_error
+            try:
+                while True:
+                    item = await asyncio.to_thread(_next_batch_or_sentinel)
+                    await queue.put(item)
+                    if item is sentinel:
+                        return
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                fetch_error = exc
+                await queue.put(sentinel)
+
+        producer_task = asyncio.create_task(_produce_batches())
+        process_error: Exception | None = None
+        try:
+            while True:
+                item = await queue.get()
+                if item is sentinel:
+                    break
+                batch = cast(list[dict], item)
+                await self.process_batch(
+                    batch,
+                    resource_name=actual_resource_name,
+                    conn_conf=conn_conf,
+                )
+        except Exception as exc:
+            process_error = exc
+            raise
+        finally:
+            if process_error is not None and not producer_task.done():
+                producer_task.cancel()
+            try:
+                await producer_task
+            except asyncio.CancelledError:
+                pass
+
+        if fetch_error is not None:
+            raise fetch_error
 
     async def process_resource(
         self,

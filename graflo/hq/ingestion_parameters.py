@@ -84,6 +84,14 @@ class IngestionParams(BaseModel):
         ge=1,
         description="Number of source items to group per batch for casting and writes.",
     )
+    batch_prefetch: int = Field(
+        default=2,
+        ge=1,
+        description=(
+            "How many batches to prefetch ahead while processing current batch. "
+            "Keeps ingestion lazy with bounded memory."
+        ),
+    )
     dry: bool = False
     init_only: bool = False
     limit_files: int | None = None
