@@ -326,8 +326,6 @@ class Caster:
                 conn_conf=conn_conf,
                 resource_name=resource_name,
                 bulk_session_id=bulk_sid,
-                bindings=self._ingest_bindings,
-                connection_provider=self._connection_provider,
             )
 
     async def process_data_source(

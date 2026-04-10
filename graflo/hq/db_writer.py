@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from graflo.architecture.schema.edge import Edge
@@ -18,12 +17,8 @@ from graflo.architecture.contract.declarations.ingestion_model import IngestionM
 from graflo.architecture.graph_types import GraphContainer
 from graflo.architecture.schema import Schema
 from graflo.db import ConnectionManager
-from graflo.db import DBConfig, TigergraphConfig
+from graflo.db import DBConfig
 from graflo.onto import DBType
-
-if TYPE_CHECKING:
-    from graflo.architecture.contract.bindings import Bindings
-    from graflo.hq.connection_provider import ConnectionProvider
 
 logger = logging.getLogger(__name__)
 
@@ -68,30 +63,22 @@ class DBWriter:
         resource_name: str | None,
         *,
         bulk_session_id: str | None = None,
-        bindings: Bindings | None = None,
-        connection_provider: ConnectionProvider | None = None,
     ) -> None:
         """Push *gc* to the database (vertices, extra weights, then edges).
 
-        When TigerGraph ``bulk_load.enabled`` is set and *bulk_session_id* is
-        provided, appends rows to the CSV staging session instead of using REST++.
+        When *bulk_session_id* is provided, appends rows using the connection's
+        native bulk interface instead of using per-record writes.
 
         .. note::
             *gc* is mutated in-place for the REST path: blank-vertex keys are
             updated and blank edges are extended after the vertex round-trip.
             The bulk path does not support blank vertices or ``extra_weights``.
         """
-        if (
-            bulk_session_id
-            and conn_conf.connection_type == DBType.TIGERGRAPH
-            and isinstance(conn_conf, TigergraphConfig)
-            and conn_conf.bulk_load is not None
-            and conn_conf.bulk_load.enabled
-        ):
-            self._validate_tigergraph_bulk_resource(resource_name)
+        if bulk_session_id:
+            self._validate_bulk_resource(resource_name)
             if self.dry:
                 logger.debug(
-                    "Dry run: would append batch to TigerGraph bulk session %s",
+                    "Dry run: would append batch to bulk session %s",
                     bulk_session_id,
                 )
                 return
@@ -110,13 +97,13 @@ class DBWriter:
         await self._enrich_extra_weights(gc, conn_conf, resource)
         await self._push_edges(gc, conn_conf)
 
-    def _validate_tigergraph_bulk_resource(self, resource_name: str | None) -> None:
+    def _validate_bulk_resource(self, resource_name: str | None) -> None:
         if resource_name is None:
             return
         resource = self.ingestion_model.fetch_resource(resource_name)
         if resource.extra_weights:
             raise ValueError(
-                "TigerGraph bulk_load does not support resources with extra_weights "
+                "Native bulk ingest does not support resources with extra_weights "
                 "(those require DB round-trips). Use REST ingest or disable extra_weights."
             )
 

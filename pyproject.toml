@@ -78,6 +78,7 @@ include = ["graflo"]
 
 [tool.pytest.ini_options]
 markers = [
+  "bulk_e2e: marks TigerGraph native bulk end-to-end tests (skipped unless --run-bulk-e2e is passed)",
   "nebula: marks NebulaGraph integration tests (skipped unless --run-nebula is passed)",
   "performance: marks performance / stress tests (skipped unless --run-performance is passed)"
 ]
