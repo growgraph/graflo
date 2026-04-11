@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.7.16] - 2026-04-10
+
+### Added
+
+- **`merge_observation_with_transform_buffer`** (and alias **`merge_row_doc_with_transform_buffer`**) in **`graflo.architecture.graph_types`**: merges a nested JSON observation slice with **`ExtractionContext.buffer_transforms`** entries at the same **`LocationIndex`** in pipeline order (later transform output overrides earlier keys and conflicts with the raw observation).
+- **`IngestionParams.batch_prefetch`**: bounded queue depth for prefetching the next source batch(es) while the current batch is cast and written—keeps **`iter_batches`** lazy with smoother overlap between fetch and processing.
+- **`BulkSessionCoordinator`** (**`graflo.hq.bulk_session`**): backend-agnostic begin/finalize lifecycle for optional native bulk ingest sessions (feature detection and **`UnsupportedBulkLoad`** handling stay on connections).
+
+### Changed
+
+- **Native bulk writes**: **`DBWriter.write`** treats a non-empty **`bulk_session_id`** as “append via the connection’s bulk interface” (no TigerGraph-only branching in the writer). **`bindings`** / **`connection_provider`** are no longer passed into **`write`**; finalize still receives them from the coordinator after the ingest run.
+- **`VertexRouterActor` / `EdgeRouterActor`**: routing reads type fields, relation fields, and projected identity columns from the **merged** observation (raw slice + transform buffer), including **`{prefix}{type_field}`** fallback for vertex routers when **`prefix`** is set.
+- **`Caster`**: TigerGraph-specific bulk session helpers replaced with **`_ensure_bulk_session`** / **`_finalize_bulk_session`** backed by **`BulkSessionCoordinator`**; **`process_data_source`** pipelines batch iteration through the prefetch queue.
+
+### Documentation
+
+- Concepts: router actors + transform buffer merge; **`docs/concepts/table_connector_views.md`** (table connector views).
+
 ## [1.7.15] - 2026-04-08
 
 ### Added

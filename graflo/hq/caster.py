@@ -40,7 +40,8 @@ from graflo.data_source import (
     DataSourceFactory,
     DataSourceRegistry,
 )
-from graflo.db import ConnectionManager, DBConfig, TigergraphConfig
+from graflo.db import DBConfig
+from graflo.hq.bulk_session import BulkSessionCoordinator
 from graflo.hq.db_writer import DBWriter
 from graflo.hq.registry_builder import RegistryBuilder
 from graflo.util.chunker import ChunkerType
@@ -168,8 +169,7 @@ class Caster:
         self._doc_cast_error_total = 0
         self._doc_cast_error_io_lock = asyncio.Lock()
         self._failure_sinks = failure_sinks_from_ingestion_params(ingestion_params)
-        self._tigergraph_bulk_session_id: str | None = None
-        self._bulk_begin_lock = asyncio.Lock()
+        self._bulk_coordinator = BulkSessionCoordinator(schema=self.schema)
         self._ingest_bindings: Bindings | None = None
         self._connection_provider: ConnectionProvider = EmptyConnectionProvider()
 
@@ -177,42 +177,16 @@ class Caster:
     # Casting
     # ------------------------------------------------------------------
 
-    async def _ensure_tigergraph_bulk_session(self, conn_conf: DBConfig) -> str | None:
-        """Return active CSV bulk session id, starting one if needed."""
-        if not isinstance(conn_conf, TigergraphConfig):
-            return None
-        cfg = conn_conf.bulk_load
-        if cfg is None or not cfg.enabled:
-            return None
-        async with self._bulk_begin_lock:
-            if self._tigergraph_bulk_session_id is not None:
-                return self._tigergraph_bulk_session_id
+    async def _ensure_bulk_session(self, conn_conf: DBConfig) -> str | None:
+        """Return active native bulk session id, starting one if needed."""
+        return await self._bulk_coordinator.ensure_session(conn_conf)
 
-            def _begin() -> str:
-                with ConnectionManager(connection_config=conn_conf) as db:
-                    return db.bulk_load_begin(self.schema, cfg)
-
-            self._tigergraph_bulk_session_id = await asyncio.to_thread(_begin)
-        return self._tigergraph_bulk_session_id
-
-    async def _finalize_tigergraph_bulk(self, conn_conf: DBConfig) -> None:
-        sid = self._tigergraph_bulk_session_id
-        self._tigergraph_bulk_session_id = None
-        if sid is None:
-            return
-        bindings = self._ingest_bindings
-        provider = self._connection_provider
-
-        def _finalize() -> None:
-            with ConnectionManager(connection_config=conn_conf) as db:
-                db.bulk_load_finalize(
-                    sid,
-                    self.schema,
-                    bindings=bindings,
-                    connection_provider=provider,
-                )
-
-        await asyncio.to_thread(_finalize)
+    async def _finalize_bulk_session(self, conn_conf: DBConfig) -> None:
+        await self._bulk_coordinator.finalize(
+            conn_conf,
+            bindings=self._ingest_bindings,
+            connection_provider=self._connection_provider,
+        )
 
     async def _persist_doc_failures(self, failures: list[DocCastFailure]) -> None:
         if not failures:
@@ -346,14 +320,12 @@ class Caster:
 
         if conn_conf is not None:
             writer = self._make_db_writer()
-            bulk_sid = await self._ensure_tigergraph_bulk_session(conn_conf)
+            bulk_sid = await self._ensure_bulk_session(conn_conf)
             await writer.write(
                 gc=gc,
                 conn_conf=conn_conf,
                 resource_name=resource_name,
                 bulk_session_id=bulk_sid,
-                bindings=self._ingest_bindings,
-                connection_provider=self._connection_provider,
             )
 
     async def process_data_source(
@@ -373,13 +345,64 @@ class Caster:
 
         # Same semantics as AbstractDataSource.iter_batches(limit=...).
         limit = self.ingestion_params.max_items
+        batch_prefetch = self.ingestion_params.batch_prefetch
+        queue: asyncio.Queue[list[dict] | object] = asyncio.Queue(
+            maxsize=batch_prefetch
+        )
+        sentinel = object()
+        fetch_error: Exception | None = None
 
-        for batch in data_source.iter_batches(
-            batch_size=self.ingestion_params.batch_size, limit=limit
-        ):
-            await self.process_batch(
-                batch, resource_name=actual_resource_name, conn_conf=conn_conf
-            )
+        batches_iter = data_source.iter_batches(
+            batch_size=self.ingestion_params.batch_size,
+            limit=limit,
+        )
+
+        def _next_batch_or_sentinel() -> list[dict] | object:
+            try:
+                return next(batches_iter)
+            except StopIteration:
+                return sentinel
+
+        async def _produce_batches() -> None:
+            nonlocal fetch_error
+            try:
+                while True:
+                    item = await asyncio.to_thread(_next_batch_or_sentinel)
+                    await queue.put(item)
+                    if item is sentinel:
+                        return
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                fetch_error = exc
+                await queue.put(sentinel)
+
+        producer_task = asyncio.create_task(_produce_batches())
+        process_error: Exception | None = None
+        try:
+            while True:
+                item = await queue.get()
+                if item is sentinel:
+                    break
+                batch = cast(list[dict], item)
+                await self.process_batch(
+                    batch,
+                    resource_name=actual_resource_name,
+                    conn_conf=conn_conf,
+                )
+        except Exception as exc:
+            process_error = exc
+            raise
+        finally:
+            if process_error is not None and not producer_task.done():
+                producer_task.cancel()
+            try:
+                await producer_task
+            except asyncio.CancelledError:
+                pass
+
+        if fetch_error is not None:
+            raise fetch_error
 
     async def process_resource(
         self,
@@ -588,7 +611,7 @@ class Caster:
                         )
             logger.info(f"Processing took {klepsidra.elapsed:.1f} sec")
         finally:
-            await self._finalize_tigergraph_bulk(conn_conf)
+            await self._finalize_bulk_session(conn_conf)
             self._ingest_bindings = None
             self._connection_provider = EmptyConnectionProvider()
 

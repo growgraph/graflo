@@ -1,4 +1,4 @@
-"""Vertex router actor for routing documents to vertex actors by type field."""
+"""Vertex router actor for routing nested JSON observations to vertex actors."""
 
 from __future__ import annotations
 
@@ -10,7 +10,11 @@ from .config import (
     VertexActorConfig,
     VertexRouterActorConfig,
 )
-from graflo.architecture.graph_types import ExtractionContext, LocationIndex
+from graflo.architecture.graph_types import (
+    ExtractionContext,
+    LocationIndex,
+    merge_observation_with_transform_buffer,
+)
 from graflo.architecture.schema.vertex import VertexConfig
 
 if TYPE_CHECKING:
@@ -100,8 +104,18 @@ class VertexRouterActor(Actor):
     def __call__(
         self, ctx: ExtractionContext, lindex: LocationIndex, *nargs: Any, **kwargs: Any
     ) -> ExtractionContext:
-        doc: dict[str, Any] = kwargs.get("doc", {})
+        raw_observation = kwargs.get("doc", {})
+        if not isinstance(raw_observation, dict):
+            logger.debug(
+                "VertexRouterActor: expected dict observation slice, got %s, skipping",
+                type(raw_observation).__name__,
+            )
+            return ctx
+        buffer_items: list[Any] = list(ctx.buffer_transforms.get(lindex, []))
+        doc = merge_observation_with_transform_buffer(raw_observation, buffer_items)
         raw_vtype = doc.get(self.type_field)
+        if raw_vtype is None and self.prefix:
+            raw_vtype = doc.get(f"{self.prefix}{self.type_field}")
         if raw_vtype is None:
             logger.debug(
                 "VertexRouterActor: type_field '%s' not in doc, skipping",

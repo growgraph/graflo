@@ -422,6 +422,7 @@ classDiagram
         +resources: list[str]?
         +vertices: list[str]?
         +batch_size: int
+        +batch_prefetch: int
         +max_items: int?
         +dry: bool
         +datetime_after: str?
@@ -647,6 +648,23 @@ flowchart TB
     VR -.->|routes by type_field| V
     ER -.->|routes by source/target/relation fields| E
 ```
+
+### Location-scoped observations, transforms, and routers
+
+Ingestion pipelines walk **nested JSON** (or list-shaped branches). At each step, actors receive:
+
+- A **`LocationIndex`** — a path into the document (which list index, which object key, and so on).
+- An **observation slice** — usually a `dict` that is the current fragment of the document for that path (for example the element produced by a `DescendActor` iteration). Tabular sources are the special case where the top-level slice is one flat object per record.
+
+**Transform output** is not written back onto that slice automatically. `TransformActor` appends a `TransformPayload` to `ExtractionContext.buffer_transforms[location]` for the **same** `LocationIndex` it was invoked with. Later actors at that location can consume those named fields.
+
+**`VertexRouterActor` and `EdgeRouterActor`** build an **effective observation** by merging the current dict slice with all `TransformPayload` entries at that `LocationIndex` (in pipeline order; later transforms override earlier keys and override the raw JSON on conflicts). Routing fields (`type_field`, edge type fields, `relation_field`, projections) are read from this merged view, so normalized attributes produced by transforms are first-class inputs to routing. For `VertexRouterActor`, if `prefix` is set and `type_field` is absent on the merged slice, the router also tries ``{prefix}{type_field}`` so prefixed discriminator keys (including from transforms) still resolve the vertex type.
+
+**Scoping:** `buffer_transforms` is keyed only by the exact `LocationIndex`. A transform at a parent path does **not** appear in the buffer for a child path, and vice versa. That keeps parent/child branches separate.
+
+**Descend behavior:** When `DescendActor` expands a collection, inner actors see **`sub_doc`** (one child value) per iteration — not the full parent object — unless you denormalize parent fields onto each child or structure the pipeline so the router runs at a level where the slice already contains what you need.
+
+**Future discussion (not implemented):** Opt-in inheritance of specific fields from a parent `LocationIndex` (or a parent observation stack) could simplify parent–child edges without duplicating data on every child; that would be an explicit configuration surface to avoid breaking the default isolation above.
 
 ### Transform
 
@@ -899,10 +917,10 @@ uv run migrate_schema history
 Schema comparison gives you a predictable transition path between versions. Instead of discovering incompatibilities during ingestion, you see structural deltas in advance, gate risky steps, and execute a controlled rollout.
 
 ### Performance Optimization
-- **Batch Processing**: Process large datasets in configurable batches (`batch_size` parameter of `Caster`)
+- **Batch Processing**: Process large datasets in configurable batches (`IngestionParams.batch_size` on `Caster` / `GraphEngine`)
+- **Batch Prefetch**: While one batch is cast and written, `Caster.process_data_source` can prefetch up to `IngestionParams.batch_prefetch` additional batches from `AbstractDataSource.iter_batches` (bounded memory, overlapped I/O)
 - **Parallel Execution**: Utilize multiple cores for faster processing (`n_cores` parameter of `Caster`)
 - **Efficient Resource Handling**: Optimized processing of both table and tree-like data
-- **Smart Caching**: Minimize redundant operations
 
 ## Best Practices
 1. Use compound identity fields for natural keys, and **`schema.db_profile`** secondary indexes for query performance

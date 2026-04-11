@@ -385,6 +385,44 @@ class TransformPayload(ConfigBaseModel):
         return dict(self.named)
 
 
+def context_dict_from_transform_buffer_item(item: Any) -> dict[str, Any]:
+    """Map one ``buffer_transforms`` entry to a flat context dict (named keys only)."""
+    if isinstance(item, TransformPayload):
+        return item.context_doc()
+    if isinstance(item, dict):
+        return dict(item)
+    return {}
+
+
+def merge_observation_with_transform_buffer(
+    observation: dict[str, Any],
+    buffer_items: list[Any],
+) -> dict[str, Any]:
+    """Merge a JSON observation slice with transform outputs at the same location.
+
+    ``observation`` is the current dict-shaped fragment of the nested document
+    passed into actors (often a child object under a :class:`DescendActor`).
+    ``buffer_items`` are the entries in ``ExtractionContext.buffer_transforms``
+    for the same :class:`LocationIndex`.
+
+    Starts from a shallow copy of ``observation``; each buffer entry (in pipeline
+    order) updates the merged view, so later transforms override earlier keys
+    and transform output overrides the raw JSON on key conflicts.
+    """
+    merged: dict[str, Any] = dict(observation)
+    for item in buffer_items:
+        merged.update(context_dict_from_transform_buffer_item(item))
+    return merged
+
+
+def merge_row_doc_with_transform_buffer(
+    doc: dict[str, Any],
+    buffer_items: list[Any],
+) -> dict[str, Any]:
+    """Backward-compatible alias for :func:`merge_observation_with_transform_buffer`."""
+    return merge_observation_with_transform_buffer(doc, buffer_items)
+
+
 class ProvenancePath(ConfigBaseModel):
     """Explicit provenance path for extracted observations."""
 

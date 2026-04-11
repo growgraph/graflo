@@ -411,7 +411,10 @@ class VertexRouterActorConfig(ConfigBaseModel):
     )
     type_field: str = PydanticField(
         ...,
-        description="Document field whose value determines the target vertex type name.",
+        description=(
+            "Field on the current JSON observation slice (after merge with same-location "
+            "transform buffer) whose value determines the target vertex type name."
+        ),
     )
     prefix: str | None = PydanticField(
         default=None,
@@ -448,15 +451,15 @@ class EdgeRouterActorConfig(ConfigBaseModel):
     source_type_field: str | None = PydanticField(
         default=None,
         description=(
-            "Document field whose value determines the source vertex type. "
-            "Provide this or source."
+            "Field on the current JSON observation slice (after merge with same-location "
+            "transform buffer) that determines the source vertex type. Provide this or source."
         ),
     )
     target_type_field: str | None = PydanticField(
         default=None,
         description=(
-            "Document field whose value determines the target vertex type. "
-            "Provide this or target."
+            "Field on the current JSON observation slice (after merge with same-location "
+            "transform buffer) that determines the target vertex type. Provide this or target."
         ),
     )
     source: str | None = PydanticField(
@@ -481,7 +484,10 @@ class EdgeRouterActorConfig(ConfigBaseModel):
     )
     relation_field: str | None = PydanticField(
         default=None,
-        description="Document field whose value determines the relation type per row.",
+        description=(
+            "Field on the current JSON observation slice (after merge with same-location "
+            "transform buffer) whose value determines the relation type per row."
+        ),
     )
     relation: str | None = PydanticField(
         default=None,

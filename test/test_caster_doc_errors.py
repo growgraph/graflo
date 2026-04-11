@@ -5,12 +5,15 @@ from __future__ import annotations
 import asyncio
 import gzip
 import json
+import threading
+import time
 from collections import defaultdict
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
+from graflo.data_source.base import AbstractDataSource, DataSourceType
 from graflo.hq.caster import (
     CastBatchResult,
     Caster,
@@ -154,3 +157,94 @@ def test_concurrent_doc_error_sink_lines(
     assert len(lines) == 2
     for ln in lines:
         json.loads(ln)
+
+
+def test_batch_prefetch_default_and_validation() -> None:
+    params = IngestionParams()
+    assert params.batch_prefetch == 2
+
+    with pytest.raises(ValueError):
+        IngestionParams(batch_prefetch=0)
+
+
+class _PrefetchProbeDataSource(AbstractDataSource):
+    source_type: DataSourceType = DataSourceType.IN_MEMORY
+
+    def __init__(self, second_fetch_started: threading.Event) -> None:
+        super().__init__(source_type=DataSourceType.IN_MEMORY)
+        self._second_fetch_started = second_fetch_started
+        self.resource_name = "fake_resource"
+
+    def iter_batches(self, batch_size: int = 1000, limit: int | None = None):
+        del batch_size, limit
+        time.sleep(0.01)
+        yield [{"id": 1}]
+        self._second_fetch_started.set()
+        time.sleep(0.01)
+        yield [{"id": 2}]
+
+
+def test_process_data_source_prefetch_overlaps_fetch_and_processing(
+    mock_schema: MagicMock,
+    mock_ingestion_model: MagicMock,
+) -> None:
+    params = IngestionParams(n_cores=1, batch_prefetch=2)
+    caster = Caster(mock_schema, mock_ingestion_model, ingestion_params=params)
+    second_fetch_started = threading.Event()
+    data_source = _PrefetchProbeDataSource(second_fetch_started)
+
+    async def _fake_process_batch(*args, **kwargs) -> None:
+        del args, kwargs
+        if not second_fetch_started.wait(timeout=0.2):
+            raise AssertionError("next batch was not prefetched while processing")
+        await asyncio.sleep(0.01)
+
+    caster.process_batch = _fake_process_batch  # type: ignore[method-assign]
+    asyncio.run(caster.process_data_source(data_source=data_source))
+
+
+class _ErrorAfterFirstBatchDataSource(AbstractDataSource):
+    source_type: DataSourceType = DataSourceType.IN_MEMORY
+
+    def __init__(self) -> None:
+        super().__init__(source_type=DataSourceType.IN_MEMORY)
+        self.resource_name = "fake_resource"
+
+    def iter_batches(self, batch_size: int = 1000, limit: int | None = None):
+        del batch_size, limit
+        yield [{"id": 1}]
+        raise RuntimeError("fetch exploded")
+
+
+def test_process_data_source_propagates_fetch_errors(
+    mock_schema: MagicMock,
+    mock_ingestion_model: MagicMock,
+) -> None:
+    params = IngestionParams(n_cores=1, batch_prefetch=2)
+    caster = Caster(mock_schema, mock_ingestion_model, ingestion_params=params)
+    data_source = _ErrorAfterFirstBatchDataSource()
+
+    async def _fake_process_batch(*args, **kwargs) -> None:
+        del args, kwargs
+        await asyncio.sleep(0.01)
+
+    caster.process_batch = _fake_process_batch  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError, match="fetch exploded"):
+        asyncio.run(caster.process_data_source(data_source=data_source))
+
+
+def test_process_data_source_propagates_processing_errors(
+    mock_schema: MagicMock,
+    mock_ingestion_model: MagicMock,
+) -> None:
+    params = IngestionParams(n_cores=1, batch_prefetch=2)
+    caster = Caster(mock_schema, mock_ingestion_model, ingestion_params=params)
+    data_source = _PrefetchProbeDataSource(threading.Event())
+
+    async def _fake_process_batch(*args, **kwargs) -> None:
+        del args, kwargs
+        raise ConnectionError("db write failed")
+
+    caster.process_batch = _fake_process_batch  # type: ignore[method-assign]
+    with pytest.raises(ConnectionError, match="db write failed"):
+        asyncio.run(caster.process_data_source(data_source=data_source))
