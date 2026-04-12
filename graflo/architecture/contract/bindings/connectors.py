@@ -14,6 +14,9 @@ from pydantic import AliasChoices, Field, field_validator, model_validator
 from graflo.architecture.base import ConfigBaseModel
 from graflo.onto import BaseEnum
 
+# SQL identifier for TableConnector.base_alias validation (matches SelectSpec).
+_BASE_TABLE_ALIAS_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\Z")
+
 if TYPE_CHECKING:
     from graflo.db import PostgresConfig
 else:
@@ -158,7 +161,8 @@ class JoinClause(ConfigBaseModel):
     """Specification for a SQL JOIN operation.
 
     Used by TableConnector to describe multi-table queries. Each JoinClause
-    adds one JOIN to the generated SQL.
+    adds one JOIN to the generated SQL. The base row uses ``TableConnector.base_alias``
+    (default ``base``), not a hard-coded name.
 
     Attributes:
         table: Table name to join (e.g. "all_classes").
@@ -209,6 +213,7 @@ class TableConnector(ResourceConnector):
         date_range_days: Number of days after start date (used with date_range_start)
         filters: General-purpose pushdown filters rendered as SQL WHERE fragments.
         joins: Multi-table JOIN specifications (auto-generated or explicit).
+        base_alias: SQL alias for the base table when ``joins`` is non-empty.
         select_columns: Explicit SELECT column list. None means ``*`` for the
             base table (plus aliased columns from joins).
     """
@@ -231,6 +236,10 @@ class TableConnector(ResourceConnector):
     joins: list[JoinClause] = Field(
         default_factory=list,
         description="JOIN clauses for multi-table queries.",
+    )
+    base_alias: str = Field(
+        default="base",
+        description="SQL alias for the base table row when joins are present.",
     )
     select_columns: list[str] | None = Field(
         default=None,
@@ -257,6 +266,17 @@ class TableConnector(ResourceConnector):
         """Validate table_name and date filtering parameters."""
         if not self.table_name:
             raise ValueError("table_name is required for TableConnector")
+        if not _BASE_TABLE_ALIAS_IDENT.match(self.base_alias):
+            raise ValueError(
+                "base_alias must be a simple SQL identifier "
+                "(ASCII letter, digit, underscore)"
+            )
+        join_aliases = {jc.alias or jc.table for jc in self.joins}
+        if self.base_alias in join_aliases:
+            raise ValueError(
+                f"base_alias {self.base_alias!r} conflicts with a join alias "
+                f"{sorted(join_aliases)}"
+            )
         if (self.date_filter or self.date_range_start) and not self.date_field:
             raise ValueError(
                 "date_field is required when using date_filter or date_range_start"
@@ -361,7 +381,7 @@ class TableConnector(ResourceConnector):
 
             if isinstance(self.view, SelectSpec):
                 return self.view.build_sql(schema=schema, base_table=self.table_name)
-        base_alias = "r" if self.joins else None
+        base_alias = self.base_alias if self.joins else None
         base_ref = f'"{schema}"."{self.table_name}"'
         if base_alias:
             base_ref_aliased = f"{base_ref} {base_alias}"

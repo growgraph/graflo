@@ -22,6 +22,9 @@ from graflo.architecture.contract.bindings import JoinClause
 # Unquoted SQL identifiers (column / alias) for ergonomic select items.
 _SIMPLE_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\Z")
 
+# Vocal "all columns from the base row" token (not SQL ``*``); expands to ``{base_alias}.*``.
+ALL_BASE_COLUMNS = "all_base"
+
 
 def _collect_join_aliases(joins: list[JoinClause | dict[str, Any]]) -> set[str]:
     aliases: set[str] = set()
@@ -38,6 +41,10 @@ def _sql_qualify_base_column(col: str, base_alias: str | None) -> str:
 
 
 def _render_select_string(item: str, base_alias: str | None) -> str:
+    if item == ALL_BASE_COLUMNS:
+        if base_alias:
+            return f"{base_alias}.*"
+        return "*"
     if item == "*":
         return "*"
     if _SIMPLE_IDENT.match(item):
@@ -102,9 +109,9 @@ class SelectSpec(ConfigBaseModel):
         from_: Base table (used when kind="select")
         joins: JOIN clauses (used when kind="select")
         select: SELECT list (used when kind="select"). Each entry may be:
-            - A string: ``*``, a raw SQL fragment (e.g. expressions), or a simple
-              identifier that names a **base-table column** (auto-qualified with
-              the base alias ``r`` when joins are present).
+            - A string: ``all_base`` (all columns from the base row), ``*`` (SQL
+              wildcard), a raw SQL fragment, or a simple identifier for a **base
+              column** (qualified with ``base_alias`` when joins are present).
             - A dict ``{expr, alias}`` (legacy SQL expression).
             - A dict ``{base, as?}`` for a base-table column (optional output alias).
             - A dict ``{from_join, column, as?}`` for a column from a joined table
@@ -124,6 +131,9 @@ class SelectSpec(ConfigBaseModel):
             type_column).
         target_type_column: Type discriminator on target lookup (defaults to
             type_column).
+        base_alias: SQL alias for the base table row when joins are present
+            (``kind="select"`` and ``joins``, or ``kind="type_lookup"``). Default
+            ``base``; must not collide with join aliases.
     """
 
     kind: Literal["select", "type_lookup"] = "select"
@@ -131,8 +141,17 @@ class SelectSpec(ConfigBaseModel):
     # Full select form
     from_: str | None = Field(default=None, validation_alias="from")
     joins: list[JoinClause | dict[str, Any]] = Field(default_factory=list)
-    select: list[str | dict[str, Any]] = Field(default_factory=lambda: ["*"])
+    select: list[str | dict[str, Any]] = Field(
+        default_factory=lambda: [ALL_BASE_COLUMNS],
+        description=(
+            "Default all_base expands to base.* when joins exist, else SELECT *."
+        ),
+    )
     where: FilterExpression | dict[str, Any] | None = None
+    base_alias: str = Field(
+        default="base",
+        description="SQL table alias for the base row (when joins are generated).",
+    )
 
     # Type-lookup shorthand
     table: str | None = None
@@ -197,6 +216,28 @@ class SelectSpec(ConfigBaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def _validate_base_alias(self) -> Self:
+        if not _SIMPLE_IDENT.match(self.base_alias):
+            raise ValueError(
+                "base_alias must be a simple SQL identifier "
+                "(ASCII letter, digit, underscore)"
+            )
+        if self.kind == "type_lookup":
+            if self.base_alias in ("s", "t"):
+                raise ValueError(
+                    "base_alias must not be 's' or 't' (reserved for type_lookup "
+                    "lookup join aliases)"
+                )
+            return self
+        join_aliases = _collect_join_aliases(self.joins)
+        if self.base_alias in join_aliases:
+            raise ValueError(
+                f"base_alias {self.base_alias!r} conflicts with a join alias "
+                f"{sorted(join_aliases)}"
+            )
+        return self
+
     def build_sql(
         self,
         schema: str,
@@ -245,17 +286,18 @@ class SelectSpec(ConfigBaseModel):
         )
 
         base_ref = f'"{schema}"."{base_table}"'
+        ba = self.base_alias
 
         assert src_type_col is not None and tgt_type_col is not None
         select_parts: list[str] = [
-            f'r."{src_fk}" AS source_id',
+            f'{ba}."{src_fk}" AS source_id',
             f's."{src_type_col}" AS source_type',
-            f'r."{tgt_fk}" AS target_id',
+            f'{ba}."{tgt_fk}" AS target_id',
             f't."{tgt_type_col}" AS target_type',
         ]
 
         if rel_col:
-            select_parts.append(f'r."{rel_col}" AS relation')
+            select_parts.append(f'{ba}."{rel_col}" AS relation')
         select_clause = ", ".join(select_parts)
 
         assert src_tbl is not None and src_ident is not None
@@ -263,9 +305,9 @@ class SelectSpec(ConfigBaseModel):
         s_ref = f'"{schema}"."{src_tbl}"'
         t_ref = f'"{schema}"."{tgt_tbl}"'
         from_clause = (
-            f"{base_ref} r "
-            f'LEFT JOIN {s_ref} s ON r."{src_fk}" = s."{src_ident}" '
-            f'LEFT JOIN {t_ref} t ON r."{tgt_fk}" = t."{tgt_ident}"'
+            f"{base_ref} {ba} "
+            f'LEFT JOIN {s_ref} s ON {ba}."{src_fk}" = s."{src_ident}" '
+            f'LEFT JOIN {t_ref} t ON {ba}."{tgt_fk}" = t."{tgt_ident}"'
         )
 
         where_clause = f's."{src_ident}" IS NOT NULL AND t."{tgt_ident}" IS NOT NULL'
@@ -275,7 +317,7 @@ class SelectSpec(ConfigBaseModel):
         """Build SQL from full select spec."""
         from_table = self.from_ or base_table
         base_ref = f'"{schema}"."{from_table}"'
-        base_alias = "r" if self.joins else None
+        base_alias = self.base_alias if self.joins else None
         if base_alias:
             base_ref_aliased = f"{base_ref} {base_alias}"
         else:
@@ -359,8 +401,9 @@ class SelectSpec(ConfigBaseModel):
             kind="select",
             from_=head.from_,
             joins=merged_joins,
-            select=merged_select if merged_select else ["*"],
+            select=merged_select if merged_select else [ALL_BASE_COLUMNS],
             where=head.where,
+            base_alias=head.base_alias,
         )
 
     @classmethod
@@ -370,8 +413,8 @@ class SelectSpec(ConfigBaseModel):
         Supports:
         - kind="type_lookup": table, identity, type_column, source, target, relation,
           optional per-side source_* / target_* lookup overrides
-        - kind="select": from, joins, select (strings, base/from_join dicts, or
-          legacy expr/alias dicts), where
+        - kind="select": from, joins, select (``all_base``, strings, base/from_join
+          dicts, or legacy expr/alias dicts), where, base_alias
         """
         if isinstance(data, list):
             return cls.model_validate(data)

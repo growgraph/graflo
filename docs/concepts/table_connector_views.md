@@ -22,7 +22,7 @@ Implementation references:
 | -------- | -------- |
 | **`joins` only** | One or more `JoinClause` rows; base table column `ON` join keys; optional `alias` when the same physical table appears twice. |
 | **`view` with `kind="type_lookup"`** | A **fact** table (e.g. relations) plus **lookup** table(s) for endpoint types: emits `source_id`, `source_type`, `target_id`, `target_type`, and optional `relation` with a fixed pattern. Supports **per-side** lookup tables/columns via `source_table`, `target_table`, `source_identity`, `target_identity`, `source_type_column`, `target_type_column`. |
-| **`view` with `kind="select"`** | Full control: optional `from` (defaults to `table_name`), `joins`, explicit `select` (structured `base` / `from_join`, simple column names, or legacy `expr`/`alias`), `where` as `FilterExpression`. Use when `type_lookup` is not expressive enough. |
+| **`view` with `kind="select"`** | Full control: optional `from` (defaults to `table_name`), `joins`, explicit `select` (``all_base``, structured `base` / `from_join`, simple column names, or legacy `expr`/`alias`), optional `base_alias` (default `base`), `where` as `FilterExpression`. Use when `type_lookup` is not expressive enough. |
 | **Database VIEW** | Same logical outcome as `select`, but SQL owned by the DBA; `TableConnector` points at the view name as `table_name` and omits `view` / `joins`. |
 
 ## Interaction with edge auto-join
@@ -57,11 +57,11 @@ connectors:
       relation: relation
 ```
 
-Expanded SQL selects (conceptually):
+Expanded SQL selects (conceptually; base row alias defaults to `base`):
 
-- `r.source_id AS source_id`, `s.<type_column> AS source_type`
-- `r.target_id AS target_id`, `t.<type_column> AS target_type`
-- `r.relation AS relation` when `relation` is set
+- `base.source_id AS source_id`, `s.<type_column> AS source_type`
+- `base.target_id AS target_id`, `t.<type_column> AS target_type`
+- `base.relation AS relation` when `relation` is set
 
 Pair this with an `edge_router` step whose field names match those aliases, for example:
 
@@ -95,15 +95,28 @@ the connector’s `table_name`. `SelectSpec.build_sql()` uses `table_name` as th
 `FROM` target in that case. Set `from` only when the queried object differs
 (e.g. a synonym or a view name that is not `table_name`).
 
+### Base row alias (`base_alias`)
+
+`SelectSpec.base_alias` and `TableConnector.base_alias` default to **`base`**: that
+is the SQL identifier used for the base table row whenever joins are generated
+(`FROM "schema"."table" base ...`). Override only if you need a different name or
+to avoid a clash with a join alias. `where` clauses that use qualified fields
+should use this name (e.g. `base.tenant_id`).
+
 ### Ergonomic `select` items
 
 Each `select` entry can be:
 
+- **`all_base`** — all columns from the base row: expands to `base.*` when joins
+  are present (using your `base_alias`), or plain `*` when there are no joins.
+  This is the default single entry when `select` is omitted; prefer it over raw
+  `*` when joining so you do not accidentally select every column from every
+  joined table.
 - A **simple identifier string** (letters, digits, underscore): a column on the
-  **base** row. When `joins` are present, it is emitted as `r."column"` (no need
-  to type `r` in YAML).
+  **base** row. When `joins` are present, it is emitted as `base."column"` (no
+  need to type the alias in YAML).
 - `*` or any string that is **not** a simple identifier (expressions, quoted SQL,
-  `r.*`, etc.) is passed through unchanged.
+  `base.*`, etc.) is passed through unchanged.
 - A dict **`{ base: <col>, as: <output> }`** — base-table column with an optional
   output alias (`alias` is accepted as well as `as`).
 - A dict **`{ from_join: <join_alias>, column: <col>, as: <output> }`** — column
@@ -111,8 +124,8 @@ Each `select` entry can be:
   `joins` entry.
 - Legacy dict **`{ expr: "...", alias: ... }`** for arbitrary SQL expressions.
 
-Example (two joins to the same lookup table, no duplicated `from`, no `r.` in
-`select`):
+Example (two joins to the same lookup table, no duplicated `from`, no manual
+base alias in `select`):
 
 ```yaml
 connectors:
@@ -139,12 +152,12 @@ connectors:
           join_type: LEFT
       where:
         kind: leaf
-        field: r.tenant_id
+        field: base.tenant_id
         cmp_operator: "=="
         value: ["acme"]
 ```
 
-`where` still uses SQL flavor and may reference `r` / join aliases where needed.
+`where` still uses SQL flavor and may reference `base` / join aliases where needed.
 
 ### Legacy `expr` style
 
@@ -227,7 +240,8 @@ elsewhere (see [Transforms](transforms.md) and filter docs).
   type lookup** feeding **`EdgeRouterActor`**.
 - **`kind="select"`** covers **asymmetric** or **non-standard** join/select logic
   without giving up structured config; **`from`** defaults to **`table_name`**;
-  **`base` / `from_join`** reduce noise versus raw `expr` and internal `r.` aliases.
+  **`all_base`**, **`base` / `from_join`**, and default **`base_alias`** reduce noise
+  versus raw `expr` and ad-hoc SQL aliases.
 - **`SelectSpec.concat_select_parts`** merges join/select fragments when you want
   multiple **`SelectSpec`**-shaped pieces composed in code.
 - Edge **`EdgeActor`** auto-join in HQ is orthogonal; set `view` or explicit

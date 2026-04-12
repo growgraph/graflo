@@ -19,7 +19,7 @@ from graflo.architecture.schema.vertex import Field as VertexField
 from graflo.architecture.schema.vertex import Vertex, VertexConfig
 from graflo.data_source.sql import SQLConfig, SQLDataSource
 from graflo.filter.onto import ComparisonOperator, FilterExpression
-from graflo.filter.select import SelectSpec
+from graflo.filter.select import ALL_BASE_COLUMNS, SelectSpec
 from graflo.hq.resource_mapper import ResourceMapper
 from graflo.db import PostgresConfig
 
@@ -462,8 +462,8 @@ class TestTypeLookupPerSideConfiguration:
             relation="link_type",
         )
         sql = _sql_for_sqlite(spec.build_sql(schema="main", base_table="wide_links"))
-        assert 'r."parent_uuid" = s."by_uuid"' in sql
-        assert 'r."child_code" = t."by_code"' in sql
+        assert 'base."parent_uuid" = s."by_uuid"' in sql
+        assert 'base."child_code" = t."by_code"' in sql
         rows = _fetch_rows(conn_str, sql)
         triples = _run_router_on_rows(_symmetric_edge_router(), rows)
         assert Counter(triples) == Counter(
@@ -520,11 +520,11 @@ class TestSelectKindSelectAsymmetricLookup:
                 }
             ],
             select=[
-                'r."parent" AS source_id',
+                'base."parent" AS source_id',
                 "'project' AS source_type",
-                'r."child" AS target_id',
+                'base."child" AS target_id',
                 't."type_name" AS target_type',
-                'r."link_type" AS relation',
+                'base."link_type" AS relation',
             ],
             where=FilterExpression(
                 kind="leaf",
@@ -597,7 +597,7 @@ class TestSelectStructuredItemsAndConcat:
             ],
         )
         sql = _sql_for_sqlite(spec.build_sql(schema="main", base_table="entity_links"))
-        assert 'r."parent"' in sql
+        assert 'base."parent"' in sql
         assert 's."type_name" AS source_type' in sql
         rows = _fetch_rows(conn_str, sql)
         triples = _run_router_on_rows(_symmetric_edge_router(), rows)
@@ -689,6 +689,25 @@ class TestSelectStructuredItemsAndConcat:
                 ],
                 select=[{"from_join": "unknown", "column": "type_name"}],
             ).build_sql("main", "entity_links")
+
+    def test_custom_base_alias_used_in_sql(self):
+        spec = SelectSpec(
+            kind="select",
+            base_alias="row",
+            joins=[
+                {
+                    "table": "entity_types",
+                    "alias": "t",
+                    "on_self": "child",
+                    "on_other": "entity_id",
+                    "join_type": "LEFT",
+                }
+            ],
+            select=[ALL_BASE_COLUMNS, {"from_join": "t", "column": "type_name"}],
+        )
+        sql = _sql_for_sqlite(spec.build_sql(schema="main", base_table="entity_links"))
+        assert '"entity_links" row ' in sql
+        assert "row.*" in sql
 
 
 class TestResourceMapperTypeLookupOverride:

@@ -20,9 +20,10 @@ Example:
 """
 
 from .onto import ComparisonOperator, FilterExpression, LogicalOperator
-from .select import SelectSpec
+from .select import ALL_BASE_COLUMNS, SelectSpec
 
 __all__ = [
+    "ALL_BASE_COLUMNS",
     "ComparisonOperator",
     "FilterExpression",
     "LogicalOperator",

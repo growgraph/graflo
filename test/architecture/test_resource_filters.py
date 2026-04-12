@@ -198,9 +198,9 @@ class TestTableConnectorBuildQuery:
         q = tp.build_query("public")
         assert "LEFT JOIN" in q
         assert '"public"."addresses" a' in q
-        assert 'r."address_id" = a."id"' in q
-        # base table aliased as 'r'
-        assert "r.*" in q
+        assert 'base."address_id" = a."id"' in q
+        # base table aliased as 'base'
+        assert "base.*" in q
 
     def test_with_two_joins_same_table(self):
         """CMDB-style: two joins to same table with different aliases."""
@@ -235,8 +235,8 @@ class TestTableConnectorBuildQuery:
         # Both JOINs present
         assert '"sn"."classes" s' in q
         assert '"sn"."classes" t' in q
-        assert 'r."parent" = s."id"' in q
-        assert 'r."child" = t."id"' in q
+        assert 'base."parent" = s."id"' in q
+        assert 'base."child" = t."id"' in q
         # IS NOT NULL filters
         assert 's."id" IS NOT NULL' in q
         assert 't."id" IS NOT NULL' in q

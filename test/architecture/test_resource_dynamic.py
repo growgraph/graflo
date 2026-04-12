@@ -418,17 +418,17 @@ class TestEdgeResourceAutoJoin:
 
         # SQLite doesn't use schema prefixes, so build query manually
         # mimicking what build_query does but without schema quoting
-        base = "relations r"
+        base = "relations base"
         join_parts = []
         for jc in tp_edge.joins:
             alias = jc.alias
             join_parts.append(
-                f"{jc.join_type} JOIN classes {alias} ON r.{jc.on_self} = {alias}.{jc.on_other}"
+                f"{jc.join_type} JOIN classes {alias} ON base.{jc.on_self} = {alias}.{jc.on_other}"
             )
 
         # SELECT with aliased columns to simulate the prefix convention
         select_cols = [
-            "r.*",
+            "base.*",
             's.id AS "s__id"',
             's.class_name AS "s__class_name"',
             's.description AS "s__description"',
