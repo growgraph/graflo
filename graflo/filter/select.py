@@ -9,6 +9,7 @@ static vertex type from EdgeRouterConfig only) use kind="select".
 
 from __future__ import annotations
 
+import re
 from typing import Any, Literal, Self
 
 from pydantic import Field, model_validator
@@ -17,6 +18,77 @@ from graflo.architecture.base import ConfigBaseModel
 from graflo.filter.onto import FilterExpression
 from graflo.onto import ExpressionFlavor
 from graflo.architecture.contract.bindings import JoinClause
+
+# Unquoted SQL identifiers (column / alias) for ergonomic select items.
+_SIMPLE_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\Z")
+
+
+def _collect_join_aliases(joins: list[JoinClause | dict[str, Any]]) -> set[str]:
+    aliases: set[str] = set()
+    for j in joins:
+        jc = JoinClause.model_validate(j) if isinstance(j, dict) else j
+        aliases.add(jc.alias or jc.table)
+    return aliases
+
+
+def _sql_qualify_base_column(col: str, base_alias: str | None) -> str:
+    if base_alias:
+        return f'{base_alias}."{col}"'
+    return f'"{col}"'
+
+
+def _render_select_string(item: str, base_alias: str | None) -> str:
+    if item == "*":
+        return "*"
+    if _SIMPLE_IDENT.match(item):
+        return _sql_qualify_base_column(item, base_alias)
+    return item
+
+
+def _render_select_dict(
+    item: dict[str, Any],
+    base_alias: str | None,
+    join_aliases: set[str],
+) -> str:
+    if "from_join" in item:
+        alias = item["from_join"]
+        if not isinstance(alias, str):
+            raise ValueError("from_join select item requires string 'from_join' alias")
+        if alias not in join_aliases:
+            raise ValueError(
+                f"select from_join alias {alias!r} is not among join aliases "
+                f"{sorted(join_aliases)}"
+            )
+        col = item.get("column")
+        if not col or not isinstance(col, str):
+            raise ValueError("from_join select item requires string 'column'")
+        expr = f'{alias}."{col}"'
+        out = item.get("as") or item.get("alias")
+        if out is not None:
+            if not isinstance(out, str):
+                raise ValueError("select output alias must be a string")
+            return f"{expr} AS {out}"
+        return expr
+    if "base" in item:
+        col = item["base"]
+        if not isinstance(col, str):
+            raise ValueError("base select item requires string 'base' column name")
+        expr = _sql_qualify_base_column(col, base_alias)
+        out = item.get("as") or item.get("alias")
+        if out is not None:
+            if not isinstance(out, str):
+                raise ValueError("select output alias must be a string")
+            return f"{expr} AS {out}"
+        return expr
+    expr = item.get("expr", "")
+    if not isinstance(expr, str):
+        raise ValueError("expr select item requires string 'expr'")
+    out = item.get("as") or item.get("alias")
+    if out is not None:
+        if not isinstance(out, str):
+            raise ValueError("select output alias must be a string")
+        return f"{expr} AS {out}"
+    return expr
 
 
 class SelectSpec(ConfigBaseModel):
@@ -29,7 +101,14 @@ class SelectSpec(ConfigBaseModel):
         kind: "select" for full spec, "type_lookup" for shorthand
         from_: Base table (used when kind="select")
         joins: JOIN clauses (used when kind="select")
-        select: SELECT list (used when kind="select")
+        select: SELECT list (used when kind="select"). Each entry may be:
+            - A string: ``*``, a raw SQL fragment (e.g. expressions), or a simple
+              identifier that names a **base-table column** (auto-qualified with
+              the base alias ``r`` when joins are present).
+            - A dict ``{expr, alias}`` (legacy SQL expression).
+            - A dict ``{base, as?}`` for a base-table column (optional output alias).
+            - A dict ``{from_join, column, as?}`` for a column from a joined table
+              (``from_join`` is the join alias from ``joins``).
         where: WHERE clause, reuses FilterExpression
         table: Lookup table (type_lookup only)
         identity: Identity column in lookup table (type_lookup only)
@@ -52,7 +131,7 @@ class SelectSpec(ConfigBaseModel):
     # Full select form
     from_: str | None = Field(default=None, validation_alias="from")
     joins: list[JoinClause | dict[str, Any]] = Field(default_factory=list)
-    select: list[str] | list[dict[str, Any]] = Field(default_factory=lambda: ["*"])
+    select: list[str | dict[str, Any]] = Field(default_factory=lambda: ["*"])
     where: FilterExpression | dict[str, Any] | None = None
 
     # Type-lookup shorthand
@@ -203,17 +282,13 @@ class SelectSpec(ConfigBaseModel):
             base_ref_aliased = base_ref
 
         # SELECT
+        join_aliases = _collect_join_aliases(self.joins)
         select_parts: list[str] = []
         for item in self.select:
             if isinstance(item, str):
-                select_parts.append(item)
+                select_parts.append(_render_select_string(item, base_alias))
             elif isinstance(item, dict):
-                expr = item.get("expr", "")
-                alias = item.get("alias")
-                if alias:
-                    select_parts.append(f"{expr} AS {alias}")
-                else:
-                    select_parts.append(expr)
+                select_parts.append(_render_select_dict(item, base_alias, join_aliases))
         select_clause = ", ".join(select_parts) if select_parts else "*"
 
         # FROM + JOINs
@@ -247,13 +322,56 @@ class SelectSpec(ConfigBaseModel):
         return query
 
     @classmethod
+    def concat_select_parts(cls, head: Self, *tail: Self) -> Self:
+        """Merge ``kind="select"`` join/select fragments into one spec.
+
+        ``head`` may set ``from_`` and ``where``. Each ``tail`` fragment must omit
+        ``from_`` and ``where`` so the logical base table and filters stay on
+        ``head``. ``joins`` and ``select`` are concatenated in order.
+
+        Omitting ``from`` on the merged spec is fine: :meth:`build_sql` uses
+        ``TableConnector.table_name`` as the base when ``from_`` is unset.
+
+        This is the structured equivalent of listing two join/select blocks in
+        one YAML ``view``; see ``docs/concepts/table_connector_views.md`` for
+        YAML anchor patterns.
+        """
+        if head.kind != "select":
+            raise ValueError("head must use kind='select'")
+        for part in tail:
+            if part.kind != "select":
+                raise ValueError("all fragments must use kind='select'")
+            if part.from_ is not None:
+                raise ValueError(
+                    "tail SelectSpec fragments must omit `from` "
+                    "(base table is TableConnector.table_name at build_sql time)"
+                )
+            if part.where is not None:
+                raise ValueError(
+                    "tail fragments must omit `where`; set it on `head` only"
+                )
+        merged_joins: list[JoinClause | dict[str, Any]] = list(head.joins)
+        merged_select: list[str | dict[str, Any]] = list(head.select)
+        for part in tail:
+            merged_joins.extend(part.joins)
+            merged_select.extend(part.select)
+        return cls(
+            kind="select",
+            from_=head.from_,
+            joins=merged_joins,
+            select=merged_select if merged_select else ["*"],
+            where=head.where,
+        )
+
+    @classmethod
     def from_dict(cls, data: dict[str, Any] | list[Any]) -> Self:
         """Create SelectSpec from dictionary (YAML/JSON friendly).
 
         Supports:
         - kind="type_lookup": table, identity, type_column, source, target, relation,
           optional per-side source_* / target_* lookup overrides
-        - kind="select": from, joins, select, where
+        - kind="select": from, joins, select (strings, base/from_join dicts, or
+          legacy expr/alias dicts), where
         """
         if isinstance(data, list):
             return cls.model_validate(data)

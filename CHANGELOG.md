@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+
+### Added
+
+- **`SelectSpec`** (`kind="select"`): ergonomic **`select`** items — simple identifier
+  strings and dicts **`{base, as}`** / **`{from_join, column, as}`** (plus legacy
+  **`{expr, alias}`**). **`SelectSpec.concat_select_parts`** merges join/select
+  fragments from multiple specs when composing in Python.
+
+### Documentation
+
+- **`docs/concepts/table_connector_views.md`**: base table defaults, structured
+  select, **`concat_select_parts`** sketch, YAML anchor note.
+
 ## [1.7.16] - 2026-04-10
 
 ### Added
