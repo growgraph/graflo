@@ -1,0 +1,43 @@
+schema:
+    metadata:
+        name: incidents
+    graph:
+        vertex_config:
+            vertices:
+            -   name: incident
+                properties:
+                -   id
+                identity:
+                -   id
+        edge_config:
+            edges:
+            -   source: incident
+                target: incident
+                relation: causes
+    db_profile: {}
+ingestion_model:
+    resources:
+    -   name: incidents
+        apply:
+        -   transform:
+                call:
+                    module: graflo.util.transform
+                    foo: incident_row_to_cause_edge_list
+                    input:
+                    -   id
+                    -   causes
+                    -   parent_incident
+                    output:
+                    -   cause_edges
+        -   key: cause_edges
+            apply:
+            -   vertex: incident
+                from:
+                    id: from_id
+            -   vertex: incident
+                from:
+                    id: to_id
+            -   source: incident
+                target: incident
+                relation: causes
+bindings: {}
