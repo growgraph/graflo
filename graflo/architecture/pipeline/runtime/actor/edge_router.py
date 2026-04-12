@@ -133,6 +133,20 @@ class EdgeRouterActor(Actor):
         identity = self.vertex_config.identity_fields(vertex_name)
         return {f: doc[f] for f in identity if f in doc}
 
+    def _identity_projection_is_usable(
+        self, vertex_name: str, projected: dict[str, Any]
+    ) -> bool:
+        """False when any identity field is missing, None, or blank (e.g. parent_id '')."""
+        for field in self.vertex_config.identity_fields(vertex_name):
+            if field not in projected:
+                return False
+            val = projected[field]
+            if val is None:
+                return False
+            if isinstance(val, str) and val.strip() == "":
+                return False
+        return True
+
     def __call__(
         self,
         ctx: ExtractionContext,
@@ -180,6 +194,19 @@ class EdgeRouterActor(Actor):
                 "EdgeRouterActor: could not project identity docs for "
                 "(%s, %s), skipping",
                 source_name,
+                target_name,
+            )
+            return ctx
+
+        if not self._identity_projection_is_usable(source_name, source_doc):
+            logger.debug(
+                "EdgeRouterActor: source identity incomplete or blank for %s, skipping",
+                source_name,
+            )
+            return ctx
+        if not self._identity_projection_is_usable(target_name, target_doc):
+            logger.debug(
+                "EdgeRouterActor: target identity incomplete or blank for %s, skipping",
                 target_name,
             )
             return ctx

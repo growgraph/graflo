@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 import tempfile
 from collections import Counter
+
+import pytest
 from unittest.mock import MagicMock
 
 from graflo.architecture.contract.bindings import TableConnector
@@ -17,7 +19,7 @@ from graflo.architecture.schema.vertex import Field as VertexField
 from graflo.architecture.schema.vertex import Vertex, VertexConfig
 from graflo.data_source.sql import SQLConfig, SQLDataSource
 from graflo.filter.onto import ComparisonOperator, FilterExpression
-from graflo.filter.select import SelectSpec
+from graflo.filter.select import ALL_BASE_COLUMNS, SelectSpec
 from graflo.hq.resource_mapper import ResourceMapper
 from graflo.db import PostgresConfig
 
@@ -460,8 +462,8 @@ class TestTypeLookupPerSideConfiguration:
             relation="link_type",
         )
         sql = _sql_for_sqlite(spec.build_sql(schema="main", base_table="wide_links"))
-        assert 'r."parent_uuid" = s."by_uuid"' in sql
-        assert 'r."child_code" = t."by_code"' in sql
+        assert 'base."parent_uuid" = s."by_uuid"' in sql
+        assert 'base."child_code" = t."by_code"' in sql
         rows = _fetch_rows(conn_str, sql)
         triples = _run_router_on_rows(_symmetric_edge_router(), rows)
         assert Counter(triples) == Counter(
@@ -518,11 +520,11 @@ class TestSelectKindSelectAsymmetricLookup:
                 }
             ],
             select=[
-                'r."parent" AS source_id',
+                'base."parent" AS source_id',
                 "'project' AS source_type",
-                'r."child" AS target_id',
+                'base."child" AS target_id',
                 't."type_name" AS target_type',
-                'r."link_type" AS relation',
+                'base."link_type" AS relation',
             ],
             where=FilterExpression(
                 kind="leaf",
@@ -560,6 +562,152 @@ class TestSelectKindSelectAsymmetricLookup:
                 ("project", "milestone", "depends_on"),
             ]
         )
+
+
+class TestSelectStructuredItemsAndConcat:
+    """Ergonomic select items (base / from_join) and concat_select_parts."""
+
+    def test_double_type_lookup_via_structured_select_matches_type_lookup_rows(self):
+        """Two joins to the same lookup table without raw ``r.`` / ``expr`` noise."""
+        conn_str = _setup_test_db()
+        spec = SelectSpec(
+            kind="select",
+            joins=[
+                {
+                    "table": "entity_types",
+                    "alias": "s",
+                    "on_self": "parent",
+                    "on_other": "entity_id",
+                    "join_type": "LEFT",
+                },
+                {
+                    "table": "entity_types",
+                    "alias": "t",
+                    "on_self": "child",
+                    "on_other": "entity_id",
+                    "join_type": "LEFT",
+                },
+            ],
+            select=[
+                {"base": "parent", "as": "source_id"},
+                {"from_join": "s", "column": "type_name", "as": "source_type"},
+                {"base": "child", "as": "target_id"},
+                {"from_join": "t", "column": "type_name", "as": "target_type"},
+                {"base": "link_type", "as": "relation"},
+            ],
+        )
+        sql = _sql_for_sqlite(spec.build_sql(schema="main", base_table="entity_links"))
+        assert 'base."parent"' in sql
+        assert 's."type_name" AS source_type' in sql
+        rows = _fetch_rows(conn_str, sql)
+        triples = _run_router_on_rows(_symmetric_edge_router(), rows)
+        assert Counter(triples) == Counter(
+            [
+                ("project", "task", "contains"),
+                ("project", "task", "contains"),
+                ("project", "milestone", "depends_on"),
+            ]
+        )
+
+    def test_concat_select_parts_equivalent_to_single_spec(self):
+        """Two SelectSpec fragments compose to the same SQL as one inline spec."""
+        one = SelectSpec(
+            kind="select",
+            joins=[
+                {
+                    "table": "entity_types",
+                    "alias": "s",
+                    "on_self": "parent",
+                    "on_other": "entity_id",
+                    "join_type": "LEFT",
+                },
+                {
+                    "table": "entity_types",
+                    "alias": "t",
+                    "on_self": "child",
+                    "on_other": "entity_id",
+                    "join_type": "LEFT",
+                },
+            ],
+            select=[
+                {"base": "parent", "as": "source_id"},
+                {"from_join": "s", "column": "type_name", "as": "source_type"},
+                {"base": "child", "as": "target_id"},
+                {"from_join": "t", "column": "type_name", "as": "target_type"},
+                {"base": "link_type", "as": "relation"},
+            ],
+        )
+        head = SelectSpec(
+            kind="select",
+            joins=[
+                {
+                    "table": "entity_types",
+                    "alias": "s",
+                    "on_self": "parent",
+                    "on_other": "entity_id",
+                    "join_type": "LEFT",
+                }
+            ],
+            select=[
+                {"base": "parent", "as": "source_id"},
+                {"from_join": "s", "column": "type_name", "as": "source_type"},
+            ],
+        )
+        tail = SelectSpec(
+            kind="select",
+            joins=[
+                {
+                    "table": "entity_types",
+                    "alias": "t",
+                    "on_self": "child",
+                    "on_other": "entity_id",
+                    "join_type": "LEFT",
+                }
+            ],
+            select=[
+                {"base": "child", "as": "target_id"},
+                {"from_join": "t", "column": "type_name", "as": "target_type"},
+                {"base": "link_type", "as": "relation"},
+            ],
+        )
+        merged = SelectSpec.concat_select_parts(head, tail)
+        assert one.build_sql("main", "entity_links") == merged.build_sql(
+            "main", "entity_links"
+        )
+
+    def test_from_join_bad_alias_raises(self):
+        with pytest.raises(ValueError, match="not among join aliases"):
+            SelectSpec(
+                kind="select",
+                joins=[
+                    {
+                        "table": "entity_types",
+                        "alias": "s",
+                        "on_self": "parent",
+                        "on_other": "entity_id",
+                    }
+                ],
+                select=[{"from_join": "unknown", "column": "type_name"}],
+            ).build_sql("main", "entity_links")
+
+    def test_custom_base_alias_used_in_sql(self):
+        spec = SelectSpec(
+            kind="select",
+            base_alias="row",
+            joins=[
+                {
+                    "table": "entity_types",
+                    "alias": "t",
+                    "on_self": "child",
+                    "on_other": "entity_id",
+                    "join_type": "LEFT",
+                }
+            ],
+            select=[ALL_BASE_COLUMNS, {"from_join": "t", "column": "type_name"}],
+        )
+        sql = _sql_for_sqlite(spec.build_sql(schema="main", base_table="entity_links"))
+        assert '"entity_links" row ' in sql
+        assert "row.*" in sql
 
 
 class TestResourceMapperTypeLookupOverride:

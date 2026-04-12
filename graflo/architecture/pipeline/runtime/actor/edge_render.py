@@ -178,7 +178,8 @@ def _iter_emitter_receiver_group_pairs(
             if len(source_group) <= 1:
                 if source_group:
                     yield (source_group, target_group)
-            yield (source_group[:1], source_group[1:])
+            else:
+                yield (source_group[:1], source_group[1:])
         else:
             if not source_group:
                 continue
@@ -273,7 +274,9 @@ def render_edge(
 
     edges: defaultdict[str | None, list] = defaultdict(list)
 
-    if source == target and source_locs is target_locs:
+    # Homogeneous edge: both ends use the same vertex bucket. Compare location *sets*,
+    # not list object identity (source_locs is target_locs was almost always False).
+    if source == target and set(source_locs) == set(target_locs):
         path_spec = count_unique_by_position_variable([loc.path for loc in source_locs])
         source_path_spec = target_path_spec = path_spec
     else:

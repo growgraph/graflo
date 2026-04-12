@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.7.17] - 2026-04-13
+
+### Added
+
+- **`SelectSpec`** (`kind="select"`): ergonomic **`select`** items — simple identifier
+  strings and dicts **`{base, as}`** / **`{from_join, column, as}`** (plus legacy
+  **`{expr, alias}`**). **`SelectSpec.concat_select_parts`** merges join/select
+  fragments from multiple specs when composing in Python.
+- **`ALL_BASE_COLUMNS`** (`"all_base"`): vocal default for “all base columns”
+  (expands to **`{base_alias}.*`** when joins exist). **`SelectSpec.base_alias`**
+  and **`TableConnector.base_alias`** (default **`base`**) replace the former
+  hard-coded `r` alias in generated SQL.
+
+### Changed
+
+- **Default `SelectSpec.select`**: **`["all_base"]`** instead of **`["*"]`** so
+  multi-table views default to base-row columns only.
+
+### Documentation
+
+- **`docs/concepts/table_connector_views.md`**: base table defaults, structured
+  select, **`all_base`** / **`base_alias`**, **`concat_select_parts`** sketch, YAML
+  anchor note.
+
 ## [1.7.16] - 2026-04-10
 
 ### Added
