@@ -6,7 +6,6 @@ import pytest
 
 from graflo.architecture.pipeline.runtime.actor import (
     EdgeActor,
-    EdgeRouterActor,
     VertexRouterActor,
 )
 from graflo.architecture.pipeline.runtime.actor.wrapper import ActorWrapper
@@ -238,13 +237,13 @@ def test_plot_vc2fields_appends_schema_version_to_stem(monkeypatch):
 def test_assemble_tree_styles_router_actor_classes():
     router_edge = (
         "root",
-        "vertex_router",
-        {"class": EdgeRouterActor},
+        "dynamic_edge",
         {"class": VertexRouterActor},
+        {"class": EdgeActor},
     )
     actor_wrapper_stub = _ActorWrapperStub([router_edge])
 
     graph = assemble_tree(cast(ActorWrapper, actor_wrapper_stub))
 
-    assert graph.nodes["root"]["fillcolor"] == fillcolor_palette["red"]
-    assert graph.nodes["vertex_router"]["fillcolor"] == fillcolor_palette["peach"]
+    assert graph.nodes["root"]["fillcolor"] == fillcolor_palette["peach"]
+    assert graph.nodes["dynamic_edge"]["fillcolor"] == fillcolor_palette["violet"]

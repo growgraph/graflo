@@ -1,4 +1,4 @@
-"""Example 7: Objects and Relations with vertex_router and edge_router.
+"""Example 7: Objects and Relations with vertex_router and dynamic edge.
 
 Ingests polymorphic entities (Person, Vehicle, Institution) from objects.csv
 and dynamic relations (EMPLOYED_BY, OWNS, FUNDS, etc.) from relations.csv

@@ -32,10 +32,9 @@ for resources whose pipeline uses **`EdgeActor`** steps
 with `match_source` / `match_target`. It runs only when the connector has
 **no** `view` and **no** pre-existing `joins`.
 
-Pipelines that use **`EdgeRouterActor`** do not participate in that heuristic.
 For polymorphic edges, prefer **`type_lookup`** (or `select`) on `TableConnector.view`
 so each row already carries `source_type` / `target_type` (and `relation`) for
-`edge_router` configuration—see [Example 7 – Polymorphic objects and relations](../examples/example-7.md).
+the `vertex_router` + dynamic `edge` pipeline—see [Example 7 – Polymorphic objects and relations](../examples/example-7.md).
 
 ## `kind="type_lookup"` (shorthand)
 
@@ -63,24 +62,31 @@ Expanded SQL selects (conceptually; base row alias defaults to `base`):
 - `base.target_id AS target_id`, `t.<type_column> AS target_type`
 - `base.relation AS relation` when `relation` is set
 
-Pair this with an `edge_router` step whose field names match those aliases, for example:
+Pair this with two `vertex_router` steps and a dynamic `edge` step whose field names match those aliases, for example:
 
 ```yaml
 ingestion_model:
   resources:
     - name: relations
       pipeline:
-        - edge_router:
-            source_type_field: source_type
-            target_type_field: target_type
-            source_fields:
-              id: source_id
-            target_fields:
-              id: target_id
-            relation_field: relation
+        - vertex_router:
+            type_field: source_type
+            field_map:
+              source_id: id
             type_map:
               Car: car
               Person: person
+        - vertex_router:
+            type_field: target_type
+            field_map:
+              target_id: id
+            type_map:
+              Car: car
+              Person: person
+        - edge:
+            source_type_field: source_type
+            target_type_field: target_type
+            relation_field: relation
 ```
 
 ## `kind="select"` (full declarative query)
@@ -237,7 +243,7 @@ elsewhere (see [Transforms](transforms.md) and filter docs).
 - **`TableConnector.view`** + **`SelectSpec`** keeps multi-table SQL **declarative**
   and aligned with `build_query()` / SQL data sources.
 - **`type_lookup`** is the user-friendly path for **polymorphic relations +
-  type lookup** feeding **`EdgeRouterActor`**.
+  type lookup**, producing rows ready for a `vertex_router` + dynamic `edge` pipeline.
 - **`kind="select"`** covers **asymmetric** or **non-standard** join/select logic
   without giving up structured config; **`from`** defaults to **`table_name`**;
   **`all_base`**, **`base` / `from_join`**, and default **`base_alias`** reduce noise

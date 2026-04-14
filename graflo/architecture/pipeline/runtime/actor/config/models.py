@@ -305,10 +305,44 @@ class EdgeActorConfig(ConfigBaseModel):
     type: Literal["edge"] = PydanticField(
         default="edge", description="Actor type discriminator"
     )
-    source: str = PydanticField(
-        ..., alias="from", description="Source vertex type name"
+    source: str | None = PydanticField(
+        default=None,
+        alias="from",
+        description="Source vertex type name (optional if source_type_field is set).",
     )
-    target: str = PydanticField(..., alias="to", description="Target vertex type name")
+    target: str | None = PydanticField(
+        default=None,
+        alias="to",
+        description="Target vertex type name (optional if target_type_field is set).",
+    )
+    source_type_field: str | None = PydanticField(
+        default=None,
+        description=(
+            "The type_field value of the upstream VertexRouterActor whose output should be "
+            "treated as the source vertex.  EdgeActor scans acc_vertex for data at "
+            "lindex.extend((source_type_field, 0)) to resolve the source type dynamically. "
+            "Exclusive with 'from'."
+        ),
+    )
+    target_type_field: str | None = PydanticField(
+        default=None,
+        description=(
+            "The type_field value of the upstream VertexRouterActor whose output should be "
+            "treated as the target vertex. Exclusive with 'to'."
+        ),
+    )
+    relation_map: dict[str, str] | None = PydanticField(
+        default=None,
+        description="Map raw relation values to canonical relation names.",
+    )
+    strict_edge_types: bool = PydanticField(
+        default=False,
+        description=(
+            "When True, skip rows whose resolved (source_type, target_type) pair "
+            "is not pre-declared in the resource edge_config at init. "
+            "When False (default), dynamic pairs are registered at runtime."
+        ),
+    )
     relation: str | None = PydanticField(
         default=None,
         description="Optional fixed logical relation / edge type name.",
@@ -353,6 +387,20 @@ class EdgeActorConfig(ConfigBaseModel):
         default_factory=list,
         description="Vertex-derived weight rules registered in EdgeDerivationRegistry.",
     )
+
+    @model_validator(mode="after")
+    def validate_type_sources(self) -> EdgeActorConfig:
+        # Each side needs exactly one of: static type or dynamic slot.
+        if self.source is None and self.source_type_field is None:
+            raise ValueError("edge step requires 'from' (source) or source_type_field.")
+        if self.target is None and self.target_type_field is None:
+            raise ValueError("edge step requires 'to' (target) or target_type_field.")
+        if self.source is not None and self.source_type_field is not None:
+            raise ValueError("'from' and source_type_field are mutually exclusive.")
+        if self.target is not None and self.target_type_field is not None:
+            raise ValueError("'to' and target_type_field are mutually exclusive.")
+        # Mixed mode (one static + one dynamic) is valid; both-static is pure static mode.
+        return self
 
     @property
     def derivation(self) -> EdgeDerivation:
@@ -442,116 +490,12 @@ class VertexRouterActorConfig(ConfigBaseModel):
         return data
 
 
-class EdgeRouterActorConfig(ConfigBaseModel):
-    """Configuration for an EdgeRouterActor."""
-
-    type: Literal["edge_router"] = PydanticField(
-        default="edge_router", description="Actor type discriminator"
-    )
-    source_type_field: str | None = PydanticField(
-        default=None,
-        description=(
-            "Field on the current JSON observation slice (after merge with same-location "
-            "transform buffer) that determines the source vertex type. Provide this or source."
-        ),
-    )
-    target_type_field: str | None = PydanticField(
-        default=None,
-        description=(
-            "Field on the current JSON observation slice (after merge with same-location "
-            "transform buffer) that determines the target vertex type. Provide this or target."
-        ),
-    )
-    source: str | None = PydanticField(
-        default=None,
-        description=(
-            "Static source vertex type name. Provide this or source_type_field."
-        ),
-    )
-    target: str | None = PydanticField(
-        default=None,
-        description=(
-            "Static target vertex type name. Provide this or target_type_field."
-        ),
-    )
-    source_fields: dict[str, str] | None = PydanticField(
-        default=None,
-        description="Projection for source vertex identity.",
-    )
-    target_fields: dict[str, str] | None = PydanticField(
-        default=None,
-        description="Projection for target vertex identity.",
-    )
-    relation_field: str | None = PydanticField(
-        default=None,
-        description=(
-            "Field on the current JSON observation slice (after merge with same-location "
-            "transform buffer) whose value determines the relation type per row."
-        ),
-    )
-    relation: str | None = PydanticField(
-        default=None,
-        description="Static relation type when relation_field is not used.",
-    )
-    type_map: dict[str, str] | None = PydanticField(
-        default=None,
-        description="Shared map: raw type value -> vertex type name.",
-    )
-    source_type_map: dict[str, str] | None = PydanticField(
-        default=None,
-        description="Override type_map for source side only.",
-    )
-    target_type_map: dict[str, str] | None = PydanticField(
-        default=None,
-        description="Override type_map for target side only.",
-    )
-    relation_map: dict[str, str] | None = PydanticField(
-        default=None,
-        description="Map raw relation values to canonical names.",
-    )
-
-    @model_validator(mode="before")
-    @classmethod
-    def set_type(cls, data: Any) -> Any:
-        if (
-            isinstance(data, dict)
-            and (
-                "source_type_field" in data
-                or "target_type_field" in data
-                or "source" in data
-                or "target" in data
-            )
-            and "type" not in data
-        ):
-            data = dict(data)
-            data["type"] = "edge_router"
-        return data
-
-    @model_validator(mode="after")
-    def validate_side_type_sources(self) -> "EdgeRouterActorConfig":
-        if self.source is None and self.source_type_field is None:
-            raise ValueError(
-                "edge_router requires source or source_type_field to be provided."
-            )
-        if self.target is None and self.target_type_field is None:
-            raise ValueError(
-                "edge_router requires target or target_type_field to be provided."
-            )
-        if self.source_type_field is None and self.target_type_field is None:
-            raise ValueError(
-                "edge_router requires at least one of "
-                "source_type_field or target_type_field."
-            )
-        return self
-
-
 ActorConfig = Annotated[
     VertexActorConfig
     | TransformActorConfig
     | EdgeActorConfig
     | DescendActorConfig
-    | VertexRouterActorConfig
-    | EdgeRouterActorConfig,
+    | VertexRouterActorConfig,
     PydanticField(discriminator="type"),
 ]
 
@@ -564,12 +508,10 @@ _actor_config_adapter: TypeAdapter[
     | EdgeActorConfig
     | DescendActorConfig
     | VertexRouterActorConfig
-    | EdgeRouterActorConfig
 ] = TypeAdapter(
     VertexActorConfig
     | TransformActorConfig
     | EdgeActorConfig
     | DescendActorConfig
     | VertexRouterActorConfig
-    | EdgeRouterActorConfig
 )

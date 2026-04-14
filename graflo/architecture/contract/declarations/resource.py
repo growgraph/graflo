@@ -377,7 +377,13 @@ class Resource(ConfigBaseModel):
         edge_actors = [
             a for a in self.root.collect_actors() if isinstance(a, EdgeActor)
         ]
-        return {(ea.edge.source, ea.edge.target, None) for ea in edge_actors}
+        # Dynamic EdgeActors (ea.edge is None) resolve types at row time;
+        # exclude them from static inference suppression.
+        return {
+            (ea.edge.source, ea.edge.target, None)
+            for ea in edge_actors
+            if ea.edge is not None
+        }
 
     def _validate_dynamic_edge_vertices_exist(
         self, vertex_config: VertexConfig

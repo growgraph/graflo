@@ -4,7 +4,7 @@ Tests use SQLite file-based (via SQLAlchemy) to exercise:
 - Case 1: Filtered vertex resources (same table, different WHERE)
 - Case 2: Edge resource with auto-JOIN (EdgeActor) and dynamic vertex types
 - Case 3: Polymorphic relations + objects lookup via ``SelectSpec`` ``type_lookup``
-  on ``TableConnector.view`` for :class:`~graflo.architecture.pipeline.runtime.actor.edge_router.EdgeRouterActor`
+  on ``TableConnector.view`` with a ``vertex_router`` + dynamic ``edge`` pipeline
   (``enrich_edge_connector_with_joins`` does not apply; use declarative view instead)
 """
 
@@ -101,8 +101,8 @@ def _setup_db() -> str:
                 """
                 CREATE TABLE relations (
                     id INTEGER PRIMARY KEY,
-                    parent TEXT NOT NULL,
-                    child TEXT NOT NULL,
+                    s__class_name TEXT NOT NULL,
+                    t__class_name TEXT NOT NULL,
                     type_display TEXT NOT NULL
                 )
                 """
@@ -111,7 +111,7 @@ def _setup_db() -> str:
         conn.execute(
             text(
                 """
-                INSERT INTO relations (id, parent, child, type_display) VALUES
+                INSERT INTO relations (id, s__class_name, t__class_name, type_display) VALUES
                     (1, '1', '2', 'runs_on'),
                     (2, '3', '4', 'runs_on'),
                     (3, '1', '5', 'connects_to')
@@ -127,9 +127,8 @@ def _setup_polymorphic_objects_relations_db() -> str:
 
     Mirrors a common CMDB pattern: one relation table, one polymorphic object table.
     Used with :class:`SelectSpec` ``kind="type_lookup"`` on ``TableConnector.view``,
-    then :class:`~graflo.architecture.pipeline.runtime.actor.edge_router.EdgeRouterActor`
-    with ``source_type_field`` / ``target_type_field`` matching generated aliases
-    ``source_type`` and ``target_type``.
+    together with a ``vertex_router`` + dynamic ``edge`` pipeline that reads
+    ``source_type`` and ``target_type`` from the generated aliases.
     """
     fd, path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
@@ -323,8 +322,8 @@ class TestEdgeResourceAutoJoin:
                             "edge": {
                                 "from": "server",
                                 "to": "database",
-                                "match_source": "parent",
-                                "match_target": "child",
+                                "match_source": "s__class_name",
+                                "match_target": "t__class_name",
                                 "relation_field": "type_display",
                             }
                         },
@@ -426,9 +425,11 @@ class TestEdgeResourceAutoJoin:
                 f"{jc.join_type} JOIN classes {alias} ON base.{jc.on_self} = {alias}.{jc.on_other}"
             )
 
-        # SELECT with aliased columns to simulate the prefix convention
+        # SELECT with explicit columns to avoid collision with the FK cols in base.
+        # The JOIN aliases (s__class_name, t__class_name) override the base FK values.
         select_cols = [
-            "base.*",
+            "base.id",
+            "base.type_display",
             's.id AS "s__id"',
             's.class_name AS "s__class_name"',
             's.description AS "s__description"',
@@ -483,8 +484,6 @@ class TestEdgeResourceAutoJoin:
         router = VertexRouterActor(config)
 
         doc = {
-            "parent": "1",
-            "child": "2",
             "type_display": "runs_on",
             "s__id": "1",
             "s__class_name": "server",
@@ -532,8 +531,6 @@ class TestEdgeResourceAutoJoin:
         resource = _bound_ingestion_model(schema).fetch_resource("relations")
 
         doc = {
-            "parent": "1",
-            "child": "2",
             "type_display": "runs_on",
             "s__id": "1",
             "s__class_name": "server",
@@ -559,6 +556,8 @@ class TestEdgeResourceAutoJoin:
         assert len(db_docs) >= 1
         assert any(d.get("id") == "2" for d in db_docs)
 
+        assert len(result[("server", "database", None)]) == 1
+
     def test_vertex_router_registers_wrappers_lazily(self):
         """VertexRouterActor creates only wrappers used by routed documents."""
         from graflo.architecture.pipeline.runtime.actor import VertexRouterActor
@@ -575,8 +574,6 @@ class TestEdgeResourceAutoJoin:
 
         resource(
             {
-                "parent": "1",
-                "child": "2",
                 "type_display": "runs_on",
                 "s__id": "1",
                 "s__class_name": "server",
@@ -695,38 +692,40 @@ class TestEdgeResourceAutoJoin:
 
 
 # ---------------------------------------------------------------
-# Case 3: EdgeRouterActor + SelectSpec type_lookup (no auto_join)
+# Case 3: SelectSpec type_lookup + vertex_router+edge pipeline
 # ---------------------------------------------------------------
 
 
-class TestEdgeRouterWithTypeLookupView:
+class TestTypeLookupView:
     """Polymorphic relations + object lookup via ``TableConnector.view`` (``SelectSpec``).
 
-    Use this pattern when the pipeline uses ``EdgeRouterActor`` (not ``EdgeActor``).
-    ``enrich_edge_connector_with_joins`` only collects ``EdgeActor`` steps; for
-    mixed relation tables, declare ``kind: type_lookup`` (or ``kind: select``)
-    on the edge resource's ``TableConnector`` so ``build_query`` emits JOINs and
-    columns ``source_type`` / ``target_type`` expected by ``edge_router``.
+    ``kind: type_lookup`` generates a JOIN query that exposes ``source_type`` /
+    ``target_type`` columns.  Two ``vertex_router`` steps consume those columns to
+    accumulate vertices into typed slots; a dynamic ``edge`` step resolves the
+    (source_type, target_type, relation) triple from those slots.
 
-    **YAML sketch** (edge resource ``relations`` + connector; adjust bindings names)::
+    **YAML sketch**::
 
         ingestion_model:
           resources:
             - name: relations
               pipeline:
-                - edge_router:
+                - vertex_router:
+                    type_field: source_type
+                    field_map: { source_id: id }
+                    type_map: { Car: car, Teacher: teacher, Person: person }
+                - vertex_router:
+                    type_field: target_type
+                    field_map: { target_id: id }
+                    type_map: { Car: car, Teacher: teacher, Person: person }
+                - edge:
                     source_type_field: source_type
                     target_type_field: target_type
-                    source_fields: { id: source_id }
-                    target_fields: { id: target_id }
                     relation_field: relation
-                    type_map: { Car: car, Teacher: teacher, Person: person }
 
-        # On the TableConnector bound to ``relations``:
         connectors:
           - name: relations_polymorphic
             table_name: relations
-            schema_name: main   # or your schema
             view:
               kind: type_lookup
               table: objects
@@ -735,10 +734,6 @@ class TestEdgeRouterWithTypeLookupView:
               source: source_id
               target: target_id
               relation: relation
-
-    Asymmetric lookups (different tables or keys per side) use ``source_table`` /
-    ``target_table`` / ``source_identity`` / ``target_identity`` / etc. on the
-    same ``type_lookup`` block—see ``SelectSpec`` in ``graflo/filter/select.py``.
     """
 
     @staticmethod
@@ -761,26 +756,15 @@ class TestEdgeRouterWithTypeLookupView:
         )
 
     @staticmethod
-    def _build_schema_edge_router() -> Schema:
+    def _build_schema() -> Schema:
+        type_map = {"Car": "car", "Teacher": "teacher", "Person": "person"}
         return _build_bound_schema(
             name="polymorphic_relations",
             vertex_config={
                 "vertices": [
-                    {
-                        "name": "car",
-                        "properties": ["id"],
-                        "identity": ["id"],
-                    },
-                    {
-                        "name": "teacher",
-                        "properties": ["id"],
-                        "identity": ["id"],
-                    },
-                    {
-                        "name": "person",
-                        "properties": ["id"],
-                        "identity": ["id"],
-                    },
+                    {"name": "car", "properties": ["id"], "identity": ["id"]},
+                    {"name": "teacher", "properties": ["id"], "identity": ["id"]},
+                    {"name": "person", "properties": ["id"], "identity": ["id"]},
                 ],
             },
             edge_config={"edges": []},
@@ -789,17 +773,24 @@ class TestEdgeRouterWithTypeLookupView:
                     "name": "relations",
                     "pipeline": [
                         {
-                            "edge_router": {
+                            "vertex_router": {
+                                "type_field": "source_type",
+                                "field_map": {"source_id": "id"},
+                                "type_map": type_map,
+                            }
+                        },
+                        {
+                            "vertex_router": {
+                                "type_field": "target_type",
+                                "field_map": {"target_id": "id"},
+                                "type_map": type_map,
+                            }
+                        },
+                        {
+                            "edge": {
                                 "source_type_field": "source_type",
                                 "target_type_field": "target_type",
-                                "source_fields": {"id": "source_id"},
-                                "target_fields": {"id": "target_id"},
                                 "relation_field": "relation",
-                                "type_map": {
-                                    "Car": "car",
-                                    "Teacher": "teacher",
-                                    "Person": "person",
-                                },
                             }
                         },
                     ],
@@ -819,7 +810,7 @@ class TestEdgeRouterWithTypeLookupView:
         assert "AS relation" in q
 
     def test_type_lookup_query_runs_on_sqlite(self):
-        """Generated SQL executes; rows expose fields the edge router reads."""
+        """Generated SQL executes; rows expose fields the pipeline reads."""
         conn_str = _setup_polymorphic_objects_relations_db()
         connector = self._relations_type_lookup_connector()
         query = connector.build_query("main")
@@ -841,9 +832,9 @@ class TestEdgeRouterWithTypeLookupView:
             "relation",
         }
 
-    def test_edge_router_resource_accepts_type_lookup_row_shape(self):
-        """Pipeline ``edge_router`` consumes documents shaped like ``type_lookup`` output."""
-        schema = self._build_schema_edge_router()
+    def test_pipeline_accepts_type_lookup_row_shape(self):
+        """vertex_router+edge pipeline consumes documents shaped like ``type_lookup`` output."""
+        schema = self._build_schema()
         resource = _bound_ingestion_model(schema).fetch_resource("relations")
 
         doc = {
@@ -863,14 +854,10 @@ class TestEdgeRouterWithTypeLookupView:
         person_docs = result["person"]
         assert any(d.get("id") == "id226" for d in person_docs)
 
-    def test_pipeline_collects_edge_router_not_edge_actor(self):
-        from graflo.architecture.pipeline.runtime.actor import (
-            EdgeActor,
-            EdgeRouterActor,
-        )
+    def test_pipeline_collects_edge_actor_not_edge_router(self):
+        from graflo.architecture.pipeline.runtime.actor import EdgeActor
 
-        schema = self._build_schema_edge_router()
+        schema = self._build_schema()
         resource = _bound_ingestion_model(schema).fetch_resource("relations")
         actors = resource.root.collect_actors()
-        assert any(isinstance(a, EdgeRouterActor) for a in actors)
-        assert not any(isinstance(a, EdgeActor) for a in actors)
+        assert any(isinstance(a, EdgeActor) for a in actors)

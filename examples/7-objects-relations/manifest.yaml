@@ -67,18 +67,26 @@ ingestion_model:
                     Institution: institution
     -   name: relations
         pipeline:
-        -   edge_router:
-                source_type_field: source_type
-                target_type_field: target_type
-                source_fields:
-                    id: source_id
-                target_fields:
-                    id: target_id
-                relation_field: relation_type
+        -   vertex_router:
+                type_field: source_type
+                field_map:
+                    source_id: id
                 type_map:
                     Person: person
                     Vehicle: vehicle
                     Institution: institution
+        -   vertex_router:
+                type_field: target_type
+                field_map:
+                    target_id: id
+                type_map:
+                    Person: person
+                    Vehicle: vehicle
+                    Institution: institution
+        -   edge:
+                source_type_field: source_type
+                target_type_field: target_type
+                relation_field: relation_type
                 relation_map:
                     EMPLOYED_BY: employed_by
                     OWNS: owns

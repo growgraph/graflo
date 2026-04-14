@@ -24,7 +24,13 @@ logger = logging.getLogger(__name__)
 
 
 class VertexRouterActor(Actor):
-    """Routes documents to the correct VertexActor based on a type field."""
+    """Routes documents to the correct VertexActor based on a type field.
+
+    Vertices are always accumulated at ``lindex.extend((type_field, 0))``, using
+    the ``type_field`` name as the accumulator slot.  A downstream dynamic
+    ``EdgeActor`` step references this slot via ``source_type_field`` /
+    ``target_type_field`` set to the same ``type_field`` value.
+    """
 
     def __init__(self, config: VertexRouterActorConfig):
         self.type_field = config.type_field
@@ -138,4 +144,5 @@ class VertexRouterActor(Actor):
         if not sub_doc:
             return ctx
 
-        return wrapper(ctx, lindex, doc=sub_doc)
+        effective_lindex = lindex.extend((self.type_field, 0))
+        return wrapper(ctx, effective_lindex, doc=sub_doc)
