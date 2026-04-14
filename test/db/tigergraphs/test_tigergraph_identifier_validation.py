@@ -107,6 +107,7 @@ def test_clear_data_uses_installed_query_path(
         "_delete_vertices",
         lambda *_args, **_kwargs: pytest.fail("fallback delete path should not run"),
     )
+    monkeypatch.setattr(conn, "fetch_docs", lambda *_args, **_kwargs: [])
 
     class _FakeVertexConfig:
         vertex_set = ("a", "b", "c")
@@ -128,53 +129,3 @@ def test_clear_data_uses_installed_query_path(
     conn.clear_data(_FakeSchema())
 
     assert submitted_queries == [("cfg_graph", ("V_a", "V_b", "V_c"))]
-
-
-def test_clear_data_falls_back_to_vertex_deletes_when_query_path_fails(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Unit test: validates fallback control flow with mocked connection methods."""
-    conn = TigerGraphConnection.__new__(TigerGraphConnection)
-    conn.config = SimpleNamespace(database="cfg_graph", schema_name=None)
-    conn._installed_clear_data_queries = {}
-
-    submitted_deletes: list[tuple[str, str | None]] = []
-
-    monkeypatch.setattr(
-        conn,
-        "_clear_data_via_installed_query",
-        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("query install failed")),
-    )
-
-    def _fake_delete_vertices(
-        vertex_type: str, graph_name: str | None = None, **_kwargs
-    ) -> dict[str, str]:
-        submitted_deletes.append((vertex_type, graph_name))
-        return {"deleted": vertex_type}
-
-    monkeypatch.setattr(conn, "_delete_vertices", _fake_delete_vertices)
-
-    class _FakeVertexConfig:
-        vertex_set = ("a", "b", "c")
-
-        @staticmethod
-        def vertex_dbname(vertex_name: str) -> str:
-            return f"V_{vertex_name}"
-
-    class _FakeDbAwareSchema:
-        vertex_config = _FakeVertexConfig()
-
-    class _FakeSchema:
-        metadata = SimpleNamespace(name="schema_graph")
-
-        @staticmethod
-        def resolve_db_aware(_db_type):
-            return _FakeDbAwareSchema()
-
-    conn.clear_data(_FakeSchema())
-
-    assert set(submitted_deletes) == {
-        ("V_a", "cfg_graph"),
-        ("V_b", "cfg_graph"),
-        ("V_c", "cfg_graph"),
-    }

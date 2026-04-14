@@ -1088,7 +1088,27 @@ class TigerGraphConnection(Connection):
         """
         graph_name = graph_name or self.graphname
         endpoint = f"/query/{graph_name}/{query_name}"
-        return self._call_restpp_api(endpoint, method="POST", data=kwargs)
+        result = self._call_restpp_api(endpoint, method="POST", data=kwargs)
+        if (
+            isinstance(result, dict)
+            and result.get("error") is True
+            and self._is_missing_query_endpoint_error(result)
+        ):
+            # Some TigerGraph environments expose installed query endpoints as GET-only.
+            return self._call_restpp_api(endpoint, method="GET", params=kwargs)
+        return result
+
+    @staticmethod
+    def _is_missing_query_endpoint_error(result: dict[str, Any]) -> bool:
+        """Return True when REST++ reports an installed query endpoint is missing."""
+        message = str(result.get("message", "")).lower()
+        details = str(result.get("details", "")).lower()
+        return (
+            "endpoint is not found" in message
+            or "endpoint is not found" in details
+            or "no such endpoint" in message
+            or "no such endpoint" in details
+        )
 
     def _build_clear_data_query_name(self, vertex_types: tuple[str, ...]) -> str:
         """Build a stable, schema-aware query name for clear-data operations."""
@@ -1103,16 +1123,22 @@ class TigerGraphConnection(Connection):
         delete_stmts = "\n".join(
             f"  DELETE FROM {vertex_type};" for vertex_type in sorted(vertex_types)
         )
-        create_and_install = "\n".join(
+        create_query = "\n".join(
             [
                 f"USE GRAPH {graph_name}",
                 f"CREATE QUERY {query_name}() FOR GRAPH {graph_name} {{",
                 delete_stmts,
                 "}",
+            ]
+        )
+        install_query = "\n".join(
+            [
+                f"USE GRAPH {graph_name}",
                 f"INSTALL QUERY {query_name}",
             ]
         )
-        self._execute_gsql(create_and_install)
+        self._execute_gsql(create_query)
+        self._execute_gsql(install_query)
 
     def _clear_data_via_installed_query(
         self, graph_name: str, vertex_types: tuple[str, ...]
@@ -1131,11 +1157,19 @@ class TigerGraphConnection(Connection):
             )
             installed_queries.add(query_name)
 
-        result = self._run_installed_query(query_name=query_name, graph_name=graph_name)
-        if isinstance(result, dict) and result.get("error") is True:
+        try:
+            result = self._execute_gsql(
+                f"USE GRAPH {graph_name}\nRUN QUERY {query_name}()"
+            )
+        except Exception as run_error:
             raise RuntimeError(
-                f"Installed clear_data query '{query_name}' failed: "
-                f"{result.get('message', 'Unknown TigerGraph error')}"
+                f"Installed clear_data query '{query_name}' failed: {run_error}"
+            ) from run_error
+
+        result_text = str(result).lower()
+        if "error" in result_text or "failed" in result_text:
+            raise RuntimeError(
+                f"Installed clear_data query '{query_name}' failed: {result}"
             )
 
     def _upsert_vertex(
@@ -3428,6 +3462,16 @@ class TigerGraphConnection(Connection):
             self._clear_data_via_installed_query(
                 graph_name=graph_name, vertex_types=vertex_types
             )
+            remaining = [
+                vertex_type
+                for vertex_type in vertex_types
+                if len(self.fetch_docs(vertex_type, limit=1)) > 0
+            ]
+            if remaining:
+                raise RuntimeError(
+                    "Installed clear_data query completed but left data in: "
+                    + ", ".join(remaining)
+                )
             logger.info(
                 "Cleared data via installed query for graph '%s' (%d vertex types)",
                 graph_name,
@@ -3435,12 +3479,47 @@ class TigerGraphConnection(Connection):
             )
             return
         except Exception as query_error:
-            logger.warning(
+            logger.info(
                 "Installed clear-data query path failed for graph '%s': %s. "
-                "Falling back to REST vertex deletion.",
+                "Falling back to GSQL vertex deletion.",
                 graph_name,
                 query_error,
             )
+
+        gsql_failures: list[str] = []
+        for vertex_type in vertex_types:
+            try:
+                result = self._execute_gsql(
+                    f"USE GRAPH {graph_name}\nDELETE FROM {vertex_type}"
+                )
+                if isinstance(result, dict) and result.get("error") is True:
+                    raise RuntimeError(str(result))
+                result_text = str(result).lower()
+                if '"error": true' in result_text or "failed" in result_text:
+                    raise RuntimeError(str(result))
+                logger.debug(
+                    "Deleted vertices via GSQL from %s in graph %s: %s",
+                    vertex_type,
+                    graph_name,
+                    result,
+                )
+            except Exception as gsql_error:
+                gsql_failures.append(f"{vertex_type}: {gsql_error}")
+
+        if not gsql_failures:
+            logger.info(
+                "Cleared data via direct GSQL deletion for graph '%s' (%d vertex types)",
+                graph_name,
+                len(vertex_types),
+            )
+            return
+
+        logger.warning(
+            "Direct GSQL delete path failed for graph '%s': %s. "
+            "Falling back to REST vertex deletion.",
+            graph_name,
+            "; ".join(gsql_failures),
+        )
 
         failures: list[str] = []
         for vertex_type in vertex_types:

@@ -12,11 +12,8 @@ from graflo.db import ConnectionManager
 from graflo.onto import DBType
 
 
-def test_init_db_vertex_identity_string_default(
-    conn_conf, test_graph_name, clean_db
-) -> None:
+def test_init_db_vertex_identity_string_default(conn_conf, test_graph_name) -> None:
     """Regression: DEFAULT on PK must not emit PRIMARY_ID ... DEFAULT (parse error)."""
-    _ = clean_db
     vlog = f"v_{test_graph_name}"
     schema = Schema(
         metadata=GraphMetadata(name=test_graph_name),

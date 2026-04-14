@@ -1,4 +1,5 @@
 import pytest
+import uuid
 
 from graflo.db import ConnectionManager
 
@@ -6,6 +7,7 @@ from graflo.db import ConnectionManager
 def test_create_vertex_index(conn_conf, schema_obj, test_graph_name):
     """Test creating vertex indexes using GSQL CREATE INDEX."""
     schema_obj = schema_obj("review")
+    schema_obj.metadata.name = test_graph_name
 
     with ConnectionManager(connection_config=conn_conf) as db_client:
         # Initialize database with schema
@@ -29,7 +31,7 @@ def test_create_vertex_index(conn_conf, schema_obj, test_graph_name):
         assert "Author" in vertex_types, "Vertex type 'Author' not found"
         assert "ResearchField" in vertex_types, "Vertex type 'ResearchField' not found"
 
-        job_name = "add_ResearchField_id_index"
+        job_name = f"add_ResearchField_id_index_{uuid.uuid4().hex[:8]}"
         create_job_cmd = (
             "USE GLOBAL\n"
             f"CREATE GLOBAL SCHEMA_CHANGE job {job_name} "
@@ -38,11 +40,12 @@ def test_create_vertex_index(conn_conf, schema_obj, test_graph_name):
         run_job_cmd = f"RUN GLOBAL SCHEMA_CHANGE job {job_name}"
         drop_job_cmd = f"DROP JOB {job_name}"
 
-        # Clean up: drop job if it exists (ignore errors)
+        # Cleanup stale job name if supported by server.
         try:
             db_client._execute_gsql(drop_job_cmd)
-        except Exception:
-            pass
+        except Exception as drop_error:
+            if "not exist" not in str(drop_error).lower():
+                raise
 
         try:
             # Create the job
@@ -55,6 +58,13 @@ def test_create_vertex_index(conn_conf, schema_obj, test_graph_name):
             # Clean up on failure
             try:
                 db_client._execute_gsql(drop_job_cmd)
-            except Exception:
-                pass
+            except Exception as drop_error:
+                if "not exist" not in str(drop_error).lower():
+                    raise
             pytest.fail(f"Failed to create or run schema change job: {e}")
+        finally:
+            try:
+                db_client._execute_gsql(drop_job_cmd)
+            except Exception as drop_error:
+                if "not exist" not in str(drop_error).lower():
+                    raise

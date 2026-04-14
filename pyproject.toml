@@ -44,6 +44,7 @@ version = "1.7.17"
 [project.optional-dependencies]
 dev = [
   "pre-commit>=4.2.0",
+  "pytest-xdist>=3.8.0",
   "pytest>=9.0.2",
   "ty>=0.0.1a24"
 ]

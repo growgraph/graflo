@@ -12,14 +12,12 @@ def modes():
 
 
 def test_ingest(
-    clean_db,
     modes,
     conn_conf,
     current_path,
     test_graph_name,
     reset,
 ):
-    _ = clean_db
     for m in modes:
         schema_o = fetch_schema_obj(m)
 
@@ -57,3 +55,8 @@ def test_ingest(
                     edge_type="belongsTo",
                 )
                 assert len(edges) == 1
+                # Keep clear_data regression coverage here to avoid a second full ingest pass.
+                db_client.clear_data(schema_o)
+                assert db_client.graph_exists(test_graph_name)
+                authors_after_clear = db_client.fetch_docs("Author")
+                assert len(authors_after_clear) == 0
