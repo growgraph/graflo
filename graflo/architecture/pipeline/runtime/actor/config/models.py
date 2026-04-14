@@ -28,6 +28,16 @@ class VertexActorConfig(ConfigBaseModel):
     keep_fields: list[str] | None = PydanticField(
         default=None, description="Optional list of fields to keep"
     )
+    role: str | None = PydanticField(
+        default=None,
+        description=(
+            "Named accumulator slot for this vertex. When set, the vertex is stored at "
+            "lindex.extend((role, 0)) instead of bare lindex, making it addressable by "
+            "a downstream edge step via source_role / target_role. Use when multiple "
+            "vertices of the same type appear as distinct roles in one row (e.g. "
+            "role='buyer' and role='seller' both vertex type 'company')."
+        ),
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -299,8 +309,127 @@ class TransformCallConfig(ConfigBaseModel):
         return self
 
 
+class EdgeLinkConfig(ConfigBaseModel):
+    """One intent in a multi-link edge step.
+
+    Each item in an ``EdgeActorConfig.links`` list describes one source→target→relation
+    binding to emit per row. Equivalent to a single-intent ``edge`` step without the
+    ``links`` field itself.
+
+    Slot resolution (``source_role`` / ``target_role``) works identically to
+    ``source_type_field`` / ``target_type_field`` on a standalone ``edge`` step — the
+    slot name is the accumulator segment populated by an upstream ``vertex`` step with a
+    matching ``role``, or a ``vertex_router`` step with a matching ``type_field``.
+    """
+
+    model_config = {"extra": "forbid", "populate_by_name": True}
+
+    source: str | None = PydanticField(
+        default=None,
+        alias="from",
+        description="Static source vertex type name. Exclusive with source_type_field / source_role.",
+    )
+    target: str | None = PydanticField(
+        default=None,
+        alias="to",
+        description="Static target vertex type name. Exclusive with target_type_field / target_role.",
+    )
+    source_type_field: str | None = PydanticField(
+        default=None,
+        description=(
+            "Accumulator slot name for the source vertex (set by an upstream vertex_router "
+            "whose type_field matches this value). Exclusive with 'from' and source_role."
+        ),
+    )
+    target_type_field: str | None = PydanticField(
+        default=None,
+        description=(
+            "Accumulator slot name for the target vertex (set by an upstream vertex_router "
+            "whose type_field matches this value). Exclusive with 'to' and target_role."
+        ),
+    )
+    source_role: str | None = PydanticField(
+        default=None,
+        description=(
+            "Role slot name for the source vertex. Sugar for source_type_field when the "
+            "slot was populated by an upstream 'vertex' step with a matching role. "
+            "Exclusive with source_type_field."
+        ),
+    )
+    target_role: str | None = PydanticField(
+        default=None,
+        description=(
+            "Role slot name for the target vertex. Sugar for target_type_field when the "
+            "slot was populated by an upstream 'vertex' step with a matching role. "
+            "Exclusive with target_type_field."
+        ),
+    )
+    relation: str | None = PydanticField(
+        default=None,
+        description="Fixed relation / edge type name for this link.",
+    )
+    relation_field: str | None = PydanticField(
+        default=None,
+        description="Document field name for per-row relationship type.",
+    )
+    match_source: str | None = PydanticField(
+        default=None,
+        description="Require this path segment in source vertex locations.",
+    )
+    match_target: str | None = PydanticField(
+        default=None,
+        description="Require this path segment in target vertex locations.",
+    )
+
+    @model_validator(mode="after")
+    def resolve_and_validate(self) -> "EdgeLinkConfig":
+        # Resolve role aliases → type_field (they name the same accumulator slot).
+        # Use object.__setattr__ to bypass validate_assignment re-triggering this validator.
+        if self.source_role is not None:
+            if self.source_type_field is not None:
+                raise ValueError(
+                    "source_role and source_type_field are mutually exclusive in an edge link."
+                )
+            object.__setattr__(self, "source_type_field", self.source_role)
+        if self.target_role is not None:
+            if self.target_type_field is not None:
+                raise ValueError(
+                    "target_role and target_type_field are mutually exclusive in an edge link."
+                )
+            object.__setattr__(self, "target_type_field", self.target_role)
+
+        # Each side needs exactly one of: static type or slot reference.
+        if self.source is None and self.source_type_field is None:
+            raise ValueError(
+                "edge link requires 'from' (source), source_type_field, or source_role."
+            )
+        if self.target is None and self.target_type_field is None:
+            raise ValueError(
+                "edge link requires 'to' (target), target_type_field, or target_role."
+            )
+        if self.source is not None and self.source_type_field is not None:
+            raise ValueError(
+                "'from' and source_type_field/source_role are mutually exclusive."
+            )
+        if self.target is not None and self.target_type_field is not None:
+            raise ValueError(
+                "'to' and target_type_field/target_role are mutually exclusive."
+            )
+        return self
+
+
 class EdgeActorConfig(ConfigBaseModel):
-    """Configuration for an EdgeActor (logical edge + ingestion derivation; flat YAML)."""
+    """Configuration for an EdgeActor (logical edge + ingestion derivation; flat YAML).
+
+    **Single-intent mode** (default): declare source/target via ``from``/``to`` (static
+    vertex type names) or ``source_type_field``/``target_type_field`` / ``source_role``/
+    ``target_role`` (slot-based dynamic resolution).  One edge intent is emitted per row.
+
+    **Multi-link mode** (``links`` list): declare a list of :class:`EdgeLinkConfig` items.
+    Each item emits one edge intent per row, allowing a single pipeline step to produce
+    multiple relationship types from one flat row.  Mutually exclusive with all top-level
+    source/target fields.
+    """
 
     type: Literal["edge"] = PydanticField(
         default="edge", description="Actor type discriminator"
@@ -308,12 +437,12 @@ class EdgeActorConfig(ConfigBaseModel):
     source: str | None = PydanticField(
         default=None,
         alias="from",
-        description="Source vertex type name (optional if source_type_field is set).",
+        description="Source vertex type name (optional if source_type_field/source_role is set).",
     )
     target: str | None = PydanticField(
         default=None,
         alias="to",
-        description="Target vertex type name (optional if target_type_field is set).",
+        description="Target vertex type name (optional if target_type_field/target_role is set).",
     )
     source_type_field: str | None = PydanticField(
         default=None,
@@ -321,14 +450,38 @@ class EdgeActorConfig(ConfigBaseModel):
             "The type_field value of the upstream VertexRouterActor whose output should be "
             "treated as the source vertex.  EdgeActor scans acc_vertex for data at "
             "lindex.extend((source_type_field, 0)) to resolve the source type dynamically. "
-            "Exclusive with 'from'."
+            "Exclusive with 'from' and source_role."
         ),
     )
     target_type_field: str | None = PydanticField(
         default=None,
         description=(
             "The type_field value of the upstream VertexRouterActor whose output should be "
-            "treated as the target vertex. Exclusive with 'to'."
+            "treated as the target vertex. Exclusive with 'to' and target_role."
+        ),
+    )
+    source_role: str | None = PydanticField(
+        default=None,
+        description=(
+            "Role slot name for the source vertex — sugar for source_type_field when the "
+            "slot was populated by an upstream 'vertex' step with a matching role. "
+            "Exclusive with source_type_field."
+        ),
+    )
+    target_role: str | None = PydanticField(
+        default=None,
+        description=(
+            "Role slot name for the target vertex — sugar for target_type_field when the "
+            "slot was populated by an upstream 'vertex' step with a matching role. "
+            "Exclusive with target_type_field."
+        ),
+    )
+    links: list[EdgeLinkConfig] | None = PydanticField(
+        default=None,
+        description=(
+            "Multi-intent list. When set, each item emits one edge intent per row. "
+            "Mutually exclusive with all top-level source/target/role fields. "
+            "Use when a single flat row encodes multiple relationships."
         ),
     )
     relation_map: dict[str, str] | None = PydanticField(
@@ -389,7 +542,41 @@ class EdgeActorConfig(ConfigBaseModel):
     )
 
     @model_validator(mode="after")
-    def validate_type_sources(self) -> EdgeActorConfig:
+    def validate_type_sources(self) -> "EdgeActorConfig":
+        if self.links is not None:
+            # Multi-link mode: top-level source/target fields must all be absent.
+            has_single = any(
+                [
+                    self.source,
+                    self.target,
+                    self.source_type_field,
+                    self.target_type_field,
+                    self.source_role,
+                    self.target_role,
+                ]
+            )
+            if has_single:
+                raise ValueError(
+                    "edge 'links' is mutually exclusive with top-level "
+                    "from/to/source_type_field/target_type_field/source_role/target_role."
+                )
+            return self
+
+        # Single-intent mode: resolve role aliases → type_field.
+        # Use object.__setattr__ to bypass validate_assignment re-triggering this validator.
+        if self.source_role is not None:
+            if self.source_type_field is not None:
+                raise ValueError(
+                    "source_role and source_type_field are mutually exclusive."
+                )
+            object.__setattr__(self, "source_type_field", self.source_role)
+        if self.target_role is not None:
+            if self.target_type_field is not None:
+                raise ValueError(
+                    "target_role and target_type_field are mutually exclusive."
+                )
+            object.__setattr__(self, "target_type_field", self.target_role)
+
         # Each side needs exactly one of: static type or dynamic slot.
         if self.source is None and self.source_type_field is None:
             raise ValueError("edge step requires 'from' (source) or source_type_field.")
