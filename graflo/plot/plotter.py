@@ -115,6 +115,8 @@ map_class2color = {
     VertexActor: "orange",
     EdgeActor: fillcolor_palette["violet"],
     TransformActor: fillcolor_palette["blue"],
+    VertexRouterActor: fillcolor_palette["peach"],
+    EdgeRouterActor: fillcolor_palette["red"],
 }
 
 # Edge style mapping
