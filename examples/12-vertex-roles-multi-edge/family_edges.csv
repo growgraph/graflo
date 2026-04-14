@@ -1,0 +1,4 @@
+person,parent,child,name,age
+12,13,21,Bob,35
+13,15,12,Alice,62
+21,12,24,Carol,10

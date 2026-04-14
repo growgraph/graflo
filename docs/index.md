@@ -15,7 +15,7 @@ It is a **Python package** and **Graph Schema & Transformation Language (GSTL)**
 
 - **One pipeline, several graph databases** — The same manifest targets ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, or NebulaGraph; `DatabaseProfile` and DB-aware types absorb naming, defaults, and indexing differences.
 - **Explicit identities** — Vertex identity fields and indexes back upserts so reloads merge on keys instead of blindly duplicating nodes.
-- **Reusable ingestion** — `Resource` actor pipelines (including **vertex_router** / **edge** steps and the **`VertexRouterActor`** / **`EdgeActor`** implementations) bind to files, SQL, SPARQL/RDF, APIs, or in-memory batches via `Bindings` and the `DataSourceRegistry`.
+- **Reusable ingestion** — `Resource` actor pipelines (including **vertex** / **vertex_router** / **edge** steps) bind to files, SQL, SPARQL/RDF, APIs, or in-memory batches via `Bindings` and the `DataSourceRegistry`. A single flat row can populate multiple same-type vertices in distinct named slots (`role`) and emit multiple edges in one `edge: links` step.
 - **Manifest-first sanitization** — `Sanitizer` normalizes schema identifiers (reserved words, TigerGraph relation/index constraints) and synchronizes related ingestion mappings via `sanitize_manifest(GraphManifest)`.
 
 ### What’s in the manifest
@@ -87,6 +87,10 @@ Resources and transforms are part of `IngestionModel`, not `Schema`.
 ### Resource
 
 A `Resource` is the central abstraction that bridges data sources and the graph schema. Each Resource defines a reusable pipeline of actors (descend, transform, vertex, edge) that maps raw records to graph elements. Data sources bind to Resources by name via the `DataSourceRegistry`, so the same transformation logic applies regardless of whether data arrives from a file, an API, or a SPARQL endpoint.
+
+- **`vertex` step `role`**: assign a named accumulator slot to a static-type vertex step so multiple vertices of the same type in one flat row occupy distinct slots (e.g. `role: self`, `role: parent`, `role: child` all as `person`). Use `keep_fields` to restrict passthrough so sibling role steps don't absorb each other's columns.
+- **`edge` step `links`**: declare multiple edge intents in one step — each list item emits one edge per row with its own `source_role`/`target_role` (or `source_type_field`/`target_type_field`) and `relation`.
+- **`source_role` / `target_role`** on `edge` steps: ergonomic aliases for `source_type_field` / `target_type_field` when the slot was populated by a `vertex+role` step.
 
 For wide rows with many empty or null columns, **`drop_trivial_input_fields`** (default `false`) removes only **top-level** keys whose value is `null` or `""` before the pipeline runs. The filter is **shallow**: nested dicts and lists are not walked, and empty `{}` / `[]` values are kept because they are not `null` or `""`. **`0`** and **`false`** are kept.
 

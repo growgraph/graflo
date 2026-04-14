@@ -73,6 +73,8 @@ nav:
     -   8 - Multi-Edge Weights with Filters and dress Transform: examples/example-8.md
     -   9 - Explicit connector_connection Proxy Wiring: examples/example-9.md
     -   10 - TigerGraph bulk load and S3 staging: examples/example-10.md
+    -   11 - Flat-row dynamic edges with vertex_router: examples/example-11.md
+    -   12 - Vertex Roles and Multi-intent Edges: examples/example-12.md
 -   API Reference: reference/
 -   Contributing: contributing.md
 markdown_extensions:

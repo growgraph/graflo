@@ -6,7 +6,7 @@ import logging
 from typing import Any
 
 from .base import Actor, ActorInitContext
-from .config import EdgeActorConfig
+from .config import EdgeActorConfig, EdgeLinkConfig
 from graflo.architecture.edge_derivation import EdgeDerivation
 from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.graph_types import (
@@ -20,40 +20,92 @@ from graflo.architecture.schema.vertex import VertexConfig
 logger = logging.getLogger(__name__)
 
 
+def _link_to_edge_actor_config(link: EdgeLinkConfig) -> EdgeActorConfig:
+    """Convert an EdgeLinkConfig item into a standalone EdgeActorConfig for delegation."""
+    data: dict[str, Any] = {"type": "edge"}
+    # source/target_type_field is already resolved in EdgeLinkConfig.resolve_and_validate
+    if link.source is not None:
+        data["from"] = link.source
+    if link.target is not None:
+        data["to"] = link.target
+    if link.source_type_field is not None:
+        data["source_type_field"] = link.source_type_field
+    if link.target_type_field is not None:
+        data["target_type_field"] = link.target_type_field
+    if link.relation is not None:
+        data["relation"] = link.relation
+    if link.relation_field is not None:
+        data["relation_field"] = link.relation_field
+    if link.match_source is not None:
+        data["match_source"] = link.match_source
+    if link.match_target is not None:
+        data["match_target"] = link.match_target
+    return EdgeActorConfig.model_validate(data)
+
+
 class EdgeActor(Actor):
     """Actor for processing edge data.
 
-    Operates in two modes determined by configuration:
+    Operates in three modes determined by configuration:
 
     **Static mode** (``from``/``to`` set): both vertex types are declared at config
     time.  The schema ``Edge`` is created during ``finish_init`` and the
     ``__call__`` path is unchanged from the original implementation.
 
     **Dynamic mode** (at least one of ``source_type_field``/``target_type_field``
-    set): vertex types for the dynamic side(s) are resolved at extraction time by
-    looking up ``VertexRouterActor`` accumulator slots.  The other side may be a
-    statically declared type (mixed mode) or also dynamic (fully dynamic mode).
+    / ``source_role``/``target_role`` set): vertex types for the dynamic side(s) are
+    resolved at extraction time by looking up accumulator slots populated by an
+    upstream ``VertexRouterActor`` or a ``VertexActor`` with a matching ``role``.
     The schema ``Edge`` is created—or retrieved from cache—per unique
     ``(source_type, target_type, relation)`` triple encountered.
+
+    **Multi-link mode** (``links`` list set): each item in ``links`` becomes a
+    dedicated sub-``EdgeActor`` that runs in sequence per row, emitting one edge
+    intent each.  Use when one flat row encodes multiple distinct relationships.
     """
 
     def __init__(self, config: EdgeActorConfig):
-        self._source_type_field: str | None = config.source_type_field
-        self._target_type_field: str | None = config.target_type_field
-        # Static fallback for whichever side is not dynamic.
-        self._static_source: str | None = config.source
-        self._static_target: str | None = config.target
-        self._relation_map: dict[str, str] = config.relation_map or {}
-        self._strict_edge_types: bool = config.strict_edge_types
-        self._edge_cache: dict[tuple[str, str, str | None], Edge] = {}
-        self._init_ctx: ActorInitContext | None = None
+        # Multi-link mode: delegate each link to its own EdgeActor.
+        if config.links:
+            self._link_actors: list[EdgeActor] = [
+                EdgeActor(_link_to_edge_actor_config(lk)) for lk in config.links
+            ]
+            # Null-out all single-intent state so the dispatch is unambiguous.
+            self._source_type_field = None
+            self._target_type_field = None
+            self._static_source = None
+            self._static_target = None
+            self._relation_map: dict[str, str] = {}
+            self._strict_edge_types = False
+            self._edge_cache: dict[tuple[str, str, str | None], Edge] = {}
+            self._init_ctx: ActorInitContext | None = None
+            self.derivation: EdgeDerivation = EdgeDerivation()
+            self._pending_vertex_weights: list[Weight] = []
+            self._static_relation = None
+            self.edge: Edge | None = None
+            self.vertex_config: VertexConfig | None = None
+            self.edge_config: EdgeConfig | None = None
+            self.allowed_vertex_names: set[str] | None = None
+            return
 
-        self.derivation: EdgeDerivation = config.derivation
-        self._pending_vertex_weights: list[Weight] = []
+        self._link_actors = []
+
+        self._source_type_field = config.source_type_field
+        self._target_type_field = config.target_type_field
+        # Static fallback for whichever side is not dynamic.
+        self._static_source = config.source
+        self._static_target = config.target
+        self._relation_map = config.relation_map or {}
+        self._strict_edge_types = config.strict_edge_types
+        self._edge_cache = {}
+        self._init_ctx = None
+
+        self.derivation = config.derivation
+        self._pending_vertex_weights = []
 
         # In dynamic/mixed mode the static relation (if set) is used as a fallback
         # when relation_field yields nothing.
-        self._static_relation: str | None = None
+        self._static_relation = None
 
         # Dynamic mode: at least one side is resolved at extraction time.
         # Static mode: both sides are fixed at config time.
@@ -88,10 +140,12 @@ class EdgeActor(Actor):
         return self.derivation.relation_field
 
     @classmethod
-    def from_config(cls, config: EdgeActorConfig) -> EdgeActor:
+    def from_config(cls, config: EdgeActorConfig) -> "EdgeActor":
         return cls(config)
 
     def fetch_important_items(self) -> dict[str, Any]:
+        if self._link_actors:
+            return {"links": str(len(self._link_actors))}
         items: dict[str, Any] = {}
         if self.edge is not None:
             items["source"] = self.edge.source
@@ -116,6 +170,12 @@ class EdgeActor(Actor):
         self.vertex_config = init_ctx.vertex_config
         self.edge_config = init_ctx.edge_config
         self.allowed_vertex_names = init_ctx.allowed_vertex_names
+
+        if self._link_actors:
+            # Multi-link mode: delegate finish_init to each sub-actor.
+            for la in self._link_actors:
+                la.finish_init(init_ctx)
+            return
 
         if self.edge is not None:
             # Static mode: register schema Edge now.
@@ -181,6 +241,11 @@ class EdgeActor(Actor):
     def __call__(
         self, ctx: ExtractionContext, lindex: LocationIndex, *nargs: Any, **kwargs: Any
     ) -> ExtractionContext:
+        if self._link_actors:
+            # Multi-link mode: run each sub-actor in sequence.
+            for la in self._link_actors:
+                ctx = la(ctx, lindex, *nargs, **kwargs)
+            return ctx
         if self._source_type_field is not None or self._target_type_field is not None:
             return self._call_dynamic(ctx, lindex, **kwargs)
         return self._call_static(ctx, lindex, **kwargs)
@@ -313,6 +378,11 @@ class EdgeActor(Actor):
         return ctx
 
     def references_vertices(self) -> set[str]:
+        if self._link_actors:
+            result: set[str] = set()
+            for la in self._link_actors:
+                result |= la.references_vertices()
+            return result
         if self.edge is not None:
             return {self.edge.source, self.edge.target}
         static: set[str] = set()

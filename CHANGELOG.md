@@ -6,6 +6,64 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.7.19] - 2026-04-14
+
+### Added
+
+- **`role` on `vertex` step** (`VertexActorConfig`): optional named accumulator slot. When set,
+  the vertex is stored at `lindex.extend((role, 0))` instead of bare `lindex`, allowing multiple
+  vertices of the same type to occupy distinct slots in the same flat row (e.g. `role: self`,
+  `role: parent`, `role: child` — all `person`). A downstream `edge` step references the slot
+  via the new `source_role` / `target_role` aliases.
+
+- **`source_role` / `target_role` on `edge` step** (`EdgeActorConfig`): ergonomic aliases for
+  `source_type_field` / `target_type_field`. Both names look up the same accumulator slot;
+  `source_role` is preferred when the slot was populated by a `vertex+role` step, while
+  `source_type_field` remains idiomatic when a `vertex_router` step was used. Mutually exclusive
+  with their counterparts.
+
+- **`links` list on `edge` step** (`EdgeActorConfig`): multi-intent edge declaration. When set,
+  each item in `links` is an `EdgeLinkConfig` that emits one edge intent per row. This replaces
+  the need for two (or more) nearly identical `edge` steps when a single flat row encodes multiple
+  relationship types. Mutually exclusive with all top-level source/target fields on the same step.
+
+- **`EdgeLinkConfig`** model: per-link binding inside a `links` edge step. Supports `source` /
+  `target` (static types), `source_type_field` / `target_type_field` (dynamic slots from
+  `vertex_router`), `source_role` / `target_role` (dynamic slots from `vertex+role`), `relation`,
+  `relation_field`, `match_source`, `match_target`.
+
+- **`keep_fields` now enforced in passthrough** (`VertexActor`): the field was already present in
+  `VertexActorConfig` but had no effect. The passthrough step in `VertexActor.__call__` now
+  restricts the set of automatically absorbed columns to `keep_fields` when it is set. Use on
+  role-vertex steps to prevent shared row columns (e.g. `name`) from leaking into placeholder
+  vertices that only carry an ID.
+
+### Changed
+
+- **Passthrough non-mutation when `role` is set** (`VertexActor.__call__`): without `role`,
+  the existing `doc.pop` behaviour is preserved (backward-compatible). When `role` is set,
+  passthrough uses `doc.get` so that sibling role-vertex steps operating on the same shared doc
+  each see all row columns. This is the correct behaviour for multi-role flat-row pipelines and
+  has no effect on single-vertex pipelines.
+
+### Documentation
+
+- **`docs/examples/example-12.md`**: new example — *Vertex Roles and Multi-intent Edges*.
+  CSV `person,parent,child,name,age`; one `person` vertex type; two `person→person` edge types
+  (`is_child_of`, `is_parent_of`); three `vertex+role` steps + one `edge: links` step.
+  Covers `role`, `keep_fields`, `from` direction, passthrough behaviour, and `links`.
+- **`docs/examples/index.md`**: entry 12 added.
+- **`mkdocs.yml`**: examples 11 and 12 added to nav (example 11 was missing).
+- **`docs/concepts/index.md`**: Actor section updated — `role` and `keep_fields` on `VertexActor`;
+  `source_role` / `target_role` / `links` on `EdgeActor`; scenario matrix extended.
+
+### Examples
+
+- **`examples/12-vertex-roles-multi-edge/`**: `family_edges.csv`, `manifest.yaml`, `ingest.py`
+  demonstrating the vertex-role + multi-link pattern end-to-end.
+
+---
+
 ## [1.7.18] - 2026-04-14
 
 ### Added
