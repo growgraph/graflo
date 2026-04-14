@@ -65,6 +65,10 @@ def enrich_edge_connector_with_joins(
         der = ea.derivation
         if not der.match_source or not der.match_target:
             continue
+        # Dynamic EdgeActors (source_type_field set) resolve types at row-processing
+        # time; static vertex type info is not available for JOIN generation.
+        if edge is None:
+            continue
 
         source_info = _vertex_table_info(edge.source, bindings, vertex_config)
         target_info = _vertex_table_info(edge.target, bindings, vertex_config)

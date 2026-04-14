@@ -52,7 +52,7 @@ def _raise_step_validation_error(data: dict[str, Any], err: ValidationError) -> 
     raise ValueError(
         "Invalid actor step configuration. "
         "Supported step forms include `vertex`, `transform`, `edge`, `descend`, "
-        "`vertex_router`, and `edge_router`. "
+        "and `vertex_router`. "
         f"Step keys: [{keys}]."
     ) from err
 

@@ -6,6 +6,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.7.18] - 2026-04-14
+
+### Added
+
+- **Dynamic `EdgeActor` mixed mode**: `EdgeActorConfig` now accepts one static side
+  (`from` / `to`) combined with one dynamic slot side (`source_type_field` /
+  `target_type_field`). Previously both slot fields had to be set together; now any
+  combination is valid — both dynamic (fully dynamic), one static + one dynamic
+  (mixed), or both static (static mode).  The `_call_dynamic` path handles all three
+  uniformly.
+
+### Removed
+
+- **`EdgeRouterActor`** and **`EdgeRouterActorConfig`** are removed from the codebase.
+  The replacement is a `vertex_router` step per dynamic endpoint (each with its own
+  `type_field`) followed by a dynamic `edge` step with `source_type_field` /
+  `target_type_field` set to the corresponding `type_field` values.  Mixed-mode edges
+  (one static endpoint, one dynamic) are now supported natively by `EdgeActor`.
+  `CHANGELOG.md` retains historical references to `EdgeRouterActor` for audit purposes.
+
+### Changed
+
+- **`VertexRouterActor`** vertices are always stored at `lindex.extend((type_field, 0))`
+  (`type_field` doubles as the accumulator slot name); this was already the behaviour
+  after the previous refactor and is now the only supported mode.
+- **`EdgeActorConfig.validate_type_sources`**: the constraint
+  `"source_type_field and target_type_field must both be set or both be absent"` is
+  lifted; each side is validated independently (must have exactly one of static or
+  dynamic, but the two sides may differ).
+- **`objects-relations` test schema and example 7 manifest** migrated from `edge_router`
+  to two `vertex_router` steps + dynamic `edge`.
+
+### Documentation
+
+- **`docs/examples/example-7.md`**: rewritten to describe the `vertex_router` +
+  dynamic `edge` pattern; flat-row variant section retained as a cross-reference to
+  Example 11.
+- **`docs/concepts/index.md`**: actor class diagram and scenario matrix updated;
+  deprecated `EdgeRouterActor` entry removed.
+- **`docs/concepts/table_connector_views.md`**: YAML pipeline sketch updated from
+  `edge_router` to `vertex_router` + `edge`.
+
 ## [1.7.17] - 2026-04-13
 
 ### Added

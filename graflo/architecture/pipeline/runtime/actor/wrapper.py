@@ -12,7 +12,6 @@ from .config import (
     ActorConfig,
     DescendActorConfig,
     EdgeActorConfig,
-    EdgeRouterActorConfig,
     TransformActorConfig,
     VertexActorConfig,
     VertexRouterActorConfig,
@@ -37,7 +36,6 @@ from graflo.util.transform import pick_unique_dict
 
 from .descend import DescendActor
 from .edge import EdgeActor
-from .edge_router import EdgeRouterActor
 from .transform import TransformActor
 from .vertex import VertexActor
 from .vertex_router import VertexRouterActor
@@ -100,13 +98,10 @@ class ActorWrapper:
             actor = DescendActor.from_config(config)
         elif isinstance(config, VertexRouterActorConfig):
             actor = VertexRouterActor.from_config(config)
-        elif isinstance(config, EdgeRouterActorConfig):
-            actor = EdgeRouterActor.from_config(config)
         else:
             raise ValueError(
                 f"Expected VertexActorConfig, TransformActorConfig, EdgeActorConfig, "
-                f"DescendActorConfig, VertexRouterActorConfig, or EdgeRouterActorConfig, "
-                f"got {type(config)}"
+                f"DescendActorConfig, or VertexRouterActorConfig, got {type(config)}"
             )
         wrapper = cls.__new__(cls)
         wrapper.actor = actor
@@ -199,7 +194,6 @@ class ActorWrapper:
             DescendActor: fillcolor_palette["green"],
             VertexActor: "orange",
             VertexRouterActor: fillcolor_palette["peach"],
-            EdgeRouterActor: fillcolor_palette["red"],
             EdgeActor: fillcolor_palette["violet"],
             TransformActor: fillcolor_palette["blue"],
         }

@@ -45,7 +45,8 @@ def test_vertex_router_type_field_only_from_transform_buffer() -> None:
     )
     out = actor(ctx, loc, doc={})
 
-    reps = out.acc_vertex["Widget"][loc]
+    slot = loc.extend(("kind", 0))
+    reps = out.acc_vertex["Widget"][slot]
     assert len(reps) == 1
     assert reps[0].vertex == {"id": "w-1"}
 
@@ -68,8 +69,9 @@ def test_vertex_router_transform_overrides_doc_for_type_field() -> None:
     ctx.buffer_transforms[loc].append(TransformPayload(named={"kind": "Post"}))
     out = actor(ctx, loc, doc={"kind": "Widget", "id": "p1"})
 
-    assert "Widget" not in out.acc_vertex or not out.acc_vertex["Widget"].get(loc)
-    reps = out.acc_vertex["Post"][loc]
+    slot = loc.extend(("kind", 0))
+    assert "Widget" not in out.acc_vertex or not out.acc_vertex["Widget"].get(slot)
+    reps = out.acc_vertex["Post"][slot]
     assert len(reps) == 1
     assert reps[0].vertex == {"id": "p1"}
 
@@ -95,7 +97,8 @@ def test_vertex_router_field_map_reads_keys_from_transform_buffer() -> None:
     )
     out = actor(ctx, loc, doc={})
 
-    assert out.acc_vertex["Widget"][loc][0].vertex == {"id": "ext-99"}
+    slot = loc.extend(("t", 0))
+    assert out.acc_vertex["Widget"][slot][0].vertex == {"id": "ext-99"}
 
 
 def test_vertex_router_prefix_keys_from_transform_buffer() -> None:
@@ -119,7 +122,8 @@ def test_vertex_router_prefix_keys_from_transform_buffer() -> None:
     )
     out = actor(ctx, loc, doc={})
 
-    assert out.acc_vertex["Widget"][loc][0].vertex == {"id": "z"}
+    slot = loc.extend(("kind", 0))
+    assert out.acc_vertex["Widget"][slot][0].vertex == {"id": "z"}
 
 
 def test_transform_buffer_isolation_by_location_index() -> None:

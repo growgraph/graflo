@@ -2,7 +2,7 @@
 
 Uses schema from test/config/schema/objects-relations.yaml and
 data from test/data/objects-relations/objects.csv and relations.csv.
-Verifies vertex_router (type_map) and edge_router (type_map, relation_map) logic.
+Verifies vertex_router (type_map) and dynamic edge (relation_map) logic.
 """
 
 from pathlib import Path
@@ -23,7 +23,7 @@ def _load_csv_as_dicts(csv_path: Path) -> list[dict]:
 
 @pytest.fixture
 def schema_objects_relations():
-    """Schema with vertex_router (objects) and edge_router (relations) resources."""
+    """Schema with vertex_router (objects) and vertex_router+edge (relations) resources."""
     manifest = GraphManifest.from_config(
         FileHandle.load("test.config.schema", "objects-relations.yaml")
     )
@@ -87,7 +87,7 @@ class TestObjectsResource:
 
 
 class TestRelationsResource:
-    """EdgeRouterActor routes relations.csv rows to dynamic edges with relation_map."""
+    """Dynamic EdgeActor routes relations.csv rows to edges with relation_map."""
 
     def test_relations_resource_produces_edges(
         self, schema_objects_relations, relations_data
@@ -137,8 +137,6 @@ class TestObjectsAndRelationsCombined:
 
         graph = GraphContainer.from_docs_list(all_docs)
 
-        # Vertices: 4 person + 3 vehicle + 3 institution from objects;
-        # relations add vertex refs (id only) which extend the lists
         assert len(graph.vertices["person"]) >= 4
         assert len(graph.vertices["vehicle"]) >= 3
         assert len(graph.vertices["institution"]) >= 3
@@ -148,17 +146,15 @@ class TestObjectsAndRelationsCombined:
         assert total_edges == 7
 
 
-class TestRelationsResourceMixedTypeSources:
-    """EdgeRouterActor supports one dynamic side and one explicit side."""
+class TestMixedModeDynamicEdge:
+    """Dynamic EdgeActor supports one static side and one dynamic (slot-based) side."""
 
     @staticmethod
-    def _build_manifest_for_resource(
-        resource_name: str, edge_router_config: dict
-    ) -> GraphManifest:
+    def _build_manifest(resource_name: str, edge_cfg: dict) -> GraphManifest:
         manifest = GraphManifest.from_config(
             {
                 "schema": {
-                    "metadata": {"name": "mixed_edge_router_types"},
+                    "metadata": {"name": "mixed_dynamic_edge"},
                     "core_schema": {
                         "vertex_config": {
                             "vertices": [
@@ -187,7 +183,33 @@ class TestRelationsResourceMixedTypeSources:
                     "resources": [
                         {
                             "name": resource_name,
-                            "pipeline": [{"edge_router": edge_router_config}],
+                            "pipeline": [
+                                # Static source vertex actor
+                                {
+                                    "vertex": edge_cfg.get("static_source", "person"),
+                                    "from": {"id": "source_id"},
+                                },
+                                # Dynamic target VRA
+                                {
+                                    "vertex_router": {
+                                        "type_field": "target_type",
+                                        "field_map": {"target_id": "id"},
+                                        "type_map": {
+                                            "Vehicle": "vehicle",
+                                            "Institution": "institution",
+                                        },
+                                    }
+                                },
+                                # Mixed-mode edge: static source + dynamic target slot
+                                {
+                                    "edge": {
+                                        "from": edge_cfg.get("static_source", "person"),
+                                        "target_type_field": "target_type",
+                                        "relation_field": "relation_type",
+                                        "relation_map": {"OWNS": "owns"},
+                                    }
+                                },
+                            ],
                         }
                     ]
                 },
@@ -197,23 +219,10 @@ class TestRelationsResourceMixedTypeSources:
         manifest.finish_init()
         return manifest
 
-    def test_edge_router_with_explicit_source_and_dynamic_target(self):
+    def test_static_source_dynamic_target(self):
         """source can be fixed while target comes from target_type_field."""
-        manifest = self._build_manifest_for_resource(
-            "relations_explicit_source",
-            {
-                "source": "person",
-                "target_type_field": "target_type",
-                "source_fields": {"id": "source_id"},
-                "target_fields": {"id": "target_id"},
-                "type_map": {"Vehicle": "vehicle", "Institution": "institution"},
-                "relation_field": "relation_type",
-                "relation_map": {"OWNS": "owns"},
-            },
-        )
-        resource = manifest.require_ingestion_model().fetch_resource(
-            "relations_explicit_source"
-        )
+        manifest = self._build_manifest("rel", {"static_source": "person"})
+        resource = manifest.require_ingestion_model().fetch_resource("rel")
         result = resource(
             {
                 "source_id": "p1",
@@ -229,23 +238,64 @@ class TestRelationsResourceMixedTypeSources:
         assert ("person", "vehicle", "owns") in graph.edges
         assert len(graph.edges[("person", "vehicle", "owns")]) == 1
 
-    def test_edge_router_with_dynamic_source_and_explicit_target(self):
+    def test_dynamic_source_static_target(self):
         """target can be fixed while source comes from source_type_field."""
-        manifest = self._build_manifest_for_resource(
-            "relations_explicit_target",
+        manifest = GraphManifest.from_config(
             {
-                "source_type_field": "source_type",
-                "target": "institution",
-                "source_fields": {"id": "source_id"},
-                "target_fields": {"id": "target_id"},
-                "type_map": {"Person": "person", "Vehicle": "vehicle"},
-                "relation_field": "relation_type",
-                "relation_map": {"EMPLOYED_BY": "employed_by"},
-            },
+                "schema": {
+                    "metadata": {"name": "mixed_dynamic_edge_inv"},
+                    "core_schema": {
+                        "vertex_config": {
+                            "vertices": [
+                                {
+                                    "name": "person",
+                                    "properties": ["id"],
+                                    "identity": ["id"],
+                                },
+                                {
+                                    "name": "institution",
+                                    "properties": ["id"],
+                                    "identity": ["id"],
+                                },
+                            ]
+                        },
+                        "edge_config": {"edges": []},
+                    },
+                    "db_profile": {},
+                },
+                "ingestion_model": {
+                    "resources": [
+                        {
+                            "name": "rel",
+                            "pipeline": [
+                                # Dynamic source VRA
+                                {
+                                    "vertex_router": {
+                                        "type_field": "source_type",
+                                        "field_map": {"source_id": "id"},
+                                        "type_map": {"Person": "person"},
+                                    }
+                                },
+                                # Static target vertex actor
+                                {"vertex": "institution", "from": {"id": "target_id"}},
+                                # Mixed-mode edge: dynamic source slot + static target
+                                {
+                                    "edge": {
+                                        "source_type_field": "source_type",
+                                        "to": "institution",
+                                        "relation_field": "relation_type",
+                                        "relation_map": {"EMPLOYED_BY": "employed_by"},
+                                    }
+                                },
+                            ],
+                        }
+                    ]
+                },
+                "bindings": {},
+            }
         )
-        resource = manifest.require_ingestion_model().fetch_resource(
-            "relations_explicit_target"
-        )
+        manifest.finish_init()
+        resource = manifest.require_ingestion_model().fetch_resource("rel")
         result = resource(
             {
                 "source_id": "p1",

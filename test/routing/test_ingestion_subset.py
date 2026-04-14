@@ -134,7 +134,8 @@ def test_vertex_router_early_exit_skips_disallowed_types() -> None:
     assert "B" not in extraction_ctx.acc_vertex
 
 
-def test_edge_router_early_exit_skips_disallowed_endpoints() -> None:
+def test_dynamic_edge_early_exit_skips_disallowed_endpoints() -> None:
+    """Dynamic EdgeActor skips rows where a resolved type is not in allowed_vertex_names."""
     vc = _vertex_config_a_b_c()
     ec = EdgeConfig.from_dict({"edges": []})
 
@@ -143,13 +144,23 @@ def test_edge_router_early_exit_skips_disallowed_endpoints() -> None:
             "name": "r",
             "pipeline": [
                 {
-                    "edge_router": {
+                    "vertex_router": {
+                        "type_field": "src_type",
+                        "field_map": {"src_id": "id"},
+                    }
+                },
+                {
+                    "vertex_router": {
+                        "type_field": "tgt_type",
+                        "field_map": {"tgt_id": "id"},
+                    }
+                },
+                {
+                    "edge": {
                         "source_type_field": "src_type",
                         "target_type_field": "tgt_type",
-                        "source_fields": {"id": "src_id"},
-                        "target_fields": {"id": "tgt_id"},
                     }
-                }
+                },
             ],
         }
     )
@@ -161,13 +172,14 @@ def test_edge_router_early_exit_skips_disallowed_endpoints() -> None:
         allowed_vertex_names={"A", "B"},
     )
 
+    # C is disallowed → VRA skips it; edge actor finds no target slot → no intent.
     extraction_ctx = resource._executor.extract(
         {"src_type": "A", "src_id": "a1", "tgt_type": "C", "tgt_id": "c1"}
     )
-    assert "A" not in extraction_ctx.acc_vertex  # no endpoint populated
     assert "C" not in extraction_ctx.acc_vertex
     assert not extraction_ctx.edge_intents
 
+    # Both A and B are allowed → vertices accumulated, edge intent produced.
     extraction_ctx = resource._executor.extract(
         {"src_type": "A", "src_id": "a1", "tgt_type": "B", "tgt_id": "b1"}
     )
@@ -176,7 +188,6 @@ def test_edge_router_early_exit_skips_disallowed_endpoints() -> None:
     assert extraction_ctx.edge_intents
 
     result = resource._executor.assemble_result(extraction_ctx).entities
-    # No edge should involve disallowed vertex types.
     for k in result.keys():
         if not isinstance(k, tuple):
             continue

@@ -67,13 +67,6 @@ def normalize_actor_step(data: dict[str, Any]) -> dict[str, Any]:
         data["type"] = "vertex_router"
         return data
 
-    if "edge_router" in data:
-        inner = data.pop("edge_router")
-        if isinstance(inner, dict):
-            data.update(inner)
-        data["type"] = "edge_router"
-        return data
-
     if "transform" in data:
         inner = data.pop("transform")
         if not isinstance(inner, dict):

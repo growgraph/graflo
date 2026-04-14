@@ -32,7 +32,6 @@ from graflo.architecture.pipeline.runtime.actor import (
     ActorWrapper,
     DescendActor,
     EdgeActor,
-    EdgeRouterActor,
     TransformActor,
     VertexActor,
     VertexRouterActor,
@@ -115,6 +114,7 @@ map_class2color = {
     VertexActor: "orange",
     EdgeActor: fillcolor_palette["violet"],
     TransformActor: fillcolor_palette["blue"],
+    VertexRouterActor: fillcolor_palette["peach"],
 }
 
 # Edge style mapping
@@ -374,6 +374,9 @@ class ManifestPlotter:
             for actor in actors:
                 if isinstance(actor, EdgeActor):
                     edge = actor.edge
+                    # Dynamic EdgeActors resolve types at row time; skip for plot discovery.
+                    if edge is None:
+                        continue
                     edge_id = edge.edge_id
                     # Store the edge, preferring already discovered edges from edge_config
                     # but allowing resource edges to supplement
@@ -772,12 +775,6 @@ class ManifestPlotter:
                     _add(vertex_name, "VertexRouterActor(type_map)")
                 for vertex_name in actor.vertex_from_map:
                     _add(vertex_name, "VertexRouterActor(vertex_from_map)")
-
-            if isinstance(actor, EdgeRouterActor):
-                for vertex_name in actor._source_type_map.values():
-                    _add(vertex_name, "EdgeRouterActor(source_type_map)")
-                for vertex_name in actor._target_type_map.values():
-                    _add(vertex_name, "EdgeRouterActor(target_type_map)")
 
         return vertex_reasons
 

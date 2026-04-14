@@ -1,8 +1,11 @@
 """Tests for TigerGraph database (graph) creation and deletion functionality."""
 
+import uuid
+
 import pytest
 
 from graflo.db import ConnectionManager
+from graflo.db.tigergraph.conn import TigerGraphConnection
 
 
 def test_create_database(conn_conf, test_graph_name):
@@ -12,8 +15,7 @@ def test_create_database(conn_conf, test_graph_name):
         assert not db_client.graph_exists(test_graph_name)
 
         # Create the graph
-        result = db_client.create_database(test_graph_name)
-        assert result is not None
+        db_client.create_database(test_graph_name)
 
         # Verify the graph exists
         assert db_client.graph_exists(test_graph_name)
@@ -27,7 +29,7 @@ def test_create_database_already_exists(conn_conf, test_graph_name):
         assert db_client.graph_exists(test_graph_name)
 
         # Creating it again should raise an exception
-        with pytest.raises(Exception):
+        with pytest.raises(RuntimeError, match="already exists"):
             db_client.create_database(test_graph_name)
 
 
@@ -41,17 +43,19 @@ def test_delete_database(conn_conf, test_graph_name):
         # Delete the graph
         db_client.delete_database(test_graph_name)
 
-        # Graph should no longer exist (or at least be cleared)
-        # Note: delete_database may only clear data, not drop structure
+        # Graph should no longer exist after successful drop.
+        assert not db_client.graph_exists(test_graph_name)
 
 
 def test_delete_nonexistent_database(conn_conf):
     """Test deleting a graph that doesn't exist."""
-    nonexistent_graph = f"nonexistent_{hash('test') % 10000}"
+    nonexistent_graph = f"nonexistent_{uuid.uuid4().hex[:8]}"
 
     with ConnectionManager(connection_config=conn_conf) as db_client:
+        assert not db_client.graph_exists(nonexistent_graph)
         # Delete should not raise an exception even if graph doesn't exist
         db_client.delete_database(nonexistent_graph)
+        assert not db_client.graph_exists(nonexistent_graph)
 
 
 def test_create_and_delete_database(conn_conf, test_graph_name):
@@ -63,6 +67,7 @@ def test_create_and_delete_database(conn_conf, test_graph_name):
 
         # Delete it
         db_client.delete_database(test_graph_name)
+        assert not db_client.graph_exists(test_graph_name)
 
 
 def test_schema_creation(conn_conf, test_graph_name, schema_obj):
@@ -144,64 +149,24 @@ def test_schema_creation_edges(conn_conf, test_graph_name, schema_obj):
             print(f"Created edge types: {edge_types}")
 
 
-def test_delete_database_keeps_other_graph_queries(conn_conf):
-    """Deleting one graph must not drop queries from unrelated graphs."""
-    graph_a = "g_query_scope_a"
-    graph_b = "g_query_scope_b"
-    query_a = "q_scope_a"
-    query_b = "q_scope_b"
+def test_delete_database_scopes_query_cleanup_to_target_graph() -> None:
+    """delete_database should clean only target graph queries before DROP GRAPH."""
+    conn = TigerGraphConnection.__new__(TigerGraphConnection)
+    dropped_graph_queries: list[str] = []
+    executed_gsql: list[str] = []
 
-    with ConnectionManager(connection_config=conn_conf) as db_client:
-        try:
-            # Ensure both graphs exist
-            if not db_client.graph_exists(graph_a):
-                db_client.create_database(graph_a)
-            if not db_client.graph_exists(graph_b):
-                db_client.create_database(graph_b)
+    def _fake_drop_installed_queries_for_graph(graph_name: str) -> None:
+        dropped_graph_queries.append(graph_name)
 
-            # Ensure queries do not pre-exist (best effort for idempotency)
-            for graph_name, query_name in ((graph_a, query_a), (graph_b, query_b)):
-                try:
-                    db_client._execute_gsql(
-                        f"USE GRAPH {graph_name}\nDROP QUERY {query_name} IF EXISTS"
-                    )
-                except Exception:
-                    pass
+    def _fake_execute_gsql(gsql: str):
+        executed_gsql.append(gsql)
+        return {"accepted": True}
 
-            # Install one trivial query per graph
-            db_client._execute_gsql(
-                f"""
-                USE GRAPH {graph_a}
-                CREATE QUERY {query_a}() FOR GRAPH {graph_a} {{
-                    PRINT "ok";
-                }}
-                INSTALL QUERY {query_a}
-                """
-            )
-            db_client._execute_gsql(
-                f"""
-                USE GRAPH {graph_b}
-                CREATE QUERY {query_b}() FOR GRAPH {graph_b} {{
-                    PRINT "ok";
-                }}
-                INSTALL QUERY {query_b}
-                """
-            )
+    conn._drop_installed_queries_for_graph = _fake_drop_installed_queries_for_graph
+    conn._execute_gsql = _fake_execute_gsql
 
-            assert query_a in db_client._get_installed_queries(graph_name=graph_a)
-            assert query_b in db_client._get_installed_queries(graph_name=graph_b)
+    graph_name = f"g_query_scope_a_{uuid.uuid4().hex[:8]}"
+    conn.delete_database(graph_name)
 
-            # Delete graph A and verify graph B query remains untouched.
-            db_client.delete_database(graph_a)
-
-            remaining_b_queries = db_client._get_installed_queries(graph_name=graph_b)
-            assert query_b in remaining_b_queries, (
-                f"Query '{query_b}' in graph '{graph_b}' should remain after deleting '{graph_a}'. "
-                f"Found: {remaining_b_queries}"
-            )
-        finally:
-            for graph_name in (graph_a, graph_b):
-                try:
-                    db_client.delete_database(graph_name)
-                except Exception:
-                    pass
+    assert dropped_graph_queries == [graph_name]
+    assert executed_gsql == [f"USE GLOBAL\nDROP GRAPH {graph_name}"]

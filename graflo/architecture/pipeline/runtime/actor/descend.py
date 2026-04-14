@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Any, Type
 from .base import Actor, ActorInitContext
 from .config import DescendActorConfig, VertexActorConfig
 from .edge import EdgeActor
-from .edge_router import EdgeRouterActor
 from .transform import TransformActor
 from .vertex import VertexActor
 from .vertex_router import VertexRouterActor
@@ -194,7 +193,6 @@ _NodeTypePriority: MappingProxyType[Type[Actor], int] = MappingProxyType(
         DescendActor: 10,
         TransformActor: 20,
         VertexRouterActor: 30,
-        EdgeRouterActor: 35,
         VertexActor: 50,
         EdgeActor: 90,
     }

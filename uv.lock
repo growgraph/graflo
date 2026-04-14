@@ -355,6 +355,15 @@ wheels = [
 ]
 
 [[package]]
+name = "execnet"
+sdist = {hash = "sha256:63d83bfdd9a23e35b9c6a3261412324f964c2ec8dcd8d3c6916ee9373e0befcd", size = 166622, upload-time = "2025-11-12T09:56:37.75Z", url = "https://files.pythonhosted.org/packages/bf/89/780e11f9588d9e7128a3f87788354c7946a9cbb1401ad38a48c4db9a4f07/execnet-2.1.2.tar.gz"}
+source = {registry = "https://pypi.org/simple"}
+version = "2.1.2"
+wheels = [
+  {hash = "sha256:67fba928dd5a544b783f6056f449e5e3931a5c378b128bc18501f7ea79e296ec", size = 40708, upload-time = "2025-11-12T09:56:36.333Z", url = "https://files.pythonhosted.org/packages/ab/84/02fc1827e8cdded4aa65baef11296a9bbe595c474f0d6d758af082d849fd/execnet-2.1.2-py3-none-any.whl"}
+]
+
+[[package]]
 dependencies = [
   {name = "python-dateutil"},
   {name = "redis"}
@@ -425,7 +434,7 @@ dependencies = [
 ]
 name = "graflo"
 source = {editable = "."}
-version = "1.7.17"
+version = "1.7.18"
 
 [package.metadata]
 provides-extras = ["dev", "docs", "plot"]
@@ -433,6 +442,7 @@ requires-dist = [
   {extras = ["python"], marker = "extra == 'docs'", name = "mkdocstrings", specifier = ">=0.29.1"},
   {marker = "extra == 'dev'", name = "pre-commit", specifier = ">=4.2.0"},
   {marker = "extra == 'dev'", name = "pytest", specifier = ">=9.0.2"},
+  {marker = "extra == 'dev'", name = "pytest-xdist", specifier = ">=3.8.0"},
   {marker = "extra == 'dev'", name = "ty", specifier = ">=0.0.1a24"},
   {marker = "extra == 'docs'", name = "mkdocs", specifier = ">=1.6.1"},
   {marker = "extra == 'docs'", name = "mkdocs-gen-files", specifier = ">=0.5.0"},
@@ -470,6 +480,7 @@ requires-dist = [
 dev = [
   {name = "pre-commit"},
   {name = "pytest"},
+  {name = "pytest-xdist"},
   {name = "ty"}
 ]
 docs = [
@@ -1690,6 +1701,19 @@ source = {registry = "https://pypi.org/simple"}
 version = "9.0.2"
 wheels = [
   {hash = "sha256:711ffd45bf766d5264d487b917733b453d917afd2b0ad65223959f59089f875b", size = 374801, upload-time = "2025-12-06T21:30:49.154Z", url = "https://files.pythonhosted.org/packages/3b/ab/b3226f0bd7cdcf710fbede2b3548584366da3b19b5021e74f5bde2a8fa3f/pytest-9.0.2-py3-none-any.whl"}
+]
+
+[[package]]
+dependencies = [
+  {name = "execnet"},
+  {name = "pytest"}
+]
+name = "pytest-xdist"
+sdist = {hash = "sha256:7e578125ec9bc6050861aa93f2d59f1d8d085595d6551c2c90b6f4fad8d3a9f1", size = 88069, upload-time = "2025-07-01T13:30:59.346Z", url = "https://files.pythonhosted.org/packages/78/b4/439b179d1ff526791eb921115fca8e44e596a13efeda518b9d845a619450/pytest_xdist-3.8.0.tar.gz"}
+source = {registry = "https://pypi.org/simple"}
+version = "3.8.0"
+wheels = [
+  {hash = "sha256:202ca578cfeb7370784a8c33d6d05bc6e13b4f25b5053c30a152269fd10f0b88", size = 46396, upload-time = "2025-07-01T13:30:56.632Z", url = "https://files.pythonhosted.org/packages/ca/31/d4e37e9e550c2b92a9cbc2e4d0b7420a27224968580b5a447f420847c975/pytest_xdist-3.8.0-py3-none-any.whl"}
 ]
 
 [[package]]

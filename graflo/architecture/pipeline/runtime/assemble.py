@@ -121,44 +121,23 @@ def assemble_edges(
 
     emitted_pairs: set[tuple[str, str]] = set()
 
-    if ctx.edge_intents:
-        for intent in ctx.edge_intents:
-            edge = intent.edge
-            relation_input = _resolved_relation_input_field(
-                edge,
-                derivation=intent.derivation,
-                target_db_flavor=target_db_flavor,
-            )
-            if _emit_edge_documents(
-                ctx=ctx,
-                vertex_config=vertex_config,
-                edge=edge,
-                lindex=intent.location,
-                relation_input_field=relation_input,
-                derivation=intent.derivation,
-                edge_derivation=edge_derivation,
-            ):
-                emitted_pairs.add((edge.source, edge.target))
-    else:
-        for item in ctx.edge_requests:
-            edge = item[0]
-            lindex = item[1]
-            relation_input = _resolved_relation_input_field(
-                edge,
-                derivation=None,
-                target_db_flavor=target_db_flavor,
-            )
-            if _emit_edge_documents(
-                ctx=ctx,
-                vertex_config=vertex_config,
-                edge=edge,
-                lindex=lindex,
-                relation_input_field=relation_input,
-                derivation=None,
-                edge_derivation=edge_derivation,
-            ):
-                emitted_pairs.add((edge.source, edge.target))
-    ctx.edge_requests = []
+    for intent in ctx.edge_intents:
+        edge = intent.edge
+        relation_input = _resolved_relation_input_field(
+            edge,
+            derivation=intent.derivation,
+            target_db_flavor=target_db_flavor,
+        )
+        if _emit_edge_documents(
+            ctx=ctx,
+            vertex_config=vertex_config,
+            edge=edge,
+            lindex=intent.location,
+            relation_input_field=relation_input,
+            derivation=intent.derivation,
+            edge_derivation=edge_derivation,
+        ):
+            emitted_pairs.add((edge.source, edge.target))
     ctx.extraction.edge_intents = []
 
     if not infer_edges:

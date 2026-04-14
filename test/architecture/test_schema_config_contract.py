@@ -1,6 +1,6 @@
 import pytest
 
-from graflo.architecture.pipeline.runtime.actor.config import EdgeRouterActorConfig
+from graflo.architecture.pipeline.runtime.actor.config import EdgeActorConfig
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.schema import Schema
 
@@ -134,19 +134,15 @@ def test_schema_rejects_edges_with_undefined_vertices():
     assert "Declared vertices: ['user']" in str(exc_info.value)
 
 
-def test_edge_router_requires_at_least_one_dynamic_type_side():
+def test_edge_actor_requires_source():
+    """EdgeActorConfig rejects a step with no source or source_type_field."""
     with pytest.raises(
         ValueError,
-        match=(
-            "edge_router requires at least one of "
-            "source_type_field or target_type_field"
-        ),
+        match="edge step requires 'from' \\(source\\) or source_type_field",
     ):
-        EdgeRouterActorConfig.model_validate(
+        EdgeActorConfig.model_validate(
             {
-                "source": "person",
-                "target": "institution",
-                "source_fields": {"id": "source_id"},
-                "target_fields": {"id": "target_id"},
+                "type": "edge",
+                "to": "institution",
             }
         )

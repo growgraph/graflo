@@ -292,7 +292,6 @@ classDiagram
     class VertexActor
     class EdgeActor
     class VertexRouterActor
-    class EdgeRouterActor
     class TransformActor
     class DescendActor
 
@@ -351,7 +350,6 @@ classDiagram
     Actor <|-- VertexActor
     Actor <|-- EdgeActor
     Actor <|-- VertexRouterActor
-    Actor <|-- EdgeRouterActor
     Actor <|-- TransformActor
     Actor <|-- DescendActor
 ```
@@ -530,7 +528,7 @@ An `Edge` describes edges and their logical identities. It allows:
 - **`properties`**: relationship payload (names and optional types), same accepted forms as vertex properties (strings, `Field`, or dicts with at least `name`)
 - Optional static **`relation`** label (e.g. Neo4j relationship type) when it is not derived at ingest time
 
-Ingestion-only controls (**`relation_field`**, **`relation_from_key`**, **`match_source`**, **`match_target`**, vertex-sourced edge payload) live on **`EdgeActor`** / **`EdgeRouterActor`** steps and **`EdgeDerivation`**, not on the logical `Edge` model.
+Ingestion-only controls (**`relation_field`**, **`relation_from_key`**, **`match_source`**, **`match_target`**, vertex-sourced edge payload) live on **`EdgeActor`** steps and **`EdgeDerivation`**, not on the logical `Edge` model.
 
 ### Edge properties and configuration
 
@@ -619,15 +617,16 @@ Resource-level edge inference controls:
 
 ### Actor
 An `Actor` describes how the current level of the document should be mapped/transformed to the property graph vertices and edges. There are six actor types:
- 
+
 - `DescendActor`: Navigates to the next level in the hierarchy. Supports:
   - `key`: Process a specific key in a dictionary
   - `any_key`: Process all keys in a dictionary (useful when you want to handle multiple keys dynamically)
 - `TransformActor`: Applies data transformations
 - `VertexActor`: Creates vertices from the current level
-- `EdgeActor`: Creates edges between vertices
-- `VertexRouterActor`: Routes documents to the correct `VertexActor` based on a type field in the document (dynamic vertex-type routing)
-- `EdgeRouterActor`: Routes documents to dynamically created edges based on source/target type fields and optional relation field
+- `EdgeActor`: Creates edges between vertices. Operates in two modes:
+  - **Static mode** (`from`/`to` set on both sides): vertex types declared at config time.
+  - **Dynamic / mixed mode** (at least one of `source_type_field`/`target_type_field` set): vertex types resolved at extraction time by looking up accumulator slots written by `VertexRouterActor` steps. The other side may be a static type (mixed mode) or also dynamic (fully dynamic mode).
+- `VertexRouterActor`: Routes documents to the correct `VertexActor` based on a type field. Vertices are always stored at `lindex.extend((type_field, 0))`, making them addressable by a downstream dynamic `EdgeActor` via `source_type_field` / `target_type_field`.
 
 ```mermaid
 flowchart TB
@@ -635,18 +634,41 @@ flowchart TB
         D[DescendActor]
         T[TransformActor]
         V[VertexActor]
-        E[EdgeActor]
-        VR[VertexRouterActor]
-        ER[EdgeRouterActor]
+        E["EdgeActor\n(static, dynamic, or mixed)"]
+        VR["VertexRouterActor\n(type_field as slot)"]
     end
     Doc[Document] --> D
     Doc --> T
     Doc --> V
     Doc --> E
     Doc --> VR
-    Doc --> ER
-    VR -.->|routes by type_field| V
-    ER -.->|routes by source/target/relation fields| E
+    VR -.->|"type_field='tf'\n→ store at lindex.(tf,0)"| V
+    E -.->|"source_type_field='tf'\n→ scan acc_vertex at lindex.(tf,0)"| V
+```
+
+#### Dynamic Edge Scenario Matrix
+
+| Vertex types | Relation | Config pattern |
+|---|---|---|
+| Both static | Static | `from: server, to: database, relation: uses` |
+| Both static | Dynamic from field | `from: server, to: database, relation_field: rt` |
+| Both static | Dynamic from key | `from: server, to: database, relation_from_key: true` |
+| Both dynamic | Static | `source_type_field: tf_src, target_type_field: tf_tgt, relation: uses` |
+| Both dynamic | Dynamic from field | `source_type_field: tf_src, target_type_field: tf_tgt, relation_field: rt` |
+| Mixed (static + dynamic) | Dynamic | `from: person, target_type_field: tf_tgt, relation_field: rt` |
+| Mixed (dynamic + static) | Dynamic | `source_type_field: tf_src, to: institution, relation_field: rt` |
+
+`source_type_field` / `target_type_field` must equal the `type_field` of the upstream `VertexRouterActor` whose vertices should serve as source / target.
+
+#### Type Safety Controls
+
+When dynamic edge types are used, a row may encounter a `(source_type, target_type)` pair not pre-declared in the schema `edge_config`. By default (`strict_edge_types: false`) this pair is registered at runtime. For strictly-typed databases that require DDL before writes, set:
+
+```yaml
+edge:
+  source_type_field: S
+  target_type_field: T
+  strict_edge_types: true   # skip rows whose resolved pair is not pre-declared
 ```
 
 ### Location-scoped observations, transforms, and routers
@@ -658,7 +680,9 @@ Ingestion pipelines walk **nested JSON** (or list-shaped branches). At each step
 
 **Transform output** is not written back onto that slice automatically. `TransformActor` appends a `TransformPayload` to `ExtractionContext.buffer_transforms[location]` for the **same** `LocationIndex` it was invoked with. Later actors at that location can consume those named fields.
 
-**`VertexRouterActor` and `EdgeRouterActor`** build an **effective observation** by merging the current dict slice with all `TransformPayload` entries at that `LocationIndex` (in pipeline order; later transforms override earlier keys and override the raw JSON on conflicts). Routing fields (`type_field`, edge type fields, `relation_field`, projections) are read from this merged view, so normalized attributes produced by transforms are first-class inputs to routing. For `VertexRouterActor`, if `prefix` is set and `type_field` is absent on the merged slice, the router also tries ``{prefix}{type_field}`` so prefixed discriminator keys (including from transforms) still resolve the vertex type.
+**`VertexRouterActor`** builds an **effective observation** by merging the current dict slice with all `TransformPayload` entries at that `LocationIndex`. Routing fields (`type_field`, projections) are read from this merged view. If `prefix` is set and `type_field` is absent on the merged slice, the router also tries `{prefix}{type_field}`. The vertex is always accumulated at `lindex.extend((type_field, 0))`, using `type_field` as the slot name. A downstream dynamic `EdgeActor` finds it by setting `source_type_field` / `target_type_field` to the same `type_field` value.
+
+**Dynamic `EdgeActor`** (slot mode) also merges the doc with the transform buffer before reading `relation_field`; this ensures that values produced by upstream transforms (e.g. canonicalized relation names) are available at edge construction time.
 
 **Scoping:** `buffer_transforms` is keyed only by the exact `LocationIndex`. A transform at a parent path does **not** appear in the buffer for a child path, and vice versa. That keeps parent/child branches separate.
 

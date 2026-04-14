@@ -4,7 +4,7 @@ Provides SelectSpec for describing queries in a structured way, similar to
 FilterExpression. Supports type_lookup shorthand for edge tables where
 source/target types come from lookup table(s) via FK joins, with optional
 per-side table / join key / discriminator column. Asymmetric edges (e.g. one
-static vertex type from EdgeRouterConfig only) use kind="select".
+static vertex type) use kind="select".
 """
 
 from __future__ import annotations

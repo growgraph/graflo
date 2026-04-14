@@ -1,0 +1,4 @@
+T_source,I_source,desc_source,T_target,I_target,desc_target,RT
+server,s1,Web server,database,d1,Primary DB,runs_on
+server,s2,App server,database,d2,Replica DB,runs_on
+server,s1,Web server,database,d2,Replica DB,replicates

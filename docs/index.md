@@ -15,7 +15,7 @@ It is a **Python package** and **Graph Schema & Transformation Language (GSTL)**
 
 - **One pipeline, several graph databases** — The same manifest targets ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, or NebulaGraph; `DatabaseProfile` and DB-aware types absorb naming, defaults, and indexing differences.
 - **Explicit identities** — Vertex identity fields and indexes back upserts so reloads merge on keys instead of blindly duplicating nodes.
-- **Reusable ingestion** — `Resource` actor pipelines (including **vertex_router** / **edge_router** steps and the **`VertexRouterActor`** / **`EdgeRouterActor`** implementations) bind to files, SQL, SPARQL/RDF, APIs, or in-memory batches via `Bindings` and the `DataSourceRegistry`.
+- **Reusable ingestion** — `Resource` actor pipelines (including **vertex_router** / **edge** steps and the **`VertexRouterActor`** / **`EdgeActor`** implementations) bind to files, SQL, SPARQL/RDF, APIs, or in-memory batches via `Bindings` and the `DataSourceRegistry`.
 - **Manifest-first sanitization** — `Sanitizer` normalizes schema identifiers (reserved words, TigerGraph relation/index constraints) and synchronizes related ingestion mappings via `sanitize_manifest(GraphManifest)`.
 
 ### What’s in the manifest

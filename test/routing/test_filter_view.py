@@ -1,4 +1,4 @@
-"""Tests for SelectSpec / TableConnector views and EdgeRouterActor row contract."""
+"""Tests for SelectSpec / TableConnector views and edge pipeline row contract."""
 
 from __future__ import annotations
 
@@ -12,8 +12,7 @@ from unittest.mock import MagicMock
 from graflo.architecture.contract.bindings import TableConnector
 from graflo.architecture.graph_types import ExtractionContext, LocationIndex
 from graflo.architecture.pipeline.runtime.actor.base import ActorInitContext
-from graflo.architecture.pipeline.runtime.actor.config import EdgeRouterActorConfig
-from graflo.architecture.pipeline.runtime.actor.edge_router import EdgeRouterActor
+from graflo.architecture.pipeline.runtime.actor.wrapper import ActorWrapper
 from graflo.architecture.schema.edge import EdgeConfig
 from graflo.architecture.schema.vertex import Field as VertexField
 from graflo.architecture.schema.vertex import Vertex, VertexConfig
@@ -107,33 +106,54 @@ def _vertex_config_fixture() -> VertexConfig:
     )
 
 
-def _symmetric_edge_router() -> EdgeRouterActor:
-    cfg = EdgeRouterActorConfig(
-        source_type_field="source_type",
-        target_type_field="target_type",
-        source_fields={"id": "source_id"},
-        target_fields={"id": "target_id"},
-        relation_field="relation",
+def _init_ctx() -> ActorInitContext:
+    return ActorInitContext(
+        vertex_config=_vertex_config_fixture(),
+        edge_config=EdgeConfig(),
+        transforms={},
     )
-    router = EdgeRouterActor.from_config(cfg)
-    router.finish_init(
-        ActorInitContext(
-            vertex_config=_vertex_config_fixture(),
-            edge_config=EdgeConfig(),
-            transforms={},
-        )
-    )
-    return router
 
 
-def _run_router_on_rows(
-    router: EdgeRouterActor, rows: list[dict[str, object]]
+def _make_symmetric_pipeline() -> ActorWrapper:
+    """vertex_router(source_type) + vertex_router(target_type) + dynamic edge."""
+    wrapper = ActorWrapper(
+        pipeline=[
+            {
+                "vertex_router": {
+                    "type_field": "source_type",
+                    "field_map": {"source_id": "id"},
+                }
+            },
+            {
+                "vertex_router": {
+                    "type_field": "target_type",
+                    "field_map": {"target_id": "id"},
+                }
+            },
+            {
+                "edge": {
+                    "source_type_field": "source_type",
+                    "target_type_field": "target_type",
+                    "relation_field": "relation",
+                }
+            },
+        ]
+    )
+    wrapper.finish_init(_init_ctx())
+    return wrapper
+
+
+def _run_pipeline_on_rows(
+    wrapper: ActorWrapper, rows: list[dict[str, object]]
 ) -> list[tuple[str, str, str | None]]:
     ctx = ExtractionContext()
     base = LocationIndex()
     for i, row in enumerate(rows):
-        router(ctx, base.extend((i,)), doc=dict(row))
-    return [(edge.source, edge.target, edge.relation) for edge, _ in ctx.edge_requests]
+        wrapper(ctx, base.extend((i,)), doc=dict(row))
+    return [
+        (intent.edge.source, intent.edge.target, intent.edge.relation)
+        for intent in ctx.edge_intents
+    ]
 
 
 _TYPE_LOOKUP_VIEW: dict[str, object] = {
@@ -372,11 +392,11 @@ class TestSelectSpecFromDict:
         assert spec.relation == "link_type"
 
 
-class TestTypeLookupSqlFeedsEdgeRouter:
-    """type_lookup SQL rows match EdgeRouterActor field mapping (symmetric types)."""
+class TestTypeLookupSqlFeedsPipeline:
+    """type_lookup SQL rows match vertex_router+edge pipeline field mapping."""
 
     def test_type_lookup_rows_produce_expected_edges(self):
-        """Rows from type_lookup view are consumed directly by edge_router config."""
+        """Rows from type_lookup view are consumed directly by the new pipeline."""
         conn_str = _setup_test_db()
         spec = SelectSpec.from_dict(_TYPE_LOOKUP_VIEW)
         sql = _sql_for_sqlite(spec.build_sql(schema="main", base_table="entity_links"))
@@ -388,7 +408,7 @@ class TestTypeLookupSqlFeedsEdgeRouter:
         assert first["target_type"] == "task"
         assert first["relation"] == "contains"
 
-        triples = _run_router_on_rows(_symmetric_edge_router(), rows)
+        triples = _run_pipeline_on_rows(_make_symmetric_pipeline(), rows)
         assert Counter(triples) == Counter(
             [
                 ("project", "task", "contains"),
@@ -398,10 +418,10 @@ class TestTypeLookupSqlFeedsEdgeRouter:
         )
 
 
-class TestTableConnectorViewFeedsEdgeRouter:
+class TestTableConnectorViewFeedsPipeline:
     """TableConnector.view build_query produces the same edge contract."""
 
-    def test_table_connector_query_rows_match_edge_router(self):
+    def test_table_connector_query_rows_match_pipeline(self):
         connector = TableConnector(
             table_name="entity_links",
             schema_name="main",
@@ -411,7 +431,7 @@ class TestTableConnectorViewFeedsEdgeRouter:
         sql = _sql_for_sqlite(connector.build_query("main"))
         rows = _fetch_rows(conn_str, sql)
 
-        triples = _run_router_on_rows(_symmetric_edge_router(), rows)
+        triples = _run_pipeline_on_rows(_make_symmetric_pipeline(), rows)
         assert Counter(triples) == Counter(
             [
                 ("project", "task", "contains"),
@@ -440,7 +460,7 @@ class TestTypeLookupPerSideConfiguration:
         assert '"src_entity_types" s' in sql
         assert '"tgt_entity_types" t' in sql
         rows = _fetch_rows(conn_str, sql)
-        triples = _run_router_on_rows(_symmetric_edge_router(), rows)
+        triples = _run_pipeline_on_rows(_make_symmetric_pipeline(), rows)
         assert Counter(triples) == Counter(
             [
                 ("project", "task", "contains"),
@@ -465,7 +485,7 @@ class TestTypeLookupPerSideConfiguration:
         assert 'base."parent_uuid" = s."by_uuid"' in sql
         assert 'base."child_code" = t."by_code"' in sql
         rows = _fetch_rows(conn_str, sql)
-        triples = _run_router_on_rows(_symmetric_edge_router(), rows)
+        triples = _run_pipeline_on_rows(_make_symmetric_pipeline(), rows)
         assert Counter(triples) == Counter(
             [
                 ("project", "task", "contains"),
@@ -491,7 +511,7 @@ class TestTypeLookupPerSideConfiguration:
         assert 's."vertex_kind" AS source_type' in sql
         assert 't."label" AS target_type' in sql
         rows = _fetch_rows(conn_str, sql)
-        triples = _run_router_on_rows(_symmetric_edge_router(), rows)
+        triples = _run_pipeline_on_rows(_make_symmetric_pipeline(), rows)
         assert Counter(triples) == Counter(
             [
                 ("project", "task", "contains"),
@@ -539,22 +559,27 @@ class TestSelectKindSelectAsymmetricLookup:
         assert len(rows) == 3
         assert rows[0]["target_type"] == "task"
 
-        cfg = EdgeRouterActorConfig(
-            source="project",
-            target_type_field="target_type",
-            source_fields={"id": "source_id"},
-            target_fields={"id": "target_id"},
-            relation_field="relation",
+        # Mixed-mode pipeline: static source "project" + dynamic target from slot.
+        mixed = ActorWrapper(
+            pipeline=[
+                {"vertex": "project", "from": {"id": "source_id"}},
+                {
+                    "vertex_router": {
+                        "type_field": "target_type",
+                        "field_map": {"target_id": "id"},
+                    }
+                },
+                {
+                    "edge": {
+                        "from": "project",
+                        "target_type_field": "target_type",
+                        "relation_field": "relation",
+                    }
+                },
+            ]
         )
-        router = EdgeRouterActor.from_config(cfg)
-        router.finish_init(
-            ActorInitContext(
-                vertex_config=_vertex_config_fixture(),
-                edge_config=EdgeConfig(),
-                transforms={},
-            )
-        )
-        triples = _run_router_on_rows(router, rows)
+        mixed.finish_init(_init_ctx())
+        triples = _run_pipeline_on_rows(mixed, rows)
         assert Counter(triples) == Counter(
             [
                 ("project", "task", "contains"),
@@ -600,7 +625,7 @@ class TestSelectStructuredItemsAndConcat:
         assert 'base."parent"' in sql
         assert 's."type_name" AS source_type' in sql
         rows = _fetch_rows(conn_str, sql)
-        triples = _run_router_on_rows(_symmetric_edge_router(), rows)
+        triples = _run_pipeline_on_rows(_make_symmetric_pipeline(), rows)
         assert Counter(triples) == Counter(
             [
                 ("project", "task", "contains"),

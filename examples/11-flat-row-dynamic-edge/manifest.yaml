@@ -1,0 +1,52 @@
+schema:
+    metadata:
+        name: flat_row_dynamic_edge
+    graph:
+        vertex_config:
+            vertices:
+            -   name: server
+                properties:
+                -   id
+                -   desc
+                identity:
+                -   id
+            -   name: database
+                properties:
+                -   id
+                -   desc
+                identity:
+                -   id
+        edge_config:
+            edges:
+            -   source: server
+                target: database
+                relation: runs_on
+            -   source: server
+                target: database
+                relation: replicates
+    db_profile: {}
+
+ingestion_model:
+    resources:
+    -   name: relations
+        pipeline:
+        -   vertex_router:
+                type_field: T_source
+                field_map:
+                    I_source: id
+                    desc_source: desc
+        -   vertex_router:
+                type_field: T_target
+                field_map:
+                    I_target: id
+                    desc_target: desc
+        -   edge:
+                source_type_field: T_source # references VRA with type_field=T_source
+                target_type_field: T_target # references VRA with type_field=T_target
+                relation_field: RT
+
+bindings:
+    connectors:
+    -   regex: "^relations\\.csv$"
+        sub_path: .
+        resource_name: relations

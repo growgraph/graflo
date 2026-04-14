@@ -522,10 +522,6 @@ def _default_dict_transforms() -> defaultdict[LocationIndex, list[Any]]:
     return defaultdict(list)
 
 
-def _default_edge_requests() -> list[tuple[Any, LocationIndex]]:
-    return []
-
-
 def _default_vertex_observations() -> list[VertexObservation]:
     return []
 
@@ -544,7 +540,6 @@ class ExtractionContext(ConfigBaseModel):
     Attributes:
         acc_vertex: Local accumulation of extracted vertices
         buffer_transforms: Buffer for transform payloads (defaultdict[LocationIndex, list])
-        edge_requests: Explicit edge assembly requests collected during extraction
         vertex_observations: Explicit extracted vertex observations
         transform_observations: Explicit extracted transform observations
         edge_intents: Explicit edge intents for assembly phase
@@ -556,7 +551,6 @@ class ExtractionContext(ConfigBaseModel):
     # so we use Any; runtime type is as documented in Attributes
     acc_vertex: Any = Field(default_factory=outer_factory)
     buffer_transforms: Any = Field(default_factory=_default_dict_transforms)
-    edge_requests: Any = Field(default_factory=_default_edge_requests)
     vertex_observations: list[VertexObservation] = Field(
         default_factory=_default_vertex_observations
     )
@@ -621,14 +615,6 @@ class AssemblyContext(ConfigBaseModel):
     @property
     def buffer_transforms(self) -> Any:
         return self.extraction.buffer_transforms
-
-    @property
-    def edge_requests(self) -> Any:
-        return self.extraction.edge_requests
-
-    @edge_requests.setter
-    def edge_requests(self, value: Any) -> None:
-        self.extraction.edge_requests = value
 
     @property
     def edge_intents(self) -> list[EdgeIntent]:

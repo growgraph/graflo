@@ -1,12 +1,17 @@
 from types import SimpleNamespace
+from typing import cast
 
 import networkx as nx
 import pytest
 
-from graflo.architecture.pipeline.runtime.actor import EdgeActor
+from graflo.architecture.pipeline.runtime.actor import (
+    EdgeActor,
+    VertexRouterActor,
+)
+from graflo.architecture.pipeline.runtime.actor.wrapper import ActorWrapper
 from graflo.architecture.pipeline.runtime.actor.config import EdgeActorConfig
 from graflo.architecture.schema.edge import Edge
-from graflo.plot.plotter import ManifestPlotter
+from graflo.plot.plotter import ManifestPlotter, assemble_tree, fillcolor_palette
 
 
 class _EdgeConfigStub:
@@ -60,6 +65,14 @@ class _AgraphStub:
         self.draw_calls.append(
             {"path": path, "output_format": output_format, "prog": prog}
         )
+
+
+class _ActorWrapperStub:
+    def __init__(self, edges):
+        self._edges = edges
+
+    def fetch_actors(self, _depth, _acc):
+        return (None, None, None, self._edges)
 
 
 def _build_plotter(
@@ -219,3 +232,18 @@ def test_plot_vc2fields_appends_schema_version_to_stem(monkeypatch):
     plotter.plot_vc2fields()
 
     assert captured["ag"].draw_calls[0]["path"] == "./test_schema_vc2fields-v2.3.4.pdf"
+
+
+def test_assemble_tree_styles_router_actor_classes():
+    router_edge = (
+        "root",
+        "dynamic_edge",
+        {"class": VertexRouterActor},
+        {"class": EdgeActor},
+    )
+    actor_wrapper_stub = _ActorWrapperStub([router_edge])
+
+    graph = assemble_tree(cast(ActorWrapper, actor_wrapper_stub))
+
+    assert graph.nodes["root"]["fillcolor"] == fillcolor_palette["peach"]
+    assert graph.nodes["dynamic_edge"]["fillcolor"] == fillcolor_palette["violet"]
