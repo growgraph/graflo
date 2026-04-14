@@ -5,6 +5,7 @@ for graph database operations, coordinating between inference, connector mapping
 and data ingestion.
 """
 
+import inspect
 import logging
 
 from graflo.architecture.contract.manifest import GraphManifest
@@ -325,7 +326,13 @@ class GraphEngine:
         ingestion_params = ingestion_params or IngestionParams()
         if ingestion_params.clear_data:
             with ConnectionManager(connection_config=target_db_config) as db_client:
-                db_client.clear_data(schema)
+                clear_result = db_client.clear_data(schema)
+                if inspect.isawaitable(clear_result):
+                    raise TypeError(
+                        "clear_data must be synchronous so ingestion only starts "
+                        "after data clearing has completed."
+                    )
+
         caster = Caster(
             schema=schema,
             ingestion_model=ingestion_model,

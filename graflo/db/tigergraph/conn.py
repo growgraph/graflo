@@ -24,11 +24,11 @@ Example:
 """
 
 import contextlib
+import hashlib
 import json
 import logging
 import re
 import uuid
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import defaultdict
 from functools import lru_cache
 from pathlib import Path
@@ -293,6 +293,7 @@ class TigerGraphConnection(Connection):
         self._bulk_sessions: dict[
             str, tuple[BulkCsvAppender, TigergraphBulkLoadConfig, Any, Path]
         ] = {}
+        self._installed_clear_data_queries: dict[str, set[str]] = {}
 
         # Initialize URLs (ports come from config, no hardcoded defaults)
         # Set GSQL URL first as it's needed for token generation
@@ -1048,6 +1049,7 @@ class TigerGraphConnection(Connection):
         queries = self._get_installed_queries(graph_name=graph_name)
         if not queries:
             logger.debug(f"No installed queries found for graph '{graph_name}'")
+            self._installed_clear_data_queries.pop(graph_name, None)
             return
 
         logger.info(f"Dropping {len(queries)} queries from graph '{graph_name}'")
@@ -1068,6 +1070,7 @@ class TigerGraphConnection(Connection):
                         f"Could not drop query '{query_name}' from graph "
                         f"'{graph_name}': {query_error}"
                     )
+        self._installed_clear_data_queries.pop(graph_name, None)
 
     def _run_installed_query(
         self, query_name: str, graph_name: str | None = None, **kwargs: Any
@@ -1086,6 +1089,54 @@ class TigerGraphConnection(Connection):
         graph_name = graph_name or self.graphname
         endpoint = f"/query/{graph_name}/{query_name}"
         return self._call_restpp_api(endpoint, method="POST", data=kwargs)
+
+    def _build_clear_data_query_name(self, vertex_types: tuple[str, ...]) -> str:
+        """Build a stable, schema-aware query name for clear-data operations."""
+        signature = "|".join(sorted(vertex_types))
+        digest = hashlib.sha1(signature.encode("utf-8")).hexdigest()[:12]
+        return f"graflo_clear_data_{digest}"
+
+    def _install_clear_data_query(
+        self, graph_name: str, query_name: str, vertex_types: tuple[str, ...]
+    ) -> None:
+        """Create and install a pre-compiled query that deletes all schema vertex types."""
+        delete_stmts = "\n".join(
+            f"  DELETE FROM {vertex_type};" for vertex_type in sorted(vertex_types)
+        )
+        create_and_install = "\n".join(
+            [
+                f"USE GRAPH {graph_name}",
+                f"CREATE QUERY {query_name}() FOR GRAPH {graph_name} {{",
+                delete_stmts,
+                "}",
+                f"INSTALL QUERY {query_name}",
+            ]
+        )
+        self._execute_gsql(create_and_install)
+
+    def _clear_data_via_installed_query(
+        self, graph_name: str, vertex_types: tuple[str, ...]
+    ) -> None:
+        """Run clear-data through an installed GSQL query for faster cluster cleanup."""
+        query_name = self._build_clear_data_query_name(vertex_types)
+        installed_queries = self._installed_clear_data_queries.get(graph_name)
+        if installed_queries is None:
+            installed_queries = set(self._get_installed_queries(graph_name=graph_name))
+            self._installed_clear_data_queries[graph_name] = installed_queries
+        if query_name not in installed_queries:
+            self._install_clear_data_query(
+                graph_name=graph_name,
+                query_name=query_name,
+                vertex_types=vertex_types,
+            )
+            installed_queries.add(query_name)
+
+        result = self._run_installed_query(query_name=query_name, graph_name=graph_name)
+        if isinstance(result, dict) and result.get("error") is True:
+            raise RuntimeError(
+                f"Installed clear_data query '{query_name}' failed: "
+                f"{result.get('message', 'Unknown TigerGraph error')}"
+            )
 
     def _upsert_vertex(
         self,
@@ -3370,34 +3421,57 @@ class TigerGraphConnection(Connection):
         vc = schema.resolve_db_aware(DBType.TIGERGRAPH).vertex_config
         graph_name = self._configured_graph_name() or schema.metadata.name
         vertex_types = tuple(vc.vertex_dbname(v) for v in vc.vertex_set)
-        if vertex_types:
-            max_workers = min(8, len(vertex_types))
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                future_to_vertex_type = {
-                    executor.submit(
-                        self._delete_vertices,
-                        vertex_type=vertex_type,
-                        graph_name=graph_name,
-                    ): vertex_type
-                    for vertex_type in vertex_types
-                }
-                for future in as_completed(future_to_vertex_type):
-                    vertex_type = future_to_vertex_type[future]
-                    try:
-                        result = future.result()
-                        logger.debug(
-                            "Deleted vertices from %s in graph %s: %s",
-                            vertex_type,
-                            graph_name,
-                            result,
-                        )
-                    except Exception as e:
-                        logger.error(
-                            "Error deleting vertices from %s in graph %s: %s",
-                            vertex_type,
-                            graph_name,
-                            e,
-                        )
+        if not vertex_types:
+            return
+
+        try:
+            self._clear_data_via_installed_query(
+                graph_name=graph_name, vertex_types=vertex_types
+            )
+            logger.info(
+                "Cleared data via installed query for graph '%s' (%d vertex types)",
+                graph_name,
+                len(vertex_types),
+            )
+            return
+        except Exception as query_error:
+            logger.warning(
+                "Installed clear-data query path failed for graph '%s': %s. "
+                "Falling back to REST vertex deletion.",
+                graph_name,
+                query_error,
+            )
+
+        failures: list[str] = []
+        for vertex_type in vertex_types:
+            try:
+                result = self._delete_vertices(
+                    vertex_type=vertex_type,
+                    graph_name=graph_name,
+                )
+                if isinstance(result, dict) and result.get("error") is True:
+                    raise RuntimeError(
+                        result.get("message", "Unknown TigerGraph error")
+                    )
+                logger.debug(
+                    "Deleted vertices from %s in graph %s: %s",
+                    vertex_type,
+                    graph_name,
+                    result,
+                )
+            except Exception as e:
+                logger.error(
+                    "Error deleting vertices from %s in graph %s: %s",
+                    vertex_type,
+                    graph_name,
+                    e,
+                )
+                failures.append(f"{vertex_type}: {e}")
+
+        if failures:
+            raise RuntimeError(
+                "TigerGraph clear_data failed for vertex types: " + "; ".join(failures)
+            )
 
     def _generate_upsert_payload(
         self, data: list[dict[str, Any]], vname: str, vindex: tuple[str, ...]

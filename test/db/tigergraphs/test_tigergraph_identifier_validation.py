@@ -15,7 +15,6 @@ from graflo.db.tigergraph.conn import (
     _load_tigergraph_name_rules,
     _validate_tigergraph_schema_name,
 )
-import graflo.db.tigergraph.conn as tigergraph_conn_module
 from graflo.onto import DBType
 
 
@@ -86,50 +85,73 @@ def test_require_configured_graph_name_raises_when_unset() -> None:
         conn._require_configured_graph_name()
 
 
-def test_clear_data_uses_bounded_parallel_deletes(
+def test_clear_data_uses_installed_query_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     conn = TigerGraphConnection.__new__(TigerGraphConnection)
     conn.config = SimpleNamespace(database="cfg_graph", schema_name=None)
+    conn._installed_clear_data_queries = {}
 
-    submitted: list[tuple[str, str | None]] = []
-    created_max_workers: list[int] = []
+    submitted_queries: list[tuple[str, tuple[str, ...]]] = []
 
-    class _FakeFuture:
-        def __init__(self, fn, **kwargs):
-            self._fn = fn
-            self._kwargs = kwargs
+    def _fake_clear_data_via_installed_query(
+        graph_name: str, vertex_types: tuple[str, ...]
+    ) -> None:
+        submitted_queries.append((graph_name, vertex_types))
 
-        def result(self):
-            return self._fn(**self._kwargs)
+    monkeypatch.setattr(
+        conn, "_clear_data_via_installed_query", _fake_clear_data_via_installed_query
+    )
+    monkeypatch.setattr(
+        conn,
+        "_delete_vertices",
+        lambda *_args, **_kwargs: pytest.fail("fallback delete path should not run"),
+    )
 
-    class _FakeExecutor:
-        def __init__(self, max_workers: int):
-            created_max_workers.append(max_workers)
-            self._futures: list[_FakeFuture] = []
+    class _FakeVertexConfig:
+        vertex_set = ("a", "b", "c")
 
-        def __enter__(self):
-            return self
+        @staticmethod
+        def vertex_dbname(vertex_name: str) -> str:
+            return f"V_{vertex_name}"
 
-        def __exit__(self, exc_type, exc, tb):
-            return False
+    class _FakeDbAwareSchema:
+        vertex_config = _FakeVertexConfig()
 
-        def submit(self, fn, **kwargs):
-            future = _FakeFuture(fn, **kwargs)
-            self._futures.append(future)
-            return future
+    class _FakeSchema:
+        metadata = SimpleNamespace(name="schema_graph")
 
-    def _fake_as_completed(futures):
-        return iter(list(futures))
+        @staticmethod
+        def resolve_db_aware(_db_type):
+            return _FakeDbAwareSchema()
+
+    conn.clear_data(_FakeSchema())
+
+    assert submitted_queries == [("cfg_graph", ("V_a", "V_b", "V_c"))]
+
+
+def test_clear_data_falls_back_to_vertex_deletes_when_query_path_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unit test: validates fallback control flow with mocked connection methods."""
+    conn = TigerGraphConnection.__new__(TigerGraphConnection)
+    conn.config = SimpleNamespace(database="cfg_graph", schema_name=None)
+    conn._installed_clear_data_queries = {}
+
+    submitted_deletes: list[tuple[str, str | None]] = []
+
+    monkeypatch.setattr(
+        conn,
+        "_clear_data_via_installed_query",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("query install failed")),
+    )
 
     def _fake_delete_vertices(
         vertex_type: str, graph_name: str | None = None, **_kwargs
-    ):
-        submitted.append((vertex_type, graph_name))
+    ) -> dict[str, str]:
+        submitted_deletes.append((vertex_type, graph_name))
         return {"deleted": vertex_type}
 
-    monkeypatch.setattr(tigergraph_conn_module, "ThreadPoolExecutor", _FakeExecutor)
-    monkeypatch.setattr(tigergraph_conn_module, "as_completed", _fake_as_completed)
     monkeypatch.setattr(conn, "_delete_vertices", _fake_delete_vertices)
 
     class _FakeVertexConfig:
@@ -151,8 +173,7 @@ def test_clear_data_uses_bounded_parallel_deletes(
 
     conn.clear_data(_FakeSchema())
 
-    assert created_max_workers == [3]
-    assert set(submitted) == {
+    assert set(submitted_deletes) == {
         ("V_a", "cfg_graph"),
         ("V_b", "cfg_graph"),
         ("V_c", "cfg_graph"),
