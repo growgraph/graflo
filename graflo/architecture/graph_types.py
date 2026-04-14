@@ -274,18 +274,6 @@ class GraphContainer(ConfigBaseModel):
         for k, v in self.edges.items():
             self.edges[k] = _pick_unique_dict(v)
 
-    def loop_over_relations(self, edge_def: tuple[str, str, str | None]):
-        """Iterate over edges matching the given edge definition.
-
-        Args:
-            edge_def: Tuple of (source, target, optional_relation)
-
-        Returns:
-            Generator yielding matching edge IDs
-        """
-        source, target, _ = edge_def
-        return (ed for ed in self.edges if source == ed[0] and target == ed[1])
-
     @classmethod
     def from_docs_list(
         cls, list_default_dicts: list[defaultdict[GraphEntity, list]]
