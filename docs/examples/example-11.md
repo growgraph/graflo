@@ -6,7 +6,7 @@ This example demonstrates the **flat-row dynamic edge** pattern: each CSV row en
 
 Use this pattern when:
 - Data arrives pre-joined (one row = one complete edge relationship)
-- Source and target vertex types vary per row (e.g. `T_source` column holds the type name)
+- Source and target vertex types vary per row (e.g. `source_type` holds the type name)
 - You want a clean, declarative pipeline using `vertex_router` + `edge`
 
 For polymorphic objects that need separate resources for vertices vs. edges, see [Example 7](example-7.md).
@@ -15,10 +15,10 @@ For polymorphic objects that need separate resources for vertices vs. edges, see
 
 ### relations.csv
 
-Each row is a self-contained relationship tuple. `T_source`/`T_target` hold vertex type names; `I_source`/`I_target` hold vertex IDs; `RT` holds the relation name:
+Each row is a self-contained relationship tuple. `source_type` / `target_type` hold vertex type names; `source_id` / `target_id` hold vertex IDs; `relation_type` holds the relation name (matches `examples/11-flat-row-dynamic-edge/relations.csv`):
 
 ```csv
-T_source,I_source,desc_source,T_target,I_target,desc_target,RT
+source_type,source_id,desc_source,target_type,target_id,desc_target,relation_type
 server,s1,Web server,database,d1,Primary DB,runs_on
 server,s2,App server,database,d2,Replica DB,runs_on
 server,s1,Web server,database,d2,Replica DB,replicates
@@ -54,19 +54,19 @@ ingestion_model:
     - name: relations
       pipeline:
         - vertex_router:
-            type_field: T_source       # vertex stored at lindex.(T_source, 0)
-            field_map:
-              I_source: id
-              desc_source: desc
+            type_field: source_type
+            from:
+              id: source_id
+              desc: desc_source
         - vertex_router:
-            type_field: T_target       # vertex stored at lindex.(T_target, 0)
-            field_map:
-              I_target: id
-              desc_target: desc
+            type_field: target_type
+            from:
+              id: target_id
+              desc: desc_target
         - edge:
-            source_type_field: T_source   # scan acc_vertex at lindex.(T_source, 0)
-            target_type_field: T_target   # scan acc_vertex at lindex.(T_target, 0)
-            relation_field: RT
+            source_type_field: source_type
+            target_type_field: target_type
+            relation_field: relation_type
 
 bindings:
   connectors:
@@ -79,12 +79,12 @@ bindings:
 
 ```mermaid
 flowchart LR
-    CSV["Row: T_source=server\nT_target=database\nRT=runs_on"]
-    VRA_S["vertex_router\ntype_field=T_source"]
-    VRA_T["vertex_router\ntype_field=T_target"]
-    EA["edge\nsource_type_field=T_source\ntarget_type_field=T_target\nrelation_field=RT"]
-    SLOT_S["acc_vertex[server]\n@ lindex.(T_source,0)"]
-    SLOT_T["acc_vertex[database]\n@ lindex.(T_target,0)"]
+    CSV["Row: source_type=server\ntarget_type=database\nrelation_type=runs_on"]
+    VRA_S["vertex_router\ntype_field=source_type"]
+    VRA_T["vertex_router\ntype_field=target_type"]
+    EA["edge\nsource_type_field=source_type\ntarget_type_field=target_type\nrelation_field=relation_type"]
+    SLOT_S["acc_vertex[server]\n@ lindex.(source_type,0)"]
+    SLOT_T["acc_vertex[database]\n@ lindex.(target_type,0)"]
     INTENT["edge_intent\n(server→database, runs_on)"]
 
     CSV --> VRA_S --> SLOT_S
@@ -95,9 +95,9 @@ flowchart LR
     EA --> INTENT
 ```
 
-1. **`vertex_router` (type_field=T_source)**: reads `T_source` → `server`, projects `{I_source→id, desc_source→desc}`, stores vertex at `lindex.(T_source, 0)`.
-2. **`vertex_router` (type_field=T_target)**: reads `T_target` → `database`, projects fields, stores vertex at `lindex.(T_target, 0)`.
-3. **`edge` (dynamic slot mode)**: scans `acc_vertex` for data at `lindex.(T_source, 0)` → finds `server`; same for `T_target` → finds `database`. Reads `RT` → `runs_on`. Emits edge intent `(server→database, runs_on)`.
+1. **`vertex_router` (`type_field: source_type`)**: reads `source_type` → `server`, projects with `from: {id: source_id, desc: desc_source}`, stores vertex at `lindex.(source_type, 0)`.
+2. **`vertex_router` (`type_field: target_type`)**: reads `target_type` → `database`, projects with `from: {id: target_id, desc: desc_target}`, stores vertex at `lindex.(target_type, 0)`.
+3. **`edge` (dynamic slot mode)**: scans `acc_vertex` for data at `lindex.(source_type, 0)` → finds `server`; same for `target_type` → finds `database`. Reads `relation_type` (e.g. `runs_on`). Emits edge intent `(server→database, runs_on)` (or `replicates` on the third row).
 
 ## Key configuration fields
 

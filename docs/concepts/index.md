@@ -628,9 +628,9 @@ An `Actor` describes how the current level of the document should be mapped/tran
   - **`keep_fields`**: restrict passthrough to this field subset. Use on role-vertex steps to prevent shared row columns from leaking into placeholder vertices that only carry an ID.
 - `EdgeActor`: Creates edges between vertices. Operates in three modes:
   - **Static mode** (`from`/`to` set on both sides): vertex types declared at config time.
-  - **Dynamic / mixed mode** (at least one of `source_type_field` / `target_type_field` / `source_role` / `target_role` set): vertex types resolved at extraction time by looking up accumulator slots. `source_role` / `target_role` are ergonomic aliases for `source_type_field` / `target_type_field` — they reference slots populated by `vertex+role` steps rather than `vertex_router` steps, but the slot lookup is identical.
+  - **Dynamic / mixed mode** (at least one of `source_type_field` / `target_type_field` / `source_role` / `target_role` set): vertex types resolved at extraction time by looking up accumulator slots. `source_role` / `target_role` are ergonomic aliases for `source_type_field` / `target_type_field` — the slot lookup is identical whether the slot was populated by `vertex+role`, `vertex_router+role`, or `vertex_router` (default slot = `type_field`).
   - **Multi-link mode** (`links` list set): each item in `links` emits one edge intent per row. Use when one flat row encodes multiple distinct relationship types (e.g. `is_child_of` and `is_parent_of` from the same row).
-- `VertexRouterActor`: Routes documents to the correct `VertexActor` based on a type field read from the document at runtime. Vertices are always stored at `lindex.extend((type_field, 0))`, addressable by `source_type_field` / `target_type_field` on a downstream `EdgeActor`. Use when the vertex type itself varies per row; for static-type vertices with role-distinct slots, use `vertex+role` instead.
+- `VertexRouterActor`: Routes documents to the correct `VertexActor` based on a type field read from the document at runtime. Vertices are stored at `lindex.extend((slot, 0))` where `slot` is `role` when set, otherwise `type_field` — addressable by `source_type_field` / `target_type_field` on a downstream `EdgeActor` using that same segment name. Optional router-level **`from`** provides a default `{vertex_field: doc_field}` projection; **`vertex_from_map`** overrides per resolved vertex type. Use when the vertex type varies per row; for a fixed vertex type with role-distinct slots, use `vertex+role` instead.
 
 ```mermaid
 flowchart TB
@@ -647,7 +647,7 @@ flowchart TB
     Doc --> E
     Doc --> VR
     V -.->|"role='r'\n→ store at lindex.(r,0)"| slot_r["acc_vertex slot (r,0)"]
-    VR -.->|"type_field='tf'\n→ store at lindex.(tf,0)"| slot_tf["acc_vertex slot (tf,0)"]
+    VR -.->|"type_field='tf', role unset\n→ store at lindex.(tf,0)"| slot_tf["acc_vertex slot (tf,0)"]
     E -.->|"source_role='r' or\nsource_type_field='tf'\n→ scan acc_vertex at slot"| slot_r
     E -.->|"links: [...]"| multi["N edge intents per row"]
 ```
@@ -659,14 +659,14 @@ Both mechanisms write vertices to a named sub-slot of the current `LocationIndex
 | Mechanism | When the vertex type is... | Slot name comes from... |
 |---|---|---|
 | `vertex: T, role: r` | **static** (known at schema design time) | `role` value |
-| `vertex_router: type_field: tf` | **dynamic** (read from a doc column at runtime) | `type_field` value |
+| `vertex_router: type_field: tf` (optional `role: r`) | **dynamic** (read from a doc column at runtime) | `role` if set, else `type_field` |
 
 The `EdgeActor` vocabulary matches:
 
 | Slot populated by | Edge config field |
 |---|---|
 | `vertex+role` | `source_role` / `target_role` |
-| `vertex_router` | `source_type_field` / `target_type_field` |
+| `vertex_router` (slot = `role` or `type_field`) | `source_type_field` / `target_type_field` (or `source_role` / `target_role`) |
 
 Both pairs are equivalent at runtime — they name the same path segment in `acc_vertex`.
 
@@ -684,7 +684,7 @@ Both pairs are equivalent at runtime — they name the same path segment in `acc
 | Mixed (dynamic + static) | Dynamic | `source_type_field: tf_src, to: institution, relation_field: rt` |
 | Multiple relations from one row | Static per link | `links: [{source_role: self, target_role: parent, relation: is_child_of}, ...]` |
 
-`source_type_field` / `target_type_field` must equal the `type_field` of the upstream `VertexRouterActor`. `source_role` / `target_role` must equal the `role` of the upstream `vertex` step.
+`source_type_field` / `target_type_field` (or `source_role` / `target_role`) must equal the accumulator slot segment of the upstream `VertexRouterActor` — that is `role` when set, otherwise `type_field`. For a static `vertex` step, `source_role` / `target_role` must equal that step’s `role`.
 
 #### Type Safety Controls
 
@@ -708,7 +708,7 @@ Ingestion pipelines walk **nested JSON** (or list-shaped branches). At each step
 
 **`VertexActor` with `role`** stores the vertex at `lindex.extend((role, 0))` using the configured `role` string as the slot segment. Passthrough uses `doc.get` (non-mutating) so sibling role-vertex steps in the same pipeline all see the complete shared row. Use `keep_fields` to restrict which properties are absorbed during passthrough — this prevents unrelated row columns from leaking into placeholder role vertices that only need an ID. A downstream edge step references the slot via `source_role` / `target_role`.
 
-**`VertexRouterActor`** builds an **effective observation** by merging the current dict slice with all `TransformPayload` entries at that `LocationIndex`. Routing fields (`type_field`, projections) are read from this merged view. If `prefix` is set and `type_field` is absent on the merged slice, the router also tries `{prefix}{type_field}`. The vertex is always accumulated at `lindex.extend((type_field, 0))`, using `type_field` as the slot name. A downstream dynamic `EdgeActor` finds it by setting `source_type_field` / `target_type_field` to the same `type_field` value.
+**`VertexRouterActor`** builds an **effective observation** by merging the current dict slice with all `TransformPayload` entries at that `LocationIndex`. Routing fields (`type_field`, optional `from` / `vertex_from_map`, optional `keep_fields`) are read from this merged view — the same dict is passed to the lazily created `VertexActor` (no separate rename/slice layer). The vertex is accumulated at `lindex.extend((slot, 0))` with `slot = role` when set, otherwise `type_field`. A downstream dynamic `EdgeActor` finds it by setting `source_type_field` / `target_type_field` (or `source_role` / `target_role`) to that same slot segment.
 
 **Dynamic `EdgeActor`** (slot mode) also merges the doc with the transform buffer before reading `relation_field`; this ensures that values produced by upstream transforms (e.g. canonicalized relation names) are available at edge construction time.
 

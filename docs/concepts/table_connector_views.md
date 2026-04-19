@@ -71,15 +71,15 @@ ingestion_model:
       pipeline:
         - vertex_router:
             type_field: source_type
-            field_map:
-              source_id: id
+            from:
+              id: source_id
             type_map:
               Car: car
               Person: person
         - vertex_router:
             type_field: target_type
-            field_map:
-              target_id: id
+            from:
+              id: target_id
             type_map:
               Car: car
               Person: person

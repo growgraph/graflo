@@ -319,7 +319,7 @@ class EdgeLinkConfig(ConfigBaseModel):
     Slot resolution (``source_role`` / ``target_role``) works identically to
     ``source_type_field`` / ``target_type_field`` on a standalone ``edge`` step — the
     slot name is the accumulator segment populated by an upstream ``vertex`` step with a
-    matching ``role``, or a ``vertex_router`` step with a matching ``type_field``.
+    matching ``role``, or a ``vertex_router`` step (``role`` when set, else ``type_field``).
     """
 
     model_config = {"extra": "forbid", "populate_by_name": True}
@@ -337,31 +337,29 @@ class EdgeLinkConfig(ConfigBaseModel):
     source_type_field: str | None = PydanticField(
         default=None,
         description=(
-            "Accumulator slot name for the source vertex (set by an upstream vertex_router "
-            "whose type_field matches this value). Exclusive with 'from' and source_role."
+            "Accumulator slot segment for the source vertex (VertexRouterActor role or "
+            "type_field; or vertex step role). Exclusive with 'from' and source_role."
         ),
     )
     target_type_field: str | None = PydanticField(
         default=None,
         description=(
-            "Accumulator slot name for the target vertex (set by an upstream vertex_router "
-            "whose type_field matches this value). Exclusive with 'to' and target_role."
+            "Accumulator slot segment for the target vertex (VertexRouterActor role or "
+            "type_field; or vertex step role). Exclusive with 'to' and target_role."
         ),
     )
     source_role: str | None = PydanticField(
         default=None,
         description=(
-            "Role slot name for the source vertex. Sugar for source_type_field when the "
-            "slot was populated by an upstream 'vertex' step with a matching role. "
-            "Exclusive with source_type_field."
+            "Sugar for source_type_field: same accumulator segment name. Exclusive with "
+            "source_type_field."
         ),
     )
     target_role: str | None = PydanticField(
         default=None,
         description=(
-            "Role slot name for the target vertex. Sugar for target_type_field when the "
-            "slot was populated by an upstream 'vertex' step with a matching role. "
-            "Exclusive with target_type_field."
+            "Sugar for target_type_field: same accumulator segment name. Exclusive with "
+            "target_type_field."
         ),
     )
     relation: str | None = PydanticField(
@@ -447,17 +445,17 @@ class EdgeActorConfig(ConfigBaseModel):
     source_type_field: str | None = PydanticField(
         default=None,
         description=(
-            "The type_field value of the upstream VertexRouterActor whose output should be "
-            "treated as the source vertex.  EdgeActor scans acc_vertex for data at "
-            "lindex.extend((source_type_field, 0)) to resolve the source type dynamically. "
-            "Exclusive with 'from' and source_role."
+            "Accumulator slot segment for the source vertex (same name as the upstream "
+            "VertexRouterActor's role, or type_field when role is unset). EdgeActor scans "
+            "acc_vertex for data at lindex.extend((source_type_field, 0)) to resolve the "
+            "source type dynamically. Exclusive with 'from' and source_role."
         ),
     )
     target_type_field: str | None = PydanticField(
         default=None,
         description=(
-            "The type_field value of the upstream VertexRouterActor whose output should be "
-            "treated as the target vertex. Exclusive with 'to' and target_role."
+            "Accumulator slot segment for the target vertex (VertexRouterActor role or "
+            "type_field). Exclusive with 'to' and target_role."
         ),
     )
     source_role: str | None = PydanticField(
@@ -639,7 +637,13 @@ class DescendActorConfig(ConfigBaseModel):
 
 
 class VertexRouterActorConfig(ConfigBaseModel):
-    """Configuration for a VertexRouterActor."""
+    """Configuration for a VertexRouterActor.
+
+    Field handling matches :class:`VertexActorConfig`: optional router-level ``from`` /
+    ``from_doc`` (and per-type ``vertex_from_map``), optional ``keep_fields``, and the
+    same merged observation dict is passed to the lazily created :class:`VertexActor`
+    (no separate slice / rename layer).
+    """
 
     type: Literal["vertex_router"] = PydanticField(
         default="vertex_router", description="Actor type discriminator"
@@ -647,17 +651,10 @@ class VertexRouterActorConfig(ConfigBaseModel):
     type_field: str = PydanticField(
         ...,
         description=(
-            "Field on the current JSON observation slice (after merge with same-location "
-            "transform buffer) whose value determines the target vertex type name."
+            "Key on the merged observation (document + same-location transform buffer) "
+            "whose value determines the target vertex type (after type_map). Use the "
+            "actual column name (e.g. ``s__class_name`` or ``p_kind``)."
         ),
-    )
-    prefix: str | None = PydanticField(
-        default=None,
-        description="Optional prefix to strip from document field keys.",
-    )
-    field_map: dict[str, str] | None = PydanticField(
-        default=None,
-        description="Optional explicit rename map.",
     )
     type_map: dict[str, str] | None = PydanticField(
         default=None,
@@ -666,6 +663,31 @@ class VertexRouterActorConfig(ConfigBaseModel):
     vertex_from_map: dict[str, dict[str, str]] | None = PydanticField(
         default=None,
         description="Per-vertex-type field projection.",
+    )
+    role: str | None = PydanticField(
+        default=None,
+        description=(
+            "Named accumulator slot segment. When set, vertices are stored at "
+            "lindex.extend((role, 0)). When omitted, the slot segment defaults to type_field. "
+            "A downstream edge step references this slot via source_type_field / target_type_field "
+            "(or source_role / target_role) using the same segment name."
+        ),
+    )
+    from_doc: dict[str, str] | None = PydanticField(
+        default=None,
+        alias="from",
+        description=(
+            "Default projection {vertex_field: doc_field} for all routed vertex types. "
+            "Per-type vertex_from_map overrides this for a given resolved type when that type "
+            "is present as a key in vertex_from_map."
+        ),
+    )
+    keep_fields: list[str] | None = PydanticField(
+        default=None,
+        description=(
+            "Forwarded to each lazily created VertexActor: restrict passthrough to this "
+            "subset of vertex property names (same semantics as vertex.keep_fields)."
+        ),
     )
 
     @model_validator(mode="before")

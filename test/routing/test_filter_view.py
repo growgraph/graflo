@@ -121,13 +121,13 @@ def _make_symmetric_pipeline() -> ActorWrapper:
             {
                 "vertex_router": {
                     "type_field": "source_type",
-                    "field_map": {"source_id": "id"},
+                    "from": {"id": "source_id"},
                 }
             },
             {
                 "vertex_router": {
                     "type_field": "target_type",
-                    "field_map": {"target_id": "id"},
+                    "from": {"id": "target_id"},
                 }
             },
             {
@@ -566,7 +566,7 @@ class TestSelectKindSelectAsymmetricLookup:
                 {
                     "vertex_router": {
                         "type_field": "target_type",
-                        "field_map": {"target_id": "id"},
+                        "from": {"id": "target_id"},
                     }
                 },
                 {

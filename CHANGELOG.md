@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.20]
+
+### Changed
+
+- **`vertex_router`**: Removed `field_map` and `prefix`. Use `from` (same contract as `vertex`) for
+  `{vertex_field: doc_field}` projection, optional `keep_fields` to restrict passthrough, and
+  `vertex_from_map` for per-type overrides. The merged observation is passed through to the routed
+  `VertexActor` with no separate rename/slice step.
 
 ## [1.7.19] - 2026-04-14
 

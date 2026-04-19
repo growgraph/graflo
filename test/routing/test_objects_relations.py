@@ -193,7 +193,7 @@ class TestMixedModeDynamicEdge:
                                 {
                                     "vertex_router": {
                                         "type_field": "target_type",
-                                        "field_map": {"target_id": "id"},
+                                        "from": {"id": "target_id"},
                                         "type_map": {
                                             "Vehicle": "vehicle",
                                             "Institution": "institution",
@@ -272,7 +272,7 @@ class TestMixedModeDynamicEdge:
                                 {
                                     "vertex_router": {
                                         "type_field": "source_type",
-                                        "field_map": {"source_id": "id"},
+                                        "from": {"id": "source_id"},
                                         "type_map": {"Person": "person"},
                                     }
                                 },

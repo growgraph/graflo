@@ -26,16 +26,24 @@ logger = logging.getLogger(__name__)
 class VertexRouterActor(Actor):
     """Routes documents to the correct VertexActor based on a type field.
 
-    Vertices are always accumulated at ``lindex.extend((type_field, 0))``, using
-    the ``type_field`` name as the accumulator slot.  A downstream dynamic
-    ``EdgeActor`` step references this slot via ``source_type_field`` /
-    ``target_type_field`` set to the same ``type_field`` value.
+    The merged observation (document + same-location transform buffer) is passed
+    through to the selected :class:`VertexActor` unchanged. Projection uses the same
+    ``from`` / ``vertex_from_map`` contract as a standalone vertex step.
+
+    Vertices are accumulated at ``lindex.extend((slot, 0))`` where ``slot`` is
+    :attr:`role` when set, otherwise :attr:`type_field`. A downstream dynamic
+    ``EdgeActor`` references this slot via ``source_type_field`` /
+    ``target_type_field`` (or ``source_role`` / ``target_role``) using the same
+    segment name.
     """
 
     def __init__(self, config: VertexRouterActorConfig):
         self.type_field = config.type_field
-        self.prefix = config.prefix
-        self.field_map = config.field_map
+        self.role = config.role
+        self.from_doc: dict[str, str] | None = config.from_doc
+        self.keep_fields: tuple[str, ...] | None = (
+            tuple(config.keep_fields) if config.keep_fields else None
+        )
         self.type_map: dict[str, str] = config.type_map or {}
         self.vertex_from_map: dict[str, dict[str, str]] = config.vertex_from_map or {}
         self._vertex_actors: dict[str, ActorWrapper] = {}
@@ -48,10 +56,12 @@ class VertexRouterActor(Actor):
 
     def fetch_important_items(self) -> dict[str, Any]:
         items: dict[str, Any] = {"type_field": self.type_field}
-        if self.prefix:
-            items["prefix"] = self.prefix
-        if self.field_map:
-            items["field_map"] = self.field_map
+        if self.role is not None:
+            items["role"] = self.role
+        if self.from_doc:
+            items["from_doc"] = self.from_doc
+        if self.keep_fields:
+            items["keep_fields"] = list(self.keep_fields)
         if self.type_map:
             items["type_map"] = self.type_map
         if self.vertex_from_map:
@@ -77,35 +87,29 @@ class VertexRouterActor(Actor):
                 "VertexRouterActor._get_or_create_wrapper called before finish_init"
             )
 
-        from_doc = self.vertex_from_map.get(vertex_type)
-        config = VertexActorConfig(vertex=vertex_type, from_doc=from_doc)
+        if vertex_type in self.vertex_from_map:
+            per_type_from = self.vertex_from_map[vertex_type]
+        else:
+            per_type_from = self.from_doc
+        config = VertexActorConfig(
+            vertex=vertex_type,
+            from_doc=per_type_from,
+            keep_fields=list(self.keep_fields) if self.keep_fields else None,
+        )
         wrapper = ActorWrapper.from_config(config)
         wrapper.finish_init(self._init_ctx)
         self._vertex_actors[vertex_type] = wrapper
+        slot = self.role if self.role is not None else self.type_field
         logger.debug(
-            "VertexRouterActor: lazily registered VertexActor(%s) for type_field=%s",
+            "VertexRouterActor: lazily registered VertexActor(%s) for type_field=%s slot=%s",
             vertex_type,
             self.type_field,
+            slot,
         )
         return wrapper
 
     def count(self) -> int:
         return 1 + sum(w.count() for w in self._vertex_actors.values())
-
-    def _extract_sub_doc(self, doc: dict[str, Any]) -> dict[str, Any]:
-        if self.prefix:
-            return {
-                k[len(self.prefix) :]: v
-                for k, v in doc.items()
-                if k.startswith(self.prefix)
-            }
-        if self.field_map:
-            return {
-                new_key: doc[old_key]
-                for old_key, new_key in self.field_map.items()
-                if old_key in doc
-            }
-        return doc
 
     def __call__(
         self, ctx: ExtractionContext, lindex: LocationIndex, *nargs: Any, **kwargs: Any
@@ -120,8 +124,6 @@ class VertexRouterActor(Actor):
         buffer_items: list[Any] = list(ctx.buffer_transforms.get(lindex, []))
         doc = merge_observation_with_transform_buffer(raw_observation, buffer_items)
         raw_vtype = doc.get(self.type_field)
-        if raw_vtype is None and self.prefix:
-            raw_vtype = doc.get(f"{self.prefix}{self.type_field}")
         if raw_vtype is None:
             logger.debug(
                 "VertexRouterActor: type_field '%s' not in doc, skipping",
@@ -140,9 +142,6 @@ class VertexRouterActor(Actor):
             )
             return ctx
 
-        sub_doc = self._extract_sub_doc(doc)
-        if not sub_doc:
-            return ctx
-
-        effective_lindex = lindex.extend((self.type_field, 0))
-        return wrapper(ctx, effective_lindex, doc=sub_doc)
+        slot = self.role if self.role is not None else self.type_field
+        effective_lindex = lindex.extend((slot, 0))
+        return wrapper(ctx, effective_lindex, doc=doc)
