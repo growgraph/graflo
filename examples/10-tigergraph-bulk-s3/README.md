@@ -3,7 +3,7 @@
 This example extends the [CSV + edge weights](../../docs/examples/example-3.md) style manifest with:
 
 - **`bindings.staging_proxy`** — maps the logical name `bulk_s3` to the runtime proxy key `minio_bulk`.
-- **`TigergraphConfig.bulk_load`** — set in `ingest.py` so the target uses CSV staging + `LOADING JOB` (see [TigerGraph bulk load](../../docs/concepts/tigergraph_bulk_load.md)).
+- **`TigergraphConfig.bulk_load`** — set in `ingest.py` so the target uses CSV staging + `LOADING JOB` (see [TigerGraph bulk load](../../docs/guides/tigergraph_bulk_load.md)).
 
 Secrets stay out of YAML: the script registers [`S3GeneralizedConnConfig`](../../graflo/hq/connection_provider.py) on [`InMemoryConnectionProvider`](../../graflo/hq/connection_provider.py).
 

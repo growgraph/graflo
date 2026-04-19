@@ -1,27 +1,40 @@
 # Example 12: Vertex Roles and Multi-intent Edges
 
-This example demonstrates two complementary features for flat rows that encode multiple same-type vertices and multiple relationship types:
+**The problem:** a plain **`vertex`** step (and **`vertex_router`**) only materializes **one vertex per vertex type per pipeline level** — one accumulator slot per type. If a single row must create **several** vertices of the **same** type (e.g. self, parent, and child are all `person`), those steps would collide in the same slot. **`role`** gives each logical endpoint its **own named slot** (`self`, `parent`, `child`) while keeping a single declared vertex type.
 
-- **`role` on a `vertex` step** — gives each same-type vertex a named accumulator slot, so the pipeline can distinguish buyer from seller, parent from child, or self from parent, all without a `vertex_router`.
-- **`links` on an `edge` step** — declares multiple source→target→relation intents in a single pipeline step, emitting one edge per link per row.
+**What this shows:**
+
+- **`role` on a `vertex` step** — separate named accumulator slots for multiple same-type vertices in one row, without `vertex_router`.
+- **`links` on an `edge` step** — several source→target→relation intents in one step, emitting one edge per link per row.
 
 ## When to use this pattern
 
 Use this pattern when:
 
-- One CSV row encodes a **main entity** and one or more **related entities of the same type** (e.g. a family row with person IDs for self, parent, child).
-- The same flat row must produce **multiple edge types** between those entities.
-- The vertex type is **static** (you know it at schema design time) — if the type varies per row, use `vertex_router` instead (see [Example 11](example-11.md)).
+- One row holds **several endpoints of the same vertex type** (family: person, parent, child) and you need distinct slots for each.
+- The same row must emit **multiple edge types** between those endpoints.
+- Vertex type is **fixed in the schema** — if the type name varies per row, use `vertex_router` ([Example 11](example-11.md)).
 
 ## Data
 
 ### family_edges.csv
 
-```
-{{ read_csv('data/family_edges.csv') }}
-```
+Source file: `docs/examples/data/family_edges.csv` (same content as `examples/12-vertex-roles-multi-edge/family_edges.csv`).
 
-Each row describes one person (`person` column), their parent (`parent`), their child (`child`), and the person's own metadata (`name`, `age`).
+Each row is one “focal” person (`person`), their parent (`parent`), their child (`child`), plus metadata (`name`, `age`) for the focal row.
+
+| person | parent | child | name | age |
+|--------|--------|-------|------|-----|
+| 12 | 13 | 21 | Bob | 35 |
+| 13 | 15 | 12 | Alice | 62 |
+| 21 | 12 | 24 | Carol | 10 |
+
+```csv
+person,parent,child,name,age
+12,13,21,Bob,35
+13,15,12,Alice,62
+21,12,24,Carol,10
+```
 
 ## Schema Configuration
 
@@ -181,14 +194,15 @@ Edges: [('person', 'person', 'is_child_of'), ('person', 'person', 'is_parent_of'
 
 ## Key Takeaways
 
-1. **`role` on `vertex`** is the static-type equivalent of `vertex_router` — use it when the vertex type is known at schema design time but multiple role-distinct instances of the same type appear in one row.
-2. **`source_role` / `target_role` on `edge`** reference those slots — they are sugar for `source_type_field` / `target_type_field` and work identically at runtime.
-3. **`links` on `edge`** replaces two (or more) near-identical edge steps with a single, readable block. Each link is a fully independent edge binding with its own source, target, and relation.
-4. **`keep_fields`** is essential when multiple role-vertex steps share a doc and some properties must not bleed between roles.
-5. **`from` only lists renames** — all vertex properties whose names already match a CSV column are absorbed automatically. `{name: name}` is redundant and can be omitted.
+1. **One slot per type per level** — without `role`, multiple `person` endpoints in one row would share the same accumulator; **`role` names separate slots** for the same vertex type.
+2. **`role` on `vertex`** is the static-type counterpart to routing by type: use it when the type is fixed in the schema but the row encodes **several instances** of that type.
+3. **`source_role` / `target_role` on `edge`** reference those slots — sugar for `source_type_field` / `target_type_field` with the same runtime behavior.
+4. **`links` on `edge`** replaces two or more near-identical edge steps with one block; each link is an independent binding.
+5. **`keep_fields`** prevents properties from bleeding between role steps that share one document.
+6. **`from` only lists renames** — vertex properties whose names already match a CSV column are absorbed automatically; `{name: name}` is redundant.
 
 ## Related examples
 
-- [Example 11](example-11.md): Dynamic vertex types per row using `vertex_router` + `source_type_field`.
+- [Example 11](example-11.md): Dynamic vertex and relation types per row with `vertex_router` + `source_type_field` / `target_type_field`.
 - [Example 7](example-7.md): Polymorphic objects with `vertex_router` + dynamic `edge` across multiple vertex types.
 - [Example 3](example-3.md): Static edge with `relation_field` for tabular data where the relation label comes from a column.

@@ -1,21 +1,28 @@
-# Example 11: Flat-row Dynamic Edges with `vertex_router` + dynamic `EdgeActor`
+# Example 11: Dynamic Vertex Types and Dynamic Edge Types per Row
 
-This example demonstrates the **flat-row dynamic edge** pattern: each CSV row encodes a complete `(source-vertex, target-vertex, relation)` tuple. Two `vertex_router` steps accumulate the endpoint vertices into accumulator slots keyed by their `type_field`; a single `edge` step with `source_type_field` / `target_type_field` resolves vertex types from those slots and creates the edge — no `edge_router` required.
+**What this shows:** each row carries **dynamic** source vertex type, target vertex type, and relation name (e.g. `source_type`, `target_type`, `relation_type`). Two `vertex_router` steps fill accumulator slots keyed by those type columns; a single dynamic `edge` step reads the same columns and emits the edge.
 
 ## When to use this pattern
 
 Use this pattern when:
-- Data arrives pre-joined (one row = one complete edge relationship)
-- Source and target vertex types vary per row (e.g. `source_type` holds the type name)
-- You want a clean, declarative pipeline using `vertex_router` + `edge`
 
-For polymorphic objects that need separate resources for vertices vs. edges, see [Example 7](example-7.md).
+- **Vertex types vary by row** — type names live in columns (`source_type`, `target_type`), not in separate resources or fixed pipeline branches.
+- **Relation labels vary by row** — the relation name comes from a column (`relation_field`).
+- You want a small, declarative pipeline: **`vertex_router` + `vertex_router` + `edge`**.
+
+For polymorphic *objects* that split across vertex vs. edge tables, see [Example 7](example-7.md).
 
 ## Data
 
 ### relations.csv
 
-Each row is a self-contained relationship tuple. `source_type` / `target_type` hold vertex type names; `source_id` / `target_id` hold vertex IDs; `relation_type` holds the relation name (matches `examples/11-flat-row-dynamic-edge/relations.csv`):
+Each row is one relationship: source endpoint, target endpoint, and relation name. Column meanings: `source_type` / `target_type` — vertex type names; `source_id` / `target_id` — vertex IDs; `desc_*` — descriptions; `relation_type` — relation name (matches `examples/11-flat-row-dynamic-edge/relations.csv`).
+
+| source_type | source_id | desc_source | target_type | target_id | desc_target | relation_type |
+|-------------|-----------|-------------|-------------|-----------|-------------|---------------|
+| server | s1 | Web server | database | d1 | Primary DB | runs_on |
+| server | s2 | App server | database | d2 | Replica DB | runs_on |
+| server | s1 | Web server | database | d2 | Replica DB | replicates |
 
 ```csv
 source_type,source_id,desc_source,target_type,target_id,desc_target,relation_type
@@ -129,12 +136,12 @@ Vertices: ['server', 'database']
 
 ## Key Takeaways
 
-1. **`type_field` on `vertex_router`** serves double duty: it names both the column to read the vertex type from AND the accumulator slot (`lindex.(type_field, 0)`) where the vertex is stored.
-2. **`source_type_field` / `target_type_field` on `edge`** reference those slot names — which equal the VRA `type_field` values — to dynamically resolve vertex types at extraction time.
-3. The combination of `vertex_router` + dynamic `edge` is the standard pattern for flat-row data — clean, composable, and symmetric with how other actor types work.
+1. **Dynamic vertex types** — `type_field` on each `vertex_router` names both the column to read and the accumulator slot (`lindex.(type_field, 0)`).
+2. **Dynamic edge / relation** — `source_type_field`, `target_type_field`, and `relation_field` on `edge` resolve types and relation from the row at extraction time.
+3. **`vertex_router` + dynamic `edge`** is the usual pattern when type and relation names are **data**, not fixed pipeline structure.
 4. **`relation_map`** (not shown here) can normalize raw values (e.g. `RUNS_ON` → `runs_on`) before they are used as relation labels.
 
 ## Related examples
 
-- [Example 7](example-7.md): Polymorphic objects with `vertex_router` + dynamic `edge` for separate vertex/edge tables.
+- [Example 7](example-7.md): Polymorphic objects with `vertex_router` + dynamic `edge` when vertex and edge data live in different tables.
 - [Example 3](example-3.md): Static edge with `relation_field` for simple tabular relations.
