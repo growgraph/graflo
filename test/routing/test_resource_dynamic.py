@@ -309,13 +309,21 @@ class TestEdgeResourceAutoJoin:
                         {
                             "vertex_router": {
                                 "type_field": "s__class_name",
-                                "prefix": "s__",
+                                "from": {
+                                    "id": "s__id",
+                                    "class_name": "s__class_name",
+                                    "description": "s__description",
+                                },
                             }
                         },
                         {
                             "vertex_router": {
                                 "type_field": "t__class_name",
-                                "prefix": "t__",
+                                "from": {
+                                    "id": "t__id",
+                                    "class_name": "t__class_name",
+                                    "description": "t__description",
+                                },
                             }
                         },
                         {
@@ -473,58 +481,6 @@ class TestEdgeResourceAutoJoin:
         for ra in router_actors:
             assert set(ra._vertex_actors.keys()) == set()
 
-    def test_vertex_router_extract_sub_doc_strips_prefix(self):
-        """VertexRouterActor._extract_sub_doc strips prefix from field keys."""
-        from graflo.architecture.pipeline.runtime.actor import VertexRouterActor
-        from graflo.architecture.pipeline.runtime.actor.config import (
-            VertexRouterActorConfig,
-        )
-
-        config = VertexRouterActorConfig(type_field="s__class_name", prefix="s__")
-        router = VertexRouterActor(config)
-
-        doc = {
-            "type_display": "runs_on",
-            "s__id": "1",
-            "s__class_name": "server",
-            "s__description": "Web Server",
-            "t__id": "2",
-            "t__class_name": "database",
-            "t__description": "PostgreSQL",
-        }
-
-        sub_doc = router._extract_sub_doc(doc)
-
-        # Only s__-prefixed keys extracted, with prefix stripped
-        assert sub_doc == {
-            "id": "1",
-            "class_name": "server",
-            "description": "Web Server",
-        }
-
-    def test_vertex_router_extract_sub_doc_with_field_map(self):
-        """VertexRouterActor._extract_sub_doc applies field_map when set."""
-        from graflo.architecture.pipeline.runtime.actor import VertexRouterActor
-        from graflo.architecture.pipeline.runtime.actor.config import (
-            VertexRouterActorConfig,
-        )
-
-        config = VertexRouterActorConfig(
-            type_field="src_type",
-            field_map={"src_id": "id", "src_name": "class_name"},
-        )
-        router = VertexRouterActor(config)
-
-        doc = {
-            "src_type": "server",
-            "src_id": "1",
-            "src_name": "server",
-            "extra": "ignored",
-        }
-        sub_doc = router._extract_sub_doc(doc)
-
-        assert sub_doc == {"id": "1", "class_name": "server"}
-
     def test_full_resource_call_produces_vertices_and_edges(self):
         """Resource.__call__ with dynamic types creates vertices and edges."""
         schema = self._build_schema()
@@ -556,7 +512,7 @@ class TestEdgeResourceAutoJoin:
         assert len(db_docs) >= 1
         assert any(d.get("id") == "2" for d in db_docs)
 
-        assert len(result[("server", "database", None)]) == 1
+        assert len(result[("server", "database", "runs_on")]) == 1
 
     def test_vertex_router_registers_wrappers_lazily(self):
         """VertexRouterActor creates only wrappers used by routed documents."""
@@ -712,11 +668,11 @@ class TestTypeLookupView:
               pipeline:
                 - vertex_router:
                     type_field: source_type
-                    field_map: { source_id: id }
+                    from: { id: source_id }
                     type_map: { Car: car, Teacher: teacher, Person: person }
                 - vertex_router:
                     type_field: target_type
-                    field_map: { target_id: id }
+                    from: { id: target_id }
                     type_map: { Car: car, Teacher: teacher, Person: person }
                 - edge:
                     source_type_field: source_type
@@ -775,14 +731,14 @@ class TestTypeLookupView:
                         {
                             "vertex_router": {
                                 "type_field": "source_type",
-                                "field_map": {"source_id": "id"},
+                                "from": {"id": "source_id"},
                                 "type_map": type_map,
                             }
                         },
                         {
                             "vertex_router": {
                                 "type_field": "target_type",
-                                "field_map": {"target_id": "id"},
+                                "from": {"id": "target_id"},
                                 "type_map": type_map,
                             }
                         },

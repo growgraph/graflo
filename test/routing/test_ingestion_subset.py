@@ -146,13 +146,13 @@ def test_dynamic_edge_early_exit_skips_disallowed_endpoints() -> None:
                 {
                     "vertex_router": {
                         "type_field": "src_type",
-                        "field_map": {"src_id": "id"},
+                        "from": {"id": "src_id"},
                     }
                 },
                 {
                     "vertex_router": {
                         "type_field": "tgt_type",
-                        "field_map": {"tgt_id": "id"},
+                        "from": {"id": "tgt_id"},
                     }
                 },
                 {

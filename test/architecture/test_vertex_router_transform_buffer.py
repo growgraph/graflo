@@ -76,11 +76,11 @@ def test_vertex_router_transform_overrides_doc_for_type_field() -> None:
     assert reps[0].vertex == {"id": "p1"}
 
 
-def test_vertex_router_field_map_reads_keys_from_transform_buffer() -> None:
+def test_vertex_router_from_reads_keys_from_transform_buffer() -> None:
     cfg = VertexRouterActorConfig(
         type="vertex_router",
         type_field="t",
-        field_map={"external_id": "id"},
+        from_doc={"id": "external_id"},
     )
     actor = VertexRouterActor.from_config(cfg)
     init = ActorInitContext(
@@ -101,11 +101,11 @@ def test_vertex_router_field_map_reads_keys_from_transform_buffer() -> None:
     assert out.acc_vertex["Widget"][slot][0].vertex == {"id": "ext-99"}
 
 
-def test_vertex_router_prefix_keys_from_transform_buffer() -> None:
+def test_vertex_router_type_field_uses_prefixed_column_from_transform_buffer() -> None:
     cfg = VertexRouterActorConfig(
         type="vertex_router",
-        type_field="kind",
-        prefix="p_",
+        type_field="p_kind",
+        from_doc={"id": "p_id"},
     )
     actor = VertexRouterActor.from_config(cfg)
     init = ActorInitContext(
@@ -122,7 +122,7 @@ def test_vertex_router_prefix_keys_from_transform_buffer() -> None:
     )
     out = actor(ctx, loc, doc={})
 
-    slot = loc.extend(("kind", 0))
+    slot = loc.extend(("p_kind", 0))
     assert out.acc_vertex["Widget"][slot][0].vertex == {"id": "z"}
 
 

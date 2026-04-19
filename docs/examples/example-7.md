@@ -72,16 +72,16 @@ The relations resource uses two `vertex_router` steps to accumulate both endpoin
     pipeline:
       - vertex_router:
           type_field: source_type      # slot: lindex.(source_type, 0)
-          field_map:
-            source_id: id
+          from:
+            id: source_id
           type_map:
             Person: person
             Vehicle: vehicle
             Institution: institution
       - vertex_router:
           type_field: target_type      # slot: lindex.(target_type, 0)
-          field_map:
-            target_id: id
+          from:
+            id: target_id
           type_map:
             Person: person
             Vehicle: vehicle
@@ -99,7 +99,7 @@ The relations resource uses two `vertex_router` steps to accumulate both endpoin
 ```
 
 - `source_type_field` / `target_type_field`: Match the `type_field` of the upstream `vertex_router` steps; the edge actor finds vertex types by scanning the accumulator slots at `lindex.(type_field, 0)`
-- `field_map`: Projects relation-table columns to vertex identity fields (e.g. `source_id` → `id`)
+- `from`: Projects relation-table columns onto vertex fields (e.g. `id: source_id`), same as on a `vertex` step
 - `relation_field`: Column with the raw relation name (e.g. `EMPLOYED_BY`)
 - `relation_map`: Maps raw relation values to canonical names (e.g. `EMPLOYED_BY` → `employed_by`)
 

@@ -57,7 +57,7 @@ See **`ingest.py`** in the example folder for a full script that sets `bulk_load
 
 ## Emulating S3 locally
 
-The [concept page](../concepts/tigergraph_bulk_load.md#emulating-s3-in-development) compares **MinIO**, **LocalStack**, and **moto**. For a quick MinIO container:
+The [TigerGraph bulk load guide](../guides/tigergraph_bulk_load.md#emulating-s3-in-development) compares **MinIO**, **LocalStack**, and **moto**. For a quick MinIO container:
 
 ```bash
 docker run -p 9000:9000 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \

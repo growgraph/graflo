@@ -55,7 +55,8 @@ class EdgeActor(Actor):
     **Dynamic mode** (at least one of ``source_type_field``/``target_type_field``
     / ``source_role``/``target_role`` set): vertex types for the dynamic side(s) are
     resolved at extraction time by looking up accumulator slots populated by an
-    upstream ``VertexRouterActor`` or a ``VertexActor`` with a matching ``role``.
+    upstream ``VertexRouterActor`` (slot segment = ``role`` or ``type_field``) or a
+    ``VertexActor`` with a matching ``role``.
     The schema ``Edge`` is created—or retrieved from cache—per unique
     ``(source_type, target_type, relation)`` triple encountered.
 

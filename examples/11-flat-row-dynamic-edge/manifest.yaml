@@ -31,19 +31,19 @@ ingestion_model:
     -   name: relations
         pipeline:
         -   vertex_router:
-                type_field: T_source
-                field_map:
-                    I_source: id
-                    desc_source: desc
+                type_field: source_type
+                from:
+                    id: source_id
+                    desc: desc_source
         -   vertex_router:
-                type_field: T_target
-                field_map:
-                    I_target: id
-                    desc_target: desc
+                type_field: target_type
+                from:
+                    id: target_id
+                    desc: desc_target
         -   edge:
-                source_type_field: T_source # references VRA with type_field=T_source
-                target_type_field: T_target # references VRA with type_field=T_target
-                relation_field: RT
+                source_type_field: source_type # references VRA with type_field=source_type
+                target_type_field: target_type # references VRA with type_field=target_type
+                relation_field: relation_type
 
 bindings:
     connectors:

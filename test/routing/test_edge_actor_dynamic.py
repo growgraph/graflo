@@ -1,7 +1,7 @@
 """Tests for dynamic-mode EdgeActor (slot-based type resolution).
 
 Covers all scenario dimensions:
-  - VRA always slots by type_field (no separate type_index)
+  - VRA slots by role when set, else by type_field
   - Static types with static relation
   - Static types with dynamic relation via relation_field
   - Dynamic types via VRA type_field → EdgeActor source/target_type_field
@@ -115,12 +115,12 @@ def _populate_slot(
 
 
 # ---------------------------------------------------------------------------
-# 1. VRA always stores at lindex.(type_field, 0)
+# 1. VRA stores at lindex.(role, 0) or lindex.(type_field, 0)
 # ---------------------------------------------------------------------------
 
 
 def test_vra_stores_at_type_field_slot_lindex() -> None:
-    """VertexRouterActor always stores vertex at lindex.extend((type_field, 0))."""
+    """VertexRouterActor stores at lindex.extend((type_field, 0)) when role is unset."""
     vc = _vc("server", "database")
     cfg = VertexRouterActorConfig(type_field="vtype")
     vra = VertexRouterActor(cfg)
@@ -135,23 +135,85 @@ def test_vra_stores_at_type_field_slot_lindex() -> None:
     assert ctx.acc_vertex["server"][slot_lindex][0].vertex["id"] == "s1"
 
 
+def test_vra_stores_at_role_slot_when_role_set() -> None:
+    """VertexRouterActor uses role as the accumulator slot segment when role is set."""
+    vc = _vc("server", "database")
+    cfg = VertexRouterActorConfig(type_field="vtype", role="src")
+    vra = VertexRouterActor(cfg)
+    vra.finish_init(_init(vc))
+
+    ctx = ExtractionContext()
+    base = _lindex(0)
+    vra(ctx, base, doc={"vtype": "server", "id": "s1"})
+
+    slot_lindex = base.extend(("src", 0))
+    assert slot_lindex in ctx.acc_vertex["server"]
+    assert ctx.acc_vertex["server"][slot_lindex][0].vertex["id"] == "s1"
+
+
+def test_vra_from_doc_used_when_vertex_from_map_missing_type() -> None:
+    """Router-level from_doc applies when resolved type has no vertex_from_map entry."""
+    vc = _vc("server")
+    cfg = VertexRouterActorConfig(
+        type_field="vtype",
+        from_doc={"id": "row_id"},
+    )
+    vra = VertexRouterActor(cfg)
+    vra.finish_init(_init(vc))
+
+    ctx = ExtractionContext()
+    base = _lindex(0)
+    vra(ctx, base, doc={"vtype": "server", "row_id": "r9"})
+
+    slot_lindex = base.extend(("vtype", 0))
+    assert ctx.acc_vertex["server"][slot_lindex][0].vertex["id"] == "r9"
+
+
+def test_vra_vertex_from_map_overrides_from_doc() -> None:
+    """Per-type vertex_from_map replaces router from_doc for that type."""
+    vc = _vc("server", "database")
+    cfg = VertexRouterActorConfig(
+        type_field="vtype",
+        from_doc={"id": "fallback_id"},
+        vertex_from_map={"server": {"id": "sid"}},
+        type_map={"s": "server", "d": "database"},
+    )
+    vra = VertexRouterActor(cfg)
+    vra.finish_init(_init(vc))
+
+    ctx = ExtractionContext()
+    base = _lindex(0)
+    vra(
+        ctx,
+        base,
+        doc={"vtype": "s", "sid": "one", "fallback_id": "ignored_for_server"},
+    )
+    slot = base.extend(("vtype", 0))
+    assert ctx.acc_vertex["server"][slot][0].vertex["id"] == "one"
+
+    ctx2 = ExtractionContext()
+    vra(ctx2, base, doc={"vtype": "d", "fallback_id": "two"})
+    slot2 = base.extend(("vtype", 0))
+    assert ctx2.acc_vertex["database"][slot2][0].vertex["id"] == "two"
+
+
 def test_two_vras_with_different_type_fields_use_separate_slots() -> None:
     """Two VRAs with different type_fields accumulate into separate slots at the same lindex."""
     vc = _vc("server", "database")
-    vra_src = VertexRouterActor(VertexRouterActorConfig(type_field="T_source"))
-    vra_tgt = VertexRouterActor(VertexRouterActorConfig(type_field="T_target"))
+    vra_src = VertexRouterActor(VertexRouterActorConfig(type_field="source_type"))
+    vra_tgt = VertexRouterActor(VertexRouterActorConfig(type_field="target_type"))
     init = _init(vc)
     vra_src.finish_init(init)
     vra_tgt.finish_init(init)
 
     ctx = ExtractionContext()
     base = _lindex(0)
-    row = {"T_source": "server", "T_target": "database", "id": "1"}
+    row = {"source_type": "server", "target_type": "database", "id": "1"}
     ctx = vra_src(ctx, base, doc=row)
     ctx = vra_tgt(ctx, base, doc=row)
 
-    src_slot = base.extend(("T_source", 0))
-    tgt_slot = base.extend(("T_target", 0))
+    src_slot = base.extend(("source_type", 0))
+    tgt_slot = base.extend(("target_type", 0))
     assert src_slot in ctx.acc_vertex["server"]
     assert tgt_slot in ctx.acc_vertex["database"]
 

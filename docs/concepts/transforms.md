@@ -202,7 +202,7 @@ Call function once with all selected input values (flat `input`, no groups).
 ### Explicit grouped calls (nested field lists)
 
 When the same function should run repeatedly on explicit argument tuples, use
-nested lists in `input_groups` (see [Grouped calls](#grouped-calls-input_groups--output_groups) above).
+nested lists in `input_groups` (see [Grouped calls](#grouped-calls-input_groups-output_groups) above).
 
 ```yaml
 - transform:
