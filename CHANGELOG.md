@@ -5,7 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.7.20]
+## [1.7.21]
+
+### Changed
+
+- **`VertexRouterActor` role normalization**: `role` is now normalized from
+  `type_field` when omitted, and router storage/addressing uses `role` as the single
+  internal slot key. `type_field` remains the type discriminator source.
+- **Explicit vertex extraction policy**: `VertexActorConfig` and
+  `VertexRouterActorConfig` now support `extraction_scope: full | mapped_only`
+  (default `full`). `mapped_only` limits extraction to explicitly mapped fields
+  from `from`/`vertex_from_map`; `full` preserves passthrough behavior.
+- **Shared vertex extraction config surface**: common options (`from`, `keep_fields`,
+  `extraction_scope`, `role`) are consolidated in a shared
+  `VertexExtractionOptionsConfig`, and actor-specific models inherit from it.
+
+## [1.7.20]- 2026-04-19
 
 ### Changed
 

@@ -166,3 +166,34 @@ def test_vertex_router_skips_non_dict_observation() -> None:
     )
     out = actor(ctx, loc, doc="not-a-dict")
     assert not any(out.acc_vertex[v][loc] for v in out.acc_vertex)
+
+
+def test_vertex_router_mapped_only_limits_to_from_fields() -> None:
+    cfg = VertexRouterActorConfig(
+        type="vertex_router",
+        type_field="kind",
+        from_doc={"id": "external_id"},
+        extraction_scope="mapped_only",
+    )
+    actor = VertexRouterActor.from_config(cfg)
+    init = ActorInitContext(
+        vertex_config=VertexConfig.model_validate(
+            {"vertices": [{"name": "Widget", "properties": ["id", "name"]}]}
+        ),
+        edge_config=EdgeConfig(),
+        transforms={},
+    )
+    actor.finish_init(init)
+
+    ctx = ExtractionContext()
+    loc = LocationIndex(("items", 0))
+    out = actor(
+        ctx,
+        loc,
+        doc={"kind": "Widget", "external_id": "w-1", "name": "Widget Name"},
+    )
+
+    slot = loc.extend(("kind", 0))
+    reps = out.acc_vertex["Widget"][slot]
+    assert len(reps) == 1
+    assert reps[0].vertex == {"id": "w-1"}

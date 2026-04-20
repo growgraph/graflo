@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from .base import Actor, ActorInitContext
 from .config import (
@@ -45,6 +45,7 @@ class VertexRouterActor(Actor):
         self.keep_fields: tuple[str, ...] | None = (
             tuple(config.keep_fields) if config.keep_fields else None
         )
+        self.extraction_scope: Literal["full", "mapped_only"] = config.extraction_scope
         self.type_map: dict[str, str] = config.type_map or {}
         self.vertex_from_map: dict[str, dict[str, str]] = config.vertex_from_map or {}
         self._vertex_actors: dict[str, ActorWrapper] = {}
@@ -61,6 +62,7 @@ class VertexRouterActor(Actor):
             items["from_doc"] = self.from_doc
         if self.keep_fields:
             items["keep_fields"] = list(self.keep_fields)
+        items["extraction_scope"] = self.extraction_scope
         if self.type_map:
             items["type_map"] = self.type_map
         if self.vertex_from_map:
@@ -94,6 +96,7 @@ class VertexRouterActor(Actor):
             vertex=vertex_type,
             from_doc=per_type_from,
             keep_fields=list(self.keep_fields) if self.keep_fields else None,
+            extraction_scope=self.extraction_scope,
         )
         wrapper = ActorWrapper.from_config(config)
         wrapper.finish_init(self._init_ctx)

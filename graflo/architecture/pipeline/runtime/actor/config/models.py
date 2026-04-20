@@ -13,13 +13,9 @@ from graflo.architecture.edge_derivation import EdgeDerivation
 from .normalize import normalize_actor_step
 
 
-class VertexActorConfig(ConfigBaseModel):
-    """Configuration for a VertexActor."""
+class VertexExtractionOptionsConfig(ConfigBaseModel):
+    """Shared field-extraction options for vertex-like actors."""
 
-    type: Literal["vertex"] = PydanticField(
-        default="vertex", description="Actor type discriminator"
-    )
-    vertex: str = PydanticField(..., description="Name of the vertex type to create")
     from_doc: dict[str, str] | None = PydanticField(
         default=None,
         alias="from",
@@ -28,16 +24,31 @@ class VertexActorConfig(ConfigBaseModel):
     keep_fields: list[str] | None = PydanticField(
         default=None, description="Optional list of fields to keep"
     )
+    extraction_scope: Literal["full", "mapped_only"] = PydanticField(
+        default="full",
+        description=(
+            "Field extraction policy. full (default) keeps existing passthrough behavior "
+            "for remaining schema properties; mapped_only limits extraction to explicit "
+            "field mappings declared in from."
+        ),
+    )
     role: str | None = PydanticField(
         default=None,
         description=(
-            "Named accumulator slot for this vertex. When set, the vertex is stored at "
-            "lindex.extend((role, 0)) instead of bare lindex, making it addressable by "
-            "a downstream edge step via source_role / target_role. Use when multiple "
-            "vertices of the same type appear as distinct roles in one row (e.g. "
-            "role='buyer' and role='seller' both vertex type 'company')."
+            "Optional accumulator slot segment used for storage/addressing. "
+            "Vertex-like actors store observations at lindex.extend((role, 0)) when set. "
+            "When omitted, actor-specific defaults may apply."
         ),
     )
+
+
+class VertexActorConfig(VertexExtractionOptionsConfig):
+    """Configuration for a VertexActor."""
+
+    type: Literal["vertex"] = PydanticField(
+        default="vertex", description="Actor type discriminator"
+    )
+    vertex: str = PydanticField(..., description="Name of the vertex type to create")
 
     @model_validator(mode="before")
     @classmethod
@@ -636,7 +647,7 @@ class DescendActorConfig(ConfigBaseModel):
         return self
 
 
-class VertexRouterActorConfig(ConfigBaseModel):
+class VertexRouterActorConfig(VertexExtractionOptionsConfig):
     """Configuration for a VertexRouterActor.
 
     Field handling matches :class:`VertexActorConfig`: optional router-level ``from`` /
@@ -664,31 +675,6 @@ class VertexRouterActorConfig(ConfigBaseModel):
     vertex_from_map: dict[str, dict[str, str]] | None = PydanticField(
         default=None,
         description="Per-vertex-type field projection.",
-    )
-    role: str | None = PydanticField(
-        default=None,
-        description=(
-            "Accumulator slot segment used for storage/addressing. Vertices are stored at "
-            "lindex.extend((role, 0)). When omitted, role is inferred from type_field. "
-            "A downstream edge step references this slot via source_role/target_role "
-            "(or source_type_field/target_type_field) using the same segment name."
-        ),
-    )
-    from_doc: dict[str, str] | None = PydanticField(
-        default=None,
-        alias="from",
-        description=(
-            "Default projection {vertex_field: doc_field} for all routed vertex types. "
-            "Per-type vertex_from_map overrides this for a given resolved type when that type "
-            "is present as a key in vertex_from_map."
-        ),
-    )
-    keep_fields: list[str] | None = PydanticField(
-        default=None,
-        description=(
-            "Forwarded to each lazily created VertexActor: restrict passthrough to this "
-            "subset of vertex property names (same semantics as vertex.keep_fields)."
-        ),
     )
 
     @model_validator(mode="before")

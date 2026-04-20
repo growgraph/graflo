@@ -66,6 +66,7 @@ def _make_vertex_actor(
     role: str | None = None,
     from_doc: dict | None = None,
     keep_fields: list[str] | None = None,
+    extraction_scope: str | None = None,
 ) -> VertexActor:
     cfg = VertexActorConfig.model_validate(
         {
@@ -73,6 +74,7 @@ def _make_vertex_actor(
             **({"role": role} if role else {}),
             **({"from": from_doc} if from_doc else {}),
             **({"keep_fields": keep_fields} if keep_fields else {}),
+            **({"extraction_scope": extraction_scope} if extraction_scope else {}),
         }
     )
     return VertexActor.from_config(cfg)
@@ -206,6 +208,49 @@ def test_passthrough_without_role_still_pops() -> None:
 
     # 'id' and 'name' should have been popped from doc by passthrough.
     assert "name" not in doc
+
+
+def test_mapped_only_role_extracts_only_from_mapping() -> None:
+    """mapped_only limits extraction to explicit from mappings for role vertices."""
+    vc = _vc("person")
+    va_parent = _make_vertex_actor(
+        "person",
+        role="parent",
+        from_doc={"id": "parent"},
+        extraction_scope="mapped_only",
+    )
+    va_parent.finish_init(_init(vc))
+
+    ctx = ExtractionContext()
+    base = _lindex(0)
+    doc = {"person": "12", "parent": "13", "name": "Bob"}
+    doc_before = dict(doc)
+    ctx = va_parent(ctx, base, doc=doc)
+
+    slot_parent = base.extend(("parent", 0))
+    vertex = ctx.acc_vertex["person"][slot_parent][0].vertex
+    assert vertex == {"id": "13"}
+    assert doc == doc_before
+
+
+def test_mapped_only_without_role_does_not_pop_unmapped() -> None:
+    """mapped_only disables passthrough, so unmapped keys remain on doc."""
+    vc = _vc("person")
+    va = _make_vertex_actor(
+        "person",
+        from_doc={"id": "person"},
+        extraction_scope="mapped_only",
+    )
+    va.finish_init(_init(vc))
+
+    ctx = ExtractionContext()
+    base = _lindex(0)
+    doc = {"person": "12", "name": "Bob"}
+    ctx = va(ctx, base, doc=doc)
+
+    vertex = ctx.acc_vertex["person"][base][0].vertex
+    assert vertex == {"id": "12"}
+    assert doc == {"person": "12", "name": "Bob"}
 
 
 # ---------------------------------------------------------------------------

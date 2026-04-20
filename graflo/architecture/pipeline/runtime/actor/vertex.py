@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from .base import Actor, ActorConstants, ActorInitContext
 from .config import VertexActorConfig
@@ -26,6 +26,7 @@ class VertexActor(Actor):
         self.keep_fields: tuple[str, ...] | None = (
             tuple(config.keep_fields) if config.keep_fields else None
         )
+        self.extraction_scope: Literal["full", "mapped_only"] = config.extraction_scope
         self.role: str | None = config.role
         self.vertex_config: VertexConfig
         self.allowed_vertex_names: set[str] | None = None
@@ -35,7 +36,9 @@ class VertexActor(Actor):
         return cls(config)
 
     def fetch_important_items(self) -> dict[str, Any]:
-        return self._fetch_items_from_dict(("name", "from_doc", "keep_fields", "role"))
+        return self._fetch_items_from_dict(
+            ("name", "from_doc", "keep_fields", "extraction_scope", "role")
+        )
 
     def finish_init(self, init_ctx: ActorInitContext) -> None:
         self.vertex_config = init_ctx.vertex_config
@@ -157,19 +160,20 @@ class VertexActor(Actor):
 
         agg.extend(self._process_transformed_items(ctx, lindex, doc, vertex_keys))
 
-        remaining_keys = set(vertex_keys) - set().union(*[d.keys() for d in agg])
-        # When keep_fields is set, restrict passthrough to only those declared fields.
-        if self.keep_fields is not None:
-            remaining_keys = remaining_keys & set(self.keep_fields)
-        # When a role is set, do not mutate the shared doc dict — sibling role-vertex
-        # steps in the same pipeline need to read the same columns for their own slots.
-        # Without a role, the historical pop behaviour is preserved (backward compat).
-        if self.role:
-            passthrough_doc = {k: doc.get(k) for k in remaining_keys if k in doc}
-        else:
-            passthrough_doc = {k: doc.pop(k) for k in remaining_keys if k in doc}
-        if passthrough_doc:
-            agg.append(passthrough_doc)
+        if self.extraction_scope == "full":
+            remaining_keys = set(vertex_keys) - set().union(*[d.keys() for d in agg])
+            # When keep_fields is set, restrict passthrough to only those declared fields.
+            if self.keep_fields is not None:
+                remaining_keys = remaining_keys & set(self.keep_fields)
+            # When a role is set, do not mutate the shared doc dict — sibling role-vertex
+            # steps in the same pipeline need to read the same columns for their own slots.
+            # Without a role, the historical pop behaviour is preserved (backward compat).
+            if self.role:
+                passthrough_doc = {k: doc.get(k) for k in remaining_keys if k in doc}
+            else:
+                passthrough_doc = {k: doc.pop(k) for k in remaining_keys if k in doc}
+            if passthrough_doc:
+                agg.append(passthrough_doc)
 
         merged = merge_doc_basis(
             agg, index_keys=tuple(self.vertex_config.identity_fields(self.name))
