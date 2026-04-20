@@ -22,7 +22,7 @@ from graflo.hq.connection_provider import (
     InMemoryConnectionProvider,
     SparqlGeneralizedConnConfig,
 )
-from graflo.hq.inferencer import InferenceManager
+from graflo.hq.sql_inferencer import SQLInferenceManager
 from graflo.hq.resource_mapper import ResourceMapper
 from graflo.architecture.contract.bindings import Bindings
 
@@ -121,7 +121,7 @@ class GraphEngine:
                 raw_tables, schema_name) suitable for serialization.
         """
         with PostgresConnection(postgres_config) as postgres_conn:
-            inferencer = InferenceManager(
+            inferencer = SQLInferenceManager(
                 conn=postgres_conn,
                 target_db_flavor=self.target_db_flavor,
             )
@@ -150,7 +150,7 @@ class GraphEngine:
             GraphManifest: Inferred manifest with schema and ingestion model.
         """
         with PostgresConnection(postgres_config) as postgres_conn:
-            inferencer = InferenceManager(
+            inferencer = SQLInferenceManager(
                 conn=postgres_conn,
                 target_db_flavor=self.target_db_flavor,
                 fuzzy_threshold=fuzzy_threshold,

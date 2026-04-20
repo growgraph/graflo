@@ -1,18 +1,21 @@
+"""PostgreSQL schema inference and resource mapping (high level)."""
+
+import logging
+
+from graflo.architecture import Resource
 from graflo.architecture.contract.declarations.ingestion_model import IngestionModel
 from graflo.architecture.contract.manifest import GraphManifest
-from graflo.architecture.schema import Schema
-from graflo.onto import DBType
-from graflo.architecture import Resource
-from graflo.db import PostgresConnection
-from graflo.db.postgres import PostgresSchemaInferencer, PostgresResourceMapper
-from graflo.hq.sanitizer import Sanitizer
-import logging
 from graflo.architecture.onto_sql import SchemaIntrospectionResult
+from graflo.architecture.schema import Schema
+from graflo.db import PostgresConnection
+from graflo.db.postgres import PostgresResourceMapper, PostgresSchemaInferencer
+from graflo.hq.sanitizer import Sanitizer
+from graflo.onto import DBType
 
 logger = logging.getLogger(__name__)
 
 
-class InferenceManager:
+class SQLInferenceManager:
     """Inference manager for PostgreSQL sources."""
 
     def __init__(

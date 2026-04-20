@@ -46,7 +46,7 @@ flowchart LR
 - **GraphManifest** — the canonical top-level contract that composes `schema`, `ingestion_model`, and `bindings`.
 - **Schema** — the declarative logical graph model (`Schema`): vertex/edge definitions, identities, typed **`properties`**, and DB profile.
 - **IngestionModel** — reusable resources and transforms used to map records into graph entities.
-- **Bindings** — named `FileConnector` / `TableConnector` / `SparqlConnector` list plus `resource_connector` (many rows per resource allowed: resource→0..n connectors) and optional `connector_connection` (connector **name** or **hash**→`conn_proxy` for runtime `ConnectionProvider` resolution without secrets in the manifest). Optional **`staging_proxy`** maps logical staging profile names to `conn_proxy` keys for **TigerGraph bulk S3 upload** (credentials via `S3GeneralizedConnConfig`, not in YAML). Each connector exposes a **bound source modality** (`BoundSourceKind`: file, SQL table, SPARQL) for dispatch, distinct from the abstract ingestion **Resource**. See [TigerGraph bulk load](../guides/tigergraph_bulk_load.md).
+- **Bindings** — named `FileConnector` / `TableConnector` / `SparqlConnector` list plus `resource_connector` (many rows per resource allowed: resource→0..n connectors) and optional `connector_connection` (connector **name** or **hash**→`conn_proxy` for runtime `ConnectionProvider` resolution without secrets in the manifest). Optional **`staging_proxy`** maps logical staging profile names to `conn_proxy` keys for **TigerGraph bulk S3 upload** (credentials via `S3GeneralizedConnConfig`, not in YAML). Staging is separate from ingestion connectors; see [Object storage (S3 staging)](object_storage.md). Each connector exposes a **bound source modality** (`BoundSourceKind`: file, SQL table, SPARQL) for dispatch, distinct from the abstract ingestion **Resource**. See [TigerGraph bulk load](../guides/tigergraph_bulk_load.md).
 - **Database-Independent Graph Representation** — a `GraphContainer` of vertices and edges, independent of any target database.
 - **Graph DB** — the target LPG store (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph).
 
@@ -138,7 +138,7 @@ classDiagram
         +ingest(manifest, target_db_config, ...)
     }
 
-    class InferenceManager {
+    class SQLInferenceManager {
         +conn: PostgresConnection
         +target_db_flavor: DBType
         +introspect(schema_name) SchemaIntrospectionResult
@@ -189,7 +189,7 @@ classDiagram
         +connection_type: DBType
     }
 
-    GraphEngine --> InferenceManager : creates for introspect / infer_schema
+    GraphEngine --> SQLInferenceManager : creates for introspect / infer_schema
     GraphEngine --> ResourceMapper : resource_mapper
     GraphEngine --> Caster : creates for ingest
     GraphEngine --> ConnectionManager : creates for define_schema

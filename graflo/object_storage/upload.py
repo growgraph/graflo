@@ -1,11 +1,11 @@
-"""Upload local bulk CSV staging files to S3 for TigerGraph loading."""
+"""Upload local files to S3 for TigerGraph LOADING JOB paths."""
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import boto3
+from graflo.object_storage.s3_client import boto3_s3_client_from_generalized
 
 if TYPE_CHECKING:
     from graflo.hq.connection_provider import S3GeneralizedConnConfig
@@ -17,16 +17,10 @@ def upload_staged_csvs(
     bucket: str,
     key_prefix: str,
     session_id: str,
-    s3_cfg: S3GeneralizedConnConfig,
+    s3_cfg: "S3GeneralizedConnConfig",
 ) -> dict[str, str]:
     """Upload files and return manifest key -> ``s3://bucket/key`` for GSQL."""
-    client = boto3.client(
-        "s3",
-        region_name=s3_cfg.region or None,
-        endpoint_url=s3_cfg.endpoint_url or None,
-        aws_access_key_id=s3_cfg.aws_access_key_id or None,
-        aws_secret_access_key=s3_cfg.aws_secret_access_key or None,
-    )
+    client = boto3_s3_client_from_generalized(s3_cfg)
     base = "/".join(p.strip("/") for p in (key_prefix, session_id) if p)
     urls: dict[str, str] = {}
     for label, path in staged_files.items():

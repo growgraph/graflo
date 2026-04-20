@@ -11,6 +11,10 @@ The mapping follows these conventions:
 - ``owl:ObjectProperty`` (``rdfs:domain``, ``rdfs:range``) -> **Edge**
   (source = domain class, target = range class)
 - Subject URI local name -> ``_key``
+- Inferred vertex **identity** is ``["_uri"]`` so ABox ingestion keys on stable RDF subject URIs.
+- **Object properties** (edges) become per-resource pipeline steps on the domain class that
+  materialize the range vertex from the object-property field (URI reference) and emit the edge,
+  including when domain and range are the same class (e.g. ``Publication`` -> ``Publication`` for ``cites``).
 
 Requires ``rdflib`` (a **core** dependency of ``graflo``).
 """
@@ -118,6 +122,11 @@ class RdfInferenceManager:
     ) -> tuple[Schema, IngestionModel]:
         """Infer a complete graflo Schema from an RDF/OWL ontology.
 
+        Vertices use ``identity: ["_uri"]``. For each ``owl:ObjectProperty``, each
+        source-class resource gets pipeline steps that (1) extract the range vertex
+        from the predicate field via ``from: {_uri: <relation>}`` and (2) emit the
+        edge, including when domain and range are the same class.
+
         Args:
             source: Path to an RDF file or a base URL (when using endpoint).
             endpoint_url: SPARQL endpoint to CONSTRUCT the ontology from.
@@ -177,7 +186,9 @@ class RdfInferenceManager:
         vertices = []
         for cls_name, fields in fields_by_class.items():
             vertex_fields = [VertexField(name=f) for f in fields]
-            vertices.append(Vertex(name=cls_name, properties=vertex_fields))
+            vertices.append(
+                Vertex(name=cls_name, properties=vertex_fields, identity=["_uri"])
+            )
 
         vertex_config = VertexConfig(vertices=vertices)
 
@@ -192,18 +203,34 @@ class RdfInferenceManager:
         edge_config = EdgeConfig(edges=edge_objects)
 
         # -- Build Resources (one per class) ----------------------------------
+        edge_defs_by_source: dict[str, list[dict[str, str]]] = {}
+        for edge_def in edges:
+            edge_defs_by_source.setdefault(edge_def["source"], []).append(edge_def)
+
         resources: list[Resource] = []
         for cls_name in classes:
             pipeline: list[dict[str, Any]] = [{"vertex": cls_name}]
-            for edge_def in edges:
-                if edge_def["source"] == cls_name:
-                    pipeline.append(
-                        {
-                            "source": edge_def["source"],
-                            "target": edge_def["target"],
-                            "relation": edge_def.get("relation"),
+            for edge_def in edge_defs_by_source.get(cls_name, []):
+                relation_name = edge_def.get("relation")
+                if relation_name is None:
+                    continue
+                target = edge_def["target"]
+                pipeline.append(
+                    {
+                        "vertex": target,
+                        "from": {"_uri": relation_name},
+                        "extraction_scope": "mapped_only",
+                    }
+                )
+                pipeline.append(
+                    {
+                        "edge": {
+                            "from": edge_def["source"],
+                            "to": target,
+                            "relation": relation_name,
                         }
-                    )
+                    }
+                )
             resources.append(Resource(name=cls_name, pipeline=pipeline))
 
         effective_name = schema_name or "rdf_schema"

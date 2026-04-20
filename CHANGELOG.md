@@ -5,9 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.7.21] - 2026-04-20
+## [1.7.21] - 2026-04-21
+
+### Added
+
+- **`graflo.object_storage`**: S3-compatible helpers — `MinioConfig` / `S3EndpointConfig`, boto3 client factories,
+  `ensure_bucket_exists` / `ensure_staging_bucket_for_config`, and `upload_staged_csvs`
+  (TigerGraph bulk staging imports `upload_staged_csvs` from here).
+- **Documentation**: [Object storage (S3 staging)](docs/concepts/object_storage.md) concept page;
+  Concepts overview links staging to that page.
+
+### Breaking
+
+- **`InferenceManager` removed**: PostgreSQL inference now lives in
+  `graflo.hq.sql_inferencer.SQLInferenceManager`. Replace
+  `from graflo.hq.inferencer import InferenceManager` with
+  `from graflo.hq.sql_inferencer import SQLInferenceManager` (also exported from
+  `graflo.hq`).
 
 ### Changed
+
+- **`RdfInferenceManager.infer_schema`**: RDF-inferred vertices use `identity: ["_uri"]`.
+  Cross-class `owl:ObjectProperty` declarations produce per-resource pipeline steps that
+  materialize the target vertex from the predicate URI field, then emit the edge. Same-class
+  object properties are not expanded automatically (custom pipelines still apply).
 
 - **`VertexRouterActor` role normalization**: `role` is now normalized from
   `type_field` when omitted, and router storage/addressing uses `role` as the single

@@ -28,6 +28,7 @@ import hashlib
 import json
 import logging
 import re
+import threading
 import uuid
 from collections import defaultdict
 from functools import lru_cache
@@ -59,18 +60,25 @@ from graflo.db.tigergraph.bulk_gsql import (
     build_run_loading_job_only,
 )
 from graflo.db.tigergraph.gsql_literals import gsql_default_literal
-from graflo.db.tigergraph.s3_staging import upload_staged_csvs
-from graflo.hq.connection_provider import S3GeneralizedConnConfig
 from graflo.db.tigergraph.onto import (
     TIGERGRAPH_TYPE_ALIASES,
     VALID_TIGERGRAPH_TYPES,
 )
 from graflo.db.util import json_serializer
 from graflo.filter.onto import FilterExpression
+from graflo.hq.connection_provider import S3GeneralizedConnConfig
+from graflo.object_storage import upload_staged_csvs
 from graflo.onto import AggregationType
 from graflo.onto import DBType
 from graflo.util.transform import pick_unique_dict
 from urllib.parse import quote
+
+# begin / append / finalize use different :class:`ConnectionManager` contexts (new
+# :class:`TigerGraphConnection` each time); bulk state must not be per-instance.
+_tiger_bulk_sessions_lock = threading.Lock()
+_tiger_bulk_sessions: dict[
+    str, tuple[BulkCsvAppender, TigergraphBulkLoadConfig, Any, Path]
+] = {}
 
 # Alias for backward compatibility
 _json_serializer = json_serializer
@@ -290,9 +298,6 @@ class TigerGraphConnection(Connection):
         self.graphname: str = (
             configured_graph if configured_graph is not None else "DefaultGraph"
         )
-        self._bulk_sessions: dict[
-            str, tuple[BulkCsvAppender, TigergraphBulkLoadConfig, Any, Path]
-        ] = {}
         self._installed_clear_data_queries: dict[str, set[str]] = {}
 
         # Initialize URLs (ports come from config, no hardcoded defaults)
@@ -1870,16 +1875,23 @@ class TigerGraphConnection(Connection):
             bulk_cfg=bulk_cfg,
             schema_db=schema_db,
         )
-        self._bulk_sessions[session_id] = (appender, bulk_cfg, schema_db, staging_root)
+        with _tiger_bulk_sessions_lock:
+            _tiger_bulk_sessions[session_id] = (
+                appender,
+                bulk_cfg,
+                schema_db,
+                staging_root,
+            )
         return session_id
 
     def bulk_load_append(
         self, session_id: str, gc: GraphContainer, schema: Schema
     ) -> None:
-        if session_id not in self._bulk_sessions:
-            raise KeyError(f"Unknown TigerGraph bulk session {session_id!r}")
-        appender, _, _, _ = self._bulk_sessions[session_id]
-        appender.append_graph_container(gc, schema)
+        with _tiger_bulk_sessions_lock:
+            if session_id not in _tiger_bulk_sessions:
+                raise KeyError(f"Unknown TigerGraph bulk session {session_id!r}")
+            appender, _, _, _ = _tiger_bulk_sessions[session_id]
+            appender.append_graph_container(gc, schema)
 
     def bulk_load_finalize(  # noqa: PLR0912
         self,
@@ -1891,11 +1903,12 @@ class TigerGraphConnection(Connection):
     ) -> str:
         """Upload to S3 when configured, then CREATE/RUN/DROP LOADING JOB."""
         _ = schema
-        if session_id not in self._bulk_sessions:
-            raise KeyError(f"Unknown TigerGraph bulk session {session_id!r}")
-        appender, bulk_cfg, schema_db, _staging_root = self._bulk_sessions.pop(
-            session_id
-        )
+        with _tiger_bulk_sessions_lock:
+            if session_id not in _tiger_bulk_sessions:
+                raise KeyError(f"Unknown TigerGraph bulk session {session_id!r}")
+            appender, bulk_cfg, schema_db, _staging_root = _tiger_bulk_sessions.pop(
+                session_id
+            )
         appender.close()
         staged = appender.staged_file_paths
         if not staged:
@@ -1905,9 +1918,11 @@ class TigerGraphConnection(Connection):
         path_for_gsql: dict[str, str] = {k: str(v.resolve()) for k, v in staged.items()}
         proxy = bulk_cfg.resolve_s3_conn_proxy(bindings)
         bucket = bulk_cfg.s3_bucket
+        tigergraph_s3_loader: S3GeneralizedConnConfig | None = None
         if proxy and connection_provider is not None:
             gen = connection_provider.get_generalized_config_by_proxy(proxy)
             if isinstance(gen, S3GeneralizedConnConfig):
+                tigergraph_s3_loader = gen
                 resolved_bucket = bucket or gen.bucket
                 if not resolved_bucket:
                     raise ValueError(
@@ -1933,6 +1948,8 @@ class TigerGraphConnection(Connection):
                 staged_files=staged,
                 bulk_cfg=bulk_cfg,
                 path_for_gsql=path_for_gsql,
+                tigergraph_s3_loader=tigergraph_s3_loader,
+                tigergraph_s3_data_source_name=f"gf_s3_{session_id}",
             )
         return str(self._execute_gsql(gsql))
 

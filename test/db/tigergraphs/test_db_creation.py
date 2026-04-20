@@ -150,7 +150,7 @@ def test_schema_creation_edges(conn_conf, test_graph_name, schema_obj):
 
 
 def test_delete_database_scopes_query_cleanup_to_target_graph() -> None:
-    """delete_database should clean only target graph queries before DROP GRAPH."""
+    """delete_database should clean only the target graph (queries, then jobs) before DROP GRAPH."""
     conn = TigerGraphConnection.__new__(TigerGraphConnection)
     dropped_graph_queries: list[str] = []
     executed_gsql: list[str] = []
@@ -169,4 +169,7 @@ def test_delete_database_scopes_query_cleanup_to_target_graph() -> None:
     conn.delete_database(graph_name)
 
     assert dropped_graph_queries == [graph_name]
-    assert executed_gsql == [f"USE GLOBAL\nDROP GRAPH {graph_name}"]
+    assert executed_gsql == [
+        f"USE GRAPH {graph_name}\nSHOW JOB *",
+        f"USE GLOBAL\nDROP GRAPH {graph_name}",
+    ]

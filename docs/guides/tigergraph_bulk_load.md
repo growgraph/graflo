@@ -65,6 +65,8 @@ GraFlo uses **boto3**. Any endpoint that speaks the S3 API works if you set `end
 
 For **end-to-end** tests against a real loader, MinIO or cloud S3 with matching VPC/network access is the usual approach.
 
+TigerGraph resolves `s3://` paths via a **GSQL `CREATE DATA_SOURCE`** (S3 credentials and, for MinIO, `file.reader.settings.fs.s3a.endpoint` and path-style access). GraFlo emits that statement when bulk staging uploads to S3. The endpoint in that data source must be reachable **from the TigerGraph server**; if TigerGraph runs in Docker and MinIO on the host, set `MINIO_LOADER_ENDPOINT` in `docker/minio/.env` to a URL visible inside the TG container (see `docker/README.md` MinIO section).
+
 ## See also
 
 - [Example 10: TigerGraph bulk load and S3 staging](../examples/example-10.md)

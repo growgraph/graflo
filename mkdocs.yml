@@ -56,6 +56,7 @@ nav:
     -   Creating a Manifest: getting_started/creating_manifest.md
 -   Concepts:
     -   Concepts Overview: concepts/index.md
+    -   Object storage (S3 staging): concepts/object_storage.md
     -   Transforms: concepts/transforms.md
     -   Table connector views and SelectSpec: concepts/table_connector_views.md
     -   Backend Index Behavior: concepts/backend_indexes.md
