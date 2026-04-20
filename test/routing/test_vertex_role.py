@@ -258,45 +258,100 @@ def test_mapped_only_without_role_does_not_pop_unmapped() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_source_role_resolves_to_source_type_field() -> None:
-    """source_role is sugar for source_type_field; both name the same slot."""
+def test_source_role_is_canonical_slot_key() -> None:
+    """source_role is the canonical dynamic slot key."""
     cfg = EdgeActorConfig.model_validate(
         {"type": "edge", "source_role": "buyer", "to": "company"}
     )
-    assert cfg.source_type_field == "buyer"
     assert cfg.source_role == "buyer"
+    assert cfg.source_type_field is None
 
 
-def test_target_role_resolves_to_target_type_field() -> None:
-    """target_role resolves to target_type_field."""
+def test_target_role_is_canonical_slot_key() -> None:
+    """target_role is the canonical dynamic slot key."""
     cfg = EdgeActorConfig.model_validate(
         {"type": "edge", "from": "company", "target_role": "seller"}
     )
-    assert cfg.target_type_field == "seller"
+    assert cfg.target_role == "seller"
+    assert cfg.target_type_field is None
 
 
-def test_source_role_and_source_type_field_are_exclusive() -> None:
-    with pytest.raises(Exception, match="mutually exclusive"):
+def test_source_type_field_legacy_alias_canonicalizes_to_source_role() -> None:
+    cfg = EdgeActorConfig.model_validate(
+        {"type": "edge", "source_type_field": "buyer", "to": "company"}
+    )
+    assert cfg.source_role == "buyer"
+    assert cfg.source_type_field is None
+
+
+def test_target_type_field_legacy_alias_canonicalizes_to_target_role() -> None:
+    cfg = EdgeActorConfig.model_validate(
+        {"type": "edge", "from": "company", "target_type_field": "seller"}
+    )
+    assert cfg.target_role == "seller"
+    assert cfg.target_type_field is None
+
+
+def test_source_role_and_source_type_field_equal_values_canonicalize() -> None:
+    cfg = EdgeActorConfig.model_validate(
+        {
+            "type": "edge",
+            "source_role": "buyer",
+            "source_type_field": "buyer",
+            "to": "company",
+        }
+    )
+    assert cfg.source_role == "buyer"
+    assert cfg.source_type_field is None
+
+
+def test_target_role_and_target_type_field_equal_values_canonicalize() -> None:
+    cfg = EdgeActorConfig.model_validate(
+        {
+            "type": "edge",
+            "from": "company",
+            "target_role": "seller",
+            "target_type_field": "seller",
+        }
+    )
+    assert cfg.target_role == "seller"
+    assert cfg.target_type_field is None
+
+
+def test_source_role_and_source_type_field_mismatch_raises() -> None:
+    with pytest.raises(Exception, match="must match"):
         EdgeActorConfig.model_validate(
             {
                 "type": "edge",
                 "source_role": "buyer",
-                "source_type_field": "buyer",
+                "source_type_field": "seller",
                 "to": "company",
             }
         )
 
 
-def test_target_role_and_target_type_field_are_exclusive() -> None:
-    with pytest.raises(Exception, match="mutually exclusive"):
+def test_target_role_and_target_type_field_mismatch_raises() -> None:
+    with pytest.raises(Exception, match="must match"):
         EdgeActorConfig.model_validate(
             {
                 "type": "edge",
                 "from": "company",
                 "target_role": "seller",
-                "target_type_field": "seller",
+                "target_type_field": "buyer",
             }
         )
+
+
+def test_edge_actor_config_roundtrip_does_not_retrigger_alias_conflict() -> None:
+    cfg = EdgeActorConfig.model_validate(
+        {"type": "edge", "source_role": "buyer", "target_role": "seller"}
+    )
+    payload = cfg.to_dict()
+    reparsed = EdgeActorConfig.model_validate(payload)
+    assert reparsed.source_role == "buyer"
+    assert reparsed.target_role == "seller"
+    assert reparsed.source_type_field is None
+    assert reparsed.target_type_field is None
 
 
 # ---------------------------------------------------------------------------
@@ -308,8 +363,10 @@ def test_edge_link_config_source_role_resolved() -> None:
     lk = EdgeLinkConfig.model_validate(
         {"source_role": "self", "target_role": "parent", "relation": "is_child_of"}
     )
-    assert lk.source_type_field == "self"
-    assert lk.target_type_field == "parent"
+    assert lk.source_role == "self"
+    assert lk.target_role == "parent"
+    assert lk.source_type_field is None
+    assert lk.target_type_field is None
 
 
 def test_edge_link_config_missing_source_raises() -> None:
@@ -322,12 +379,22 @@ def test_edge_link_config_missing_target_raises() -> None:
         EdgeLinkConfig.model_validate({"source_role": "self"})
 
 
-def test_edge_link_config_role_and_type_field_exclusive() -> None:
-    with pytest.raises(Exception, match="mutually exclusive"):
+def test_edge_link_config_legacy_alias_canonicalizes_to_role() -> None:
+    lk = EdgeLinkConfig.model_validate(
+        {"source_type_field": "self", "target_type_field": "parent"}
+    )
+    assert lk.source_role == "self"
+    assert lk.target_role == "parent"
+    assert lk.source_type_field is None
+    assert lk.target_type_field is None
+
+
+def test_edge_link_config_role_and_type_field_mismatch_raises() -> None:
+    with pytest.raises(Exception, match="must match"):
         EdgeLinkConfig.model_validate(
             {
                 "source_role": "self",
-                "source_type_field": "self",
+                "source_type_field": "other",
                 "target_role": "parent",
             }
         )

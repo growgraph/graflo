@@ -480,7 +480,8 @@ def test_edge_config_mixed_mode_source_type_field_static_target_is_valid() -> No
             "to": "database",
         }
     )
-    assert cfg.source_type_field == "S"
+    assert cfg.source_role == "S"
+    assert cfg.source_type_field is None
     assert cfg.target == "database"
 
 
@@ -494,4 +495,5 @@ def test_edge_config_mixed_mode_static_source_target_type_field_is_valid() -> No
         }
     )
     assert cfg.source == "server"
-    assert cfg.target_type_field == "T"
+    assert cfg.target_role == "T"
+    assert cfg.target_type_field is None

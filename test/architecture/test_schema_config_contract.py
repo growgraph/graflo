@@ -138,7 +138,7 @@ def test_edge_actor_requires_source():
     """EdgeActorConfig rejects a step with no source or source_type_field."""
     with pytest.raises(
         ValueError,
-        match="edge step requires 'from' \\(source\\) or source_type_field",
+        match="edge step requires 'from' \\(source\\), source_role, or source_type_field",
     ):
         EdgeActorConfig.model_validate(
             {
