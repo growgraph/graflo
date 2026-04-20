@@ -141,7 +141,7 @@ flowchart TD
 
 Step by step for row `person=12, parent=13, child=21, name=Bob, age=35`:
 
-1. **`vertex: person, role: self`** — renames `person → id`, then picks up `name=Bob` and `age=35` via passthrough. Stores at `lindex.(self, 0)`. Doc is not mutated (uses `doc.get`).
+1. **`vertex: person, role: self`** — renames `person → id`, then picks up `name=Bob` and `age=35` via passthrough. Stores at `lindex.(self, 0)`. Extraction reads from an effective merged observation (raw row + same-location transform output).
 2. **`vertex: person, role: parent`** — renames `parent → id`. `keep_fields: [id]` prevents `name`/`age` leaking in. Stores at `lindex.(parent, 0)`.
 3. **`vertex: person, role: child`** — renames `child → id`. `keep_fields: [id]` restricts passthrough. Stores at `lindex.(child, 0)`.
 4. **`edge: links`** — link 1 scans `acc_vertex` at `lindex.(self, 0)` and `lindex.(parent, 0)`, emits `(person 12 → person 13, is_child_of)`. Link 2 scans `self` and `child` slots, emits `(person 12 → person 21, is_parent_of)`.
@@ -170,7 +170,9 @@ Fields whose names already match a vertex property are absorbed automatically by
 
 ### Passthrough behaviour with `role`
 
-When `role` is set, passthrough uses `doc.get` rather than `doc.pop`, so the shared row dict is not mutated between sibling vertex steps. Without `role`, the original `doc.pop` behaviour is preserved for backward compatibility.
+Vertex extraction reads from an effective merged observation (raw row + same-location transform output). On key conflicts, transform-derived values have priority over raw row values, and passthrough no longer relies on mutating the incoming row dict.
+
+For extraction internals, edge assembly now reads row-level merged observation values from `obs_buffer` keyed by `LocationIndex`; `VertexRep` remains a pure vertex payload carrier.
 
 Use `keep_fields` on role-vertex steps that should ignore some vertex properties from the shared row.
 

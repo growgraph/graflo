@@ -27,9 +27,10 @@ class VertexExtractionOptionsConfig(ConfigBaseModel):
     extraction_scope: Literal["full", "mapped_only"] = PydanticField(
         default="full",
         description=(
-            "Field extraction policy. full (default) keeps existing passthrough behavior "
-            "for remaining schema properties; mapped_only limits extraction to explicit "
-            "field mappings declared in from."
+            "Field extraction policy. full (default) includes passthrough for remaining "
+            "schema properties from the merged observation "
+            "(doc + same-location transform buffer), while mapped_only limits extraction "
+            "to explicit field mappings declared in from."
         ),
     )
     role: str | None = PydanticField(

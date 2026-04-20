@@ -109,9 +109,7 @@ def _populate_slot(
 ) -> None:
     """Simulate VRA storing a vertex rep at lindex.(type_field, 0)."""
     slot_lindex = base_lindex.extend((type_field, 0))
-    ctx.acc_vertex[vertex_type][slot_lindex].append(
-        VertexRep(vertex=vertex_doc, ctx={})
-    )
+    ctx.acc_vertex[vertex_type][slot_lindex].append(VertexRep(vertex=vertex_doc))
 
 
 # ---------------------------------------------------------------------------
@@ -317,7 +315,7 @@ def test_dynamic_relation_from_transform_buffer() -> None:
     _populate_slot(ctx, base, "S", "server", {"id": "s1"})
     _populate_slot(ctx, base, "T", "database", {"id": "d1"})
 
-    ctx.buffer_transforms[base].append(TransformPayload(named={"rel": "from_buffer"}))
+    ctx.transform_buffer[base].append(TransformPayload(named={"rel": "from_buffer"}))
     ea(ctx, base, doc={"rel": "from_doc"})  # buffer overrides doc
 
     assert ctx.edge_intents[0].edge.relation == "from_buffer"

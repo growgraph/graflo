@@ -37,8 +37,8 @@ def test_render_edge_keeps_heterogeneous_equal_projected_values() -> None:
 
     ext = ExtractionContext()
     loc = LocationIndex(())
-    ext.acc_vertex["a"][loc] = [VertexRep(vertex={"id": 42}, ctx={})]
-    ext.acc_vertex["b"][loc] = [VertexRep(vertex={"id": 42}, ctx={})]
+    ext.acc_vertex["a"][loc] = [VertexRep(vertex={"id": 42})]
+    ext.acc_vertex["b"][loc] = [VertexRep(vertex={"id": 42})]
 
     asm = AssemblyContext.from_extraction(ext)
     out = render_edge(edge, vc, asm, lindex=None, derivation=None)
@@ -84,7 +84,7 @@ def test_dynamic_edge_skips_blank_string_identity() -> None:
     # vertex actor storing a blank-id vertex, then check no edge intent is produced.
 
     # Populate source ("node") at base lindex with blank id.
-    ctx.acc_vertex["node"][loc].append(VertexRep(vertex={"id": ""}, ctx={}))
+    ctx.acc_vertex["node"][loc].append(VertexRep(vertex={"id": ""}))
     # VRA populates target slot.
     vra(ctx, loc, doc={"t": "node", "id": "n1"})
 

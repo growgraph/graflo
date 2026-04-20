@@ -233,7 +233,7 @@ class TransformActor(Actor):
                 return ctx
         transform_result = self.t(doc)
         _update_doc = self._format_transform_result(transform_result)
-        ctx.buffer_transforms[lindex].append(_update_doc)
+        ctx.transform_buffer[lindex].append(_update_doc)
         ctx.record_transform_observation(location=lindex, payload=_update_doc)
         return ctx
 

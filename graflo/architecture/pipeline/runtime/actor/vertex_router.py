@@ -122,8 +122,9 @@ class VertexRouterActor(Actor):
                 type(raw_observation).__name__,
             )
             return ctx
-        buffer_items: list[Any] = list(ctx.buffer_transforms.get(lindex, []))
+        buffer_items: list[Any] = list(ctx.transform_buffer.get(lindex, []))
         doc = merge_observation_with_transform_buffer(raw_observation, buffer_items)
+        ctx.obs_buffer[lindex] = dict(doc)
         raw_vtype = doc.get(self.type_field)
         if raw_vtype is None:
             logger.debug(

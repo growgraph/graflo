@@ -2,7 +2,7 @@
 
 Covers:
   - VertexActor with role stores at lindex.(role, 0) not bare lindex
-  - VertexActor without role stores at bare lindex (backward compat)
+  - VertexActor without role stores at bare lindex
   - Two vertex+role steps for the same vertex type accumulate at distinct slots
   - Passthrough does not mutate shared doc when role is set (sibling steps see same col)
   - source_role / target_role on EdgeActorConfig resolve to source_type_field / target_type_field
@@ -18,6 +18,7 @@ import pytest
 from graflo.architecture.graph_types import (
     ExtractionContext,
     LocationIndex,
+    TransformPayload,
     VertexRep,
 )
 from graflo.architecture.pipeline.runtime.actor.base import ActorInitContext
@@ -108,7 +109,7 @@ def test_vertex_actor_with_role_stores_at_role_slot() -> None:
 
 
 def test_vertex_actor_without_role_stores_at_bare_lindex() -> None:
-    """VertexActor without role stores vertex at bare lindex (backward compat)."""
+    """VertexActor without role stores vertex at bare lindex."""
     vc = _vc("person")
     va = _make_vertex_actor("person")
     va.finish_init(_init(vc))
@@ -144,12 +145,12 @@ def test_two_role_steps_same_type_occupy_distinct_slots() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 2. Passthrough safety (doc.get not doc.pop when role is set)
+# 2. Passthrough safety (non-mutating effective observation reads)
 # ---------------------------------------------------------------------------
 
 
 def test_passthrough_does_not_mutate_doc_when_role_is_set() -> None:
-    """Role-bearing vertex step uses doc.get so sibling steps still see shared columns."""
+    """Role-bearing vertex step keeps the shared doc unchanged for sibling steps."""
     vc = _vc("person")
     # from_doc: {vertex_field: doc_field}
     va_self = _make_vertex_actor("person", role="self", from_doc={"id": "person"})
@@ -166,7 +167,7 @@ def test_passthrough_does_not_mutate_doc_when_role_is_set() -> None:
     doc_before = dict(doc)
     ctx = va_self(ctx, base, doc=doc)
 
-    # After va_self the doc is unmodified (role=self uses doc.get not doc.pop).
+    # After va_self the doc is unmodified.
     assert doc == doc_before, "role-bearing VertexActor must not mutate the shared doc"
 
     # va_parent can still run on the same doc without missing anything.
@@ -195,8 +196,8 @@ def test_keep_fields_restricts_passthrough_for_role_vertex() -> None:
     assert "name" not in vertex
 
 
-def test_passthrough_without_role_still_pops() -> None:
-    """Without role, passthrough uses doc.pop (backward compat behaviour)."""
+def test_passthrough_without_role_does_not_mutate_doc() -> None:
+    """Without role, passthrough reads non-destructively from effective doc."""
     vc = _vc("person")
     va = _make_vertex_actor("person")  # no role
     va.finish_init(_init(vc))
@@ -206,8 +207,26 @@ def test_passthrough_without_role_still_pops() -> None:
     doc = {"id": "12", "name": "Bob"}
     ctx = va(ctx, base, doc=doc)
 
-    # 'id' and 'name' should have been popped from doc by passthrough.
-    assert "name" not in doc
+    assert doc == {"id": "12", "name": "Bob"}
+
+
+def test_from_doc_prefers_transform_value_over_raw_doc() -> None:
+    """from_doc reads merged observation with transform priority over raw doc."""
+    vc = _vc("person")
+    va = _make_vertex_actor("person", from_doc={"id": "external_id"})
+    va.finish_init(_init(vc))
+
+    ctx = ExtractionContext()
+    base = _lindex(0)
+    ctx.transform_buffer[base].append(
+        TransformPayload(named={"external_id": "from_tf"})
+    )
+    doc = {"external_id": "from_doc", "name": "Bob"}
+    ctx = va(ctx, base, doc=doc)
+
+    vertex = ctx.acc_vertex["person"][base][0].vertex
+    assert vertex["id"] == "from_tf"
+    assert doc == {"external_id": "from_doc", "name": "Bob"}
 
 
 def test_mapped_only_role_extracts_only_from_mapping() -> None:
@@ -446,9 +465,7 @@ def _populate_slot(
 ) -> None:
     """Simulate a role-vertex step having stored a vertex at lindex.(slot, 0)."""
     slot_lindex = base.extend((slot, 0))
-    ctx.acc_vertex[vertex_type][slot_lindex].append(
-        VertexRep(vertex=vertex_doc, ctx={})
-    )
+    ctx.acc_vertex[vertex_type][slot_lindex].append(VertexRep(vertex=vertex_doc))
 
 
 def test_edge_actor_links_emits_two_intents() -> None:

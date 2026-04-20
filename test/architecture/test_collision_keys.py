@@ -19,16 +19,16 @@ def test_collision(resource_collision, vertex_config_collision, sample_cross):
     )
     ctx = anw(ctx, doc=sample_cross)
     assert ctx.acc_vertex["person"][LocationIndex(path=(0,))] == [
-        VertexRep(vertex={"id": "John"}, ctx={"name": "John", "id": "Apple"}),
+        VertexRep(vertex={"id": "John"}),
     ]
     assert ctx.acc_vertex["person"][LocationIndex(path=(1,))] == [
-        VertexRep(vertex={"id": "Mary"}, ctx={"name": "Mary", "id": "Oracle"}),
+        VertexRep(vertex={"id": "Mary"}),
     ]
 
     assert ctx.acc_vertex["company"][LocationIndex(path=(0,))] == [
-        VertexRep(vertex={"id": "Apple"}, ctx={"name": "John", "id": "Apple"}),
+        VertexRep(vertex={"id": "Apple"}),
     ]
 
     assert ctx.acc_vertex["company"][LocationIndex(path=(1,))] == [
-        VertexRep(vertex={"id": "Oracle"}, ctx={"name": "Mary", "id": "Oracle"}),
+        VertexRep(vertex={"id": "Oracle"}),
     ]

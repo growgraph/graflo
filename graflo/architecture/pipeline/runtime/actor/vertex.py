@@ -11,6 +11,7 @@ from graflo.architecture.graph_types import (
     LocationIndex,
     TransformPayload,
     VertexRep,
+    merge_observation_with_transform_buffer,
 )
 from graflo.architecture.schema.vertex import VertexConfig
 from graflo.onto import ExpressionFlavor
@@ -106,14 +107,14 @@ class VertexActor(Actor):
         vertex_keys: tuple[str, ...],
     ) -> list[dict[str, Any]]:
         index_keys = tuple(self.vertex_config.identity_fields(self.name))
-        payloads = ctx.buffer_transforms[lindex]
+        payloads = ctx.transform_buffer[lindex]
         extracted_docs = [
             self._extract_vertex_doc_from_transformed_item(
                 item, vertex_keys, index_keys
             )
             for item in payloads
         ]
-        ctx.buffer_transforms[lindex] = [
+        ctx.transform_buffer[lindex] = [
             item
             for item in payloads
             if not (
@@ -129,6 +130,9 @@ class VertexActor(Actor):
         self, ctx: ExtractionContext, lindex: LocationIndex, *nargs: Any, **kwargs: Any
     ) -> ExtractionContext:
         doc: dict[str, Any] = kwargs.get("doc", {})
+        buffer_items: list[Any] = list(ctx.transform_buffer.get(lindex, []))
+        effective_doc = merge_observation_with_transform_buffer(doc, buffer_items)
+        ctx.obs_buffer[lindex] = dict(effective_doc)
 
         # Early-exit for disallowed vertex types.
         # This must happen before any ctx.acc_vertex[...] access.
@@ -154,24 +158,24 @@ class VertexActor(Actor):
 
         agg = []
         if self.from_doc:
-            projected = {v_f: doc.get(d_f) for v_f, d_f in self.from_doc.items()}
+            projected = {
+                v_f: effective_doc.get(d_f) for v_f, d_f in self.from_doc.items()
+            }
             if any(v is not None for v in projected.values()):
                 agg.append(projected)
 
-        agg.extend(self._process_transformed_items(ctx, lindex, doc, vertex_keys))
+        agg.extend(
+            self._process_transformed_items(ctx, lindex, effective_doc, vertex_keys)
+        )
 
         if self.extraction_scope == "full":
             remaining_keys = set(vertex_keys) - set().union(*[d.keys() for d in agg])
             # When keep_fields is set, restrict passthrough to only those declared fields.
             if self.keep_fields is not None:
                 remaining_keys = remaining_keys & set(self.keep_fields)
-            # When a role is set, do not mutate the shared doc dict — sibling role-vertex
-            # steps in the same pipeline need to read the same columns for their own slots.
-            # Without a role, the historical pop behaviour is preserved (backward compat).
-            if self.role:
-                passthrough_doc = {k: doc.get(k) for k in remaining_keys if k in doc}
-            else:
-                passthrough_doc = {k: doc.pop(k) for k in remaining_keys if k in doc}
+            passthrough_doc = {
+                k: effective_doc.get(k) for k in remaining_keys if k in effective_doc
+            }
             if passthrough_doc:
                 agg.append(passthrough_doc)
 
@@ -179,15 +183,14 @@ class VertexActor(Actor):
             agg, index_keys=tuple(self.vertex_config.identity_fields(self.name))
         )
 
-        obs_ctx = {q: w for q, w in doc.items() if not isinstance(w, (dict, list))}
         for m in merged:
-            vertex_rep = VertexRep(vertex=m, ctx=obs_ctx)
+            vertex_rep = VertexRep(vertex=m)
             ctx.acc_vertex[self.name][effective_lindex].append(vertex_rep)
             ctx.record_vertex_observation(
                 vertex_name=self.name,
                 location=effective_lindex,
                 vertex=vertex_rep.vertex,
-                ctx=vertex_rep.ctx,
+                ctx={},
             )
         return ctx
 
