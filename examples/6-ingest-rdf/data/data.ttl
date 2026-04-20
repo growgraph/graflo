@@ -42,19 +42,19 @@ ex:alice  a ex:Researcher ;
     ex:fullName       "Alice Smith" ;
     ex:orcid          "0000-0001-0001-0001" ;
     ex:affiliatedWith ex:mit ;
-    ex:authorOf       ex:paper1 , ex:paper3 .
+    ex:authorOf       ex:paper1 .
 
 ex:bob  a ex:Researcher ;
     ex:fullName       "Bob Jones" ;
     ex:orcid          "0000-0001-0002-0002" ;
     ex:affiliatedWith ex:eth ;
-    ex:authorOf       ex:paper1 , ex:paper2 .
+    ex:authorOf       ex:paper2 .
 
 ex:carol  a ex:Researcher ;
     ex:fullName       "Carol Wu" ;
     ex:orcid          "0000-0001-0003-0003" ;
     ex:affiliatedWith ex:oxford ;
-    ex:authorOf       ex:paper2 , ex:paper3 .
+    ex:authorOf       ex:paper3 .
 
 ex:dave  a ex:Researcher ;
     ex:fullName       "Dave Müller" ;
@@ -79,10 +79,10 @@ ex:paper3  a ex:Publication ;
     ex:title "Ontology-Driven Data Integration" ;
     ex:year  2023 ;
     ex:doi   "10.1234/paper3" ;
-    ex:cites ex:paper1 , ex:paper2 .
+    ex:cites ex:paper2 .
 
 ex:paper4  a ex:Publication ;
     ex:title "SPARQL Query Optimization Techniques" ;
     ex:year  2024 ;
     ex:doi   "10.1234/paper4" ;
-    ex:cites ex:paper2 , ex:paper3 .
+    ex:cites ex:paper3 .

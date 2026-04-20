@@ -16,33 +16,44 @@ uv run python ingest.py
 
 Ensure TigerGraph env matches `docker/tigergraph/.env` (or override `TIGERGRAPH_*`).
 
+Staging uploads use **`MinioConfig.from_docker_env()`**, which reads `docker/minio/.env` the same way examples like [Neo4j ingest](../4-ingest-neo4j/ingest.py) use `Neo4jConfig.from_docker_env()` — no need to export `MINIO_*` in the shell unless you want to override. Bucket ensure and upload helpers live in **`graflo.object_storage`**; see [Object storage (S3 staging)](../../docs/concepts/object_storage.md).
+
 ## Emulate S3 with MinIO
 
-1. Start MinIO (example):
+1. Start MinIO from the repo compose stack (recommended; image pin lives in `docker/minio/.env`):
+
+   ```bash
+   cd ../../docker/minio
+   docker compose --env-file .env --profile graflo.minio up -d
+   ```
+
+   Or run a standalone container (same defaults as `docker/minio`):
 
    ```bash
    docker run -p 9000:9000 -p 9001:9001 \
      -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
-     minio/minio server /data --console-address ":9001"
+     minio/minio:RELEASE.2025-09-07T16-13-09Z-cpuv1 \
+     server /data --console-address ":9001"
    ```
 
-2. Open the console (`http://127.0.0.1:9001`), create bucket **`graflo-staging`** (or set `BULK_S3_BUCKET`).
-
-3. Export credentials for boto3 (used during bulk finalize):
+2. Optional: ensure the staging bucket exists ( **`ingest.py` does this automatically** when `BULK_USE_S3=1`):
 
    ```bash
-   export MINIO_ENDPOINT=http://127.0.0.1:9000
-   export MINIO_ACCESS_KEY=minioadmin
-   export MINIO_SECRET_KEY=minioadmin
-   export BULK_S3_BUCKET=graflo-staging
+   uv run python minio_init.py
    ```
 
-4. **TigerGraph** must be able to read the resulting `s3://` URLs (same cloud, IAM, or connector config on the TG side). If you only want **local** paths in `LOADING JOB`, disable S3 in the example:
+3. **TigerGraph** must be able to read the resulting `s3://` URLs (same cloud, IAM, or connector config on the TG side). If you only want **local** paths in `LOADING JOB`, disable S3 in the example:
 
    ```bash
    export BULK_USE_S3=0
    uv run python ingest.py
    ```
+
+## Troubleshooting
+
+- **`Connection refused` to `127.0.0.1:9000` (or your `MINIO_API_PORT`)**: The script talks to the MinIO **S3 API**, not the web console. A URL like `http://127.0.0.1:9001/endpoints` is the **console** (different port and service); boto3 must use `MINIO_API_PORT` / `MINIO_ENDPOINT` from `docker/minio/.env`. Verify `docker ps` shows `graflo.minio` as **Up**. If the container is stuck in **Created** or never starts, check compose logs: `Bind for ... :9001 failed: port is already allocated` means another process already uses that host port. Set `MINIO_CONSOLE_PORT` (and `MINIO_API_PORT` if needed) to free ports, run `docker rm -f graflo.minio`, then bring the stack up again. See **MinIO** in [`docker/README.md`](../../docker/README.md).
+
+- **Ingest finishes but the graph is empty (S3 / `BULK_USE_S3=1`)**: TigerGraph loads from `s3://` using a **GSQL DATA_SOURCE** (credentials + MinIO endpoint). That endpoint must be reachable **from the TigerGraph process** (often inside Docker). If GraFlo and MinIO run on the host but TigerGraph is in a container, `127.0.0.1` in `docker/minio/.env` is wrong for the loader. Set **`MINIO_LOADER_ENDPOINT`** (or `MINIO_TIGERGRAPH_ENDPOINT`) to a URL the TigerGraph container can use (e.g. `http://172.17.0.1:9003` on Linux, or `http://host.docker.internal:9003` where supported). Python/boto3 still uses `MINIO_HOSTNAME` + `MINIO_API_PORT` for uploads. Alternatively use **`BULK_USE_S3=0`** so the LOADING JOB uses local file paths (TigerGraph must see those paths on its filesystem).
 
 ## Other ways to “fake” S3 in Python
 
@@ -58,4 +69,5 @@ Ensure TigerGraph env matches `docker/tigergraph/.env` (or override `TIGERGRAPH_
 |------|---------|
 | `manifest.yaml` | Schema, ingestion, `staging_proxy` wiring. |
 | `data/relations.csv` | Tiny CSV for `relations` resource. |
+| `minio_init.py` | Thin CLI for `graflo.object_storage.ensure_staging_bucket_for_config` (same as `ingest.py` when `BULK_USE_S3=1`). |
 | `ingest.py` | Enables `bulk_load`, registers S3 provider, runs `define_and_ingest`. |

@@ -13,13 +13,9 @@ from graflo.architecture.edge_derivation import EdgeDerivation
 from .normalize import normalize_actor_step
 
 
-class VertexActorConfig(ConfigBaseModel):
-    """Configuration for a VertexActor."""
+class VertexExtractionOptionsConfig(ConfigBaseModel):
+    """Shared field-extraction options for vertex-like actors."""
 
-    type: Literal["vertex"] = PydanticField(
-        default="vertex", description="Actor type discriminator"
-    )
-    vertex: str = PydanticField(..., description="Name of the vertex type to create")
     from_doc: dict[str, str] | None = PydanticField(
         default=None,
         alias="from",
@@ -28,16 +24,32 @@ class VertexActorConfig(ConfigBaseModel):
     keep_fields: list[str] | None = PydanticField(
         default=None, description="Optional list of fields to keep"
     )
+    extraction_scope: Literal["full", "mapped_only"] = PydanticField(
+        default="full",
+        description=(
+            "Field extraction policy. full (default) includes passthrough for remaining "
+            "schema properties from the merged observation "
+            "(doc + same-location transform buffer), while mapped_only limits extraction "
+            "to explicit field mappings declared in from."
+        ),
+    )
     role: str | None = PydanticField(
         default=None,
         description=(
-            "Named accumulator slot for this vertex. When set, the vertex is stored at "
-            "lindex.extend((role, 0)) instead of bare lindex, making it addressable by "
-            "a downstream edge step via source_role / target_role. Use when multiple "
-            "vertices of the same type appear as distinct roles in one row (e.g. "
-            "role='buyer' and role='seller' both vertex type 'company')."
+            "Optional accumulator slot segment used for storage/addressing. "
+            "Vertex-like actors store observations at lindex.extend((role, 0)) when set. "
+            "When omitted, actor-specific defaults may apply."
         ),
     )
+
+
+class VertexActorConfig(VertexExtractionOptionsConfig):
+    """Configuration for a VertexActor."""
+
+    type: Literal["vertex"] = PydanticField(
+        default="vertex", description="Actor type discriminator"
+    )
+    vertex: str = PydanticField(..., description="Name of the vertex type to create")
 
     @model_validator(mode="before")
     @classmethod
@@ -316,10 +328,11 @@ class EdgeLinkConfig(ConfigBaseModel):
     binding to emit per row. Equivalent to a single-intent ``edge`` step without the
     ``links`` field itself.
 
-    Slot resolution (``source_role`` / ``target_role``) works identically to
-    ``source_type_field`` / ``target_type_field`` on a standalone ``edge`` step — the
-    slot name is the accumulator segment populated by an upstream ``vertex`` step with a
-    matching ``role``, or a ``vertex_router`` step (``role`` when set, else ``type_field``).
+    Slot resolution uses role-first semantics (``source_role`` / ``target_role``).
+    Legacy aliases (``source_type_field`` / ``target_type_field``) are accepted and
+    canonicalized to their role counterparts. The slot name is the accumulator segment
+    populated by an upstream ``vertex`` step with a matching ``role``, or by
+    ``vertex_router.role`` (which defaults to ``type_field`` when omitted).
     """
 
     model_config = {"extra": "forbid", "populate_by_name": True}
@@ -337,29 +350,29 @@ class EdgeLinkConfig(ConfigBaseModel):
     source_type_field: str | None = PydanticField(
         default=None,
         description=(
-            "Accumulator slot segment for the source vertex (VertexRouterActor role or "
-            "type_field; or vertex step role). Exclusive with 'from' and source_role."
+            "Accumulator slot segment for the source vertex (same name as upstream "
+            "vertex/vertex_router role). Exclusive with 'from' and source_role."
         ),
     )
     target_type_field: str | None = PydanticField(
         default=None,
         description=(
-            "Accumulator slot segment for the target vertex (VertexRouterActor role or "
-            "type_field; or vertex step role). Exclusive with 'to' and target_role."
+            "Accumulator slot segment for the target vertex (same name as upstream "
+            "vertex/vertex_router role). Exclusive with 'to' and target_role."
         ),
     )
     source_role: str | None = PydanticField(
         default=None,
         description=(
-            "Sugar for source_type_field: same accumulator segment name. Exclusive with "
-            "source_type_field."
+            "Role-first alias for source_type_field (same accumulator segment name). "
+            "When both are set, values must match."
         ),
     )
     target_role: str | None = PydanticField(
         default=None,
         description=(
-            "Sugar for target_type_field: same accumulator segment name. Exclusive with "
-            "target_type_field."
+            "Role-first alias for target_type_field (same accumulator segment name). "
+            "When both are set, values must match."
         ),
     )
     relation: str | None = PydanticField(
@@ -379,37 +392,63 @@ class EdgeLinkConfig(ConfigBaseModel):
         description="Require this path segment in target vertex locations.",
     )
 
+    @staticmethod
+    def _canonicalize_slot_key(
+        role: str | None,
+        legacy_type_field: str | None,
+        *,
+        role_name: str,
+        type_field_name: str,
+        context: str,
+    ) -> str | None:
+        """Canonicalize legacy slot-name fields to role-first semantics."""
+        if (
+            role is not None
+            and legacy_type_field is not None
+            and role != legacy_type_field
+        ):
+            raise ValueError(
+                f"{role_name} and {type_field_name} must match when both are set in {context}."
+            )
+        return role if role is not None else legacy_type_field
+
     @model_validator(mode="after")
     def resolve_and_validate(self) -> "EdgeLinkConfig":
-        # Resolve role aliases → type_field (they name the same accumulator slot).
+        # Canonicalize to role-first slot names while preserving legacy key input.
         # Use object.__setattr__ to bypass validate_assignment re-triggering this validator.
-        if self.source_role is not None:
-            if self.source_type_field is not None:
-                raise ValueError(
-                    "source_role and source_type_field are mutually exclusive in an edge link."
-                )
-            object.__setattr__(self, "source_type_field", self.source_role)
-        if self.target_role is not None:
-            if self.target_type_field is not None:
-                raise ValueError(
-                    "target_role and target_type_field are mutually exclusive in an edge link."
-                )
-            object.__setattr__(self, "target_type_field", self.target_role)
+        source_role = self._canonicalize_slot_key(
+            self.source_role,
+            self.source_type_field,
+            role_name="source_role",
+            type_field_name="source_type_field",
+            context="an edge link",
+        )
+        target_role = self._canonicalize_slot_key(
+            self.target_role,
+            self.target_type_field,
+            role_name="target_role",
+            type_field_name="target_type_field",
+            context="an edge link",
+        )
+        object.__setattr__(self, "source_role", source_role)
+        object.__setattr__(self, "target_role", target_role)
+        object.__setattr__(self, "source_type_field", None)
+        object.__setattr__(self, "target_type_field", None)
 
         # Each side needs exactly one of: static type or slot reference.
-        if self.source is None and self.source_type_field is None:
+        if self.source is None and self.source_role is None:
             raise ValueError(
-                "edge link requires 'from' (source), source_type_field, or source_role."
+                "edge link requires 'from' (source), source_role, or source_type_field."
             )
-        if self.target is None and self.target_type_field is None:
+        if self.target is None and self.target_role is None:
             raise ValueError(
-                "edge link requires 'to' (target), target_type_field, or target_role."
+                "edge link requires 'to' (target), target_role, or target_type_field."
             )
-        if self.source is not None and self.source_type_field is not None:
+        if self.source is not None and self.source_role is not None:
             raise ValueError(
                 "'from' and source_type_field/source_role are mutually exclusive."
             )
-        if self.target is not None and self.target_type_field is not None:
+        if self.target is not None and self.target_role is not None:
             raise ValueError(
                 "'to' and target_type_field/target_role are mutually exclusive."
             )
@@ -420,8 +459,9 @@ class EdgeActorConfig(ConfigBaseModel):
     """Configuration for an EdgeActor (logical edge + ingestion derivation; flat YAML).
 
     **Single-intent mode** (default): declare source/target via ``from``/``to`` (static
-    vertex type names) or ``source_type_field``/``target_type_field`` / ``source_role``/
-    ``target_role`` (slot-based dynamic resolution).  One edge intent is emitted per row.
+    vertex type names) or ``source_role``/``target_role`` (slot-based dynamic
+    resolution; ``source_type_field``/``target_type_field`` remain accepted aliases).
+    One edge intent is emitted per row.
 
     **Multi-link mode** (``links`` list): declare a list of :class:`EdgeLinkConfig` items.
     Each item emits one edge intent per row, allowing a single pipeline step to produce
@@ -446,32 +486,31 @@ class EdgeActorConfig(ConfigBaseModel):
         default=None,
         description=(
             "Accumulator slot segment for the source vertex (same name as the upstream "
-            "VertexRouterActor's role, or type_field when role is unset). EdgeActor scans "
+            "VertexRouterActor role, inferred from type_field when role is omitted). EdgeActor scans "
             "acc_vertex for data at lindex.extend((source_type_field, 0)) to resolve the "
-            "source type dynamically. Exclusive with 'from' and source_role."
+            "source type dynamically. Legacy alias for source_role."
         ),
     )
     target_type_field: str | None = PydanticField(
         default=None,
         description=(
-            "Accumulator slot segment for the target vertex (VertexRouterActor role or "
-            "type_field). Exclusive with 'to' and target_role."
+            "Accumulator slot segment for the target vertex (same name as upstream "
+            "VertexRouterActor role, inferred from type_field when role is omitted). "
+            "Legacy alias for target_role."
         ),
     )
     source_role: str | None = PydanticField(
         default=None,
         description=(
-            "Role slot name for the source vertex — sugar for source_type_field when the "
-            "slot was populated by an upstream 'vertex' step with a matching role. "
-            "Exclusive with source_type_field."
+            "Role slot name for the source vertex — role-first alias for source_type_field. "
+            "When both are set, values must match."
         ),
     )
     target_role: str | None = PydanticField(
         default=None,
         description=(
-            "Role slot name for the target vertex — sugar for target_type_field when the "
-            "slot was populated by an upstream 'vertex' step with a matching role. "
-            "Exclusive with target_type_field."
+            "Role slot name for the target vertex — role-first alias for target_type_field. "
+            "When both are set, values must match."
         ),
     )
     links: list[EdgeLinkConfig] | None = PydanticField(
@@ -539,6 +578,26 @@ class EdgeActorConfig(ConfigBaseModel):
         description="Vertex-derived weight rules registered in EdgeDerivationRegistry.",
     )
 
+    @staticmethod
+    def _canonicalize_slot_key(
+        role: str | None,
+        legacy_type_field: str | None,
+        *,
+        role_name: str,
+        type_field_name: str,
+        context: str,
+    ) -> str | None:
+        """Canonicalize legacy slot-name fields to role-first semantics."""
+        if (
+            role is not None
+            and legacy_type_field is not None
+            and role != legacy_type_field
+        ):
+            raise ValueError(
+                f"{role_name} and {type_field_name} must match when both are set in {context}."
+            )
+        return role if role is not None else legacy_type_field
+
     @model_validator(mode="after")
     def validate_type_sources(self) -> "EdgeActorConfig":
         if self.links is not None:
@@ -560,29 +619,39 @@ class EdgeActorConfig(ConfigBaseModel):
                 )
             return self
 
-        # Single-intent mode: resolve role aliases → type_field.
+        # Single-intent mode: canonicalize to role-first slot names.
         # Use object.__setattr__ to bypass validate_assignment re-triggering this validator.
-        if self.source_role is not None:
-            if self.source_type_field is not None:
-                raise ValueError(
-                    "source_role and source_type_field are mutually exclusive."
-                )
-            object.__setattr__(self, "source_type_field", self.source_role)
-        if self.target_role is not None:
-            if self.target_type_field is not None:
-                raise ValueError(
-                    "target_role and target_type_field are mutually exclusive."
-                )
-            object.__setattr__(self, "target_type_field", self.target_role)
+        source_role = self._canonicalize_slot_key(
+            self.source_role,
+            self.source_type_field,
+            role_name="source_role",
+            type_field_name="source_type_field",
+            context="an edge step",
+        )
+        target_role = self._canonicalize_slot_key(
+            self.target_role,
+            self.target_type_field,
+            role_name="target_role",
+            type_field_name="target_type_field",
+            context="an edge step",
+        )
+        object.__setattr__(self, "source_role", source_role)
+        object.__setattr__(self, "target_role", target_role)
+        object.__setattr__(self, "source_type_field", None)
+        object.__setattr__(self, "target_type_field", None)
 
         # Each side needs exactly one of: static type or dynamic slot.
-        if self.source is None and self.source_type_field is None:
-            raise ValueError("edge step requires 'from' (source) or source_type_field.")
-        if self.target is None and self.target_type_field is None:
-            raise ValueError("edge step requires 'to' (target) or target_type_field.")
-        if self.source is not None and self.source_type_field is not None:
+        if self.source is None and self.source_role is None:
+            raise ValueError(
+                "edge step requires 'from' (source), source_role, or source_type_field."
+            )
+        if self.target is None and self.target_role is None:
+            raise ValueError(
+                "edge step requires 'to' (target), target_role, or target_type_field."
+            )
+        if self.source is not None and self.source_role is not None:
             raise ValueError("'from' and source_type_field are mutually exclusive.")
-        if self.target is not None and self.target_type_field is not None:
+        if self.target is not None and self.target_role is not None:
             raise ValueError("'to' and target_type_field are mutually exclusive.")
         # Mixed mode (one static + one dynamic) is valid; both-static is pure static mode.
         return self
@@ -636,7 +705,7 @@ class DescendActorConfig(ConfigBaseModel):
         return self
 
 
-class VertexRouterActorConfig(ConfigBaseModel):
+class VertexRouterActorConfig(VertexExtractionOptionsConfig):
     """Configuration for a VertexRouterActor.
 
     Field handling matches :class:`VertexActorConfig`: optional router-level ``from`` /
@@ -652,7 +721,8 @@ class VertexRouterActorConfig(ConfigBaseModel):
         ...,
         description=(
             "Key on the merged observation (document + same-location transform buffer) "
-            "whose value determines the target vertex type (after type_map). Use the "
+            "whose value determines the target vertex type (after type_map). "
+            "This is a discriminator field, not the internal slot key. Use the "
             "actual column name (e.g. ``s__class_name`` or ``p_kind``)."
         ),
     )
@@ -664,31 +734,6 @@ class VertexRouterActorConfig(ConfigBaseModel):
         default=None,
         description="Per-vertex-type field projection.",
     )
-    role: str | None = PydanticField(
-        default=None,
-        description=(
-            "Named accumulator slot segment. When set, vertices are stored at "
-            "lindex.extend((role, 0)). When omitted, the slot segment defaults to type_field. "
-            "A downstream edge step references this slot via source_type_field / target_type_field "
-            "(or source_role / target_role) using the same segment name."
-        ),
-    )
-    from_doc: dict[str, str] | None = PydanticField(
-        default=None,
-        alias="from",
-        description=(
-            "Default projection {vertex_field: doc_field} for all routed vertex types. "
-            "Per-type vertex_from_map overrides this for a given resolved type when that type "
-            "is present as a key in vertex_from_map."
-        ),
-    )
-    keep_fields: list[str] | None = PydanticField(
-        default=None,
-        description=(
-            "Forwarded to each lazily created VertexActor: restrict passthrough to this "
-            "subset of vertex property names (same semantics as vertex.keep_fields)."
-        ),
-    )
 
     @model_validator(mode="before")
     @classmethod
@@ -697,6 +742,12 @@ class VertexRouterActorConfig(ConfigBaseModel):
             data = dict(data)
             data["type"] = "vertex_router"
         return data
+
+    @model_validator(mode="after")
+    def normalize_role(self) -> "VertexRouterActorConfig":
+        if self.role is None:
+            object.__setattr__(self, "role", self.type_field)
+        return self
 
 
 ActorConfig = Annotated[

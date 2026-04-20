@@ -27,7 +27,7 @@ from graflo.hq.connection_provider import (
 )
 from graflo.hq.db_writer import DBWriter
 from graflo.hq.graph_engine import GraphEngine
-from graflo.hq.inferencer import InferenceManager
+from graflo.hq.sql_inferencer import SQLInferenceManager
 from graflo.hq.registry_builder import RegistryBuilder
 from graflo.hq.resource_mapper import ResourceMapper
 from graflo.hq.sanitizer import Sanitizer
@@ -50,7 +50,7 @@ __all__ = [
     "DocErrorBudgetExceeded",
     "failure_sinks_from_ingestion_params",
     "SparqlAuth",
-    "InferenceManager",
+    "SQLInferenceManager",
     "RegistryBuilder",
     "ResourceMapper",
     "Sanitizer",

@@ -88,9 +88,9 @@ Resources and transforms are part of `IngestionModel`, not `Schema`.
 
 A `Resource` is the central abstraction that bridges data sources and the graph schema. Each Resource defines a reusable pipeline of actors (descend, transform, vertex, edge) that maps raw records to graph elements. Data sources bind to Resources by name via the `DataSourceRegistry`, so the same transformation logic applies regardless of whether data arrives from a file, an API, or a SPARQL endpoint.
 
-- **`vertex` step `role`**: assign a named accumulator slot to a static-type vertex step so multiple vertices of the same type in one flat row occupy distinct slots (e.g. `role: self`, `role: parent`, `role: child` all as `person`). Use `keep_fields` to restrict passthrough so sibling role steps don't absorb each other's columns.
+- **`vertex` step `role`**: assign a named accumulator slot to a static-type vertex step so multiple vertices of the same type in one flat row occupy distinct slots (e.g. `role: self`, `role: parent`, `role: child` all as `person`). Use `extraction_scope: mapped_only` to extract only explicit `from` mappings, or keep the default `extraction_scope: full` and use `keep_fields` to restrict passthrough.
 - **`edge` step `links`**: declare multiple edge intents in one step — each list item emits one edge per row with its own `source_role`/`target_role` (or `source_type_field`/`target_type_field`) and `relation`.
-- **`source_role` / `target_role`** on `edge` steps: ergonomic aliases for `source_type_field` / `target_type_field` when the slot was populated by a `vertex+role` step.
+- **`source_role` / `target_role`** on `edge` steps: role-first aliases for `source_type_field` / `target_type_field` when the slot was populated by a `vertex+role` or `vertex_router+role` step.
 
 For wide rows with many empty or null columns, **`drop_trivial_input_fields`** (default `false`) removes only **top-level** keys whose value is `null` or `""` before the pipeline runs. The filter is **shallow**: nested dicts and lists are not walked, and empty `{}` / `[]` values are kept because they are not `null` or `""`. **`0`** and **`false`** are kept.
 

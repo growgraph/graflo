@@ -41,11 +41,14 @@ from .connection import (
     DBConfig,
     FalkordbConfig,
     MemgraphConfig,
+    MinioConfig,
     NebulaConfig,
     Neo4jConfig,
     PostgresConfig,
     SparqlEndpointConfig,
+    S3EndpointConfig,
     TigergraphConfig,
+    parse_dotenv_file,
 )
 from .falkordb.conn import FalkordbConnection
 from .manager import ConnectionManager
@@ -70,6 +73,9 @@ __all__ = [
     "ConnectionManager",
     "FalkordbConfig",
     "MemgraphConfig",
+    "MinioConfig",
+    "S3EndpointConfig",
+    "parse_dotenv_file",
     "NebulaConfig",
     "Neo4jConfig",
     "PostgresConfig",

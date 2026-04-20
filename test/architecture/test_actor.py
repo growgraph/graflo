@@ -82,10 +82,7 @@ def test_mapper_value(resource_concept, schema_vc_openalex):
     ctx = anw(ctx, doc=test_doc)
     assert len(ctx.acc_vertex) == 1
     assert ctx.acc_vertex["concept"][LocationIndex(path=(0,))] == [
-        VertexRep(
-            vertex={"wikidata": "Q123", "mag": 105794591},
-            ctx={"wikidata": "https://www.wikidata.org/wiki/Q123"},
-        )
+        VertexRep(vertex={"wikidata": "Q123", "mag": 105794591})
     ]
 
 
@@ -106,13 +103,7 @@ def test_transform_shortcut(resource_openalex_works, schema_vc_openalex):
     ctx = ActionContext()
     ctx = anw(ctx, doc=doc)
     assert ctx.acc_vertex["work"][LocationIndex(path=(0,))] == [
-        VertexRep(
-            vertex={"_key": "A123", "doi": "10.1007/978-3-123"},
-            ctx={
-                "doi": "https://doi.org/10.1007/978-3-123",
-                "id": "https://openalex.org/A123",
-            },
-        )
+        VertexRep(vertex={"_key": "A123", "doi": "10.1007/978-3-123"})
     ]
 
 
@@ -398,7 +389,7 @@ def test_transform_tuple_output_maps_to_vertex_index_fields_in_order():
     ctx = ActionContext()
     ctx = anw(ctx, doc={"unused": "value"})
     assert ctx.acc_vertex["pair"][LocationIndex(path=(0,))] == [
-        VertexRep(vertex={"left": "L", "right": "R"}, ctx={"unused": "value"}),
+        VertexRep(vertex={"left": "L", "right": "R"}),
     ]
 
 
@@ -428,7 +419,7 @@ def test_transform_named_proto_binding_executes_with_registered_transform():
 
     ctx = ActionContext()
     ctx = anw(ctx, doc={"value": "7"})
-    payload = ctx.buffer_transforms[LocationIndex(path=(0,))][0]
+    payload = ctx.transform_buffer[LocationIndex(path=(0,))][0]
     assert payload.named == {"v": 7}
     assert payload.positional == ()
 
@@ -455,7 +446,7 @@ def test_transform_named_proto_binding_inherits_input_output_from_library():
 
     ctx = ActionContext()
     ctx = anw(ctx, doc={"value": "7"})
-    payload = ctx.buffer_transforms[LocationIndex(path=(0,))][0]
+    payload = ctx.transform_buffer[LocationIndex(path=(0,))][0]
     assert payload.named == {"v": 7}
     assert payload.positional == ()
 
@@ -494,7 +485,7 @@ def test_transform_named_proto_binding_local_io_overrides_library_io():
 
     ctx = ActionContext()
     ctx = anw(ctx, doc={"raw_value": "8", "value": "7"})
-    payload = ctx.buffer_transforms[LocationIndex(path=(0,))][0]
+    payload = ctx.transform_buffer[LocationIndex(path=(0,))][0]
     assert payload.named == {"parsed": 8}
     assert payload.positional == ()
 
@@ -523,7 +514,7 @@ def test_transform_named_proto_inherits_target_keys_from_library():
 
     ctx = ActionContext()
     ctx = anw(ctx, doc={"zipCode": "NW1"})
-    payload = ctx.buffer_transforms[LocationIndex(path=(0,))][0]
+    payload = ctx.transform_buffer[LocationIndex(path=(0,))][0]
     assert payload.named == {"zip_code": "NW1"}
     assert payload.positional == ()
 
@@ -561,7 +552,7 @@ def test_transform_named_proto_call_overrides_library_keys_selection():
 
     ctx = ActionContext()
     ctx = anw(ctx, doc={"raw_id": "1", "raw_label": "Alice"})
-    payload = ctx.buffer_transforms[LocationIndex(path=(0,))][0]
+    payload = ctx.transform_buffer[LocationIndex(path=(0,))][0]
     assert payload.named == {"raw_id": "1", "label": "Alice"}
     assert payload.positional == ()
 
@@ -629,7 +620,7 @@ def test_transform_named_proto_binding_inherits_dress_from_library():
 
     ctx = ActionContext()
     ctx = anw(ctx, doc={"Volume": "9000"})
-    payload = ctx.buffer_transforms[LocationIndex(path=(0,))][0]
+    payload = ctx.transform_buffer[LocationIndex(path=(0,))][0]
     assert payload.named == {"name": "Volume", "value": 9000}
     assert payload.positional == ()
 
@@ -654,7 +645,7 @@ def test_transform_inline_function_without_output_defaults_to_input():
 
     ctx = ActionContext()
     ctx = anw(ctx, doc={"value": "9"})
-    payload = ctx.buffer_transforms[LocationIndex(path=(0,))][0]
+    payload = ctx.transform_buffer[LocationIndex(path=(0,))][0]
     assert payload.named == {"value": 9}
     assert payload.positional == ()
 
@@ -684,7 +675,7 @@ def test_transform_inline_function_strategy_each_initializes_and_executes():
 
     ctx = ActionContext()
     ctx = anw(ctx, doc={"value": "11"})
-    payload = ctx.buffer_transforms[LocationIndex(path=(0,))][0]
+    payload = ctx.transform_buffer[LocationIndex(path=(0,))][0]
     assert payload.named == {"value": 11}
     assert payload.positional == ()
 
@@ -709,7 +700,7 @@ def test_transform_inline_function_strategy_all_receives_document():
 
     ctx = ActionContext()
     ctx = anw(ctx, doc={"value": 11, "other": "x"})
-    payload = ctx.buffer_transforms[LocationIndex(path=(0,))][0]
+    payload = ctx.transform_buffer[LocationIndex(path=(0,))][0]
     assert payload.named == {"value": 11, "other": "x"}
     assert payload.positional == ()
 
@@ -753,10 +744,7 @@ def test_transform_target_keys_updates_vertex_fields():
     ctx = ActionContext()
     ctx = anw(ctx, doc={"raw_id": "1", "raw_label": "Alice"})
     assert ctx.acc_vertex["entity"][LocationIndex(path=(0,))] == [
-        VertexRep(
-            vertex={"id": "1", "label": "Alice"},
-            ctx={"raw_id": "1", "raw_label": "Alice"},
-        ),
+        VertexRep(vertex={"id": "1", "label": "Alice"}),
     ]
 
 
@@ -810,10 +798,7 @@ def test_transform_target_keys_multiple_steps_compose_for_vertex():
     ctx = ActionContext()
     ctx = anw(ctx, doc={"raw_id": "1", "raw_label": "Alice"})
     assert ctx.acc_vertex["entity"][LocationIndex(path=(0,))] == [
-        VertexRep(
-            vertex={"id": "1", "label": "Alice"},
-            ctx={"raw_id": "1", "raw_label": "Alice"},
-        ),
+        VertexRep(vertex={"id": "1", "label": "Alice"}),
     ]
 
 
@@ -852,7 +837,7 @@ def test_transform_grouped_input_call_outputs_named_payload():
             "lname_child": "Turing",
         },
     )
-    payload = ctx.buffer_transforms[LocationIndex(path=(0,))][0]
+    payload = ctx.transform_buffer[LocationIndex(path=(0,))][0]
     assert payload.named == {"parent_name": "Ada Lovelace", "child_name": "Alan Turing"}
     assert payload.positional == ()
 
@@ -888,7 +873,7 @@ def test_transform_grouped_call_use_inherits_input_groups():
             "lname_child": "Turing",
         },
     )
-    payload = ctx.buffer_transforms[LocationIndex(path=(0,))][0]
+    payload = ctx.transform_buffer[LocationIndex(path=(0,))][0]
     assert payload.named == {"parent_name": "Ada Lovelace", "child_name": "Alan Turing"}
     assert payload.positional == ()
 
@@ -936,7 +921,7 @@ def test_transform_grouped_call_use_accepts_inline_input_groups_override():
             "lname_child": "Turing",
         },
     )
-    payload = ctx.buffer_transforms[LocationIndex(path=(0,))][0]
+    payload = ctx.transform_buffer[LocationIndex(path=(0,))][0]
     assert payload.named == {"parent_name": "Ada Lovelace", "child_name": "Alan Turing"}
     assert payload.positional == ()
 
@@ -984,7 +969,7 @@ def test_transform_grouped_call_use_inline_groups_do_not_inherit_proto_output_gr
             "lname_child": "Turing",
         },
     )
-    payload = ctx.buffer_transforms[LocationIndex(path=(0,))][0]
+    payload = ctx.transform_buffer[LocationIndex(path=(0,))][0]
     assert payload.named == {"parent_name": "Ada Lovelace", "child_name": "Alan Turing"}
     assert payload.positional == ()
 
@@ -1019,7 +1004,7 @@ def test_transform_call_inline_module_foo_path_remains_supported():
             "last_name": "Lovelace",
         },
     )
-    payload = ctx.buffer_transforms[LocationIndex(path=(0,))][0]
+    payload = ctx.transform_buffer[LocationIndex(path=(0,))][0]
     assert payload.named == {"full_name": "Ada Lovelace"}
     assert payload.positional == ()
 

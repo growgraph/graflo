@@ -2,7 +2,7 @@
 
 Covers:
   - VertexActor with role stores at lindex.(role, 0) not bare lindex
-  - VertexActor without role stores at bare lindex (backward compat)
+  - VertexActor without role stores at bare lindex
   - Two vertex+role steps for the same vertex type accumulate at distinct slots
   - Passthrough does not mutate shared doc when role is set (sibling steps see same col)
   - source_role / target_role on EdgeActorConfig resolve to source_type_field / target_type_field
@@ -18,6 +18,7 @@ import pytest
 from graflo.architecture.graph_types import (
     ExtractionContext,
     LocationIndex,
+    TransformPayload,
     VertexRep,
 )
 from graflo.architecture.pipeline.runtime.actor.base import ActorInitContext
@@ -66,6 +67,7 @@ def _make_vertex_actor(
     role: str | None = None,
     from_doc: dict | None = None,
     keep_fields: list[str] | None = None,
+    extraction_scope: str | None = None,
 ) -> VertexActor:
     cfg = VertexActorConfig.model_validate(
         {
@@ -73,6 +75,7 @@ def _make_vertex_actor(
             **({"role": role} if role else {}),
             **({"from": from_doc} if from_doc else {}),
             **({"keep_fields": keep_fields} if keep_fields else {}),
+            **({"extraction_scope": extraction_scope} if extraction_scope else {}),
         }
     )
     return VertexActor.from_config(cfg)
@@ -106,7 +109,7 @@ def test_vertex_actor_with_role_stores_at_role_slot() -> None:
 
 
 def test_vertex_actor_without_role_stores_at_bare_lindex() -> None:
-    """VertexActor without role stores vertex at bare lindex (backward compat)."""
+    """VertexActor without role stores vertex at bare lindex."""
     vc = _vc("person")
     va = _make_vertex_actor("person")
     va.finish_init(_init(vc))
@@ -142,12 +145,12 @@ def test_two_role_steps_same_type_occupy_distinct_slots() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 2. Passthrough safety (doc.get not doc.pop when role is set)
+# 2. Passthrough safety (non-mutating effective observation reads)
 # ---------------------------------------------------------------------------
 
 
 def test_passthrough_does_not_mutate_doc_when_role_is_set() -> None:
-    """Role-bearing vertex step uses doc.get so sibling steps still see shared columns."""
+    """Role-bearing vertex step keeps the shared doc unchanged for sibling steps."""
     vc = _vc("person")
     # from_doc: {vertex_field: doc_field}
     va_self = _make_vertex_actor("person", role="self", from_doc={"id": "person"})
@@ -164,7 +167,7 @@ def test_passthrough_does_not_mutate_doc_when_role_is_set() -> None:
     doc_before = dict(doc)
     ctx = va_self(ctx, base, doc=doc)
 
-    # After va_self the doc is unmodified (role=self uses doc.get not doc.pop).
+    # After va_self the doc is unmodified.
     assert doc == doc_before, "role-bearing VertexActor must not mutate the shared doc"
 
     # va_parent can still run on the same doc without missing anything.
@@ -193,8 +196,8 @@ def test_keep_fields_restricts_passthrough_for_role_vertex() -> None:
     assert "name" not in vertex
 
 
-def test_passthrough_without_role_still_pops() -> None:
-    """Without role, passthrough uses doc.pop (backward compat behaviour)."""
+def test_passthrough_without_role_does_not_mutate_doc() -> None:
+    """Without role, passthrough reads non-destructively from effective doc."""
     vc = _vc("person")
     va = _make_vertex_actor("person")  # no role
     va.finish_init(_init(vc))
@@ -204,8 +207,69 @@ def test_passthrough_without_role_still_pops() -> None:
     doc = {"id": "12", "name": "Bob"}
     ctx = va(ctx, base, doc=doc)
 
-    # 'id' and 'name' should have been popped from doc by passthrough.
-    assert "name" not in doc
+    assert doc == {"id": "12", "name": "Bob"}
+
+
+def test_from_doc_prefers_transform_value_over_raw_doc() -> None:
+    """from_doc reads merged observation with transform priority over raw doc."""
+    vc = _vc("person")
+    va = _make_vertex_actor("person", from_doc={"id": "external_id"})
+    va.finish_init(_init(vc))
+
+    ctx = ExtractionContext()
+    base = _lindex(0)
+    ctx.transform_buffer[base].append(
+        TransformPayload(named={"external_id": "from_tf"})
+    )
+    doc = {"external_id": "from_doc", "name": "Bob"}
+    ctx = va(ctx, base, doc=doc)
+
+    vertex = ctx.acc_vertex["person"][base][0].vertex
+    assert vertex["id"] == "from_tf"
+    assert doc == {"external_id": "from_doc", "name": "Bob"}
+
+
+def test_mapped_only_role_extracts_only_from_mapping() -> None:
+    """mapped_only limits extraction to explicit from mappings for role vertices."""
+    vc = _vc("person")
+    va_parent = _make_vertex_actor(
+        "person",
+        role="parent",
+        from_doc={"id": "parent"},
+        extraction_scope="mapped_only",
+    )
+    va_parent.finish_init(_init(vc))
+
+    ctx = ExtractionContext()
+    base = _lindex(0)
+    doc = {"person": "12", "parent": "13", "name": "Bob"}
+    doc_before = dict(doc)
+    ctx = va_parent(ctx, base, doc=doc)
+
+    slot_parent = base.extend(("parent", 0))
+    vertex = ctx.acc_vertex["person"][slot_parent][0].vertex
+    assert vertex == {"id": "13"}
+    assert doc == doc_before
+
+
+def test_mapped_only_without_role_does_not_pop_unmapped() -> None:
+    """mapped_only disables passthrough, so unmapped keys remain on doc."""
+    vc = _vc("person")
+    va = _make_vertex_actor(
+        "person",
+        from_doc={"id": "person"},
+        extraction_scope="mapped_only",
+    )
+    va.finish_init(_init(vc))
+
+    ctx = ExtractionContext()
+    base = _lindex(0)
+    doc = {"person": "12", "name": "Bob"}
+    ctx = va(ctx, base, doc=doc)
+
+    vertex = ctx.acc_vertex["person"][base][0].vertex
+    assert vertex == {"id": "12"}
+    assert doc == {"person": "12", "name": "Bob"}
 
 
 # ---------------------------------------------------------------------------
@@ -213,45 +277,100 @@ def test_passthrough_without_role_still_pops() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_source_role_resolves_to_source_type_field() -> None:
-    """source_role is sugar for source_type_field; both name the same slot."""
+def test_source_role_is_canonical_slot_key() -> None:
+    """source_role is the canonical dynamic slot key."""
     cfg = EdgeActorConfig.model_validate(
         {"type": "edge", "source_role": "buyer", "to": "company"}
     )
-    assert cfg.source_type_field == "buyer"
     assert cfg.source_role == "buyer"
+    assert cfg.source_type_field is None
 
 
-def test_target_role_resolves_to_target_type_field() -> None:
-    """target_role resolves to target_type_field."""
+def test_target_role_is_canonical_slot_key() -> None:
+    """target_role is the canonical dynamic slot key."""
     cfg = EdgeActorConfig.model_validate(
         {"type": "edge", "from": "company", "target_role": "seller"}
     )
-    assert cfg.target_type_field == "seller"
+    assert cfg.target_role == "seller"
+    assert cfg.target_type_field is None
 
 
-def test_source_role_and_source_type_field_are_exclusive() -> None:
-    with pytest.raises(Exception, match="mutually exclusive"):
+def test_source_type_field_legacy_alias_canonicalizes_to_source_role() -> None:
+    cfg = EdgeActorConfig.model_validate(
+        {"type": "edge", "source_type_field": "buyer", "to": "company"}
+    )
+    assert cfg.source_role == "buyer"
+    assert cfg.source_type_field is None
+
+
+def test_target_type_field_legacy_alias_canonicalizes_to_target_role() -> None:
+    cfg = EdgeActorConfig.model_validate(
+        {"type": "edge", "from": "company", "target_type_field": "seller"}
+    )
+    assert cfg.target_role == "seller"
+    assert cfg.target_type_field is None
+
+
+def test_source_role_and_source_type_field_equal_values_canonicalize() -> None:
+    cfg = EdgeActorConfig.model_validate(
+        {
+            "type": "edge",
+            "source_role": "buyer",
+            "source_type_field": "buyer",
+            "to": "company",
+        }
+    )
+    assert cfg.source_role == "buyer"
+    assert cfg.source_type_field is None
+
+
+def test_target_role_and_target_type_field_equal_values_canonicalize() -> None:
+    cfg = EdgeActorConfig.model_validate(
+        {
+            "type": "edge",
+            "from": "company",
+            "target_role": "seller",
+            "target_type_field": "seller",
+        }
+    )
+    assert cfg.target_role == "seller"
+    assert cfg.target_type_field is None
+
+
+def test_source_role_and_source_type_field_mismatch_raises() -> None:
+    with pytest.raises(Exception, match="must match"):
         EdgeActorConfig.model_validate(
             {
                 "type": "edge",
                 "source_role": "buyer",
-                "source_type_field": "buyer",
+                "source_type_field": "seller",
                 "to": "company",
             }
         )
 
 
-def test_target_role_and_target_type_field_are_exclusive() -> None:
-    with pytest.raises(Exception, match="mutually exclusive"):
+def test_target_role_and_target_type_field_mismatch_raises() -> None:
+    with pytest.raises(Exception, match="must match"):
         EdgeActorConfig.model_validate(
             {
                 "type": "edge",
                 "from": "company",
                 "target_role": "seller",
-                "target_type_field": "seller",
+                "target_type_field": "buyer",
             }
         )
+
+
+def test_edge_actor_config_roundtrip_does_not_retrigger_alias_conflict() -> None:
+    cfg = EdgeActorConfig.model_validate(
+        {"type": "edge", "source_role": "buyer", "target_role": "seller"}
+    )
+    payload = cfg.to_dict()
+    reparsed = EdgeActorConfig.model_validate(payload)
+    assert reparsed.source_role == "buyer"
+    assert reparsed.target_role == "seller"
+    assert reparsed.source_type_field is None
+    assert reparsed.target_type_field is None
 
 
 # ---------------------------------------------------------------------------
@@ -263,8 +382,10 @@ def test_edge_link_config_source_role_resolved() -> None:
     lk = EdgeLinkConfig.model_validate(
         {"source_role": "self", "target_role": "parent", "relation": "is_child_of"}
     )
-    assert lk.source_type_field == "self"
-    assert lk.target_type_field == "parent"
+    assert lk.source_role == "self"
+    assert lk.target_role == "parent"
+    assert lk.source_type_field is None
+    assert lk.target_type_field is None
 
 
 def test_edge_link_config_missing_source_raises() -> None:
@@ -277,12 +398,22 @@ def test_edge_link_config_missing_target_raises() -> None:
         EdgeLinkConfig.model_validate({"source_role": "self"})
 
 
-def test_edge_link_config_role_and_type_field_exclusive() -> None:
-    with pytest.raises(Exception, match="mutually exclusive"):
+def test_edge_link_config_legacy_alias_canonicalizes_to_role() -> None:
+    lk = EdgeLinkConfig.model_validate(
+        {"source_type_field": "self", "target_type_field": "parent"}
+    )
+    assert lk.source_role == "self"
+    assert lk.target_role == "parent"
+    assert lk.source_type_field is None
+    assert lk.target_type_field is None
+
+
+def test_edge_link_config_role_and_type_field_mismatch_raises() -> None:
+    with pytest.raises(Exception, match="must match"):
         EdgeLinkConfig.model_validate(
             {
                 "source_role": "self",
-                "source_type_field": "self",
+                "source_type_field": "other",
                 "target_role": "parent",
             }
         )
@@ -334,9 +465,7 @@ def _populate_slot(
 ) -> None:
     """Simulate a role-vertex step having stored a vertex at lindex.(slot, 0)."""
     slot_lindex = base.extend((slot, 0))
-    ctx.acc_vertex[vertex_type][slot_lindex].append(
-        VertexRep(vertex=vertex_doc, ctx={})
-    )
+    ctx.acc_vertex[vertex_type][slot_lindex].append(VertexRep(vertex=vertex_doc))
 
 
 def test_edge_actor_links_emits_two_intents() -> None:

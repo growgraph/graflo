@@ -28,6 +28,7 @@ import hashlib
 import json
 import logging
 import re
+import threading
 import uuid
 from collections import defaultdict
 from functools import lru_cache
@@ -59,18 +60,25 @@ from graflo.db.tigergraph.bulk_gsql import (
     build_run_loading_job_only,
 )
 from graflo.db.tigergraph.gsql_literals import gsql_default_literal
-from graflo.db.tigergraph.s3_staging import upload_staged_csvs
-from graflo.hq.connection_provider import S3GeneralizedConnConfig
 from graflo.db.tigergraph.onto import (
     TIGERGRAPH_TYPE_ALIASES,
     VALID_TIGERGRAPH_TYPES,
 )
 from graflo.db.util import json_serializer
 from graflo.filter.onto import FilterExpression
+from graflo.hq.connection_provider import S3GeneralizedConnConfig
+from graflo.object_storage import upload_staged_csvs
 from graflo.onto import AggregationType
 from graflo.onto import DBType
 from graflo.util.transform import pick_unique_dict
 from urllib.parse import quote
+
+# begin / append / finalize use different :class:`ConnectionManager` contexts (new
+# :class:`TigerGraphConnection` each time); bulk state must not be per-instance.
+_tiger_bulk_sessions_lock = threading.Lock()
+_tiger_bulk_sessions: dict[
+    str, tuple[BulkCsvAppender, TigergraphBulkLoadConfig, Any, Path]
+] = {}
 
 # Alias for backward compatibility
 _json_serializer = json_serializer
@@ -290,9 +298,6 @@ class TigerGraphConnection(Connection):
         self.graphname: str = (
             configured_graph if configured_graph is not None else "DefaultGraph"
         )
-        self._bulk_sessions: dict[
-            str, tuple[BulkCsvAppender, TigergraphBulkLoadConfig, Any, Path]
-        ] = {}
         self._installed_clear_data_queries: dict[str, set[str]] = {}
 
         # Initialize URLs (ports come from config, no hardcoded defaults)
@@ -1045,32 +1050,124 @@ class TigerGraphConnection(Connection):
             return []
 
     def _drop_installed_queries_for_graph(self, graph_name: str) -> None:
-        """Drop only installed queries that belong to the provided graph."""
+        """Drop all installed queries that belong to the provided graph.
+
+        Uses GSQL ``DROP QUERY *`` as the primary mechanism — this removes every
+        installed query in the graph in one shot and does not require prior
+        discovery.  The REST-API-based individual-drop path runs afterwards as
+        a best-effort cleanup for any stragglers.
+
+        TigerGraph will not DROP GRAPH while installed queries exist; this step
+        must succeed before the graph can be removed.
+        """
+        # Primary: bulk drop via GSQL — works regardless of what the REST API reports.
+        try:
+            self._execute_gsql(f"USE GRAPH {graph_name}\nDROP QUERY *")
+            logger.debug(f"Bulk-dropped all queries from graph '{graph_name}'")
+        except Exception as e:
+            logger.debug(
+                f"Bulk DROP QUERY * for graph '{graph_name}' failed (may have no queries): {e}"
+            )
+
+        # Secondary: REST-API discovery + individual drops for any stragglers.
         queries = self._get_installed_queries(graph_name=graph_name)
-        if not queries:
-            logger.debug(f"No installed queries found for graph '{graph_name}'")
-            self._installed_clear_data_queries.pop(graph_name, None)
+        if queries:
+            logger.info(
+                f"Dropping {len(queries)} remaining queries from graph '{graph_name}'"
+            )
+            for query_name in queries:
+                try:
+                    self._execute_gsql(
+                        f"USE GRAPH {graph_name}\nDROP QUERY {query_name} IF EXISTS"
+                    )
+                    logger.debug(
+                        f"Dropped query '{query_name}' from graph '{graph_name}'"
+                    )
+                except Exception:
+                    try:
+                        self._execute_gsql(
+                            f"USE GRAPH {graph_name}\nDROP QUERY {query_name}"
+                        )
+                    except Exception as query_error:
+                        logger.debug(
+                            f"Could not drop query '{query_name}' from graph "
+                            f"'{graph_name}': {query_error}"
+                        )
+
+        self._installed_clear_data_queries.pop(graph_name, None)
+
+    def _drop_global_schema_types(self, schema: "Schema") -> None:
+        """Drop global vertex and edge types that belong to *schema*.
+
+        TigerGraph stores vertex/edge types globally.  When a graph is dropped
+        the types may linger as orphans and block subsequent schema creation for
+        a graph with the same name.  This method cleans them up idempotently —
+        any type that doesn't exist or is still referenced by another graph is
+        silently skipped.
+
+        Order: edges first (they depend on vertices), then vertices.
+        """
+
+        db_schema = schema.resolve_db_aware(DBType.TIGERGRAPH)
+        edge_config = schema.core_schema.edge_config
+
+        # Collect unique edge relation names
+        edge_names: set[str] = set()
+        for edge in edge_config.values():
+            runtime = db_schema.edge_config.runtime(edge)
+            rel = runtime.relation_name or f"{edge.source}_{edge.target}"
+            if rel:
+                edge_names.add(rel)
+
+        for edge_name in edge_names:
+            try:
+                result = self._execute_gsql(f"DROP EDGE {edge_name}")
+                logger.debug(f"Dropped global edge type '{edge_name}': {result}")
+            except Exception as e:
+                logger.debug(
+                    f"Could not drop global edge type '{edge_name}' (may not exist or still referenced): {e}"
+                )
+
+        # Collect unique vertex db-names
+        vertex_names: set[str] = set()
+        for vertex in schema.core_schema.vertex_config.vertices:
+            try:
+                dbname = db_schema.vertex_config.vertex_dbname(vertex.name)
+                vertex_names.add(dbname if dbname else vertex.name)
+            except Exception:
+                vertex_names.add(vertex.name)
+
+        for vertex_name in vertex_names:
+            try:
+                result = self._execute_gsql(f"DROP VERTEX {vertex_name}")
+                logger.debug(f"Dropped global vertex type '{vertex_name}': {result}")
+            except Exception as e:
+                logger.debug(
+                    f"Could not drop global vertex type '{vertex_name}' (may not exist or still referenced): {e}"
+                )
+
+    def _drop_jobs_for_graph(self, graph_name: str) -> None:
+        """Drop jobs visible in the given graph context."""
+        try:
+            result = self._execute_gsql(f"USE GRAPH {graph_name}\nSHOW JOB *")
+        except Exception as e:
+            logger.debug(f"Could not list jobs for graph '{graph_name}': {e}")
             return
 
-        logger.info(f"Dropping {len(queries)} queries from graph '{graph_name}'")
-        for query_name in queries:
+        job_names = self._parse_show_job_output(str(result))
+        if not job_names:
+            logger.debug(f"No jobs found for graph '{graph_name}'")
+            return
+
+        logger.info(f"Dropping {len(job_names)} jobs from graph '{graph_name}'")
+        for job_name in job_names:
             try:
-                drop_query_cmd = (
-                    f"USE GRAPH {graph_name}\nDROP QUERY {query_name} IF EXISTS"
+                self._execute_gsql(f"USE GRAPH {graph_name}\nDROP JOB {job_name}")
+                logger.debug(f"Dropped job '{job_name}' from graph '{graph_name}'")
+            except Exception as e:
+                logger.debug(
+                    f"Could not drop job '{job_name}' from graph '{graph_name}': {e}"
                 )
-                self._execute_gsql(drop_query_cmd)
-                logger.debug(f"Dropped query '{query_name}' from graph '{graph_name}'")
-            except Exception:
-                # Try without IF EXISTS for older TigerGraph versions
-                try:
-                    drop_query_cmd = f"USE GRAPH {graph_name}\nDROP QUERY {query_name}"
-                    self._execute_gsql(drop_query_cmd)
-                except Exception as query_error:
-                    logger.debug(
-                        f"Could not drop query '{query_name}' from graph "
-                        f"'{graph_name}': {query_error}"
-                    )
-        self._installed_clear_data_queries.pop(graph_name, None)
 
     def _run_installed_query(
         self, query_name: str, graph_name: str | None = None, **kwargs: Any
@@ -1556,9 +1653,8 @@ class TigerGraphConnection(Connection):
         """
         Check if a graph with the given name exists.
 
-        Uses the USE GRAPH command and checks the returned message.
-        If the graph doesn't exist, USE GRAPH returns an error message like
-        "Graph 'name' does not exist."
+        Prefers `SHOW GRAPH *` parsing for deterministic existence checks,
+        with a best-effort fallback to `USE GRAPH` output heuristics.
 
         Args:
             name: Name of the graph to check
@@ -1566,35 +1662,33 @@ class TigerGraphConnection(Connection):
         Returns:
             bool: True if the graph exists, False otherwise
         """
+        normalized_name = name.strip().lower()
+        if not normalized_name:
+            return False
+
+        try:
+            result = self._execute_gsql("USE GLOBAL\nSHOW GRAPH *")
+            graph_names = self._parse_show_graph_output(str(result))
+            if graph_names:
+                return any(g.lower() == normalized_name for g in graph_names)
+            logger.debug(
+                "SHOW GRAPH * returned no parsed graphs; falling back to USE GRAPH check for '%s'",
+                name,
+            )
+        except Exception as e:
+            logger.debug(f"SHOW GRAPH check failed for graph '{name}': {e}")
+
         try:
             result = self._execute_gsql(f"USE GRAPH {name}")
             result_str = str(result).lower()
-
-            # If the graph doesn't exist, USE GRAPH returns an error message
-            # Check for common error messages indicating the graph doesn't exist
-            error_patterns = [
-                "does not exist",
-                "doesn't exist",
-                "doesn't exist!",
-                f"graph '{name.lower()}' does not exist",
-            ]
-
-            # If any error pattern is found, the graph doesn't exist
-            for pattern in error_patterns:
-                if pattern in result_str:
-                    return False
-
-            # If no error pattern is found, the graph likely exists
-            # (USE GRAPH succeeded or returned success message)
-            return True
+            return (
+                "does not exist" not in result_str and "doesn't exist" not in result_str
+            )
         except Exception as e:
-            logger.debug(f"Error checking if graph '{name}' exists: {e}")
-            # If there's an exception, try to parse it
+            logger.debug(f"Fallback USE GRAPH check failed for '{name}': {e}")
             error_str = str(e).lower()
             if "does not exist" in error_str or "doesn't exist" in error_str:
                 return False
-            # If exception doesn't indicate "doesn't exist", assume it exists
-            # (other errors might indicate connection issues, not missing graph)
             return False
 
     @_wrap_tg_exception
@@ -1682,64 +1776,55 @@ class TigerGraphConnection(Connection):
             logger.error(f"Error creating graph '{name}' via GSQL: {e}")
             raise
 
+    def _gsql_result_has_error(self, result: str) -> bool:
+        """Return True when a GSQL response text signals a semantic/runtime failure."""
+        lowered = result.lower()
+        return (
+            "semantic check fails" in lowered
+            or "failed to" in lowered
+            or "parse error" in lowered
+            or "syntax error" in lowered
+        )
+
     @_wrap_tg_exception
     def delete_database(self, name: str):
         """
         Delete a TigerGraph database (graph).
 
-        This method attempts to drop the graph using a clean teardown sequence:
-          1) Drop all queries associated with the graph
-          2) Drop the graph itself
+        Teardown sequence:
+          1) Drop installed queries for the graph
+          2) Drop jobs scoped to the graph
+          3) DROP GRAPH
+
+        The GSQL endpoint returns HTTP 200 even for logical failures, so we
+        inspect the response text for GSQL-level error markers rather than
+        relying on a follow-up graph_exists() call (which can produce false
+        positives when SHOW GRAPH * is unavailable or slow to propagate).
 
         Args:
             name: Name of the graph to delete
-
-        Note:
-            In TigerGraph, deleting a graph structure requires the graph to be empty
-            or may fail if it has dependencies. This method handles both cases.
         """
-        try:
-            logger.debug(f"Attempting to drop graph '{name}'")
+        logger.debug(f"Attempting to drop graph '{name}'")
+        self._drop_installed_queries_for_graph(name)
+        self._drop_jobs_for_graph(name)
+        result = self._execute_gsql(f"USE GLOBAL\nDROP GRAPH {name}")
+        result_str = str(result) if result else ""
+        result_lower = result_str.lower()
 
-            # Surgical teardown: only drop queries discovered for this graph.
-            self._drop_installed_queries_for_graph(name)
-            result = self._execute_gsql(f"USE GLOBAL\nDROP GRAPH {name}")
-            logger.info(f"Successfully dropped graph '{name}'")
+        # Treat "does not exist" as a success: graph is already gone.
+        if "does not exist" in result_lower or "doesn't exist" in result_lower:
+            logger.info(
+                f"Graph '{name}' did not exist; treating as successful deletion"
+            )
             return result
-        except Exception as e:
-            error_str = str(e).lower()
-            # If the clean teardown fails, try fallback approaches
-            if (
-                "depends on" in error_str
-                or "query" in error_str
-                or "not exist" in error_str
-            ):
-                logger.warning(
-                    f"Clean teardown failed for graph '{name}': {e}. "
-                    f"Attempting fallback cleanup."
-                )
-                # Fallback: Retry surgical query cleanup, then drop graph
-                try:
-                    self._drop_installed_queries_for_graph(name)
-                    # Now try to drop the graph
-                    drop_command = f"USE GLOBAL\nDROP GRAPH {name}"
-                    result = self._execute_gsql(drop_command)
-                    logger.info(
-                        f"Successfully dropped graph '{name}' via fallback: {result}"
-                    )
-                    return result
-                except Exception as fallback_error:
-                    logger.warning(
-                        f"Fallback cleanup also failed for graph '{name}': {fallback_error}. "
-                        f"Graph may be partially cleaned or may not exist."
-                    )
-                    # Don't raise - allow the process to continue
-                    # The schema creation will handle existing types
-                    return None
-            else:
-                error_msg = f"Could not drop graph '{name}'. Error: {e}"
-                logger.error(error_msg)
-                raise RuntimeError(error_msg) from e
+
+        if self._gsql_result_has_error(result_str):
+            error_msg = f"DROP GRAPH '{name}' failed: {result_str}"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
+
+        logger.info(f"Successfully dropped graph '{name}'")
+        return result
 
     @_wrap_tg_exception
     def execute(self, query, **kwargs):
@@ -1790,16 +1875,23 @@ class TigerGraphConnection(Connection):
             bulk_cfg=bulk_cfg,
             schema_db=schema_db,
         )
-        self._bulk_sessions[session_id] = (appender, bulk_cfg, schema_db, staging_root)
+        with _tiger_bulk_sessions_lock:
+            _tiger_bulk_sessions[session_id] = (
+                appender,
+                bulk_cfg,
+                schema_db,
+                staging_root,
+            )
         return session_id
 
     def bulk_load_append(
         self, session_id: str, gc: GraphContainer, schema: Schema
     ) -> None:
-        if session_id not in self._bulk_sessions:
-            raise KeyError(f"Unknown TigerGraph bulk session {session_id!r}")
-        appender, _, _, _ = self._bulk_sessions[session_id]
-        appender.append_graph_container(gc, schema)
+        with _tiger_bulk_sessions_lock:
+            if session_id not in _tiger_bulk_sessions:
+                raise KeyError(f"Unknown TigerGraph bulk session {session_id!r}")
+            appender, _, _, _ = _tiger_bulk_sessions[session_id]
+            appender.append_graph_container(gc, schema)
 
     def bulk_load_finalize(  # noqa: PLR0912
         self,
@@ -1811,11 +1903,12 @@ class TigerGraphConnection(Connection):
     ) -> str:
         """Upload to S3 when configured, then CREATE/RUN/DROP LOADING JOB."""
         _ = schema
-        if session_id not in self._bulk_sessions:
-            raise KeyError(f"Unknown TigerGraph bulk session {session_id!r}")
-        appender, bulk_cfg, schema_db, _staging_root = self._bulk_sessions.pop(
-            session_id
-        )
+        with _tiger_bulk_sessions_lock:
+            if session_id not in _tiger_bulk_sessions:
+                raise KeyError(f"Unknown TigerGraph bulk session {session_id!r}")
+            appender, bulk_cfg, schema_db, _staging_root = _tiger_bulk_sessions.pop(
+                session_id
+            )
         appender.close()
         staged = appender.staged_file_paths
         if not staged:
@@ -1825,9 +1918,11 @@ class TigerGraphConnection(Connection):
         path_for_gsql: dict[str, str] = {k: str(v.resolve()) for k, v in staged.items()}
         proxy = bulk_cfg.resolve_s3_conn_proxy(bindings)
         bucket = bulk_cfg.s3_bucket
+        tigergraph_s3_loader: S3GeneralizedConnConfig | None = None
         if proxy and connection_provider is not None:
             gen = connection_provider.get_generalized_config_by_proxy(proxy)
             if isinstance(gen, S3GeneralizedConnConfig):
+                tigergraph_s3_loader = gen
                 resolved_bucket = bucket or gen.bucket
                 if not resolved_bucket:
                     raise ValueError(
@@ -1853,6 +1948,8 @@ class TigerGraphConnection(Connection):
                 staged_files=staged,
                 bulk_cfg=bulk_cfg,
                 path_for_gsql=path_for_gsql,
+                tigergraph_s3_loader=tigergraph_s3_loader,
+                tigergraph_s3_data_source_name=f"gf_s3_{session_id}",
             )
         return str(self._execute_gsql(gsql))
 
@@ -2687,14 +2784,24 @@ class TigerGraphConnection(Connection):
 
             if recreate_schema:
                 try:
-                    # Only delete the current graph
+                    # Drop the graph (queries and jobs are dropped first inside delete_database).
                     self.delete_database(graph_name)
-                    logger.debug(f"Cleaned graph '{graph_name}' for fresh start")
-                except Exception as clean_error:
-                    logger.warning(
-                        f"Error during recreate_schema for graph '{graph_name}': {clean_error}",
-                        exc_info=True,
+                    # TigerGraph stores vertex/edge types globally. Dropping the graph
+                    # does NOT remove those types; they linger as orphans and cause
+                    # "used by another object" failures when we try to re-create them.
+                    # Clean them up explicitly before re-creating the schema.
+                    logger.debug(
+                        f"Dropping global schema types for graph '{graph_name}'"
                     )
+                    self._drop_global_schema_types(schema)
+                    logger.debug(f"Cleaned up graph '{graph_name}' for fresh start")
+                except Exception as clean_error:
+                    error_msg = (
+                        f"Error during recreate_schema for graph '{graph_name}': "
+                        f"{clean_error}"
+                    )
+                    logger.error(error_msg, exc_info=True)
+                    raise RuntimeError(error_msg) from clean_error
 
             # Step 1: Create graph first if it doesn't exist
             if not self.graph_exists(graph_name):
@@ -3221,7 +3328,28 @@ class TigerGraphConnection(Connection):
 
     def _parse_show_graph_output(self, result_str: str) -> list[str]:
         """Parse SHOW GRAPH * output to extract graph names."""
-        return self._parse_show_output(result_str, "GRAPH")
+        import re
+
+        names: list[str] = []
+        # Accept multiple TigerGraph output styles:
+        # - GRAPH name
+        # - GRAPH name(
+        # - - Graph name
+        graph_pattern = re.compile(
+            r"(?:^|\s)-?\s*GRAPH\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:\(|$)",
+            re.IGNORECASE,
+        )
+        for line in result_str.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            match = graph_pattern.search(line)
+            if not match:
+                continue
+            graph_name = match.group(1)
+            if graph_name not in names:
+                names.append(graph_name)
+        return names
 
     def _parse_show_job_output(self, result_str: str) -> list[str]:
         """Parse SHOW JOB * output to extract job names."""

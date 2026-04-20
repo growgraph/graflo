@@ -29,12 +29,12 @@ def add_blank_collections(
     ctx: AssemblyContext | ActionContext, vertex_conf: VertexConfig
 ) -> AssemblyContext | ActionContext:
     """Add blank collections for vertices that require them."""
-    buffer_transforms = [
-        item for sublist in ctx.buffer_transforms.values() for item in sublist
+    transform_buffer = [
+        item for sublist in ctx.transform_buffer.values() for item in sublist
     ]
     for vname in vertex_conf.blank_vertices:
         v = vertex_conf[vname]
-        for item in buffer_transforms:
+        for item in transform_buffer:
             prep_doc = {f: item[f] for f in v.property_names if f in item}
             if vname not in ctx.acc_global:
                 ctx.acc_global[vname] = [prep_doc]
@@ -43,21 +43,46 @@ def add_blank_collections(
 
 def dress_vertices(
     items_dd: defaultdict[LocationIndex, list[VertexRep]],
-    buffer_transforms: defaultdict[LocationIndex, list[Any]],
+    transform_buffer: defaultdict[LocationIndex, list[Any]],
 ) -> defaultdict[LocationIndex, list[tuple[VertexRep, dict]]]:
     new_items_dd: defaultdict[LocationIndex, list[tuple[VertexRep, dict]]] = (
         defaultdict(list)
     )
     for va, vlist in items_dd.items():
-        if va in buffer_transforms and len(buffer_transforms[va]) == len(vlist):
+        if va in transform_buffer and len(transform_buffer[va]) == len(vlist):
             transformed_docs = [
-                context_dict_from_transform_buffer_item(x)
-                for x in buffer_transforms[va]
+                context_dict_from_transform_buffer_item(x) for x in transform_buffer[va]
             ]
             new_items_dd[va] = list(zip(vlist, transformed_docs))
         else:
             new_items_dd[va] = list(zip(vlist, [{}] * len(vlist)))
     return new_items_dd
+
+
+def _lookup_obs_buffer(
+    obs_buffer: dict[LocationIndex, dict[str, Any]],
+    lindex: LocationIndex | None,
+    field: str,
+) -> tuple[bool, Any]:
+    current = lindex
+    while current is not None:
+        doc = obs_buffer.get(current)
+        if isinstance(doc, dict) and field in doc:
+            return True, doc[field]
+        current = current.parent()
+    return False, None
+
+
+def _lookup_obs_buffer_at_locations(
+    obs_buffer: dict[LocationIndex, dict[str, Any]],
+    field: str,
+    locations: tuple[LocationIndex | None, ...],
+) -> tuple[bool, Any]:
+    for loc in locations:
+        found, value = _lookup_obs_buffer(obs_buffer, loc, field)
+        if found:
+            return True, value
+    return False, None
 
 
 def select_iterator(casting_type: EdgeCastingType):
@@ -235,7 +260,8 @@ def render_edge(
         derivation: Ingestion-only location / field wiring (edge pipeline step).
     """
     acc_vertex = ctx.acc_vertex
-    buffer_transforms = ctx.buffer_transforms
+    transform_buffer = ctx.transform_buffer
+    obs_buffer = ctx.obs_buffer
     source = edge.source
     target = edge.target
 
@@ -267,8 +293,8 @@ def render_edge(
     source_min_depth = min(loc.depth() for loc in source_by_loc)
     target_min_depth = min(loc.depth() for loc in target_by_loc)
 
-    source_dressed = dress_vertices(source_by_loc, buffer_transforms)
-    target_dressed = dress_vertices(target_by_loc, buffer_transforms)
+    source_dressed = dress_vertices(source_by_loc, transform_buffer)
+    target_dressed = dress_vertices(target_by_loc, transform_buffer)
     source_dressed = filter_nonindexed(source_dressed, source_identity)
     target_dressed = filter_nonindexed(target_dressed, target_identity)
 
@@ -317,12 +343,11 @@ def render_edge(
                     if edge.properties:
                         for field in edge.properties:
                             field_name = field.name
-                            # Direct weights may live on observation ctx (row leftovers) or on
-                            # merged vertex docs (passthrough fields merged in VertexActor).
-                            if field_name in u_rep.ctx:
-                                weight[field_name] = u_rep.ctx[field_name]
-                            if field_name in v_rep.ctx:
-                                weight[field_name] = v_rep.ctx[field_name]
+                            found, value = _lookup_obs_buffer_at_locations(
+                                obs_buffer, field_name, (source_loc, target_loc, lindex)
+                            )
+                            if found:
+                                weight[field_name] = value
                             if field_name in u_doc:
                                 weight[field_name] = u_doc[field_name]
                             if field_name in v_doc:
@@ -338,14 +363,19 @@ def render_edge(
                     extracted_relation = None
 
                     if relation_input_field is not None:
-                        u_relation = u_rep.ctx.pop(relation_input_field, None)
-                        if u_relation is None:
-                            v_relation = v_rep.ctx.pop(relation_input_field, None)
-                            if v_relation is not None:
-                                source_proj, target_proj = target_proj, source_proj
-                                extracted_relation = v_relation
-                        else:
-                            extracted_relation = u_relation
+                        found_relation, relation_value = (
+                            _lookup_obs_buffer_at_locations(
+                                obs_buffer,
+                                relation_input_field,
+                                (source_loc, target_loc, lindex),
+                            )
+                        )
+                        if found_relation:
+                            extracted_relation = relation_value
+                        elif relation_input_field in u_tr:
+                            extracted_relation = u_tr[relation_input_field]
+                        elif relation_input_field in v_tr:
+                            extracted_relation = v_tr[relation_input_field]
 
                     use_key = (
                         derivation.relation_from_key

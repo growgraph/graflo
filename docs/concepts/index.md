@@ -46,7 +46,7 @@ flowchart LR
 - **GraphManifest** — the canonical top-level contract that composes `schema`, `ingestion_model`, and `bindings`.
 - **Schema** — the declarative logical graph model (`Schema`): vertex/edge definitions, identities, typed **`properties`**, and DB profile.
 - **IngestionModel** — reusable resources and transforms used to map records into graph entities.
-- **Bindings** — named `FileConnector` / `TableConnector` / `SparqlConnector` list plus `resource_connector` (many rows per resource allowed: resource→0..n connectors) and optional `connector_connection` (connector **name** or **hash**→`conn_proxy` for runtime `ConnectionProvider` resolution without secrets in the manifest). Optional **`staging_proxy`** maps logical staging profile names to `conn_proxy` keys for **TigerGraph bulk S3 upload** (credentials via `S3GeneralizedConnConfig`, not in YAML). Each connector exposes a **bound source modality** (`BoundSourceKind`: file, SQL table, SPARQL) for dispatch, distinct from the abstract ingestion **Resource**. See [TigerGraph bulk load](../guides/tigergraph_bulk_load.md).
+- **Bindings** — named `FileConnector` / `TableConnector` / `SparqlConnector` list plus `resource_connector` (many rows per resource allowed: resource→0..n connectors) and optional `connector_connection` (connector **name** or **hash**→`conn_proxy` for runtime `ConnectionProvider` resolution without secrets in the manifest). Optional **`staging_proxy`** maps logical staging profile names to `conn_proxy` keys for **TigerGraph bulk S3 upload** (credentials via `S3GeneralizedConnConfig`, not in YAML). Staging is separate from ingestion connectors; see [Object storage (S3 staging)](object_storage.md). Each connector exposes a **bound source modality** (`BoundSourceKind`: file, SQL table, SPARQL) for dispatch, distinct from the abstract ingestion **Resource**. See [TigerGraph bulk load](../guides/tigergraph_bulk_load.md).
 - **Database-Independent Graph Representation** — a `GraphContainer` of vertices and edges, independent of any target database.
 - **Graph DB** — the target LPG store (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph).
 
@@ -138,7 +138,7 @@ classDiagram
         +ingest(manifest, target_db_config, ...)
     }
 
-    class InferenceManager {
+    class SQLInferenceManager {
         +conn: PostgresConnection
         +target_db_flavor: DBType
         +introspect(schema_name) SchemaIntrospectionResult
@@ -189,7 +189,7 @@ classDiagram
         +connection_type: DBType
     }
 
-    GraphEngine --> InferenceManager : creates for introspect / infer_schema
+    GraphEngine --> SQLInferenceManager : creates for introspect / infer_schema
     GraphEngine --> ResourceMapper : resource_mapper
     GraphEngine --> Caster : creates for ingest
     GraphEngine --> ConnectionManager : creates for define_schema
@@ -301,7 +301,8 @@ classDiagram
 
     class ExtractionContext {
         +acc_vertex: map
-        +buffer_transforms: map
+        +transform_buffer: map
+        +obs_buffer: map
         +edge_intents: list~EdgeIntent~
     }
 
@@ -628,9 +629,9 @@ An `Actor` describes how the current level of the document should be mapped/tran
   - **`keep_fields`**: restrict passthrough to this field subset. Use on role-vertex steps to prevent shared row columns from leaking into placeholder vertices that only carry an ID.
 - `EdgeActor`: Creates edges between vertices. Operates in three modes:
   - **Static mode** (`from`/`to` set on both sides): vertex types declared at config time.
-  - **Dynamic / mixed mode** (at least one of `source_type_field` / `target_type_field` / `source_role` / `target_role` set): vertex types resolved at extraction time by looking up accumulator slots. `source_role` / `target_role` are ergonomic aliases for `source_type_field` / `target_type_field` — the slot lookup is identical whether the slot was populated by `vertex+role`, `vertex_router+role`, or `vertex_router` (default slot = `type_field`).
+  - **Dynamic / mixed mode** (at least one of `source_type_field` / `target_type_field` / `source_role` / `target_role` set): vertex types resolved at extraction time by looking up accumulator slots. `source_role` / `target_role` are ergonomic aliases for `source_type_field` / `target_type_field` — the slot lookup is identical whether the slot was populated by `vertex+role` or `vertex_router+role` (with router role inferred from `type_field` when omitted).
   - **Multi-link mode** (`links` list set): each item in `links` emits one edge intent per row. Use when one flat row encodes multiple distinct relationship types (e.g. `is_child_of` and `is_parent_of` from the same row).
-- `VertexRouterActor`: Routes documents to the correct `VertexActor` based on a type field read from the document at runtime. Vertices are stored at `lindex.extend((slot, 0))` where `slot` is `role` when set, otherwise `type_field` — addressable by `source_type_field` / `target_type_field` on a downstream `EdgeActor` using that same segment name. Optional router-level **`from`** provides a default `{vertex_field: doc_field}` projection; **`vertex_from_map`** overrides per resolved vertex type. Use when the vertex type varies per row; for a fixed vertex type with role-distinct slots, use `vertex+role` instead.
+- `VertexRouterActor`: Routes documents to the correct `VertexActor` based on a type field read from the document at runtime. Vertices are stored at `lindex.extend((role, 0))`; when `role` is omitted it is inferred from `type_field`. Optional router-level **`from`** provides a default `{vertex_field: doc_field}` projection; **`vertex_from_map`** overrides per resolved vertex type. Use when the vertex type varies per row; for a fixed vertex type with role-distinct slots, use `vertex+role` instead.
 
 ```mermaid
 flowchart TB
@@ -647,7 +648,7 @@ flowchart TB
     Doc --> E
     Doc --> VR
     V -.->|"role='r'\n→ store at lindex.(r,0)"| slot_r["acc_vertex slot (r,0)"]
-    VR -.->|"type_field='tf', role unset\n→ store at lindex.(tf,0)"| slot_tf["acc_vertex slot (tf,0)"]
+    VR -.->|"role='r' (or inferred from type_field)\n→ store at lindex.(r,0)"| slot_tf["acc_vertex slot (r,0)"]
     E -.->|"source_role='r' or\nsource_type_field='tf'\n→ scan acc_vertex at slot"| slot_r
     E -.->|"links: [...]"| multi["N edge intents per row"]
 ```
@@ -659,14 +660,14 @@ Both mechanisms write vertices to a named sub-slot of the current `LocationIndex
 | Mechanism | When the vertex type is... | Slot name comes from... |
 |---|---|---|
 | `vertex: T, role: r` | **static** (known at schema design time) | `role` value |
-| `vertex_router: type_field: tf` (optional `role: r`) | **dynamic** (read from a doc column at runtime) | `role` if set, else `type_field` |
+| `vertex_router: type_field: tf` (optional `role: r`) | **dynamic** (read from a doc column at runtime) | `role` (`type_field` when `role` is omitted) |
 
 The `EdgeActor` vocabulary matches:
 
 | Slot populated by | Edge config field |
 |---|---|
 | `vertex+role` | `source_role` / `target_role` |
-| `vertex_router` (slot = `role` or `type_field`) | `source_type_field` / `target_type_field` (or `source_role` / `target_role`) |
+| `vertex_router` | `source_type_field` / `target_type_field` (or `source_role` / `target_role`) |
 
 Both pairs are equivalent at runtime — they name the same path segment in `acc_vertex`.
 
@@ -677,14 +678,14 @@ Both pairs are equivalent at runtime — they name the same path segment in `acc
 | Both static | Static | `from: server, to: database, relation: uses` |
 | Both static | Dynamic from field | `from: server, to: database, relation_field: rt` |
 | Both static | Dynamic from key | `from: server, to: database, relation_from_key: true` |
-| Both dynamic (router) | Static | `source_type_field: tf_src, target_type_field: tf_tgt, relation: uses` |
-| Both dynamic (router) | Dynamic from field | `source_type_field: tf_src, target_type_field: tf_tgt, relation_field: rt` |
+| Both dynamic (router) | Static | `source_role: src, target_role: tgt, relation: uses` |
+| Both dynamic (router) | Dynamic from field | `source_role: src, target_role: tgt, relation_field: rt` |
 | Both role-slot | Static | `source_role: self, target_role: parent, relation: is_child_of` |
-| Mixed (static + dynamic) | Dynamic | `from: person, target_type_field: tf_tgt, relation_field: rt` |
-| Mixed (dynamic + static) | Dynamic | `source_type_field: tf_src, to: institution, relation_field: rt` |
+| Mixed (static + dynamic) | Dynamic | `from: person, target_role: tgt, relation_field: rt` |
+| Mixed (dynamic + static) | Dynamic | `source_role: src, to: institution, relation_field: rt` |
 | Multiple relations from one row | Static per link | `links: [{source_role: self, target_role: parent, relation: is_child_of}, ...]` |
 
-`source_type_field` / `target_type_field` (or `source_role` / `target_role`) must equal the accumulator slot segment of the upstream `VertexRouterActor` — that is `role` when set, otherwise `type_field`. For a static `vertex` step, `source_role` / `target_role` must equal that step’s `role`.
+`source_type_field` / `target_type_field` (or `source_role` / `target_role`) must equal the accumulator slot segment of the upstream `VertexRouterActor` — `role` (inferred from `type_field` when omitted). For a static `vertex` step, `source_role` / `target_role` must equal that step’s `role`.
 
 #### Type Safety Controls
 
@@ -704,17 +705,19 @@ Ingestion pipelines walk **nested JSON** (or list-shaped branches). At each step
 - A **`LocationIndex`** — a path into the document (which list index, which object key, and so on).
 - An **observation slice** — usually a `dict` that is the current fragment of the document for that path (for example the element produced by a `DescendActor` iteration). Tabular sources are the special case where the top-level slice is one flat object per record.
 
-**Transform output** is not written back onto that slice automatically. `TransformActor` appends a `TransformPayload` to `ExtractionContext.buffer_transforms[location]` for the **same** `LocationIndex` it was invoked with. Later actors at that location can consume those named fields.
+**Transform output** is not written back onto that slice automatically. `TransformActor` appends a `TransformPayload` to `ExtractionContext.transform_buffer[location]` for the **same** `LocationIndex` it was invoked with. Later actors at that location can consume those named fields.
 
-**`VertexActor` with `role`** stores the vertex at `lindex.extend((role, 0))` using the configured `role` string as the slot segment. Passthrough uses `doc.get` (non-mutating) so sibling role-vertex steps in the same pipeline all see the complete shared row. Use `keep_fields` to restrict which properties are absorbed during passthrough — this prevents unrelated row columns from leaking into placeholder role vertices that only need an ID. A downstream edge step references the slot via `source_role` / `target_role`.
+**`VertexActor` with `role`** stores the vertex at `lindex.extend((role, 0))` using the configured `role` string as the slot segment. Extraction reads from an effective observation built from the current doc slice plus same-location transform buffer values (transform values override raw doc values on conflicts). Field greediness is controlled explicitly via `extraction_scope`: `full` (default) keeps passthrough behavior for remaining schema properties, while `mapped_only` extracts only fields explicitly mapped in `from`. In `full`, `keep_fields` restricts passthrough to a subset and helps prevent unrelated row columns from leaking into placeholder role vertices that only need an ID. A downstream edge step references the slot via `source_role` / `target_role`.
 
-**`VertexRouterActor`** builds an **effective observation** by merging the current dict slice with all `TransformPayload` entries at that `LocationIndex`. Routing fields (`type_field`, optional `from` / `vertex_from_map`, optional `keep_fields`) are read from this merged view — the same dict is passed to the lazily created `VertexActor` (no separate rename/slice layer). The vertex is accumulated at `lindex.extend((slot, 0))` with `slot = role` when set, otherwise `type_field`. A downstream dynamic `EdgeActor` finds it by setting `source_type_field` / `target_type_field` (or `source_role` / `target_role`) to that same slot segment.
+`VertexRep` carries only the extracted vertex document. Row-level merged observation state used for edge relation/weight derivation lives in `ExtractionContext.obs_buffer` and is looked up by `LocationIndex` (with parent lookup for nested scopes).
+
+**`VertexRouterActor`** builds an **effective observation** by merging the current dict slice with all `TransformPayload` entries at that `LocationIndex`. Routing fields (`type_field`, optional `from` / `vertex_from_map`, optional `keep_fields`, optional `extraction_scope`) are read from this merged view — the same dict is passed to the lazily created `VertexActor` (no separate rename/slice layer). The vertex is accumulated at `lindex.extend((role, 0))`, where `role` is inferred from `type_field` when omitted. A downstream dynamic `EdgeActor` finds it by setting `source_role` / `target_role` (or `source_type_field` / `target_type_field`) to that same slot segment.
 
 **Dynamic `EdgeActor`** (slot mode) also merges the doc with the transform buffer before reading `relation_field`; this ensures that values produced by upstream transforms (e.g. canonicalized relation names) are available at edge construction time.
 
 **Multi-link `EdgeActor`** (when `links` is set) delegates to one sub-actor per link. Each sub-actor performs a full single-intent edge resolution; the results accumulate into the same `ExtractionContext`. The `links` field is mutually exclusive with all top-level source/target fields on the same step.
 
-**Scoping:** `buffer_transforms` is keyed only by the exact `LocationIndex`. A transform at a parent path does **not** appear in the buffer for a child path, and vice versa. That keeps parent/child branches separate.
+**Scoping:** `transform_buffer` is keyed only by the exact `LocationIndex`. A transform at a parent path does **not** appear in the buffer for a child path, and vice versa. That keeps parent/child branches separate.
 
 **Descend behavior:** When `DescendActor` expands a collection, inner actors see **`sub_doc`** (one child value) per iteration — not the full parent object — unless you denormalize parent fields onto each child or structure the pipeline so the router runs at a level where the slice already contains what you need.
 

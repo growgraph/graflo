@@ -1,7 +1,7 @@
 """Tests for dynamic-mode EdgeActor (slot-based type resolution).
 
 Covers all scenario dimensions:
-  - VRA slots by role when set, else by type_field
+  - VRA slots by role (role inferred from type_field when omitted)
   - Static types with static relation
   - Static types with dynamic relation via relation_field
   - Dynamic types via VRA type_field → EdgeActor source/target_type_field
@@ -109,18 +109,21 @@ def _populate_slot(
 ) -> None:
     """Simulate VRA storing a vertex rep at lindex.(type_field, 0)."""
     slot_lindex = base_lindex.extend((type_field, 0))
-    ctx.acc_vertex[vertex_type][slot_lindex].append(
-        VertexRep(vertex=vertex_doc, ctx={})
-    )
+    ctx.acc_vertex[vertex_type][slot_lindex].append(VertexRep(vertex=vertex_doc))
 
 
 # ---------------------------------------------------------------------------
-# 1. VRA stores at lindex.(role, 0) or lindex.(type_field, 0)
+# 1. VRA stores at lindex.(role, 0), with role inferred from type_field
 # ---------------------------------------------------------------------------
+
+
+def test_vra_config_infers_role_from_type_field() -> None:
+    cfg = VertexRouterActorConfig(type_field="vtype")
+    assert cfg.role == "vtype"
 
 
 def test_vra_stores_at_type_field_slot_lindex() -> None:
-    """VertexRouterActor stores at lindex.extend((type_field, 0)) when role is unset."""
+    """VertexRouterActor stores at inferred role slot when role is unset."""
     vc = _vc("server", "database")
     cfg = VertexRouterActorConfig(type_field="vtype")
     vra = VertexRouterActor(cfg)
@@ -198,7 +201,7 @@ def test_vra_vertex_from_map_overrides_from_doc() -> None:
 
 
 def test_two_vras_with_different_type_fields_use_separate_slots() -> None:
-    """Two VRAs with different type_fields accumulate into separate slots at the same lindex."""
+    """Two VRAs with different inferred roles accumulate into separate slots."""
     vc = _vc("server", "database")
     vra_src = VertexRouterActor(VertexRouterActorConfig(type_field="source_type"))
     vra_tgt = VertexRouterActor(VertexRouterActorConfig(type_field="target_type"))
@@ -312,7 +315,7 @@ def test_dynamic_relation_from_transform_buffer() -> None:
     _populate_slot(ctx, base, "S", "server", {"id": "s1"})
     _populate_slot(ctx, base, "T", "database", {"id": "d1"})
 
-    ctx.buffer_transforms[base].append(TransformPayload(named={"rel": "from_buffer"}))
+    ctx.transform_buffer[base].append(TransformPayload(named={"rel": "from_buffer"}))
     ea(ctx, base, doc={"rel": "from_doc"})  # buffer overrides doc
 
     assert ctx.edge_intents[0].edge.relation == "from_buffer"
@@ -475,7 +478,8 @@ def test_edge_config_mixed_mode_source_type_field_static_target_is_valid() -> No
             "to": "database",
         }
     )
-    assert cfg.source_type_field == "S"
+    assert cfg.source_role == "S"
+    assert cfg.source_type_field is None
     assert cfg.target == "database"
 
 
@@ -489,4 +493,5 @@ def test_edge_config_mixed_mode_static_source_target_type_field_is_valid() -> No
         }
     )
     assert cfg.source == "server"
-    assert cfg.target_type_field == "T"
+    assert cfg.target_role == "T"
+    assert cfg.target_type_field is None

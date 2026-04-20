@@ -23,15 +23,15 @@ logger = logging.getLogger(__name__)
 def _link_to_edge_actor_config(link: EdgeLinkConfig) -> EdgeActorConfig:
     """Convert an EdgeLinkConfig item into a standalone EdgeActorConfig for delegation."""
     data: dict[str, Any] = {"type": "edge"}
-    # source/target_type_field is already resolved in EdgeLinkConfig.resolve_and_validate
+    # source/target role keys are canonicalized in EdgeLinkConfig.resolve_and_validate
     if link.source is not None:
         data["from"] = link.source
     if link.target is not None:
         data["to"] = link.target
-    if link.source_type_field is not None:
-        data["source_type_field"] = link.source_type_field
-    if link.target_type_field is not None:
-        data["target_type_field"] = link.target_type_field
+    if link.source_role is not None:
+        data["source_role"] = link.source_role
+    if link.target_role is not None:
+        data["target_role"] = link.target_role
     if link.relation is not None:
         data["relation"] = link.relation
     if link.relation_field is not None:
@@ -52,8 +52,9 @@ class EdgeActor(Actor):
     time.  The schema ``Edge`` is created during ``finish_init`` and the
     ``__call__`` path is unchanged from the original implementation.
 
-    **Dynamic mode** (at least one of ``source_type_field``/``target_type_field``
-    / ``source_role``/``target_role`` set): vertex types for the dynamic side(s) are
+    **Dynamic mode** (at least one of ``source_role``/``target_role`` set, with
+    ``source_type_field``/``target_type_field`` accepted as legacy aliases):
+    vertex types for the dynamic side(s) are
     resolved at extraction time by looking up accumulator slots populated by an
     upstream ``VertexRouterActor`` (slot segment = ``role`` or ``type_field``) or a
     ``VertexActor`` with a matching ``role``.
@@ -72,8 +73,8 @@ class EdgeActor(Actor):
                 EdgeActor(_link_to_edge_actor_config(lk)) for lk in config.links
             ]
             # Null-out all single-intent state so the dispatch is unambiguous.
-            self._source_type_field = None
-            self._target_type_field = None
+            self._source_slot_key = None
+            self._target_slot_key = None
             self._static_source = None
             self._static_target = None
             self._relation_map: dict[str, str] = {}
@@ -91,8 +92,8 @@ class EdgeActor(Actor):
 
         self._link_actors = []
 
-        self._source_type_field = config.source_type_field
-        self._target_type_field = config.target_type_field
+        self._source_slot_key = config.source_role
+        self._target_slot_key = config.target_role
         # Static fallback for whichever side is not dynamic.
         self._static_source = config.source
         self._static_target = config.target
@@ -111,7 +112,7 @@ class EdgeActor(Actor):
         # Dynamic mode: at least one side is resolved at extraction time.
         # Static mode: both sides are fixed at config time.
         is_dynamic = (
-            self._source_type_field is not None or self._target_type_field is not None
+            self._source_slot_key is not None or self._target_slot_key is not None
         )
         if not is_dynamic:
             payload: dict[str, Any] = {
@@ -152,12 +153,12 @@ class EdgeActor(Actor):
             items["source"] = self.edge.source
             items["target"] = self.edge.target
         else:
-            if self._source_type_field is not None:
-                items["source_type_field"] = self._source_type_field
+            if self._source_slot_key is not None:
+                items["source_role"] = self._source_slot_key
             elif self._static_source is not None:
                 items["source"] = self._static_source
-            if self._target_type_field is not None:
-                items["target_type_field"] = self._target_type_field
+            if self._target_slot_key is not None:
+                items["target_role"] = self._target_slot_key
             elif self._static_target is not None:
                 items["target"] = self._static_target
         for k in ("match_source", "match_target"):
@@ -247,7 +248,7 @@ class EdgeActor(Actor):
             for la in self._link_actors:
                 ctx = la(ctx, lindex, *nargs, **kwargs)
             return ctx
-        if self._source_type_field is not None or self._target_type_field is not None:
+        if self._source_slot_key is not None or self._target_slot_key is not None:
             return self._call_dynamic(ctx, lindex, **kwargs)
         return self._call_static(ctx, lindex, **kwargs)
 
@@ -295,17 +296,18 @@ class EdgeActor(Actor):
             )
             return ctx
 
-        buffer_items: list[Any] = list(ctx.buffer_transforms.get(lindex, []))
+        buffer_items: list[Any] = list(ctx.transform_buffer.get(lindex, []))
         doc = merge_observation_with_transform_buffer(raw_observation, buffer_items)
+        ctx.obs_buffer[lindex] = dict(doc)
 
         # --- source type ---
-        if self._source_type_field is not None:
-            source_slot_lindex = lindex.extend((self._source_type_field, 0))
+        if self._source_slot_key is not None:
+            source_slot_lindex = lindex.extend((self._source_slot_key, 0))
             source_type = self._find_type_at_slot(ctx, source_slot_lindex)
             if source_type is None:
                 logger.debug(
                     "EdgeActor: no vertex data at source slot '%s', skipping",
-                    self._source_type_field,
+                    self._source_slot_key,
                 )
                 return ctx
         else:
@@ -323,13 +325,13 @@ class EdgeActor(Actor):
             return ctx
 
         # --- target type ---
-        if self._target_type_field is not None:
-            target_slot_lindex = lindex.extend((self._target_type_field, 0))
+        if self._target_slot_key is not None:
+            target_slot_lindex = lindex.extend((self._target_slot_key, 0))
             target_type = self._find_type_at_slot(ctx, target_slot_lindex)
             if target_type is None:
                 logger.debug(
                     "EdgeActor: no vertex data at target slot '%s', skipping",
-                    self._target_type_field,
+                    self._target_slot_key,
                 )
                 return ctx
         else:
@@ -372,8 +374,8 @@ class EdgeActor(Actor):
 
         # Build derivation: slot names for dynamic sides so render_edge can filter.
         derivation = EdgeDerivation(
-            match_source=self._source_type_field,
-            match_target=self._target_type_field,
+            match_source=self._source_slot_key,
+            match_target=self._target_slot_key,
         )
         ctx.record_edge_intent(edge=edge, location=lindex, derivation=derivation)
         return ctx

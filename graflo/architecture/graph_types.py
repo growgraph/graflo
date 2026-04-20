@@ -345,13 +345,11 @@ class VertexRep(ConfigBaseModel):
 
     Attributes:
         vertex: doc representing a vertex
-        ctx: context (for edge definition upstream
     """
 
     model_config = ConfigDict(kw_only=True)  # type: ignore[assignment]
 
-    vertex: dict
-    ctx: dict
+    vertex: dict[str, Any]
 
 
 class TransformPayload(ConfigBaseModel):
@@ -374,7 +372,7 @@ class TransformPayload(ConfigBaseModel):
 
 
 def context_dict_from_transform_buffer_item(item: Any) -> dict[str, Any]:
-    """Map one ``buffer_transforms`` entry to a flat context dict (named keys only)."""
+    """Map one ``transform_buffer`` entry to a flat context dict (named keys only)."""
     if isinstance(item, TransformPayload):
         return item.context_doc()
     if isinstance(item, dict):
@@ -390,7 +388,7 @@ def merge_observation_with_transform_buffer(
 
     ``observation`` is the current dict-shaped fragment of the nested document
     passed into actors (often a child object under a :class:`DescendActor`).
-    ``buffer_items`` are the entries in ``ExtractionContext.buffer_transforms``
+    ``buffer_items`` are the entries in ``ExtractionContext.transform_buffer``
     for the same :class:`LocationIndex`.
 
     Starts from a shallow copy of ``observation``; each buffer entry (in pipeline
@@ -472,6 +470,11 @@ class LocationIndex(ConfigBaseModel):
     def extend(self, extension: tuple[str | int | None, ...]) -> LocationIndex:
         return LocationIndex(path=(*self.path, *extension))
 
+    def parent(self) -> LocationIndex | None:
+        if not self.path:
+            return None
+        return LocationIndex(path=self.path[:-1])
+
     def depth(self) -> int:
         return len(self.path)
 
@@ -510,6 +513,10 @@ def _default_dict_transforms() -> defaultdict[LocationIndex, list[Any]]:
     return defaultdict(list)
 
 
+def _default_dict_observations() -> dict[LocationIndex, dict[str, Any]]:
+    return {}
+
+
 def _default_vertex_observations() -> list[VertexObservation]:
     return []
 
@@ -527,7 +534,8 @@ class ExtractionContext(ConfigBaseModel):
 
     Attributes:
         acc_vertex: Local accumulation of extracted vertices
-        buffer_transforms: Buffer for transform payloads (defaultdict[LocationIndex, list])
+        transform_buffer: Buffer for transform payloads (defaultdict[LocationIndex, list])
+        obs_buffer: Merged observation context per location (dict[LocationIndex, dict])
         vertex_observations: Explicit extracted vertex observations
         transform_observations: Explicit extracted transform observations
         edge_intents: Explicit edge intents for assembly phase
@@ -538,7 +546,8 @@ class ExtractionContext(ConfigBaseModel):
     # Pydantic cannot schema nested defaultdict with custom key types (e.g. LocationIndex),
     # so we use Any; runtime type is as documented in Attributes
     acc_vertex: Any = Field(default_factory=outer_factory)
-    buffer_transforms: Any = Field(default_factory=_default_dict_transforms)
+    transform_buffer: Any = Field(default_factory=_default_dict_transforms)
+    obs_buffer: Any = Field(default_factory=_default_dict_observations)
     vertex_observations: list[VertexObservation] = Field(
         default_factory=_default_vertex_observations
     )
@@ -601,8 +610,12 @@ class AssemblyContext(ConfigBaseModel):
         return self.extraction.acc_vertex
 
     @property
-    def buffer_transforms(self) -> Any:
-        return self.extraction.buffer_transforms
+    def transform_buffer(self) -> Any:
+        return self.extraction.transform_buffer
+
+    @property
+    def obs_buffer(self) -> Any:
+        return self.extraction.obs_buffer
 
     @property
     def edge_intents(self) -> list[EdgeIntent]:

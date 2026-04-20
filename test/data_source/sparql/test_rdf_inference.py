@@ -46,6 +46,52 @@ class TestRdfInferenceManager:
         assert ("Person", "Organization", "worksFor") in edge_tuples
         assert ("Person", "Person", "knows") in edge_tuples
 
+    def test_infer_schema_vertex_identity_uri(self, sample_ontology_path: Path):
+        """RDF-inferred vertices should key ingestion on subject URI."""
+        mgr = RdfInferenceManager()
+        schema, _ = mgr.infer_schema(sample_ontology_path, schema_name="test_rdf")
+
+        for v in schema.core_schema.vertex_config.vertices:
+            assert v.identity == ["_uri"]
+
+    def test_infer_schema_resource_pipeline_uri_object_properties(
+        self, sample_ontology_path: Path
+    ):
+        """Object properties should emit target vertex + edge steps (incl. same-class)."""
+        mgr = RdfInferenceManager()
+        _, ingestion_model = mgr.infer_schema(
+            sample_ontology_path, schema_name="test_rdf"
+        )
+
+        person = next(r for r in ingestion_model.resources if r.name == "Person")
+        assert person.pipeline == [
+            {"vertex": "Person"},
+            {
+                "vertex": "Organization",
+                "from": {"_uri": "worksFor"},
+                "extraction_scope": "mapped_only",
+            },
+            {
+                "edge": {
+                    "from": "Person",
+                    "to": "Organization",
+                    "relation": "worksFor",
+                }
+            },
+            {
+                "vertex": "Person",
+                "from": {"_uri": "knows"},
+                "extraction_scope": "mapped_only",
+            },
+            {
+                "edge": {
+                    "from": "Person",
+                    "to": "Person",
+                    "relation": "knows",
+                }
+            },
+        ]
+
     def test_infer_schema_resources(self, sample_ontology_path: Path):
         """One Resource per class should be created."""
         mgr = RdfInferenceManager()

@@ -54,6 +54,14 @@ class S3GeneralizedConnConfig(BaseModel):
     endpoint_url: str | None = Field(
         default=None, description="For S3-compatible endpoints (MinIO, etc.)."
     )
+    loader_endpoint_url: str | None = Field(
+        default=None,
+        description=(
+            "S3 endpoint URL as seen by TigerGraph when it runs in another network "
+            "namespace (e.g. Docker). Used only in CREATE DATA_SOURCE for LOADING JOB; "
+            "boto3 continues to use endpoint_url."
+        ),
+    )
 
 
 GeneralizedConnConfig = (

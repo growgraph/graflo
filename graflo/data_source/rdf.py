@@ -8,7 +8,10 @@ Provides two concrete data sources that share a common abstract parent:
   (e.g. Apache Fuseki) via *SPARQLWrapper*.
 
 Both convert RDF triples into flat dictionaries grouped by subject URI, one
-dict per ``rdf:Class`` instance.
+dict per ``rdf:Class`` instance.  Each document has ``_uri`` (full subject URI)
+and ``_key`` (URI local name — the fragment or last path segment).  All other
+identity decisions (e.g. using a domain-specific literal as the storage key)
+belong in the schema layer, not here.
 
 Uses ``rdflib`` and ``SPARQLWrapper``, which are **core** dependencies of
 ``graflo`` (see ``pyproject.toml``).

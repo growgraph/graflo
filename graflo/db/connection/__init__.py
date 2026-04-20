@@ -1,3 +1,9 @@
+from graflo.object_storage.config import (
+    MinioConfig,
+    S3EndpointConfig,
+    parse_dotenv_file,
+)
+
 from .onto import (
     TARGET_DATABASES,
     ArangoConfig,
@@ -19,6 +25,9 @@ __all__ = [
     "DBConfig",
     "FalkordbConfig",
     "MemgraphConfig",
+    "MinioConfig",
+    "S3EndpointConfig",
+    "parse_dotenv_file",
     "NebulaConfig",
     "Neo4jConfig",
     "PostgresConfig",

@@ -38,7 +38,7 @@ bindings:
     connectors:
     -   name: relations_files
         regex: "^relations.*\\.csv$"
-        sub_path: "."
+        sub_path: "data"
         resource_name: "relations"
   # Maps logical name "bulk_s3" -> runtime conn_proxy key "minio_bulk" (registered in ingest.py).
     staging_proxy:

@@ -600,7 +600,7 @@ class TestEdgeResourceAutoJoin:
         assert any(d.get("id") == "o1" and d.get("name") == "Acme" for d in org_docs)
 
     def test_vertex_router_with_transform_consumes_transform_output(self):
-        """TransformActor runs before VertexRouterActor; routed VertexActor consumes buffer_transforms."""
+        """TransformActor runs before VertexRouterActor; routed VertexActor consumes transform_buffer."""
         schema = _build_bound_schema(
             name="test",
             vertex_config={
