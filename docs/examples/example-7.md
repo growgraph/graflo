@@ -71,7 +71,8 @@ The relations resource uses two `vertex_router` steps to accumulate both endpoin
   - name: relations
     pipeline:
       - vertex_router:
-          type_field: source_type      # slot: lindex.(source_type, 0)
+          type_field: source_type
+          role: source
           from:
             id: source_id
           type_map:
@@ -79,7 +80,8 @@ The relations resource uses two `vertex_router` steps to accumulate both endpoin
             Vehicle: vehicle
             Institution: institution
       - vertex_router:
-          type_field: target_type      # slot: lindex.(target_type, 0)
+          type_field: target_type
+          role: target
           from:
             id: target_id
           type_map:
@@ -87,8 +89,8 @@ The relations resource uses two `vertex_router` steps to accumulate both endpoin
             Vehicle: vehicle
             Institution: institution
       - edge:
-          source_type_field: source_type   # resolves type from slot
-          target_type_field: target_type
+          source_role: source
+          target_role: target
           relation_field: relation_type
           relation_map:
             EMPLOYED_BY: employed_by
@@ -98,7 +100,8 @@ The relations resource uses two `vertex_router` steps to accumulate both endpoin
             INVESTS_IN: invests_in
 ```
 
-- `source_type_field` / `target_type_field`: Match the `type_field` of the upstream `vertex_router` steps; the edge actor finds vertex types by scanning the accumulator slots at `lindex.(type_field, 0)`
+- `role`: Names the accumulator slot (`lindex.(role, 0)`) for each `vertex_router` endpoint
+- `source_role` / `target_role`: Match upstream `vertex_router.role`; the edge actor finds vertex types by scanning those role slots
 - `from`: Projects relation-table columns onto vertex fields (e.g. `id: source_id`), same as on a `vertex` step
 - `relation_field`: Column with the raw relation name (e.g. `EMPLOYED_BY`)
 - `relation_map`: Maps raw relation values to canonical names (e.g. `EMPLOYED_BY` → `employed_by`)
@@ -157,9 +160,9 @@ uv run python ingest.py
 ## Key Takeaways
 
 1. **`vertex_router`** routes polymorphic rows to the correct vertex type using a type discriminator column and `type_map`.
-2. Two **`vertex_router`** steps on a relations resource accumulate both endpoint vertices into named slots (keyed by `type_field`).
+2. Two **`vertex_router`** steps on a relations resource accumulate both endpoint vertices into named role slots.
 3. The dynamic **`edge`** step resolves source/target types from those slots and normalizes relation names via `relation_map`.
-4. **`source_type_field` / `target_type_field`** on the `edge` step must equal the `type_field` of the corresponding `vertex_router` steps.
+4. **`source_role` / `target_role`** on the `edge` step should equal the `role` of the corresponding `vertex_router` steps.
 5. **Order matters** — ingest objects (vertices) before relations (edges) so that edge endpoints exist when edges are created.
 
 ---

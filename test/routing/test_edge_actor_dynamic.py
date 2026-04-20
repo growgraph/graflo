@@ -1,7 +1,7 @@
 """Tests for dynamic-mode EdgeActor (slot-based type resolution).
 
 Covers all scenario dimensions:
-  - VRA slots by role when set, else by type_field
+  - VRA slots by role (role inferred from type_field when omitted)
   - Static types with static relation
   - Static types with dynamic relation via relation_field
   - Dynamic types via VRA type_field → EdgeActor source/target_type_field
@@ -115,12 +115,17 @@ def _populate_slot(
 
 
 # ---------------------------------------------------------------------------
-# 1. VRA stores at lindex.(role, 0) or lindex.(type_field, 0)
+# 1. VRA stores at lindex.(role, 0), with role inferred from type_field
 # ---------------------------------------------------------------------------
 
 
+def test_vra_config_infers_role_from_type_field() -> None:
+    cfg = VertexRouterActorConfig(type_field="vtype")
+    assert cfg.role == "vtype"
+
+
 def test_vra_stores_at_type_field_slot_lindex() -> None:
-    """VertexRouterActor stores at lindex.extend((type_field, 0)) when role is unset."""
+    """VertexRouterActor stores at inferred role slot when role is unset."""
     vc = _vc("server", "database")
     cfg = VertexRouterActorConfig(type_field="vtype")
     vra = VertexRouterActor(cfg)
@@ -198,7 +203,7 @@ def test_vra_vertex_from_map_overrides_from_doc() -> None:
 
 
 def test_two_vras_with_different_type_fields_use_separate_slots() -> None:
-    """Two VRAs with different type_fields accumulate into separate slots at the same lindex."""
+    """Two VRAs with different inferred roles accumulate into separate slots."""
     vc = _vc("server", "database")
     vra_src = VertexRouterActor(VertexRouterActorConfig(type_field="source_type"))
     vra_tgt = VertexRouterActor(VertexRouterActorConfig(type_field="target_type"))

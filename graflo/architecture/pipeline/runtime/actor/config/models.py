@@ -319,7 +319,8 @@ class EdgeLinkConfig(ConfigBaseModel):
     Slot resolution (``source_role`` / ``target_role``) works identically to
     ``source_type_field`` / ``target_type_field`` on a standalone ``edge`` step — the
     slot name is the accumulator segment populated by an upstream ``vertex`` step with a
-    matching ``role``, or a ``vertex_router`` step (``role`` when set, else ``type_field``).
+    matching ``role``, or by ``vertex_router.role`` (which defaults to ``type_field`` when
+    omitted).
     """
 
     model_config = {"extra": "forbid", "populate_by_name": True}
@@ -337,29 +338,29 @@ class EdgeLinkConfig(ConfigBaseModel):
     source_type_field: str | None = PydanticField(
         default=None,
         description=(
-            "Accumulator slot segment for the source vertex (VertexRouterActor role or "
-            "type_field; or vertex step role). Exclusive with 'from' and source_role."
+            "Accumulator slot segment for the source vertex (same name as upstream "
+            "vertex/vertex_router role). Exclusive with 'from' and source_role."
         ),
     )
     target_type_field: str | None = PydanticField(
         default=None,
         description=(
-            "Accumulator slot segment for the target vertex (VertexRouterActor role or "
-            "type_field; or vertex step role). Exclusive with 'to' and target_role."
+            "Accumulator slot segment for the target vertex (same name as upstream "
+            "vertex/vertex_router role). Exclusive with 'to' and target_role."
         ),
     )
     source_role: str | None = PydanticField(
         default=None,
         description=(
-            "Sugar for source_type_field: same accumulator segment name. Exclusive with "
-            "source_type_field."
+            "Role-first alias for source_type_field (same accumulator segment name). "
+            "Exclusive with source_type_field."
         ),
     )
     target_role: str | None = PydanticField(
         default=None,
         description=(
-            "Sugar for target_type_field: same accumulator segment name. Exclusive with "
-            "target_type_field."
+            "Role-first alias for target_type_field (same accumulator segment name). "
+            "Exclusive with target_type_field."
         ),
     )
     relation: str | None = PydanticField(
@@ -446,7 +447,7 @@ class EdgeActorConfig(ConfigBaseModel):
         default=None,
         description=(
             "Accumulator slot segment for the source vertex (same name as the upstream "
-            "VertexRouterActor's role, or type_field when role is unset). EdgeActor scans "
+            "VertexRouterActor role, inferred from type_field when role is omitted). EdgeActor scans "
             "acc_vertex for data at lindex.extend((source_type_field, 0)) to resolve the "
             "source type dynamically. Exclusive with 'from' and source_role."
         ),
@@ -454,23 +455,22 @@ class EdgeActorConfig(ConfigBaseModel):
     target_type_field: str | None = PydanticField(
         default=None,
         description=(
-            "Accumulator slot segment for the target vertex (VertexRouterActor role or "
-            "type_field). Exclusive with 'to' and target_role."
+            "Accumulator slot segment for the target vertex (same name as upstream "
+            "VertexRouterActor role, inferred from type_field when role is omitted). "
+            "Exclusive with 'to' and target_role."
         ),
     )
     source_role: str | None = PydanticField(
         default=None,
         description=(
-            "Role slot name for the source vertex — sugar for source_type_field when the "
-            "slot was populated by an upstream 'vertex' step with a matching role. "
+            "Role slot name for the source vertex — role-first alias for source_type_field. "
             "Exclusive with source_type_field."
         ),
     )
     target_role: str | None = PydanticField(
         default=None,
         description=(
-            "Role slot name for the target vertex — sugar for target_type_field when the "
-            "slot was populated by an upstream 'vertex' step with a matching role. "
+            "Role slot name for the target vertex — role-first alias for target_type_field. "
             "Exclusive with target_type_field."
         ),
     )
@@ -652,7 +652,8 @@ class VertexRouterActorConfig(ConfigBaseModel):
         ...,
         description=(
             "Key on the merged observation (document + same-location transform buffer) "
-            "whose value determines the target vertex type (after type_map). Use the "
+            "whose value determines the target vertex type (after type_map). "
+            "This is a discriminator field, not the internal slot key. Use the "
             "actual column name (e.g. ``s__class_name`` or ``p_kind``)."
         ),
     )
@@ -667,10 +668,10 @@ class VertexRouterActorConfig(ConfigBaseModel):
     role: str | None = PydanticField(
         default=None,
         description=(
-            "Named accumulator slot segment. When set, vertices are stored at "
-            "lindex.extend((role, 0)). When omitted, the slot segment defaults to type_field. "
-            "A downstream edge step references this slot via source_type_field / target_type_field "
-            "(or source_role / target_role) using the same segment name."
+            "Accumulator slot segment used for storage/addressing. Vertices are stored at "
+            "lindex.extend((role, 0)). When omitted, role is inferred from type_field. "
+            "A downstream edge step references this slot via source_role/target_role "
+            "(or source_type_field/target_type_field) using the same segment name."
         ),
     )
     from_doc: dict[str, str] | None = PydanticField(
@@ -697,6 +698,12 @@ class VertexRouterActorConfig(ConfigBaseModel):
             data = dict(data)
             data["type"] = "vertex_router"
         return data
+
+    @model_validator(mode="after")
+    def normalize_role(self) -> "VertexRouterActorConfig":
+        if self.role is None:
+            object.__setattr__(self, "role", self.type_field)
+        return self
 
 
 ActorConfig = Annotated[

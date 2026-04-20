@@ -90,7 +90,7 @@ A `Resource` is the central abstraction that bridges data sources and the graph 
 
 - **`vertex` step `role`**: assign a named accumulator slot to a static-type vertex step so multiple vertices of the same type in one flat row occupy distinct slots (e.g. `role: self`, `role: parent`, `role: child` all as `person`). Use `keep_fields` to restrict passthrough so sibling role steps don't absorb each other's columns.
 - **`edge` step `links`**: declare multiple edge intents in one step — each list item emits one edge per row with its own `source_role`/`target_role` (or `source_type_field`/`target_type_field`) and `relation`.
-- **`source_role` / `target_role`** on `edge` steps: ergonomic aliases for `source_type_field` / `target_type_field` when the slot was populated by a `vertex+role` step.
+- **`source_role` / `target_role`** on `edge` steps: role-first aliases for `source_type_field` / `target_type_field` when the slot was populated by a `vertex+role` or `vertex_router+role` step.
 
 For wide rows with many empty or null columns, **`drop_trivial_input_fields`** (default `false`) removes only **top-level** keys whose value is `null` or `""` before the pipeline runs. The filter is **shallow**: nested dicts and lists are not walked, and empty `{}` / `[]` values are kept because they are not `null` or `""`. **`0`** and **`false`** are kept.
 

@@ -30,16 +30,17 @@ class VertexRouterActor(Actor):
     through to the selected :class:`VertexActor` unchanged. Projection uses the same
     ``from`` / ``vertex_from_map`` contract as a standalone vertex step.
 
-    Vertices are accumulated at ``lindex.extend((slot, 0))`` where ``slot`` is
-    :attr:`role` when set, otherwise :attr:`type_field`. A downstream dynamic
-    ``EdgeActor`` references this slot via ``source_type_field`` /
-    ``target_type_field`` (or ``source_role`` / ``target_role``) using the same
-    segment name.
+    Vertices are accumulated at ``lindex.extend((role, 0))``. ``role`` is normalized
+    by config validation (defaults to :attr:`type_field` when omitted), so runtime slot
+    addressing uses a single internal key. A downstream dynamic ``EdgeActor`` references
+    this slot via ``source_role`` / ``target_role`` (or ``source_type_field`` /
+    ``target_type_field``) using the same segment name.
     """
 
     def __init__(self, config: VertexRouterActorConfig):
         self.type_field = config.type_field
-        self.role = config.role
+        # Config normalization guarantees role is always present.
+        self.role: str = config.role or config.type_field
         self.from_doc: dict[str, str] | None = config.from_doc
         self.keep_fields: tuple[str, ...] | None = (
             tuple(config.keep_fields) if config.keep_fields else None
@@ -55,9 +56,7 @@ class VertexRouterActor(Actor):
         return cls(config)
 
     def fetch_important_items(self) -> dict[str, Any]:
-        items: dict[str, Any] = {"type_field": self.type_field}
-        if self.role is not None:
-            items["role"] = self.role
+        items: dict[str, Any] = {"type_field": self.type_field, "role": self.role}
         if self.from_doc:
             items["from_doc"] = self.from_doc
         if self.keep_fields:
@@ -99,12 +98,11 @@ class VertexRouterActor(Actor):
         wrapper = ActorWrapper.from_config(config)
         wrapper.finish_init(self._init_ctx)
         self._vertex_actors[vertex_type] = wrapper
-        slot = self.role if self.role is not None else self.type_field
         logger.debug(
-            "VertexRouterActor: lazily registered VertexActor(%s) for type_field=%s slot=%s",
+            "VertexRouterActor: lazily registered VertexActor(%s) for type_field=%s role=%s",
             vertex_type,
             self.type_field,
-            slot,
+            self.role,
         )
         return wrapper
 
@@ -142,6 +140,5 @@ class VertexRouterActor(Actor):
             )
             return ctx
 
-        slot = self.role if self.role is not None else self.type_field
-        effective_lindex = lindex.extend((slot, 0))
+        effective_lindex = lindex.extend((self.role, 0))
         return wrapper(ctx, effective_lindex, doc=doc)

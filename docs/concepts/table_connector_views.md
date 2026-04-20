@@ -71,6 +71,7 @@ ingestion_model:
       pipeline:
         - vertex_router:
             type_field: source_type
+            role: source
             from:
               id: source_id
             type_map:
@@ -78,14 +79,15 @@ ingestion_model:
               Person: person
         - vertex_router:
             type_field: target_type
+            role: target
             from:
               id: target_id
             type_map:
               Car: car
               Person: person
         - edge:
-            source_type_field: source_type
-            target_type_field: target_type
+            source_role: source
+            target_role: target
             relation_field: relation
 ```
 
