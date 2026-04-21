@@ -7,6 +7,7 @@ import hashlib
 import json
 import pathlib
 import re
+from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Self
 
 from pydantic import AliasChoices, Field, field_validator, model_validator
@@ -19,6 +20,7 @@ _BASE_TABLE_ALIAS_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\Z")
 
 if TYPE_CHECKING:
     from graflo.db import PostgresConfig
+    from graflo.filter.onto import FilterExpression
 else:
     try:
         from graflo.db import PostgresConfig
@@ -320,26 +322,24 @@ class TableConnector(ResourceConnector):
     def bound_source_kind(self) -> BoundSourceKind:
         return BoundSourceKind.SQL_TABLE
 
-    def build_where_clause(self) -> str:
+    def build_where_clause(self, base_alias: str | None = None) -> str:
         """Build SQL WHERE clause from date filtering parameters **and** general filters.
 
         Returns:
             WHERE clause string (without the WHERE keyword) or empty string if no filters
         """
-        from graflo.filter.onto import FilterExpression
         from graflo.onto import ExpressionFlavor
 
         conditions: list[str] = []
 
         # Date-specific conditions (legacy fields)
         if self.date_field:
+            date_col = self._qualified_column_ref(self.date_field, base_alias)
             if self.date_range_start and self.date_range_days is not None:
-                conditions.append(
-                    f"\"{self.date_field}\" >= '{self.date_range_start}'::date"
-                )
-                conditions.append(
-                    f"\"{self.date_field}\" < '{self.date_range_start}'::date + INTERVAL '{self.date_range_days} days'"
-                )
+                start_date = self._parse_iso_date(self.date_range_start)
+                end_date = start_date + timedelta(days=self.date_range_days)
+                conditions.append(f"{date_col} >= '{start_date.isoformat()}'")
+                conditions.append(f"{date_col} < '{end_date.isoformat()}'")
             elif self.date_filter:
                 filter_parts = self.date_filter.strip().split(None, 1)
                 if len(filter_parts) == 2:
@@ -347,16 +347,15 @@ class TableConnector(ResourceConnector):
                     if not (value.startswith("'") and value.endswith("'")):
                         if len(value) == 10 and value.count("-") == 2:
                             value = f"'{value}'"
-                    conditions.append(f'"{self.date_field}" {operator} {value}')
+                    conditions.append(f"{date_col} {operator} {value}")
                 else:
-                    conditions.append(f'"{self.date_field}" {self.date_filter}')
+                    conditions.append(f"{date_col} {self.date_filter}")
 
         # General-purpose FilterExpression filters
         for filt in self.filters:
-            if isinstance(filt, dict):
-                filt = FilterExpression.from_dict(filt)
-            if isinstance(filt, FilterExpression):
-                rendered = filt(kind=ExpressionFlavor.SQL)
+            filt_expr = self._coerce_filter_expression(filt, base_alias)
+            if filt_expr is not None:
+                rendered = filt_expr(kind=ExpressionFlavor.SQL)
                 if rendered:
                     conditions.append(str(rendered))
 
@@ -383,7 +382,7 @@ class TableConnector(ResourceConnector):
 
             if isinstance(self.view, SelectSpec):
                 query = self.view.build_sql(schema=schema, base_table=self.table_name)
-                where = self.build_where_clause()
+                where = self.build_where_clause(base_alias=self.view.base_alias)
                 if where:
                     return self._append_where_condition(query, where)
                 return query
@@ -430,7 +429,7 @@ class TableConnector(ResourceConnector):
         query = f"SELECT {select_clause} FROM {from_clause}"
 
         # --- WHERE ---
-        where = self.build_where_clause()
+        where = self.build_where_clause(base_alias=base_alias)
         if where:
             query += f" WHERE {where}"
 
@@ -442,6 +441,60 @@ class TableConnector(ResourceConnector):
         if re.search(r"\bWHERE\b", query, flags=re.IGNORECASE):
             return f"{query} AND {condition}"
         return f"{query} WHERE {condition}"
+
+    @staticmethod
+    def _qualified_column_ref(column: str, base_alias: str | None) -> str:
+        if base_alias:
+            return f'{base_alias}."{column}"'
+        return f'"{column}"'
+
+    @staticmethod
+    def _parse_iso_date(raw: str) -> date:
+        value = raw.strip().strip("'")
+        try:
+            return date.fromisoformat(value)
+        except ValueError:
+            dt = datetime.fromisoformat(value)
+            return dt.date()
+
+    @classmethod
+    def _qualify_filter_payload(
+        cls, payload: dict[str, Any], base_alias: str | None
+    ) -> dict[str, Any]:
+        qualified = dict(payload)
+        if base_alias is None:
+            return qualified
+        if qualified.get("kind") == "leaf":
+            field = qualified.get("field")
+            if isinstance(field, str) and "." not in field:
+                qualified["field"] = f"{base_alias}.{field}"
+            return qualified
+        deps = qualified.get("deps")
+        if isinstance(deps, list):
+            qualified["deps"] = [
+                cls._qualify_filter_payload(dep, base_alias)
+                if isinstance(dep, dict)
+                else dep
+                for dep in deps
+            ]
+        return qualified
+
+    @classmethod
+    def _coerce_filter_expression(
+        cls, raw_filter: Any, base_alias: str | None
+    ) -> FilterExpression | None:
+        from graflo.filter.onto import FilterExpression
+
+        if isinstance(raw_filter, FilterExpression):
+            payload = raw_filter.model_dump(mode="python")
+            return FilterExpression.from_dict(
+                cls._qualify_filter_payload(payload, base_alias)
+            )
+        if isinstance(raw_filter, dict):
+            return FilterExpression.from_dict(
+                cls._qualify_filter_payload(raw_filter, base_alias)
+            )
+        return None
 
 
 class SparqlConnector(ResourceConnector):

@@ -8,6 +8,9 @@ Tests cover:
 
 from __future__ import annotations
 
+import os
+import tempfile
+
 import pytest
 
 from graflo.filter.onto import ComparisonOperator, FilterExpression, LogicalOperator
@@ -18,6 +21,7 @@ from graflo.architecture.contract.bindings import (
     JoinClause,
     TableConnector,
 )
+from graflo.data_source.sql import SQLConfig, SQLDataSource
 
 
 # ---------------------------------------------------------------
@@ -326,6 +330,80 @@ class TestTableConnectorBuildQuery:
         )
         q = tp.build_query("public")
         assert "\"status\" = 'active'" in q
+
+    def test_joined_query_qualifies_date_and_filter_columns(self):
+        filt = FilterExpression(
+            kind="leaf",
+            field="status",
+            cmp_operator=ComparisonOperator.EQ,
+            value=["active"],
+        )
+        tp = TableConnector(
+            table_name="events",
+            date_field="created_at",
+            date_filter=">= '2024-01-01'",
+            filters=[filt],
+            joins=[
+                JoinClause(
+                    table="users",
+                    alias="u",
+                    on_self="user_id",
+                    on_other="id",
+                )
+            ],
+        )
+        q = tp.build_query("public")
+        assert "base.\"created_at\" >= '2024-01-01'" in q
+        assert "base.\"status\" = 'active'" in q
+
+    def test_date_range_query_runs_on_sqlite_without_interval(self):
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        conn_str = f"sqlite:///{path}"
+        from sqlalchemy import create_engine, text
+
+        engine = create_engine(conn_str)
+        with engine.connect() as conn:
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE events (
+                        id INTEGER PRIMARY KEY,
+                        dt TEXT NOT NULL
+                    )
+                    """
+                )
+            )
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO events (id, dt) VALUES
+                        (1, '2024-01-01'),
+                        (2, '2024-01-02'),
+                        (3, '2024-01-03')
+                    """
+                )
+            )
+            conn.commit()
+
+        tp = TableConnector(
+            table_name="events",
+            schema_name="main",
+            date_field="dt",
+            date_range_start="2024-01-01",
+            date_range_days=2,
+        )
+        query = tp.build_query("main")
+        assert "INTERVAL" not in query
+
+        ds = SQLDataSource(
+            config=SQLConfig(
+                connection_string=conn_str,
+                query=query.replace('"main".', ""),
+            )
+        )
+        rows = list(ds)
+        assert len(rows) == 2
 
 
 # ---------------------------------------------------------------
