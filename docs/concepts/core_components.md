@@ -1,0 +1,397 @@
+# Core components
+
+Reference for logical schema pieces, ingestion runtime, actors, and transforms.
+
+## Core Components
+
+### Schema
+The `Schema` is the single source of truth for the LPG structure. It encapsulates:
+ 
+- Vertex and edge definitions with optional type information
+- Identity and physical index configurations
+- DB profile defaults and DB-aware projection settings
+- Automatic schema inference from normalized PostgreSQL databases (3NF with PK/FK) or from OWL/RDFS ontologies
+
+### IngestionModel
+The `IngestionModel` is the source of truth for ingestion runtime behavior. It encapsulates:
+
+- Resource mappings and actor pipelines
+- Reusable named transforms
+- Runtime initialization against the core schema (`finish_init(schema.core_schema)`)
+
+### Manifest-level sanitization
+
+When targeting stricter engines (notably TigerGraph), identifier normalization is handled at the
+manifest boundary:
+
+- `Sanitizer.sanitize_manifest(manifest)` mutates `manifest.graph_schema` and, when needed,
+  updates ingestion actor mappings in `manifest.ingestion_model`.
+- Sanitization covers reserved-word-safe vertex/property/relation names and relation-level index
+  harmonization required by TigerGraph.
+- The API is intentionally manifest-first so schema and ingestion updates remain consistent.
+
+### Vertex
+A `Vertex` describes vertices and their logical identity. It supports:
+
+- Single or compound identity fields (e.g., `["first_name", "last_name"]` instead of `"full_name"`)
+- Property definitions with optional type information
+  - Fields can be specified as strings (backward compatible) or typed `Field` objects
+  - Supported types: `INT`, `FLOAT`, `BOOL`, `STRING`, `DATETIME`
+  - Type information enables better validation and database-specific optimizations
+- Filtering conditions
+- Optional blank vertex configuration
+
+### Edge
+An `Edge` describes edges and their logical identities. It allows:
+
+- Optional uniqueness semantics through **`identities`** (multiple candidate keys are allowed)
+- **`properties`**: relationship payload (names and optional types), same accepted forms as vertex properties (strings, `Field`, or dicts with at least `name`)
+- Optional static **`relation`** label (e.g. Neo4j relationship type) when it is not derived at ingest time
+
+Ingestion-only controls (**`relation_field`**, **`relation_from_key`**, **`match_source`**, **`match_target`**, vertex-sourced edge payload) live on **`EdgeActor`** steps and **`EdgeDerivation`**, not on the logical `Edge` model.
+
+### Edge properties and configuration
+
+#### Basic logical fields
+- **`source`**: Source vertex name (required)
+- **`target`**: Target vertex name (required)
+- **`identities`**: Logical identity keys for the edge (each key can induce uniqueness)
+- **`properties`**: Declared relationship attributes (typed or untyped)
+
+**Neo4j, Memgraph, FalkorDB — relationship `MERGE` keys:** Writers match source and target nodes on vertex identity, then `MERGE` the relationship. Which **relationship properties** participate in that `MERGE` (so multiple edges between the same two vertices do not collapse) is derived as follows: use the **first** `identities` key, keep only tokens that refer to relationship payload (skip `source` and `target`; the `relation` token becomes the `relation` property on the relationship where used). If that produces no fields—e.g. `identities` is empty—the writer falls back to **all** names in **`Edge.properties`**. Declare `identities` when the full property list is a superset of what should define edge uniqueness.
+
+#### Relationship type at ingest time
+- **`relation`** on the logical edge: static relationship type when applicable
+- **`relation_field`** on an **edge actor** step: column/field holding dynamic relationship type values (CSV/tabular; see Example 3)
+- **`relation_from_key`** on an **edge actor** step: use JSON object keys as relationship types (nested JSON; see Example 4)
+
+#### Payload from vertices at ingest time
+Vertex fields that should appear on edges are configured via **edge actor** options (e.g. **`vertex_weights`**, maps), not via a `weights` block on the logical `Edge`. DB layers may still use an internal `WeightConfig` built from `Edge.properties` for backends that need it.
+
+#### Edge behavior control
+- Edge physical variants should be modeled with `schema.db_profile.edge_specs[*].purpose` (YAML) / `db_profile.edge_specs[*].purpose` (in code).
+- `Edge.aux` is no longer a behavior switch.
+
+> DB-only physical edge metadata (including `purpose`) is configured under
+> **`schema.db_profile.edge_specs`**, not on `Edge`.
+
+#### Matching and filtering (ingestion)
+- **`match_source`** / **`match_target`** / **`match`**: edge **actor** options for branch selection when building edges from hierarchical documents
+
+#### Advanced logical configuration
+- **`type`**: Edge type (DIRECT or INDIRECT)
+- **`by`**: Vertex name for indirect edges
+- DB-specific edge storage/type names are resolved from **`schema.db_profile`**
+  through DB-aware wrappers (`EdgeConfigDBAware`), not stored on `Edge`.
+
+#### When to use what
+
+**`relation_field`** (Example 3):
+
+- Set on the **`source` / `target` edge step** in the resource pipeline when relationship types live in a column (e.g. `company_a, company_b, relation, date`).
+
+**`relation_from_key`** (Example 4):
+
+- Set on the edge step for nested JSON where keys imply relationship types.
+
+**`properties` on the logical edge:**
+
+- Declare every relationship attribute you want in the schema (dates, scores, metadata).
+- Typed example: `properties: [{name: date, type: DATETIME}, {name: confidence_score, type: FLOAT}]`
+- String list: `properties: [date, confidence_score]`
+
+**`match_source` / `match_target`:**
+
+- Edge **actor** options when multiple branches feed the same vertex types; use to restrict which branches participate in an edge.
+
+### DataSource & DataSourceRegistry
+An `AbstractDataSource` subclass defines where data comes from and how it is retrieved. Each carries a `DataSourceType`. The `DataSourceRegistry` maps data sources to Resources by name.
+
+| `DataSourceType` | Adapter | Sources |
+|---|---|---|
+| `FILE` | `FileDataSource` | JSON, JSONL, CSV/TSV, Parquet files |
+| `SPARQL` | `RdfFileDataSource` | Turtle (`.ttl`), RDF/XML (`.rdf`), N3 (`.n3`), JSON-LD files — parsed via `rdflib` |
+| `SPARQL` | `SparqlEndpointDataSource` | Remote SPARQL endpoints (e.g. Apache Fuseki) queried via `SPARQLWrapper` |
+| `API` | `APIDataSource` | REST API endpoints with pagination, authentication, and retry logic |
+| `SQL` | `SQLDataSource` | SQL databases via SQLAlchemy with parameterised queries |
+| `IN_MEMORY` | `InMemoryDataSource` | Python objects (lists, DataFrames) already in memory |
+
+Data sources handle retrieval only. They bind to Resources by name via the `DataSourceRegistry`, so the same `Resource` can ingest data from multiple sources without modification.
+
+### Resource
+A `Resource` is the central abstraction that bridges data sources and the graph schema. Each Resource defines a reusable actor pipeline (descend → transform → vertex → edge) that maps raw records to graph elements:
+
+- How data structures map to vertices and edges
+- What transformations to apply
+- The actor pipeline for processing documents
+
+Because DataSources bind to Resources by name, the same transformation logic applies regardless of whether data arrives from a file, an API, a SQL table, or a SPARQL endpoint.
+
+Resource-level edge inference controls:
+- **`infer_edges`**: Global toggle for inferred edge emission during assembly (default: `true`).
+- **`infer_edge_only`**: Allow-list of inferred edges (`source`, `target`, optional `relation`).
+- **`infer_edge_except`**: Deny-list of inferred edges (`source`, `target`, optional `relation`).
+- `infer_edge_only` and `infer_edge_except` are mutually exclusive and validated against declared schema edges.
+- These controls apply to inferred edges only; explicit edge actors in the pipeline are still emitted.
+- **Auto-exclusion**: When a resource pipeline contains any EdgeActor for edges of type `(source, target)`, `(source, target, None)` is automatically added to `infer_edge_except` for that resource, so inferred edges do not duplicate edges produced by explicit edge actors.
+
+### Actor
+An `Actor` describes how the current level of the document should be mapped/transformed to the property graph vertices and edges. There are five actor types:
+
+- `DescendActor`: Navigates to the next level in the hierarchy. Supports:
+  - `key`: Process a specific key in a dictionary
+  - `any_key`: Process all keys in a dictionary (useful when you want to handle multiple keys dynamically)
+- `TransformActor`: Applies data transformations
+- `VertexActor`: Creates vertices from the current level. Key options:
+  - **`role`** (optional): named accumulator slot. When set the vertex is stored at `lindex.extend((role, 0))` instead of bare `lindex`, so multiple vertices of the same type in one row (e.g. `role: self`, `role: parent`, `role: child`) occupy distinct slots and can be addressed individually by a downstream edge step.
+  - **`from`**: rename map `{vertex_field: doc_field}`. Only mismatched column names need listing; remaining vertex schema properties are absorbed from the doc automatically (passthrough).
+  - **`keep_fields`**: restrict passthrough to this field subset. Use on role-vertex steps to prevent shared row columns from leaking into placeholder vertices that only carry an ID.
+- `EdgeActor`: Creates edges between vertices. Operates in three modes:
+  - **Static mode** (`from`/`to` set on both sides): vertex types declared at config time.
+  - **Dynamic / mixed mode** (at least one of `source_type_field` / `target_type_field` / `source_role` / `target_role` set): vertex types resolved at extraction time by looking up accumulator slots. `source_role` / `target_role` are ergonomic aliases for `source_type_field` / `target_type_field` — the slot lookup is identical whether the slot was populated by `vertex+role` or `vertex_router+role` (with router role inferred from `type_field` when omitted).
+  - **Multi-link mode** (`links` list set): each item in `links` emits one edge intent per row. Use when one flat row encodes multiple distinct relationship types (e.g. `is_child_of` and `is_parent_of` from the same row).
+- `VertexRouterActor`: Routes documents to the correct `VertexActor` based on a type field read from the document at runtime. Vertices are stored at `lindex.extend((role, 0))`; when `role` is omitted it is inferred from `type_field`. Optional router-level **`from`** provides a default `{vertex_field: doc_field}` projection; **`vertex_from_map`** overrides per resolved vertex type. Use when the vertex type varies per row; for a fixed vertex type with role-distinct slots, use `vertex+role` instead.
+
+```mermaid
+flowchart TB
+    subgraph actors [Actor Types]
+        D[DescendActor]
+        T[TransformActor]
+        V["VertexActor\n(optional role)"]
+        E["EdgeActor\n(static · dynamic · multi-link)"]
+        VR["VertexRouterActor\n(type from doc)"]
+    end
+    Doc[Document] --> D
+    Doc --> T
+    Doc --> V
+    Doc --> E
+    Doc --> VR
+    V -.->|"role='r'\n→ store at lindex.(r,0)"| slot_r["acc_vertex slot (r,0)"]
+    VR -.->|"role='r' (or inferred from type_field)\n→ store at lindex.(r,0)"| slot_tf["acc_vertex slot (r,0)"]
+    E -.->|"source_role='r' or\nsource_type_field='tf'\n→ scan acc_vertex at slot"| slot_r
+    E -.->|"links: [...]"| multi["N edge intents per row"]
+```
+
+#### Accumulator slots: `vertex+role` vs `vertex_router`
+
+Both mechanisms write vertices to a named sub-slot of the current `LocationIndex`. A downstream dynamic `EdgeActor` scans `acc_vertex` for data at the same slot path.
+
+| Mechanism | When the vertex type is... | Slot name comes from... |
+|---|---|---|
+| `vertex: T, role: r` | **static** (known at schema design time) | `role` value |
+| `vertex_router: type_field: tf` (optional `role: r`) | **dynamic** (read from a doc column at runtime) | `role` (`type_field` when `role` is omitted) |
+
+The `EdgeActor` vocabulary matches:
+
+| Slot populated by | Edge config field |
+|---|---|
+| `vertex+role` | `source_role` / `target_role` |
+| `vertex_router` | `source_type_field` / `target_type_field` (or `source_role` / `target_role`) |
+
+Both pairs are equivalent at runtime — they name the same path segment in `acc_vertex`.
+
+#### Dynamic Edge Scenario Matrix
+
+| Vertex types | Relation | Config pattern |
+|---|---|---|
+| Both static | Static | `from: server, to: database, relation: uses` |
+| Both static | Dynamic from field | `from: server, to: database, relation_field: rt` |
+| Both static | Dynamic from key | `from: server, to: database, relation_from_key: true` |
+| Both dynamic (router) | Static | `source_role: src, target_role: tgt, relation: uses` |
+| Both dynamic (router) | Dynamic from field | `source_role: src, target_role: tgt, relation_field: rt` |
+| Both role-slot | Static | `source_role: self, target_role: parent, relation: is_child_of` |
+| Mixed (static + dynamic) | Dynamic | `from: person, target_role: tgt, relation_field: rt` |
+| Mixed (dynamic + static) | Dynamic | `source_role: src, to: institution, relation_field: rt` |
+| Multiple relations from one row | Static per link | `links: [{source_role: self, target_role: parent, relation: is_child_of}, ...]` |
+
+`source_type_field` / `target_type_field` (or `source_role` / `target_role`) must equal the accumulator slot segment of the upstream `VertexRouterActor` — `role` (inferred from `type_field` when omitted). For a static `vertex` step, `source_role` / `target_role` must equal that step’s `role`.
+
+#### Type Safety Controls
+
+When dynamic edge types are used, a row may encounter a `(source_type, target_type)` pair not pre-declared in the schema `edge_config`. By default (`strict_edge_types: false`) this pair is registered at runtime. For strictly-typed databases that require DDL before writes, set:
+
+```yaml
+edge:
+  source_type_field: S
+  target_type_field: T
+  strict_edge_types: true   # skip rows whose resolved pair is not pre-declared
+```
+
+### Location-scoped observations, transforms, and routers
+
+Ingestion pipelines walk **nested JSON** (or list-shaped branches). At each step, actors receive:
+
+- A **`LocationIndex`** — a path into the document (which list index, which object key, and so on).
+- An **observation slice** — usually a `dict` that is the current fragment of the document for that path (for example the element produced by a `DescendActor` iteration). Tabular sources are the special case where the top-level slice is one flat object per record.
+
+**Transform output** is not written back onto that slice automatically. `TransformActor` appends a `TransformPayload` to `ExtractionContext.transform_buffer[location]` for the **same** `LocationIndex` it was invoked with. Later actors at that location can consume those named fields.
+
+**`VertexActor` with `role`** stores the vertex at `lindex.extend((role, 0))` using the configured `role` string as the slot segment. Extraction reads from an effective observation built from the current doc slice plus same-location transform buffer values (transform values override raw doc values on conflicts). Field greediness is controlled explicitly via `extraction_scope`: `full` (default) keeps passthrough behavior for remaining schema properties, while `mapped_only` extracts only fields explicitly mapped in `from`. In `full`, `keep_fields` restricts passthrough to a subset and helps prevent unrelated row columns from leaking into placeholder role vertices that only need an ID. A downstream edge step references the slot via `source_role` / `target_role`.
+
+`VertexRep` carries only the extracted vertex document. Row-level merged observation state used for edge relation/weight derivation lives in `ExtractionContext.obs_buffer` and is looked up by `LocationIndex` (with parent lookup for nested scopes).
+
+**`VertexRouterActor`** builds an **effective observation** by merging the current dict slice with all `TransformPayload` entries at that `LocationIndex`. Routing fields (`type_field`, optional `from` / `vertex_from_map`, optional `keep_fields`, optional `extraction_scope`) are read from this merged view — the same dict is passed to the lazily created `VertexActor` (no separate rename/slice layer). The vertex is accumulated at `lindex.extend((role, 0))`, where `role` is inferred from `type_field` when omitted. A downstream dynamic `EdgeActor` finds it by setting `source_role` / `target_role` (or `source_type_field` / `target_type_field`) to that same slot segment.
+
+**Dynamic `EdgeActor`** (slot mode) also merges the doc with the transform buffer before reading `relation_field`; this ensures that values produced by upstream transforms (e.g. canonicalized relation names) are available at edge construction time.
+
+**Multi-link `EdgeActor`** (when `links` is set) delegates to one sub-actor per link. Each sub-actor performs a full single-intent edge resolution; the results accumulate into the same `ExtractionContext`. The `links` field is mutually exclusive with all top-level source/target fields on the same step.
+
+**Scoping:** `transform_buffer` is keyed only by the exact `LocationIndex`. A transform at a parent path does **not** appear in the buffer for a child path, and vice versa. That keeps parent/child branches separate.
+
+**Descend behavior:** When `DescendActor` expands a collection, inner actors see **`sub_doc`** (one child value) per iteration — not the full parent object — unless you denormalize parent fields onto each child or structure the pipeline so the router runs at a level where the slice already contains what you need.
+
+**Future discussion (not implemented):** Opt-in inheritance of specific fields from a parent `LocationIndex` (or a parent observation stack) could simplify parent–child edges without duplicating data on every child; that would be an explicit configuration surface to avoid breaking the default isolation above.
+
+### Transform
+
+A `Transform` defines data transforms, from renaming and type-casting to
+arbitrary Python functions. The transform system is built on two layers:
+
+For a dedicated guide covering all transform use cases and configuration
+options (inline/local usage, reusable `use` references, multi-field
+strategies, and key transforms), see [Transforms](transforms.md).
+
+- **ProtoTransform** — the raw function wrapper. It holds `module`, `foo`
+  (function name), and `params`. Its `apply()` method invokes the function
+  without caring about where the inputs come from or how the outputs are
+  packaged.
+- **Transform** — wraps a ProtoTransform with input extraction, output
+  formatting, field mapping, and optional *dressing*.
+
+#### Output modes
+
+A Transform can produce output in three ways:
+
+1. **Direct output** (`output`) — the function returns one or more values that
+   map 1:1 to output field names:
+
+    ```yaml
+    - foo: parse_date_ibes
+      module: graflo.util.transform
+      input: [ANNDATS, ANNTIMS]
+      output: [datetime_announce]
+    ```
+
+    The function takes two arguments and returns a single string; the string
+    is placed into the `datetime_announce` field.
+
+2. **Field mapping** (`map`) — pure renaming with no function:
+
+    ```yaml
+    - map:
+        Date: t_obs
+    ```
+
+3. **Dressed output** (`dress`) — the function returns a single scalar, and
+   the result is packaged together with the input field name into a dict.
+   This is useful for pivoting wide columns into key/value rows:
+
+    ```yaml
+    - foo: round_str
+      module: graflo.util.transform
+      params:
+        ndigits: 3
+      input:
+      - Open
+      dress:
+        key: name
+        value: value
+    ```
+
+    Given a document `{Open: "6.430062..."}`, this produces
+    `{name: "Open", value: 6.43}`. The `dress` dict has two roles:
+
+    - `key` — the output field that receives the **input field name** (here `"Open"`)
+    - `value` — the output field that receives the **function result** (here `6.43`)
+
+    This cleanly separates *what function to apply* (ProtoTransform) from
+    *how to present the result* (dressing).
+
+#### Key transforms
+
+Transforms can also target **document keys** (not values) using
+`transform.call.target: keys`. Key mode uses implicit per-key execution and a
+selector under `call.keys`:
+
+- `mode: all` — apply to all keys
+- `mode: include` — apply only to listed keys
+- `mode: exclude` — apply to all keys except listed keys
+
+Example: normalize all keys to snake case:
+
+```yaml
+- transform:
+    call:
+      module: graflo.util.transform
+      foo: camel_to_snake
+      target: keys
+      keys:
+        mode: all
+```
+
+Example: strip `raw_` only from selected keys:
+
+```yaml
+- transform:
+    call:
+      module: graflo.util.transform
+      foo: remove_prefix
+      params: {prefix: "raw_"}
+      target: keys
+      keys:
+        mode: include
+        names: [raw_id, raw_label]
+```
+
+#### Grouped value transforms
+
+For repeated tuple-style value calls, use explicit `input_groups` in
+`transform.call`:
+
+```yaml
+- transform:
+    call:
+      module: my_pkg.transforms
+      foo: join_name
+      input_groups:
+        - [fname_parent, lname_parent]
+        - [fname_child, lname_child]
+      output: [parent_name, child_name]
+```
+
+This executes one function call per group with deterministic output mapping.
+
+```mermaid
+flowchart LR
+    Doc["Input Document"] -->|"extract input fields"| Proto["ProtoTransform.apply()"]
+    Proto -->|"dress is set"| Dressed["{dress.key: input_key,<br/>dress.value: result}"]
+    Proto -->|"output is set"| Direct["zip(output, result)"]
+    Proto -->|"map only"| Mapped["{new_key: old_value}"]
+```
+
+#### Schema-level transforms
+
+Transforms are declared as a **list** under `ingestion_model.transforms` and
+referenced from resource steps via `transform.call.use`. This keeps ordering
+explicit and allows reuse across multiple pipelines:
+
+```yaml
+transforms:
+  - name: keep_suffix_id
+    foo: split_keep_part
+    module: graflo.util.transform
+    params: { sep: "/", keep: -1 }
+    input: [id]
+    output: [_key]
+
+resources:
+- name: works
+  apply:
+  - transform:
+      call:
+        use: keep_suffix_id      # references the transform above
+        input: [doi]             # override input for this usage
+  - vertex: work
+```
+
+Transform steps are executed in the order they appear in `apply`.

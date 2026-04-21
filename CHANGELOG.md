@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.22] - 2026-04-22
+
+### Added
+
+- **`graflo.architecture.evolution`**: Manifest evolution MVP — `apply_evolution`, `RemoveVerticesOp`,
+  `MergeVerticesOp`; cascade remove (schema edges, ingestion resources, `resource_connector` rows,
+  `db_profile`); merge vertices (union logical schema, redirect/dedupe edges, rewrite pipelines and
+  infer/extra_weights, merge DB profile keys). Compare contract identity with `graflo.migrate.io.manifest_hash`.
+  Default MINOR bump on `schema.metadata.version` via `bump_semver_minor` (opt out with `bump_version=False`).
+
+### Documentation
+
+- [Manifest evolution](docs/concepts/manifest_evolution.md) concept page; [Creating a Manifest](docs/getting_started/creating_manifest.md) “Evolving a manifest” section.
+- **Concepts split**: [Concepts overview](docs/concepts/index.md) is a short landing page; long-form content moved to
+  [Architecture diagrams](docs/concepts/architecture_diagrams.md), [Core components](docs/concepts/core_components.md),
+  and [Features, migration, and practices](docs/concepts/features_and_practices.md). Site nav and cross-links updated
+  (e.g. schema migration anchors on the home page and Quick Start).
+
 ## [1.7.21] - 2026-04-21
 
 ### Added

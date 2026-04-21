@@ -56,6 +56,10 @@ nav:
     -   Creating a Manifest: getting_started/creating_manifest.md
 -   Concepts:
     -   Concepts Overview: concepts/index.md
+    -   Architecture diagrams: concepts/architecture_diagrams.md
+    -   Core components: concepts/core_components.md
+    -   Features, migration, and practices: concepts/features_and_practices.md
+    -   Manifest evolution: concepts/manifest_evolution.md
     -   Object storage (S3 staging): concepts/object_storage.md
     -   Transforms: concepts/transforms.md
     -   Table connector views and SelectSpec: concepts/table_connector_views.md

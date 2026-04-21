@@ -158,6 +158,10 @@ ingestion_model = manifest.require_ingestion_model()
 
 `finish_init()` performs runtime wiring and consistency checks across schema and ingestion model.
 
+## Evolving a manifest
+
+To apply structured changes to an existing manifest (remove vertex types, merge types into one name, and update resources and `db_profile` in sync), use **`graflo.architecture.evolution`**. That layer operates on the manifest contract only; it does not migrate data already stored in a graph database—plan to **reingest** after deploying the new manifest. See [Manifest evolution](../concepts/manifest_evolution.md) for operations, `manifest_hash`, and examples.
+
 ## Minimal run path
 
 ```python
@@ -175,6 +179,7 @@ engine.define_and_ingest(
 
 ## See also
 
+- [Manifest evolution](../concepts/manifest_evolution.md)
 - [Quick Start](quickstart.md)
 - [Concepts](../concepts/index.md)
 - [Examples](../examples/index.md)
