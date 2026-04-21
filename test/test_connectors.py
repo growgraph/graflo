@@ -184,7 +184,7 @@ def test_table_connector_build_where_clause_date_range():
     # Should contain both conditions
     assert '"dt"' in where_clause
     assert ">= '2015-11-11'" in where_clause
-    assert "INTERVAL '30 days'" in where_clause
+    assert "< '2015-12-11'" in where_clause
     assert "AND" in where_clause
 
     # Verify the range logic: dt >= start AND dt < start + interval
@@ -299,7 +299,7 @@ def test_table_connector_date_range_sql():
     assert ">=" in where_clause
     assert "<" in where_clause
     assert "2015-11-11" in where_clause
-    assert "INTERVAL '30 days'" in where_clause
+    assert "2015-12-11" in where_clause
 
     # Verify the full query structure
     base_query = 'SELECT * FROM "public"."transactions"'

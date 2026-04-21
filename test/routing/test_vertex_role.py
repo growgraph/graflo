@@ -521,6 +521,46 @@ def test_edge_actor_links_correct_source_target() -> None:
         assert intent.edge.target == "person"
 
 
+def test_edge_actor_single_edge_uses_vertex_role_slots() -> None:
+    """Single-edge mode resolves source/target types from VertexActor role slots."""
+    vc = _vc("person")
+    ec = EdgeConfig()
+
+    va_self = _make_vertex_actor("person", role="self", from_doc={"id": "person"})
+    va_parent = _make_vertex_actor("person", role="parent", from_doc={"id": "parent"})
+    ea = EdgeActor.from_config(
+        EdgeActorConfig.model_validate(
+            {
+                "type": "edge",
+                "source_role": "self",
+                "target_role": "parent",
+                "relation": "is_child_of",
+            }
+        )
+    )
+
+    init = _init(vc, ec)
+    va_self.finish_init(init)
+    va_parent.finish_init(init)
+    ea.finish_init(init)
+
+    ctx = ExtractionContext()
+    base = _lindex(0)
+    doc = {"person": "12", "parent": "13"}
+    ctx = va_self(ctx, base, doc=doc)
+    ctx = va_parent(ctx, base, doc=doc)
+    ctx = ea(ctx, base, doc=doc)
+
+    assert len(ctx.edge_intents) == 1
+    intent = ctx.edge_intents[0]
+    assert intent.edge.source == "person"
+    assert intent.edge.target == "person"
+    assert intent.edge.relation == "is_child_of"
+    assert intent.derivation is not None
+    assert intent.derivation.match_source == "self"
+    assert intent.derivation.match_target == "parent"
+
+
 def test_edge_actor_links_skips_when_slot_missing() -> None:
     """A link whose required slot is empty emits no intent for that link."""
     vc = _vc("person")
