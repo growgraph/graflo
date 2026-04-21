@@ -126,7 +126,7 @@ engine.define_and_ingest(
 # )
 ```
 
-Here `schema` defines the logical graph, while `ingestion_model` defines resources/transforms and `bindings` maps resources to physical data sources. See [Creating a Manifest](creating_manifest.md) and [Concepts — Schema](../concepts/index.md#schema) for details.
+Here `schema` defines the logical graph, while `ingestion_model` defines resources/transforms and `bindings` maps resources to physical data sources. See [Creating a Manifest](creating_manifest.md) and [Concepts — Schema](../concepts/core_components.md#schema) for details.
 
 `Bindings` maps resource names (from `IngestionModel`) to one or more physical data sources (the same resource may list several connectors):
 - **FileConnector**: For file-based resources with `regex` for matching filenames and `sub_path` for the directory to search
