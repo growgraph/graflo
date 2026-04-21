@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 
 from graflo.filter.onto import ComparisonOperator, FilterExpression, LogicalOperator
+from graflo.filter.select import SelectSpec
 from graflo.onto import ExpressionFlavor
 from graflo.architecture.contract.bindings import (
     Bindings,
@@ -266,6 +267,65 @@ class TestTableConnectorBuildQuery:
         tp = TableConnector(table_name="t")
         q = tp.build_query()
         assert '"public"."t"' in q
+
+    def test_view_query_includes_connector_filters(self):
+        view = SelectSpec(
+            kind="select",
+            select=[{"base": "id"}],
+        )
+        filt = FilterExpression(
+            kind="leaf",
+            field="status",
+            cmp_operator=ComparisonOperator.EQ,
+            value=["active"],
+        )
+        tp = TableConnector(table_name="users", view=view, filters=[filt])
+        q = tp.build_query("public")
+        assert "WHERE" in q
+        assert "\"status\" = 'active'" in q
+
+    def test_view_query_appends_connector_filters_to_existing_where(self):
+        view = SelectSpec(
+            kind="select",
+            select=[{"base": "id"}],
+            where=FilterExpression(
+                kind="leaf",
+                field="role",
+                cmp_operator=ComparisonOperator.EQ,
+                value=["admin"],
+            ),
+        )
+        filt = FilterExpression(
+            kind="leaf",
+            field="status",
+            cmp_operator=ComparisonOperator.EQ,
+            value=["active"],
+        )
+        tp = TableConnector(table_name="users", view=view, filters=[filt])
+        q = tp.build_query("public")
+        assert "\"role\" = 'admin'" in q
+        assert "\"status\" = 'active'" in q
+        assert " AND " in q
+
+    def test_view_query_supports_dict_filter_entries(self):
+        view = SelectSpec(
+            kind="select",
+            select=[{"base": "id"}],
+        )
+        tp = TableConnector(
+            table_name="users",
+            view=view,
+            filters=[
+                {
+                    "kind": "leaf",
+                    "field": "status",
+                    "cmp_operator": ComparisonOperator.EQ,
+                    "value": ["active"],
+                }
+            ],
+        )
+        q = tp.build_query("public")
+        assert "\"status\" = 'active'" in q
 
 
 # ---------------------------------------------------------------

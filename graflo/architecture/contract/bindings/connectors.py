@@ -353,6 +353,8 @@ class TableConnector(ResourceConnector):
 
         # General-purpose FilterExpression filters
         for filt in self.filters:
+            if isinstance(filt, dict):
+                filt = FilterExpression.from_dict(filt)
             if isinstance(filt, FilterExpression):
                 rendered = filt(kind=ExpressionFlavor.SQL)
                 if rendered:
@@ -380,7 +382,11 @@ class TableConnector(ResourceConnector):
             from graflo.filter.select import SelectSpec
 
             if isinstance(self.view, SelectSpec):
-                return self.view.build_sql(schema=schema, base_table=self.table_name)
+                query = self.view.build_sql(schema=schema, base_table=self.table_name)
+                where = self.build_where_clause()
+                if where:
+                    return self._append_where_condition(query, where)
+                return query
         base_alias = self.base_alias if self.joins else None
         base_ref = f'"{schema}"."{self.table_name}"'
         if base_alias:
@@ -429,6 +435,13 @@ class TableConnector(ResourceConnector):
             query += f" WHERE {where}"
 
         return query
+
+    @staticmethod
+    def _append_where_condition(query: str, condition: str) -> str:
+        """Append a SQL condition to *query* preserving an existing WHERE clause."""
+        if re.search(r"\bWHERE\b", query, flags=re.IGNORECASE):
+            return f"{query} AND {condition}"
+        return f"{query} WHERE {condition}"
 
 
 class SparqlConnector(ResourceConnector):
