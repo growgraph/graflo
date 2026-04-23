@@ -252,10 +252,18 @@ class TransformCallConfig(ConfigBaseModel):
     def validate_target(self) -> "TransformCallConfig":
         if self.use is not None and (self.module is not None or self.foo is not None):
             raise ValueError("call.use cannot be combined with call.module/call.foo.")
-        if self.use is None and (self.module is None or self.foo is None):
-            raise ValueError(
-                "call must provide either use, or both module and foo for inline function."
-            )
+        if self.use is None:
+            has_inline_callable = self.module is not None or self.foo is not None
+            if has_inline_callable and (self.module is None or self.foo is None):
+                raise ValueError(
+                    "Inline call functions require both call.module and call.foo."
+                )
+            if not has_inline_callable and self.dress is None:
+                raise ValueError(
+                    "call must provide either use, both module+foo, or dress shorthand."
+                )
+            if self.dress is not None and not self.input:
+                raise ValueError("dress shorthand requires call.input.")
         if self.use is None:
             effective_target: Literal["values", "keys"] | None = (
                 self.target if self.target is not None else "values"

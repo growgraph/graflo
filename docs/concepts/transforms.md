@@ -15,7 +15,7 @@ Two layers work together:
 - `ProtoTransform`: function wrapper (`module`, `foo`, `params`) with invocation logic.
 - `Transform`: adds input selection, output mapping, dressing, key targeting, and execution strategy.
 
-In a resource pipeline, each transform step applies to the current document and emits an update payload for downstream actor steps.
+**Sequential `transform` steps (same `LocationIndex`):** each `transform` actor receives a working document that is the current row slice **merged with** all prior transform payloads at that index—the same construction as `merge_observation_with_transform_buffer`. Later steps can therefore depend on field names or values established by earlier steps (for example, a key normalizer followed by a value transform whose `input` uses the new key). Each step still appends its own payload to the transform buffer. **`vertex` and `edge` actors** continue to receive the **raw** slice and merge the **full** buffer in their own `__call__` path, so buffer contributions are not applied twice to them.
 
 ## Where transforms can be defined
 
@@ -389,3 +389,20 @@ When the effective target is `keys` (from the call or the named proto), `call.in
 - [Creating a Manifest](../getting_started/creating_manifest.md)
 - [Architecture Transform API](../reference/architecture/contract/declarations/transform.md)
 - [Transform Actor API](../reference/architecture/pipeline/runtime/actor/transform.md)
+
+## Notes on contract renaming
+
+Transform helper functions can also be reused for contract-level renaming when calling
+`GraphManifest.rename_entities(...)` or `Schema.rename_entities(...)` (for example,
+`camel_to_snake`, `remove_prefix`, `remove_suffix`).
+
+```python
+from graflo.architecture.contract import GraphManifest
+from graflo.util.transform import camel_to_snake
+
+manifest = GraphManifest.from_dict(payload)
+renamed = manifest.rename_entities(
+    vertices=camel_to_snake,
+    edges=lambda relation: f"edge_{camel_to_snake(relation)}",
+)
+```

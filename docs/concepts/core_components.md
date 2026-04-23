@@ -30,6 +30,41 @@ manifest boundary:
   harmonization required by TigerGraph.
 - The API is intentionally manifest-first so schema and ingestion updates remain consistent.
 
+### Manifest/schema renaming
+
+When you need to rename vertex types, edge relations, or ingestion resource names in bulk,
+use the built-in rename APIs:
+
+- `GraphManifest.rename_entities(vertices=..., edges=..., resources=...)`
+- `Schema.rename_entities(vertices=..., edges=...)`
+
+Each rename argument accepts either:
+
+- a mapping (`dict[str, str]`) for explicit substitutions, or
+- a callable (`Callable[[str], str]`) for programmatic transforms (prefix/suffix/camelize, etc.).
+
+```python
+from graflo.architecture.contract import GraphManifest
+from graflo.util.transform import camel_to_snake
+
+manifest = GraphManifest.from_dict(payload)
+renamed = manifest.rename_entities(
+    vertices={"Person": "author", "Organization": "institution"},
+    edges=lambda relation: f"rel_{camel_to_snake(relation)}",
+    resources=lambda name: f"src_{name}",
+)
+```
+
+`GraphManifest.rename_entities(...)` updates all relevant references consistently:
+
+- schema vertex names + edge endpoints/relations
+- ingestion pipelines (`vertex`, `edge`/`create_edge`, nested `descend`, router mappings)
+- resource edge selectors (`infer_edge_only` / `infer_edge_except`) and `extra_weights`
+- bindings resource references (`connectors[].resource_name`, `resource_connector[].resource`)
+
+This API is meant for deterministic contract refactors and complements (not replaces)
+DB-specific sanitization.
+
 ### Vertex
 A `Vertex` describes vertices and their logical identity. It supports:
 
@@ -303,6 +338,20 @@ A Transform can produce output in three ways:
 
     - `key` — the output field that receives the **input field name** (here `"Open"`)
     - `value` — the output field that receives the **function result** (here `6.43`)
+
+    You can also use `dress` as a shorthand without a callable when you only
+    want to pivot one field into key/value form:
+
+    ```yaml
+    - transform:
+        call:
+          input: [vol]
+          dress:
+            key: type
+            value: value
+    ```
+
+    Given `{vol: 0.123}`, this produces `{type: "vol", value: 0.123}`.
 
     This cleanly separates *what function to apply* (ProtoTransform) from
     *how to present the result* (dressing).

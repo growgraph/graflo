@@ -588,6 +588,53 @@ def test_transform_named_proto_keys_merge_fails_when_call_has_input():
         )
 
 
+def test_sequential_transforms_second_sees_merged_row_from_first() -> None:
+    """Later transform steps read doc merged with prior transform_buffer at the same lindex."""
+    anw = ActorWrapper(
+        [
+            {
+                "transform": {
+                    "call": {
+                        "use": "snake_keys",
+                    }
+                }
+            },
+            {
+                "transform": {
+                    "call": {
+                        "module": "builtins",
+                        "foo": "float",
+                        "input": ["prc"],
+                    }
+                }
+            },
+        ]
+    )
+    transforms = {
+        "snake_keys": ProtoTransform(
+            name="snake_keys",
+            module="graflo.util.transform",
+            foo="camel_to_snake",
+            target="keys",
+        ),
+    }
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=VertexConfig(vertices=[]),
+            edge_config=EdgeConfig(),
+            transforms=transforms,
+        )
+    )
+    loc = LocationIndex(path=(0,))
+    ctx = ActionContext()
+    ctx = anw(ctx, doc={"PRC": "3.5", "id": 1})
+    items = ctx.transform_buffer[loc]
+    assert len(items) == 2
+    # Key transform maps PRC -> prc; first payload is the full row with renamed keys.
+    assert items[0].named["prc"] == "3.5"
+    assert items[1].named == {"prc": 3.5}
+
+
 def test_transform_named_proto_binding_inherits_dress_from_library():
     anw = ActorWrapper(
         pipeline=[
@@ -703,6 +750,43 @@ def test_transform_inline_function_strategy_all_receives_document():
     payload = ctx.transform_buffer[LocationIndex(path=(0,))][0]
     assert payload.named == {"value": 11, "other": "x"}
     assert payload.positional == ()
+
+
+def test_transform_call_dress_shorthand_without_function():
+    anw = ActorWrapper(
+        pipeline=[
+            {
+                "transform": {
+                    "call": {
+                        "input": ["vol"],
+                        "dress": {"key": "type", "value": "value"},
+                    }
+                }
+            }
+        ]
+    )
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=VertexConfig(vertices=[]),
+            edge_config=EdgeConfig(),
+            transforms={},
+        )
+    )
+
+    ctx = ActionContext()
+    ctx = anw(ctx, doc={"vol": 0.123})
+    payload = ctx.transform_buffer[LocationIndex(path=(0,))][0]
+    assert payload.named == {"type": "vol", "value": 0.123}
+    assert payload.positional == ()
+
+
+def test_transform_call_dress_shorthand_requires_input():
+    with pytest.raises(ValueError, match="Invalid transform step"):
+        ActorWrapper(
+            pipeline=[
+                {"transform": {"call": {"dress": {"key": "type", "value": "value"}}}}
+            ]
+        )
 
 
 def test_transform_target_keys_updates_vertex_fields():

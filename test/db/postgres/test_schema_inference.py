@@ -11,7 +11,46 @@ from unittest.mock import patch
 
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.hq import GraphEngine
+from graflo.hq.connection_provider import InMemoryConnectionProvider
+from graflo.hq.resource_mapper import ResourceMapper
 from graflo.onto import DBType
+
+
+def _assert_full_bindings_contract(manifest: GraphManifest) -> None:
+    bindings = manifest.require_bindings()
+    ingestion_model = manifest.require_ingestion_model()
+
+    resource_names = {resource.name for resource in ingestion_model.resources}
+    assert len(bindings.connectors) > 0, "Bindings should include inferred connectors"
+    assert len(bindings.resource_connector) > 0, (
+        "Bindings should include resource_connector mappings"
+    )
+    assert len(bindings.connector_connection) > 0, (
+        "Bindings should include connector_connection mappings"
+    )
+
+    mapped_resources = set()
+    for mapping in bindings.resource_connector:
+        if isinstance(mapping, dict):
+            resource_name = mapping.get("resource")
+        else:
+            resource_name = mapping.resource
+        if isinstance(resource_name, str):
+            mapped_resources.add(resource_name)
+    assert resource_names.issubset(mapped_resources), (
+        "Each inferred resource should have a resource_connector mapping"
+    )
+
+    for resource_name in resource_names:
+        connectors = bindings.get_connectors_for_resource(resource_name)
+        assert connectors, (
+            f"Expected at least one connector for resource {resource_name}"
+        )
+        for connector in connectors:
+            conn_proxy = bindings.get_conn_proxy_for_connector(connector)
+            assert conn_proxy == "postgres_source", (
+                f"Expected postgres_source proxy for {resource_name}, got {conn_proxy}"
+            )
 
 
 def test_infer_schema_from_postgres(conn_conf, load_mock_schema):
@@ -124,6 +163,10 @@ def test_infer_schema_from_postgres(conn_conf, load_mock_schema):
     assert "follows" in resource_names, (
         f"Expected 'follows' resource, got {resource_names}"
     )
+    _assert_full_bindings_contract(manifest)
+    assert isinstance(engine.connection_provider, InMemoryConnectionProvider)
+    assert "users" in engine.connection_provider.postgres_by_resource
+    assert "products" in engine.connection_provider.postgres_by_resource
 
     # Verify resource actors
     users_resource = next(r for r in ingestion_model.resources if r.name == "users")
@@ -183,6 +226,7 @@ def test_infer_schema_returns_manifest(conn_conf, load_mock_schema):
     assert schema.metadata.name == "public"
     assert len(schema.core_schema.vertex_config.vertices) > 0
     assert len(ingestion_model.resources) > 0
+    _assert_full_bindings_contract(manifest)
 
 
 def test_infer_schema_with_pg_catalog_fallback(conn_conf, load_mock_schema):
@@ -349,6 +393,7 @@ def test_infer_schema_with_pg_catalog_fallback(conn_conf, load_mock_schema):
         assert len(purchases_resource.pipeline) > 0, (
             "purchases resource should have at least one actor when using pg_catalog"
         )
+        _assert_full_bindings_contract(manifest)
 
         print("\n" + "=" * 80)
         print("Schema Inference Results (using pg_catalog fallback):")
@@ -377,3 +422,39 @@ def test_infer_schema_with_pg_catalog_fallback(conn_conf, load_mock_schema):
             print(f"  - {r.name} (actors: {', '.join(actor_types)})")
 
         print("=" * 80)
+
+
+def test_infer_manifest_pruning_drops_stale_resource_connector_refs(
+    conn_conf, load_mock_schema
+):
+    """Discarded-vertex pruning should remove now-invalid resource_connector refs."""
+    _ = load_mock_schema
+    engine = GraphEngine(target_db_flavor=DBType.ARANGO)
+    original_method = ResourceMapper.create_bindings_with_provider_from_introspection
+
+    def _inject_stale_mapping(self, *args, **kwargs):
+        bindings, provider = original_method(self, *args, **kwargs)
+        # Simulate stale contract data that may survive prune filtering.
+        bindings.resource_connector.append({"resource": "users", "connector": "bla"})
+        return bindings, provider
+
+    with patch.object(
+        ResourceMapper,
+        "create_bindings_with_provider_from_introspection",
+        autospec=True,
+        side_effect=_inject_stale_mapping,
+    ):
+        manifest = engine.infer_manifest(
+            conn_conf,
+            schema_name="public",
+            discard_disconnected_vertices=True,
+        )
+
+    bindings = manifest.require_bindings()
+    for mapping in bindings.resource_connector:
+        connector_ref = (
+            mapping["connector"] if isinstance(mapping, dict) else mapping.connector
+        )
+        assert connector_ref != "bla", (
+            "Stale connector refs should be filtered before bindings validation"
+        )

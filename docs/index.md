@@ -111,7 +111,9 @@ The `DataSourceRegistry` manages `AbstractDataSource` adapters, each carrying a 
 
 ### GraphEngine
 
-`GraphEngine` orchestrates end-to-end operations: schema inference, schema definition in the target database, connector creation from data sources, and data ingestion.
+`GraphEngine` orchestrates end-to-end operations: schema/manifest inference, schema definition in the target database, connector creation from data sources, and data ingestion.
+For PostgreSQL workflows, `infer_manifest(...)` now returns a full manifest contract
+(`schema` + `ingestion_model` + `bindings`) by default.
 
 ## More capabilities
 

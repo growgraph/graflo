@@ -467,10 +467,6 @@ class Transform(ProtoTransform):
         if explicit_map and self.rename and self._foo is not None:
             raise ValueError("map and functional transform cannot be used together.")
         if self.dress is not None:
-            if self._foo is None:
-                raise ValueError(
-                    "dress requires a functional transform (module + foo)."
-                )
             if len(self.input) != 1:
                 raise ValueError("dress requires exactly one input field.")
         if self.strategy != "single" and self._foo is None:
@@ -586,6 +582,9 @@ class Transform(ProtoTransform):
                 output_values = [input_doc[k] for k in self.input]
             else:
                 output_values = list(nargs)
+            if self.dress is not None and len(output_values) == 1:
+                # Non-functional dress shorthand: keep scalar value.
+                output_values = output_values[0]
         else:
             if self.strategy == "all":
                 if nargs and isinstance(nargs[0], dict):

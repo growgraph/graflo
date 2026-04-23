@@ -6,6 +6,8 @@ import logging
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Type
 
+from graflo.architecture.graph_types import merge_observation_with_transform_buffer
+
 from .base import Actor, ActorInitContext
 from .config import DescendActorConfig, VertexActorConfig
 from .edge import EdgeActor
@@ -156,14 +158,13 @@ class DescendActor(Actor):
 
         for idoc, (key, sub_doc) in enumerate(doc_expanded):
             logger.debug("Processing item %s/%s", idoc + 1, len(doc_expanded))
+            extra_step = (idoc,) if key is None else (key, idoc)
+            child_lindex = lindex.extend(extra_step)
             if isinstance(sub_doc, dict):
                 nargs_tuple: tuple[Any, ...] = ()
-                child_kwargs = {**kwargs, "doc": sub_doc}
             else:
                 nargs_tuple = (sub_doc,)
-                child_kwargs = kwargs
 
-            extra_step = (idoc,) if key is None else (key, idoc)
             for j, anw in enumerate(self.descendants):
                 logger.debug(
                     "%s: %s/%s",
@@ -171,7 +172,15 @@ class DescendActor(Actor):
                     j + 1,
                     len(self.descendants),
                 )
-                ctx = anw(ctx, lindex.extend(extra_step), *nargs_tuple, **child_kwargs)
+                if isinstance(sub_doc, dict) and isinstance(anw.actor, TransformActor):
+                    buf = list(ctx.transform_buffer.get(child_lindex, []))
+                    feed_doc = merge_observation_with_transform_buffer(sub_doc, buf)
+                    child_kwargs = {**kwargs, "doc": feed_doc}
+                elif isinstance(sub_doc, dict):
+                    child_kwargs = {**kwargs, "doc": sub_doc}
+                else:
+                    child_kwargs = kwargs
+                ctx = anw(ctx, child_lindex, *nargs_tuple, **child_kwargs)
         return ctx
 
     def fetch_actors(self, level: int, edges: list) -> tuple[int, type, str, list]:

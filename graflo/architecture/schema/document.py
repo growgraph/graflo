@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pathlib
 import re
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING
 
 import yaml
@@ -17,6 +18,29 @@ from graflo.onto import DBType
 
 if TYPE_CHECKING:
     from .db_aware import SchemaDBAware
+
+NameTransform = Mapping[str, str] | Callable[[str], str]
+
+
+def _build_name_transformer(
+    transform: NameTransform | None, *, label: str
+) -> Callable[[str], str]:
+    if transform is None:
+        return lambda value: value
+    if isinstance(transform, Mapping):
+        return lambda value: transform.get(value, value)
+    if callable(transform):
+
+        def _apply(value: str) -> str:
+            renamed = transform(value)
+            if not isinstance(renamed, str):
+                raise TypeError(
+                    f"{label} transform must return str, got {type(renamed).__name__}"
+                )
+            return renamed
+
+        return _apply
+    raise TypeError(f"{label} transform must be a mapping or callable")
 
 
 class Schema(ConfigBaseModel):
@@ -49,6 +73,58 @@ class Schema(ConfigBaseModel):
 
     def remove_disconnected_vertices(self) -> set[str]:
         return self.core_schema.remove_disconnected_vertices()
+
+    def rename_entities(
+        self,
+        *,
+        vertices: NameTransform | None = None,
+        edges: NameTransform | None = None,
+    ) -> "Schema":
+        """Return a schema copy with renamed vertex names and edge relations."""
+        vertex_name = _build_name_transformer(vertices, label="vertices")
+        edge_name = _build_name_transformer(edges, label="edges")
+
+        payload = self.to_dict(skip_defaults=False)
+        graph_payload = payload.get("core_schema")
+        if isinstance(graph_payload, dict):
+            vertex_config = graph_payload.get("vertex_config")
+            if isinstance(vertex_config, dict):
+                vertices_payload = vertex_config.get("vertices")
+                if isinstance(vertices_payload, list):
+                    for vertex in vertices_payload:
+                        if isinstance(vertex, dict) and isinstance(
+                            vertex.get("name"), str
+                        ):
+                            vertex["name"] = vertex_name(vertex["name"])
+
+                blank_vertices = vertex_config.get("blank_vertices")
+                if isinstance(blank_vertices, list):
+                    vertex_config["blank_vertices"] = [
+                        vertex_name(name) if isinstance(name, str) else name
+                        for name in blank_vertices
+                    ]
+
+                force_types = vertex_config.get("force_types")
+                if isinstance(force_types, dict):
+                    vertex_config["force_types"] = {
+                        vertex_name(name): value for name, value in force_types.items()
+                    }
+
+            edge_config = graph_payload.get("edge_config")
+            if isinstance(edge_config, dict):
+                edges_payload = edge_config.get("edges")
+                if isinstance(edges_payload, list):
+                    for edge in edges_payload:
+                        if not isinstance(edge, dict):
+                            continue
+                        if isinstance(edge.get("source"), str):
+                            edge["source"] = vertex_name(edge["source"])
+                        if isinstance(edge.get("target"), str):
+                            edge["target"] = vertex_name(edge["target"])
+                        if isinstance(edge.get("relation"), str):
+                            edge["relation"] = edge_name(edge["relation"])
+
+        return Schema.from_dict(payload)
 
     def resolve_db_aware(self, db_flavor: DBType | None = None) -> SchemaDBAware:
         """Build DB-aware runtime wrappers without mutating logical schema."""

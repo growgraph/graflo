@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.23] - 2026-04-23
+
+### Added
+
+- **`GraphManifest.rename_entities(...)`**: manifest-level rename helper for coordinated vertex/edge/resource renames across `schema`, `ingestion_model`, and `bindings` references.
+
+### Changed
+
+- **`GraphEngine.infer_manifest` now returns full contracts by default** for PostgreSQL inference:
+  inferred manifests now include `schema`, `ingestion_model`, and `bindings` (`connectors`,
+  `resource_connector`, `connector_connection`) instead of requiring a separate bindings pass.
+- **Inference pipeline reuse**: PostgreSQL schema/resources/bindings now share a single
+  introspection snapshot, avoiding duplicate introspection and keeping inferred contract blocks
+  in sync.
+
+### Documentation
+
+- Quick start and PostgreSQL example docs now describe `infer_manifest(...)` as producing
+  full manifests with bindings by default, while still documenting manual/override bindings
+  workflows for advanced cases.
+
 ## [1.7.22] - 2026-04-22
 
 ### Added

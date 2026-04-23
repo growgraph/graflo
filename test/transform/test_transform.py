@@ -133,6 +133,16 @@ def test_dress_complete():
     assert r == {"name": "Open", "value": 17.9}
 
 
+def test_dress_without_function_uses_input_value():
+    kwargs = {
+        "input": ["vol"],
+        "dress": {"key": "type", "value": "value"},
+    }
+    t = Transform(**kwargs)  # type: ignore
+    r = t({"vol": 0.123})
+    assert r == {"type": "vol", "value": 0.123}
+
+
 def test_dress_derives_output():
     """dress auto-derives output=(key, value) field names."""
     kwargs = {

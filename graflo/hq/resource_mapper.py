@@ -6,6 +6,7 @@ This module provides functionality to create Bindings from various data sources
 
 import logging
 
+from graflo.architecture.onto_sql import SchemaIntrospectionResult
 from graflo.db import PostgresConnection
 from graflo.filter.select import SelectSpec
 from graflo.architecture.contract.bindings import Bindings, TableConnector
@@ -68,16 +69,29 @@ class ResourceMapper:
                 - Bindings object with TableConnector instances for all tables
                 - InMemoryConnectionProvider containing connector->PostgresConfig mappings
         """
-        # Introspect the schema
         introspection_result = conn.introspect_schema(
             schema_name=schema_name,
             include_raw_tables=include_raw_tables,
         )
+        return self.create_bindings_with_provider_from_introspection(
+            introspection_result=introspection_result,
+            conn=conn,
+            schema_name=schema_name,
+            datetime_columns=datetime_columns,
+            type_lookup_overrides=type_lookup_overrides,
+        )
 
-        # Create bindings
+    def create_bindings_with_provider_from_introspection(
+        self,
+        introspection_result: SchemaIntrospectionResult,
+        conn: PostgresConnection,
+        schema_name: str | None = None,
+        datetime_columns: dict[str, str] | None = None,
+        type_lookup_overrides: dict[str, dict] | None = None,
+    ) -> tuple[Bindings, InMemoryConnectionProvider]:
+        """Create bindings/provider from a precomputed introspection result."""
+
         bindings = Bindings()
-
-        # Get schema name
         effective_schema = schema_name or introspection_result.schema_name
 
         provider = InMemoryConnectionProvider()

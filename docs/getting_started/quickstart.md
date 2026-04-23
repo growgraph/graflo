@@ -178,16 +178,16 @@ from graflo.db.connection.onto import PostgresConfig
 # Connect to PostgreSQL
 pg_config = PostgresConfig.from_docker_env()  # Or from_env(), or create directly
 
-# Create GraphEngine and infer schema from PostgreSQL (automatically detects vertices and edges)
+# Create GraphEngine and infer a full manifest from PostgreSQL
+# (automatically detects vertices/edges/resources and also infers bindings)
 # Connection is automatically managed inside infer_manifest()
 engine = GraphEngine()
 manifest = engine.infer_manifest(pg_config, schema_name="public")
 
-# Create bindings from PostgreSQL tables
-engine = GraphEngine()
-bindings = engine.create_bindings(pg_config, schema_name="public")
+# Inferred bindings are available on the manifest by default
+bindings = manifest.require_bindings()
 
-# Or create bindings manually
+# You can still create or override bindings manually when needed
 from graflo.architecture.contract.bindings import Bindings, TableConnector
 
 bindings = Bindings()
