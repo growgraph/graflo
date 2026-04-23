@@ -226,3 +226,17 @@ def test_bind_single_config_for_bindings_binds_and_validates() -> None:
             conn_proxy="pg",
             config=PostgresGeneralizedConnConfig(config=pg_cfg),
         )
+
+
+def test_bindings_generated_shape_supports_proxy_resolution() -> None:
+    """Match infer_manifest-style bindings: connector names + conn_proxy mapping."""
+    connector = TableConnector(table_name="users", schema_name="public")
+    bindings = Bindings()
+    bindings.add_connector(connector)
+    bindings.bind_resource("users", connector)
+    bindings.bind_connector_to_conn_proxy(connector, "postgres_source")
+
+    resolved = bindings.get_connectors_for_resource("users")
+    assert len(resolved) == 1
+    assert resolved[0].name == "users"
+    assert bindings.get_conn_proxy_for_connector(resolved[0]) == "postgres_source"

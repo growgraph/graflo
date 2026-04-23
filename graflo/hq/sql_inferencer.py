@@ -1,6 +1,7 @@
 """PostgreSQL schema inference and resource mapping (high level)."""
 
 import logging
+from dataclasses import dataclass
 
 from graflo.architecture import Resource
 from graflo.architecture.contract.declarations.ingestion_model import IngestionModel
@@ -13,6 +14,15 @@ from graflo.hq.sanitizer import Sanitizer
 from graflo.onto import DBType
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class SQLInferenceArtifacts:
+    """Shared inference artifacts derived from one PostgreSQL introspection snapshot."""
+
+    introspection_result: SchemaIntrospectionResult
+    schema: Schema
+    ingestion_model: IngestionModel
 
 
 class SQLInferenceManager:
@@ -113,22 +123,28 @@ class SQLInferenceManager:
         Returns:
             tuple[Schema, IngestionModel]: Complete schema and ingestion model
         """
-        # Introspect the schema
+        artifacts = self.infer_artifacts(schema_name=schema_name)
+        return artifacts.schema, artifacts.ingestion_model
+
+    def infer_artifacts(self, schema_name: str | None = None) -> SQLInferenceArtifacts:
+        """Infer schema/resources from a single introspection pass.
+
+        Returns:
+            SQLInferenceArtifacts: introspection + schema + ingestion model tuple.
+        """
         introspection_result = self.introspect(schema_name=schema_name)
-
-        # Infer schema
         schema = self.infer_schema(introspection_result, schema_name=schema_name)
-
-        # Create ingestion model from inferred resources.
         resources = self.create_resources(introspection_result, schema)
         ingestion_model = IngestionModel(resources=resources)
         ingestion_model.finish_init(schema.core_schema)
 
-        # Sanitize for target database flavor at manifest level.
         manifest = GraphManifest(graph_schema=schema, ingestion_model=ingestion_model)
         self.sanitizer.sanitize_manifest(manifest)
-
-        return schema, ingestion_model
+        return SQLInferenceArtifacts(
+            introspection_result=introspection_result,
+            schema=schema,
+            ingestion_model=ingestion_model,
+        )
 
     def create_resources_for_schema(
         self, schema: Schema, schema_name: str | None = None
