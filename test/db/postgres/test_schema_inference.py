@@ -12,6 +12,7 @@ from unittest.mock import patch
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.hq import GraphEngine
 from graflo.hq.connection_provider import InMemoryConnectionProvider
+from graflo.hq.resource_mapper import ResourceMapper
 from graflo.onto import DBType
 
 
@@ -421,3 +422,39 @@ def test_infer_schema_with_pg_catalog_fallback(conn_conf, load_mock_schema):
             print(f"  - {r.name} (actors: {', '.join(actor_types)})")
 
         print("=" * 80)
+
+
+def test_infer_manifest_pruning_drops_stale_resource_connector_refs(
+    conn_conf, load_mock_schema
+):
+    """Discarded-vertex pruning should remove now-invalid resource_connector refs."""
+    _ = load_mock_schema
+    engine = GraphEngine(target_db_flavor=DBType.ARANGO)
+    original_method = ResourceMapper.create_bindings_with_provider_from_introspection
+
+    def _inject_stale_mapping(self, *args, **kwargs):
+        bindings, provider = original_method(self, *args, **kwargs)
+        # Simulate stale contract data that may survive prune filtering.
+        bindings.resource_connector.append({"resource": "users", "connector": "bla"})
+        return bindings, provider
+
+    with patch.object(
+        ResourceMapper,
+        "create_bindings_with_provider_from_introspection",
+        autospec=True,
+        side_effect=_inject_stale_mapping,
+    ):
+        manifest = engine.infer_manifest(
+            conn_conf,
+            schema_name="public",
+            discard_disconnected_vertices=True,
+        )
+
+    bindings = manifest.require_bindings()
+    for mapping in bindings.resource_connector:
+        connector_ref = (
+            mapping["connector"] if isinstance(mapping, dict) else mapping.connector
+        )
+        assert connector_ref != "bla", (
+            "Stale connector refs should be filtered before bindings validation"
+        )

@@ -173,22 +173,34 @@ class GraphEngine:
             connected_resources = {
                 resource.name for resource in ingestion_model.resources
             }
+            connectors = list(bindings.connectors)
+            resource_connector = list(bindings.resource_connector)
+            connector_connection = list(bindings.connector_connection)
+
+            connector_refs_all = set()
+            for connector in connectors:
+                connector_refs_all.add(connector.hash)
+                if connector.name:
+                    connector_refs_all.add(connector.name)
             filtered_resource_connector = []
             mapped_connector_refs = set()
-            for mapping in bindings.resource_connector:
+            for mapping in resource_connector:
                 if isinstance(mapping, dict):
                     resource_name = mapping.get("resource")
                     connector_ref = mapping.get("connector")
                 else:
                     resource_name = mapping.resource
                     connector_ref = mapping.connector
-                if resource_name in connected_resources:
+                if (
+                    resource_name in connected_resources
+                    and isinstance(connector_ref, str)
+                    and connector_ref in connector_refs_all
+                ):
                     filtered_resource_connector.append(mapping)
-                    if isinstance(connector_ref, str):
-                        mapped_connector_refs.add(connector_ref)
-            bindings.connectors = [
+                    mapped_connector_refs.add(connector_ref)
+            filtered_connectors = [
                 connector
-                for connector in bindings.connectors
+                for connector in connectors
                 if connector.resource_name in connected_resources
                 or connector.hash in mapped_connector_refs
                 or (
@@ -196,22 +208,24 @@ class GraphEngine:
                     and connector.name in mapped_connector_refs
                 )
             ]
-            bindings.resource_connector = filtered_resource_connector
             valid_connector_refs = set()
-            for connector in bindings.connectors:
+            for connector in filtered_connectors:
                 valid_connector_refs.add(connector.hash)
                 if connector.name:
                     valid_connector_refs.add(connector.name)
             filtered_connector_connection = []
-            for mapping in bindings.connector_connection:
+            for mapping in connector_connection:
                 if isinstance(mapping, dict):
                     connector_ref = mapping.get("connector")
                 else:
                     connector_ref = mapping.connector
                 if connector_ref in valid_connector_refs:
                     filtered_connector_connection.append(mapping)
-            bindings.connector_connection = filtered_connector_connection
-            bindings = Bindings.from_dict(bindings.to_dict(skip_defaults=False))
+            bindings_dict = bindings.to_dict(skip_defaults=False)
+            bindings_dict["connectors"] = filtered_connectors
+            bindings_dict["resource_connector"] = filtered_resource_connector
+            bindings_dict["connector_connection"] = filtered_connector_connection
+            bindings = Bindings.from_dict(bindings_dict)
         return GraphManifest(
             graph_schema=schema, ingestion_model=ingestion_model, bindings=bindings
         )
