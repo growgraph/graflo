@@ -7,6 +7,7 @@ from typing import Annotated, Literal
 from pydantic import Field as PydanticField
 
 from graflo.architecture.base import ConfigBaseModel
+from graflo.onto import DBType
 
 
 class RemoveVerticesOp(ConfigBaseModel):
@@ -41,7 +42,53 @@ class MergeVerticesOp(ConfigBaseModel):
     )
 
 
+class RenameVertexFieldsOp(ConfigBaseModel):
+    """Rename vertex properties (and identity references) and propagate to ingestion.
+
+    ``renames`` maps each vertex name to a per-vertex ``{old_field: new_field}`` map.
+    Schema-side: rewrites ``Field.name``, ``vertex.identity``, and any DB profile
+    structures that reference field names (``vertex_indexes``, ``edge_specs.indexes``).
+    Ingestion-side: rewrites ``VertexActor.from`` so the doc still uses the OLD field
+    name (injecting ``{new_field: old_field}`` when missing), and rewrites
+    ``TransformActor.rename`` values that target a renamed vertex field.
+    """
+
+    op: Literal["rename_vertex_fields"] = "rename_vertex_fields"
+    renames: dict[str, dict[str, str]] = PydanticField(
+        ...,
+        description=(
+            "Per-vertex field rename map: ``{vertex_name: {old_field: new_field}}``."
+        ),
+    )
+
+
+class SanitizeOp(ConfigBaseModel):
+    """Apply DB-flavor-specific name/field sanitization to a manifest.
+
+    Composes (in order):
+
+    1. Storage-name sanitization on ``DatabaseProfile`` (vertex storage names + edge
+       relation names) against the flavor's reserved-words set.
+    2. Vertex field rename for fields whose names are reserved words.
+    3. For TigerGraph, normalize identity fields across edges that share a relation
+       (TigerGraph requires consistent source/target indexes per relation).
+    """
+
+    op: Literal["sanitize"] = "sanitize"
+    db_flavor: DBType = PydanticField(
+        ...,
+        description="Target database flavor whose reserved words/constraints drive the sanitization.",
+    )
+    reserved_words: list[str] | None = PydanticField(
+        default=None,
+        description=(
+            "Optional override for the flavor's reserved words. "
+            "When unset, ``graflo.db.util.load_reserved_words(db_flavor)`` is used."
+        ),
+    )
+
+
 ManifestOp = Annotated[
-    RemoveVerticesOp | MergeVerticesOp,
+    RemoveVerticesOp | MergeVerticesOp | RenameVertexFieldsOp | SanitizeOp,
     PydanticField(discriminator="op"),
 ]
