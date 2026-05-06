@@ -1348,8 +1348,21 @@ class SparqlEndpointConfig(DBConfig):
     )
 
     dataset: str | None = Field(
-        default=None, description="Dataset / repository name on the SPARQL server"
+        default=None,
+        description="Dataset / repository name on the SPARQL server. "
+        "If unset, endpoint URLs default to the ``test`` dataset (Fuseki requires "
+        "a non-empty path segment; see ``query_endpoint``).",
     )
+
+    def _fuseki_dataset_path_segment(self) -> str:
+        """Return the dataset name used in ``/…/sparql`` and ``/…/data`` paths.
+
+        Fuseki rejects paths like ``//sparql`` (empty segment). The integration
+        tests use ``test`` when no dataset is configured; keep the same default
+        here so ``query_endpoint`` / ``graph_store_endpoint`` stay valid.
+        """
+        name = (self.dataset or "").strip().strip("/")
+        return name or "test"
 
     def _get_default_port(self) -> int:
         """Default Fuseki HTTP port."""
@@ -1371,7 +1384,7 @@ class SparqlEndpointConfig(DBConfig):
             URL like ``http://localhost:3030/dataset/sparql``
         """
         base = (self.uri or "").rstrip("/")
-        ds = self.dataset or ""
+        ds = self._fuseki_dataset_path_segment()
         return f"{base}/{ds}/sparql"
 
     @property
@@ -1382,7 +1395,7 @@ class SparqlEndpointConfig(DBConfig):
             URL like ``http://localhost:3030/dataset/data``
         """
         base = (self.uri or "").rstrip("/")
-        ds = self.dataset or ""
+        ds = self._fuseki_dataset_path_segment()
         return f"{base}/{ds}/data"
 
     @classmethod
