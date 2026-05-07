@@ -97,21 +97,38 @@ def _normalize_role_indexes(
             per_vertex[old_fields[0]] = new_fields[0]
 
         vertex = schema.core_schema.vertex_config[vertex_name]
-        existing_field_names = {f.name for f in vertex.properties}
+
+        # Walk existing properties and apply per_vertex rename map, preserving
+        # types and descriptions. This mirrors _rename_fields_in_schema and
+        # correctly handles overlapping old/new field names (e.g. ("a","b") ->
+        # ("b","c") where "b" appears in both sets at different positions).
+        new_properties: list[Field] = []
+        seen_names: set[str] = set()
+        for field in vertex.properties:
+            new_name = per_vertex.get(field.name, field.name)
+            if new_name in seen_names:
+                continue
+            seen_names.add(new_name)
+            if new_name == field.name:
+                new_properties.append(field)
+            else:
+                new_properties.append(field.model_copy(update={"name": new_name}))
+
+        # Add any identity fields from most_popular_index that have no source
+        # in the current properties (genuinely new fields — type=None is correct
+        # because there is no existing field to inherit a type from).
         for new_field in most_popular_index:
-            if new_field not in existing_field_names:
-                vertex.properties.append(Field(name=new_field, type=None))
-                existing_field_names.add(new_field)
+            if new_field not in seen_names:
+                new_properties.append(Field(name=new_field, type=None))
+                seen_names.add(new_field)
 
-        fields_to_remove = [
-            f
-            for f in vertex.properties
-            if f.name in old_fields and f.name not in new_fields
-        ]
-        for field_to_remove in fields_to_remove:
-            vertex.properties.remove(field_to_remove)
-
+        # Set identity before properties so that the set_identity model
+        # validator (triggered by validate_assignment=True on ConfigBaseModel)
+        # reads the new identity when it runs for the properties assignment.
+        # If properties were set first, the validator would see the old identity
+        # and re-add the old identity field names as type=None ghosts.
         vertex.identity = list(most_popular_index)
+        vertex.properties = new_properties
 
         logger.debug(
             "Normalizing %s index for vertex '%s' in relation '%s': %s -> %s",

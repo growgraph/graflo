@@ -86,8 +86,8 @@ A `Vertex` describes vertices and their logical identity. It supports:
 - Optional blank vertex configuration
 
 Identity defaults are strict by default at schema level:
-- `VertexConfig.identity_from_all_properties: false` (default) requires explicit vertex `identity` (except configured blank vertices, which default to `["id"]`)
-- `VertexConfig.identity_from_all_properties: true` enables compatibility fallback where missing identity uses all property names
+- `VertexConfig.identity_from_all_properties: false` (default) do not require explicit vertex `identity`, defaults to all properties
+- `VertexConfig.identity_from_all_properties: false` disables compatibility fallback where missing identity uses all property names
 
 ### Edge
 An `Edge` describes edges and their logical identities. It allows:

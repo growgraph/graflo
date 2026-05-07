@@ -244,3 +244,190 @@ def test_sanitize_preserves_merged_duplicate_vertex_fields():
     schema = manifest.require_schema()
     user_props = [f.name for f in schema.core_schema.vertex_config["users"].properties]
     assert user_props.count("package_attr") == 1
+
+
+# -- normalize_relation_identity (TigerGraph identity normalization) ----------
+
+
+def _build_multi_relation_manifest(
+    *,
+    vertex_a_properties: list[Field] | None = None,
+    vertex_a_identity: list[str] | None = None,
+    vertex_indexes: dict | None = None,
+) -> GraphManifest:
+    """Manifest with three source vertices sharing the same relation 'owns'.
+
+    UserA has a diverging identity that will be normalized to match the
+    majority identity used by UserB and UserC (["id"]).
+
+    Vertex layout:
+        UserA --(owns)--> Target
+        UserB --(owns)--> Target
+        UserC --(owns)--> Target
+    """
+    from graflo.architecture.database_features import DatabaseProfile
+
+    meta = GraphMetadata(name="tg_normalize", version="1.0.0")
+
+    a_props = vertex_a_properties or [Field(name="source_id", type=FieldType.INT)]
+    a_identity = vertex_a_identity or ["source_id"]
+
+    vc = VertexConfig(
+        vertices=[
+            Vertex(name="UserA", properties=a_props, identity=a_identity),
+            Vertex(
+                name="UserB",
+                properties=[Field(name="id", type=FieldType.STRING)],
+                identity=["id"],
+            ),
+            Vertex(
+                name="UserC",
+                properties=[Field(name="id", type=FieldType.STRING)],
+                identity=["id"],
+            ),
+            Vertex(
+                name="Target",
+                properties=[Field(name="tid", type=FieldType.INT)],
+                identity=["tid"],
+            ),
+        ],
+        blank_vertices=[],
+        force_types={},
+    )
+    ec = EdgeConfig(
+        edges=[
+            Edge(source="UserA", target="Target", relation="owns"),
+            Edge(source="UserB", target="Target", relation="owns"),
+            Edge(source="UserC", target="Target", relation="owns"),
+        ]
+    )
+    db_profile = DatabaseProfile(
+        db_flavor=DBType.TIGERGRAPH,
+        vertex_indexes=vertex_indexes or {},
+    )
+    core = CoreSchema(vertex_config=vc, edge_config=ec)
+    schema = Schema(metadata=meta, core_schema=core, db_profile=db_profile)
+    ingestion = {
+        "resources": [
+            {"name": "UserA", "apply": [{"vertex": "UserA"}]},
+            {"name": "UserB", "apply": [{"vertex": "UserB"}]},
+            {"name": "UserC", "apply": [{"vertex": "UserC"}]},
+            {"name": "Target", "apply": [{"vertex": "Target"}]},
+        ],
+        "transforms": [],
+    }
+    manifest = GraphManifest.from_config(
+        {
+            "schema": schema.to_dict(skip_defaults=False),
+            "ingestion_model": ingestion,
+        }
+    )
+    manifest.finish_init()
+    return manifest
+
+
+def test_identity_normalization_preserves_field_type():
+    """Renamed identity field keeps its original type after normalization.
+
+    UserA.source_id (INT) is renamed to 'id' to match the majority identity.
+    The resulting field must still carry type=INT, not the default None.
+    """
+    manifest = _build_multi_relation_manifest()
+
+    apply_sanitize(manifest, SanitizeOp(db_flavor=DBType.TIGERGRAPH))
+
+    schema = manifest.require_schema()
+    user_a = schema.core_schema.vertex_config["UserA"]
+    props_by_name = {f.name: f for f in user_a.properties}
+
+    assert "source_id" not in props_by_name, "old field name must be removed"
+    assert "id" in props_by_name, "new field name must be present"
+    assert props_by_name["id"].type == FieldType.INT, (
+        "type must be carried over from source_id (INT), not silently set to None"
+    )
+    assert user_a.identity == ["id"]
+
+
+def test_identity_normalization_no_stale_field_on_overlap():
+    """When old and new identity sets overlap, no stale field is left behind.
+
+    UserA identity ("a", "b") is normalized to ("b", "c").
+    per_vertex = {"a": "b", "b": "c"}.  The old set-membership removal logic
+    kept "b" because it appears in new_fields; the rename-walk approach must
+    remove it by renaming it to "c".
+    """
+    manifest = _build_multi_relation_manifest(
+        vertex_a_properties=[
+            Field(name="a", type=FieldType.INT),
+            Field(name="b", type=FieldType.STRING),
+            Field(name="extra"),
+        ],
+        vertex_a_identity=["a", "b"],
+    )
+    # Override UserB/UserC to use identity ("b", "c") so most_popular = ("b","c")
+    schema = manifest.require_schema()
+    vc = schema.core_schema.vertex_config
+    for vname in ("UserB", "UserC"):
+        v = vc[vname]
+        if "c" not in v.property_names:
+            v.properties.append(Field(name="c", type=FieldType.INT))
+        v.identity = ["b", "c"]
+
+    apply_sanitize(manifest, SanitizeOp(db_flavor=DBType.TIGERGRAPH))
+
+    schema = manifest.require_schema()
+    user_a = schema.core_schema.vertex_config["UserA"]
+    prop_names = user_a.property_names
+
+    # "a" renamed to "b", "b" renamed to "c" — only the post-rename names remain
+    assert "a" not in prop_names, "'a' must be gone after rename to 'b'"
+    assert prop_names.count("b") == 1, "'b' must appear exactly once"
+    assert "c" in prop_names, "'c' must be present after rename from 'b'"
+    assert user_a.identity == ["b", "c"]
+
+    # Types must be preserved: original "a"(INT)→"b", original "b"(STRING)→"c"
+    props_by_name = {f.name: f for f in user_a.properties}
+    assert props_by_name["b"].type == FieldType.INT
+    assert props_by_name["c"].type == FieldType.STRING
+
+
+def test_identity_normalization_updates_db_profile_vertex_indexes():
+    """vertex_indexes referencing the renamed field are rewritten in DatabaseProfile."""
+    from graflo.architecture.graph_types import Index
+
+    manifest = _build_multi_relation_manifest(
+        vertex_indexes={
+            "UserA": [Index(fields=["source_id", "extra_field"])],
+        },
+    )
+
+    apply_sanitize(manifest, SanitizeOp(db_flavor=DBType.TIGERGRAPH))
+
+    schema = manifest.require_schema()
+    indexes = schema.db_profile.vertex_indexes.get("UserA", [])
+    assert indexes, "UserA vertex_indexes must still exist"
+    assert indexes[0].fields == ["id", "extra_field"], (
+        "index field 'source_id' must be rewritten to 'id'; 'extra_field' unchanged"
+    )
+
+
+def test_identity_normalization_leaves_non_identity_properties_untouched():
+    """Properties not involved in identity normalization keep name and type."""
+    manifest = _build_multi_relation_manifest(
+        vertex_a_properties=[
+            Field(name="source_id", type=FieldType.INT),
+            Field(name="email", type=FieldType.STRING),
+            Field(name="score", type=FieldType.FLOAT),
+        ],
+    )
+
+    apply_sanitize(manifest, SanitizeOp(db_flavor=DBType.TIGERGRAPH))
+
+    schema = manifest.require_schema()
+    user_a = schema.core_schema.vertex_config["UserA"]
+    props_by_name = {f.name: f for f in user_a.properties}
+
+    assert "email" in props_by_name
+    assert props_by_name["email"].type == FieldType.STRING
+    assert "score" in props_by_name
+    assert props_by_name["score"].type == FieldType.FLOAT
