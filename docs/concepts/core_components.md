@@ -78,8 +78,16 @@ A `Vertex` describes vertices and their logical identity. It supports:
   - Fields can be specified as strings (backward compatible) or typed `Field` objects
   - Supported types: `INT`, `FLOAT`, `BOOL`, `STRING`, `DATETIME`
   - Type information enables better validation and database-specific optimizations
+- Duplicate property declarations are normalized by field name
+  - Same type duplicates merge into one field
+  - If one duplicate is typed and the other is untyped, the typed definition wins
+  - Conflicting non-null types for the same field name are rejected
 - Filtering conditions
 - Optional blank vertex configuration
+
+Identity defaults are strict by default at schema level:
+- `VertexConfig.identity_from_all_properties: false` (default) requires explicit vertex `identity` (except configured blank vertices, which default to `["id"]`)
+- `VertexConfig.identity_from_all_properties: true` enables compatibility fallback where missing identity uses all property names
 
 ### Edge
 An `Edge` describes edges and their logical identities. It allows:

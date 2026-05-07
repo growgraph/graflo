@@ -65,6 +65,8 @@ The graph engines listed in **What you get** are the supported **output** `DBTyp
 GraFlo targets the LPG model:
 
 - **Vertices** — nodes with typed **properties** (manifest key: `properties`) and logical **identity** keys for upserts.
+  - Duplicate vertex property definitions are merged by name; conflicting typed duplicates are rejected.
+  - Identity fallback from all properties is opt-in via `VertexConfig.identity_from_all_properties` and is disabled by default.
 - **Edges** — directed relationships between vertices; relationship attributes are declared as **`properties`** on the logical edge (same list-of-names-or-`Field` shape as vertices).
 
 ### Schema

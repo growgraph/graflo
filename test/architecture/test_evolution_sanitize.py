@@ -14,7 +14,7 @@ from graflo.architecture.schema.core import CoreSchema
 from graflo.architecture.schema.document import Schema
 from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.schema.metadata import GraphMetadata
-from graflo.architecture.schema.vertex import Field, Vertex, VertexConfig
+from graflo.architecture.schema.vertex import Field, Vertex, VertexConfig, FieldType
 from graflo.hq.sanitizer import Sanitizer
 from graflo.onto import DBType
 
@@ -224,3 +224,23 @@ def test_sanitizer_propagates_hyphenated_field_rename_to_actors_for_tigergraph()
         f"got pipeline={pipeline}"
     )
     assert "package" in step["from"].values()
+
+
+def test_sanitize_preserves_merged_duplicate_vertex_fields():
+    """Duplicate logical fields are merged before sanitize rewrite."""
+    manifest = _build_manifest(
+        user_properties=[
+            Field(name="id"),
+            Field(name="package"),
+            Field(name="package", type=FieldType.STRING),
+        ],
+    )
+
+    apply_sanitize(
+        manifest,
+        SanitizeOp(db_flavor=DBType.ARANGO, reserved_words=["package"]),
+    )
+
+    schema = manifest.require_schema()
+    user_props = [f.name for f in schema.core_schema.vertex_config["users"].properties]
+    assert user_props.count("package_attr") == 1

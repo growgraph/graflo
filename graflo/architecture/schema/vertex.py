@@ -184,6 +184,70 @@ def _normalize_fields_item(item: str | Field | dict[str, Any]) -> Field:
     raise TypeError(f"Field must be str, Field, or dict, got {type(item)}")
 
 
+def _merge_duplicate_fields(vertex_name: str, fields: list[Field]) -> list[Field]:
+    """Merge duplicate fields by name while preserving stable order.
+
+    Merge rules:
+    - Same non-null type: keep one field.
+    - One type is None and the other is typed: keep typed field.
+    - Different non-null types: raise.
+    """
+    merged_by_name: dict[str, Field] = {}
+    ordered_names: list[str] = []
+
+    for field in fields:
+        existing = merged_by_name.get(field.name)
+        if existing is None:
+            merged_by_name[field.name] = field
+            ordered_names.append(field.name)
+            continue
+
+        existing_type = existing.type
+        incoming_type = field.type
+
+        if existing_type is not None and incoming_type is not None:
+            if existing_type != incoming_type:
+                raise ValueError(
+                    "Conflicting field types for vertex "
+                    f"'{vertex_name}', property '{field.name}': "
+                    f"'{existing_type}' vs '{incoming_type}'"
+                )
+            if existing.description is None and field.description is not None:
+                merged_by_name[field.name] = existing.model_copy(
+                    update={"description": field.description}
+                )
+            continue
+
+        if existing_type is None and incoming_type is not None:
+            replacement = field
+            if replacement.description is None and existing.description is not None:
+                replacement = replacement.model_copy(
+                    update={"description": existing.description}
+                )
+            merged_by_name[field.name] = replacement
+            continue
+
+        # existing typed + incoming untyped OR both untyped
+        if existing.description is None and field.description is not None:
+            merged_by_name[field.name] = existing.model_copy(
+                update={"description": field.description}
+            )
+
+    return [merged_by_name[name] for name in ordered_names]
+
+
+def _dedupe_ordered(values: list[str]) -> list[str]:
+    """Deduplicate string list while preserving order."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        out.append(value)
+    return out
+
+
 class Vertex(ConfigBaseModel):
     """Represents a vertex in the graph database.
 
@@ -277,17 +341,15 @@ class Vertex(ConfigBaseModel):
 
     @model_validator(mode="after")
     def set_identity(self) -> "Vertex":
-        identity_names = list(self.identity)
-        if not identity_names:
-            identity_names = [f.name for f in self.properties]
-        object.__setattr__(self, "identity", identity_names)
-
-        seen_names = {f.name for f in self.properties}
-        augmented = list(self.properties)
+        merged_properties = _merge_duplicate_fields(self.name, list(self.properties))
+        identity_names = _dedupe_ordered(list(self.identity))
+        seen_names = {f.name for f in merged_properties}
+        augmented = list(merged_properties)
         for name in identity_names:
             if name not in seen_names:
                 augmented.append(Field(name=name, type=None))
                 seen_names.add(name)
+        object.__setattr__(self, "identity", identity_names)
         object.__setattr__(self, "properties", augmented)
         return self
 
@@ -331,6 +393,13 @@ class VertexConfig(ConfigBaseModel):
         default_factory=dict,
         description="Override mapping: vertex name -> list of field type names for type inference.",
     )
+    identity_from_all_properties: bool = PydanticField(
+        default=True,
+        description=(
+            "When true, vertices without explicit identity fall back to all property names. "
+            "When false, explicit identity is required except for blank vertices."
+        ),
+    )
     _vertices_map: dict[str, Vertex] | None = PrivateAttr(default=None)
     _vertex_numeric_fields_map: dict[str, object] | None = PrivateAttr(default=None)
 
@@ -354,10 +423,16 @@ class VertexConfig(ConfigBaseModel):
     ) -> None:
         blank_id_field = "id"
         for vertex in self.vertices:
-            if vertex.name in self.blank_vertices and not vertex.identity:
-                vertex.identity = [blank_id_field]
             if not vertex.identity:
-                raise ValueError(f"Vertex '{vertex.name}' must define identity fields")
+                if vertex.name in self.blank_vertices:
+                    vertex.identity = [blank_id_field]
+                elif self.identity_from_all_properties:
+                    vertex.identity = list(vertex.property_names)
+                else:
+                    raise ValueError(
+                        f"Vertex '{vertex.name}' must define identity fields"
+                    )
+            vertex.identity = _dedupe_ordered(list(vertex.identity))
             missing = [f for f in vertex.identity if f not in vertex.property_names]
             for field_name in missing:
                 vertex.properties.append(Field(name=field_name, type=None))
