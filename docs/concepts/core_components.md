@@ -24,11 +24,16 @@ The `IngestionModel` is the source of truth for ingestion runtime behavior. It e
 When targeting stricter engines (notably TigerGraph), identifier normalization is handled at the
 manifest boundary:
 
-- `Sanitizer.sanitize_manifest(manifest)` mutates `manifest.graph_schema` and, when needed,
-  updates ingestion actor mappings in `manifest.ingestion_model`.
-- Sanitization covers reserved-word-safe vertex/property/relation names and relation-level index
-  harmonization required by TigerGraph.
-- The API is intentionally manifest-first so schema and ingestion updates remain consistent.
+- Implementation lives in **`graflo.architecture.evolution`** as **`SanitizeOp`** /
+  **`apply_sanitize`** (reserved words, `DatabaseProfile` storage names, TigerGraph per-relation
+  identity alignment, and coordinated ingestion rewrites).
+- **`Sanitizer.sanitize_manifest(manifest)`** is the ergonomic wrapper: it builds the evolution op
+  list for the configured **`DBType`** and applies it in place (same public API as before).
+- **`GraphEngine.infer_manifest(...)`** runs **`Sanitizer`** on the assembled **`GraphManifest`**
+  before returning, so PostgreSQL inference through the engine stays target-flavor-safe.
+- **`SQLInferenceManager`** (`infer_artifacts`, **`infer_complete_schema`**, …) does **not**
+  sanitize; it keeps source column names in resources so you can compose a manifest and then call
+  **`Sanitizer`** once at the boundary (or rely on **`infer_manifest`** when using **`GraphEngine`**).
 
 ### Manifest/schema renaming
 

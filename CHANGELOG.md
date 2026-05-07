@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.24] - 2026-05-07
+
+### Added
+
+- **`graflo.architecture.evolution` — sanitization and field renames as ops**:
+  **`SanitizeOp`** / **`apply_sanitize`** (reserved-word-safe storage names, per-vertex field renames,
+  TigerGraph per-relation identity harmonization) and **`RenameVertexFieldsOp`** /
+  **`apply_rename_vertex_fields`** (schema + ingestion rewrite for explicit vertex-field renames),
+  with helpers in **`sanitize`**, **`rewrite`**, and **`db_profile`** modules.
+- **`SparqlEndpointConfig`**: when **`dataset`** is unset or empty, endpoint URLs use the
+  **`test`** path segment so Fuseki never receives invalid paths such as **`//sparql`** (aligned
+  with integration-test defaults).
+- **TigerGraph connection**: list graph and per-graph vertex/edge type helpers; query snapshots
+  around destructive work; **`delete_all=True`** on full teardown now requires
+  **`confirm_global_teardown=True`**; global **`DROP VERTEX` / `DROP EDGE`** skips types still
+  referenced by **other** graphs so unrelated installed queries are not silently invalidated.
+
+### Changed
+
+- **`Sanitizer`**: manifest sanitization is implemented by dispatching
+  **`SanitizeOp`** through **`graflo.architecture.evolution`** (same **`sanitize_manifest`**
+  entrypoint for callers).
+- **`SQLInferenceManager`**: PostgreSQL inference no longer mutates the contract for the target
+  DB flavor; **`infer_artifacts`** / **`infer_complete_schema`** return **unsanitized** schema +
+  ingestion. Apply **`Sanitizer(...).sanitize_manifest(...)`** (or **`apply_sanitize`**) when you
+  need reserved-word / TigerGraph normalization.
+- **`PostgresResourceMapper`**: inferred **`Resource`** pipelines keep **source (PostgreSQL) column
+  names**; field renames for the target flavor are applied when the manifest is sanitized, not
+  during mapper construction.
+- **`GraphEngine.infer_manifest`**: still returns a full **`GraphManifest`** (schema +
+  ingestion_model + bindings) and now runs **`Sanitizer`** on that manifest **before** returning,
+  so the high-level PostgreSQL inference path stays target-flavor-safe.
+- **`docker/fuseki`**: Fuseki 6–style image, **`fix-perms`** init for the data volume, and a
+  **`shiro.ini`** template wired through compose for basic auth (credentials from **`TS_*`**
+  env vars).
+
+### Documentation
+
+- [Manifest evolution](docs/concepts/manifest_evolution.md), [Core components](docs/concepts/core_components.md),
+  [Architecture diagrams](docs/concepts/architecture_diagrams.md), and the [documentation home](docs/index.md)
+  updated for evolution-backed **`SanitizeOp`**, the **`SQLInferenceManager`** vs **`GraphEngine.infer_manifest`**
+  sanitization split, and **`SparqlEndpointConfig`** dataset URL behavior.
+
 ## [1.7.23] - 2026-04-23
 
 ### Added

@@ -22,6 +22,7 @@ from graflo.hq.connection_provider import (
     InMemoryConnectionProvider,
     SparqlGeneralizedConnConfig,
 )
+from graflo.hq.sanitizer import Sanitizer
 from graflo.hq.sql_inferencer import SQLInferenceManager
 from graflo.hq.resource_mapper import ResourceMapper
 from graflo.architecture.contract.bindings import Bindings
@@ -226,9 +227,15 @@ class GraphEngine:
             bindings_dict["resource_connector"] = filtered_resource_connector
             bindings_dict["connector_connection"] = filtered_connector_connection
             bindings = Bindings.from_dict(bindings_dict)
-        return GraphManifest(
+        manifest = GraphManifest(
             graph_schema=schema, ingestion_model=ingestion_model, bindings=bindings
         )
+        # Apply DB-flavor-specific sanitization a posteriori (reserved words,
+        # TigerGraph identity normalization, etc.). Sanitizer is the single
+        # entry point that maps `target_db_flavor` to the corresponding
+        # evolution ops.
+        Sanitizer(self.target_db_flavor).sanitize_manifest(manifest)
+        return manifest
 
     def create_bindings(
         self,

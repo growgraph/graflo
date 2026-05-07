@@ -1096,17 +1096,27 @@ class TigerGraphConnection(Connection):
 
         self._installed_clear_data_queries.pop(graph_name, None)
 
-    def _drop_global_schema_types(self, schema: "Schema") -> None:
+    def _drop_global_schema_types(
+        self, schema: "Schema", surviving_graphs: list[str]
+    ) -> None:
         """Drop global vertex and edge types that belong to *schema*.
 
         TigerGraph stores vertex/edge types globally.  When a graph is dropped
         the types may linger as orphans and block subsequent schema creation for
-        a graph with the same name.  This method cleans them up idempotently —
-        any type that doesn't exist or is still referenced by another graph is
-        silently skipped.
+        a graph with the same name.  This method cleans them up idempotently.
+
+        Types that still appear in *surviving_graphs* (other graphs on the
+        server) are **not** dropped: a global ``DROP VERTEX`` / ``DROP EDGE``
+        can cascade-invalidate installed queries in unrelated graphs.
 
         Order: edges first (they depend on vertices), then vertices.
         """
+        in_use_vertices: set[str] = set()
+        in_use_edges: set[str] = set()
+        for g in surviving_graphs:
+            verts, edges = self._get_graph_type_names(g)
+            in_use_vertices |= verts
+            in_use_edges |= edges
 
         db_schema = schema.resolve_db_aware(DBType.TIGERGRAPH)
         edge_config = schema.core_schema.edge_config
@@ -1120,12 +1130,19 @@ class TigerGraphConnection(Connection):
                 edge_names.add(rel)
 
         for edge_name in edge_names:
+            if edge_name in in_use_edges:
+                logger.warning(
+                    f"Skipping DROP EDGE '{edge_name}' — still referenced by "
+                    "surviving graphs"
+                )
+                continue
             try:
                 result = self._execute_gsql(f"DROP EDGE {edge_name}")
-                logger.debug(f"Dropped global edge type '{edge_name}': {result}")
+                logger.warning(f"Dropped global edge type '{edge_name}': {result}")
             except Exception as e:
                 logger.debug(
-                    f"Could not drop global edge type '{edge_name}' (may not exist or still referenced): {e}"
+                    f"Could not drop global edge type '{edge_name}' "
+                    f"(may not exist or still referenced): {e}"
                 )
 
         # Collect unique vertex db-names
@@ -1138,12 +1155,19 @@ class TigerGraphConnection(Connection):
                 vertex_names.add(vertex.name)
 
         for vertex_name in vertex_names:
+            if vertex_name in in_use_vertices:
+                logger.warning(
+                    f"Skipping DROP VERTEX '{vertex_name}' — still referenced by "
+                    "surviving graphs"
+                )
+                continue
             try:
                 result = self._execute_gsql(f"DROP VERTEX {vertex_name}")
-                logger.debug(f"Dropped global vertex type '{vertex_name}': {result}")
+                logger.warning(f"Dropped global vertex type '{vertex_name}': {result}")
             except Exception as e:
                 logger.debug(
-                    f"Could not drop global vertex type '{vertex_name}' (may not exist or still referenced): {e}"
+                    f"Could not drop global vertex type '{vertex_name}' "
+                    f"(may not exist or still referenced): {e}"
                 )
 
     def _drop_jobs_for_graph(self, graph_name: str) -> None:
@@ -1648,6 +1672,42 @@ class TigerGraphConnection(Connection):
         finally:
             # Restore original graphname
             self.graphname = old_graphname
+
+    def _get_all_graph_names(self) -> list[str]:
+        """Return all graph names currently in TigerGraph (SHOW GRAPH * + parser)."""
+        try:
+            result = self._execute_gsql("USE GLOBAL\nSHOW GRAPH *")
+            return self._parse_show_graph_output(str(result))
+        except Exception as e:
+            logger.warning(f"Could not list graphs for orphan check: {e}")
+            return []
+
+    def _get_graph_type_names(self, graph_name: str) -> tuple[set[str], set[str]]:
+        """Return ``(vertex_names, edge_names)`` visible in *graph_name* context."""
+        vertex_names: set[str] = set()
+        edge_names: set[str] = set()
+        try:
+            r = self._execute_gsql(f"USE GRAPH {graph_name}\nSHOW VERTEX *")
+            vertex_names = set(self._parse_show_vertex_output(str(r)))
+        except Exception as e:
+            logger.debug(f"Could not list vertices for graph '{graph_name}': {e}")
+        try:
+            r = self._execute_gsql(f"USE GRAPH {graph_name}\nSHOW EDGE *")
+            edge_names = {name for name, _ in self._parse_show_edge_output(str(r))}
+        except Exception as e:
+            logger.debug(f"Could not list edges for graph '{graph_name}': {e}")
+        return vertex_names, edge_names
+
+    def _snapshot_all_queries(self) -> dict[str, list[str]]:
+        """Return ``{graph_name: [installed_query_names]}`` for every graph.
+
+        Used before/after destructive operations to detect accidental query loss
+        in graphs that were not the direct target of a recreate.
+        """
+        snapshot: dict[str, list[str]] = {}
+        for graph_name in self._get_all_graph_names():
+            snapshot[graph_name] = self._get_installed_queries(graph_name=graph_name)
+        return snapshot
 
     def graph_exists(self, name: str) -> bool:
         """
@@ -2783,17 +2843,33 @@ class TigerGraphConnection(Connection):
                 )
 
             if recreate_schema:
+                pre_query_snapshot = self._snapshot_all_queries()
+                logger.info(
+                    "Pre-recreate installed-query snapshot for graph '%s': %s",
+                    graph_name,
+                    pre_query_snapshot,
+                )
                 try:
+                    graph_existed_before = self.graph_exists(graph_name)
                     # Drop the graph (queries and jobs are dropped first inside delete_database).
                     self.delete_database(graph_name)
                     # TigerGraph stores vertex/edge types globally. Dropping the graph
                     # does NOT remove those types; they linger as orphans and cause
                     # "used by another object" failures when we try to re-create them.
                     # Clean them up explicitly before re-creating the schema.
-                    logger.debug(
-                        f"Dropping global schema types for graph '{graph_name}'"
-                    )
-                    self._drop_global_schema_types(schema)
+                    if graph_existed_before:
+                        surviving_graphs = self._get_all_graph_names()
+                        normalized = graph_name.strip().lower()
+                        surviving_graphs = [
+                            g
+                            for g in surviving_graphs
+                            if g.strip().lower() != normalized
+                        ]
+                        logger.debug(
+                            f"Dropping global schema types for graph '{graph_name}' "
+                            f"(surviving graphs for orphan check: {surviving_graphs})"
+                        )
+                        self._drop_global_schema_types(schema, surviving_graphs)
                     logger.debug(f"Cleaned up graph '{graph_name}' for fresh start")
                 except Exception as clean_error:
                     error_msg = (
@@ -2802,6 +2878,21 @@ class TigerGraphConnection(Connection):
                     )
                     logger.error(error_msg, exc_info=True)
                     raise RuntimeError(error_msg) from clean_error
+
+                post_query_snapshot = self._snapshot_all_queries()
+                normalized_graph = graph_name.strip().lower()
+                for other_graph, pre_queries in pre_query_snapshot.items():
+                    if other_graph.strip().lower() == normalized_graph:
+                        continue
+                    post_queries = post_query_snapshot.get(other_graph, [])
+                    lost = set(pre_queries) - set(post_queries)
+                    if lost:
+                        logger.error(
+                            "QUERY LOSS DETECTED in graph '%s' after recreating '%s': %s",
+                            other_graph,
+                            graph_name,
+                            sorted(lost),
+                        )
 
             # Step 1: Create graph first if it doesn't exist
             if not self.graph_exists(graph_name):
@@ -3360,6 +3451,8 @@ class TigerGraphConnection(Connection):
         vertex_types: tuple[str, ...] | list[str] = (),
         graph_names: tuple[str, ...] | list[str] = (),
         delete_all: bool = False,
+        *,
+        confirm_global_teardown: bool = False,
     ) -> None:
         """
         Delete graph structure (graphs, vertex types, edge types) from TigerGraph.
@@ -3370,19 +3463,31 @@ class TigerGraphConnection(Connection):
         - Edge Types: Global edge type definitions (can be shared across graphs)
         - Vertex and edge types are associated with graphs
 
-        Teardown order:
-        1. Drop all graphs
-        2. Drop all edge types globally
-        3. Drop all vertex types globally
-        4. Drop all jobs globally
+        Teardown order (``delete_all=True``):
+        1. Drop targeted graphs (``delete_database`` drops graph-scoped queries and jobs).
+        2. Drop global edge types that are not still referenced by any surviving graph.
+        3. Drop global vertex types that are not still referenced by any surviving graph.
+
+        Global ``DROP VERTEX`` / ``DROP EDGE`` can silently invalidate installed queries
+        in unrelated graphs. ``delete_all=True`` therefore requires
+        ``confirm_global_teardown=True``.
 
         Args:
             vertex_types: Vertex type names to delete (not used in TigerGraph teardown)
             graph_names: Graph names to delete (if empty and delete_all=True, deletes all)
-            delete_all: If True, perform full teardown of all graphs, edges, vertices, and jobs
+            delete_all: If True, perform full teardown of targeted graphs and orphaned
+                global types.
+            confirm_global_teardown: Must be True when ``delete_all=True``; otherwise
+                this method raises without issuing GSQL.
         """
         cnames = vertex_types
         gnames = graph_names
+        if delete_all and not confirm_global_teardown:
+            raise ValueError(
+                "delete_all=True requires confirm_global_teardown=True. "
+                "Global teardown can silently drop installed queries in unrelated "
+                "graphs when shared vertex/edge types are removed."
+            )
         try:
             if delete_all:
                 # Step 1: Drop all graphs
@@ -3423,24 +3528,40 @@ class TigerGraphConnection(Connection):
                                 f"Error details: {type(e).__name__}: {str(e)}"
                             )
 
-                # Step 2: Drop all edge types globally
-                # Note: Edges must be dropped before vertices due to dependencies
-                # Edges are global, so we need to query them at global level using GSQL
+                dropped_set = {g.strip().lower() for g in graphs_to_drop}
+                surviving_graphs = [
+                    g
+                    for g in self._get_all_graph_names()
+                    if g.strip().lower() not in dropped_set
+                ]
+                in_use_vertices: set[str] = set()
+                in_use_edges: set[str] = set()
+                for g in surviving_graphs:
+                    verts, edges = self._get_graph_type_names(g)
+                    in_use_vertices |= verts
+                    in_use_edges |= edges
+
+                # Step 2: Drop global edge types not still referenced by surviving graphs.
+                # Edges before vertices (dependencies).
                 try:
-                    # Use GSQL to list all global edge types (not graph-scoped)
                     show_edges_cmd = "SHOW EDGE *"
                     result = self._execute_gsql(show_edges_cmd)
                     result_str = str(result)
-
-                    # Parse edge types using helper method
                     edge_types = self._parse_show_edge_output(result_str)
 
                     logger.info(
-                        f"Found {len(edge_types)} edge types to drop: {[name for name, _ in edge_types]}"
+                        "Found %s edge types in global catalog: %s",
+                        len(edge_types),
+                        [name for name, _ in edge_types],
                     )
-                    for e_type, is_directed in edge_types:
+                    for e_type, _is_directed in edge_types:
+                        if e_type in in_use_edges:
+                            logger.warning(
+                                "Skipping DROP EDGE '%s' — still referenced by surviving graphs",
+                                e_type,
+                            )
+                            continue
                         try:
-                            # DROP EDGE works for both directed and undirected edges
                             drop_edge_cmd = f"DROP EDGE {e_type}"
                             logger.debug(f"Executing: {drop_edge_cmd}")
                             result = self._execute_gsql(drop_edge_cmd)
@@ -3463,24 +3584,27 @@ class TigerGraphConnection(Connection):
                     logger.warning(f"Could not list or drop edge types: {e}")
                     logger.warning(f"Error details: {type(e).__name__}: {str(e)}")
 
-                # Step 3: Drop all vertex types globally
-                # Vertices are dropped after edges to avoid dependency issues
-                # Vertices are global, so we need to query them at global level using GSQL
+                # Step 3: Drop global vertex types not still referenced by surviving graphs.
                 try:
-                    # Use GSQL to list all global vertex types (not graph-scoped)
                     show_vertices_cmd = "SHOW VERTEX *"
                     result = self._execute_gsql(show_vertices_cmd)
                     result_str = str(result)
-
-                    # Parse vertex types using helper method
-                    vertex_types = self._parse_show_vertex_output(result_str)
+                    listed_vertex_types = self._parse_show_vertex_output(result_str)
 
                     logger.info(
-                        f"Found {len(vertex_types)} vertex types to drop: {vertex_types}"
+                        "Found %s vertex types in global catalog: %s",
+                        len(listed_vertex_types),
+                        listed_vertex_types,
                     )
-                    for v_type in vertex_types:
+                    for v_type in listed_vertex_types:
+                        if v_type in in_use_vertices:
+                            logger.warning(
+                                "Skipping DROP VERTEX '%s' — still referenced by "
+                                "surviving graphs",
+                                v_type,
+                            )
+                            continue
                         try:
-                            # Clear data first to avoid dependency issues
                             try:
                                 result = self._delete_vertices(v_type)
                                 logger.debug(
@@ -3491,7 +3615,6 @@ class TigerGraphConnection(Connection):
                                     f"Could not clear data from vertex type '{v_type}': {clear_err}"
                                 )
 
-                            # Drop vertex type
                             drop_vertex_cmd = f"DROP VERTEX {v_type}"
                             logger.debug(f"Executing: {drop_vertex_cmd}")
                             result = self._execute_gsql(drop_vertex_cmd)
@@ -3512,43 +3635,6 @@ class TigerGraphConnection(Connection):
                                 )
                 except Exception as e:
                     logger.warning(f"Could not list or drop vertex types: {e}")
-                    logger.warning(f"Error details: {type(e).__name__}: {str(e)}")
-
-                # Step 4: Drop all jobs globally
-                # Jobs are dropped last since they may reference schema objects
-                try:
-                    # Use GSQL to list all global jobs
-                    show_jobs_cmd = "SHOW JOB *"
-                    result = self._execute_gsql(show_jobs_cmd)
-                    result_str = str(result)
-
-                    # Parse job names using helper method
-                    job_names = self._parse_show_job_output(result_str)
-
-                    logger.info(f"Found {len(job_names)} jobs to drop: {job_names}")
-                    for job_name in job_names:
-                        try:
-                            # Drop job
-                            # Jobs can be of different types (SCHEMA_CHANGE, LOADING, etc.)
-                            # DROP JOB works for all job types
-                            drop_job_cmd = f"DROP JOB {job_name}"
-                            logger.debug(f"Executing: {drop_job_cmd}")
-                            result = self._execute_gsql(drop_job_cmd)
-                            logger.info(
-                                f"Successfully dropped job '{job_name}': {result}"
-                            )
-                        except Exception as e:
-                            if self._is_not_found_error(e):
-                                logger.debug(
-                                    f"Job '{job_name}' already dropped or doesn't exist"
-                                )
-                            else:
-                                logger.warning(f"Failed to drop job '{job_name}': {e}")
-                                logger.warning(
-                                    f"Error details: {type(e).__name__}: {str(e)}"
-                                )
-                except Exception as e:
-                    logger.warning(f"Could not list or drop jobs: {e}")
                     logger.warning(f"Error details: {type(e).__name__}: {str(e)}")
 
             elif gnames:

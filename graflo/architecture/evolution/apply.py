@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Literal, Sequence
 
 from graflo.architecture.contract.declarations.ingestion_model import IngestionModel
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.database_features import DatabaseProfile
+from graflo.architecture.schema import Schema
 from graflo.architecture.schema.core import CoreSchema
 from graflo.architecture.schema.edge import EdgeConfig
-from graflo.architecture.schema.vertex import Vertex, VertexConfig
+from graflo.architecture.schema.vertex import Field, Vertex, VertexConfig
+from graflo.db.util import load_reserved_words
 
 from .db_profile import (
+    apply_field_rename_to_db_profile,
+    apply_storage_name_sanitization_to_db_profile,
     apply_vertex_merge_to_db_profile,
     apply_vertex_removal_to_db_profile,
 )
@@ -20,13 +25,25 @@ from .merge_core import (
     merge_vertex_models,
     redirect_and_merge_edges,
 )
-from .ops import MergeVerticesOp, RemoveVerticesOp
+from .ops import (
+    MergeVerticesOp,
+    RemoveVerticesOp,
+    RenameVertexFieldsOp,
+    SanitizeOp,
+)
 from .rewrite import (
     pipeline_mentions_any_vertex,
+    rewrite_vertex_field_names_in_pipeline,
     rewrite_vertex_names_in_pipeline,
     rewrite_vertex_names_in_value,
 )
+from .sanitize import (
+    compute_vertex_field_renames,
+    normalize_relation_identity,
+)
 from .version import bump_semver_minor
+
+logger = logging.getLogger(__name__)
 
 
 def _revalidate_db_profile(profile: DatabaseProfile) -> DatabaseProfile:
@@ -254,9 +271,154 @@ def apply_merge_vertices(manifest: GraphManifest, op: MergeVerticesOp) -> None:
         )
 
 
+def _rename_fields_in_schema(
+    schema: Schema, renames: dict[str, dict[str, str]]
+) -> None:
+    """Mutate vertex properties + identity in place per the rename map."""
+    if not renames:
+        return
+    for vertex in schema.core_schema.vertex_config.vertices:
+        per_vertex = renames.get(vertex.name)
+        if not per_vertex:
+            continue
+        new_properties: list[Field] = []
+        seen_names: set[str] = set()
+        for field in vertex.properties:
+            new_name = per_vertex.get(field.name, field.name)
+            if new_name in seen_names:
+                continue
+            seen_names.add(new_name)
+            if new_name == field.name:
+                new_properties.append(field)
+            else:
+                new_properties.append(field.model_copy(update={"name": new_name}))
+        vertex.properties = new_properties
+        vertex.identity = [per_vertex.get(name, name) for name in vertex.identity]
+
+
+def _rebuild_ingestion_with_pipeline_rewrite(
+    manifest: GraphManifest,
+    rewriter,  # callable: pipeline -> new pipeline
+) -> None:
+    """Rebuild ``manifest.ingestion_model`` after applying *rewriter* to each
+    resource's pipeline.
+    """
+    if manifest.ingestion_model is None:
+        return
+    from graflo.architecture.contract.declarations.resource import Resource
+
+    new_resources: list[Resource] = []
+    for resource in manifest.ingestion_model.resources:
+        d = resource.to_dict(skip_defaults=False)
+        d["pipeline"] = rewriter(resource.pipeline)
+        new_resources.append(Resource.model_validate(d))
+    manifest.ingestion_model.resources = new_resources
+    manifest.ingestion_model = IngestionModel.model_validate(
+        manifest.ingestion_model.to_dict(skip_defaults=False)
+    )
+
+
+def apply_rename_vertex_fields(
+    manifest: GraphManifest, op: RenameVertexFieldsOp
+) -> None:
+    """Rename vertex properties (and their references) across the manifest.
+
+    Mutates *manifest* in place:
+
+    - Rewrites schema ``Field.name`` and ``vertex.identity``.
+    - Rewrites :class:`DatabaseProfile` field references (vertex_indexes,
+      edge_specs.indexes, default_property_values).
+    - Rewrites resource pipelines so that ``VertexActor.from`` covers the
+      rename and ``TransformActor.rename`` produces the renamed property
+      (see :func:`rewrite_vertex_field_names_in_pipeline` for details).
+    """
+    if not op.renames:
+        return
+    schema = manifest.graph_schema
+    if schema is None:
+        raise ValueError("rename_vertex_fields requires graph_schema")
+
+    unknown = sorted(set(op.renames) - schema.core_schema.vertex_config.vertex_set)
+    if unknown:
+        raise ValueError(
+            f"rename_vertex_fields: unknown vertices in renames: {unknown}"
+        )
+
+    _rename_fields_in_schema(schema, op.renames)
+    apply_field_rename_to_db_profile(schema.db_profile, op.renames)
+    schema.db_profile = _revalidate_db_profile(schema.db_profile)
+    schema.finish_init()
+
+    _rebuild_ingestion_with_pipeline_rewrite(
+        manifest,
+        lambda pipeline: rewrite_vertex_field_names_in_pipeline(pipeline, op.renames),
+    )
+
+
+def apply_sanitize(manifest: GraphManifest, op: SanitizeOp) -> None:
+    """Apply DB-flavor-specific sanitization to *manifest* in place.
+
+    Composes:
+
+    1. Storage-name sanitization on :class:`DatabaseProfile`.
+    2. Reserved-word vertex field renames (via ``apply_rename_vertex_fields``).
+    3. TigerGraph identity normalization (cross-relation), propagated to
+       ingestion via the same field-rename code path.
+    """
+    if manifest.graph_schema is None:
+        return
+
+    schema = manifest.graph_schema
+    if op.reserved_words is not None:
+        reserved_words = {word.upper() for word in op.reserved_words}
+    else:
+        reserved_words = load_reserved_words(op.db_flavor)
+
+    if reserved_words:
+        apply_storage_name_sanitization_to_db_profile(
+            schema.db_profile, schema, reserved_words
+        )
+        schema.db_profile = _revalidate_db_profile(schema.db_profile)
+
+        field_renames = compute_vertex_field_renames(schema, reserved_words)
+        if field_renames:
+            apply_rename_vertex_fields(
+                manifest,
+                RenameVertexFieldsOp(renames=field_renames),
+            )
+
+    identity_renames = normalize_relation_identity(schema, op.db_flavor)
+    if identity_renames:
+        apply_field_rename_to_db_profile(schema.db_profile, identity_renames)
+        schema.db_profile = _revalidate_db_profile(schema.db_profile)
+        schema.finish_init()
+        _rebuild_ingestion_with_pipeline_rewrite(
+            manifest,
+            lambda pipeline: rewrite_vertex_field_names_in_pipeline(
+                pipeline, identity_renames
+            ),
+        )
+
+
+def _dispatch_op(manifest: GraphManifest, op: Any) -> None:
+    """Dispatch a single evolution op to its in-place apply function."""
+    if isinstance(op, RemoveVerticesOp):
+        apply_remove_vertices(manifest, op)
+    elif isinstance(op, MergeVerticesOp):
+        apply_merge_vertices(manifest, op)
+    elif isinstance(op, RenameVertexFieldsOp):
+        apply_rename_vertex_fields(manifest, op)
+    elif isinstance(op, SanitizeOp):
+        apply_sanitize(manifest, op)
+    else:
+        raise TypeError(f"Unsupported evolution op: {type(op)!r}")
+
+
 def apply_evolution(
     manifest: GraphManifest,
-    ops: Sequence[RemoveVerticesOp | MergeVerticesOp],
+    ops: Sequence[
+        RemoveVerticesOp | MergeVerticesOp | RenameVertexFieldsOp | SanitizeOp
+    ],
     *,
     bump_version: bool | Literal["minor"] = "minor",
     finish_init: bool = True,
@@ -271,12 +433,7 @@ def apply_evolution(
     out = manifest.model_copy(deep=True)
 
     for op in ops:
-        if isinstance(op, RemoveVerticesOp):
-            apply_remove_vertices(out, op)
-        elif isinstance(op, MergeVerticesOp):
-            apply_merge_vertices(out, op)
-        else:
-            raise TypeError(f"Unsupported evolution op: {type(op)!r}")
+        _dispatch_op(out, op)
 
     _bump_schema_version(out, bump_version)
 

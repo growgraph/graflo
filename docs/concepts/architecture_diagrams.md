@@ -18,7 +18,7 @@ classDiagram
         +target_db_flavor: DBType
         +resource_mapper: ResourceMapper
         +introspect(postgres_config) SchemaIntrospectionResult
-        +infer_schema(postgres_config) GraphManifest
+        +infer_manifest(postgres_config) GraphManifest
         +create_bindings(postgres_config, ...) Bindings
         +infer_schema_from_rdf(source) tuple~Schema, IngestionModel~
         +create_bindings_from_rdf(source) Bindings
@@ -31,7 +31,13 @@ classDiagram
         +conn: PostgresConnection
         +target_db_flavor: DBType
         +introspect(schema_name) SchemaIntrospectionResult
+        +infer_artifacts(schema_name) SQLInferenceArtifacts
         +infer_complete_schema(schema_name) tuple~Schema, IngestionModel~
+    }
+
+    class Sanitizer {
+        +db_flavor: DBType
+        +sanitize_manifest(manifest) GraphManifest
     }
 
     class ResourceMapper {
@@ -78,14 +84,17 @@ classDiagram
         +connection_type: DBType
     }
 
-    GraphEngine --> SQLInferenceManager : creates for introspect / infer_schema
+    GraphEngine --> SQLInferenceManager : creates for introspect / infer_artifacts
     GraphEngine --> ResourceMapper : resource_mapper
+    GraphEngine --> Sanitizer : infer_manifest() applies target flavor
     GraphEngine --> Caster : creates for ingest
     GraphEngine --> ConnectionManager : creates for define_schema
     GraphEngine ..> GraphManifest : produces / consumes
     GraphEngine ..> Bindings : produces / consumes
     GraphEngine ..> DBConfig : target_db_config
 ```
+
+`SQLInferenceManager` performs introspection and schema/resource inference only (no **`Sanitizer`**). Use **`GraphEngine.infer_manifest`** or call **`Sanitizer.sanitize_manifest`** on a composed **`GraphManifest`** when you need target-DB normalization.
 
 ### Schema architecture
 

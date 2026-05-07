@@ -118,6 +118,188 @@ def rewrite_vertex_names_in_value(obj: Any, mapping: dict[str, str]) -> Any:
     return obj
 
 
+def _apply_vertex_field_rename_to_from_doc(
+    from_doc: dict[str, Any] | None, renames: dict[str, str]
+) -> dict[str, str]:
+    """Update a VertexActor ``from`` map for a per-vertex field rename.
+
+    ``from_doc`` is ``{vertex_field: doc_field}`` (alias ``from``).
+
+    Strategy:
+
+    - Existing ``{old_field: doc_col}`` becomes ``{new_field: doc_col}`` (rename key).
+    - For renames whose ``new_field`` is not yet present in the resulting map,
+      inject ``{new_field: old_field}`` so the doc continues to address the
+      attribute via its original name.
+    """
+    out: dict[str, str] = {}
+    if isinstance(from_doc, dict):
+        for v_f, d_f in from_doc.items():
+            if not isinstance(v_f, str):
+                continue
+            mapped_v = renames.get(v_f, v_f)
+            out[mapped_v] = d_f if isinstance(d_f, str) else v_f
+    for old_field, new_field in renames.items():
+        if new_field in out:
+            continue
+        out[new_field] = old_field
+    return out
+
+
+def _apply_vertex_field_rename_to_transform_rename(
+    rename_map: dict[str, Any] | None,
+    in_scope_renames: dict[str, str],
+) -> dict[str, str]:
+    """Update a TransformActor ``rename`` map for in-scope vertex field renames.
+
+    ``rename`` is ``{input_key: output_key}`` (doc-side -> vertex-side).
+
+    - For every entry whose value matches an old field name in scope, rewrite
+      the value to the corresponding new field name.
+    - For renames whose ``new_field`` is not yet a value in the map, add a
+      ``{old_field: new_field}`` entry so the transform produces the renamed
+      property.
+    """
+    out: dict[str, str] = {}
+    if isinstance(rename_map, dict):
+        for k, v in rename_map.items():
+            if not isinstance(k, str):
+                continue
+            mapped_v = in_scope_renames.get(v, v) if isinstance(v, str) else v
+            out[k] = mapped_v if isinstance(mapped_v, str) else str(mapped_v)
+    existing_values = set(out.values())
+    for old_field, new_field in in_scope_renames.items():
+        if new_field in existing_values:
+            continue
+        out[old_field] = new_field
+        existing_values.add(new_field)
+    return out
+
+
+def _step_vertices(step: dict[str, Any]) -> set[str]:
+    """Return vertex names introduced by a single (non-recursive) actor step."""
+    s = normalize_actor_step(dict(step))
+    t = s.get("type")
+    if t == "vertex" and isinstance(s.get("vertex"), str):
+        return {s["vertex"]}
+    if t == "vertex_router":
+        names: set[str] = set()
+        type_map = s.get("type_map")
+        if isinstance(type_map, dict):
+            for v in type_map.values():
+                if isinstance(v, str):
+                    names.add(v)
+        vfm = s.get("vertex_from_map")
+        if isinstance(vfm, dict):
+            for k in vfm:
+                if isinstance(k, str):
+                    names.add(k)
+        return names
+    return set()
+
+
+def _collect_level_vertices(steps: list[Any]) -> set[str]:
+    """Collect vertex names introduced at the immediate (non-recursive) level."""
+    out: set[str] = set()
+    for step in steps:
+        if isinstance(step, dict):
+            out |= _step_vertices(step)
+    return out
+
+
+def _rewrite_vertex_field_step(
+    step: dict[str, Any],
+    renames: dict[str, dict[str, str]],
+    available_vertices: set[str],
+) -> dict[str, Any]:
+    """Rewrite a single normalized step for vertex field renames.
+
+    ``available_vertices`` is the set of vertex names in scope at the call site
+    (vertices created at this level or by ancestors). It bounds which renames
+    apply to ``transform`` rename maps.
+    """
+    s = normalize_actor_step(dict(step))
+    out = deepcopy(s)
+    t = out.get("type")
+
+    if t == "vertex":
+        v_name = out.get("vertex")
+        if isinstance(v_name, str) and v_name in renames and renames[v_name]:
+            per_vertex = renames[v_name]
+            new_from = _apply_vertex_field_rename_to_from_doc(
+                out.get("from") if isinstance(out.get("from"), dict) else None,
+                per_vertex,
+            )
+            if new_from:
+                out["from"] = new_from
+            keep_fields = out.get("keep_fields")
+            if isinstance(keep_fields, list):
+                out["keep_fields"] = [
+                    per_vertex.get(name, name) if isinstance(name, str) else name
+                    for name in keep_fields
+                ]
+
+    elif t == "transform":
+        in_scope_renames: dict[str, str] = {}
+        for v_name in available_vertices:
+            in_scope_renames.update(renames.get(v_name, {}))
+        if in_scope_renames:
+            current = out.get("rename")
+            if isinstance(current, dict) or current is None:
+                new_rename = _apply_vertex_field_rename_to_transform_rename(
+                    current, in_scope_renames
+                )
+                if new_rename:
+                    out["rename"] = new_rename
+
+    elif t == "descend":
+        pl = out.get("pipeline")
+        if isinstance(pl, list):
+            descend_level_vertices = _collect_level_vertices(pl)
+            nested_available = available_vertices | descend_level_vertices
+            out["pipeline"] = [
+                _rewrite_vertex_field_step(x, renames, nested_available)
+                for x in pl
+                if isinstance(x, dict)
+            ]
+
+    return out
+
+
+def rewrite_vertex_field_names_in_pipeline(
+    pipeline: list[dict[str, Any]],
+    renames: dict[str, dict[str, str]],
+    *,
+    available_vertices: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Rewrite vertex field names across a resource pipeline.
+
+    Walks the dict pipeline (no runtime tree mutation):
+
+    - ``vertex`` steps: ensure ``from:`` covers the rename. Existing
+      ``{old_field: doc_col}`` becomes ``{new_field: doc_col}``; missing entries
+      are injected as ``{new_field: old_field}`` so the doc can still address
+      the property by its original name.
+    - ``transform`` steps with ``rename``: rewrite values matching old field
+      names of in-scope vertices, and add ``{old_field: new_field}`` entries
+      that are not yet present.
+    - ``descend`` steps: recurse with an extended ``available_vertices`` set.
+
+    ``available_vertices`` is the set of vertex names visible from the parent
+    scope. Vertex names introduced at the current level are added automatically.
+    """
+    if not renames:
+        return deepcopy(pipeline)
+    parent_scope = set(available_vertices) if available_vertices else set()
+    level_vertices = _collect_level_vertices(pipeline)
+    scope = parent_scope | level_vertices
+    return [
+        _rewrite_vertex_field_step(step, renames, scope)
+        for step in pipeline
+        if isinstance(step, dict)
+    ]
+
+
 def pipeline_mentions_any_vertex(steps: list[dict[str, Any]], names: set[str]) -> bool:
     """Return True if any pipeline step references a vertex name in *names*."""
     if not names:

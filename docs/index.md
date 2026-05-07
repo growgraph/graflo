@@ -16,7 +16,7 @@ It is a **Python package** and **Graph Schema & Transformation Language (GSTL)**
 - **One pipeline, several graph databases** — The same manifest targets ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, or NebulaGraph; `DatabaseProfile` and DB-aware types absorb naming, defaults, and indexing differences.
 - **Explicit identities** — Vertex identity fields and indexes back upserts so reloads merge on keys instead of blindly duplicating nodes.
 - **Reusable ingestion** — `Resource` actor pipelines (including **vertex** / **vertex_router** / **edge** steps) bind to files, SQL, SPARQL/RDF, APIs, or in-memory batches via `Bindings` and the `DataSourceRegistry`. A single flat row can populate multiple same-type vertices in distinct named slots (`role`) and emit multiple edges in one `edge: links` step.
-- **Manifest-first sanitization** — `Sanitizer` normalizes schema identifiers (reserved words, TigerGraph relation/index constraints) and synchronizes related ingestion mappings via `sanitize_manifest(GraphManifest)`.
+- **Manifest-first sanitization** — `Sanitizer` (backed by `graflo.architecture.evolution` **`SanitizeOp`**) normalizes schema identifiers (reserved words, TigerGraph relation/index constraints) and synchronizes related ingestion mappings via `sanitize_manifest(GraphManifest)`. `GraphEngine.infer_manifest(...)` applies it automatically; lower-level `SQLInferenceManager` does not—sanitize the manifest yourself when assembling contracts outside the engine.
 
 ### What’s in the manifest
 
@@ -112,8 +112,8 @@ The `DataSourceRegistry` manages `AbstractDataSource` adapters, each carrying a 
 ### GraphEngine
 
 `GraphEngine` orchestrates end-to-end operations: schema/manifest inference, schema definition in the target database, connector creation from data sources, and data ingestion.
-For PostgreSQL workflows, `infer_manifest(...)` now returns a full manifest contract
-(`schema` + `ingestion_model` + `bindings`) by default.
+For PostgreSQL workflows, `infer_manifest(...)` returns a full manifest contract
+(`schema` + `ingestion_model` + `bindings`) and runs target-`DBType` **`Sanitizer`** on that manifest before returning.
 
 ## More capabilities
 
