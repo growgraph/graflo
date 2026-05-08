@@ -281,6 +281,18 @@ def _rename_fields_in_schema(
         per_vertex = renames.get(vertex.name)
         if not per_vertex:
             continue
+        # Update identity first so Vertex.validate_assignment doesn't re-add
+        # stale pre-rename identity names into properties as type=None ghosts.
+        renamed_identity: list[str] = []
+        seen_identity: set[str] = set()
+        for name in vertex.identity:
+            new_name = per_vertex.get(name, name)
+            if new_name in seen_identity:
+                continue
+            seen_identity.add(new_name)
+            renamed_identity.append(new_name)
+        vertex.identity = renamed_identity
+
         new_properties: list[Field] = []
         seen_names: set[str] = set()
         for field in vertex.properties:
@@ -293,7 +305,6 @@ def _rename_fields_in_schema(
             else:
                 new_properties.append(field.model_copy(update={"name": new_name}))
         vertex.properties = new_properties
-        vertex.identity = [per_vertex.get(name, name) for name in vertex.identity]
 
 
 def _rebuild_ingestion_with_pipeline_rewrite(

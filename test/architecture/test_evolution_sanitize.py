@@ -141,6 +141,45 @@ def test_rename_vertex_fields_validates_unknown_vertex():
         assert "missing" in str(exc)
 
 
+def test_rename_vertex_fields_does_not_add_old_identity_as_type_none():
+    """Renaming an identity field should not reintroduce the old name as a ghost."""
+    manifest = _build_manifest(
+        user_properties=[Field(name="id", type=FieldType.STRING), Field(name="name")],
+        user_identity=["id"],
+    )
+
+    apply_rename_vertex_fields(
+        manifest,
+        RenameVertexFieldsOp(renames={"users": {"id": "user_id"}}),
+    )
+
+    schema = manifest.require_schema()
+    users = schema.core_schema.vertex_config["users"]
+    by_name = {field.name: field for field in users.properties}
+
+    assert users.identity == ["user_id"]
+    assert "id" not in by_name
+    assert by_name["user_id"].type == FieldType.STRING
+
+
+def test_rename_vertex_fields_dedupes_identity_when_names_collide():
+    """Identity rewrite should not keep duplicate names after a collision."""
+    manifest = _build_manifest(
+        user_properties=[Field(name="a"), Field(name="b")],
+        user_identity=["a", "b"],
+    )
+
+    apply_rename_vertex_fields(
+        manifest,
+        RenameVertexFieldsOp(renames={"users": {"a": "b"}}),
+    )
+
+    schema = manifest.require_schema()
+    users = schema.core_schema.vertex_config["users"]
+    assert users.identity == ["b"]
+    assert [field.name for field in users.properties].count("b") == 1
+
+
 # -- SanitizeOp end-to-end ---------------------------------------------------
 
 
