@@ -17,7 +17,6 @@ from collections import Counter
 
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.edge import Edge
-from graflo.db.util import sanitize_attribute_name
 from graflo.onto import DBType
 
 logger = logging.getLogger(__name__)
@@ -33,6 +32,8 @@ def compute_vertex_field_renames(
     ``schema``. Vertices/fields whose names are not reserved are absent from
     the result.
     """
+    from graflo.db.util import sanitize_attribute_name
+
     renames: dict[str, dict[str, str]] = {}
     if not reserved_words:
         return renames

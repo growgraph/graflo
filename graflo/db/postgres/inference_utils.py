@@ -4,9 +4,12 @@ This module provides utility functions for inferring relationships and patterns
 from PostgreSQL table and column names using heuristics and fuzzy matching.
 """
 
-from typing import Any
+from __future__ import annotations
 
-from graflo.hq.fuzzy_matcher import FuzzyMatcher
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from graflo.hq.fuzzy_matcher import FuzzyMatcher
 
 
 def fuzzy_match_fragment(
@@ -24,6 +27,8 @@ def fuzzy_match_fragment(
     Returns:
         Best matching vertex name or None if no match above threshold
     """
+    from graflo.hq.fuzzy_matcher import FuzzyMatcher
+
     matcher = FuzzyMatcher(vertex_names, threshold)
     match, _ = matcher.match(fragment)
     return match
@@ -412,6 +417,8 @@ def infer_edge_vertices_from_table_name(
 
     # Use matcher if provided, otherwise create a temporary one
     if matcher is None:
+        from graflo.hq.fuzzy_matcher import FuzzyMatcher
+
         matcher = FuzzyMatcher(vertex_table_names, threshold=0.6, enable_cache=True)
 
     # Step 1: Detect separator and split table name
@@ -572,6 +579,8 @@ def infer_vertex_from_column_name(
 
     # Use matcher if provided, otherwise create a temporary one
     if matcher is None:
+        from graflo.hq.fuzzy_matcher import FuzzyMatcher
+
         matcher = FuzzyMatcher(vertex_table_names, threshold=0.6, enable_cache=True)
 
     if not column_name:

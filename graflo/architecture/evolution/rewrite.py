@@ -5,7 +5,6 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
-from graflo.architecture.graph_types import Weight
 from graflo.architecture.pipeline.runtime.actor.config.normalize import (
     normalize_actor_step,
 )
@@ -20,6 +19,8 @@ def rewrite_vertex_weights_vertex_field_names(
     Each weight's ``name`` selects the logical vertex whose ``renames_by_vertex[name]``
     map applies (old field name -> new field name).
     """
+    from graflo.architecture.graph_types import Weight
+
     if not weights:
         return []
     out: list[dict[str, Any]] = []

@@ -13,8 +13,9 @@ from graflo.architecture.contract.declarations.ingestion_model import IngestionM
 from graflo.architecture.schema import Schema
 from graflo.onto import DBType
 from graflo.architecture.onto_sql import SchemaIntrospectionResult
-from graflo.db import ConnectionManager, PostgresConnection
-from graflo.db import DBConfig, PostgresConfig, SparqlEndpointConfig
+from graflo.db.connection import DBConfig, PostgresConfig, SparqlEndpointConfig
+from graflo.db.manager import ConnectionManager
+from graflo.db.postgres.conn import PostgresConnection
 from graflo.hq.caster import Caster, IngestionParams
 from graflo.hq.connection_provider import (
     ConnectionProvider,

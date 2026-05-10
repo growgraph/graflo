@@ -12,7 +12,6 @@ from graflo.architecture.schema import Schema
 from graflo.architecture.schema.core import CoreSchema
 from graflo.architecture.schema.edge import EdgeConfig
 from graflo.architecture.schema.vertex import Field, Vertex, VertexConfig
-from graflo.db.util import load_reserved_words
 
 from .db_profile import (
     apply_field_rename_to_db_profile,
@@ -393,6 +392,8 @@ def apply_sanitize(manifest: GraphManifest, op: SanitizeOp) -> None:
     3. TigerGraph identity normalization (cross-relation), propagated to
        ingestion via the same field-rename code path.
     """
+    from graflo.db.util import load_reserved_words
+
     if manifest.graph_schema is None:
         return
 
@@ -441,6 +442,21 @@ def _dispatch_op(manifest: GraphManifest, op: Any) -> None:
         apply_sanitize(manifest, op)
     else:
         raise TypeError(f"Unsupported evolution op: {type(op)!r}")
+
+
+def apply_manifest_ops_inplace(
+    manifest: GraphManifest,
+    ops: Sequence[
+        RemoveVerticesOp | MergeVerticesOp | RenameVertexFieldsOp | SanitizeOp
+    ],
+) -> None:
+    """Apply each evolution op to *manifest* in place.
+
+    Does not copy the manifest, bump schema version, or call :meth:`GraphManifest.finish_init`.
+    Callers that need re-validation after mutation should invoke ``finish_init`` themselves.
+    """
+    for op in ops:
+        _dispatch_op(manifest, op)
 
 
 def apply_evolution(

@@ -16,7 +16,7 @@ from graflo.architecture.contract.bindings import (
     SparqlConnector,
     TableConnector,
 )
-from graflo.db import PostgresConfig, SparqlEndpointConfig
+from graflo.db.connection import PostgresConfig, SparqlEndpointConfig
 
 
 class SparqlAuth(BaseModel):

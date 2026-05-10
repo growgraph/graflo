@@ -23,6 +23,8 @@ Example:
     >>> conn.upsert_docs_batch(docs, "User", match_keys=["email"])
 """
 
+from __future__ import annotations
+
 import contextlib
 import hashlib
 import json
@@ -33,11 +35,9 @@ import uuid
 from collections import defaultdict
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from graflo.architecture.contract.bindings import Bindings
-from graflo.hq.connection_provider import ConnectionProvider
-
 
 import requests
 from requests import exceptions as requests_exceptions
@@ -66,12 +66,17 @@ from graflo.db.tigergraph.onto import (
 )
 from graflo.db.util import json_serializer
 from graflo.filter.onto import FilterExpression
-from graflo.hq.connection_provider import S3GeneralizedConnConfig
 from graflo.object_storage import upload_staged_csvs
 from graflo.onto import AggregationType
 from graflo.onto import DBType
 from graflo.util.transform import pick_unique_dict
 from urllib.parse import quote
+
+if TYPE_CHECKING:
+    from graflo.hq.connection_provider import (
+        ConnectionProvider,
+        S3GeneralizedConnConfig,
+    )
 
 # begin / append / finalize use different :class:`ConnectionManager` contexts (new
 # :class:`TigerGraphConnection` each time); bulk state must not be per-instance.
@@ -1980,6 +1985,8 @@ class TigerGraphConnection(Connection):
         bucket = bulk_cfg.s3_bucket
         tigergraph_s3_loader: S3GeneralizedConnConfig | None = None
         if proxy and connection_provider is not None:
+            from graflo.hq.connection_provider import S3GeneralizedConnConfig
+
             gen = connection_provider.get_generalized_config_by_proxy(proxy)
             if isinstance(gen, S3GeneralizedConnConfig):
                 tigergraph_s3_loader = gen
