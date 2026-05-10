@@ -10,11 +10,11 @@ import asyncio
 from typing import TYPE_CHECKING
 
 from graflo.architecture.schema import Schema
-from graflo.db import ConnectionManager, DBConfig
 from graflo.db.bulk_exc import UnsupportedBulkLoad
 
 if TYPE_CHECKING:
     from graflo.architecture.contract.bindings import Bindings
+    from graflo.db.connection import DBConfig
     from graflo.hq.connection_provider import ConnectionProvider
 
 
@@ -33,6 +33,8 @@ class BulkSessionCoordinator:
                 return self._session_id
 
             def _begin() -> str | None:
+                from graflo.db.manager import ConnectionManager
+
                 with ConnectionManager(connection_config=conn_conf) as db:
                     bulk_cfg = getattr(conn_conf, "bulk_load", None)
                     if bulk_cfg is None or not getattr(bulk_cfg, "enabled", False):
@@ -59,6 +61,8 @@ class BulkSessionCoordinator:
             return
 
         def _finalize() -> None:
+            from graflo.db.manager import ConnectionManager
+
             with ConnectionManager(connection_config=conn_conf) as db:
                 db.bulk_load_finalize(
                     session_id,

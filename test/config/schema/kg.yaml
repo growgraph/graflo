@@ -133,12 +133,12 @@ ingestion_model:
         infer_edge_except:
         -   source: entity
             target: entity
-        apply:
+        pipeline:
         -   key: publication
-            apply:
+            pipeline:
             -   vertex: publication
         -   key: top_level_mention
-            apply:
+            pipeline:
             -   vertex: mention
             -   transform:
                     rename:
@@ -150,30 +150,30 @@ ingestion_model:
             target: entity
             match: map_mention_entity
         -   key: map_mention_entity
-            apply:
+            pipeline:
             -   key: entity
-                apply:
+                pipeline:
                 -   vertex: entity
                 -   transform:
                         rename:
                             hash: _key
             -   key: mention
-                apply:
+                pipeline:
                 -   vertex: mention
                 -   transform:
                         rename:
                             hash: _key
         -   key: triples
-            apply:
+            pipeline:
             -   key: triple_index
-                apply:
+                pipeline:
                 -   vertex: mention
                 -   transform:
                         rename:
                             hash: _key
             -   key: triple
-                apply:
-                -   apply:
+                pipeline:
+                -   pipeline:
                     -   vertex: mention
                     -   transform:
                             rename:
@@ -186,13 +186,13 @@ ingestion_model:
             properties:
             -   _role
     -   name: communities
-        apply:
+        pipeline:
         -   source: entity
             target: community
         -   key: entity
-            apply:
+            pipeline:
             -   vertex: entity
         -   key: community
-            apply:
+            pipeline:
             -   vertex: community
 bindings: {}

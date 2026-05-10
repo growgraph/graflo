@@ -49,8 +49,10 @@ class RenameVertexFieldsOp(ConfigBaseModel):
     Schema-side: rewrites ``Field.name``, ``vertex.identity``, and any DB profile
     structures that reference field names (``vertex_indexes``, ``edge_specs.indexes``).
     Ingestion-side: rewrites ``VertexActor.from`` so the doc still uses the OLD field
-    name (injecting ``{new_field: old_field}`` when missing), and rewrites
-    ``TransformActor.rename`` values that target a renamed vertex field.
+    name (injecting ``{new_field: old_field}`` when missing), rewrites
+    ``TransformActor.rename`` values that target a renamed vertex field, and updates
+    ``Resource.extra_weights`` / ``edge.vertex_weights`` (:class:`~graflo.architecture.graph_types.Weight`
+    ``fields``, ``map``, and ``filter`` keys that address vertex observation columns).
     """
 
     op: Literal["rename_vertex_fields"] = "rename_vertex_fields"

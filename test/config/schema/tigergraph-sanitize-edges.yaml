@@ -43,19 +43,19 @@ schema:
 ingestion_model:
     resources:
     -   name: parcels
-        apply:
+        pipeline:
         -   vertex: parcel
         -   transform:
                 rename:
                     parcel_id: id
     -   name: boxes
-        apply:
+        pipeline:
         -   vertex: box
         -   transform:
                 rename:
                     box_id: id
     -   name: containers
-        apply:
+        pipeline:
         -   vertex: container
         -   transform:
                 rename:

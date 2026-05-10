@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.25]
+
+### Fixed
+
+- **Import cycles** between `graflo.architecture.evolution`, `graflo.hq`, and `graflo.db`
+  (including “partially initialized module” errors when importing `rewrite` or PostgreSQL
+  paths during package startup).
+
+### Changed
+
+- **`graflo` package**: `GraphEngine`, `Caster`, `IngestionParams`, and other `graflo.hq`
+  exports resolve lazily via `__getattr__`; `ConnectionManager` and `ConnectionType` are
+  also lazy so `import graflo` does not eagerly load orchestration or the full DB stack.
+- **`graflo.architecture.evolution`**: op models (`SanitizeOp`, …) load at import time;
+  `apply_evolution` and other `apply_*` functions load lazily on first attribute access.
+- **`Sanitizer`**: applies ops via public `apply_manifest_ops_inplace` instead of private
+  `_dispatch_op`.
+- **`rewrite_vertex_weights_vertex_field_names`**: defers `Weight` import to avoid pulling
+  heavy modules during `rewrite` initialization.
+- **Evolution / DB utilities**: `load_reserved_words` and `sanitize_attribute_name` are
+  imported lazily inside the functions that need them (avoids `graflo.db` ↔ `graflo.hq`
+  recursion during evolution apply).
+- **DB ↔ HQ boundaries**: TigerGraph `bulk_load_finalize` lazily imports S3 connection
+  types; PostgreSQL inference/mapping lazily imports `FuzzyMatcher`; `BulkSessionCoordinator`
+  lazily imports `ConnectionManager`; several `hq` modules import config and Postgres types
+  from `graflo.db.connection` / `graflo.db.manager` / `graflo.db.postgres.conn` instead of
+  `from graflo.db import …`.
+
 ## [1.7.24] - 2026-05-07
 
 ### Added

@@ -16,8 +16,8 @@ from graflo.architecture.schema import EdgeRuntime, SchemaDBAware
 from graflo.architecture.contract.declarations.ingestion_model import IngestionModel
 from graflo.architecture.graph_types import GraphContainer
 from graflo.architecture.schema import Schema
-from graflo.db import ConnectionManager
-from graflo.db import DBConfig
+from graflo.db.connection import DBConfig
+from graflo.db.manager import ConnectionManager
 from graflo.onto import DBType
 
 logger = logging.getLogger(__name__)

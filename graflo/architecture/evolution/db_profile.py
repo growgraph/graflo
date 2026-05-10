@@ -12,7 +12,6 @@ from graflo.architecture.database_features import (
 )
 from graflo.architecture.graph_types import EdgeId, Index
 from graflo.architecture.schema import Schema
-from graflo.db.util import sanitize_attribute_name
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +153,8 @@ def apply_storage_name_sanitization_to_db_profile(
 
     Mutates ``profile`` in place.
     """
+    from graflo.db.util import sanitize_attribute_name
+
     if not reserved_words:
         return
 

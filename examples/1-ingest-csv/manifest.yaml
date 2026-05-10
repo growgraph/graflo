@@ -24,10 +24,10 @@ schema:
 ingestion_model:
     resources:
     -   name: people
-        apply:
+        pipeline:
         -   vertex: person
     -   name: departments
-        apply:
+        pipeline:
         -   vertex: person
             from:
                 id: person_id

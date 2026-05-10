@@ -13,7 +13,7 @@ from graflo.architecture import Resource
 from graflo.architecture.contract.declarations.ingestion_model import IngestionModel
 from graflo.architecture.onto_sql import SchemaIntrospectionResult
 from graflo.architecture.schema import Schema
-from graflo.db import PostgresConnection
+from graflo.db.postgres.conn import PostgresConnection
 from graflo.db.postgres import PostgresResourceMapper, PostgresSchemaInferencer
 from graflo.onto import DBType
 

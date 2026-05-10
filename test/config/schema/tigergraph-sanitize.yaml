@@ -38,6 +38,6 @@ schema:
 ingestion_model:
     resources:
     -   name: package
-        apply:
+        pipeline:
         -   vertex: package
 bindings: {}

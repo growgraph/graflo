@@ -35,7 +35,7 @@ from graflo.architecture.evolution import (
     ManifestOp,
     SanitizeOp,
 )
-from graflo.architecture.evolution.apply import _dispatch_op
+from graflo.architecture.evolution.apply import apply_manifest_ops_inplace
 from graflo.onto import DBType
 
 logger = logging.getLogger(__name__)
@@ -81,8 +81,7 @@ class Sanitizer:
         if manifest.graph_schema is None:
             return manifest
 
-        for op in self.build_ops(manifest):
-            _dispatch_op(manifest, op)
+        apply_manifest_ops_inplace(manifest, self.build_ops(manifest))
 
         manifest.finish_init()
         return manifest

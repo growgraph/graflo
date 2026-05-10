@@ -12,7 +12,6 @@ from graflo.architecture.schema import Schema
 from graflo.architecture.schema.core import CoreSchema
 from graflo.architecture.schema.edge import EdgeConfig
 from graflo.architecture.schema.vertex import Field, Vertex, VertexConfig
-from graflo.db.util import load_reserved_words
 
 from .db_profile import (
     apply_field_rename_to_db_profile,
@@ -33,6 +32,7 @@ from .ops import (
 )
 from .rewrite import (
     pipeline_mentions_any_vertex,
+    rewrite_extra_weights_vertex_field_names,
     rewrite_vertex_field_names_in_pipeline,
     rewrite_vertex_names_in_pipeline,
     rewrite_vertex_names_in_value,
@@ -281,6 +281,18 @@ def _rename_fields_in_schema(
         per_vertex = renames.get(vertex.name)
         if not per_vertex:
             continue
+        # Update identity first so Vertex.validate_assignment doesn't re-add
+        # stale pre-rename identity names into properties as type=None ghosts.
+        renamed_identity: list[str] = []
+        seen_identity: set[str] = set()
+        for name in vertex.identity:
+            new_name = per_vertex.get(name, name)
+            if new_name in seen_identity:
+                continue
+            seen_identity.add(new_name)
+            renamed_identity.append(new_name)
+        vertex.identity = renamed_identity
+
         new_properties: list[Field] = []
         seen_names: set[str] = set()
         for field in vertex.properties:
@@ -293,24 +305,36 @@ def _rename_fields_in_schema(
             else:
                 new_properties.append(field.model_copy(update={"name": new_name}))
         vertex.properties = new_properties
-        vertex.identity = [per_vertex.get(name, name) for name in vertex.identity]
 
 
 def _rebuild_ingestion_with_pipeline_rewrite(
     manifest: GraphManifest,
     rewriter,  # callable: pipeline -> new pipeline
+    *,
+    vertex_field_renames: dict[str, dict[str, str]] | None = None,
 ) -> None:
     """Rebuild ``manifest.ingestion_model`` after applying *rewriter* to each
     resource's pipeline.
+
+    When *vertex_field_renames* is non-empty, ``Resource.extra_weights`` vertex
+    weight rules are updated to reference renamed vertex fields (``fields``, and
+    ``map`` / ``filter`` keys that address vertex observation columns).
     """
     if manifest.ingestion_model is None:
         return
     from graflo.architecture.contract.declarations.resource import Resource
 
+    renames_ctx = vertex_field_renames if vertex_field_renames else {}
+
     new_resources: list[Resource] = []
     for resource in manifest.ingestion_model.resources:
         d = resource.to_dict(skip_defaults=False)
         d["pipeline"] = rewriter(resource.pipeline)
+        ew = d.get("extra_weights")
+        if isinstance(ew, list) and renames_ctx:
+            d["extra_weights"] = rewrite_extra_weights_vertex_field_names(
+                ew, renames_ctx
+            )
         new_resources.append(Resource.model_validate(d))
     manifest.ingestion_model.resources = new_resources
     manifest.ingestion_model = IngestionModel.model_validate(
@@ -330,7 +354,9 @@ def apply_rename_vertex_fields(
       edge_specs.indexes, default_property_values).
     - Rewrites resource pipelines so that ``VertexActor.from`` covers the
       rename and ``TransformActor.rename`` produces the renamed property
-      (see :func:`rewrite_vertex_field_names_in_pipeline` for details).
+      (see :func:`rewrite_vertex_field_names_in_pipeline`).
+    - Rewrites ``Resource.extra_weights`` / ``vertex_weights`` (and any
+      ``vertex_weights`` embedded in ``edge`` pipeline steps).
     """
     if not op.renames:
         return
@@ -352,6 +378,7 @@ def apply_rename_vertex_fields(
     _rebuild_ingestion_with_pipeline_rewrite(
         manifest,
         lambda pipeline: rewrite_vertex_field_names_in_pipeline(pipeline, op.renames),
+        vertex_field_renames=op.renames,
     )
 
 
@@ -365,6 +392,8 @@ def apply_sanitize(manifest: GraphManifest, op: SanitizeOp) -> None:
     3. TigerGraph identity normalization (cross-relation), propagated to
        ingestion via the same field-rename code path.
     """
+    from graflo.db.util import load_reserved_words
+
     if manifest.graph_schema is None:
         return
 
@@ -397,6 +426,7 @@ def apply_sanitize(manifest: GraphManifest, op: SanitizeOp) -> None:
             lambda pipeline: rewrite_vertex_field_names_in_pipeline(
                 pipeline, identity_renames
             ),
+            vertex_field_renames=identity_renames,
         )
 
 
@@ -412,6 +442,21 @@ def _dispatch_op(manifest: GraphManifest, op: Any) -> None:
         apply_sanitize(manifest, op)
     else:
         raise TypeError(f"Unsupported evolution op: {type(op)!r}")
+
+
+def apply_manifest_ops_inplace(
+    manifest: GraphManifest,
+    ops: Sequence[
+        RemoveVerticesOp | MergeVerticesOp | RenameVertexFieldsOp | SanitizeOp
+    ],
+) -> None:
+    """Apply each evolution op to *manifest* in place.
+
+    Does not copy the manifest, bump schema version, or call :meth:`GraphManifest.finish_init`.
+    Callers that need re-validation after mutation should invoke ``finish_init`` themselves.
+    """
+    for op in ops:
+        _dispatch_op(manifest, op)
 
 
 def apply_evolution(

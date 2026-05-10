@@ -8,18 +8,22 @@ target-DB-specific renames are applied a posteriori via
 :class:`graflo.hq.sanitizer.Sanitizer`.
 """
 
+from __future__ import annotations
+
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from graflo.architecture.contract.declarations.resource import Resource
 from graflo.architecture.schema.vertex import VertexConfig
 from .conn import EdgeTableInfo, SchemaIntrospectionResult
-from graflo.hq.fuzzy_matcher import FuzzyMatcher
 from .inference_utils import (
     detect_separator,
     split_by_separator,
 )
 from ...architecture import EdgeConfig
+
+if TYPE_CHECKING:
+    from graflo.hq.fuzzy_matcher import FuzzyMatcher
 
 logger = logging.getLogger(__name__)
 
@@ -251,6 +255,8 @@ class PostgresResourceMapper:
         threshold = (
             fuzzy_threshold if fuzzy_threshold is not None else self.fuzzy_threshold
         )
+        from graflo.hq.fuzzy_matcher import FuzzyMatcher
+
         matcher = FuzzyMatcher(vertex_names, threshold, enable_cache=True)
 
         vertex_tables = introspection_result.vertex_tables

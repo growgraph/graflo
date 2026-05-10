@@ -40,7 +40,7 @@ from graflo.data_source import (
     DataSourceFactory,
     DataSourceRegistry,
 )
-from graflo.db import DBConfig
+from graflo.db.connection import DBConfig
 from graflo.hq.bulk_session import BulkSessionCoordinator
 from graflo.hq.db_writer import DBWriter
 from graflo.hq.registry_builder import RegistryBuilder

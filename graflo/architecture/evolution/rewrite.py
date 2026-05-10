@@ -10,6 +10,69 @@ from graflo.architecture.pipeline.runtime.actor.config.normalize import (
 )
 
 
+def rewrite_vertex_weights_vertex_field_names(
+    weights: list[Any],
+    renames_by_vertex: dict[str, dict[str, str]],
+) -> list[dict[str, Any]]:
+    """Rewrite :class:`~graflo.architecture.graph_types.Weight` field/map/filter keys.
+
+    Each weight's ``name`` selects the logical vertex whose ``renames_by_vertex[name]``
+    map applies (old field name -> new field name).
+    """
+    from graflo.architecture.graph_types import Weight
+
+    if not weights:
+        return []
+    out: list[dict[str, Any]] = []
+    for raw in weights:
+        w = Weight.model_validate(raw)
+        per = {}
+        vn = w.name
+        if isinstance(vn, str) and vn in renames_by_vertex:
+            per = renames_by_vertex[vn]
+        if per:
+            new_fields = [
+                per.get(fname, fname) if isinstance(fname, str) else fname
+                for fname in w.fields
+            ]
+
+            def _remap_obs_key(obs_key: Any) -> Any:
+                if isinstance(obs_key, str):
+                    return per.get(obs_key, obs_key)
+                return obs_key
+
+            new_map = {_remap_obs_key(k): v for k, v in dict(w.map).items()}
+            new_filter = {_remap_obs_key(k): v for k, v in dict(w.filter).items()}
+            w = w.model_copy(
+                update={"fields": new_fields, "map": new_map, "filter": new_filter}
+            )
+        out.append(w.to_dict(skip_defaults=False))
+    return out
+
+
+def rewrite_extra_weights_vertex_field_names(
+    entries: list[Any],
+    renames_by_vertex: dict[str, dict[str, str]],
+) -> list[dict[str, Any]]:
+    """Rewrite ``extra_weights[*].vertex_weights`` for vertex field renames."""
+    if not entries:
+        return []
+    result: list[dict[str, Any]] = []
+    for entry in entries:
+        d = (
+            dict(entry)
+            if isinstance(entry, dict)
+            else entry.to_dict(skip_defaults=False)
+        )
+        vw = d.get("vertex_weights")
+        if isinstance(vw, list) and renames_by_vertex:
+            d["vertex_weights"] = rewrite_vertex_weights_vertex_field_names(
+                vw, renames_by_vertex
+            )
+        result.append(d)
+    return result
+
+
 def _map_name(name: str | None, mapping: dict[str, str]) -> str | None:
     if name is None:
         return None
@@ -154,11 +217,10 @@ def _apply_vertex_field_rename_to_transform_rename(
 
     ``rename`` is ``{input_key: output_key}`` (doc-side -> vertex-side).
 
-    - For every entry whose value matches an old field name in scope, rewrite
-      the value to the corresponding new field name.
-    - For renames whose ``new_field`` is not yet a value in the map, add a
-      ``{old_field: new_field}`` entry so the transform produces the renamed
-      property.
+    Rewrites existing entry *values* that match old vertex field names in scope.
+    Injection of entirely new mappings is delegated to ``vertex`` ``from:`` /
+    `_apply_vertex_field_rename_to_from_doc` so pipelines without a rename step
+    still map renamed fields from raw doc columns correctly.
     """
     out: dict[str, str] = {}
     if isinstance(rename_map, dict):
@@ -167,12 +229,6 @@ def _apply_vertex_field_rename_to_transform_rename(
                 continue
             mapped_v = in_scope_renames.get(v, v) if isinstance(v, str) else v
             out[k] = mapped_v if isinstance(mapped_v, str) else str(mapped_v)
-    existing_values = set(out.values())
-    for old_field, new_field in in_scope_renames.items():
-        if new_field in existing_values:
-            continue
-        out[old_field] = new_field
-        existing_values.add(new_field)
     return out
 
 
@@ -245,12 +301,20 @@ def _rewrite_vertex_field_step(
             in_scope_renames.update(renames.get(v_name, {}))
         if in_scope_renames:
             current = out.get("rename")
-            if isinstance(current, dict) or current is None:
+            # Call-mode transforms omit ``rename``. Never synthesize rename.
+            if isinstance(current, dict):
                 new_rename = _apply_vertex_field_rename_to_transform_rename(
                     current, in_scope_renames
                 )
                 if new_rename:
                     out["rename"] = new_rename
+
+    elif t == "edge":
+        vw = out.get("vertex_weights")
+        if isinstance(vw, list):
+            out["vertex_weights"] = rewrite_vertex_weights_vertex_field_names(
+                vw, renames
+            )
 
     elif t == "descend":
         pl = out.get("pipeline")
@@ -280,9 +344,10 @@ def rewrite_vertex_field_names_in_pipeline(
       ``{old_field: doc_col}`` becomes ``{new_field: doc_col}``; missing entries
       are injected as ``{new_field: old_field}`` so the doc can still address
       the property by its original name.
-    - ``transform`` steps with ``rename``: rewrite values matching old field
-      names of in-scope vertices, and add ``{old_field: new_field}`` entries
-      that are not yet present.
+    - ``transform`` steps with ``rename``: rewrite values that pointed at renamed
+      vertex fields. ``call`` steps are unchanged.
+    - ``edge`` steps: rewrite ``vertex_weights`` field/map/filter keys per
+      ``Weight.name``.
     - ``descend`` steps: recurse with an extended ``available_vertices`` set.
 
     ``available_vertices`` is the set of vertex names visible from the parent
