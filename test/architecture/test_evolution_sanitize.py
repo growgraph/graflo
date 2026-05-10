@@ -25,6 +25,7 @@ def _build_manifest(
     pipeline_b: list[dict] | None = None,
     user_properties: list[Field] | None = None,
     user_identity: list[str] | None = None,
+    extra_weights_users: list[dict] | None = None,
 ) -> GraphManifest:
     meta = GraphMetadata(name="rename_fields", version="1.0.0")
     user_props = user_properties or [
@@ -43,15 +44,18 @@ def _build_manifest(
     ec = EdgeConfig(edges=[Edge(source="users", target="orders", relation=None)])
     core = CoreSchema(vertex_config=vc, edge_config=ec)
     schema = Schema(metadata=meta, core_schema=core)
+    users_resource: dict = {
+        "name": "users",
+        "pipeline": pipeline_a or [{"vertex": "users"}],
+    }
+    if extra_weights_users is not None:
+        users_resource["extra_weights"] = extra_weights_users
     ingestion = {
         "resources": [
-            {
-                "name": "users",
-                "apply": pipeline_a or [{"vertex": "users"}],
-            },
+            users_resource,
             {
                 "name": "orders",
-                "apply": pipeline_b or [{"vertex": "orders"}],
+                "pipeline": pipeline_b or [{"vertex": "orders"}],
             },
         ],
         "transforms": [],
@@ -180,6 +184,140 @@ def test_rename_vertex_fields_dedupes_identity_when_names_collide():
     assert [field.name for field in users.properties].count("b") == 1
 
 
+def test_rename_vertex_fields_preserves_call_transform_without_rename():
+    """``transform.call`` must not gain a synthesized ``rename`` map."""
+    manifest = _build_manifest(
+        pipeline_a=[
+            {
+                "type": "transform",
+                "call": {
+                    "module": "builtins",
+                    "foo": "str",
+                    "input": ["id"],
+                    "output": ["aux"],
+                },
+            },
+            {"type": "vertex", "vertex": "users"},
+        ],
+    )
+
+    apply_rename_vertex_fields(
+        manifest,
+        RenameVertexFieldsOp(renames={"users": {"user-name": "user_name"}}),
+    )
+
+    pipeline = manifest.require_ingestion_model().resources[0].pipeline
+    tf = pipeline[0]
+    assert tf.get("type") == "transform"
+    assert "rename" not in tf
+    assert "call" in tf
+
+
+def test_rename_vertex_fields_no_spurious_rename_map_entries():
+    """Do not inject rename entries for unrelated in-scope vertex renames."""
+    manifest = _build_manifest(
+        pipeline_a=[
+            {"type": "vertex", "vertex": "users"},
+            {"type": "transform", "rename": {"other_col": "other_field"}},
+        ],
+    )
+
+    apply_rename_vertex_fields(
+        manifest,
+        RenameVertexFieldsOp(renames={"users": {"user-name": "user_name"}}),
+    )
+
+    pipeline = manifest.require_ingestion_model().resources[0].pipeline
+    assert pipeline[1]["rename"] == {"other_col": "other_field"}
+
+
+def test_rename_vertex_fields_nested_rename_not_augmented_by_parent_scope():
+    """Nested pipelines must not inherit spurious rename keys from ancestor scope."""
+    manifest = _build_manifest(
+        pipeline_a=[
+            {"type": "vertex", "vertex": "users"},
+            {
+                "type": "descend",
+                "key": "nested",
+                "pipeline": [
+                    {"type": "vertex", "vertex": "orders"},
+                    {"type": "transform", "rename": {"amt": "amount"}},
+                ],
+            },
+        ],
+    )
+
+    apply_rename_vertex_fields(
+        manifest,
+        RenameVertexFieldsOp(renames={"users": {"user-name": "user_name"}}),
+    )
+
+    pipeline = manifest.require_ingestion_model().resources[0].pipeline
+    descend = pipeline[1]
+    assert descend["type"] == "descend"
+    inner = descend["pipeline"]
+    assert inner[1]["rename"] == {"amt": "amount"}
+
+
+def test_rename_vertex_fields_updates_extra_weights_vertex_weights():
+    manifest = _build_manifest(
+        extra_weights_users=[
+            {
+                "edge": {"source": "users", "target": "orders"},
+                "vertex_weights": [
+                    {
+                        "name": "users",
+                        "fields": ["user-name"],
+                        "filter": {"user-name": "keep"},
+                        "map": {"user-name": "edge_col"},
+                    }
+                ],
+            }
+        ]
+    )
+
+    apply_rename_vertex_fields(
+        manifest,
+        RenameVertexFieldsOp(renames={"users": {"user-name": "user_name"}}),
+    )
+
+    w = (
+        manifest.require_ingestion_model()
+        .resources[0]
+        .extra_weights[0]
+        .vertex_weights[0]
+    )
+    assert w.fields == ["user_name"]
+    assert dict(w.filter) == {"user_name": "keep"}
+    assert dict(w.map) == {"user_name": "edge_col"}
+
+
+def test_rename_vertex_fields_updates_edge_actor_vertex_weights_in_pipeline():
+    manifest = _build_manifest(
+        pipeline_a=[
+            {"type": "vertex", "vertex": "users"},
+            {
+                "type": "edge",
+                "from": "users",
+                "to": "orders",
+                "vertex_weights": [
+                    {"name": "users", "fields": ["user-name"]},
+                ],
+            },
+        ],
+    )
+
+    apply_rename_vertex_fields(
+        manifest,
+        RenameVertexFieldsOp(renames={"users": {"user-name": "user_name"}}),
+    )
+
+    pipeline = manifest.require_ingestion_model().resources[0].pipeline
+    edge_step = pipeline[1]
+    vw = edge_step["vertex_weights"][0]
+    assert vw["fields"] == ["user_name"]
+
+
 # -- SanitizeOp end-to-end ---------------------------------------------------
 
 
@@ -213,6 +351,36 @@ def test_apply_sanitize_with_explicit_reserved_words_renames_field():
     pipeline = manifest.require_ingestion_model().resources[0].pipeline
     step = _vertex_actor_step(pipeline)
     assert step["from"] == {"package_attr": "package"}
+
+
+def test_apply_sanitize_preserves_call_transform_without_rename():
+    """Reserved-word field rename must not add ``rename`` to ``transform.call`` steps."""
+    manifest = _build_manifest(
+        user_properties=[Field(name="id"), Field(name="package")],
+        pipeline_a=[
+            {
+                "type": "transform",
+                "call": {
+                    "module": "builtins",
+                    "foo": "str",
+                    "input": ["id"],
+                    "output": ["sink"],
+                },
+            },
+            {"type": "vertex", "vertex": "users"},
+        ],
+    )
+
+    apply_sanitize(
+        manifest,
+        SanitizeOp(db_flavor=DBType.ARANGO, reserved_words=["package"]),
+    )
+
+    pipeline = manifest.require_ingestion_model().resources[0].pipeline
+    tf = pipeline[0]
+    assert tf.get("type") == "transform"
+    assert "rename" not in tf
+    assert "call" in tf
 
 
 def test_apply_evolution_dispatches_sanitize_op():
@@ -348,10 +516,10 @@ def _build_multi_relation_manifest(
     schema = Schema(metadata=meta, core_schema=core, db_profile=db_profile)
     ingestion = {
         "resources": [
-            {"name": "UserA", "apply": [{"vertex": "UserA"}]},
-            {"name": "UserB", "apply": [{"vertex": "UserB"}]},
-            {"name": "UserC", "apply": [{"vertex": "UserC"}]},
-            {"name": "Target", "apply": [{"vertex": "Target"}]},
+            {"name": "UserA", "pipeline": [{"vertex": "UserA"}]},
+            {"name": "UserB", "pipeline": [{"vertex": "UserB"}]},
+            {"name": "UserC", "pipeline": [{"vertex": "UserC"}]},
+            {"name": "Target", "pipeline": [{"vertex": "Target"}]},
         ],
         "transforms": [],
     }

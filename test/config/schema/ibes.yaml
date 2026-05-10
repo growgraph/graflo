@@ -78,7 +78,7 @@ ingestion_model:
     resources:
     -   name: ibes
         encoding: ISO-8859-1
-        apply:
+        pipeline:
         -   vertex: ticker
         -   vertex: analyst
         -   vertex: recommendation

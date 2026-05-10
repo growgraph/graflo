@@ -33,6 +33,7 @@ from .ops import (
 )
 from .rewrite import (
     pipeline_mentions_any_vertex,
+    rewrite_extra_weights_vertex_field_names,
     rewrite_vertex_field_names_in_pipeline,
     rewrite_vertex_names_in_pipeline,
     rewrite_vertex_names_in_value,
@@ -310,18 +311,31 @@ def _rename_fields_in_schema(
 def _rebuild_ingestion_with_pipeline_rewrite(
     manifest: GraphManifest,
     rewriter,  # callable: pipeline -> new pipeline
+    *,
+    vertex_field_renames: dict[str, dict[str, str]] | None = None,
 ) -> None:
     """Rebuild ``manifest.ingestion_model`` after applying *rewriter* to each
     resource's pipeline.
+
+    When *vertex_field_renames* is non-empty, ``Resource.extra_weights`` vertex
+    weight rules are updated to reference renamed vertex fields (``fields``, and
+    ``map`` / ``filter`` keys that address vertex observation columns).
     """
     if manifest.ingestion_model is None:
         return
     from graflo.architecture.contract.declarations.resource import Resource
 
+    renames_ctx = vertex_field_renames if vertex_field_renames else {}
+
     new_resources: list[Resource] = []
     for resource in manifest.ingestion_model.resources:
         d = resource.to_dict(skip_defaults=False)
         d["pipeline"] = rewriter(resource.pipeline)
+        ew = d.get("extra_weights")
+        if isinstance(ew, list) and renames_ctx:
+            d["extra_weights"] = rewrite_extra_weights_vertex_field_names(
+                ew, renames_ctx
+            )
         new_resources.append(Resource.model_validate(d))
     manifest.ingestion_model.resources = new_resources
     manifest.ingestion_model = IngestionModel.model_validate(
@@ -341,7 +355,9 @@ def apply_rename_vertex_fields(
       edge_specs.indexes, default_property_values).
     - Rewrites resource pipelines so that ``VertexActor.from`` covers the
       rename and ``TransformActor.rename`` produces the renamed property
-      (see :func:`rewrite_vertex_field_names_in_pipeline` for details).
+      (see :func:`rewrite_vertex_field_names_in_pipeline`).
+    - Rewrites ``Resource.extra_weights`` / ``vertex_weights`` (and any
+      ``vertex_weights`` embedded in ``edge`` pipeline steps).
     """
     if not op.renames:
         return
@@ -363,6 +379,7 @@ def apply_rename_vertex_fields(
     _rebuild_ingestion_with_pipeline_rewrite(
         manifest,
         lambda pipeline: rewrite_vertex_field_names_in_pipeline(pipeline, op.renames),
+        vertex_field_renames=op.renames,
     )
 
 
@@ -408,6 +425,7 @@ def apply_sanitize(manifest: GraphManifest, op: SanitizeOp) -> None:
             lambda pipeline: rewrite_vertex_field_names_in_pipeline(
                 pipeline, identity_renames
             ),
+            vertex_field_renames=identity_renames,
         )
 
 

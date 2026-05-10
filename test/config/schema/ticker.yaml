@@ -72,7 +72,7 @@ schema:
 ingestion_model:
     resources:
     -   name: history
-        apply:
+        pipeline:
         -   transform:
                 call:
                     module: graflo.util.transform

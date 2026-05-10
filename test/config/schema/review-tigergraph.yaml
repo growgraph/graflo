@@ -31,7 +31,7 @@ schema:
 ingestion_model:
     resources:
     -   name: authors
-        apply:
+        pipeline:
         -   vertex: author
             from:
                 id: author_id
