@@ -6,8 +6,8 @@ TigerGraph's "consistent identity per relation" constraint.
 
 The actual mutation lives in
 :mod:`graflo.architecture.evolution.apply` (``apply_sanitize`` and
-``apply_rename_vertex_fields``) so the same code paths drive both
-``SanitizeOp`` and the standalone ``RenameVertexFieldsOp``.
+``apply_rename_vertex_properties``) so the same code paths drive both
+``SanitizeOp`` and the standalone ``RenameVertexPropertiesOp``.
 """
 
 from __future__ import annotations

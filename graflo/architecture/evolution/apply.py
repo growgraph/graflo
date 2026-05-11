@@ -26,13 +26,17 @@ from .merge_core import (
 )
 from .ops import (
     MergeVerticesOp,
+    RemoveVertexPropertiesOp,
     RemoveVerticesOp,
-    RenameVertexFieldsOp,
+    RenameEntitiesOp,
+    RenameVertexPropertiesOp,
     SanitizeOp,
 )
 from .rewrite import (
     pipeline_mentions_any_vertex,
+    rewrite_entity_names_in_pipeline,
     rewrite_extra_weights_vertex_field_names,
+    rewrite_remove_vertex_properties_in_pipeline,
     rewrite_vertex_field_names_in_pipeline,
     rewrite_vertex_names_in_pipeline,
     rewrite_vertex_names_in_value,
@@ -342,8 +346,8 @@ def _rebuild_ingestion_with_pipeline_rewrite(
     )
 
 
-def apply_rename_vertex_fields(
-    manifest: GraphManifest, op: RenameVertexFieldsOp
+def apply_rename_vertex_properties(
+    manifest: GraphManifest, op: RenameVertexPropertiesOp
 ) -> None:
     """Rename vertex properties (and their references) across the manifest.
 
@@ -362,12 +366,12 @@ def apply_rename_vertex_fields(
         return
     schema = manifest.graph_schema
     if schema is None:
-        raise ValueError("rename_vertex_fields requires graph_schema")
+        raise ValueError("rename_vertex_properties requires graph_schema")
 
     unknown = sorted(set(op.renames) - schema.core_schema.vertex_config.vertex_set)
     if unknown:
         raise ValueError(
-            f"rename_vertex_fields: unknown vertices in renames: {unknown}"
+            f"rename_vertex_properties: unknown vertices in renames: {unknown}"
         )
 
     _rename_fields_in_schema(schema, op.renames)
@@ -382,13 +386,261 @@ def apply_rename_vertex_fields(
     )
 
 
+def apply_remove_vertex_properties(
+    manifest: GraphManifest, op: RemoveVertexPropertiesOp
+) -> None:
+    """Remove vertex properties and clean up ingestion/db profile references."""
+    if not op.removals:
+        return
+    schema = manifest.graph_schema
+    if schema is None:
+        raise ValueError("remove_vertex_properties requires graph_schema")
+
+    unknown_vertices = sorted(
+        set(op.removals) - schema.core_schema.vertex_config.vertex_set
+    )
+    if unknown_vertices:
+        raise ValueError(
+            f"remove_vertex_properties: unknown vertices in removals: {unknown_vertices}"
+        )
+
+    removals = {
+        vertex_name: {field for field in fields if isinstance(field, str)}
+        for vertex_name, fields in op.removals.items()
+    }
+    if not removals:
+        return
+
+    for vertex in schema.core_schema.vertex_config.vertices:
+        remove_fields = removals.get(vertex.name, set())
+        if not remove_fields:
+            continue
+        identity_overlap = sorted(set(vertex.identity) & remove_fields)
+        if identity_overlap:
+            raise ValueError(
+                "remove_vertex_properties cannot remove identity fields "
+                f"for vertex {vertex.name}: {identity_overlap}"
+            )
+        vertex.properties = [
+            field for field in vertex.properties if field.name not in remove_fields
+        ]
+
+    for vertex_name, indexes in list(schema.db_profile.vertex_indexes.items()):
+        remove_fields = removals.get(vertex_name, set())
+        if not remove_fields:
+            continue
+        updated_indexes = []
+        for index in indexes:
+            fields = [field for field in index.fields if field not in remove_fields]
+            if fields:
+                updated_indexes.append(index.model_copy(update={"fields": fields}))
+        schema.db_profile.vertex_indexes[vertex_name] = updated_indexes
+
+    for edge_spec in schema.db_profile.edge_specs:
+        updated_indexes = []
+        for index in edge_spec.indexes:
+            fields = list(index.fields)
+            source_removals = removals.get(edge_spec.source, set())
+            target_removals = removals.get(edge_spec.target, set())
+            if source_removals:
+                fields = [field for field in fields if field not in source_removals]
+            if target_removals:
+                fields = [field for field in fields if field not in target_removals]
+            if fields:
+                updated_indexes.append(index.model_copy(update={"fields": fields}))
+        edge_spec.indexes = updated_indexes
+
+    schema.db_profile = _revalidate_db_profile(schema.db_profile)
+    schema.finish_init()
+
+    if manifest.ingestion_model is not None:
+        _rebuild_ingestion_with_pipeline_rewrite(
+            manifest,
+            lambda pipeline: rewrite_remove_vertex_properties_in_pipeline(
+                pipeline, removals
+            ),
+        )
+        for resource in manifest.ingestion_model.resources:
+            if resource.extra_weights:
+                for entry in resource.extra_weights:
+                    for weight in entry.vertex_weights:
+                        if not isinstance(weight.name, str):
+                            continue
+                        remove_fields = removals.get(weight.name, set())
+                        if not remove_fields:
+                            continue
+                        weight.fields = [
+                            field
+                            for field in weight.fields
+                            if field not in remove_fields
+                        ]
+                        weight.map = {
+                            key: value
+                            for key, value in weight.map.items()
+                            if key not in remove_fields
+                        }
+                        weight.filter = {
+                            key: value
+                            for key, value in weight.filter.items()
+                            if key not in remove_fields
+                        }
+
+
+def apply_rename_entities(manifest: GraphManifest, op: RenameEntitiesOp) -> None:
+    """Rename logical entities across schema, ingestion, and bindings."""
+    payload = manifest.to_dict(skip_defaults=False)
+
+    vertex_map = op.vertices or {}
+    edge_map = op.edges or {}
+    resource_map = op.resources or {}
+
+    schema_payload = payload.get("schema")
+    if isinstance(schema_payload, dict):
+        graph_payload = schema_payload.get("core_schema")
+        if isinstance(graph_payload, dict):
+            vertex_config = graph_payload.get("vertex_config")
+            if isinstance(vertex_config, dict):
+                vertices_payload = vertex_config.get("vertices")
+                if isinstance(vertices_payload, list):
+                    for vertex in vertices_payload:
+                        if isinstance(vertex, dict) and isinstance(
+                            vertex.get("name"), str
+                        ):
+                            vertex["name"] = vertex_map.get(
+                                vertex["name"], vertex["name"]
+                            )
+
+                blank_vertices = vertex_config.get("blank_vertices")
+                if isinstance(blank_vertices, list):
+                    vertex_config["blank_vertices"] = [
+                        vertex_map.get(name, name) if isinstance(name, str) else name
+                        for name in blank_vertices
+                    ]
+
+                force_types = vertex_config.get("force_types")
+                if isinstance(force_types, dict):
+                    vertex_config["force_types"] = {
+                        vertex_map.get(name, name): value
+                        for name, value in force_types.items()
+                    }
+
+            edge_config = graph_payload.get("edge_config")
+            if isinstance(edge_config, dict):
+                edges_payload = edge_config.get("edges")
+                if isinstance(edges_payload, list):
+                    for edge in edges_payload:
+                        if not isinstance(edge, dict):
+                            continue
+                        if isinstance(edge.get("source"), str):
+                            edge["source"] = vertex_map.get(
+                                edge["source"], edge["source"]
+                            )
+                        if isinstance(edge.get("target"), str):
+                            edge["target"] = vertex_map.get(
+                                edge["target"], edge["target"]
+                            )
+                        if isinstance(edge.get("relation"), str):
+                            edge["relation"] = edge_map.get(
+                                edge["relation"], edge["relation"]
+                            )
+
+    ingestion_payload = payload.get("ingestion_model")
+    if isinstance(ingestion_payload, dict):
+        resources_payload = ingestion_payload.get("resources")
+        if isinstance(resources_payload, list):
+            for resource in resources_payload:
+                if not isinstance(resource, dict):
+                    continue
+                if isinstance(resource.get("name"), str):
+                    resource["name"] = resource_map.get(
+                        resource["name"], resource["name"]
+                    )
+
+                pipeline = resource.get("pipeline")
+                if isinstance(pipeline, list):
+                    rewrite_entity_names_in_pipeline(
+                        pipeline,
+                        vertices=vertex_map,
+                        edges=edge_map,
+                    )
+
+                for spec_key in ("infer_edge_only", "infer_edge_except"):
+                    specs = resource.get(spec_key)
+                    if not isinstance(specs, list):
+                        continue
+                    for spec in specs:
+                        if not isinstance(spec, dict):
+                            continue
+                        if isinstance(spec.get("source"), str):
+                            spec["source"] = vertex_map.get(
+                                spec["source"], spec["source"]
+                            )
+                        if isinstance(spec.get("target"), str):
+                            spec["target"] = vertex_map.get(
+                                spec["target"], spec["target"]
+                            )
+                        if isinstance(spec.get("relation"), str):
+                            spec["relation"] = edge_map.get(
+                                spec["relation"], spec["relation"]
+                            )
+
+                extra_weights = resource.get("extra_weights")
+                if isinstance(extra_weights, list):
+                    for entry in extra_weights:
+                        if not isinstance(entry, dict):
+                            continue
+                        edge = entry.get("edge")
+                        if isinstance(edge, dict):
+                            if isinstance(edge.get("source"), str):
+                                edge["source"] = vertex_map.get(
+                                    edge["source"], edge["source"]
+                                )
+                            if isinstance(edge.get("target"), str):
+                                edge["target"] = vertex_map.get(
+                                    edge["target"], edge["target"]
+                                )
+                            if isinstance(edge.get("relation"), str):
+                                edge["relation"] = edge_map.get(
+                                    edge["relation"], edge["relation"]
+                                )
+
+    bindings_payload = payload.get("bindings")
+    if isinstance(bindings_payload, dict):
+        connectors = bindings_payload.get("connectors")
+        if isinstance(connectors, list):
+            for connector in connectors:
+                if isinstance(connector, dict) and isinstance(
+                    connector.get("resource_name"), str
+                ):
+                    connector["resource_name"] = resource_map.get(
+                        connector["resource_name"],
+                        connector["resource_name"],
+                    )
+
+        resource_connector = bindings_payload.get("resource_connector")
+        if isinstance(resource_connector, list):
+            for mapping in resource_connector:
+                if isinstance(mapping, dict) and isinstance(
+                    mapping.get("resource"), str
+                ):
+                    mapping["resource"] = resource_map.get(
+                        mapping["resource"],
+                        mapping["resource"],
+                    )
+
+    updated = GraphManifest.from_dict(payload)
+    manifest.graph_schema = updated.graph_schema
+    manifest.ingestion_model = updated.ingestion_model
+    manifest.bindings = updated.bindings
+
+
 def apply_sanitize(manifest: GraphManifest, op: SanitizeOp) -> None:
     """Apply DB-flavor-specific sanitization to *manifest* in place.
 
     Composes:
 
     1. Storage-name sanitization on :class:`DatabaseProfile`.
-    2. Reserved-word vertex field renames (via ``apply_rename_vertex_fields``).
+    2. Reserved-word vertex field renames (via ``apply_rename_vertex_properties``).
     3. TigerGraph identity normalization (cross-relation), propagated to
        ingestion via the same field-rename code path.
     """
@@ -411,9 +663,9 @@ def apply_sanitize(manifest: GraphManifest, op: SanitizeOp) -> None:
 
         field_renames = compute_vertex_field_renames(schema, reserved_words)
         if field_renames:
-            apply_rename_vertex_fields(
+            apply_rename_vertex_properties(
                 manifest,
-                RenameVertexFieldsOp(renames=field_renames),
+                RenameVertexPropertiesOp(renames=field_renames),
             )
 
     identity_renames = normalize_relation_identity(schema, op.db_flavor)
@@ -436,8 +688,12 @@ def _dispatch_op(manifest: GraphManifest, op: Any) -> None:
         apply_remove_vertices(manifest, op)
     elif isinstance(op, MergeVerticesOp):
         apply_merge_vertices(manifest, op)
-    elif isinstance(op, RenameVertexFieldsOp):
-        apply_rename_vertex_fields(manifest, op)
+    elif isinstance(op, RenameVertexPropertiesOp):
+        apply_rename_vertex_properties(manifest, op)
+    elif isinstance(op, RemoveVertexPropertiesOp):
+        apply_remove_vertex_properties(manifest, op)
+    elif isinstance(op, RenameEntitiesOp):
+        apply_rename_entities(manifest, op)
     elif isinstance(op, SanitizeOp):
         apply_sanitize(manifest, op)
     else:
@@ -447,7 +703,12 @@ def _dispatch_op(manifest: GraphManifest, op: Any) -> None:
 def apply_manifest_ops_inplace(
     manifest: GraphManifest,
     ops: Sequence[
-        RemoveVerticesOp | MergeVerticesOp | RenameVertexFieldsOp | SanitizeOp
+        RemoveVerticesOp
+        | MergeVerticesOp
+        | RenameVertexPropertiesOp
+        | RemoveVertexPropertiesOp
+        | RenameEntitiesOp
+        | SanitizeOp
     ],
 ) -> None:
     """Apply each evolution op to *manifest* in place.
@@ -462,7 +723,12 @@ def apply_manifest_ops_inplace(
 def apply_evolution(
     manifest: GraphManifest,
     ops: Sequence[
-        RemoveVerticesOp | MergeVerticesOp | RenameVertexFieldsOp | SanitizeOp
+        RemoveVerticesOp
+        | MergeVerticesOp
+        | RenameVertexPropertiesOp
+        | RemoveVertexPropertiesOp
+        | RenameEntitiesOp
+        | SanitizeOp
     ],
     *,
     bump_version: bool | Literal["minor"] = "minor",

@@ -42,7 +42,7 @@ class MergeVerticesOp(ConfigBaseModel):
     )
 
 
-class RenameVertexFieldsOp(ConfigBaseModel):
+class RenameVertexPropertiesOp(ConfigBaseModel):
     """Rename vertex properties (and identity references) and propagate to ingestion.
 
     ``renames`` maps each vertex name to a per-vertex ``{old_field: new_field}`` map.
@@ -55,12 +55,42 @@ class RenameVertexFieldsOp(ConfigBaseModel):
     ``fields``, ``map``, and ``filter`` keys that address vertex observation columns).
     """
 
-    op: Literal["rename_vertex_fields"] = "rename_vertex_fields"
+    op: Literal["rename_vertex_properties"] = "rename_vertex_properties"
     renames: dict[str, dict[str, str]] = PydanticField(
         ...,
         description=(
             "Per-vertex field rename map: ``{vertex_name: {old_field: new_field}}``."
         ),
+    )
+
+
+class RemoveVertexPropertiesOp(ConfigBaseModel):
+    """Remove vertex properties and propagate pruning to ingestion/db profile references."""
+
+    op: Literal["remove_vertex_properties"] = "remove_vertex_properties"
+    removals: dict[str, list[str]] = PydanticField(
+        ...,
+        description=(
+            "Per-vertex field removal map: ``{vertex_name: [field_name, ...]}``."
+        ),
+    )
+
+
+class RenameEntitiesOp(ConfigBaseModel):
+    """Rename logical vertex names, edge relations, and ingestion resource names."""
+
+    op: Literal["rename_entities"] = "rename_entities"
+    vertices: dict[str, str] | None = PydanticField(
+        default=None,
+        description="Vertex rename map: ``{old_vertex: new_vertex}``.",
+    )
+    edges: dict[str, str] | None = PydanticField(
+        default=None,
+        description="Edge relation rename map: ``{old_relation: new_relation}``.",
+    )
+    resources: dict[str, str] | None = PydanticField(
+        default=None,
+        description="Ingestion resource rename map: ``{old_resource: new_resource}``.",
     )
 
 
@@ -91,6 +121,11 @@ class SanitizeOp(ConfigBaseModel):
 
 
 ManifestOp = Annotated[
-    RemoveVerticesOp | MergeVerticesOp | RenameVertexFieldsOp | SanitizeOp,
+    RemoveVerticesOp
+    | MergeVerticesOp
+    | RenameVertexPropertiesOp
+    | RemoveVertexPropertiesOp
+    | RenameEntitiesOp
+    | SanitizeOp,
     PydanticField(discriminator="op"),
 ]

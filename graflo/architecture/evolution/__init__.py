@@ -10,8 +10,10 @@ from typing import Any
 from .ops import (
     ManifestOp,
     MergeVerticesOp,
+    RemoveVertexPropertiesOp,
     RemoveVerticesOp,
-    RenameVertexFieldsOp,
+    RenameEntitiesOp,
+    RenameVertexPropertiesOp,
     SanitizeOp,
 )
 
@@ -19,8 +21,10 @@ _APPLY_EXPORTS = frozenset(
     {
         "apply_evolution",
         "apply_merge_vertices",
+        "apply_remove_vertex_properties",
         "apply_remove_vertices",
-        "apply_rename_vertex_fields",
+        "apply_rename_entities",
+        "apply_rename_vertex_properties",
         "apply_sanitize",
     }
 )
@@ -28,13 +32,17 @@ _APPLY_EXPORTS = frozenset(
 __all__ = [
     "ManifestOp",
     "MergeVerticesOp",
+    "RemoveVertexPropertiesOp",
     "RemoveVerticesOp",
-    "RenameVertexFieldsOp",
+    "RenameEntitiesOp",
+    "RenameVertexPropertiesOp",
     "SanitizeOp",
     "apply_evolution",
     "apply_merge_vertices",
+    "apply_remove_vertex_properties",
     "apply_remove_vertices",
-    "apply_rename_vertex_fields",
+    "apply_rename_entities",
+    "apply_rename_vertex_properties",
     "apply_sanitize",
 ]
 

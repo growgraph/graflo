@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.evolution import (
-    RenameVertexFieldsOp,
+    RenameVertexPropertiesOp,
     SanitizeOp,
     apply_evolution,
-    apply_rename_vertex_fields,
+    apply_rename_vertex_properties,
     apply_sanitize,
 )
 from graflo.architecture.schema.core import CoreSchema
@@ -78,16 +78,16 @@ def _vertex_actor_step(resource_pipeline: list[dict]) -> dict:
     raise AssertionError(f"no vertex step in pipeline: {resource_pipeline}")
 
 
-# -- RenameVertexFieldsOp ----------------------------------------------------
+# -- RenameVertexPropertiesOp ----------------------------------------------------
 
 
 def test_rename_vertex_fields_injects_from_when_absent():
     """When VertexActor has no `from:`, rename injects `{new_field: old_field}`."""
     manifest = _build_manifest()
 
-    apply_rename_vertex_fields(
+    apply_rename_vertex_properties(
         manifest,
-        RenameVertexFieldsOp(renames={"users": {"user-name": "user_name"}}),
+        RenameVertexPropertiesOp(renames={"users": {"user-name": "user_name"}}),
     )
 
     schema = manifest.require_schema()
@@ -106,9 +106,9 @@ def test_rename_vertex_fields_rewrites_existing_from_keys():
         pipeline_a=[{"vertex": "users", "from": {"user-name": "raw_name"}}]
     )
 
-    apply_rename_vertex_fields(
+    apply_rename_vertex_properties(
         manifest,
-        RenameVertexFieldsOp(renames={"users": {"user-name": "user_name"}}),
+        RenameVertexPropertiesOp(renames={"users": {"user-name": "user_name"}}),
     )
 
     pipeline = manifest.require_ingestion_model().resources[0].pipeline
@@ -122,9 +122,9 @@ def test_rename_vertex_fields_rewrites_identity():
         user_identity=["user-id"],
     )
 
-    apply_rename_vertex_fields(
+    apply_rename_vertex_properties(
         manifest,
-        RenameVertexFieldsOp(renames={"users": {"user-id": "user_id"}}),
+        RenameVertexPropertiesOp(renames={"users": {"user-id": "user_id"}}),
     )
 
     schema = manifest.require_schema()
@@ -136,9 +136,9 @@ def test_rename_vertex_fields_rewrites_identity():
 def test_rename_vertex_fields_validates_unknown_vertex():
     manifest = _build_manifest()
     try:
-        apply_rename_vertex_fields(
+        apply_rename_vertex_properties(
             manifest,
-            RenameVertexFieldsOp(renames={"missing": {"x": "y"}}),
+            RenameVertexPropertiesOp(renames={"missing": {"x": "y"}}),
         )
         assert False, "expected ValueError"
     except ValueError as exc:
@@ -152,9 +152,9 @@ def test_rename_vertex_fields_does_not_add_old_identity_as_type_none():
         user_identity=["id"],
     )
 
-    apply_rename_vertex_fields(
+    apply_rename_vertex_properties(
         manifest,
-        RenameVertexFieldsOp(renames={"users": {"id": "user_id"}}),
+        RenameVertexPropertiesOp(renames={"users": {"id": "user_id"}}),
     )
 
     schema = manifest.require_schema()
@@ -173,9 +173,9 @@ def test_rename_vertex_fields_dedupes_identity_when_names_collide():
         user_identity=["a", "b"],
     )
 
-    apply_rename_vertex_fields(
+    apply_rename_vertex_properties(
         manifest,
-        RenameVertexFieldsOp(renames={"users": {"a": "b"}}),
+        RenameVertexPropertiesOp(renames={"users": {"a": "b"}}),
     )
 
     schema = manifest.require_schema()
@@ -201,9 +201,9 @@ def test_rename_vertex_fields_preserves_call_transform_without_rename():
         ],
     )
 
-    apply_rename_vertex_fields(
+    apply_rename_vertex_properties(
         manifest,
-        RenameVertexFieldsOp(renames={"users": {"user-name": "user_name"}}),
+        RenameVertexPropertiesOp(renames={"users": {"user-name": "user_name"}}),
     )
 
     pipeline = manifest.require_ingestion_model().resources[0].pipeline
@@ -222,9 +222,9 @@ def test_rename_vertex_fields_no_spurious_rename_map_entries():
         ],
     )
 
-    apply_rename_vertex_fields(
+    apply_rename_vertex_properties(
         manifest,
-        RenameVertexFieldsOp(renames={"users": {"user-name": "user_name"}}),
+        RenameVertexPropertiesOp(renames={"users": {"user-name": "user_name"}}),
     )
 
     pipeline = manifest.require_ingestion_model().resources[0].pipeline
@@ -247,9 +247,9 @@ def test_rename_vertex_fields_nested_rename_not_augmented_by_parent_scope():
         ],
     )
 
-    apply_rename_vertex_fields(
+    apply_rename_vertex_properties(
         manifest,
-        RenameVertexFieldsOp(renames={"users": {"user-name": "user_name"}}),
+        RenameVertexPropertiesOp(renames={"users": {"user-name": "user_name"}}),
     )
 
     pipeline = manifest.require_ingestion_model().resources[0].pipeline
@@ -276,9 +276,9 @@ def test_rename_vertex_fields_updates_extra_weights_vertex_weights():
         ]
     )
 
-    apply_rename_vertex_fields(
+    apply_rename_vertex_properties(
         manifest,
-        RenameVertexFieldsOp(renames={"users": {"user-name": "user_name"}}),
+        RenameVertexPropertiesOp(renames={"users": {"user-name": "user_name"}}),
     )
 
     w = (
@@ -307,9 +307,9 @@ def test_rename_vertex_fields_updates_edge_actor_vertex_weights_in_pipeline():
         ],
     )
 
-    apply_rename_vertex_fields(
+    apply_rename_vertex_properties(
         manifest,
-        RenameVertexFieldsOp(renames={"users": {"user-name": "user_name"}}),
+        RenameVertexPropertiesOp(renames={"users": {"user-name": "user_name"}}),
     )
 
     pipeline = manifest.require_ingestion_model().resources[0].pipeline

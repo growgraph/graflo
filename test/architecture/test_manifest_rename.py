@@ -1,5 +1,5 @@
 from graflo.architecture.contract import GraphManifest
-from graflo.architecture.schema import Schema
+from graflo.architecture.evolution import RenameEntitiesOp, apply_evolution
 
 
 def _sample_manifest_payload() -> dict:
@@ -84,10 +84,16 @@ def _sample_manifest_payload() -> dict:
 def test_graph_manifest_rename_entities_updates_schema_ingestion_and_bindings() -> None:
     manifest = GraphManifest.from_dict(_sample_manifest_payload())
 
-    renamed = manifest.rename_entities(
-        vertices={"person": "author", "company": "institution"},
-        edges=lambda relation: f"rel_{relation}",
-        resources={"employees": "staff"},
+    renamed = apply_evolution(
+        manifest,
+        [
+            RenameEntitiesOp(
+                vertices={"person": "author", "company": "institution"},
+                edges={"works_at": "rel_works_at"},
+                resources={"employees": "staff"},
+            )
+        ],
+        bump_version=False,
     )
 
     assert renamed.graph_schema is not None
@@ -130,16 +136,25 @@ def test_graph_manifest_rename_entities_updates_schema_ingestion_and_bindings() 
         assert resource_binding.resource == "staff"
 
 
-def test_schema_rename_entities_updates_vertices_and_edge_relations() -> None:
-    schema = Schema.from_dict(_sample_manifest_payload()["schema"])
-
-    renamed = schema.rename_entities(
-        vertices={"person": "author", "company": "institution"},
-        edges={"works_at": "affiliated_with"},
+def test_apply_rename_entities_updates_schema_vertices_and_edge_relations() -> None:
+    manifest = GraphManifest.from_dict(_sample_manifest_payload())
+    renamed = apply_evolution(
+        manifest,
+        [
+            RenameEntitiesOp(
+                vertices={"person": "author", "company": "institution"},
+                edges={"works_at": "affiliated_with"},
+            )
+        ],
+        bump_version=False,
     )
 
-    assert renamed.core_schema.vertex_config.vertex_set == {"author", "institution"}
-    assert renamed.core_schema.edge_config.edges[0].edge_id == (
+    assert renamed.graph_schema is not None
+    assert renamed.graph_schema.core_schema.vertex_config.vertex_set == {
+        "author",
+        "institution",
+    }
+    assert renamed.graph_schema.core_schema.edge_config.edges[0].edge_id == (
         "author",
         "institution",
         "affiliated_with",
