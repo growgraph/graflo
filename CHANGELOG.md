@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.26]
+
+### Breaking
+
+- **`graflo.architecture.evolution.RenameEntitiesOp` removed**: evolution rename operations are now split into
+  **`RenameVerticesOp`**, **`RenameRelationsOp`**, and **`RenameResourcesOp`** (no backward-compat alias).
+  Migration example:
+
+  ```python
+  # old
+  # RenameEntitiesOp(vertices=..., edges=..., resources=...)
+
+  # new
+  [
+      RenameVerticesOp(vertices=...),
+      RenameRelationsOp(relations=...),
+      RenameResourcesOp(resources=...),
+  ]
+  ```
+
+### Added
+
+- **Manifest evolution ops expanded**:
+  **`RemoveEdgesOp`**, **`MergeEdgesOp`**, **`RenameEdgePropertiesOp`**, **`RemoveEdgePropertiesOp`**,
+  **`AddVertexPropertiesOp`**, and **`AddEdgePropertiesOp`**.
+- **Propagation coverage for new ops** across manifest surfaces:
+  schema (`core_schema`), ingestion resources/selectors, and `DatabaseProfile` (`edge_specs`, edge defaults/indexes).
+
 ## [1.7.25]
 
 ### Fixed
@@ -32,6 +60,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lazily imports `ConnectionManager`; several `hq` modules import config and Postgres types
   from `graflo.db.connection` / `graflo.db.manager` / `graflo.db.postgres.conn` instead of
   `from graflo.db import …`.
+
+### Documentation
+
+- [Manifest evolution](docs/concepts/manifest_evolution.md) now includes a tutorial section with
+  relation/property evolution recipes and guidance on `RenameRelationsOp` vs `MergeEdgesOp`.
 
 ## [1.7.24] - 2026-05-07
 

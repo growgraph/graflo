@@ -127,3 +127,26 @@ def redirect_and_merge_edges(edges: list[Edge], mapping: dict[str, str]) -> list
 def edge_config_from_edges(edges: list[Edge]) -> EdgeConfig:
     """Build a fresh :class:`EdgeConfig` from a list of edges."""
     return EdgeConfig(edges=edges)
+
+
+def remap_relation_and_merge_edges(
+    edges: list[Edge], relation_map: dict[str, str]
+) -> list[Edge]:
+    """Remap edge relation names and merge duplicate edge identities."""
+    if not relation_map:
+        return list(edges)
+    remapped = [
+        edge.model_copy(
+            update={"relation": relation_map.get(edge.relation, edge.relation)}
+        )
+        if edge.relation is not None
+        else edge
+        for edge in edges
+    ]
+    by_id: dict[EdgeId, Edge] = {}
+    for edge in remapped:
+        if edge.edge_id in by_id:
+            by_id[edge.edge_id] = merge_edge_pair(by_id[edge.edge_id], edge)
+            continue
+        by_id[edge.edge_id] = edge
+    return list(by_id.values())
