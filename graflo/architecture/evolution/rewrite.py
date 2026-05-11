@@ -583,6 +583,164 @@ def rewrite_remove_vertex_properties_in_pipeline(
     return [_rewrite_step(step) for step in pipeline if isinstance(step, dict)]
 
 
+def rewrite_remove_relations_in_pipeline(
+    pipeline: list[dict[str, Any]], removed_relations: set[str]
+) -> list[dict[str, Any]]:
+    """Drop edge/create_edge steps (and links) targeting removed relations."""
+    if not removed_relations:
+        return deepcopy(pipeline)
+
+    def _rewrite_step(step: dict[str, Any]) -> dict[str, Any] | None:
+        out = deepcopy(step)
+        edge_payload = out.get("edge")
+        if isinstance(edge_payload, dict):
+            relation = edge_payload.get("relation")
+            if relation in removed_relations:
+                out.pop("edge", None)
+            elif isinstance(edge_payload.get("relation_map"), dict):
+                edge_payload["relation_map"] = {
+                    k: v
+                    for k, v in edge_payload["relation_map"].items()
+                    if not (isinstance(v, str) and v in removed_relations)
+                }
+            links = edge_payload.get("links")
+            if isinstance(links, list):
+                edge_payload["links"] = [
+                    link
+                    for link in links
+                    if not (
+                        isinstance(link, dict)
+                        and link.get("relation") in removed_relations
+                    )
+                ]
+        create_edge_payload = out.get("create_edge")
+        if isinstance(create_edge_payload, dict):
+            relation = create_edge_payload.get("relation")
+            if relation in removed_relations:
+                out.pop("create_edge", None)
+            elif isinstance(create_edge_payload.get("relation_map"), dict):
+                create_edge_payload["relation_map"] = {
+                    k: v
+                    for k, v in create_edge_payload["relation_map"].items()
+                    if not (isinstance(v, str) and v in removed_relations)
+                }
+        descend_payload = out.get("descend")
+        if isinstance(descend_payload, dict) and isinstance(
+            descend_payload.get("pipeline"), list
+        ):
+            descend_payload["pipeline"] = [
+                nested
+                for nested in (
+                    _rewrite_step(item)
+                    for item in descend_payload["pipeline"]
+                    if isinstance(item, dict)
+                )
+                if nested is not None
+            ]
+        if "edge" not in out and "create_edge" not in out and out.get("type") == "edge":
+            return None
+        return out
+
+    return [
+        rewritten
+        for rewritten in (
+            _rewrite_step(step) for step in pipeline if isinstance(step, dict)
+        )
+        if rewritten is not None
+    ]
+
+
+def _rewrite_edge_properties_payload(
+    payload: dict[str, Any],
+    *,
+    renames: dict[str, str] | None = None,
+    removals: set[str] | None = None,
+) -> None:
+    properties = payload.get("properties")
+    if not isinstance(properties, list):
+        return
+    rename_map = renames or {}
+    remove_set = removals or set()
+    rewritten: list[Any] = []
+    seen: set[str] = set()
+    for prop in properties:
+        if isinstance(prop, str):
+            new_name = rename_map.get(prop, prop)
+            if new_name in remove_set or new_name in seen:
+                continue
+            seen.add(new_name)
+            rewritten.append(new_name)
+            continue
+        if isinstance(prop, dict) and isinstance(prop.get("name"), str):
+            new_name = rename_map.get(prop["name"], prop["name"])
+            if new_name in remove_set or new_name in seen:
+                continue
+            item = dict(prop)
+            item["name"] = new_name
+            seen.add(new_name)
+            rewritten.append(item)
+            continue
+        rewritten.append(prop)
+    payload["properties"] = rewritten
+
+
+def rewrite_edge_properties_in_pipeline(
+    pipeline: list[dict[str, Any]],
+    *,
+    renames_by_relation: dict[str, dict[str, str]] | None = None,
+    removals_by_relation: dict[str, set[str]] | None = None,
+) -> list[dict[str, Any]]:
+    """Rewrite edge actor `properties` declarations by relation."""
+    renames_ctx = renames_by_relation or {}
+    removals_ctx = removals_by_relation or {}
+    if not renames_ctx and not removals_ctx:
+        return deepcopy(pipeline)
+
+    def _rewrite_edge_payload(payload: dict[str, Any]) -> None:
+        relation = payload.get("relation")
+        if isinstance(relation, str):
+            renames = renames_ctx.get(relation, {})
+            removals = removals_ctx.get(relation, set())
+        else:
+            renames = {}
+            removals = set()
+        _rewrite_edge_properties_payload(payload, renames=renames, removals=removals)
+        links = payload.get("links")
+        if isinstance(links, list):
+            for link in links:
+                if not isinstance(link, dict):
+                    continue
+                link_relation = link.get("relation")
+                _rewrite_edge_properties_payload(
+                    link,
+                    renames=renames_ctx.get(link_relation, {})
+                    if isinstance(link_relation, str)
+                    else {},
+                    removals=removals_ctx.get(link_relation, set())
+                    if isinstance(link_relation, str)
+                    else set(),
+                )
+
+    def _rewrite_step(step: dict[str, Any]) -> dict[str, Any]:
+        out = deepcopy(step)
+        for key in ("edge", "create_edge"):
+            payload = out.get(key)
+            if isinstance(payload, dict):
+                _rewrite_edge_payload(payload)
+        descend_payload = out.get("descend")
+        if isinstance(descend_payload, dict):
+            nested_pipeline = descend_payload.get("pipeline")
+            if isinstance(nested_pipeline, list):
+                descend_payload["pipeline"] = [
+                    _rewrite_step(item)
+                    for item in nested_pipeline
+                    if isinstance(item, dict)
+                ]
+        return out
+
+    return [_rewrite_step(step) for step in pipeline if isinstance(step, dict)]
+
+
 def pipeline_mentions_any_vertex(steps: list[dict[str, Any]], names: set[str]) -> bool:
     """Return True if any pipeline step references a vertex name in *names*."""
     if not names:

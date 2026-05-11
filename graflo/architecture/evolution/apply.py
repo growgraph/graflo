@@ -14,28 +14,44 @@ from graflo.architecture.schema.edge import EdgeConfig
 from graflo.architecture.schema.vertex import Field, Vertex, VertexConfig
 
 from .db_profile import (
+    apply_edge_property_removal_to_db_profile,
+    apply_edge_property_rename_to_db_profile,
     apply_field_rename_to_db_profile,
+    apply_relation_removal_to_db_profile,
+    apply_relation_rename_to_db_profile,
     apply_storage_name_sanitization_to_db_profile,
     apply_vertex_merge_to_db_profile,
     apply_vertex_removal_to_db_profile,
+    merge_relation_entries_in_db_profile,
 )
 from .merge_core import (
     edge_config_from_edges,
     merge_vertex_models,
+    remap_relation_and_merge_edges,
     redirect_and_merge_edges,
 )
 from .ops import (
+    AddEdgePropertiesOp,
+    AddVertexPropertiesOp,
+    MergeEdgesOp,
     MergeVerticesOp,
+    RemoveEdgePropertiesOp,
+    RemoveEdgesOp,
     RemoveVertexPropertiesOp,
     RemoveVerticesOp,
-    RenameEntitiesOp,
+    RenameEdgePropertiesOp,
+    RenameRelationsOp,
+    RenameResourcesOp,
     RenameVertexPropertiesOp,
+    RenameVerticesOp,
     SanitizeOp,
 )
 from .rewrite import (
     pipeline_mentions_any_vertex,
+    rewrite_edge_properties_in_pipeline,
     rewrite_entity_names_in_pipeline,
     rewrite_extra_weights_vertex_field_names,
+    rewrite_remove_relations_in_pipeline,
     rewrite_remove_vertex_properties_in_pipeline,
     rewrite_vertex_field_names_in_pipeline,
     rewrite_vertex_names_in_pipeline,
@@ -486,13 +502,19 @@ def apply_remove_vertex_properties(
                         }
 
 
-def apply_rename_entities(manifest: GraphManifest, op: RenameEntitiesOp) -> None:
-    """Rename logical entities across schema, ingestion, and bindings."""
+def _apply_rename_entities(
+    manifest: GraphManifest,
+    *,
+    vertex_map: dict[str, str] | None = None,
+    edge_map: dict[str, str] | None = None,
+    resource_map: dict[str, str] | None = None,
+) -> None:
+    """Rename logical vertices/relations/resources across manifest payload blocks."""
     payload = manifest.to_dict(skip_defaults=False)
 
-    vertex_map = op.vertices or {}
-    edge_map = op.edges or {}
-    resource_map = op.resources or {}
+    vertex_map = vertex_map or {}
+    edge_map = edge_map or {}
+    resource_map = resource_map or {}
 
     schema_payload = payload.get("schema")
     if isinstance(schema_payload, dict):
@@ -634,6 +656,237 @@ def apply_rename_entities(manifest: GraphManifest, op: RenameEntitiesOp) -> None
     manifest.bindings = updated.bindings
 
 
+def apply_rename_vertices(manifest: GraphManifest, op: RenameVerticesOp) -> None:
+    """Rename logical vertex names across schema/ingestion/bindings."""
+    _apply_rename_entities(manifest, vertex_map=op.vertices)
+
+
+def apply_rename_relations(manifest: GraphManifest, op: RenameRelationsOp) -> None:
+    """Rename logical relation names across schema/ingestion/db profile."""
+    _apply_rename_entities(manifest, edge_map=op.relations)
+    schema = manifest.graph_schema
+    if schema is None:
+        return
+    apply_relation_rename_to_db_profile(schema.db_profile, op.relations)
+    merge_relation_entries_in_db_profile(schema.db_profile)
+    schema.db_profile = _revalidate_db_profile(schema.db_profile)
+    schema.finish_init()
+
+
+def apply_rename_resources(manifest: GraphManifest, op: RenameResourcesOp) -> None:
+    """Rename ingestion resources and bindings references."""
+    _apply_rename_entities(manifest, resource_map=op.resources)
+
+
+def apply_remove_edges(manifest: GraphManifest, op: RemoveEdgesOp) -> None:
+    """Remove edges by relation name and prune related references."""
+    removed = set(op.relations)
+    if not removed:
+        return
+    schema = manifest.graph_schema
+    if schema is None:
+        raise ValueError("remove_edges requires graph_schema")
+    schema.core_schema = CoreSchema(
+        vertex_config=schema.core_schema.vertex_config,
+        edge_config=EdgeConfig(
+            edges=[
+                edge
+                for edge in schema.core_schema.edge_config.edges
+                if edge.relation not in removed
+            ]
+        ),
+    )
+    apply_relation_removal_to_db_profile(schema.db_profile, removed)
+    schema.db_profile = _revalidate_db_profile(schema.db_profile)
+    schema.finish_init()
+
+    if manifest.ingestion_model is not None:
+        from graflo.architecture.contract.declarations.resource import Resource
+
+        resources: list[Resource] = []
+        for resource in manifest.ingestion_model.resources:
+            payload = resource.to_dict(skip_defaults=False)
+            pipeline = payload.get("pipeline")
+            if isinstance(pipeline, list):
+                payload["pipeline"] = rewrite_remove_relations_in_pipeline(
+                    pipeline, removed
+                )
+            for key in ("infer_edge_only", "infer_edge_except"):
+                specs = payload.get(key)
+                if isinstance(specs, list):
+                    payload[key] = [
+                        spec
+                        for spec in specs
+                        if not (
+                            isinstance(spec, dict) and spec.get("relation") in removed
+                        )
+                    ]
+            extra_weights = payload.get("extra_weights")
+            if isinstance(extra_weights, list):
+                payload["extra_weights"] = [
+                    entry
+                    for entry in extra_weights
+                    if not (
+                        isinstance(entry, dict)
+                        and isinstance(entry.get("edge"), dict)
+                        and entry["edge"].get("relation") in removed
+                    )
+                ]
+            resources.append(Resource.model_validate(payload))
+        manifest.ingestion_model.resources = resources
+        manifest.ingestion_model = IngestionModel.model_validate(
+            manifest.ingestion_model.to_dict(skip_defaults=False)
+        )
+
+
+def apply_merge_edges(manifest: GraphManifest, op: MergeEdgesOp) -> None:
+    """Merge edge relation names into one canonical relation."""
+    if op.into in set(op.sources):
+        raise ValueError("merge_edges: `sources` must not include `into`")
+    relation_map = {source: op.into for source in op.sources}
+    apply_rename_relations(manifest, RenameRelationsOp(relations=relation_map))
+    schema = manifest.graph_schema
+    if schema is None:
+        return
+    merged_edges = remap_relation_and_merge_edges(
+        schema.core_schema.edge_config.edges, relation_map
+    )
+    schema.core_schema = CoreSchema(
+        vertex_config=schema.core_schema.vertex_config,
+        edge_config=edge_config_from_edges(merged_edges),
+    )
+    schema.finish_init()
+
+
+def apply_rename_edge_properties(
+    manifest: GraphManifest, op: RenameEdgePropertiesOp
+) -> None:
+    """Rename edge properties by relation and propagate references."""
+    schema = manifest.graph_schema
+    if schema is None:
+        raise ValueError("rename_edge_properties requires graph_schema")
+    for edge in schema.core_schema.edge_config.edges:
+        per_relation = (
+            op.renames.get(edge.relation, {}) if edge.relation is not None else {}
+        )
+        if not per_relation:
+            continue
+        seen: set[str] = set()
+        new_properties: list[Field] = []
+        for field in edge.properties:
+            new_name = per_relation.get(field.name, field.name)
+            if new_name in seen:
+                continue
+            seen.add(new_name)
+            new_properties.append(field.model_copy(update={"name": new_name}))
+        edge.properties = new_properties
+        edge.identities = [
+            [
+                per_relation.get(token, token)
+                if token not in {"source", "target", "relation"}
+                else token
+                for token in identity
+            ]
+            for identity in edge.identities
+        ]
+    apply_edge_property_rename_to_db_profile(schema.db_profile, op.renames)
+    schema.db_profile = _revalidate_db_profile(schema.db_profile)
+    schema.finish_init()
+
+    _rebuild_ingestion_with_pipeline_rewrite(
+        manifest,
+        lambda pipeline: rewrite_edge_properties_in_pipeline(
+            pipeline, renames_by_relation=op.renames
+        ),
+    )
+
+
+def apply_remove_edge_properties(
+    manifest: GraphManifest, op: RemoveEdgePropertiesOp
+) -> None:
+    """Remove edge properties by relation and clean references."""
+    schema = manifest.graph_schema
+    if schema is None:
+        raise ValueError("remove_edge_properties requires graph_schema")
+    removals = {
+        relation: {field for field in fields if isinstance(field, str)}
+        for relation, fields in op.removals.items()
+    }
+    for edge in schema.core_schema.edge_config.edges:
+        remove_fields = (
+            removals.get(edge.relation, set()) if edge.relation is not None else set()
+        )
+        if not remove_fields:
+            continue
+        blocked_tokens = set().union(
+            *[
+                set(identity) - {"source", "target", "relation"}
+                for identity in edge.identities
+            ]
+        )
+        overlap = sorted(blocked_tokens & remove_fields)
+        if overlap:
+            raise ValueError(
+                "remove_edge_properties cannot remove identity fields "
+                f"for relation {edge.relation}: {overlap}"
+            )
+        edge.properties = [
+            field for field in edge.properties if field.name not in remove_fields
+        ]
+    apply_edge_property_removal_to_db_profile(schema.db_profile, removals)
+    schema.db_profile = _revalidate_db_profile(schema.db_profile)
+    schema.finish_init()
+    _rebuild_ingestion_with_pipeline_rewrite(
+        manifest,
+        lambda pipeline: rewrite_edge_properties_in_pipeline(
+            pipeline, removals_by_relation=removals
+        ),
+    )
+
+
+def apply_add_vertex_properties(
+    manifest: GraphManifest, op: AddVertexPropertiesOp
+) -> None:
+    """Append new vertex properties to existing vertices."""
+    schema = manifest.graph_schema
+    if schema is None:
+        raise ValueError("add_vertex_properties requires graph_schema")
+    unknown = set(op.additions) - schema.core_schema.vertex_config.vertex_set
+    if unknown:
+        raise ValueError(f"add_vertex_properties: unknown vertices: {sorted(unknown)}")
+    for vertex in schema.core_schema.vertex_config.vertices:
+        additions = op.additions.get(vertex.name, [])
+        if not additions:
+            continue
+        existing = {field.name for field in vertex.properties}
+        for name in additions:
+            if name in existing:
+                continue
+            vertex.properties.append(Field(name=name, type=None))
+            existing.add(name)
+    schema.finish_init()
+
+
+def apply_add_edge_properties(manifest: GraphManifest, op: AddEdgePropertiesOp) -> None:
+    """Append new edge properties to existing relations."""
+    schema = manifest.graph_schema
+    if schema is None:
+        raise ValueError("add_edge_properties requires graph_schema")
+    for edge in schema.core_schema.edge_config.edges:
+        additions = (
+            op.additions.get(edge.relation, []) if edge.relation is not None else []
+        )
+        if not additions:
+            continue
+        existing = {field.name for field in edge.properties}
+        for name in additions:
+            if name in existing:
+                continue
+            edge.properties.append(Field(name=name, type=None))
+            existing.add(name)
+    schema.finish_init()
+
+
 def apply_sanitize(manifest: GraphManifest, op: SanitizeOp) -> None:
     """Apply DB-flavor-specific sanitization to *manifest* in place.
 
@@ -692,8 +945,24 @@ def _dispatch_op(manifest: GraphManifest, op: Any) -> None:
         apply_rename_vertex_properties(manifest, op)
     elif isinstance(op, RemoveVertexPropertiesOp):
         apply_remove_vertex_properties(manifest, op)
-    elif isinstance(op, RenameEntitiesOp):
-        apply_rename_entities(manifest, op)
+    elif isinstance(op, AddVertexPropertiesOp):
+        apply_add_vertex_properties(manifest, op)
+    elif isinstance(op, RenameVerticesOp):
+        apply_rename_vertices(manifest, op)
+    elif isinstance(op, RenameRelationsOp):
+        apply_rename_relations(manifest, op)
+    elif isinstance(op, RenameResourcesOp):
+        apply_rename_resources(manifest, op)
+    elif isinstance(op, RemoveEdgesOp):
+        apply_remove_edges(manifest, op)
+    elif isinstance(op, MergeEdgesOp):
+        apply_merge_edges(manifest, op)
+    elif isinstance(op, RenameEdgePropertiesOp):
+        apply_rename_edge_properties(manifest, op)
+    elif isinstance(op, RemoveEdgePropertiesOp):
+        apply_remove_edge_properties(manifest, op)
+    elif isinstance(op, AddEdgePropertiesOp):
+        apply_add_edge_properties(manifest, op)
     elif isinstance(op, SanitizeOp):
         apply_sanitize(manifest, op)
     else:
@@ -707,7 +976,15 @@ def apply_manifest_ops_inplace(
         | MergeVerticesOp
         | RenameVertexPropertiesOp
         | RemoveVertexPropertiesOp
-        | RenameEntitiesOp
+        | AddVertexPropertiesOp
+        | RenameVerticesOp
+        | RenameRelationsOp
+        | RenameResourcesOp
+        | RemoveEdgesOp
+        | MergeEdgesOp
+        | RenameEdgePropertiesOp
+        | RemoveEdgePropertiesOp
+        | AddEdgePropertiesOp
         | SanitizeOp
     ],
 ) -> None:
@@ -727,7 +1004,15 @@ def apply_evolution(
         | MergeVerticesOp
         | RenameVertexPropertiesOp
         | RemoveVertexPropertiesOp
-        | RenameEntitiesOp
+        | AddVertexPropertiesOp
+        | RenameVerticesOp
+        | RenameRelationsOp
+        | RenameResourcesOp
+        | RemoveEdgesOp
+        | MergeEdgesOp
+        | RenameEdgePropertiesOp
+        | RemoveEdgePropertiesOp
+        | AddEdgePropertiesOp
         | SanitizeOp
     ],
     *,

@@ -279,3 +279,190 @@ def apply_field_rename_to_db_profile(
             new_props[per_vertex.get(prop_name, prop_name)] = value
         new_dpv_vertices[vertex_name] = new_props
     object.__setattr__(dpv, "vertices", new_dpv_vertices)
+
+
+def apply_relation_rename_to_db_profile(
+    profile: DatabaseProfile, relation_renames: dict[str, str]
+) -> None:
+    """Rename logical edge relation keys in edge specs/default edge values."""
+    if not relation_renames:
+        return
+    new_specs: list[EdgeVariantSpec] = []
+    for spec in profile.edge_specs:
+        new_relation = (
+            relation_renames.get(spec.relation, spec.relation)
+            if spec.relation is not None
+            else spec.relation
+        )
+        new_specs.append(
+            spec.model_copy(
+                update={"relation": new_relation},
+                deep=True,
+            )
+        )
+    profile.edge_specs = new_specs
+
+    dpv = profile.default_property_values
+    if dpv is None:
+        return
+    object.__setattr__(
+        dpv,
+        "edges",
+        [
+            edge.model_copy(
+                update={
+                    "relation": (
+                        relation_renames.get(edge.relation, edge.relation)
+                        if edge.relation is not None
+                        else edge.relation
+                    )
+                },
+                deep=True,
+            )
+            for edge in dpv.edges
+        ],
+    )
+
+
+def apply_relation_removal_to_db_profile(
+    profile: DatabaseProfile, removed_relations: set[str]
+) -> None:
+    """Drop edge specs/default values for removed relation names."""
+    if not removed_relations:
+        return
+    profile.edge_specs = [
+        spec for spec in profile.edge_specs if spec.relation not in removed_relations
+    ]
+    dpv = profile.default_property_values
+    if dpv is None:
+        return
+    object.__setattr__(
+        dpv,
+        "edges",
+        [edge for edge in dpv.edges if edge.relation not in removed_relations],
+    )
+
+
+def merge_relation_entries_in_db_profile(profile: DatabaseProfile) -> None:
+    """Merge duplicate edge-spec/default entries created by relation remaps."""
+    merged_specs: dict[tuple[str, str, str | None, str | None], EdgeVariantSpec] = {}
+    for spec in profile.edge_specs:
+        key = (spec.source, spec.target, spec.relation, spec.purpose)
+        current = merged_specs.get(key)
+        if current is None:
+            merged_specs[key] = spec
+            continue
+        if current.relation_name != spec.relation_name:
+            raise ValueError(
+                "Conflicting relation_name while merging relation entries for "
+                f"{key}: {current.relation_name!r} vs {spec.relation_name!r}"
+            )
+        if current.indexes_mode != spec.indexes_mode:
+            raise ValueError(
+                "Conflicting indexes_mode while merging relation entries for "
+                f"{key}: {current.indexes_mode!r} vs {spec.indexes_mode!r}"
+            )
+        merged_specs[key] = current.model_copy(
+            update={"indexes": list(current.indexes) + list(spec.indexes)},
+            deep=True,
+        )
+    profile.edge_specs = list(merged_specs.values())
+
+    dpv = profile.default_property_values
+    if dpv is None:
+        return
+    merged_defaults: dict[EdgeId, EdgePropertyDefaults] = {}
+    for edge in dpv.edges:
+        edge_id: EdgeId = (edge.source, edge.target, edge.relation)
+        current = merged_defaults.get(edge_id)
+        if current is None:
+            merged_defaults[edge_id] = edge
+            continue
+        merged_values = _merge_vertex_default_maps(
+            dict(current.values),
+            dict(edge.values),
+            label="default_property_values.edges",
+        )
+        merged_defaults[edge_id] = current.model_copy(
+            update={"values": merged_values}, deep=True
+        )
+    object.__setattr__(dpv, "edges", list(merged_defaults.values()))
+
+
+def apply_edge_property_rename_to_db_profile(
+    profile: DatabaseProfile, renames_by_relation: dict[str, dict[str, str]]
+) -> None:
+    """Rename edge property references in edge indexes/default values."""
+    if not renames_by_relation:
+        return
+    profile.edge_specs = [
+        spec.model_copy(
+            update={
+                "indexes": _rewrite_index_fields(
+                    list(spec.indexes),
+                    renames_by_relation.get(spec.relation, {})
+                    if spec.relation is not None
+                    else {},
+                )
+            },
+            deep=True,
+        )
+        for spec in profile.edge_specs
+    ]
+    dpv = profile.default_property_values
+    if dpv is None:
+        return
+    new_edges: list[EdgePropertyDefaults] = []
+    for edge in dpv.edges:
+        renames = (
+            renames_by_relation.get(edge.relation, {})
+            if edge.relation is not None
+            else {}
+        )
+        values = {renames.get(name, name): value for name, value in edge.values.items()}
+        new_edges.append(edge.model_copy(update={"values": values}, deep=True))
+    object.__setattr__(dpv, "edges", new_edges)
+
+
+def apply_edge_property_removal_to_db_profile(
+    profile: DatabaseProfile, removals_by_relation: dict[str, set[str]]
+) -> None:
+    """Remove edge property references from edge indexes/default values."""
+    if not removals_by_relation:
+        return
+    updated_specs: list[EdgeVariantSpec] = []
+    for spec in profile.edge_specs:
+        removals = (
+            removals_by_relation.get(spec.relation, set())
+            if spec.relation is not None
+            else set()
+        )
+        if not removals:
+            updated_specs.append(spec)
+            continue
+        indexes: list[Index] = []
+        for index in spec.indexes:
+            fields = [field for field in index.fields if field not in removals]
+            if fields:
+                indexes.append(index.model_copy(update={"fields": fields}, deep=True))
+        updated_specs.append(spec.model_copy(update={"indexes": indexes}, deep=True))
+    profile.edge_specs = updated_specs
+
+    dpv = profile.default_property_values
+    if dpv is None:
+        return
+    new_edges: list[EdgePropertyDefaults] = []
+    for edge in dpv.edges:
+        removals = (
+            removals_by_relation.get(edge.relation, set())
+            if edge.relation is not None
+            else set()
+        )
+        if not removals:
+            new_edges.append(edge)
+            continue
+        values = {
+            name: value for name, value in edge.values.items() if name not in removals
+        }
+        new_edges.append(edge.model_copy(update={"values": values}, deep=True))
+    object.__setattr__(dpv, "edges", new_edges)
