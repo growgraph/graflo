@@ -10,7 +10,7 @@ import re
 from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Self
 
-from pydantic import AliasChoices, Field, field_validator, model_validator
+from pydantic import AliasChoices, ConfigDict, Field, field_validator, model_validator
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.onto import BaseEnum
@@ -44,6 +44,32 @@ class BoundSourceKind(BaseEnum):
     FILE = "file"
     SQL_TABLE = "sql_table"
     SPARQL = "sparql"
+
+
+class ConnectorUpdate(ConfigBaseModel):
+    """Patch payload for an existing connector (applied after manifest load).
+
+    Only ``connector`` is a fixed field; any other keys are captured as extras and
+    merged into the resolved connector via ``model_validate`` (so validators,
+    including hash recomputation, run). New connector types and fields do not
+    require changes to this model. Not part of the stored ``GraphManifest``;
+    load from a separate file or build in code, then call
+    ``Bindings.apply_connector_update``.
+
+    Attributes:
+        connector: Connector ``name`` or ``hash`` (same resolution as bindings).
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    connector: str = Field(
+        ...,
+        description="Connector reference: name or hash of the connector to patch.",
+    )
+
+    def as_patch(self) -> dict[str, Any]:
+        """Return extra keys as a patch mapping (excludes ``connector``)."""
+        return dict(self.model_extra or {})
 
 
 class ResourceConnector(ConfigBaseModel, abc.ABC):

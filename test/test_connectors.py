@@ -4,6 +4,7 @@ import pytest
 from graflo.architecture.contract.bindings import (
     Bindings,
     BoundSourceKind,
+    ConnectorUpdate,
     FileConnector,
     ResourceConnectorBinding,
     TableConnector,
@@ -430,3 +431,130 @@ def test_bindings_resource_connector_validation_error_message():
             ],
             resource_connector=[{"resource": "work"}],
         )
+
+
+def test_replace_connector_rewires_hashes() -> None:
+    bindings = Bindings(
+        connectors=[
+            TableConnector(
+                name="events_table",
+                table_name="events",
+                date_field="created_at",
+                date_range_start="2020-01-01",
+                date_range_days=365,
+            )
+        ],
+        resource_connector=[
+            ResourceConnectorBinding(resource="events", connector="events_table")
+        ],
+    )
+    old = bindings.get_connectors_for_resource("events")[0]
+    assert isinstance(old, TableConnector)
+    old_hash = old.hash
+    merged = old.model_dump(mode="python")
+    merged.update({"date_range_start": "2021-06-01", "date_range_days": 30})
+    new = TableConnector.model_validate(merged)
+    assert new.hash != old_hash
+    bindings.replace_connector(old, new)
+    loaded = bindings.get_connectors_for_resource("events")[0]
+    assert isinstance(loaded, TableConnector)
+    assert loaded.hash == new.hash
+    assert loaded.date_range_start == "2021-06-01"
+    assert loaded.date_range_days == 30
+    assert loaded.table_name == "events"
+
+
+def test_replace_connector_preserves_conn_proxy() -> None:
+    bindings = Bindings(
+        connectors=[
+            TableConnector(
+                name="events_table",
+                table_name="events",
+                date_field="created_at",
+                date_range_start="2020-01-01",
+                date_range_days=365,
+            )
+        ],
+        resource_connector=[
+            ResourceConnectorBinding(resource="events", connector="events_table")
+        ],
+        connector_connection=[
+            {"connector": "events_table", "conn_proxy": "pg_main"},
+        ],
+    )
+    old = bindings.get_connectors_for_resource("events")[0]
+    assert isinstance(old, TableConnector)
+    merged = old.model_dump(mode="python")
+    merged.update({"date_range_start": "2021-06-01", "date_range_days": 30})
+    new = TableConnector.model_validate(merged)
+    bindings.replace_connector(old, new)
+    assert bindings.get_conn_proxy_for_connector(new) == "pg_main"
+
+
+def test_apply_connector_update_partial() -> None:
+    bindings = Bindings(
+        connectors=[
+            TableConnector(
+                name="events_table",
+                table_name="events",
+                date_field="created_at",
+                date_range_start="2020-01-01",
+                date_range_days=365,
+            )
+        ],
+        resource_connector=[
+            ResourceConnectorBinding(resource="events", connector="events_table")
+        ],
+    )
+    update = ConnectorUpdate.model_validate(
+        {
+            "connector": "events_table",
+            "date_range_start": "2021-06-01",
+            "date_range_days": 30,
+        }
+    )
+    assert update.as_patch() == {
+        "date_range_start": "2021-06-01",
+        "date_range_days": 30,
+    }
+    bindings.apply_connector_update(update)
+    loaded = bindings.get_connectors_for_resource("events")[0]
+    assert isinstance(loaded, TableConnector)
+    assert loaded.date_range_start == "2021-06-01"
+    assert loaded.date_range_days == 30
+    assert loaded.table_name == "events"
+    assert loaded.date_field == "created_at"
+
+
+def test_apply_external_connector_updates_after_manifest_load() -> None:
+    """Patches are not part of the manifest; apply after Bindings is built."""
+    bindings = Bindings.model_validate(
+        {
+            "connectors": [
+                {
+                    "name": "events_table",
+                    "table_name": "events",
+                    "date_field": "created_at",
+                    "date_range_start": "2020-01-01",
+                    "date_range_days": 365,
+                }
+            ],
+            "resource_connector": [
+                {"resource": "events", "connector": "events_table"},
+            ],
+        }
+    )
+    external_patches = [
+        {
+            "connector": "events_table",
+            "date_range_start": "2021-06-01",
+            "date_range_days": 30,
+        },
+    ]
+    for row in external_patches:
+        bindings.apply_connector_update(ConnectorUpdate.model_validate(row))
+    loaded = bindings.get_connectors_for_resource("events")[0]
+    assert isinstance(loaded, TableConnector)
+    assert loaded.date_range_start == "2021-06-01"
+    assert loaded.date_range_days == 30
+    assert loaded.table_name == "events"

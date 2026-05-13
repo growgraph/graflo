@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Self
+from typing import Any, Self, cast
 
 from pydantic import Field, PrivateAttr, field_validator, model_validator
 
 from graflo.architecture.base import ConfigBaseModel
 from .connectors import (
+    ConnectorUpdate,
     FileConnector,
     ResourceConnector,
     SparqlConnector,
@@ -392,6 +393,65 @@ class Bindings(ConfigBaseModel):
                 f"Unsupported keys: {', '.join(found_legacy)}."
             )
         return cls.model_validate(data)
+
+    def apply_connector_update(self, update: ConnectorUpdate) -> None:
+        """Patch a connector in-place in this binding (re-hashes and reindexes).
+
+        Uses ``model_validate`` on merged data so connector validators (including
+        hash recomputation) run; ``model_copy(update=...)`` would not re-run them.
+        """
+        connector_hash = self._resolve_connector_ref_to_hash(update.connector)
+        old = self._connectors_index[connector_hash]
+        patch = update.as_patch()
+        if not patch:
+            return
+        merged = old.model_dump(mode="python")
+        merged.update(patch)
+        new = cast(
+            TableConnector | FileConnector | SparqlConnector,
+            old.__class__.model_validate(merged),
+        )
+        self.replace_connector(old, new)
+
+    def replace_connector(
+        self,
+        old: ResourceConnector | str,
+        new: TableConnector | FileConnector | SparqlConnector,
+    ) -> None:
+        """Swap *old* for *new*, preserving resource wiring and conn_proxy by hash."""
+        old_hash = (
+            old.hash
+            if isinstance(old, ResourceConnector)
+            else self._resolve_connector_ref_to_hash(old)
+        )
+        if old_hash not in self._connectors_index:
+            raise KeyError(f"Connector not found for hash={old_hash!r}")
+
+        old_connector = self._connectors_index[old_hash]
+        if new.name is None and old_connector.name is not None:
+            object.__setattr__(new, "name", old_connector.name)
+
+        replaced = False
+        for idx, c in enumerate(self.connectors):
+            if c.hash == old_hash:
+                self.connectors[idx] = new
+                replaced = True
+                break
+        if not replaced:
+            raise KeyError(
+                f"Connector with hash={old_hash!r} not found in bindings.connectors list"
+            )
+
+        new_hash = new.hash
+        for hashes in self._resource_to_connector_hashes.values():
+            for i, h in enumerate(hashes):
+                if h == old_hash:
+                    hashes[i] = new_hash
+
+        old_proxy = self._connector_to_conn_proxy.pop(old_hash, None)
+        self._rebuild_indexes()
+        if old_proxy is not None:
+            self._connector_to_conn_proxy[new_hash] = old_proxy
 
     def add_connector(
         self,

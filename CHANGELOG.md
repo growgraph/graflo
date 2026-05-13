@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.27]
+
+### Added
+
+- **Bindings — runtime connector patches**: **`ConnectorUpdate`**, **`Bindings.apply_connector_update`**, and **`Bindings.replace_connector`** so defining-field changes re-hash and reindex correctly while preserving **`conn_proxy`** wiring. Patches are applied **after** manifest load (not stored on `GraphManifest`).
+
+### Documentation
+
+- **[Runtime connector updates](docs/concepts/runtime_connector_updates.md)** — patches live **outside** the manifest; apply **`apply_connector_update`** / **`replace_connector`** after load and before **`GraphEngine`** or registry build.
+
+
 ## [1.7.26]
 
 ### Breaking

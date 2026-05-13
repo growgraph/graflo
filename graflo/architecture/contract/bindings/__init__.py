@@ -3,6 +3,7 @@
 from .core import Bindings, ResourceConnectorBinding, StagingProxyBinding
 from .connectors import (
     BoundSourceKind,
+    ConnectorUpdate,
     FileConnector,
     JoinClause,
     ResourceConnector,
@@ -13,6 +14,7 @@ from .connectors import (
 __all__ = [
     "Bindings",
     "BoundSourceKind",
+    "ConnectorUpdate",
     "ResourceConnectorBinding",
     "StagingProxyBinding",
     "FileConnector",
