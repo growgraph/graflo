@@ -361,7 +361,7 @@ This creates `TableConnector` instances for each table, which:
 - Map table names to resource names (e.g., `users` table → `users` resource)
 - Store PostgreSQL connection configuration
 - Enable the Caster to query data directly from PostgreSQL using SQL
-- Optionally store a `date_field` for date-range filtering when `datetime_columns` is provided
+- Optionally set **`time_filter.column`** (via `datetime_columns` → **`ColumnTimeFilter`**) so per-table ingestion date ranges know which column to filter on
 
 **How Bindings Work:**
 
@@ -407,7 +407,7 @@ ingestion_params = IngestionParams(
     # or datetime_column below)
     # datetime_after="2020-01-01",
     # datetime_before="2021-01-01",
-    # datetime_column="created_at",  # default column when a connector has no date_field
+    # datetime_column="created_at",  # default column when a connector has no time_filter column hint
 )
 
 engine.define_and_ingest(

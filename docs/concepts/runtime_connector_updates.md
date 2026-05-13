@@ -2,7 +2,25 @@
 
 Each `FileConnector`, `TableConnector`, and `SparqlConnector` gets a deterministic **`hash`** from its defining fields (excluding `name` and `resource_name`). `Bindings` indexes connectors and resource wiring by that hash, and `connector_connection` maps each connector to a `conn_proxy` by resolved hash.
 
-If you change defining fields (for example narrowing `date_range_start` / `date_range_days`, adding `filters`, or adjusting file `regex`), the hash changes. You must **replace** the old connector in `Bindings` and **re-wire** internal maps; appending a second connector or using `add_connector` alone can leave stale hash entries.
+If you change defining fields (for example narrowing a `time_filter` window (`start` / `interval` / `end`), adding `filters`, or adjusting file `regex`), the hash changes. You must **replace** the old connector in `Bindings` and **re-wire** internal maps; appending a second connector or using `add_connector` alone can leave stale hash entries.
+
+## Time filters (`ColumnTimeFilter`)
+
+`FileConnector` and `TableConnector` share an optional nested **`time_filter`** (`ColumnTimeFilter`): a column name plus bounds. SQL is built with **`FilterExpression`** (same mechanism as **`filters`**).
+
+| Field | Meaning |
+| ----- | ------- |
+| **`column`** | Identifier of the date/time column in generated SQL. |
+| **`start`** | Optional lower bound (ISO date `YYYY-MM-DD` or ISO datetime). Combined with **`start_inclusive`** (default `true` → `>=`; `false` → `>`). |
+| **`end`** | Optional upper bound. Combined with **`end_inclusive`** (default `false` → `<`; `true` → `<=`). |
+| **`interval`** | Optional [pandas `Timedelta`](https://pandas.pydata.org/docs/reference/api/pandas.Timedelta.html) string (e.g. `"7D"`, `"2h"`). Requires **`start`**; defines half-open **`[start, start + interval)`** with `>=` and `<`. Mutually exclusive with **`end`**. |
+| **`not_equals`** | Single value for `!=`; mutually exclusive with **`start`**, **`end`**, and **`interval`**. |
+
+**Column-only hint:** `time_filter: { column: "created_at" }` (no bounds) records the default datetime column for ingestion (`IngestionParams.datetime_after` / `datetime_before`) without adding a `WHERE` clause from the connector itself.
+
+Durations must parse as a fixed **`pandas.Timedelta`** (wall-clock offset). Calendar-style strings that are not valid timedeltas (for example ambiguous month rolls) are unsupported; use explicit **`start`** / **`end`** instead.
+
+At runtime, the read-only **`date_field`** property on connectors resolves to **`time_filter.column`** when present (for code and docs that read “which column is the event time?”). Manifests and patches must use the nested **`time_filter`** object; older flat `date_*` keys are not accepted.
 
 ## Manifest vs patches
 
@@ -35,9 +53,12 @@ Your application can define any file layout; below is a minimal list you might l
 
 ```yaml
 # connector_patches.yaml (separate from manifest)
+# Canonical: patch the nested time_filter (merged in full on the connector).
 - connector: events_table
-  date_range_start: "2021-06-01"
-  date_range_days: 30
+  time_filter:
+    column: created_at
+    start: "2021-06-01"
+    interval: "30D"
 ```
 
 ### Baseline manifest `bindings` (no patches)
@@ -47,9 +68,10 @@ bindings:
   connectors:
     - name: events_table
       table_name: events
-      date_field: created_at
-      date_range_start: "2020-01-01"
-      date_range_days: 365
+      time_filter:
+        column: created_at
+        start: "2020-01-01"
+        interval: "365D"
   resource_connector:
     - resource: events
       connector: events_table
@@ -79,8 +101,11 @@ bindings.apply_connector_update(
     ConnectorUpdate.model_validate(
         {
             "connector": "events_table",
-            "date_range_start": "2021-06-01",
-            "date_range_days": 30,
+            "time_filter": {
+                "column": "created_at",
+                "start": "2021-06-01",
+                "interval": "30D",
+            },
         }
     )
 )
@@ -97,6 +122,8 @@ Resolves `update.connector`, merges `old.model_dump(mode="python")` with the pat
 Lower-level: `replace_connector(old, new)` where `old` is an existing connector instance or a **name/hash string**, and `new` is the fully built replacement (`TableConnector` | `FileConnector` | `SparqlConnector`). If `new.name` is unset and the old connector had a name, the name is copied onto `new`. Resource→connector hash lists and `conn_proxy` mappings move from the old hash to `new.hash`, then name/hash indexes are rebuilt.
 
 Use this when you already built `new` yourself; use `apply_connector_update` for dict-shaped patches.
+
+When patching **`time_filter`**, the merged payload replaces the entire nested object (provide a full `time_filter` dict in YAML/JSON, not single-key deltas inside it).
 
 ## Behaviour summary
 
@@ -116,6 +143,7 @@ Use this when you already built `new` yourself; use `apply_connector_update` for
 
 Implementation entry points:
 
+- `graflo.architecture.contract.bindings.ColumnTimeFilter`
 - `graflo.architecture.contract.bindings.ConnectorUpdate`
 - `graflo.architecture.contract.bindings.Bindings.apply_connector_update`
 - `graflo.architecture.contract.bindings.Bindings.replace_connector`

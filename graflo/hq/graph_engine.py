@@ -252,8 +252,8 @@ class GraphEngine:
             postgres_config: PostgresConfig instance
             schema_name: Schema name to introspect
             datetime_columns: Optional mapping of resource/table name to datetime
-                column name for date-range filtering (sets date_field per
-                TableConnector). Use with IngestionParams.datetime_after /
+                column name for date-range filtering (sets ``time_filter.column`` per
+                ``TableConnector``). Use with IngestionParams.datetime_after /
                 datetime_before.
             type_lookup_overrides: Optional mapping of table name to type_lookup
                 spec for edge tables where source/target types come from a

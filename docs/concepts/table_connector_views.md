@@ -1,7 +1,10 @@
 # Table connector views and `SelectSpec`
 
 `TableConnector` normally describes a **base table** plus optional declarative
-`JoinClause` rows, `FilterExpression` filters, and `select_columns`. For richer SQL
+`JoinClause` rows, `FilterExpression` **`filters`**, optional nested **`time_filter`**
+(**`ColumnTimeFilter`**: column + ISO bounds and/or a pandas **`interval`** string
+for SQL `WHERE` on a datetime column — see [Runtime connector updates](runtime_connector_updates.md)),
+and `select_columns`. For richer SQL
 (polymorphic relation rows joined to lookup tables, asymmetric joins, or a
 fully custom `SELECT` list), set **`view`** to a **`SelectSpec`**.
 
