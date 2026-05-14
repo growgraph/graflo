@@ -335,6 +335,27 @@ class TestTableConnectorBuildQuery:
         q = tp.build_query("public")
         assert "\"status\" = 'active'" in q
 
+    def test_dict_filter_without_kind_model_validates_as_leaf(self):
+        """Pushdown dicts from YAML often omit ``kind``; model_validate must infer leaf."""
+        expr = FilterExpression.model_validate(
+            {
+                "cmp_operator": ComparisonOperator.IS_NOT_NULL,
+                "field": "source.sys_id",
+            }
+        )
+        assert expr.kind == "leaf"
+        assert expr(kind=ExpressionFlavor.SQL) == 'source."sys_id" IS NOT NULL'
+
+    def test_untagged_composite_operator_not_consumed_as_unary(self):
+        """Logical ``operator`` + ``deps`` must stay composite (not unary_op)."""
+        inner = {"field": "a", "cmp_operator": ComparisonOperator.EQ, "value": [1]}
+        expr = FilterExpression.model_validate(
+            {"operator": "AND", "deps": [inner, dict(inner)]}
+        )
+        assert expr.kind == "composite"
+        assert expr.operator == LogicalOperator.AND
+        assert len(expr.deps) == 2
+
     def test_joined_query_qualifies_date_and_filter_columns(self):
         filt = FilterExpression(
             kind="leaf",
