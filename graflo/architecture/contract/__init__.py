@@ -3,6 +3,7 @@
 from .bindings import (
     Bindings,
     BoundSourceKind,
+    ColumnTimeFilter,
     FileConnector,
     JoinClause,
     ResourceConnector,
@@ -20,6 +21,7 @@ from .manifest import GraphManifest
 __all__ = [
     "Bindings",
     "BoundSourceKind",
+    "ColumnTimeFilter",
     "FileConnector",
     "GraphManifest",
     "IngestionModel",

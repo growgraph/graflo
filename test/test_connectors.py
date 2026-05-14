@@ -1,13 +1,21 @@
 import pathlib
+
 import pytest
+from pydantic import ValidationError
 
 from graflo.architecture.contract.bindings import (
     Bindings,
     BoundSourceKind,
+    ColumnTimeFilter,
+    ConnectorUpdate,
     FileConnector,
     ResourceConnectorBinding,
     TableConnector,
 )
+
+
+def _tc(d: dict[str, object]) -> TableConnector:
+    return TableConnector.model_validate(d)
 
 
 def test_connectors():
@@ -47,46 +55,37 @@ def test_file_connector_basic():
         sub_path=pathlib.Path("./data"),
     )
     assert pattern.regex == r".*\.csv$"
+    assert pattern.time_filter is None
     assert pattern.date_field is None
-    assert pattern.date_filter is None
 
 
-def test_file_connector_date_validation():
-    """Test FileConnector date filtering parameter validation."""
-    # Should raise error if date_filter is set without date_field
-    with pytest.raises(ValueError, match="date_field is required"):
-        FileConnector(
-            regex=r".*\.csv$",
-            sub_path=pathlib.Path("./data"),
-            date_filter="> '2020-10-10'",
+def test_file_connector_rejects_unknown_time_keys() -> None:
+    """Legacy flat date_* keys are not accepted (extra=forbid)."""
+    with pytest.raises(ValidationError):
+        FileConnector.model_validate(
+            {
+                "regex": r".*\.csv$",
+                "sub_path": pathlib.Path("./data"),
+                "date_filter": "> '2020-10-10'",
+            }
         )
 
-    # Should raise error if date_range_start is set without date_field
-    with pytest.raises(ValueError, match="date_field is required"):
-        FileConnector(
-            regex=r".*\.csv$",
-            sub_path=pathlib.Path("./data"),
-            date_range_start="2015-11-11",
-        )
 
-    # Should raise error if date_range_days is set without date_range_start
-    with pytest.raises(ValueError, match="date_range_start is required"):
-        FileConnector(
-            regex=r".*\.csv$",
-            sub_path=pathlib.Path("./data"),
-            date_field="dt",
-            date_range_days=30,
-        )
-
-    # Should work with all required parameters
+def test_file_connector_time_filter() -> None:
     pattern = FileConnector(
         regex=r".*\.csv$",
         sub_path=pathlib.Path("./data"),
-        date_field="dt",
-        date_filter="> '2020-10-10'",
+        time_filter=ColumnTimeFilter(
+            column="dt",
+            start="2020-10-10",
+            start_inclusive=False,
+        ),
     )
     assert pattern.date_field == "dt"
-    assert pattern.date_filter == "> '2020-10-10'"
+    assert pattern.time_filter is not None
+    assert pattern.time_filter.column == "dt"
+    assert pattern.time_filter.start == "2020-10-10"
+    assert pattern.time_filter.start_inclusive is False
 
 
 def test_table_connector_basic():
@@ -99,38 +98,29 @@ def test_table_connector_basic():
     assert pattern.schema_name == "public"
 
 
-def test_table_connector_date_validation():
-    """Test TableConnector date filtering parameter validation."""
-    # Should raise error if date_filter is set without date_field
-    with pytest.raises(ValueError, match="date_field is required"):
-        TableConnector(
-            table_name="events",
-            date_filter="> '2020-10-10'",
+def test_table_connector_rejects_unknown_time_keys() -> None:
+    with pytest.raises(ValidationError):
+        TableConnector.model_validate(
+            {"table_name": "events", "date_filter": "> '2020-10-10'"}
         )
 
-    # Should raise error if date_range_start is set without date_field
-    with pytest.raises(ValueError, match="date_field is required"):
-        TableConnector(
-            table_name="events",
-            date_range_start="2015-11-11",
-        )
 
-    # Should raise error if date_range_days is set without date_range_start
-    with pytest.raises(ValueError, match="date_range_start is required"):
-        TableConnector(
-            table_name="events",
-            date_field="dt",
-            date_range_days=30,
-        )
-
-    # Should work with all required parameters
-    pattern = TableConnector(
-        table_name="events",
-        date_field="dt",
-        date_filter="> '2020-10-10'",
+def test_table_connector_time_filter_from_dict() -> None:
+    pattern = _tc(
+        {
+            "table_name": "events",
+            "time_filter": {
+                "column": "dt",
+                "start": "2020-10-10",
+                "start_inclusive": False,
+            },
+        }
     )
     assert pattern.date_field == "dt"
-    assert pattern.date_filter == "> '2020-10-10'"
+    assert pattern.time_filter is not None
+    assert pattern.time_filter.column == "dt"
+    assert pattern.time_filter.start == "2020-10-10"
+    assert pattern.time_filter.start_inclusive is False
 
 
 def test_table_connector_build_where_clause_no_filter():
@@ -139,76 +129,81 @@ def test_table_connector_build_where_clause_no_filter():
     assert pattern.build_where_clause() == ""
 
 
-def test_table_connector_build_where_clause_date_filter():
-    """Test build_where_clause with date_filter."""
-    # Test with quoted date
+def test_table_connector_build_where_clause_time_bounds():
+    """Test build_where_clause with strict lower bound."""
     pattern = TableConnector(
         table_name="events",
-        date_field="created_at",
-        date_filter="> '2020-10-10'",
+        time_filter=ColumnTimeFilter(
+            column="created_at",
+            start="2020-10-10",
+            start_inclusive=False,
+        ),
     )
     where_clause = pattern.build_where_clause()
     assert '"created_at"' in where_clause
     assert "> '2020-10-10'" in where_clause
 
-    # Test with unquoted date (should add quotes)
     pattern2 = TableConnector(
         table_name="events",
-        date_field="dt",
-        date_filter="> 2020-10-10",
+        time_filter=ColumnTimeFilter(
+            column="dt",
+            start="2020-10-10",
+            start_inclusive=False,
+        ),
     )
     where_clause2 = pattern2.build_where_clause()
     assert '"dt"' in where_clause2
     assert "> '2020-10-10'" in where_clause2
 
-    # Test with >= operator
     pattern3 = TableConnector(
         table_name="events",
-        date_field="dt",
-        date_filter=">= '2015-11-11'",
+        time_filter=ColumnTimeFilter(
+            column="dt",
+            start="2015-11-11",
+            start_inclusive=True,
+        ),
     )
     where_clause3 = pattern3.build_where_clause()
     assert '"dt"' in where_clause3
     assert ">= '2015-11-11'" in where_clause3
 
 
-def test_table_connector_build_where_clause_date_range():
-    """Test build_where_clause with date_range_start and date_range_days."""
+def test_table_connector_build_where_clause_interval_range():
+    """Test build_where_clause with start + interval (half-open window)."""
     pattern = TableConnector(
         table_name="transactions",
-        date_field="dt",
-        date_range_start="2015-11-11",
-        date_range_days=30,
+        time_filter=ColumnTimeFilter(
+            column="dt",
+            start="2015-11-11",
+            interval="30D",
+        ),
     )
     where_clause = pattern.build_where_clause()
-    # Should contain both conditions
     assert '"dt"' in where_clause
     assert ">= '2015-11-11'" in where_clause
     assert "< '2015-12-11'" in where_clause
     assert "AND" in where_clause
-
-    # Verify the range logic: dt >= start AND dt < start + interval
     assert where_clause.count(">=") == 1
     assert where_clause.count("<") == 1
 
 
-def test_table_connector_build_where_clause_complex():
-    """Test build_where_clause with various date filter formats."""
-    # Test with different operators
+def test_table_connector_build_where_clause_neq_and_upper():
+    """Test build_where_clause with != and upper bound."""
     connector = TableConnector(
         table_name="events",
-        date_field="timestamp",
-        date_filter="< '2023-01-01'",
+        time_filter=ColumnTimeFilter(
+            column="timestamp",
+            end="2023-01-01",
+            end_inclusive=False,
+        ),
     )
     where1 = connector.build_where_clause()
     assert '"timestamp"' in where1
     assert "< '2023-01-01'" in where1
 
-    # Test with != operator
     connector2 = TableConnector(
         table_name="events",
-        date_field="dt",
-        date_filter="!= '2020-01-01'",
+        time_filter=ColumnTimeFilter(column="dt", not_equals="2020-01-01"),
     )
     where2 = connector2.build_where_clause()
     assert '"dt"' in where2
@@ -219,7 +214,6 @@ def test_connectors_with_filtering():
     """Test Bindings collection with filtering parameters."""
     bindings = Bindings()
 
-    # Add file pattern
     file_connector = FileConnector(
         regex=r".*\.csv$",
         sub_path=pathlib.Path("./data"),
@@ -227,37 +221,43 @@ def test_connectors_with_filtering():
     bindings.add_connector(file_connector)
     bindings.bind_resource("users", file_connector)
 
-    # Add table pattern with date filter
     table_connector = TableConnector(
         table_name="events",
         schema_name="public",
-        date_field="created_at",
-        date_filter="> '2020-10-10'",
+        time_filter=ColumnTimeFilter(
+            column="created_at",
+            start="2020-10-10",
+            start_inclusive=False,
+        ),
     )
     bindings.add_connector(table_connector)
     bindings.bind_resource("events", table_connector)
 
-    # Verify connectors are stored correctly (narrow with isinstance checks)
     users_pattern = bindings.get_connectors_for_resource("users")[0]
     events_pattern = bindings.get_connectors_for_resource("events")[0]
     assert isinstance(users_pattern, FileConnector)
     assert users_pattern.regex == r".*\.csv$"
     assert isinstance(events_pattern, TableConnector)
     assert events_pattern.date_field == "created_at"
-    assert events_pattern.date_filter == "> '2020-10-10'"
+    tf = events_pattern.time_filter
+    assert tf is not None
+    assert tf.column == "created_at"
+    assert tf.start == "2020-10-10"
+    assert tf.start_inclusive is False
 
 
 def test_table_connector_sql_query_building():
     """Test that TableConnector builds correct SQL queries with filters."""
-    # Test the query building logic directly (as used in caster.py)
     table_connector = TableConnector(
         table_name="events",
         schema_name="public",
-        date_field="dt",
-        date_filter="> '2020-10-10'",
+        time_filter=ColumnTimeFilter(
+            column="dt",
+            start="2020-10-10",
+            start_inclusive=False,
+        ),
     )
 
-    # Test WHERE clause building
     where_clause = table_connector.build_where_clause()
     expected_where = "\"dt\" > '2020-10-10'"
     assert where_clause == expected_where
@@ -272,7 +272,6 @@ def test_table_connector_sql_query_building():
     assert "> '2020-10-10'" in full_query
     assert '"dt"' in full_query
 
-    # Test with no date filter
     pattern_no_date = TableConnector(
         table_name="users",
         schema_name="public",
@@ -288,24 +287,24 @@ def test_table_connector_date_range_sql():
     """Test SQL query building with date range."""
     pattern = TableConnector(
         table_name="transactions",
-        date_field="dt",
-        date_range_start="2015-11-11",
-        date_range_days=30,
+        time_filter=ColumnTimeFilter(
+            column="dt",
+            start="2015-11-11",
+            interval="30D",
+        ),
     )
 
     where_clause = pattern.build_where_clause()
-    # Should have both conditions joined with AND
     assert "AND" in where_clause
     assert ">=" in where_clause
     assert "<" in where_clause
     assert "2015-11-11" in where_clause
     assert "2015-12-11" in where_clause
 
-    # Verify the full query structure
     base_query = 'SELECT * FROM "public"."transactions"'
     full_query = f"{base_query} WHERE {where_clause}"
     assert "WHERE" in full_query
-    assert where_clause.count("AND") == 1  # Should have exactly one AND
+    assert where_clause.count("AND") == 1
 
 
 def test_connector_hash_is_deterministic_for_defining_fields():
@@ -430,3 +429,164 @@ def test_bindings_resource_connector_validation_error_message():
             ],
             resource_connector=[{"resource": "work"}],
         )
+
+
+def _events_table_with_range() -> TableConnector:
+    return TableConnector(
+        name="events_table",
+        table_name="events",
+        time_filter=ColumnTimeFilter(
+            column="created_at",
+            start="2020-01-01",
+            interval="365D",
+        ),
+    )
+
+
+def test_replace_connector_rewires_hashes() -> None:
+    bindings = Bindings(
+        connectors=[_events_table_with_range()],
+        resource_connector=[
+            ResourceConnectorBinding(resource="events", connector="events_table")
+        ],
+    )
+    old = bindings.get_connectors_for_resource("events")[0]
+    assert isinstance(old, TableConnector)
+    old_hash = old.hash
+    merged = old.model_dump(mode="python")
+    merged["time_filter"] = {
+        "column": "created_at",
+        "start": "2021-06-01",
+        "interval": "30D",
+    }
+    new = TableConnector.model_validate(merged)
+    assert new.hash != old_hash
+    bindings.replace_connector(old, new)
+    loaded = bindings.get_connectors_for_resource("events")[0]
+    assert isinstance(loaded, TableConnector)
+    assert loaded.hash == new.hash
+    tf = loaded.time_filter
+    assert tf is not None
+    assert tf.start == "2021-06-01"
+    assert tf.interval == "30D"
+    assert loaded.table_name == "events"
+
+
+def test_replace_connector_preserves_conn_proxy() -> None:
+    bindings = Bindings(
+        connectors=[_events_table_with_range()],
+        resource_connector=[
+            ResourceConnectorBinding(resource="events", connector="events_table")
+        ],
+        connector_connection=[
+            {"connector": "events_table", "conn_proxy": "pg_main"},
+        ],
+    )
+    old = bindings.get_connectors_for_resource("events")[0]
+    assert isinstance(old, TableConnector)
+    merged = old.model_dump(mode="python")
+    merged["time_filter"] = {
+        "column": "created_at",
+        "start": "2021-06-01",
+        "interval": "30D",
+    }
+    new = TableConnector.model_validate(merged)
+    bindings.replace_connector(old, new)
+    assert bindings.get_conn_proxy_for_connector(new) == "pg_main"
+
+
+def test_apply_connector_update_partial() -> None:
+    bindings = Bindings(
+        connectors=[_events_table_with_range()],
+        resource_connector=[
+            ResourceConnectorBinding(resource="events", connector="events_table")
+        ],
+    )
+    update = ConnectorUpdate.model_validate(
+        {
+            "connector": "events_table",
+            "time_filter": {
+                "column": "created_at",
+                "start": "2021-06-01",
+                "interval": "30D",
+            },
+        }
+    )
+    assert update.as_patch() == {
+        "time_filter": {
+            "column": "created_at",
+            "start": "2021-06-01",
+            "interval": "30D",
+        },
+    }
+    bindings.apply_connector_update(update)
+    loaded = bindings.get_connectors_for_resource("events")[0]
+    assert isinstance(loaded, TableConnector)
+    tf = loaded.time_filter
+    assert tf is not None
+    assert tf.start == "2021-06-01"
+    assert tf.interval == "30D"
+    assert loaded.table_name == "events"
+    assert loaded.date_field == "created_at"
+
+
+def test_apply_external_connector_updates_after_manifest_load() -> None:
+    """Patches are not part of the manifest; apply after Bindings is built."""
+    bindings = Bindings.model_validate(
+        {
+            "connectors": [
+                {
+                    "name": "events_table",
+                    "table_name": "events",
+                    "time_filter": {
+                        "column": "created_at",
+                        "start": "2020-01-01",
+                        "interval": "365D",
+                    },
+                }
+            ],
+            "resource_connector": [
+                {"resource": "events", "connector": "events_table"},
+            ],
+        }
+    )
+    external_patches = [
+        {
+            "connector": "events_table",
+            "time_filter": {
+                "column": "created_at",
+                "start": "2021-06-01",
+                "interval": "30D",
+            },
+        },
+    ]
+    for row in external_patches:
+        bindings.apply_connector_update(ConnectorUpdate.model_validate(row))
+    loaded = bindings.get_connectors_for_resource("events")[0]
+    assert isinstance(loaded, TableConnector)
+    tf = loaded.time_filter
+    assert tf is not None
+    assert tf.start == "2021-06-01"
+    assert tf.interval == "30D"
+    assert loaded.table_name == "events"
+
+
+def test_table_connector_time_filter_pandas_interval_hours() -> None:
+    pattern = TableConnector(
+        table_name="events",
+        time_filter=ColumnTimeFilter(
+            column="ts",
+            start="2024-01-01T10:00:00",
+            interval="2h",
+        ),
+    )
+    where_clause = pattern.build_where_clause()
+    assert '"ts"' in where_clause
+    assert ">=" in where_clause
+    assert "<" in where_clause
+    assert "2024-01-01 10:00:00" in where_clause
+
+
+def test_column_time_filter_invalid_interval() -> None:
+    with pytest.raises(ValueError, match="Invalid pandas timedelta"):
+        ColumnTimeFilter(column="ts", start="2020-01-01", interval="not_a_timedelta")

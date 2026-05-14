@@ -9,7 +9,11 @@ import logging
 from graflo.architecture.onto_sql import SchemaIntrospectionResult
 from graflo.db.postgres.conn import PostgresConnection
 from graflo.filter.select import SelectSpec
-from graflo.architecture.contract.bindings import Bindings, TableConnector
+from graflo.architecture.contract.bindings import (
+    Bindings,
+    ColumnTimeFilter,
+    TableConnector,
+)
 from graflo.hq.connection_provider import (
     InMemoryConnectionProvider,
     PostgresGeneralizedConnConfig,
@@ -56,8 +60,8 @@ class ResourceMapper:
             conn: PostgresConnection instance
             schema_name: Schema name to introspect
             datetime_columns: Optional mapping of resource/table name to datetime
-                column name for date-range filtering (sets date_field on each
-                TableConnector). Used with IngestionParams.datetime_after /
+                column name for date-range filtering (sets ``time_filter.column`` on each
+                ``TableConnector``). Used with IngestionParams.datetime_after /
                 datetime_before.
             type_lookup_overrides: Optional mapping of table name to type_lookup
                 spec for edge tables where source/target types come from a lookup
@@ -107,11 +111,14 @@ class ResourceMapper:
         # Add bindings for vertex tables
         for table_info in introspection_result.vertex_tables:
             table_name = table_info.name
-            table_connector = TableConnector(
-                table_name=table_name,
-                schema_name=effective_schema,
-                date_field=date_cols.get(table_name),
-            )
+            dc = date_cols.get(table_name)
+            tc_kwargs: dict = {
+                "table_name": table_name,
+                "schema_name": effective_schema,
+            }
+            if dc:
+                tc_kwargs["time_filter"] = ColumnTimeFilter(column=dc)
+            table_connector = TableConnector.model_validate(tc_kwargs)
             bindings.add_connector(table_connector)
             bindings.bind_resource(table_name, table_connector)
             bindings.bind_connector_to_conn_proxy(table_connector, conn_proxy)
@@ -127,12 +134,15 @@ class ResourceMapper:
             view = None
             if tl_spec:
                 view = SelectSpec.from_dict({"kind": "type_lookup", **tl_spec})
-            table_connector = TableConnector(
-                table_name=table_name,
-                schema_name=effective_schema,
-                date_field=date_cols.get(table_name),
-                view=view,
-            )
+            dc = date_cols.get(table_name)
+            tc_kwargs = {
+                "table_name": table_name,
+                "schema_name": effective_schema,
+                "view": view,
+            }
+            if dc:
+                tc_kwargs["time_filter"] = ColumnTimeFilter(column=dc)
+            table_connector = TableConnector.model_validate(tc_kwargs)
             bindings.add_connector(table_connector)
             bindings.bind_resource(table_name, table_connector)
             bindings.bind_connector_to_conn_proxy(table_connector, conn_proxy)

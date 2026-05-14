@@ -18,6 +18,7 @@ from graflo.filter.select import SelectSpec
 from graflo.onto import ExpressionFlavor
 from graflo.architecture.contract.bindings import (
     Bindings,
+    ColumnTimeFilter,
     JoinClause,
     TableConnector,
 )
@@ -155,8 +156,11 @@ class TestTableConnectorBuildQuery:
     def test_with_date_filter(self):
         tp = TableConnector(
             table_name="events",
-            date_field="created_at",
-            date_filter="> '2020-01-01'",
+            time_filter=ColumnTimeFilter(
+                column="created_at",
+                start="2020-01-01",
+                start_inclusive=False,
+            ),
         )
         q = tp.build_query("public")
         assert 'WHERE "created_at" >' in q
@@ -340,8 +344,11 @@ class TestTableConnectorBuildQuery:
         )
         tp = TableConnector(
             table_name="events",
-            date_field="created_at",
-            date_filter=">= '2024-01-01'",
+            time_filter=ColumnTimeFilter(
+                column="created_at",
+                start="2024-01-01",
+                start_inclusive=True,
+            ),
             filters=[filt],
             joins=[
                 JoinClause(
@@ -389,9 +396,11 @@ class TestTableConnectorBuildQuery:
         tp = TableConnector(
             table_name="events",
             schema_name="main",
-            date_field="dt",
-            date_range_start="2024-01-01",
-            date_range_days=2,
+            time_filter=ColumnTimeFilter(
+                column="dt",
+                start="2024-01-01",
+                interval="2D",
+            ),
         )
         query = tp.build_query("main")
         assert "INTERVAL" not in query

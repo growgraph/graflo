@@ -9,7 +9,7 @@ from graflo.filter.sql import datetime_range_where_sql
 from graflo.hq.caster import IngestionParams
 from graflo.hq.graph_engine import GraphEngine
 from graflo.onto import DBType
-from graflo.architecture.contract.bindings import TableConnector
+from graflo.architecture.contract.bindings import ColumnTimeFilter, TableConnector
 
 
 def _set_purchase_dates(postgres_conn):
@@ -63,7 +63,7 @@ def test_ingest_datetime_range_postgres(postgres_conn, load_mock_schema):
     pattern = TableConnector(
         table_name="purchases",
         schema_name="public",
-        date_field="purchase_date",
+        time_filter=ColumnTimeFilter(column="purchase_date"),
     )
     datetime_where = datetime_range_where_sql(
         "2020-02-01",
@@ -88,7 +88,6 @@ def test_ingest_datetime_range_with_global_column(postgres_conn, load_mock_schem
     pattern = TableConnector(
         table_name="purchases",
         schema_name="public",
-        date_field=None,
     )
     ingestion_params = IngestionParams(
         datetime_after="2020-02-01",
