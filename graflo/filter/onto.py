@@ -69,6 +69,10 @@ OperatorMapping = MappingProxyType(
     }
 )
 
+_LOGICAL_OPERATOR_JSON_VALUES: frozenset[str] = frozenset(
+    m.value for m in LogicalOperator
+)
+
 
 class ComparisonOperator(BaseEnum):
     """Comparison operators for field comparisons.
@@ -145,10 +149,26 @@ class FilterExpression(ConfigBaseModel):
         """Map leaf 'operator' or 'foo' (YAML/kwargs) to unary_op; infer kind and cmp_operator."""
         if not isinstance(data, dict):
             return data
+        data = dict(data)
         if data.get("kind") == "composite":
             return data
+
+        if data.get("kind") is None:
+            op = data.get("operator")
+            if isinstance(op, LogicalOperator):
+                data["kind"] = "composite"
+                return data
+            if isinstance(op, str) and op in _LOGICAL_OPERATOR_JSON_VALUES:
+                data["kind"] = "composite"
+                return data
+            deps = data.get("deps")
+            if isinstance(deps, list) and len(deps) > 0:
+                data["kind"] = "composite"
+                return data
+            if data.get("cmp_operator") is not None or data.get("field") is not None:
+                data["kind"] = "leaf"
+
         raw_op = None
-        data = dict(data)
         if "operator" in data and isinstance(data["operator"], str):
             raw_op = data.pop("operator")
         elif "foo" in data and isinstance(data["foo"], str):
