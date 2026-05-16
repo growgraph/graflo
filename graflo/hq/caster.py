@@ -35,6 +35,7 @@ from suthing import Timer
 from graflo.architecture.contract.declarations.ingestion_model import IngestionModel
 from graflo.architecture.graph_types import EncodingType, GraphContainer
 from graflo.architecture.schema import Schema
+from graflo.architecture.schema.vertex import VertexConfig
 from graflo.data_source import (
     AbstractDataSource,
     DataSourceFactory,
@@ -83,6 +84,57 @@ def _filter_graph_container_by_vertices_inplace(
         for (vfrom, vto, rel), items in gc.edges.items()
         if vfrom in allowed_vertex_names and vto in allowed_vertex_names
     }
+
+
+def _identity_value_is_empty(value: Any) -> bool:
+    return value is None or value == ""
+
+
+def _vertex_doc_has_empty_identity(
+    doc: dict[str, Any], identity_fields: list[str]
+) -> bool:
+    if not identity_fields:
+        return False
+    return all(_identity_value_is_empty(doc.get(field)) for field in identity_fields)
+
+
+def _filter_graph_container_drop_empty_identity_inplace(
+    gc: GraphContainer, *, vertex_config: VertexConfig
+) -> None:
+    """Remove vertex docs and edge tuples with no usable schema identity.
+
+    Identity rules come from *vertex_config*; :class:`GraphContainer` is unchanged
+    as a type. Blank vertex collections are skipped (empty identity before DB assign).
+    """
+    blank = set(vertex_config.blank_vertices)
+    vertex_set = vertex_config.vertex_set
+
+    for vcol, docs in list(gc.vertices.items()):
+        if vcol in blank or vcol not in vertex_set:
+            continue
+        id_fields = vertex_config.identity_fields(vcol)
+        gc.vertices[vcol] = [
+            d for d in docs if not _vertex_doc_has_empty_identity(d, id_fields)
+        ]
+
+    for edge_id, docs in list(gc.edges.items()):
+        vfrom, vto, _rel = edge_id
+        if vfrom not in vertex_set or vto not in vertex_set:
+            continue
+        if vfrom in blank or vto in blank:
+            continue
+        src_ids = vertex_config.identity_fields(vfrom)
+        tgt_ids = vertex_config.identity_fields(vto)
+        kept = [
+            t
+            for t in docs
+            if not _vertex_doc_has_empty_identity(t[0], src_ids)
+            and not _vertex_doc_has_empty_identity(t[1], tgt_ids)
+        ]
+        if kept:
+            gc.edges[edge_id] = kept
+        else:
+            del gc.edges[edge_id]
 
 
 def _format_traceback(exc: BaseException) -> str:
@@ -247,6 +299,11 @@ class Caster:
             _filter_graph_container_by_vertices_inplace(
                 graph, allowed_vertex_names=self._allowed_vertex_names
             )
+            if params.drop_empty_identity_docs:
+                _filter_graph_container_drop_empty_identity_inplace(
+                    graph,
+                    vertex_config=self.schema.core_schema.vertex_config,
+                )
             return CastBatchResult(graph=graph, failures=[])
 
         doc_list = list(data)
@@ -288,6 +345,11 @@ class Caster:
         _filter_graph_container_by_vertices_inplace(
             graph, allowed_vertex_names=self._allowed_vertex_names
         )
+        if params.drop_empty_identity_docs:
+            _filter_graph_container_drop_empty_identity_inplace(
+                graph,
+                vertex_config=self.schema.core_schema.vertex_config,
+            )
         return CastBatchResult(graph=graph, failures=failures)
 
     # ------------------------------------------------------------------

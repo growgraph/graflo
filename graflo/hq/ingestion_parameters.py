@@ -116,3 +116,10 @@ class IngestionParams(BaseModel):
     max_doc_errors: int | None = None
     doc_error_preview_max_bytes: int = 4096
     doc_error_preview_keys: tuple[str, ...] | None = None
+    drop_empty_identity_docs: bool = Field(
+        default=True,
+        description=(
+            "After casting, remove vertex docs and edge tuples where all schema "
+            "identity fields for that vertex type are missing, null, or empty string."
+        ),
+    )
