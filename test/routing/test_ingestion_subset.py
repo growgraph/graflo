@@ -7,6 +7,7 @@ from graflo.architecture.graph_types import GraphContainer
 from graflo.hq.caster import (
     IngestionParams,
     _filter_graph_container_by_vertices_inplace,
+    _filter_graph_container_drop_empty_identity_inplace,
 )
 
 
@@ -28,6 +29,49 @@ def test_filter_graph_container_by_vertices_keeps_allowed_vertices() -> None:
 
     assert set(gc.vertices.keys()) == {"A", "B"}
     assert set(gc.edges.keys()) == {("A", "B", None)}
+
+
+def test_filter_graph_container_drops_empty_identity_vertices_and_edges() -> None:
+    vc = VertexConfig.from_dict(
+        {
+            "vertices": [
+                {
+                    "name": "modifier",
+                    "properties": ["modifier_id", "parent_id"],
+                    "identity": ["modifier_id"],
+                },
+                {
+                    "name": "metric",
+                    "properties": ["metric_id"],
+                    "identity": ["metric_id"],
+                },
+            ]
+        }
+    )
+    gc = GraphContainer(
+        vertices={
+            "modifier": [{"modifier_id": 123}, {"parent_id": 456}],
+            "metric": [{"metric_id": 981}],
+        },
+        edges={
+            ("modifier", "modifier", "has_parent"): [
+                ({"modifier_id": 123}, {"parent_id": 456}, {}),
+            ],
+            ("modifier", "metric", "has_metric"): [
+                ({"modifier_id": 123}, {"metric_id": 981}, {}),
+            ],
+        },
+        linear=[],
+    )
+
+    _filter_graph_container_drop_empty_identity_inplace(gc, vertex_config=vc)
+
+    assert gc.vertices["modifier"] == [{"modifier_id": 123}]
+    assert gc.vertices["metric"] == [{"metric_id": 981}]
+    assert set(gc.edges.keys()) == {("modifier", "metric", "has_metric")}
+    assert gc.edges[("modifier", "metric", "has_metric")] == [
+        ({"modifier_id": 123}, {"metric_id": 981}, {}),
+    ]
 
 
 def test_filter_graph_container_by_vertices_empty_ingests_nothing() -> None:
