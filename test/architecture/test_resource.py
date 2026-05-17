@@ -333,3 +333,90 @@ def test_resource_infer_edge_except_excludes_edges_handled_by_edge_actors():
     assert ("a", "b", "ab") not in acc
     # (a,c) has no EdgeActor - inferred
     assert len(acc[("a", "c", "ac")]) == 1
+
+
+def _person_vertex_config() -> VertexConfig:
+    return VertexConfig.from_dict(
+        {
+            "vertices": [
+                {
+                    "name": "person",
+                    "properties": ["id", "age"],
+                    "identity": ["id"],
+                }
+            ]
+        }
+    )
+
+
+def test_resource_tolerate_transform_errors_continues_pipeline() -> None:
+    resource = Resource.from_dict(
+        {
+            "name": "tolerant",
+            "pipeline": [
+                {
+                    "transform": {
+                        "call": {
+                            "module": "builtins",
+                            "foo": "int",
+                            "input": ["age_raw"],
+                            "output": ["age"],
+                        }
+                    }
+                },
+                {"vertex": "person", "from": {"id": "id"}},
+            ],
+            "tolerate_transform_errors": True,
+        }
+    )
+    ec = EdgeConfig.from_dict({"edges": []})
+    resource.finish_init(
+        vertex_config=_person_vertex_config(), edge_config=ec, transforms={}
+    )
+
+    result = resource.cast_document({"id": "u-1", "age_raw": "not-a-number"})
+    person = result.entities["person"][0]
+    assert person["id"] == "u-1"
+    assert person.get("age") is None
+    assert len(result.transform_failures) == 1
+    assert result.transform_failures[0].nulled_fields == ("age",)
+    assert result.transform_failures[0].exception_type == "ValueError"
+
+
+def test_resource_tolerate_transform_errors_false_raises() -> None:
+    resource = Resource.from_dict(
+        {
+            "name": "strict",
+            "pipeline": [
+                {
+                    "transform": {
+                        "call": {
+                            "module": "builtins",
+                            "foo": "int",
+                            "input": ["age_raw"],
+                            "output": ["age"],
+                        }
+                    }
+                },
+                {"vertex": "person", "from": {"id": "id"}},
+            ],
+            "tolerate_transform_errors": False,
+        }
+    )
+    ec = EdgeConfig.from_dict({"edges": []})
+    resource.finish_init(
+        vertex_config=_person_vertex_config(), edge_config=ec, transforms={}
+    )
+
+    with pytest.raises(ValueError):
+        resource.cast_document({"id": "u-1", "age_raw": "not-a-number"})
+
+
+def test_resource_tolerate_transform_errors_defaults_true() -> None:
+    resource = Resource.from_dict(
+        {
+            "name": "default_tolerant",
+            "pipeline": [{"vertex": "person"}],
+        }
+    )
+    assert resource.tolerate_transform_errors is True

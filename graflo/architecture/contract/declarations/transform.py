@@ -680,6 +680,41 @@ class Transform(ProtoTransform):
         """True when the transform is pure mapping (no function)."""
         return self._foo is None
 
+    def planned_output_field_names(
+        self, doc: dict[str, Any] | None = None
+    ) -> tuple[str, ...]:
+        """Return output field names this transform would write on success."""
+        if self.target == "keys":
+            if doc is None:
+                return ()
+            return tuple(sorted(self._selected_keys(doc)))
+
+        if self.input_groups:
+            if self.output_groups:
+                names: list[str] = []
+                for group in self.output_groups:
+                    names.extend(group)
+                return tuple(dict.fromkeys(names))
+            if self.output:
+                return self.output
+            scalar_names: list[str] = []
+            for group in self.input_groups:
+                if len(group) != 1:
+                    return ()
+                scalar_names.append(group[0])
+            return tuple(scalar_names)
+
+        if self.dress is not None:
+            return (self.dress.key, self.dress.value)
+
+        if self.rename:
+            return tuple(self.rename.values())
+
+        if self.output:
+            return self.output
+
+        return ()
+
     def _dress_as_dict(self, transform_result: Any) -> dict[str, Any]:
         """Convert transform result to dictionary format.
 

@@ -41,6 +41,7 @@ class DocCastFailure(BaseModel):
     doc_index: int
     exception_type: str
     message: str
+    failure_kind: Literal["document", "transform"] = "document"
     traceback: str = Field(
         default="",
         description="Formatted traceback, truncated to the configured max length.",
@@ -48,6 +49,18 @@ class DocCastFailure(BaseModel):
     doc_preview: Any = Field(
         default=None,
         description="Subset or truncated JSON of the source document for debugging.",
+    )
+    location_path: tuple[str | int | None, ...] | None = Field(
+        default=None,
+        description="Extraction location path when failure_kind is transform.",
+    )
+    transform_label: str | None = Field(
+        default=None,
+        description="Transform name or module.foo when failure_kind is transform.",
+    )
+    nulled_fields: tuple[str, ...] | None = Field(
+        default=None,
+        description="Output fields set to None when failure_kind is transform.",
     )
 
 

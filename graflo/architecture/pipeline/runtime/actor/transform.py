@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import traceback
 from typing import Any
 
 from .base import Actor, ActorInitContext
@@ -29,6 +30,7 @@ class TransformActor(Actor):
         self.call_use: str | None = None
         self._call_config = None
         self._skip_on_missing_input_keys = False
+        self._tolerate_transform_errors = True
         self._required_doc_keys: frozenset[str] = frozenset()
 
         if config.rename is not None:
@@ -86,6 +88,7 @@ class TransformActor(Actor):
 
     def _refresh_missing_key_guard(self, init_ctx: ActorInitContext) -> None:
         self._skip_on_missing_input_keys = init_ctx.skip_actors_on_missing_input_keys
+        self._tolerate_transform_errors = init_ctx.tolerate_transform_errors
         if (
             not self._skip_on_missing_input_keys
             or self.t.target == "keys"
@@ -223,6 +226,20 @@ class TransformActor(Actor):
     def _format_transform_result(self, result: Any) -> TransformPayload:
         return TransformPayload.from_result(result)
 
+    def _transform_label(self) -> str:
+        if self.call_use:
+            return self.call_use
+        if self.t.foo and self.t.module:
+            return f"{self.t.module}.{self.t.foo}"
+        if self.t.foo:
+            return self.t.foo
+        if self.t.name:
+            return self.t.name
+        return type(self.t).__name__
+
+    def _format_traceback(self, exc: BaseException) -> str:
+        return "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+
     def __call__(
         self, ctx: ExtractionContext, lindex: LocationIndex, *nargs: Any, **kwargs: Any
     ) -> ExtractionContext:
@@ -231,7 +248,24 @@ class TransformActor(Actor):
         if self._skip_on_missing_input_keys and self._required_doc_keys:
             if not self._required_doc_keys.issubset(doc):
                 return ctx
-        transform_result = self.t(doc)
+        try:
+            transform_result = self.t(doc)
+        except Exception as exc:
+            if not self._tolerate_transform_errors:
+                raise
+            nulled_fields = self.t.planned_output_field_names(doc)
+            if nulled_fields:
+                payload = TransformPayload(named={k: None for k in nulled_fields})
+                ctx.transform_buffer[lindex].append(payload)
+                ctx.record_transform_observation(location=lindex, payload=payload)
+            ctx.record_transform_failure(
+                location=lindex,
+                transform_label=self._transform_label(),
+                exc=exc,
+                traceback_text=self._format_traceback(exc),
+                nulled_fields=nulled_fields,
+            )
+            return ctx
         _update_doc = self._format_transform_result(transform_result)
         ctx.transform_buffer[lindex].append(_update_doc)
         ctx.record_transform_observation(location=lindex, payload=_update_doc)

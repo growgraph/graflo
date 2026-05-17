@@ -44,6 +44,7 @@ from graflo.architecture.graph_types import (
 )
 from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.schema.vertex import VertexConfig
+from graflo.architecture.graph_types import ResourceCastResult
 from graflo.onto import DBType
 
 from .edge_derivation_registry import EdgeDerivationRegistry
@@ -261,6 +262,14 @@ class Resource(ConfigBaseModel):
             "If None, defaults to drop_trivial_input_fields."
         ),
     )
+    tolerate_transform_errors: bool = PydanticField(
+        default=True,
+        description=(
+            "If True, a failing transform step sets its declared output fields to None, "
+            "records the error, and continues the pipeline. If False, transform errors "
+            "abort the document as today."
+        ),
+    )
 
     _root: ActorWrapper = PrivateAttr()
     _types: dict[str, Callable[..., Any]] = PrivateAttr(default_factory=dict)
@@ -467,6 +476,7 @@ class Resource(ConfigBaseModel):
             infer_edge_except=infer_edge_except,
             strict_references=strict_references,
             skip_actors_on_missing_input_keys=skip_on_missing_input_keys,
+            tolerate_transform_errors=self.tolerate_transform_errors,
             target_db_flavor=target_db_flavor,
         )
         self.root.finish_init(init_ctx=init_ctx)
@@ -492,15 +502,8 @@ class Resource(ConfigBaseModel):
             if reg is not None and entry.vertex_weights:
                 reg.merge_vertex_weights(entry.edge.edge_id, entry.vertex_weights)
 
-    def __call__(self, doc: dict) -> defaultdict[GraphEntity, list]:
-        """Process a document through the resource pipeline.
-
-        Args:
-            doc: Document to process
-
-        Returns:
-            defaultdict[GraphEntity, list]: Processed graph entities
-        """
+    def cast_document(self, doc: dict) -> ResourceCastResult:
+        """Process a document and return entities plus any tolerated transform failures."""
         if not self._initialized:
             raise RuntimeError(
                 f"Resource '{self.name}' must be initialized via finish_init() before use."
@@ -512,7 +515,21 @@ class Resource(ConfigBaseModel):
         )
         extraction_ctx = self._executor.extract(work_doc)
         result = self._executor.assemble_result(extraction_ctx)
-        return result.entities
+        return ResourceCastResult(
+            entities=result.entities,
+            transform_failures=list(extraction_ctx.transform_failures),
+        )
+
+    def __call__(self, doc: dict) -> defaultdict[GraphEntity, list]:
+        """Process a document through the resource pipeline.
+
+        Args:
+            doc: Document to process
+
+        Returns:
+            defaultdict[GraphEntity, list]: Processed graph entities
+        """
+        return self.cast_document(doc).entities
 
     def count(self) -> int:
         """Total number of actors in the resource pipeline."""

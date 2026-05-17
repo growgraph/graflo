@@ -49,6 +49,7 @@ from graflo.util.chunker import ChunkerType
 from graflo.architecture.contract.bindings import Bindings
 from graflo.hq.connection_provider import ConnectionProvider, EmptyConnectionProvider
 from graflo.hq.doc_error_sink import failure_sinks_from_ingestion_params
+from graflo.architecture.graph_types import ResourceCastResult, TransformCastFailure
 from graflo.hq.ingestion_parameters import (
     CastBatchResult,
     DocCastFailure,
@@ -180,6 +181,54 @@ def _doc_failure_from_exception(
     )
 
 
+def _doc_failure_from_transform(
+    *,
+    resource_name: str,
+    doc_index: int,
+    doc: dict[str, Any],
+    fail: TransformCastFailure,
+    doc_keys: tuple[str, ...] | None,
+    doc_preview_max_bytes: int,
+) -> DocCastFailure:
+    tb = fail.traceback
+    if len(tb) > _DOC_CAST_ERROR_TRACEBACK_MAX_CHARS:
+        tb = tb[:_DOC_CAST_ERROR_TRACEBACK_MAX_CHARS] + "\n...(traceback truncated)"
+    return DocCastFailure(
+        resource_name=resource_name,
+        doc_index=doc_index,
+        failure_kind="transform",
+        exception_type=fail.exception_type,
+        message=fail.message,
+        traceback=tb,
+        doc_preview=_build_doc_preview(doc, doc_keys, doc_preview_max_bytes),
+        location_path=fail.location.path,
+        transform_label=fail.transform_label,
+        nulled_fields=fail.nulled_fields,
+    )
+
+
+def _transform_failures_to_doc_cast_failures(
+    *,
+    resource_name: str,
+    doc_index: int,
+    doc: dict[str, Any],
+    transform_failures: list[TransformCastFailure],
+    doc_keys: tuple[str, ...] | None,
+    doc_preview_max_bytes: int,
+) -> list[DocCastFailure]:
+    return [
+        _doc_failure_from_transform(
+            resource_name=resource_name,
+            doc_index=doc_index,
+            doc=doc,
+            fail=fail,
+            doc_keys=doc_keys,
+            doc_preview_max_bytes=doc_preview_max_bytes,
+        )
+        for fail in transform_failures
+    ]
+
+
 class Caster:
     """Main class for data casting and ingestion.
 
@@ -288,13 +337,33 @@ class Caster:
 
         semaphore = asyncio.Semaphore(params.n_cores)
 
-        async def process_doc(doc: dict[str, Any]) -> Any:
+        async def process_doc(doc: dict[str, Any]) -> ResourceCastResult:
             async with semaphore:
-                return await asyncio.to_thread(rr, doc)
+                return await asyncio.to_thread(rr.cast_document, doc)
 
         if params.on_doc_error == "fail":
-            coros = [process_doc(doc) for doc in data]
-            docs = await asyncio.gather(*coros)
+            doc_list = list(data)
+            cast_results = await asyncio.gather(*[process_doc(doc) for doc in doc_list])
+            transform_failures: list[DocCastFailure] = []
+            for i, cast_result in enumerate(cast_results):
+                doc_raw = doc_list[i]
+                doc = (
+                    doc_raw
+                    if isinstance(doc_raw, dict)
+                    else {"_source_repr": repr(doc_raw)}
+                )
+                transform_failures.extend(
+                    _transform_failures_to_doc_cast_failures(
+                        resource_name=resolved_name,
+                        doc_index=i,
+                        doc=doc,
+                        transform_failures=cast_result.transform_failures,
+                        doc_keys=params.doc_error_preview_keys,
+                        doc_preview_max_bytes=params.doc_error_preview_max_bytes,
+                    )
+                )
+            await self._persist_doc_failures(transform_failures)
+            docs = [cast_result.entities for cast_result in cast_results]
             graph = GraphContainer.from_docs_list(docs)
             _filter_graph_container_by_vertices_inplace(
                 graph, allowed_vertex_names=self._allowed_vertex_names
@@ -304,7 +373,7 @@ class Caster:
                     graph,
                     vertex_config=self.schema.core_schema.vertex_config,
                 )
-            return CastBatchResult(graph=graph, failures=[])
+            return CastBatchResult(graph=graph, failures=transform_failures)
 
         doc_list = list(data)
         raw = await asyncio.gather(
@@ -337,7 +406,17 @@ class Caster:
                     )
                 )
                 continue
-            docs.append(item)
+            failures.extend(
+                _transform_failures_to_doc_cast_failures(
+                    resource_name=resolved_name,
+                    doc_index=i,
+                    doc=doc,
+                    transform_failures=item.transform_failures,
+                    doc_keys=params.doc_error_preview_keys,
+                    doc_preview_max_bytes=params.doc_error_preview_max_bytes,
+                )
+            )
+            docs.append(item.entities)
 
         await self._persist_doc_failures(failures)
 

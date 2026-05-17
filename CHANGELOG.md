@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.29]
+
+### Added
+
+- **Empty-identity filter on cast batches** — after resource casting, **`Caster`** can drop vertex docs and edge tuples whose schema identity fields are all missing, `null`, or `""` before **`DBWriter`** (identity rules from **`VertexConfig`**, not **`GraphContainer`**). Controlled by **`IngestionParams.drop_empty_identity_docs`** (default **`true`**). Blank vertex collections are exempt.
+
 ## [1.7.27]
 
 ### Added
@@ -12,7 +18,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`ColumnTimeFilter`** — shared pandas-like time window on a single column (`column`, optional `start` / `end`, optional `interval` as a **`pandas.Timedelta`** string such as `"7D"` or `"2h"` for day/hour windows, optional `not_equals`, optional `start_inclusive` / `end_inclusive`). Rendered to SQL via **`FilterExpression`** (same path as other pushdown filters). Calendar-style offsets (for example month arithmetic) are not supported when `pandas.Timedelta` rejects the string; use explicit `start` / `end` ISO bounds instead.
 - **`FileConnector.time_filter`** and **`TableConnector.time_filter`** — canonical field replacing duplicated `date_field` / `date_filter` / `date_range_*` fields on the wire.
 - **Bindings — runtime connector patches**: **`ConnectorUpdate`**, **`Bindings.apply_connector_update`**, and **`Bindings.replace_connector`** so defining-field changes re-hash and reindex correctly while preserving **`conn_proxy`** wiring. Patches are applied **after** manifest load (not stored on `GraphManifest`).
-- **Empty-identity filter on cast batches** — after resource casting, **`Caster`** can drop vertex docs and edge tuples whose schema identity fields are all missing, `null`, or `""` before **`DBWriter`** (identity rules from **`VertexConfig`**, not **`GraphContainer`**). Controlled by **`IngestionParams.drop_empty_identity_docs`** (default **`true`**). Blank vertex collections are exempt.
 
 ### Breaking
 
