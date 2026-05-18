@@ -445,7 +445,10 @@ def test_vertex_properties_conflicting_duplicate_types_raise():
 
 def test_resource_runtime_vertex_config_excludes_unreferenced_blank_vertices():
     """Blank vertices outside the resource pipeline are not in runtime config."""
-    from graflo.architecture.contract.declarations.resource import Resource
+    from graflo.architecture.contract.declarations.resource import (
+        Resource,
+        build_resource_runtime,
+    )
     from graflo.architecture.schema.edge import EdgeConfig
 
     schema_vc = VertexConfig(
@@ -454,11 +457,12 @@ def test_resource_runtime_vertex_config_excludes_unreferenced_blank_vertices():
             Vertex(name="publication", properties=[], blank=True),
         ]
     )
-    resource = Resource(
+    config = Resource(
         name="ibes",
         pipeline=[{"vertex": "ticker"}],
     )
-    resource.finish_init(
+    resource = build_resource_runtime(
+        config,
         vertex_config=schema_vc,
         edge_config=EdgeConfig(),
         transforms={},

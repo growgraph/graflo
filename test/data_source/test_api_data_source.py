@@ -9,6 +9,7 @@ import pytest
 from test.conftest import fetch_manifest_obj
 from graflo.db import PostgresConfig
 from graflo.hq.caster import Caster
+from graflo.hq.ingestion_parameters import IngestionParams
 from graflo.data_source import (
     APIConfig,
     APIDataSource,
@@ -56,8 +57,12 @@ def test_api_data_source_basic(mock_api_server, api_mode, current_path, reset):
     api_source = DataSourceFactory.create_api_data_source(api_config)
     api_source.resource_name = resource_name
 
-    # Create caster and process
-    caster = Caster(schema, ingestion_model, n_cores=1)
+    ingestion_model.finish_init(schema.core_schema)
+    caster = Caster(
+        schema,
+        ingestion_model,
+        ingestion_params=IngestionParams(n_cores=1),
+    )
     asyncio.run(
         caster.process_data_source(data_source=api_source, resource_name=resource_name)
     )
@@ -77,8 +82,12 @@ def test_api_data_source_via_process_resource(
     schema = manifest.require_schema()
     ingestion_model = manifest.require_ingestion_model()
 
-    # Create caster
-    caster = Caster(schema, ingestion_model, n_cores=1)
+    ingestion_model.finish_init(schema.core_schema)
+    caster = Caster(
+        schema,
+        ingestion_model,
+        ingestion_params=IngestionParams(n_cores=1),
+    )
 
     # Process using configuration dict
     resource_config = {

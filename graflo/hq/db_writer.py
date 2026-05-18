@@ -101,7 +101,7 @@ class DBWriter:
         if resource_name is None:
             return
         resource = self.ingestion_model.fetch_resource(resource_name)
-        if resource.extra_weights:
+        if resource.config.extra_weights:
             raise ValueError(
                 "Native bulk ingest does not support resources with extra_weights "
                 "(those require DB round-trips). Use REST ingest or disable extra_weights."
@@ -215,7 +215,7 @@ class DBWriter:
 
         def _sync():
             with ConnectionManager(connection_config=conn_conf) as db:
-                for entry in resource.extra_weights:
+                for entry in resource.config.extra_weights:
                     edge = entry.edge
                     if not entry.vertex_weights:
                         continue

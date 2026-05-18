@@ -47,8 +47,8 @@ class StagingProxyBinding(ConfigBaseModel):
     conn_proxy: str
 
 
-class Bindings(ConfigBaseModel):
-    """Named resource connectors with explicit resource linkage."""
+class BindingsConfig(ConfigBaseModel):
+    """Declarative bindings contract (connectors and resource wiring)."""
 
     connectors: list[FileConnector | TableConnector | SparqlConnector] = Field(
         default_factory=list
@@ -332,6 +332,42 @@ class Bindings(ConfigBaseModel):
         """Return the mapped runtime proxy name for a given connector."""
         return self._connector_to_conn_proxy.get(connector.hash)
 
+    def get_connectors_for_resource(
+        self, resource_name: str
+    ) -> list[TableConnector | FileConnector | SparqlConnector]:
+        """Return connectors bound to *resource_name*, in binding order (unique by hash)."""
+        result: list[TableConnector | FileConnector | SparqlConnector] = []
+        for h in self._resource_to_connector_hashes.get(resource_name, []):
+            c = self._connectors_index.get(h)
+            if isinstance(c, (TableConnector, FileConnector, SparqlConnector)):
+                result.append(c)
+        return result
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | list[Any]) -> Self:
+        if isinstance(data, list):
+            raise ValueError(
+                "Bindings.from_dict expects a mapping with 'connectors' and optional "
+                "'resource_connector'. List-style connector payloads are not supported."
+            )
+        legacy_keys = {
+            "postgres_connections",
+            "table_connectors",
+            "file_connectors",
+            "sparql_connectors",
+        }
+        found_legacy = sorted(k for k in legacy_keys if k in data)
+        if found_legacy:
+            raise ValueError(
+                "Legacy Bindings init keys are not supported. "
+                f"Unsupported keys: {', '.join(found_legacy)}."
+            )
+        return cls.model_validate(data)
+
+
+class BindingsRegistry(BindingsConfig):
+    """Mutable bindings registry for programmatic connector updates."""
+
     def bind_connector_to_conn_proxy(
         self,
         connector: TableConnector | FileConnector | SparqlConnector,
@@ -372,27 +408,6 @@ class Bindings(ConfigBaseModel):
         self.connector_connection = list(self._connector_connection_typed)
 
         self._rebuild_connector_to_conn_proxy()
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any] | list[Any]) -> Self:
-        if isinstance(data, list):
-            raise ValueError(
-                "Bindings.from_dict expects a mapping with 'connectors' and optional "
-                "'resource_connector'. List-style connector payloads are not supported."
-            )
-        legacy_keys = {
-            "postgres_connections",
-            "table_connectors",
-            "file_connectors",
-            "sparql_connectors",
-        }
-        found_legacy = sorted(k for k in legacy_keys if k in data)
-        if found_legacy:
-            raise ValueError(
-                "Legacy Bindings init keys are not supported. "
-                f"Unsupported keys: {', '.join(found_legacy)}."
-            )
-        return cls.model_validate(data)
 
     def apply_connector_update(self, update: ConnectorUpdate) -> None:
         """Patch a connector in-place in this binding (re-hashes and reindexes).
@@ -506,13 +521,5 @@ class Bindings(ConfigBaseModel):
         # Keep the public contract field in sync for serialization / downstream.
         self.resource_connector = list(self._resource_connector_typed)
 
-    def get_connectors_for_resource(
-        self, resource_name: str
-    ) -> list[TableConnector | FileConnector | SparqlConnector]:
-        """Return connectors bound to *resource_name*, in binding order (unique by hash)."""
-        result: list[TableConnector | FileConnector | SparqlConnector] = []
-        for h in self._resource_to_connector_hashes.get(resource_name, []):
-            c = self._connectors_index.get(h)
-            if isinstance(c, (TableConnector, FileConnector, SparqlConnector)):
-                result.append(c)
-        return result
+
+Bindings = BindingsRegistry

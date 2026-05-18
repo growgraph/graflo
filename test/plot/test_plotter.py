@@ -1,4 +1,4 @@
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 from typing import cast
 
 import networkx as nx
@@ -10,6 +10,7 @@ from graflo.architecture.pipeline.runtime.actor import (
 )
 from graflo.architecture.pipeline.runtime.actor.wrapper import ActorWrapper
 from graflo.architecture.pipeline.runtime.actor.config import EdgeActorConfig
+from graflo.architecture.graph_types import EdgeId
 from graflo.architecture.schema.edge import Edge
 from graflo.plot.plotter import ManifestPlotter, assemble_tree, fillcolor_palette
 
@@ -148,16 +149,35 @@ def test_plot_vc2vc_preserves_labels_and_partition_grouping(monkeypatch):
             {"from": "b", "to": "c", "relation_from_key": True}
         )
     )
-    resource = SimpleNamespace()
-    resource.root = SimpleNamespace(
-        collect_actors=lambda: [edge_ab_actor, edge_bc_actor]
-    )
+    edge_ab = edge_ab_actor.edge
+    edge_bc = edge_bc_actor.edge
+    assert edge_ab is not None
+    assert edge_bc is not None
 
     plotter = _build_plotter(
         configured_edges={},
         vertex_set={"a", "b", "c"},
     )
-    plotter.ingestion_model = SimpleNamespace(resources=[resource])
+    plotter.ingestion_model = SimpleNamespace(
+        resources=[SimpleNamespace(name="r1", pipeline=[])]
+    )
+
+    def _discover_edges(
+        self: ManifestPlotter,
+    ) -> tuple[dict[EdgeId, Edge], dict[EdgeId, str], dict[EdgeId, bool]]:
+        discovered = {
+            edge_ab.edge_id: edge_ab,
+            edge_bc.edge_id: edge_bc,
+        }
+        relation_source = {edge_ab.edge_id: "edge_kind"}
+        relation_from_key = {edge_bc.edge_id: True}
+        return discovered, relation_source, relation_from_key
+
+    monkeypatch.setattr(
+        plotter,
+        "_discover_edges_from_resources",
+        MethodType(_discover_edges, plotter),
+    )
 
     captured = {}
 

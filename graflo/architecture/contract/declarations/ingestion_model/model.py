@@ -8,10 +8,12 @@ from typing import TYPE_CHECKING, Literal
 from pydantic import Field as PydanticField, PrivateAttr, model_validator
 
 from graflo.architecture.base import ConfigBaseModel
+from graflo.architecture.pipeline.runtime.actor import ActorWrapper
 from graflo.onto import DBType
 
 from ..edge_derivation_registry import EdgeDerivationRegistry
-from ..resource import Resource
+from ..resource import ResourceConfig
+from ..resource_runtime import ResourceRuntime
 from ..transform import ProtoTransform
 
 if TYPE_CHECKING:
@@ -26,12 +28,10 @@ class IngestionModel(ConfigBaseModel):
         description=(
             "How batch edge writes tolerate an already-matching edge. Passed through to "
             ":meth:`~graflo.db.conn.Connection.insert_edges_batch` where the target backend "
-            "supports it. Today ArangoDB maps ``ignore`` to INSERT with ignoreErrors and "
-            "``upsert`` to AQL UPSERT (with schema merge keys as ``uniq_weight_fields`` when "
-            "present). Other databases may interpret the same values later."
+            "supports it."
         ),
     )
-    resources: list[Resource] = PydanticField(
+    resources: list[ResourceConfig] = PydanticField(
         default_factory=list,
         description="List of resource definitions (data pipelines mapping to vertices/edges).",
     )
@@ -40,7 +40,8 @@ class IngestionModel(ConfigBaseModel):
         description="List of named transforms available to resources.",
     )
 
-    _resources: dict[str, Resource] = PrivateAttr()
+    _resources: dict[str, ResourceConfig] = PrivateAttr()
+    _runtimes: dict[str, ResourceRuntime] = PrivateAttr(default_factory=dict)
     _transforms: dict[str, ProtoTransform] = PrivateAttr(default_factory=dict)
     _combined_edge_derivation: EdgeDerivationRegistry = PrivateAttr(
         default_factory=EdgeDerivationRegistry
@@ -49,7 +50,7 @@ class IngestionModel(ConfigBaseModel):
     @model_validator(mode="after")
     def _init_model(self) -> IngestionModel:
         """Build transform and resource lookup maps."""
-        self._rebuild_runtime_state()
+        self._rebuild_config_state()
         return self
 
     def _rebuild_resource_map(self) -> None:
@@ -91,10 +92,12 @@ class IngestionModel(ConfigBaseModel):
         allowed_vertex_names: set[str] | None = None,
         target_db_flavor: DBType | None = None,
     ) -> None:
-        """Initialize resources against graph model and transform library."""
-        self._rebuild_runtime_state()
-        for r in self.resources:
-            r.finish_init(
+        """Build per-resource runtimes against graph model and transform library."""
+        self._rebuild_config_state()
+        runtimes: dict[str, ResourceRuntime] = {}
+        for config in self.resources:
+            runtimes[config.name] = ResourceRuntime(
+                config,
                 vertex_config=core_schema.vertex_config,
                 edge_config=core_schema.edge_config,
                 transforms=self._transforms,
@@ -103,37 +106,35 @@ class IngestionModel(ConfigBaseModel):
                 allowed_vertex_names=allowed_vertex_names,
                 target_db_flavor=target_db_flavor,
             )
+        object.__setattr__(self, "_runtimes", runtimes)
 
-    def _rebuild_runtime_state(self) -> None:
+    def _rebuild_config_state(self) -> None:
         """Rebuild transform and resource lookup maps."""
         self._rebuild_transform_map()
         self._rebuild_resource_map()
 
-    def fetch_resource(self, name: str | None = None) -> Resource:
-        """Fetch a resource by name or get the first available resource.
-
-        Args:
-            name: Optional name of the resource to fetch
-
-        Returns:
-            Resource: The requested resource
-
-        Raises:
-            ValueError: If the requested resource is not found or if no resources exist
-        """
-        _current_resource = None
-
+    def fetch_resource(self, name: str | None = None) -> ResourceRuntime:
+        """Fetch an initialized runtime resource by name."""
         if name is not None:
-            if name in self._resources:
-                _current_resource = self._resources[name]
-            else:
+            runtime = self._runtimes.get(name)
+            if runtime is None:
                 raise ValueError(f"Resource {name} not found")
-        else:
-            if self._resources:
-                _current_resource = self.resources[0]
-            else:
-                raise ValueError("Empty resource container :(")
-        return _current_resource
+            return runtime
+        if self._runtimes:
+            return next(iter(self._runtimes.values()))
+        if self.resources:
+            raise RuntimeError(
+                "IngestionModel resources exist but runtimes were not built; "
+                "call finish_init() first."
+            )
+        raise ValueError("Empty resource container :(")
+
+    def fetch_resource_config(self, name: str) -> ResourceConfig:
+        """Fetch declarative resource config by name."""
+        config = self._resources.get(name)
+        if config is None:
+            raise ValueError(f"Resource {name} not found")
+        return config
 
     def prune_to_graph(
         self, core_schema: CoreSchema, disconnected: set[str] | None = None
@@ -146,19 +147,22 @@ class IngestionModel(ConfigBaseModel):
         if not disconnected:
             return
 
-        def _mentions_disconnected(wrapper) -> bool:
+        def _mentions_disconnected(wrapper: ActorWrapper) -> bool:
             return bool(wrapper.actor.references_vertices() & disconnected)
 
-        to_drop: list[Resource] = []
-        for resource in self.resources:
-            root = resource.root
+        to_drop: list[ResourceConfig] = []
+        for resource_config in self.resources:
+            root = ActorWrapper(*resource_config.pipeline)
             if _mentions_disconnected(root):
-                to_drop.append(resource)
+                to_drop.append(resource_config)
                 continue
             root.remove_descendants_if(_mentions_disconnected)
             if not any(a.references_vertices() for a in root.collect_actors()):
-                to_drop.append(resource)
+                to_drop.append(resource_config)
 
-        for r in to_drop:
-            self.resources.remove(r)
-            self._resources.pop(r.name, None)
+        for dropped in to_drop:
+            self.resources.remove(dropped)
+            self._resources.pop(dropped.name, None)
+            self._runtimes.pop(dropped.name, None)
+        if to_drop:
+            self._rebuild_config_state()

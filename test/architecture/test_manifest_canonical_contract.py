@@ -123,8 +123,8 @@ def test_resource_finish_init_does_not_mutate_shared_schema_edge_config() -> Non
     # Shared logical schema stays untouched.
     assert len(schema.core_schema.edge_config.edges) == 0
     # Runtime resource edge configs receive local dynamic edge registrations.
-    assert len(ingestion_model.resources[0].edge_config.edges) == 1
-    assert len(ingestion_model.resources[1].edge_config.edges) == 1
+    assert len(ingestion_model.fetch_resource("r1").edge_config.edges) == 1
+    assert len(ingestion_model.fetch_resource("r2").edge_config.edges) == 1
 
 
 def test_bindings_reject_inline_credentials_payload() -> None:

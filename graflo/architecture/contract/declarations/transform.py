@@ -370,10 +370,9 @@ class Transform(ProtoTransform):
     def _init_derived(self) -> Self:
         explicit_map = bool(self.rename)
         object.__setattr__(self, "functional_transform", self._foo is not None)
-        next_input, next_output, next_map = self._derive_effective_io_and_map()
+        next_input, next_output, _next_map = self._derive_effective_io_and_map()
         object.__setattr__(self, "input", next_input)
         object.__setattr__(self, "output", next_output)
-        object.__setattr__(self, "map", next_map)
         self._validate_configuration(explicit_map=explicit_map)
         return self
 
@@ -541,14 +540,11 @@ class Transform(ProtoTransform):
             )
 
     def _refresh_derived(self) -> None:
-        """Re-run derived state (e.g. map from input/output) after mutating attributes."""
+        """Re-run derived input/output after mutating attributes (merge_from)."""
         if self.rename or not self.input or not self.output:
             return
         if len(self.input) != len(self.output):
             return
-        object.__setattr__(
-            self, "map", {src: dst for src, dst in zip(self.input, self.output)}
-        )
 
     def __call__(self, *nargs: Any, **kwargs: Any) -> dict[str, Any] | Any:
         """Execute the transform.

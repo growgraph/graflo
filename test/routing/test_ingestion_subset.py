@@ -1,14 +1,32 @@
 from __future__ import annotations
 
-from graflo.architecture.contract.declarations.resource import Resource
+from graflo.architecture.contract.declarations.resource import (
+    Resource,
+    build_resource_runtime,
+)
 from graflo.architecture.schema.edge import EdgeConfig
 from graflo.architecture.schema.vertex import VertexConfig
 from graflo.architecture.graph_types import GraphContainer
-from graflo.hq.caster import (
-    IngestionParams,
-    _filter_graph_container_by_vertices_inplace,
-    _filter_graph_container_drop_empty_identity_inplace,
+from graflo.hq.document_caster import (
+    filter_graph_container_by_vertices_inplace,
+    filter_graph_container_drop_empty_identity_inplace,
 )
+from graflo.hq.ingestion_parameters import IngestionParams
+
+
+def _runtime(
+    data: dict,
+    vertex_config: VertexConfig,
+    edge_config: EdgeConfig,
+    **kwargs,
+):
+    return build_resource_runtime(
+        Resource.from_dict(data),
+        vertex_config,
+        edge_config,
+        {},
+        **kwargs,
+    )
 
 
 def test_filter_graph_container_by_vertices_keeps_allowed_vertices() -> None:
@@ -25,7 +43,7 @@ def test_filter_graph_container_by_vertices_keeps_allowed_vertices() -> None:
         linear=[],
     )
 
-    _filter_graph_container_by_vertices_inplace(gc, allowed_vertex_names={"A", "B"})
+    filter_graph_container_by_vertices_inplace(gc, allowed_vertex_names={"A", "B"})
 
     assert set(gc.vertices.keys()) == {"A", "B"}
     assert set(gc.edges.keys()) == {("A", "B", None)}
@@ -64,7 +82,7 @@ def test_filter_graph_container_drops_empty_identity_vertices_and_edges() -> Non
         linear=[],
     )
 
-    _filter_graph_container_drop_empty_identity_inplace(gc, vertex_config=vc)
+    filter_graph_container_drop_empty_identity_inplace(gc, vertex_config=vc)
 
     assert gc.vertices["modifier"] == [{"modifier_id": 123}]
     assert gc.vertices["metric"] == [{"metric_id": 981}]
@@ -86,7 +104,7 @@ def test_filter_graph_container_by_vertices_empty_ingests_nothing() -> None:
         linear=[],
     )
 
-    _filter_graph_container_by_vertices_inplace(gc, allowed_vertex_names=set())
+    filter_graph_container_by_vertices_inplace(gc, allowed_vertex_names=set())
 
     assert gc.vertices == {}
     assert gc.edges == {}
@@ -120,19 +138,16 @@ def test_vertex_actor_early_exit_skips_disallowed_vertices() -> None:
     vc = _vertex_config_a_b_c()
     ec = EdgeConfig.from_dict({"edges": []})
 
-    resource = Resource.from_dict(
+    resource = _runtime(
         {
             "name": "r",
             "pipeline": [
                 {"vertex": "A", "from": {"id": "a_id"}},
                 {"vertex": "B", "from": {"id": "b_id"}},
             ],
-        }
-    )
-    resource.finish_init(
-        vertex_config=vc,
-        edge_config=ec,
-        transforms={},
+        },
+        vc,
+        ec,
         allowed_vertex_names={"A"},
     )
 
@@ -145,7 +160,7 @@ def test_vertex_router_early_exit_skips_disallowed_types() -> None:
     vc = _vertex_config_a_b_c()
     ec = EdgeConfig.from_dict({"edges": []})
 
-    resource = Resource.from_dict(
+    resource = _runtime(
         {
             "name": "r",
             "pipeline": [
@@ -159,13 +174,9 @@ def test_vertex_router_early_exit_skips_disallowed_types() -> None:
                     }
                 }
             ],
-        }
-    )
-
-    resource.finish_init(
-        vertex_config=vc,
-        edge_config=ec,
-        transforms={},
+        },
+        vc,
+        ec,
         allowed_vertex_names={"A"},
     )
 
@@ -183,7 +194,7 @@ def test_dynamic_edge_early_exit_skips_disallowed_endpoints() -> None:
     vc = _vertex_config_a_b_c()
     ec = EdgeConfig.from_dict({"edges": []})
 
-    resource = Resource.from_dict(
+    resource = _runtime(
         {
             "name": "r",
             "pipeline": [
@@ -206,13 +217,9 @@ def test_dynamic_edge_early_exit_skips_disallowed_endpoints() -> None:
                     }
                 },
             ],
-        }
-    )
-
-    resource.finish_init(
-        vertex_config=vc,
-        edge_config=ec,
-        transforms={},
+        },
+        vc,
+        ec,
         allowed_vertex_names={"A", "B"},
     )
 
@@ -245,7 +252,7 @@ def test_edge_inference_skips_edges_with_disallowed_vertices() -> None:
     ec = _edge_config_a_b_and_a_c()
 
     # Include an explicit A->C edge actor to ensure EdgeActor also early-exits.
-    resource = Resource.from_dict(
+    resource = _runtime(
         {
             "name": "r",
             "pipeline": [
@@ -254,13 +261,9 @@ def test_edge_inference_skips_edges_with_disallowed_vertices() -> None:
                 {"vertex": "C", "from": {"id": "c_id"}},
                 {"edge": {"from": "A", "to": "C"}},
             ],
-        }
-    )
-
-    resource.finish_init(
-        vertex_config=vc,
-        edge_config=ec,
-        transforms={},
+        },
+        vc,
+        ec,
         allowed_vertex_names={"A", "B"},
     )
 
