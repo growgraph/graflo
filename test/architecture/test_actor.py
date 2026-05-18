@@ -11,13 +11,19 @@ from graflo.architecture.pipeline.runtime.actor import (
     VertexActor,
 )
 from graflo.architecture.schema.edge import EdgeConfig
-from graflo.architecture.graph_types import ActionContext, LocationIndex, VertexRep
+from graflo.architecture.graph_types import (
+    ActionContext,
+    ExtractionContext,
+    LocationIndex,
+    TransformPayload,
+    VertexRep,
+)
 from graflo.architecture.pipeline.runtime.actor.config import (
     VertexActorConfig,
     normalize_actor_step,
     validate_actor_step,
 )
-from graflo.architecture.contract.declarations.transform import (
+from graflo.architecture.contract.ingestion.transform import (
     DressConfig,
     KeySelectionConfig,
     ProtoTransform,
@@ -1322,3 +1328,64 @@ def test_extraction_context_records_observations(
     assert all(
         obs.provenance.path == obs.location.path for obs in ctx.transform_observations
     )
+
+
+def test_vertex_from_doc_does_not_steal_other_vertex_buffer_payloads() -> None:
+    """from_doc Identifier must not consume pivot payloads meant for Metric."""
+    vc = VertexConfig.model_validate(
+        {
+            "vertices": [
+                {
+                    "name": "Identifier",
+                    "properties": ["type", "value"],
+                    "identity": ["type", "value"],
+                },
+                {
+                    "name": "Metric",
+                    "properties": ["type", "value"],
+                    "identity": ["type", "value"],
+                },
+            ]
+        }
+    )
+    init = ActorInitContext(
+        vertex_config=vc,
+        edge_config=EdgeConfig(),
+        transforms={},
+    )
+    identifier = VertexActor.from_config(
+        VertexActorConfig(
+            type="vertex",
+            vertex="Identifier",
+            from_doc={"type": "itype", "value": "ivalue"},
+        )
+    )
+    metric = VertexActor.from_config(
+        VertexActorConfig(type="vertex", vertex="Metric"),
+    )
+    identifier.finish_init(init)
+    metric.finish_init(init)
+
+    loc = LocationIndex(())
+    ctx = ExtractionContext()
+    ctx.transform_buffer[loc].extend(
+        [
+            TransformPayload(named={"type": "VOL", "value": 93115.0}),
+            TransformPayload(named={"type": "PRC", "value": 42.5}),
+            TransformPayload(named={"itype": "CUSIP", "ivalue": "03073T10"}),
+            TransformPayload(named={"itype": "TICKER", "ivalue": "AMGP"}),
+        ]
+    )
+
+    identifier(ctx, loc, doc={})
+    metric(ctx, loc, doc={})
+
+    id_docs = [rep.vertex for rep in ctx.acc_vertex["Identifier"][loc]]
+    metric_docs = [rep.vertex for rep in ctx.acc_vertex["Metric"][loc]]
+
+    assert len(id_docs) == 2
+    assert {"type": "TICKER", "value": "AMGP"} in id_docs
+    assert {"type": "CUSIP", "value": "03073T10"} in id_docs
+    assert len(metric_docs) == 2
+    assert {"type": "VOL", "value": 93115.0} in metric_docs
+    assert {"type": "PRC", "value": 42.5} in metric_docs

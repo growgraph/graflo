@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from graflo.architecture.contract.declarations.resource import Resource
+from graflo.architecture.contract.ingestion.resource import Resource
 from graflo.architecture.schema.vertex import VertexConfig
 from .conn import EdgeTableInfo, SchemaIntrospectionResult
 from .inference_utils import (

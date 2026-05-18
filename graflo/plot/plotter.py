@@ -367,9 +367,8 @@ class ManifestPlotter:
         relation_source_by_edge_id: dict[EdgeId, str] = {}
         relation_from_key_by_edge_id: dict[EdgeId, bool] = {}
 
-        for resource in self.ingestion_model.resources:
-            # Collect all actors from the resource's ActorWrapper
-            actors = resource.root.collect_actors()
+        for resource_config in self.ingestion_model.resources:
+            actors = ActorWrapper(*resource_config.pipeline).collect_actors()
 
             for actor in actors:
                 if isinstance(actor, EdgeActor):
@@ -705,12 +704,12 @@ class ManifestPlotter:
         )
         kwargs = {"vertex_sh": vertex_prefix_dict, "resource_sh": resource_prefix_dict}
 
-        for resource in self.ingestion_model.resources:
-            kwargs["resource"] = resource.name
+        for resource_config in self.ingestion_model.resources:
+            kwargs["resource"] = resource_config.name
             assemble_tree(
-                resource.root,
+                ActorWrapper(*resource_config.pipeline),
                 self._figure_path(
-                    f"{self.schema.metadata.name}.resource-{resource.name}"
+                    f"{self.schema.metadata.name}.resource-{resource_config.name}"
                 ),
                 output_format=self.output_format,
                 output_dpi=self.output_dpi,
@@ -757,7 +756,7 @@ class ManifestPlotter:
         """Collect vertex references for a resource with lightweight reason labels."""
         vertex_reasons: dict[str, set[str]] = {}
         known_vertices = set(self.schema.core_schema.vertex_config.vertex_set)
-        actors = resource.root.collect_actors()
+        actors = ActorWrapper(*resource.pipeline).collect_actors()
 
         def _add(vertex_name: str, reason: str) -> None:
             if vertex_name not in known_vertices:

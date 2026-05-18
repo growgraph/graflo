@@ -5,12 +5,12 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
-from graflo.architecture.contract.declarations.edge_derivation_registry import (
+from graflo.architecture.contract.runtime.edge_derivation import (
     EdgeDerivationRegistry,
 )
 from graflo.architecture.schema.edge import EdgeConfig
 from graflo.architecture.graph_types import EdgeId, ExtractionContext, LocationIndex
-from graflo.architecture.contract.declarations.transform import ProtoTransform
+from graflo.architecture.contract.ingestion.transform import ProtoTransform
 from graflo.architecture.schema.vertex import VertexConfig
 from graflo.onto import DBType
 
@@ -38,6 +38,7 @@ class ActorInitContext:
     infer_edge_except: set[EdgeId] = field(default_factory=set)
     strict_references: bool = False
     skip_actors_on_missing_input_keys: bool = False
+    tolerate_transform_errors: bool = True
     target_db_flavor: DBType | None = None
 
 

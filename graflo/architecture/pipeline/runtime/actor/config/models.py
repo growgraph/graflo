@@ -7,7 +7,7 @@ from typing import Annotated, Any, Literal, cast
 from pydantic import Field as PydanticField, TypeAdapter, model_validator
 
 from graflo.architecture.base import ConfigBaseModel
-from graflo.architecture.contract.declarations.transform import DressConfig
+from graflo.architecture.contract.ingestion.transform import DressConfig
 from graflo.architecture.edge_derivation import EdgeDerivation
 
 from .normalize import normalize_actor_step

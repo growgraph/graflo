@@ -15,7 +15,7 @@ It is a **Python package** and **Graph Schema & Transformation Language (GSTL)**
 
 - **One pipeline, several graph databases** — The same manifest targets ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, or NebulaGraph; `DatabaseProfile` and DB-aware types absorb naming, defaults, and indexing differences.
 - **Explicit identities** — Vertex identity fields and indexes back upserts so reloads merge on keys instead of blindly duplicating nodes.
-- **Reusable ingestion** — `Resource` actor pipelines (including **vertex** / **vertex_router** / **edge** steps) bind to files, SQL, SPARQL/RDF, APIs, or in-memory batches via `Bindings` and the `DataSourceRegistry`. A single flat row can populate multiple same-type vertices in distinct named slots (`role`) and emit multiple edges in one `edge: links` step.
+- **Reusable ingestion** — `ResourceConfig` actor pipelines (including **vertex** / **vertex_router** / **edge** steps) bind to files, SQL, SPARQL/RDF, APIs, or in-memory batches via `Bindings` and the `DataSourceRegistry`. A single flat row can populate multiple same-type vertices in distinct named slots (`role`) and emit multiple edges in one `edge: links` step. Per-resource **`tolerate_transform_errors`** (default on) keeps ingestion moving when an individual transform step fails.
 - **Manifest-first sanitization** — `Sanitizer` (backed by `graflo.architecture.evolution` **`SanitizeOp`**) normalizes schema identifiers (reserved words, TigerGraph relation/index constraints) and synchronizes related ingestion mappings via `sanitize_manifest(GraphManifest)`. `GraphEngine.infer_manifest(...)` applies it automatically; lower-level `SQLInferenceManager` does not—sanitize the manifest yourself when assembling contracts outside the engine.
 
 ### What’s in the manifest
@@ -36,7 +36,7 @@ It is a **Python package** and **Graph Schema & Transformation Language (GSTL)**
 |-------|------|------|
 | **Logical graph schema** | Manifest `schema`: vertex/edge definitions, identities, typed **properties**, DB profile. Constrains pipeline output and projection; not a separate queue between steps. | `Schema`, `VertexConfig`, `EdgeConfig` (under `core_schema`). |
 | **Source instance** | Concrete input: file, SQL table, SPARQL endpoint, API payload, in-memory rows. | `AbstractDataSource` + `DataSourceType`. |
-| **Resource** | Ordered actors; resources are looked up by name when sources are registered. | `Resource` in `IngestionModel`. |
+| **Resource** | Ordered actors; resources are looked up by name when sources are registered. | `ResourceConfig` in `IngestionModel`; `ResourceRuntime` at cast time. |
 | **Covariant graph** (`GraphContainer`) | Batches of vertices/edges before load. | `GraphContainer`. |
 | **DB-aware projection** | Physical names, defaults, indexes for the target. | `Schema.resolve_db_aware()`, `VertexConfigDBAware`, `EdgeConfigDBAware`. |
 | **Graph DB** | Target LPG; each `DBType` has its own connector, orchestrated the same way. | `ConnectionManager`, `DBWriter`, per-backend `Connection`. |

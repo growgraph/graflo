@@ -5,37 +5,54 @@ import pytest
 
 from graflo.architecture.graph_types import ExtractionContext
 from graflo.architecture.schema.edge import EdgeConfig
-from graflo.architecture.contract.declarations.resource import (
-    Resource,
-    _resolve_type_caster,
+from graflo.architecture.contract.ingestion.resource import Resource
+from graflo.architecture.contract.runtime import (
+    ResourceRuntime,
+    build_resource_runtime,
 )
 from graflo.architecture.schema.vertex import VertexConfig
+from graflo.util.casting import resolve_type_caster
 
 logger = logging.getLogger(__name__)
+
+
+def _runtime(
+    data: dict[str, Any],
+    vertex_config: VertexConfig,
+    edge_config: EdgeConfig,
+    transforms: dict | None = None,
+    **kwargs: Any,
+) -> ResourceRuntime:
+    config = Resource.from_dict(data)
+    return build_resource_runtime(
+        config,
+        vertex_config,
+        edge_config,
+        transforms or {},
+        **kwargs,
+    )
 
 
 def test_schema_tree(schema):
     sch = schema("kg")
     mn = Resource.from_dict(sch["ingestion_model"]["resources"][0])
-    assert mn.count() == 14
+    assert mn.pipeline_actor_count() == 14
 
 
 def test_resolve_type_caster_allowlist():
-    assert _resolve_type_caster("int") is int
-    assert _resolve_type_caster("float") is float
-    assert _resolve_type_caster("builtins.str") is str
+    assert resolve_type_caster("int") is int
+    assert resolve_type_caster("float") is float
+    assert resolve_type_caster("builtins.str") is str
 
 
 def test_resolve_type_caster_rejects_expressions():
-    assert _resolve_type_caster("__import__('os').system") is None
+    assert resolve_type_caster("__import__('os').system") is None
 
 
 def test_resource_drop_trivial_input_fields_strips_none_and_empty_string():
-    from graflo.architecture.contract.declarations.resource import (
-        _strip_trivial_top_level_fields,
-    )
+    from graflo.architecture.contract.runtime import strip_trivial_top_level_fields
 
-    assert _strip_trivial_top_level_fields(
+    assert strip_trivial_top_level_fields(
         {"a": 1, "b": None, "c": "", "d": "x", "nested": {"e": None}}
     ) == {"a": 1, "d": "x", "nested": {"e": None}}
 
@@ -43,13 +60,6 @@ def test_resource_drop_trivial_input_fields_strips_none_and_empty_string():
 def test_resource_drop_trivial_input_fields_passes_stripped_doc_to_executor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    resource = Resource.from_dict(
-        {
-            "name": "wide_row",
-            "pipeline": [{"vertex": "person"}],
-            "drop_trivial_input_fields": True,
-        }
-    )
     vc = VertexConfig.from_dict(
         {
             "vertices": [
@@ -62,7 +72,15 @@ def test_resource_drop_trivial_input_fields_passes_stripped_doc_to_executor(
         }
     )
     ec = EdgeConfig.from_dict({"edges": []})
-    resource.finish_init(vertex_config=vc, edge_config=ec, transforms={})
+    resource = _runtime(
+        {
+            "name": "wide_row",
+            "pipeline": [{"vertex": "person"}],
+            "drop_trivial_input_fields": True,
+        },
+        vc,
+        ec,
+    )
     doc = {"id": "1", "note": "hi", "empty": "", "nullish": None, "keep": 0}
     real_extract = resource._executor.extract
     snapshots: list[dict[str, Any]] = []
@@ -81,13 +99,6 @@ def test_resource_drop_trivial_input_fields_passes_stripped_doc_to_executor(
 def test_resource_drop_trivial_input_fields_false_passes_doc_unchanged(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    resource = Resource.from_dict(
-        {
-            "name": "wide_row",
-            "pipeline": [{"vertex": "person"}],
-            "drop_trivial_input_fields": False,
-        }
-    )
     vc = VertexConfig.from_dict(
         {
             "vertices": [
@@ -100,7 +111,15 @@ def test_resource_drop_trivial_input_fields_false_passes_doc_unchanged(
         }
     )
     ec = EdgeConfig.from_dict({"edges": []})
-    resource.finish_init(vertex_config=vc, edge_config=ec, transforms={})
+    resource = _runtime(
+        {
+            "name": "wide_row",
+            "pipeline": [{"vertex": "person"}],
+            "drop_trivial_input_fields": False,
+        },
+        vc,
+        ec,
+    )
     doc = {"id": "1", "empty": ""}
     expected_at_extract_entry = dict(doc)
     real_extract = resource._executor.extract
@@ -120,7 +139,19 @@ def test_resource_drop_trivial_input_fields_false_passes_doc_unchanged(
 def test_resource_skip_actors_on_missing_input_keys_true_skips_missing_transform() -> (
     None
 ):
-    resource = Resource.from_dict(
+    vc = VertexConfig.from_dict(
+        {
+            "vertices": [
+                {
+                    "name": "person",
+                    "properties": ["id", "age"],
+                    "identity": ["id"],
+                }
+            ]
+        }
+    )
+    ec = EdgeConfig.from_dict({"edges": []})
+    resource = _runtime(
         {
             "name": "skip_missing_transform",
             "pipeline": [
@@ -137,8 +168,18 @@ def test_resource_skip_actors_on_missing_input_keys_true_skips_missing_transform
                 {"vertex": "person", "from": {"id": "id"}},
             ],
             "skip_actors_on_missing_input_keys": True,
-        }
+        },
+        vc,
+        ec,
     )
+
+    entities = resource({"id": "u-1"})
+    assert entities["person"] == [{"id": "u-1"}]
+
+
+def test_resource_drop_trivial_input_fields_large_doc_auto_skips_missing_transform(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     vc = VertexConfig.from_dict(
         {
             "vertices": [
@@ -151,17 +192,7 @@ def test_resource_skip_actors_on_missing_input_keys_true_skips_missing_transform
         }
     )
     ec = EdgeConfig.from_dict({"edges": []})
-    resource.finish_init(vertex_config=vc, edge_config=ec, transforms={})
-
-    # missing_age is absent, transform should be skipped (not raise KeyError)
-    entities = resource({"id": "u-1"})
-    assert entities["person"] == [{"id": "u-1"}]
-
-
-def test_resource_drop_trivial_input_fields_large_doc_auto_skips_missing_transform(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    resource = Resource.from_dict(
+    resource = _runtime(
         {
             "name": "wide_row",
             "pipeline": [
@@ -178,21 +209,10 @@ def test_resource_drop_trivial_input_fields_large_doc_auto_skips_missing_transfo
                 {"vertex": "person", "from": {"id": "id"}},
             ],
             "drop_trivial_input_fields": True,
-        }
+        },
+        vc,
+        ec,
     )
-    vc = VertexConfig.from_dict(
-        {
-            "vertices": [
-                {
-                    "name": "person",
-                    "properties": ["id", "age"],
-                    "identity": ["id"],
-                }
-            ]
-        }
-    )
-    ec = EdgeConfig.from_dict({"edges": []})
-    resource.finish_init(vertex_config=vc, edge_config=ec, transforms={})
 
     large_doc: dict[str, Any] = {f"empty_{i}": "" for i in range(1000)}
     large_doc.update({"id": "u-2", "age_raw": "", "keep_zero": 0})
@@ -205,7 +225,6 @@ def test_resource_drop_trivial_input_fields_large_doc_auto_skips_missing_transfo
 
     monkeypatch.setattr(resource._executor, "extract", capturing_extract)
 
-    # age_raw is stripped as trivial; auto-enabled missing-key skip should prevent failure.
     entities = resource(large_doc)
     assert entities["person"] == [{"id": "u-2"}]
     assert snapshots and "age_raw" not in snapshots[0]
@@ -213,15 +232,22 @@ def test_resource_drop_trivial_input_fields_large_doc_auto_skips_missing_transfo
 
 
 def test_resource_types_uses_safe_caster_resolution():
-    resource = Resource.from_dict(
+    config = Resource.from_dict(
         {
             "name": "typed_resource",
             "pipeline": [{"vertex": "person"}],
             "types": {"age": "int", "unsafe": "__import__('os').system"},
         }
     )
-    assert resource._types["age"] is int
-    assert "unsafe" not in resource._types
+    runtime = build_resource_runtime(
+        config,
+        VertexConfig.from_dict(
+            {"vertices": [{"name": "person", "properties": ["id"], "identity": ["id"]}]}
+        ),
+        EdgeConfig.from_dict({"edges": []}),
+    )
+    assert runtime.type_casters["age"] is int
+    assert "unsafe" not in runtime.type_casters
 
 
 def test_resource_infer_edge_selectors_are_mutually_exclusive():
@@ -237,43 +263,44 @@ def test_resource_infer_edge_selectors_are_mutually_exclusive():
 
 
 def test_resource_infer_edge_selector_references_unknown_edge():
-    resource = Resource.from_dict(
-        {
-            "name": "typed_resource",
-            "pipeline": [{"vertex": "person"}],
-            "infer_edge_only": [{"source": "a", "target": "b"}],
-        }
-    )
     vc = VertexConfig.from_dict(
         {"vertices": [{"name": "person", "properties": ["id"], "identity": ["id"]}]}
     )
     ec = EdgeConfig.from_dict({"edges": [{"source": "person", "target": "person"}]})
     with pytest.raises(ValueError, match="undefined vertices"):
-        resource.finish_init(vertex_config=vc, edge_config=ec, transforms={})
+        _runtime(
+            {
+                "name": "typed_resource",
+                "pipeline": [{"vertex": "person"}],
+                "infer_edge_only": [{"source": "a", "target": "b"}],
+            },
+            vc,
+            ec,
+        )
 
 
 def test_resource_dynamic_edge_vertices_must_be_declared():
-    resource = Resource.from_dict(
-        {
-            "name": "dynamic_edges",
-            "pipeline": [
-                {"vertex": "person"},
-                {"edge": {"from": "person", "to": "company"}},
-            ],
-        }
-    )
     vc = VertexConfig.from_dict(
         {"vertices": [{"name": "person", "properties": ["id"], "identity": ["id"]}]}
     )
     ec = EdgeConfig.from_dict({"edges": []})
 
     with pytest.raises(ValueError, match="undefined vertices"):
-        resource.finish_init(vertex_config=vc, edge_config=ec, transforms={})
+        _runtime(
+            {
+                "name": "dynamic_edges",
+                "pipeline": [
+                    {"vertex": "person"},
+                    {"edge": {"from": "person", "to": "company"}},
+                ],
+            },
+            vc,
+            ec,
+        )
 
 
 def test_resource_auto_adds_edge_actor_types_to_infer_edge_except():
-    """When a Resource has EdgeActors for (s,t), (s,t, None) is auto-added to infer_edge_except."""
-    resource = Resource.from_dict(
+    config = Resource.from_dict(
         {
             "name": "test",
             "pipeline": [
@@ -284,12 +311,11 @@ def test_resource_auto_adds_edge_actor_types_to_infer_edge_except():
             ],
         }
     )
-    ids = resource._edge_ids_from_edge_actors()
+    ids = ResourceRuntime.edge_ids_from_pipeline(config.pipeline)
     assert ids == {("a", "b", None)}
 
 
 def test_resource_infer_edge_except_excludes_edges_handled_by_edge_actors():
-    """Resource with EdgeActor for (a,b) does not infer (a,b); (a,c) is still inferred."""
     from graflo.architecture.graph_types import ActionContext
 
     vc = VertexConfig.from_dict(
@@ -309,8 +335,7 @@ def test_resource_infer_edge_except_excludes_edges_handled_by_edge_actors():
             ]
         }
     )
-    # EdgeActor for (a,b) is inside a descend that never runs (doc has no "nested" key)
-    resource = Resource.from_dict(
+    resource = _runtime(
         {
             "name": "test",
             "pipeline": [
@@ -322,14 +347,98 @@ def test_resource_infer_edge_except_excludes_edges_handled_by_edge_actors():
                     "apply": [{"edge": {"from": "a", "to": "b"}}],
                 },
             ],
-        }
+        },
+        vc,
+        ec,
     )
-    resource.finish_init(vertex_config=vc, edge_config=ec, transforms={})
     anw = resource.root
     ctx = ActionContext()
     ctx = anw(ctx, doc={"a": "1", "b": "2", "c": "3"})
     acc = anw.assemble(ctx)
-    # (a,b) has EdgeActor so it's in infer_edge_except - not inferred
     assert ("a", "b", "ab") not in acc
-    # (a,c) has no EdgeActor - inferred
     assert len(acc[("a", "c", "ac")]) == 1
+
+
+def _person_vertex_config() -> VertexConfig:
+    return VertexConfig.from_dict(
+        {
+            "vertices": [
+                {
+                    "name": "person",
+                    "properties": ["id", "age"],
+                    "identity": ["id"],
+                }
+            ]
+        }
+    )
+
+
+def test_resource_tolerate_transform_errors_continues_pipeline() -> None:
+    ec = EdgeConfig.from_dict({"edges": []})
+    resource = _runtime(
+        {
+            "name": "tolerant",
+            "pipeline": [
+                {
+                    "transform": {
+                        "call": {
+                            "module": "builtins",
+                            "foo": "int",
+                            "input": ["age_raw"],
+                            "output": ["age"],
+                        }
+                    }
+                },
+                {"vertex": "person", "from": {"id": "id"}},
+            ],
+            "tolerate_transform_errors": True,
+        },
+        _person_vertex_config(),
+        ec,
+    )
+
+    result = resource.cast_document({"id": "u-1", "age_raw": "not-a-number"})
+    person = result.entities["person"][0]
+    assert person["id"] == "u-1"
+    assert person.get("age") is None
+    assert len(result.transform_failures) == 1
+    assert result.transform_failures[0].nulled_fields == ("age",)
+    assert result.transform_failures[0].exception_type == "ValueError"
+
+
+def test_resource_tolerate_transform_errors_false_raises() -> None:
+    ec = EdgeConfig.from_dict({"edges": []})
+    resource = _runtime(
+        {
+            "name": "strict",
+            "pipeline": [
+                {
+                    "transform": {
+                        "call": {
+                            "module": "builtins",
+                            "foo": "int",
+                            "input": ["age_raw"],
+                            "output": ["age"],
+                        }
+                    }
+                },
+                {"vertex": "person", "from": {"id": "id"}},
+            ],
+            "tolerate_transform_errors": False,
+        },
+        _person_vertex_config(),
+        ec,
+    )
+
+    with pytest.raises(ValueError):
+        resource.cast_document({"id": "u-1", "age_raw": "not-a-number"})
+
+
+def test_resource_tolerate_transform_errors_defaults_true() -> None:
+    resource = Resource.from_dict(
+        {
+            "name": "default_tolerant",
+            "pipeline": [{"vertex": "person"}],
+        }
+    )
+    assert resource.tolerate_transform_errors is True

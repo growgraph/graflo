@@ -10,11 +10,14 @@ from .bindings import (
     SparqlConnector,
     TableConnector,
 )
-from .declarations import (
+from .ingestion import (
     IngestionModel,
     ProtoTransform,
     Resource,
+    ResourceConfig,
+    ResourceRuntime,
     Transform,
+    build_resource_runtime,
 )
 from .manifest import GraphManifest
 
@@ -28,7 +31,10 @@ __all__ = [
     "JoinClause",
     "ProtoTransform",
     "Resource",
+    "ResourceConfig",
+    "ResourceRuntime",
     "ResourceConnector",
+    "build_resource_runtime",
     "SparqlConnector",
     "TableConnector",
     "Transform",

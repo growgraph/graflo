@@ -370,10 +370,9 @@ class Transform(ProtoTransform):
     def _init_derived(self) -> Self:
         explicit_map = bool(self.rename)
         object.__setattr__(self, "functional_transform", self._foo is not None)
-        next_input, next_output, next_map = self._derive_effective_io_and_map()
+        next_input, next_output, _next_map = self._derive_effective_io_and_map()
         object.__setattr__(self, "input", next_input)
         object.__setattr__(self, "output", next_output)
-        object.__setattr__(self, "map", next_map)
         self._validate_configuration(explicit_map=explicit_map)
         return self
 
@@ -541,14 +540,11 @@ class Transform(ProtoTransform):
             )
 
     def _refresh_derived(self) -> None:
-        """Re-run derived state (e.g. map from input/output) after mutating attributes."""
+        """Re-run derived input/output after mutating attributes (merge_from)."""
         if self.rename or not self.input or not self.output:
             return
         if len(self.input) != len(self.output):
             return
-        object.__setattr__(
-            self, "map", {src: dst for src, dst in zip(self.input, self.output)}
-        )
 
     def __call__(self, *nargs: Any, **kwargs: Any) -> dict[str, Any] | Any:
         """Execute the transform.
@@ -679,6 +675,41 @@ class Transform(ProtoTransform):
     def is_mapping(self) -> bool:
         """True when the transform is pure mapping (no function)."""
         return self._foo is None
+
+    def planned_output_field_names(
+        self, doc: dict[str, Any] | None = None
+    ) -> tuple[str, ...]:
+        """Return output field names this transform would write on success."""
+        if self.target == "keys":
+            if doc is None:
+                return ()
+            return tuple(sorted(self._selected_keys(doc)))
+
+        if self.input_groups:
+            if self.output_groups:
+                names: list[str] = []
+                for group in self.output_groups:
+                    names.extend(group)
+                return tuple(dict.fromkeys(names))
+            if self.output:
+                return self.output
+            scalar_names: list[str] = []
+            for group in self.input_groups:
+                if len(group) != 1:
+                    return ()
+                scalar_names.append(group[0])
+            return tuple(scalar_names)
+
+        if self.dress is not None:
+            return (self.dress.key, self.dress.value)
+
+        if self.rename:
+            return tuple(self.rename.values())
+
+        if self.output:
+            return self.output
+
+        return ()
 
     def _dress_as_dict(self, transform_result: Any) -> dict[str, Any]:
         """Convert transform result to dictionary format.

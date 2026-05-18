@@ -57,6 +57,7 @@ def merge_vertex_models(vertices: list[Vertex], into_name: str) -> Vertex:
         identity=identity_out,
         filters=filters_out,
         description=desc_out,
+        blank=any(v.blank for v in vertices),
     )
 
 

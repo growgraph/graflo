@@ -83,11 +83,14 @@ A `Vertex` describes vertices and their logical identity. It supports:
   - If one duplicate is typed and the other is untyped, the typed definition wins
   - Conflicting non-null types for the same field name are rejected
 - Filtering conditions
-- Optional blank vertex configuration
+- **`blank: true`** — placeholder vertex with no natural key; identity defaults to **`id`** when omitted
 
-Identity defaults are strict by default at schema level:
-- `VertexConfig.identity_from_all_properties: false` (default) do not require explicit vertex `identity`, defaults to all properties
-- `VertexConfig.identity_from_all_properties: false` disables compatibility fallback where missing identity uses all property names
+Identity defaults at schema level (`VertexConfig`):
+
+- **`identity_from_all_properties: true`** (default) — vertices without explicit **`identity`** use all **`properties`** names as the logical key.
+- **`identity_from_all_properties: false`** — each non-blank vertex must declare **`identity`** explicitly; blank vertices still default to **`id`**.
+
+**Blank vertices:** set **`blank: true`** on the vertex entry under **`schema.graph.vertex_config.vertices`**. **`VertexConfig.blank_vertices`** is a derived list of names (not a separate YAML field). At runtime, **`ResourceRuntime`** keeps only vertex types referenced by that resource’s pipeline (and edge-inference selectors); blank types that are declared in the schema but not used by the resource are not injected automatically—include a **`vertex`** (or edge) step when the placeholder must be populated.
 
 ### Edge
 An `Edge` describes edges and their logical identities. It allows:
@@ -166,19 +169,20 @@ An `AbstractDataSource` subclass defines where data comes from and how it is ret
 
 Data sources handle retrieval only. They bind to Resources by name via the `DataSourceRegistry`, so the same `Resource` can ingest data from multiple sources without modification.
 
-### Resource
-A `Resource` is the central abstraction that bridges data sources and the graph schema. Each Resource defines a reusable actor pipeline (descend → transform → vertex → edge) that maps raw records to graph elements:
+### Resource (`ResourceConfig` / `ResourceRuntime`)
 
-- How data structures map to vertices and edges
-- What transformations to apply
-- The actor pipeline for processing documents
+Ingestion resources split into two layers:
 
-Because DataSources bind to Resources by name, the same transformation logic applies regardless of whether data arrives from a file, an API, a SQL table, or a SPARQL endpoint.
+- **`ResourceConfig`** — declarative contract in **`ingestion_model.resources`** (YAML/Python): pipeline steps, encoding, type casters, edge-inference flags, **`tolerate_transform_errors`**, and related options. Serialized in manifests; validated by **`IngestionModel`**.
+- **`ResourceRuntime`** — schema-bound executor built via **`build_resource_runtime`**: filtered **`VertexConfig`**, bound transforms, and **`ActorExecutor`** for document casting.
 
-Resource-level edge inference controls:
+The name **`Resource`** in manifests and docs usually means **`ResourceConfig`**. Data sources bind to resources by name, so the same pipeline applies whether data arrives from a file, API, SQL table, or SPARQL endpoint.
+
+Resource-level controls:
 - **`infer_edges`**: Global toggle for inferred edge emission during assembly (default: `true`).
 - **`infer_edge_only`**: Allow-list of inferred edges (`source`, `target`, optional `relation`).
 - **`infer_edge_except`**: Deny-list of inferred edges (`source`, `target`, optional `relation`).
+- **`tolerate_transform_errors`** (default **`true`**): on transform failure, null declared outputs and continue the pipeline; see [Document cast errors](ingestion_doc_errors.md).
 - `infer_edge_only` and `infer_edge_except` are mutually exclusive and validated against declared schema edges.
 - These controls apply to inferred edges only; explicit edge actors in the pipeline are still emitted.
 - **Auto-exclusion**: When a resource pipeline contains any EdgeActor for edges of type `(source, target)`, `(source, target, None)` is automatically added to `infer_edge_except` for that resource, so inferred edges do not duplicate edges produced by explicit edge actors.
@@ -192,7 +196,7 @@ An `Actor` describes how the current level of the document should be mapped/tran
 - `TransformActor`: Applies data transformations
 - `VertexActor`: Creates vertices from the current level. Key options:
   - **`role`** (optional): named accumulator slot. When set the vertex is stored at `lindex.extend((role, 0))` instead of bare `lindex`, so multiple vertices of the same type in one row (e.g. `role: self`, `role: parent`, `role: child`) occupy distinct slots and can be addressed individually by a downstream edge step.
-  - **`from`**: rename map `{vertex_field: doc_field}`. Only mismatched column names need listing; remaining vertex schema properties are absorbed from the doc automatically (passthrough).
+  - **`from`** (`from_doc`): rename map `{vertex_field: doc_field}`. Only mismatched column names need listing; remaining vertex schema properties are absorbed from the doc and transform buffer automatically (passthrough). When multiple **`TransformPayload`** entries share a location, **`from_doc`** consumes only payloads whose **`named`** keys include all mapped source fields—so dressed metrics or pivot rows for other vertex types are left for their own **`vertex`** steps.
   - **`keep_fields`**: restrict passthrough to this field subset. Use on role-vertex steps to prevent shared row columns from leaking into placeholder vertices that only carry an ID.
 - `EdgeActor`: Creates edges between vertices. Operates in three modes:
   - **Static mode** (`from`/`to` set on both sides): vertex types declared at config time.

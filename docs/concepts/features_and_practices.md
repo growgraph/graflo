@@ -106,7 +106,7 @@ Schema comparison gives you a predictable transition path between versions. Inst
 
 ## Best Practices
 1. Use compound identity fields for natural keys, and **`schema.db_profile`** secondary indexes for query performance
-2. Leverage blank vertices for complex relationship modeling
+2. Leverage blank vertices (`blank: true` on the vertex definition) for complex relationship modeling; include them in the resource pipeline when they must be populated at cast time
 3. Define reusable transforms in **`ingestion_model.transforms`** and reference them from resource steps
 4. Configure appropriate batch sizes based on your data volume
 5. Enable parallel processing for large datasets

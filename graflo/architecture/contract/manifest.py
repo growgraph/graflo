@@ -10,7 +10,7 @@ from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.schema import Schema
 
 from .bindings import Bindings
-from .declarations.ingestion_model import IngestionModel
+from .ingestion.model import IngestionModel
 
 
 class GraphManifest(ConfigBaseModel):

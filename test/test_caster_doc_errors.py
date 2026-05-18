@@ -14,12 +14,15 @@ from unittest.mock import MagicMock
 import pytest
 
 from graflo.data_source.base import AbstractDataSource, DataSourceType
+from graflo.architecture.graph_types import LocationIndex, TransformCastFailure
 from graflo.hq.caster import (
     CastBatchResult,
     Caster,
     DocErrorBudgetExceeded,
     IngestionParams,
 )
+from graflo.architecture.graph_types import ResourceCastResult
+from graflo.architecture.schema.vertex import Field, Vertex, VertexConfig
 
 
 def _read_all_jsonl_gz_lines(path: Path) -> list[str]:
@@ -44,12 +47,41 @@ class _FakeResource:
 
     name = "fake_resource"
 
-    def __call__(self, doc: dict) -> defaultdict:
+    @property
+    def vertex_config(self) -> VertexConfig:
+        return VertexConfig(
+            vertices=[
+                Vertex(
+                    name="v_test",
+                    properties=[Field(name="id")],
+                    identity=["id"],
+                )
+            ]
+        )
+
+    def collect_vertex_names(self) -> set[str]:
+        return {"v_test"}
+
+    def cast_document(self, doc: dict) -> ResourceCastResult:
         if doc.get("_fail"):
             raise ValueError("intentional document failure")
         out: defaultdict = defaultdict(list)
         out["v_test"] = [{"id": doc.get("id")}]
-        return out
+        failures: list[TransformCastFailure] = []
+        if doc.get("_xform_fail"):
+            failures.append(
+                TransformCastFailure(
+                    location=LocationIndex(path=()),
+                    transform_label="builtins.int",
+                    exception_type="ValueError",
+                    message="invalid literal for int()",
+                    nulled_fields=("age",),
+                )
+            )
+        return ResourceCastResult(entities=out, transform_failures=failures)
+
+    def __call__(self, doc: dict) -> defaultdict:
+        return self.cast_document(doc).entities
 
 
 @pytest.fixture
@@ -93,6 +125,60 @@ def test_skip_continues_batch_and_doc_error_sink(
     assert rec["doc_index"] == 1
     assert rec["resource_name"] == "fake_resource"
     assert rec["exception_type"] == "ValueError"
+
+
+def test_transform_failure_written_to_sink(
+    mock_schema: MagicMock,
+    mock_ingestion_model: MagicMock,
+    tmp_path: Path,
+) -> None:
+    sink = tmp_path / "errors.jsonl.gz"
+    params = IngestionParams(
+        n_cores=1,
+        on_doc_error="skip",
+        doc_error_sink_path=sink,
+    )
+    caster = Caster(mock_schema, mock_ingestion_model, ingestion_params=params)
+    data = [{"id": 1, "_xform_fail": True}, {"id": 2}]
+
+    result = asyncio.run(caster.cast_normal_resource(data))
+
+    assert len(result.failures) == 1
+    assert result.failures[0].failure_kind == "transform"
+    assert result.failures[0].doc_index == 0
+    assert result.failures[0].transform_label == "builtins.int"
+    assert result.failures[0].nulled_fields == ("age",)
+    assert len(result.graph.vertices["v_test"]) == 2
+
+    lines = _read_all_jsonl_gz_lines(sink)
+    assert len(lines) == 1
+    rec = json.loads(lines[0])
+    assert rec["failure_kind"] == "transform"
+    assert rec["nulled_fields"] == ["age"]
+
+
+def test_transform_failure_counts_toward_max_doc_errors(
+    mock_schema: MagicMock,
+    mock_ingestion_model: MagicMock,
+    tmp_path: Path,
+) -> None:
+    sink = tmp_path / "errors.jsonl.gz"
+    params = IngestionParams(
+        n_cores=1,
+        on_doc_error="skip",
+        max_doc_errors=1,
+        doc_error_sink_path=sink,
+    )
+    caster = Caster(mock_schema, mock_ingestion_model, ingestion_params=params)
+    data = [{"id": 1, "_xform_fail": True}, {"id": 2, "_xform_fail": True}]
+
+    with pytest.raises(DocErrorBudgetExceeded) as exc_info:
+        asyncio.run(caster.cast_normal_resource(data))
+
+    assert exc_info.value.total_failures == 2
+    lines = _read_all_jsonl_gz_lines(sink)
+    assert len(lines) == 2
+    assert all(json.loads(ln)["failure_kind"] == "transform" for ln in lines)
 
 
 def test_fail_propagates(

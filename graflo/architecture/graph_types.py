@@ -437,6 +437,17 @@ class TransformObservation(ConfigBaseModel):
     provenance: ProvenancePath
 
 
+class TransformCastFailure(ConfigBaseModel):
+    """One transform step that failed during extraction (tolerance mode)."""
+
+    location: LocationIndex
+    transform_label: str
+    exception_type: str
+    message: str
+    traceback: str = ""
+    nulled_fields: tuple[str, ...] = Field(default_factory=tuple)
+
+
 class EdgeIntent(ConfigBaseModel):
     """Typed edge assembly request emitted during extraction."""
 
@@ -529,6 +540,10 @@ def _default_edge_intents() -> list[EdgeIntent]:
     return []
 
 
+def _default_transform_failures() -> list[TransformCastFailure]:
+    return []
+
+
 class ExtractionContext(ConfigBaseModel):
     """Extraction-phase context.
 
@@ -555,6 +570,9 @@ class ExtractionContext(ConfigBaseModel):
         default_factory=_default_transform_observations
     )
     edge_intents: list[EdgeIntent] = Field(default_factory=_default_edge_intents)
+    transform_failures: list[TransformCastFailure] = Field(
+        default_factory=_default_transform_failures
+    )
 
     def record_vertex_observation(
         self, *, vertex_name: str, location: LocationIndex, vertex: dict, ctx: dict
@@ -596,6 +614,26 @@ class ExtractionContext(ConfigBaseModel):
             )
         )
 
+    def record_transform_failure(
+        self,
+        *,
+        location: LocationIndex,
+        transform_label: str,
+        exc: BaseException,
+        traceback_text: str,
+        nulled_fields: tuple[str, ...],
+    ) -> None:
+        self.transform_failures.append(
+            TransformCastFailure(
+                location=location,
+                transform_label=transform_label,
+                exception_type=type(exc).__name__,
+                message=str(exc),
+                traceback=traceback_text,
+                nulled_fields=nulled_fields,
+            )
+        )
+
 
 class AssemblyContext(ConfigBaseModel):
     """Assembly-phase context built from extraction outputs."""
@@ -630,6 +668,15 @@ class GraphAssemblyResult(ConfigBaseModel):
     """Result of graph assembly phase."""
 
     entities: Any = Field(default_factory=dd_factory)
+
+
+class ResourceCastResult(ConfigBaseModel):
+    """Outcome of casting one document through a resource pipeline."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    entities: Any
+    transform_failures: list[TransformCastFailure] = Field(default_factory=list)
 
 
 class ActionContext(ExtractionContext):

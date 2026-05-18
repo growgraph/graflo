@@ -1,30 +1,14 @@
 """Data casting and ingestion system for graph databases.
 
-This module provides functionality for casting and ingesting data into graph databases.
-It handles batch processing, file discovery, and database operations for both ArangoDB
-and Neo4j.
-
-Key Components:
-    - Caster: Main class for data casting and ingestion
-    - FileConnector: Connector matching for file discovery
-    - Connectors: Collection of file connectors for different resources
-
-Ingestion paths (:meth:`ingest`, :meth:`ingest_data_sources`, :meth:`process_resource`,
-:meth:`process_data_source`, queue workers) all route batches through
-:meth:`process_batch` → :meth:`cast_normal_resource`, which loads the named
-``Resource`` from the :class:`~graflo.architecture.contract.declarations.ingestion_model.IngestionModel`
-and invokes :meth:`~graflo.architecture.contract.declarations.resource.Resource.__call__` per source document.
-
-Example:
-    >>> caster = Caster(schema=schema)
-    >>> caster.ingest(path="data/", conn_conf=db_config)
+Orchestration (batching, DB writes, queues) lives in :class:`Caster`.
+Pure document casting is delegated to :class:`~graflo.hq.document_caster.DocumentCaster`.
 """
 
+from __future__ import annotations
+
 import asyncio
-import json
 import logging
 import sys
-import traceback
 from pathlib import Path
 from typing import Any, cast
 
@@ -32,10 +16,10 @@ import pandas as pd
 
 from suthing import Timer
 
-from graflo.architecture.contract.declarations.ingestion_model import IngestionModel
-from graflo.architecture.graph_types import EncodingType, GraphContainer
+from graflo.architecture.contract.bindings import Bindings
+from graflo.architecture.contract.ingestion import IngestionModel
+from graflo.architecture.graph_types import EncodingType
 from graflo.architecture.schema import Schema
-from graflo.architecture.schema.vertex import VertexConfig
 from graflo.data_source import (
     AbstractDataSource,
     DataSourceFactory,
@@ -43,180 +27,38 @@ from graflo.data_source import (
 )
 from graflo.db.connection import DBConfig
 from graflo.hq.bulk_session import BulkSessionCoordinator
-from graflo.hq.db_writer import DBWriter
-from graflo.hq.registry_builder import RegistryBuilder
-from graflo.util.chunker import ChunkerType
-from graflo.architecture.contract.bindings import Bindings
 from graflo.hq.connection_provider import ConnectionProvider, EmptyConnectionProvider
+from graflo.hq.db_writer import DBWriter
 from graflo.hq.doc_error_sink import failure_sinks_from_ingestion_params
+from graflo.hq.document_caster import DocumentCaster
 from graflo.hq.ingestion_parameters import (
     CastBatchResult,
     DocCastFailure,
     DocErrorBudgetExceeded,
     IngestionParams,
 )
+from graflo.hq.registry_builder import RegistryBuilder
+from graflo.util.chunker import ChunkerType
+from graflo.util.data_normalize import normalize_rows
 
 logger = logging.getLogger(__name__)
 
-_DOC_CAST_ERROR_TRACEBACK_MAX_CHARS = 16_384
-
-
-def _filter_graph_container_by_vertices_inplace(
-    gc: GraphContainer, *, allowed_vertex_names: set[str] | None
-) -> None:
-    """Restrict persistence to a subset of vertex types.
-
-    Mutates *gc* in-place, removing:
-    - vertex collections whose names are not in *allowed_vertex_names*
-    - edge collections whose source/target vertex names are not allowed
-    """
-
-    if allowed_vertex_names is None:
-        return
-
-    gc.vertices = {
-        vcol: items
-        for vcol, items in gc.vertices.items()
-        if vcol in allowed_vertex_names
-    }
-    gc.edges = {
-        (vfrom, vto, rel): items
-        for (vfrom, vto, rel), items in gc.edges.items()
-        if vfrom in allowed_vertex_names and vto in allowed_vertex_names
-    }
-
-
-def _identity_value_is_empty(value: Any) -> bool:
-    return value is None or value == ""
-
-
-def _vertex_doc_has_empty_identity(
-    doc: dict[str, Any], identity_fields: list[str]
-) -> bool:
-    if not identity_fields:
-        return False
-    return all(_identity_value_is_empty(doc.get(field)) for field in identity_fields)
-
-
-def _filter_graph_container_drop_empty_identity_inplace(
-    gc: GraphContainer, *, vertex_config: VertexConfig
-) -> None:
-    """Remove vertex docs and edge tuples with no usable schema identity.
-
-    Identity rules come from *vertex_config*; :class:`GraphContainer` is unchanged
-    as a type. Blank vertex collections are skipped (empty identity before DB assign).
-    """
-    blank = set(vertex_config.blank_vertices)
-    vertex_set = vertex_config.vertex_set
-
-    for vcol, docs in list(gc.vertices.items()):
-        if vcol in blank or vcol not in vertex_set:
-            continue
-        id_fields = vertex_config.identity_fields(vcol)
-        gc.vertices[vcol] = [
-            d for d in docs if not _vertex_doc_has_empty_identity(d, id_fields)
-        ]
-
-    for edge_id, docs in list(gc.edges.items()):
-        vfrom, vto, _rel = edge_id
-        if vfrom not in vertex_set or vto not in vertex_set:
-            continue
-        if vfrom in blank or vto in blank:
-            continue
-        src_ids = vertex_config.identity_fields(vfrom)
-        tgt_ids = vertex_config.identity_fields(vto)
-        kept = [
-            t
-            for t in docs
-            if not _vertex_doc_has_empty_identity(t[0], src_ids)
-            and not _vertex_doc_has_empty_identity(t[1], tgt_ids)
-        ]
-        if kept:
-            gc.edges[edge_id] = kept
-        else:
-            del gc.edges[edge_id]
-
-
-def _format_traceback(exc: BaseException) -> str:
-    tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
-    if len(tb) > _DOC_CAST_ERROR_TRACEBACK_MAX_CHARS:
-        return tb[:_DOC_CAST_ERROR_TRACEBACK_MAX_CHARS] + "\n...(traceback truncated)"
-    return tb
-
-
-def _build_doc_preview(
-    doc: dict[str, Any],
-    keys: tuple[str, ...] | None,
-    max_bytes: int,
-) -> Any:
-    if keys is not None:
-        preview_obj: Any = {k: doc[k] for k in keys if k in doc}
-    else:
-        preview_obj = doc
-    raw = json.dumps(preview_obj, default=str, sort_keys=True)
-    encoded = raw.encode("utf-8")
-    if len(encoded) <= max_bytes:
-        return json.loads(raw)
-    cut = raw.encode("utf-8")[:max_bytes].decode("utf-8", errors="replace")
-    return f"{cut}...(doc preview truncated)"
-
-
-def _doc_failure_from_exception(
-    *,
-    resource_name: str,
-    doc_index: int,
-    doc: dict[str, Any],
-    exc: BaseException,
-    doc_keys: tuple[str, ...] | None,
-    doc_preview_max_bytes: int,
-) -> DocCastFailure:
-    return DocCastFailure(
-        resource_name=resource_name,
-        doc_index=doc_index,
-        exception_type=type(exc).__name__,
-        message=str(exc),
-        traceback=_format_traceback(exc),
-        doc_preview=_build_doc_preview(doc, doc_keys, doc_preview_max_bytes),
-    )
-
 
 class Caster:
-    """Main class for data casting and ingestion.
-
-    This class handles the process of casting data into graph structures and
-    ingesting them into the database. It supports batch processing, parallel
-    execution, and various data formats.
-
-    Attributes:
-        schema: Schema configuration for the graph
-        ingestion_params: IngestionParams instance controlling ingestion behavior
-    """
+    """Ingestion orchestrator: cast documents and write graph batches to the database."""
 
     def __init__(
         self,
         schema: Schema,
         ingestion_model: IngestionModel,
         ingestion_params: IngestionParams | None = None,
-        **kwargs,
     ):
-        """Initialize the caster with schema and configuration.
-
-        Args:
-            schema: Schema configuration for the graph
-            ingestion_params: IngestionParams instance with ingestion configuration.
-                If None, creates IngestionParams from kwargs or uses defaults
-            **kwargs: Additional configuration options (for backward compatibility):
-                - clear_data: Whether to clear existing data before ingestion
-                - n_cores: Number of CPU cores/threads to use for parallel processing
-                - max_items: Maximum number of items to process
-                - batch_size: Size of batches for processing
-                - dry: Whether to perform a dry run
-        """
         if ingestion_params is None:
-            ingestion_params = IngestionParams(**kwargs)
+            ingestion_params = IngestionParams()
         self.ingestion_params = ingestion_params
         self.schema = schema
         self.ingestion_model = ingestion_model
+        self._document_caster = DocumentCaster(ingestion_model)
         self._allowed_vertex_names: set[str] | None = None
         self._doc_cast_error_total = 0
         self._doc_cast_error_io_lock = asyncio.Lock()
@@ -225,12 +67,7 @@ class Caster:
         self._ingest_bindings: Bindings | None = None
         self._connection_provider: ConnectionProvider = EmptyConnectionProvider()
 
-    # ------------------------------------------------------------------
-    # Casting
-    # ------------------------------------------------------------------
-
     async def _ensure_bulk_session(self, conn_conf: DBConfig) -> str | None:
-        """Return active native bulk session id, starting one if needed."""
         return await self._bulk_coordinator.ensure_session(conn_conf)
 
     async def _finalize_bulk_session(self, conn_conf: DBConfig) -> None:
@@ -272,89 +109,15 @@ class Caster:
     async def cast_normal_resource(
         self, data, resource_name: str | None = None
     ) -> CastBatchResult:
-        """Cast data into a graph container using a resource.
-
-        Args:
-            data: Iterable of documents to cast
-            resource_name: Optional name of the resource to use
-
-        Returns:
-            CastBatchResult with graph and any per-document failures (empty when
-            ``on_doc_error`` is ``fail`` and the batch succeeds).
-        """
-        rr = self.ingestion_model.fetch_resource(resource_name)
-        resolved_name = rr.name
-        params = self.ingestion_params
-
-        semaphore = asyncio.Semaphore(params.n_cores)
-
-        async def process_doc(doc: dict[str, Any]) -> Any:
-            async with semaphore:
-                return await asyncio.to_thread(rr, doc)
-
-        if params.on_doc_error == "fail":
-            coros = [process_doc(doc) for doc in data]
-            docs = await asyncio.gather(*coros)
-            graph = GraphContainer.from_docs_list(docs)
-            _filter_graph_container_by_vertices_inplace(
-                graph, allowed_vertex_names=self._allowed_vertex_names
-            )
-            if params.drop_empty_identity_docs:
-                _filter_graph_container_drop_empty_identity_inplace(
-                    graph,
-                    vertex_config=self.schema.core_schema.vertex_config,
-                )
-            return CastBatchResult(graph=graph, failures=[])
-
-        doc_list = list(data)
-        raw = await asyncio.gather(
-            *[process_doc(doc) for doc in doc_list],
-            return_exceptions=True,
+        """Cast data into a graph container using a resource."""
+        result = await self._document_caster.cast_batch(
+            data,
+            resource_name,
+            params=self.ingestion_params,
+            allowed_vertex_names=self._allowed_vertex_names,
         )
-        docs: list[Any] = []
-        failures: list[DocCastFailure] = []
-        for i, item in enumerate(raw):
-            doc_raw = doc_list[i]
-            doc = (
-                doc_raw
-                if isinstance(doc_raw, dict)
-                else {"_source_repr": repr(doc_raw)}
-            )
-
-            if isinstance(item, asyncio.CancelledError):
-                raise item
-            if isinstance(item, (KeyboardInterrupt, SystemExit)):
-                raise item
-            if isinstance(item, BaseException):
-                failures.append(
-                    _doc_failure_from_exception(
-                        resource_name=resolved_name,
-                        doc_index=i,
-                        doc=doc,
-                        exc=item,
-                        doc_keys=params.doc_error_preview_keys,
-                        doc_preview_max_bytes=params.doc_error_preview_max_bytes,
-                    )
-                )
-                continue
-            docs.append(item)
-
-        await self._persist_doc_failures(failures)
-
-        graph = GraphContainer.from_docs_list(docs)
-        _filter_graph_container_by_vertices_inplace(
-            graph, allowed_vertex_names=self._allowed_vertex_names
-        )
-        if params.drop_empty_identity_docs:
-            _filter_graph_container_drop_empty_identity_inplace(
-                graph,
-                vertex_config=self.schema.core_schema.vertex_config,
-            )
-        return CastBatchResult(graph=graph, failures=failures)
-
-    # ------------------------------------------------------------------
-    # Processing pipeline
-    # ------------------------------------------------------------------
+        await self._persist_doc_failures(result.failures)
+        return result
 
     async def process_batch(
         self,
@@ -362,13 +125,6 @@ class Caster:
         resource_name: str | None,
         conn_conf: None | DBConfig = None,
     ):
-        """Process a batch of data.
-
-        Args:
-            batch: Batch of data to process
-            resource_name: Optional name of the resource to use
-            conn_conf: Optional database connection configuration
-        """
         result = await self.cast_normal_resource(batch, resource_name=resource_name)
         if result.failures:
             logger.warning(
@@ -396,16 +152,8 @@ class Caster:
         resource_name: str | None = None,
         conn_conf: None | DBConfig = None,
     ):
-        """Process a data source.
-
-        Args:
-            data_source: Data source to process
-            resource_name: Optional name of the resource (overrides data_source.resource_name)
-            conn_conf: Optional database connection configuration
-        """
         actual_resource_name = resource_name or data_source.resource_name
 
-        # Same semantics as AbstractDataSource.iter_batches(limit=...).
         limit = self.ingestion_params.max_items
         batch_prefetch = self.ingestion_params.batch_prefetch
         queue: asyncio.Queue[list[dict] | object] = asyncio.Queue(
@@ -475,25 +223,6 @@ class Caster:
         conn_conf: None | DBConfig = None,
         **kwargs,
     ):
-        """Process a resource instance from configuration or direct data.
-
-        This method accepts either:
-        1. A configuration dictionary with 'source_type' and data source parameters
-        2. A file path (Path or str) - creates FileDataSource
-        3. In-memory data (list[dict], list[list], or pd.DataFrame) - creates InMemoryDataSource
-
-        Args:
-            resource_instance: Configuration dict, file path, or in-memory data.
-                Configuration dict format:
-                - {"source_type": "file", "path": "data.json"}
-                - {"source_type": "api", "config": {"url": "https://..."}}
-                - {"source_type": "sql", "config": {"connection_string": "...", "query": "..."}}
-                - {"source_type": "in_memory", "data": [...]}
-            resource_name: Optional name of the resource
-            conn_conf: Optional database connection configuration
-            **kwargs: Additional arguments passed to data source creation
-                (e.g., columns for list[list], encoding for files)
-        """
         if isinstance(resource_instance, dict):
             config = resource_instance.copy()
             config.update(kwargs)
@@ -529,19 +258,9 @@ class Caster:
             conn_conf=conn_conf,
         )
 
-    # ------------------------------------------------------------------
-    # Queue-based processing
-    # ------------------------------------------------------------------
-
     async def process_with_queue(
         self, tasks: asyncio.Queue, conn_conf: DBConfig | None = None
     ):
-        """Process tasks from a queue.
-
-        Args:
-            tasks: Async queue of tasks to process
-            conn_conf: Optional database connection configuration
-        """
         SENTINEL = None
 
         while True:
@@ -569,37 +288,12 @@ class Caster:
                 tasks.task_done()
                 break
 
-    # ------------------------------------------------------------------
-    # Normalization utility
-    # ------------------------------------------------------------------
-
     @staticmethod
     def normalize_resource(
         data: pd.DataFrame | list[list] | list[dict], columns: list[str] | None = None
     ) -> list[dict]:
-        """Normalize resource data into a list of dictionaries.
-
-        Args:
-            data: Data to normalize (DataFrame, list of lists, or list of dicts)
-            columns: Optional column names for list data
-
-        Returns:
-            list[dict]: Normalized data as list of dictionaries
-
-        Raises:
-            ValueError: If columns is not provided for list data
-        """
-        if isinstance(data, pd.DataFrame):
-            columns = data.columns.tolist()
-            _data = data.values.tolist()
-        elif data and isinstance(data[0], list):
-            _data = cast(list[list], data)
-            if columns is None:
-                raise ValueError("columns should be set")
-        else:
-            return cast(list[dict], data)
-        rows_dressed = [{k: v for k, v in zip(columns, item)} for item in _data]
-        return rows_dressed
+        """Normalize resource data into a list of dictionaries."""
+        return normalize_rows(data, columns=columns)
 
     async def ingest_data_sources(
         self,
@@ -610,23 +304,11 @@ class Caster:
         bindings: Bindings | None = None,
         connection_provider: ConnectionProvider | None = None,
     ):
-        """Ingest data from data sources in a registry.
-
-        Note: Schema definition should be handled separately via GraphEngine.define_schema()
-        before calling this method.
-
-        Args:
-            data_source_registry: Registry containing data sources mapped to resources
-            conn_conf: Database connection configuration
-            ingestion_params: IngestionParams instance with ingestion configuration.
-                If None, uses default IngestionParams()
-            bindings: Optional manifest bindings (used to resolve S3 staging proxies).
-            connection_provider: Runtime credential provider for source connectors and S3.
-        """
         if ingestion_params is None:
             ingestion_params = IngestionParams()
 
         self.ingestion_params = ingestion_params
+        self._document_caster = DocumentCaster(self.ingestion_model)
         self._doc_cast_error_total = 0
         init_only = ingestion_params.init_only
 
@@ -684,21 +366,6 @@ class Caster:
         ingestion_params: IngestionParams | None = None,
         connection_provider: ConnectionProvider | None = None,
     ):
-        """Ingest data into the graph database.
-
-        This is the main ingestion method that takes:
-        - Schema: Graph structure (already set in Caster)
-        - OutputConfig: Target graph database configuration
-        - Bindings: Mapping of resources to physical data sources
-        - IngestionParams: Parameters controlling the ingestion process
-
-        Args:
-            target_db_config: Target database connection configuration (for writing graph)
-            bindings: Bindings instance mapping resources to data sources
-                If None, defaults to empty Bindings()
-            ingestion_params: IngestionParams instance with ingestion configuration.
-                If None, uses default IngestionParams()
-        """
         bindings = bindings or Bindings()
         ingestion_params = ingestion_params or IngestionParams()
 
@@ -715,6 +382,7 @@ class Caster:
             allowed_vertex_names=self._allowed_vertex_names,
             target_db_flavor=db_flavor,
         )
+        self._document_caster = DocumentCaster(self.ingestion_model)
 
         registry = RegistryBuilder(self.schema, self.ingestion_model).build(
             bindings,
@@ -734,17 +402,9 @@ class Caster:
             )
         )
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
     def _resolve_ingestion_scope(
         self, ingestion_params: IngestionParams
     ) -> set[str] | None:
-        """Resolve and validate resource/vertex filters for ingestion.
-
-        Resolution order is resources first, then vertices.
-        """
         if ingestion_params.resources is not None:
             known_resources = set(self.ingestion_model._resources.keys())
             requested_resources = set(ingestion_params.resources)
@@ -776,7 +436,6 @@ class Caster:
         return allowed_resource_names
 
     def _make_db_writer(self) -> DBWriter:
-        """Create a :class:`DBWriter` from the current ingestion params."""
         max_concurrent = (
             self.ingestion_params.max_concurrent_db_ops
             if self.ingestion_params.max_concurrent_db_ops is not None

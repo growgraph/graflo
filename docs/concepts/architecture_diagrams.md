@@ -122,10 +122,10 @@ classDiagram
     }
 
     class IngestionModel {
-        +resources: list~Resource~
+        +resources: list~ResourceConfig~
         +transforms: list~ProtoTransform~
         +finish_init(core_schema)
-        +fetch_resource(name) Resource
+        +fetch_resource_config(name) ResourceConfig
     }
 
     class GraphMetadata {
@@ -136,13 +136,15 @@ classDiagram
 
     class VertexConfig {
         +vertices: list~Vertex~
-        +blank_vertices: list~Vertex~
+        +identity_from_all_properties: bool
+        +blank_vertices: list~str~
     }
 
     class Vertex {
         +name: str
         +identity: list~str~
         +properties: list~Field~
+        +blank: bool
         +filters: FilterExpression?
     }
 
@@ -165,11 +167,16 @@ classDiagram
         +filters: FilterExpression?
     }
 
-    class Resource {
+    class ResourceConfig {
         +name: str
-        +root: ActorWrapper
+        +pipeline: list~dict~
+        +tolerate_transform_errors: bool
+    }
+
+    class ResourceRuntime {
+        +config: ResourceConfig
+        +vertex_config: VertexConfig
         +executor: ActorExecutor
-        +finish_init(vertex_config, edge_config, transforms)
     }
 
     class ActorWrapper {
@@ -224,7 +231,7 @@ classDiagram
     Schema *-- CoreSchema : core_schema
     CoreSchema *-- VertexConfig : vertex_config
     CoreSchema *-- EdgeConfig : edge_config
-    IngestionModel *-- "0..*" Resource : resources
+    IngestionModel *-- "0..*" ResourceConfig : resources
     IngestionModel *-- "0..*" ProtoTransform : transforms
 
     VertexConfig *-- "0..*" Vertex : vertices
@@ -235,8 +242,9 @@ classDiagram
     Edge *-- "0..*" Field : properties
     Edge --> FilterExpression : filters
 
-    Resource *-- ActorWrapper : root
-    Resource *-- ActorExecutor : runtime orchestration
+    ResourceRuntime *-- ResourceConfig : config
+    ResourceRuntime *-- ActorWrapper : root
+    ResourceRuntime *-- ActorExecutor : runtime orchestration
     ActorWrapper --> Actor : actor
     ActorExecutor ..> ExtractionContext : produces
     ActorExecutor ..> AssemblyContext : consumes
@@ -378,5 +386,5 @@ These are the two key abstractions that decouple *data retrieval* from *graph tr
 
 - **DataSources** (`AbstractDataSource` subclasses) — handle *where* and *how* data is read. Each carries a `DataSourceType` (`FILE`, `SQL`, `SPARQL`, `API`, `IN_MEMORY`). Many DataSources can bind to the same Resource by name via the `DataSourceRegistry`.
 
-- **Resources** (`Resource`) — handle *what* the data becomes in the LPG. Each Resource is a reusable actor pipeline (descend → transform → vertex → edge) that maps raw records to graph elements. Because DataSources bind to Resources by name, the same transformation logic applies regardless of whether data arrives from a file, an API, or a SPARQL endpoint.
+- **Resources** (`ResourceConfig` → `ResourceRuntime`) — handle *what* the data becomes in the LPG. Each resource is a reusable actor pipeline (descend → transform → vertex → edge) that maps raw records to graph elements. Because DataSources bind to resources by name, the same transformation logic applies regardless of whether data arrives from a file, an API, or a SPARQL endpoint.
   - Optional **`drop_trivial_input_fields`** (default `false` on the model): when `true`, each record is preprocessed by dropping **top-level** keys whose value is `null` or the empty string `""` before actors run. This trims sparse wide rows (many unused columns) without extra transforms; nested dicts and lists are not walked.

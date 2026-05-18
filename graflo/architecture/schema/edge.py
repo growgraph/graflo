@@ -101,7 +101,7 @@ class Edge(ConfigBaseModel):
         description=(
             "Edge property names/types (relationship properties). "
             "Vertex-derived bindings belong in ingestion (:class:`~graflo.architecture.contract."
-            "declarations.edge_derivation_registry.EdgeDerivationRegistry`)."
+            "runtime.edge_derivation.EdgeDerivationRegistry`)."
         ),
     )
 

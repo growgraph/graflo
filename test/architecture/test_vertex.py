@@ -383,13 +383,12 @@ def test_vertex_config_properties_with_db_flavor():
 
 
 def test_vertex_config_remove_vertices():
-    """Test VertexConfig.remove_vertices removes vertices and updates blank_vertices."""
+    """Test VertexConfig.remove_vertices removes vertices and blank_vertices property."""
     v1 = Vertex.from_dict({"name": "a", "properties": ["id"]})
-    v2 = Vertex.from_dict({"name": "b", "properties": ["id"]})
+    v2 = Vertex.from_dict({"name": "b", "properties": ["id"], "blank": True})
     v3 = Vertex.from_dict({"name": "c", "properties": ["id"]})
     config = VertexConfig(
         vertices=[v1, v2, v3],
-        blank_vertices=["b"],
         identity_from_all_properties=True,
     )
     assert config.vertex_set == {"a", "b", "c"}
@@ -408,8 +407,8 @@ def test_vertex_config_identity_fallback_when_flag_enabled():
 
 def test_blank_vertex_defaults_to_id_identity():
     """Blank vertices still default to id identity when omitted."""
-    blank = Vertex(name="placeholder", properties=[])
-    cfg = VertexConfig(vertices=[blank], blank_vertices=["placeholder"])
+    blank = Vertex(name="placeholder", properties=[], blank=True)
+    cfg = VertexConfig(vertices=[blank])
     assert cfg.identity_fields("placeholder") == ["id"]
     assert cfg.property_names("placeholder") == ["id"]
 
@@ -442,3 +441,29 @@ def test_vertex_properties_conflicting_duplicate_types_raise():
             ],
             identity=["id"],
         )
+
+
+def test_resource_runtime_vertex_config_excludes_unreferenced_blank_vertices():
+    """Blank vertices outside the resource pipeline are not in runtime config."""
+    from graflo.architecture.contract.ingestion.resource import Resource
+    from graflo.architecture.contract.runtime import build_resource_runtime
+    from graflo.architecture.schema.edge import EdgeConfig
+
+    schema_vc = VertexConfig(
+        vertices=[
+            Vertex(name="ticker", properties=["cusip"], identity=["cusip"]),  # type: ignore[arg-type]
+            Vertex(name="publication", properties=[], blank=True),
+        ]
+    )
+    config = Resource(
+        name="ibes",
+        pipeline=[{"vertex": "ticker"}],
+    )
+    resource = build_resource_runtime(
+        config,
+        vertex_config=schema_vc,
+        edge_config=EdgeConfig(),
+        transforms={},
+    )
+    assert resource.vertex_config.vertex_set == {"ticker"}
+    assert resource.vertex_config.blank_vertices == []

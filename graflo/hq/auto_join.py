@@ -13,7 +13,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from graflo.architecture.pipeline.runtime.actor import ActorWrapper, EdgeActor
-from graflo.architecture.contract.declarations.resource import Resource
+from graflo.architecture.contract.runtime import ResourceRuntime
 from graflo.filter.onto import ComparisonOperator, FilterExpression
 from graflo.architecture.contract.bindings import JoinClause, TableConnector
 
@@ -29,7 +29,7 @@ _TARGET_ALIAS = "t"
 
 
 def enrich_edge_connector_with_joins(
-    resource: Resource,
+    resource: ResourceRuntime,
     connector: TableConnector,
     bindings: Bindings,
     vertex_config: VertexConfig,

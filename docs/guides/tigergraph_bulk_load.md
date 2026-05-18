@@ -50,7 +50,7 @@ Ingestion coordinates begin/finalize through the backend-agnostic **`BulkSession
 
 ## Limitations (current release)
 
-- **`blank_vertices`** in the logical schema are rejected at `bulk_load_begin`.
+- Vertices with **`blank: true`** (blank placeholders) in the logical schema are rejected at `bulk_load_begin`.
 - Resources with **`extra_weights`** (DB lookups during ingest) cannot use bulk for that resource; use REST ingest or remove extra weights for those resources.
 
 Upsert semantics differ from REST: native **LOAD** is oriented toward **append** semantics; plan idempotency and clears according to your operations model.

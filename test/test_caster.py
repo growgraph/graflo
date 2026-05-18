@@ -8,7 +8,9 @@ from test.conftest import fetch_manifest_obj, verify
 import pytest
 from suthing import FileHandle
 
+from graflo.architecture.pipeline.runtime.actor import ActorWrapper
 from graflo.hq.caster import Caster
+from graflo.hq.ingestion_parameters import IngestionParams
 
 logger = logging.getLogger(__name__)
 
@@ -40,11 +42,19 @@ def cast(modes, current_path, level, reset, n_cores=1):
             from graflo.plot.plotter import assemble_tree
 
             for r in ingestion_model.resources:
-                assemble_tree(r.root, f"{output_dir}/{mode}.resource-{r.name}.pdf")
+                assemble_tree(
+                    ActorWrapper(*r.pipeline),
+                    f"{output_dir}/{mode}.resource-{r.name}.pdf",
+                )
         except ImportError:
             # graphviz/pygraphviz not available, skip visualization
             logger.debug("graphviz not available, skipping tree visualization")
-        caster = Caster(schema, ingestion_model, n_cores=n_cores)
+        ingestion_model.finish_init(schema.core_schema)
+        caster = Caster(
+            schema,
+            ingestion_model,
+            ingestion_params=IngestionParams(n_cores=n_cores),
+        )
 
         if level == 0:
             fname = os.path.join(
