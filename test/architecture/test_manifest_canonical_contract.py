@@ -1,5 +1,5 @@
 from graflo.architecture.contract.bindings import Bindings
-from graflo.architecture.contract.declarations.ingestion_model import IngestionModel
+from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.schema import Schema
 from graflo.hq.caster import IngestionParams

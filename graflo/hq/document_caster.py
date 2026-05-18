@@ -8,8 +8,8 @@ import traceback
 from collections.abc import Iterable
 from typing import Any, Literal
 
-from graflo.architecture.contract.declarations.ingestion_model import IngestionModel
-from graflo.architecture.contract.declarations.resource_runtime import ResourceRuntime
+from graflo.architecture.contract.ingestion import IngestionModel
+from graflo.architecture.contract.runtime import ResourceRuntime
 from graflo.architecture.graph_types import (
     GraphContainer,
     ResourceCastResult,

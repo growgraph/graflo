@@ -29,7 +29,7 @@ If **`doc_error_sink_path`** is **`None`**, skipped failures are emitted as stru
 
 ## Per-transform tolerance: `tolerate_transform_errors`
 
-On each **`Resource`**, **`tolerate_transform_errors`** defaults to **`True`**. When enabled, a failing transform step sets its declared output fields to **`None`**, records a **`failure_kind=transform`** row in the doc error sink, and the rest of the pipeline (vertices, edges, later transforms) still runs for that document. Set **`tolerate_transform_errors: false`** on a resource to restore fail-fast behavior for transform exceptions (the whole document is lost unless **`on_doc_error=skip`** at the caster).
+On each ingestion resource (**`ResourceConfig`** in YAML under **`ingestion_model.resources`**), **`tolerate_transform_errors`** defaults to **`True`**. When enabled, a failing transform step sets its declared output fields to **`None`**, records a **`failure_kind=transform`** row in the doc error sink, and the rest of the pipeline (vertices, edges, later transforms) still runs for that document. Set **`tolerate_transform_errors: false`** on a resource to restore fail-fast behavior for transform exceptions (the whole document is lost unless **`on_doc_error=skip`** at the caster).
 
 Transform failures are persisted through the same **`doc_error_sink_path`** and count toward **`max_doc_errors`** as full document failures. With **`on_doc_error=fail`**, tolerated transform errors do not fail the batch; only unhandled document-level exceptions do.
 
@@ -60,6 +60,18 @@ ingestion_params = IngestionParams(
     doc_error_sink_path=Path("artifacts/doc_cast_failures.jsonl.gz"),
     max_doc_errors=10_000,
 )
+```
+
+Per-resource transform tolerance in YAML:
+
+```yaml
+ingestion_model:
+  resources:
+    - name: metrics
+      tolerate_transform_errors: true
+      apply:
+        - transform: {call: {use: parse_metric}}
+        - vertex: Metric
 ```
 
 ## Extensibility

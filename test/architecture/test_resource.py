@@ -5,8 +5,8 @@ import pytest
 
 from graflo.architecture.graph_types import ExtractionContext
 from graflo.architecture.schema.edge import EdgeConfig
-from graflo.architecture.contract.declarations.resource import (
-    Resource,
+from graflo.architecture.contract.ingestion.resource import Resource
+from graflo.architecture.contract.runtime import (
     ResourceRuntime,
     build_resource_runtime,
 )
@@ -50,9 +50,7 @@ def test_resolve_type_caster_rejects_expressions():
 
 
 def test_resource_drop_trivial_input_fields_strips_none_and_empty_string():
-    from graflo.architecture.contract.declarations.resource_runtime import (
-        strip_trivial_top_level_fields,
-    )
+    from graflo.architecture.contract.runtime import strip_trivial_top_level_fields
 
     assert strip_trivial_top_level_fields(
         {"a": 1, "b": None, "c": "", "d": "x", "nested": {"e": None}}

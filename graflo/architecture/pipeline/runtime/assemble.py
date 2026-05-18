@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from .actor.edge_render import render_edge, render_weights
-from graflo.architecture.contract.declarations.edge_derivation_registry import (
+from graflo.architecture.contract.runtime.edge_derivation import (
     EdgeDerivationRegistry,
 )
 from graflo.architecture.schema.edge import (

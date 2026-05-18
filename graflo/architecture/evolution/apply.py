@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Literal, Sequence
 
-from graflo.architecture.contract.declarations.ingestion_model import IngestionModel
+from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.pipeline.runtime.actor import ActorWrapper
 from graflo.architecture.database_features import DatabaseProfile
@@ -230,7 +230,7 @@ def _build_merged_vertex_config(
 
 
 def _rewrite_ingestion_for_merge(im: IngestionModel, mapping: dict[str, str]) -> None:
-    from graflo.architecture.contract.declarations.resource import Resource
+    from graflo.architecture.contract.ingestion.resource import Resource
 
     new_resources: list[Resource] = []
     for r in im.resources:
@@ -335,7 +335,7 @@ def _rebuild_ingestion_with_pipeline_rewrite(
     """
     if manifest.ingestion_model is None:
         return
-    from graflo.architecture.contract.declarations.resource import Resource
+    from graflo.architecture.contract.ingestion.resource import Resource
 
     renames_ctx = vertex_field_renames if vertex_field_renames else {}
 
@@ -687,7 +687,7 @@ def apply_remove_edges(manifest: GraphManifest, op: RemoveEdgesOp) -> None:
     schema.finish_init()
 
     if manifest.ingestion_model is not None:
-        from graflo.architecture.contract.declarations.resource import Resource
+        from graflo.architecture.contract.ingestion.resource import Resource
 
         resources: list[Resource] = []
         for resource in manifest.ingestion_model.resources:

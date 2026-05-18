@@ -9,7 +9,7 @@ import inspect
 import logging
 
 from graflo.architecture.contract.manifest import GraphManifest
-from graflo.architecture.contract.declarations.ingestion_model import IngestionModel
+from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.schema import Schema
 from graflo.onto import DBType
 from graflo.architecture.onto_sql import SchemaIntrospectionResult

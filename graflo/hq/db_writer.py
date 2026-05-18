@@ -13,7 +13,7 @@ from uuid import uuid4
 
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema import EdgeRuntime, SchemaDBAware
-from graflo.architecture.contract.declarations.ingestion_model import IngestionModel
+from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.graph_types import GraphContainer
 from graflo.architecture.schema import Schema
 from graflo.db.connection import DBConfig

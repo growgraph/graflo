@@ -222,3 +222,7 @@ class ResourceConfig(ConfigBaseModel):
         from graflo.architecture.pipeline.runtime.actor import ActorWrapper
 
         return ActorWrapper(*self.pipeline).count()
+
+
+# Internal-only alias; prefer ResourceConfig in new code.
+Resource = ResourceConfig

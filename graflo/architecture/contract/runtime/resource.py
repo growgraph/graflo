@@ -18,9 +18,9 @@ from graflo.architecture.schema.vertex import VertexConfig
 from graflo.onto import DBType
 from graflo.util.casting import apply_type_casters, resolve_type_casters
 
-from .edge_derivation_registry import EdgeDerivationRegistry
-from .resource_config import EdgeInferSpec, ResourceConfig
-from .transform import ProtoTransform
+from ..ingestion.resource import EdgeInferSpec, ResourceConfig
+from ..ingestion.transform import ProtoTransform
+from .edge_derivation import EdgeDerivationRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -277,3 +277,27 @@ class ResourceRuntime:
 
     def __call__(self, doc: dict) -> defaultdict[GraphEntity, list]:
         return self.cast_document(doc).entities
+
+
+def build_resource_runtime(
+    config: ResourceConfig,
+    vertex_config: VertexConfig,
+    edge_config: EdgeConfig,
+    transforms: dict[str, ProtoTransform] | None = None,
+    *,
+    strict_references: bool = False,
+    dynamic_edge_feedback: bool = False,
+    allowed_vertex_names: set[str] | None = None,
+    target_db_flavor: DBType | None = None,
+) -> ResourceRuntime:
+    """Construct a fully initialized :class:`ResourceRuntime` from declarative config."""
+    return ResourceRuntime(
+        config,
+        vertex_config,
+        edge_config,
+        transforms or {},
+        strict_references=strict_references,
+        dynamic_edge_feedback=dynamic_edge_feedback,
+        allowed_vertex_names=allowed_vertex_names,
+        target_db_flavor=target_db_flavor,
+    )

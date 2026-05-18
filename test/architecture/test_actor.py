@@ -23,7 +23,7 @@ from graflo.architecture.pipeline.runtime.actor.config import (
     normalize_actor_step,
     validate_actor_step,
 )
-from graflo.architecture.contract.declarations.transform import (
+from graflo.architecture.contract.ingestion.transform import (
     DressConfig,
     KeySelectionConfig,
     ProtoTransform,

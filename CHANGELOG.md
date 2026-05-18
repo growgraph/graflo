@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.30]
+
+### Added
+
+- **`tolerate_transform_errors`** on **`ResourceConfig`** (default **`true`**) — a failing transform step sets its declared output fields to **`None`**, records a **`failure_kind=transform`** row in the doc error sink, and the rest of the resource pipeline (vertices, edges, later transforms) continues for that document. Set **`tolerate_transform_errors: false`** to fail fast on transform exceptions.
+
+### Changed
+
+- **`VertexActor` + `from_doc`** — transform-buffer projection is selective: only **`TransformPayload`** entries whose **`named`** keys cover the **`from_doc`** source fields are consumed, so dressed or pivot outputs for other vertex types are not stolen. Dressed dict payloads (`__transformed_value#*`) are handled consistently with passthrough from the merged observation doc.
+- **Blank vertices in `VertexConfig`** — mark placeholder types with **`blank: true`** on each **`Vertex`** (identity defaults to **`id`**). **`VertexConfig.blank_vertices`** is now a derived name list, not a separate manifest field. Runtime **`ResourceRuntime`** scopes **`VertexConfig`** to vertices referenced by the resource pipeline only; unreferenced blank types are no longer injected automatically.
+- **Ingestion contract layout** — declarative **`ResourceConfig`** lives under **`graflo.architecture.contract.ingestion`**; schema-bound execution is **`ResourceRuntime`** / **`build_resource_runtime`** under **`graflo.architecture.contract.runtime`**. **`Resource`** remains an internal alias for **`ResourceConfig`**.
+
+### Breaking
+
+- **Top-level `blank_vertices` on `vertex_config`** — no longer read from manifests; set **`blank: true`** on the corresponding **`vertices`** entries instead (silent ignore under `extra="ignore"` if the old key is left in place).
+- **Runtime blank vertex scope** — blank vertex types must appear in the resource pipeline (or edge inference selectors) to be present in the per-resource runtime **`VertexConfig`**; relying on schema-wide blank placeholders without a matching actor step will not add them at cast time.
+- **Imports** — prefer **`ResourceConfig`** from **`graflo.architecture.contract`** (or **`graflo.architecture.contract.ingestion`**); **`graflo.architecture.contract.declarations.resource`** is not the canonical module path.
+
+### Documentation
+
+- **[Document cast errors](docs/concepts/ingestion_doc_errors.md)** — **`tolerate_transform_errors`** and transform failure records.
+- **[Core components](docs/concepts/core_components.md)** — **`ResourceConfig`** / **`ResourceRuntime`**, per-vertex **`blank`**, **`from_doc`** with dressed transforms, identity defaults.
+- **[Architecture diagrams](docs/concepts/architecture_diagrams.md)** — contract and blank-vertex model aligned with 1.7.30.
+- **[Creating a manifest](docs/getting_started/creating_manifest.md)** — **`tolerate_transform_errors`** and blank vertex YAML.
+
 ## [1.7.29]
 
 ### Added

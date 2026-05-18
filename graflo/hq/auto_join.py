@@ -13,7 +13,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from graflo.architecture.pipeline.runtime.actor import ActorWrapper, EdgeActor
-from graflo.architecture.contract.declarations.resource import ResourceRuntime
+from graflo.architecture.contract.runtime import ResourceRuntime
 from graflo.filter.onto import ComparisonOperator, FilterExpression
 from graflo.architecture.contract.bindings import JoinClause, TableConnector
 

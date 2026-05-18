@@ -2,7 +2,7 @@ import logging
 
 import pytest
 
-from graflo.architecture.contract.declarations.transform import (
+from graflo.architecture.contract.ingestion.transform import (
     DressConfig,
     KeySelectionConfig,
     ProtoTransform,

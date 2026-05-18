@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from graflo.architecture.contract.declarations.transform import (
+from graflo.architecture.contract.ingestion.transform import (
     DressConfig,
     KeySelectionConfig,
     Transform,

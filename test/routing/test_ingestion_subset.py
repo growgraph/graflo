@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-from graflo.architecture.contract.declarations.resource import (
-    Resource,
-    build_resource_runtime,
-)
+from graflo.architecture.contract.ingestion.resource import Resource
+from graflo.architecture.contract.runtime import build_resource_runtime
 from graflo.architecture.schema.edge import EdgeConfig
 from graflo.architecture.schema.vertex import VertexConfig
 from graflo.architecture.graph_types import GraphContainer

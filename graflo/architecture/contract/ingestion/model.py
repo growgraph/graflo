@@ -11,10 +11,10 @@ from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.pipeline.runtime.actor import ActorWrapper
 from graflo.onto import DBType
 
-from ..edge_derivation_registry import EdgeDerivationRegistry
-from ..resource import ResourceConfig
-from ..resource_runtime import ResourceRuntime
-from ..transform import ProtoTransform
+from ..runtime.edge_derivation import EdgeDerivationRegistry
+from ..runtime.resource import ResourceRuntime
+from .resource import ResourceConfig
+from .transform import ProtoTransform
 
 if TYPE_CHECKING:
     from graflo.architecture.schema import CoreSchema

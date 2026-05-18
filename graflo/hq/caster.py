@@ -17,7 +17,7 @@ import pandas as pd
 from suthing import Timer
 
 from graflo.architecture.contract.bindings import Bindings
-from graflo.architecture.contract.declarations.ingestion_model import IngestionModel
+from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.graph_types import EncodingType
 from graflo.architecture.schema import Schema
 from graflo.data_source import (

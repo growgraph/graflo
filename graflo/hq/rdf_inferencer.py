@@ -27,8 +27,8 @@ from typing import Any
 
 from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.database_features import DatabaseProfile
-from graflo.architecture.contract.declarations.ingestion_model import IngestionModel
-from graflo.architecture.contract.declarations.resource import Resource
+from graflo.architecture.contract.ingestion import IngestionModel
+from graflo.architecture.contract.ingestion.resource import Resource
 from graflo.architecture.schema import (
     CoreSchema,
     GraphMetadata,

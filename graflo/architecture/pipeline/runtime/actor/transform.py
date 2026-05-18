@@ -13,7 +13,7 @@ from graflo.architecture.graph_types import (
     LocationIndex,
     TransformPayload,
 )
-from graflo.architecture.contract.declarations.transform import (
+from graflo.architecture.contract.ingestion.transform import (
     KeySelectionConfig,
     ProtoTransform,
     Transform,

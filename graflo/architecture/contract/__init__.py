@@ -10,7 +10,7 @@ from .bindings import (
     SparqlConnector,
     TableConnector,
 )
-from .declarations import (
+from .ingestion import (
     IngestionModel,
     ProtoTransform,
     Resource,

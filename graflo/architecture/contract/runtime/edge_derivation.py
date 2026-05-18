@@ -11,7 +11,7 @@ from graflo.architecture.graph_types import EdgeId, Weight
 class EdgeDerivationRegistry:
     """Mutable store for ingestion-time edge behavior keyed by :class:`EdgeId`.
 
-    Lives under the ingestion layer (typically one instance per :class:`Resource`),
+    Lives under the ingestion layer (typically one instance per :class:`ResourceRuntime`),
     not on :class:`~graflo.architecture.schema.core.CoreSchema`.
     """
 

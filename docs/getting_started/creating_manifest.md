@@ -62,7 +62,7 @@ bindings: {}
 Defines the graph contract.
 
 - `metadata`: human-facing identity (`name`, optional `version`)
-- `graph.vertex_config`: vertex types, **`properties`**, identity keys
+- `graph.vertex_config`: vertex types, **`properties`**, identity keys; optional **`blank: true`** for placeholder vertices (auto **`id`** identity)
 - `graph.edge_config`: source/target relationships, optional `relation`, edge **`properties`**, `identities`
 - `db_profile`: DB-specific physical behavior (indexes, naming, **`default_property_values`** for TigerGraph GSQL `DEFAULT` on vertex/edge attributes, backend details)
 
@@ -74,7 +74,9 @@ Defines ingestion behavior.
 
 - `resources`: named pipelines (`name`) with ordered actor steps
 - `transforms`: reusable named transforms as a **list** (each entry must define `name`) and referenced from resources via `transform.call.use`
-- Optional per-resource flags include **`drop_trivial_input_fields`** (default `false`): when `true`, top-level keys whose value is `null` or `""` are removed **before** the actor pipeline runs. Only the top-level dict is filtered (nested structures are not recursed); numeric zero and boolean false are kept. Useful for sparse wide tables (CSV/SQL) without custom transforms.
+- Optional per-resource flags include:
+  - **`drop_trivial_input_fields`** (default `false`): when `true`, top-level keys whose value is `null` or `""` are removed **before** the actor pipeline runs. Only the top-level dict is filtered (nested structures are not recursed); numeric zero and boolean false are kept. Useful for sparse wide tables (CSV/SQL) without custom transforms.
+  - **`tolerate_transform_errors`** (default `true`): when `true`, a failing transform nulls its declared outputs and the pipeline continues; when `false`, transform exceptions fail the document (subject to caster **`on_doc_error`**). See [Document cast errors](../concepts/ingestion_doc_errors.md).
 
 **TigerGraph attribute defaults (schema / `db_profile`, not ingestion):** under `schema.db_profile`, optional **`default_property_values`** declares GSQL `DEFAULT` literals per logical vertex property and per logical edge type, for example:
 

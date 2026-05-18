@@ -12,7 +12,7 @@ from graflo.architecture.database_features import DatabaseProfile
 from graflo.architecture.schema import EdgeConfigDBAware, VertexConfigDBAware
 from graflo.architecture.graph_types import Weight
 from graflo.architecture.schema.vertex import VertexConfig
-from graflo.architecture.contract.declarations.edge_derivation_registry import (
+from graflo.architecture.contract.runtime.edge_derivation import (
     EdgeDerivationRegistry,
 )
 from graflo.onto import DBType
