@@ -218,20 +218,12 @@ def _build_merged_vertex_config(
             seen_ft.add(x)
             deduped_ft.append(x)
 
-    new_blank = [b for b in vc.blank_vertices if b not in sset]
-    was_blank = any(b in sset for b in vc.blank_vertices) or (
-        into_exists and into in vc.blank_vertices
-    )
-    if was_blank and into not in new_blank:
-        new_blank.append(into)
-
     new_force = {k: v for k, v in vc.force_types.items() if k not in sset and k != into}
     if deduped_ft:
         new_force[into] = deduped_ft
 
     return VertexConfig(
         vertices=new_vertices,
-        blank_vertices=new_blank,
         force_types=new_force,
     )
 
@@ -531,13 +523,6 @@ def _apply_rename_entities(
                             vertex["name"] = vertex_map.get(
                                 vertex["name"], vertex["name"]
                             )
-
-                blank_vertices = vertex_config.get("blank_vertices")
-                if isinstance(blank_vertices, list):
-                    vertex_config["blank_vertices"] = [
-                        vertex_map.get(name, name) if isinstance(name, str) else name
-                        for name in blank_vertices
-                    ]
 
                 force_types = vertex_config.get("force_types")
                 if isinstance(force_types, dict):

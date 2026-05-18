@@ -42,6 +42,9 @@ from graflo.architecture.graph_types import (
     GraphEntity,
     Weight,
 )
+from graflo.architecture.pipeline.runtime.actor.config.normalize import (
+    normalize_actor_step,
+)
 from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.schema.vertex import VertexConfig
 from graflo.architecture.graph_types import ResourceCastResult
@@ -93,31 +96,77 @@ def _strip_trivial_top_level_fields(doc: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in doc.items() if v is not None and v != ""}
 
 
-def _filter_vertex_config_by_allowed(
+def _collect_vertex_names_from_pipeline(steps: list[Any]) -> set[str]:
+    """Collect vertex names referenced by pipeline steps (including nested descend)."""
+    names: set[str] = set()
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        normalized = normalize_actor_step(dict(step))
+        step_type = normalized.get("type")
+        if step_type == "vertex" and isinstance(normalized.get("vertex"), str):
+            names.add(normalized["vertex"])
+        elif step_type == "vertex_router":
+            type_map = normalized.get("type_map")
+            if isinstance(type_map, dict):
+                for value in type_map.values():
+                    if isinstance(value, str):
+                        names.add(value)
+            vertex_from_map = normalized.get("vertex_from_map")
+            if isinstance(vertex_from_map, dict):
+                for key in vertex_from_map:
+                    if isinstance(key, str):
+                        names.add(key)
+        elif step_type == "edge":
+            source = normalized.get("source") or normalized.get("from")
+            target = normalized.get("target") or normalized.get("to")
+            if isinstance(source, str):
+                names.add(source)
+            if isinstance(target, str):
+                names.add(target)
+            vertex_weights = normalized.get("vertex_weights")
+            if isinstance(vertex_weights, list):
+                for weight in vertex_weights:
+                    if isinstance(weight, dict) and isinstance(weight.get("name"), str):
+                        names.add(weight["name"])
+        elif step_type == "descend":
+            sub_pipeline = normalized.get("pipeline")
+            if isinstance(sub_pipeline, list):
+                names |= _collect_vertex_names_from_pipeline(sub_pipeline)
+    return names
+
+
+def _filter_vertex_config_for_resource(
     vertex_config: VertexConfig,
     *,
+    resource_vertex_names: set[str],
     allowed_vertex_names: set[str] | None,
 ) -> VertexConfig:
     """Derive a filtered VertexConfig for runtime actor execution.
 
-    This intentionally filters only the vertex collections present in
-    *allowed_vertex_names*; it does not attempt to rewrite edge configs.
+    Only vertices named in *resource_vertex_names* are retained (typically vertices
+    declared in the resource pipeline). When *allowed_vertex_names* is set, the
+    result is further restricted to that ingestion-level subset.
     """
-    if allowed_vertex_names is None:
+    if resource_vertex_names:
+        effective = set(resource_vertex_names)
+        if allowed_vertex_names is not None:
+            effective &= allowed_vertex_names
+    elif allowed_vertex_names is not None:
+        # Dynamic vertex_router steps (no type_map) declare no static vertex names.
+        effective = set(allowed_vertex_names)
+    else:
         return vertex_config
-
-    allowed = allowed_vertex_names
-    filtered_vertices = [v for v in vertex_config.vertices if v.name in allowed]
-    filtered_blank_vertices = [b for b in vertex_config.blank_vertices if b in allowed]
+    filtered_vertices = [v for v in vertex_config.vertices if v.name in effective]
     filtered_force_types = {
         name: types
         for name, types in vertex_config.force_types.items()
-        if name in allowed
+        if name in effective
     }
     return VertexConfig(
         vertices=filtered_vertices,
-        blank_vertices=filtered_blank_vertices,
         force_types=filtered_force_types,
+        identity_from_all_properties=vertex_config.identity_from_all_properties,
     )
 
 
@@ -343,6 +392,24 @@ class Resource(ConfigBaseModel):
         """Root actor wrapper for the processing pipeline."""
         return self._root
 
+    def collect_vertex_names(self) -> set[str]:
+        """Vertex types referenced by this resource (pipeline and related config)."""
+        names = _collect_vertex_names_from_pipeline(self.pipeline)
+        names.update(self.merge_collections)
+        for spec in self.infer_edge_only:
+            names.add(spec.source)
+            names.add(spec.target)
+        for spec in self.infer_edge_except:
+            names.add(spec.source)
+            names.add(spec.target)
+        for entry in self.extra_weights:
+            names.add(entry.edge.source)
+            names.add(entry.edge.target)
+            for weight in entry.vertex_weights:
+                if weight.name is not None:
+                    names.add(weight.name)
+        return names
+
     def finish_init(
         self,
         vertex_config: VertexConfig,
@@ -434,9 +501,11 @@ class Resource(ConfigBaseModel):
     ) -> None:
         """Rebuild runtime actor initialization state from typed context."""
         # Keep the full schema vertex_config for correctness validations, but
-        # use the filtered runtime vertex_config for actor execution.
-        runtime_vertex_config = _filter_vertex_config_by_allowed(
-            vertex_config, allowed_vertex_names=allowed_vertex_names
+        # use a resource-scoped runtime vertex_config for actor execution.
+        runtime_vertex_config = _filter_vertex_config_for_resource(
+            vertex_config,
+            resource_vertex_names=self.collect_vertex_names(),
+            allowed_vertex_names=allowed_vertex_names,
         )
         object.__setattr__(self, "_vertex_config", runtime_vertex_config)
         # Runtime actors may register dynamic edges; keep per-resource edge state.

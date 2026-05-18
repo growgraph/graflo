@@ -3,10 +3,9 @@ schema:
         name: ibes
     graph:
         vertex_config:
-            blank_vertices:
-            -   publication
             vertices:
             -   name: publication
+                blank: true
                 properties:
                 -   datetime_review
                 -   datetime_announce

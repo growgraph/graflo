@@ -23,9 +23,13 @@ def _sample_manifest_payload() -> dict:
                 "vertex_config": {
                     "vertices": [
                         {"name": "person", "identity": ["id"], "properties": ["id"]},
-                        {"name": "company", "identity": ["id"], "properties": ["id"]},
+                        {
+                            "name": "company",
+                            "identity": ["id"],
+                            "properties": ["id"],
+                            "blank": True,
+                        },
                     ],
-                    "blank_vertices": ["company"],
                     "force_types": {"person": ["STRING"]},
                 },
                 "edge_config": {

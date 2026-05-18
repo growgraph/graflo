@@ -38,7 +38,6 @@ def _build_manifest(
             Vertex(name="users", properties=user_props, identity=identity),
             Vertex(name="orders", properties=[Field(name="id")], identity=["id"]),
         ],
-        blank_vertices=[],
         force_types={},
     )
     ec = EdgeConfig(edges=[Edge(source="users", target="orders", relation=None)])
@@ -498,7 +497,6 @@ def _build_multi_relation_manifest(
                 identity=["tid"],
             ),
         ],
-        blank_vertices=[],
         force_types={},
     )
     ec = EdgeConfig(

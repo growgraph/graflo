@@ -26,7 +26,6 @@ def _minimal_manifest() -> GraphManifest:
             Vertex(name="a", properties=[Field(name="id")], identity=["id"]),
             Vertex(name="b", properties=[Field(name="id")], identity=["id"]),
         ],
-        blank_vertices=[],
         force_types={},
     )
     ec = EdgeConfig(

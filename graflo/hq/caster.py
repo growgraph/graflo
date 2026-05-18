@@ -62,6 +62,17 @@ logger = logging.getLogger(__name__)
 _DOC_CAST_ERROR_TRACEBACK_MAX_CHARS = 16_384
 
 
+def _cast_vertex_filter(
+    resource_vertex_names: set[str],
+    *,
+    allowed_vertex_names: set[str] | None,
+) -> set[str]:
+    """Vertex names to retain after casting for a single resource."""
+    if allowed_vertex_names is None:
+        return resource_vertex_names
+    return resource_vertex_names & allowed_vertex_names
+
+
 def _filter_graph_container_by_vertices_inplace(
     gc: GraphContainer, *, allowed_vertex_names: set[str] | None
 ) -> None:
@@ -334,6 +345,10 @@ class Caster:
         rr = self.ingestion_model.fetch_resource(resource_name)
         resolved_name = rr.name
         params = self.ingestion_params
+        vertex_filter = _cast_vertex_filter(
+            rr.collect_vertex_names(),
+            allowed_vertex_names=self._allowed_vertex_names,
+        )
 
         semaphore = asyncio.Semaphore(params.n_cores)
 
@@ -366,12 +381,12 @@ class Caster:
             docs = [cast_result.entities for cast_result in cast_results]
             graph = GraphContainer.from_docs_list(docs)
             _filter_graph_container_by_vertices_inplace(
-                graph, allowed_vertex_names=self._allowed_vertex_names
+                graph, allowed_vertex_names=vertex_filter
             )
             if params.drop_empty_identity_docs:
                 _filter_graph_container_drop_empty_identity_inplace(
                     graph,
-                    vertex_config=self.schema.core_schema.vertex_config,
+                    vertex_config=rr.vertex_config,
                 )
             return CastBatchResult(graph=graph, failures=transform_failures)
 
@@ -422,12 +437,12 @@ class Caster:
 
         graph = GraphContainer.from_docs_list(docs)
         _filter_graph_container_by_vertices_inplace(
-            graph, allowed_vertex_names=self._allowed_vertex_names
+            graph, allowed_vertex_names=vertex_filter
         )
         if params.drop_empty_identity_docs:
             _filter_graph_container_drop_empty_identity_inplace(
                 graph,
-                vertex_config=self.schema.core_schema.vertex_config,
+                vertex_config=rr.vertex_config,
             )
         return CastBatchResult(graph=graph, failures=failures)
 

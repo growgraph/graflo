@@ -44,10 +44,9 @@ class _FakeConnectionManager:
 def _build_schema() -> Schema:
     vertex_config = VertexConfig(
         vertices=[
-            Vertex(name="blank_v", properties=[], identity=[]),
+            Vertex(name="blank_v", properties=[], identity=[], blank=True),
             Vertex(name="target_v", properties=[Field(name="id")], identity=["id"]),
         ],
-        blank_vertices=["blank_v"],
     )
     edge_config = EdgeConfig(edges=[Edge(source="blank_v", target="target_v")])
     schema = Schema(
@@ -113,12 +112,10 @@ def test_resolve_blank_edges_prefers_identity_join_over_zip():
 
 def test_blank_vertex_default_identity_depends_on_db_flavor():
     arango_cfg = VertexConfig(
-        vertices=[Vertex(name="blank_v", properties=[], identity=[])],
-        blank_vertices=["blank_v"],
+        vertices=[Vertex(name="blank_v", properties=[], identity=[], blank=True)],
     )
     neo4j_cfg = VertexConfig(
-        vertices=[Vertex(name="blank_v", properties=[], identity=[])],
-        blank_vertices=["blank_v"],
+        vertices=[Vertex(name="blank_v", properties=[], identity=[], blank=True)],
     )
     arango_cfg.finish_init()
     neo4j_cfg.finish_init()

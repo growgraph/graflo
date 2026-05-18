@@ -303,6 +303,12 @@ class Vertex(ConfigBaseModel):
         default=None,
         description="Optional semantic description of the vertex meaning, role, and intended interpretation.",
     )
+    blank: bool = PydanticField(
+        default=False,
+        description=(
+            "True when this vertex has no natural identity and gets an auto-generated ID."
+        ),
+    )
 
     @field_validator("properties", mode="before")
     @classmethod
@@ -374,7 +380,6 @@ class VertexConfig(ConfigBaseModel):
 
     Attributes:
         vertices: List of vertex configurations
-        blank_vertices: List of blank vertex names
         force_types: Dictionary mapping vertex names to type lists
     """
 
@@ -384,10 +389,6 @@ class VertexConfig(ConfigBaseModel):
     vertices: list[Vertex] = PydanticField(
         ...,
         description="List of vertex type definitions (name, properties, identity, filters).",
-    )
-    blank_vertices: list[str] = PydanticField(
-        default_factory=list,
-        description="Vertex names that may be created without explicit data (e.g. placeholders).",
     )
     force_types: dict[str, list] = PydanticField(
         default_factory=dict,
@@ -404,19 +405,20 @@ class VertexConfig(ConfigBaseModel):
     _vertex_numeric_fields_map: dict[str, object] | None = PrivateAttr(default=None)
 
     @model_validator(mode="after")
-    def build_vertices_map_and_validate_blank(self) -> "VertexConfig":
+    def build_vertices_map(self) -> "VertexConfig":
         object.__setattr__(
             self,
             "_vertices_map",
             {item.name: item for item in self.vertices},
         )
         object.__setattr__(self, "_vertex_numeric_fields_map", {})
-        if set(self.blank_vertices) - set(self.vertex_set):
-            raise ValueError(
-                f" Blank vertices {self.blank_vertices} are not defined as vertices"
-            )
         self._normalize_vertex_identities()
         return self
+
+    @property
+    def blank_vertices(self) -> list[str]:
+        """Vertex names marked blank (no natural identity; auto-generated ID)."""
+        return [v.name for v in self.vertices if v.blank]
 
     def _normalize_vertex_identities(
         self,
@@ -424,7 +426,7 @@ class VertexConfig(ConfigBaseModel):
         blank_id_field = "id"
         for vertex in self.vertices:
             if not vertex.identity:
-                if vertex.name in self.blank_vertices:
+                if vertex.blank:
                     vertex.identity = [blank_id_field]
                 elif self.identity_from_all_properties:
                     vertex.identity = list(vertex.property_names)
@@ -534,8 +536,7 @@ class VertexConfig(ConfigBaseModel):
     def remove_vertices(self, names: set[str]) -> None:
         """Remove vertices by name.
 
-        Removes vertices from the configuration and from blank_vertices
-        when present. Mutates the instance in place.
+        Removes vertices from the configuration. Mutates the instance in place.
 
         Args:
             names: Set of vertex names to remove
@@ -546,7 +547,6 @@ class VertexConfig(ConfigBaseModel):
         m = self._get_vertices_map()
         for n in names:
             m.pop(n, None)
-        self.blank_vertices[:] = [b for b in self.blank_vertices if b not in names]
 
     def update_vertex(self, v: Vertex):
         """Update vertex configuration.

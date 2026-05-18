@@ -22,6 +22,7 @@ from graflo.hq.caster import (
     IngestionParams,
 )
 from graflo.architecture.graph_types import ResourceCastResult
+from graflo.architecture.schema.vertex import Field, Vertex, VertexConfig
 
 
 def _read_all_jsonl_gz_lines(path: Path) -> list[str]:
@@ -45,6 +46,21 @@ class _FakeResource:
     """Callable resource that fails documents containing ``_fail``."""
 
     name = "fake_resource"
+
+    @property
+    def vertex_config(self) -> VertexConfig:
+        return VertexConfig(
+            vertices=[
+                Vertex(
+                    name="v_test",
+                    properties=[Field(name="id")],
+                    identity=["id"],
+                )
+            ]
+        )
+
+    def collect_vertex_names(self) -> set[str]:
+        return {"v_test"}
 
     def cast_document(self, doc: dict) -> ResourceCastResult:
         if doc.get("_fail"):
