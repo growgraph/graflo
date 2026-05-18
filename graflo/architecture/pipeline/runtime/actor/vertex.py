@@ -158,14 +158,44 @@ class VertexActor(Actor):
 
         agg = []
         if self.from_doc:
-            projected = {
-                v_f: effective_doc.get(d_f) for v_f, d_f in self.from_doc.items()
-            }
-            if any(v is not None for v in projected.values()):
-                agg.append(projected)
+            source_keys = set(self.from_doc.values())
+            consumed_from_buffer = False
+            for item in ctx.transform_buffer[lindex]:
+                if isinstance(item, TransformPayload) and source_keys.issubset(
+                    item.named
+                ):
+                    projected = {
+                        v_f: item.named[d_f] for v_f, d_f in self.from_doc.items()
+                    }
+                    if any(v is not None for v in projected.values()):
+                        agg.append(projected)
+                    for k in source_keys:
+                        item.named.pop(k, None)
+                    consumed_from_buffer = True
+            ctx.transform_buffer[lindex] = [
+                item
+                for item in ctx.transform_buffer[lindex]
+                if not (
+                    isinstance(item, TransformPayload)
+                    and not item.named
+                    and not item.positional
+                )
+                and not (isinstance(item, dict) and not item)
+            ]
+            if not consumed_from_buffer:
+                projected = {
+                    v_f: effective_doc.get(d_f) for v_f, d_f in self.from_doc.items()
+                }
+                if any(v is not None for v in projected.values()):
+                    agg.append(projected)
+            buffer_vertex_keys = tuple(k for k in vertex_keys if k not in self.from_doc)
+        else:
+            buffer_vertex_keys = vertex_keys
 
         agg.extend(
-            self._process_transformed_items(ctx, lindex, effective_doc, vertex_keys)
+            self._process_transformed_items(
+                ctx, lindex, effective_doc, buffer_vertex_keys
+            )
         )
 
         if self.extraction_scope == "full":
