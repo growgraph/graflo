@@ -517,6 +517,25 @@ class TestAutoJoin:
         )
 
         assert len(connector.joins) == 2
+
+    def test_enrichment_accepts_resource_config_without_finish_init(self):
+        from graflo.hq.auto_join import enrich_edge_connector_with_joins
+
+        schema, ingestion_model, bindings = self._make_schema_and_patterns()
+        resource_config = ingestion_model.resources[0]
+        connector = bindings.get_connectors_for_resource("abc_relations")[0]
+        assert isinstance(connector, TableConnector)
+        connector.joins = []
+        connector.filters = []
+
+        enrich_edge_connector_with_joins(
+            resource=resource_config,
+            connector=connector,
+            bindings=bindings,
+            vertex_config=schema.core_schema.vertex_config,
+        )
+
+        assert len(connector.joins) == 2
         aliases = {j.alias for j in connector.joins}
         assert aliases == {"s", "t"}
         # The on_self fields come from edge match_source / match_target
