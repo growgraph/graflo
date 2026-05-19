@@ -99,6 +99,7 @@ uv run migrate_schema history
 Schema comparison gives you a predictable transition path between versions. Instead of discovering incompatibilities during ingestion, you see structural deltas in advance, gate risky steps, and execute a controlled rollout.
 
 ### Performance Optimization
+- **TigerGraph token caching**: Secret-based API tokens are cached per process for the ingest run (one fetch per cluster/graph/secret, not per upsert batch or `ConnectionManager` open)
 - **Batch Processing**: Process large datasets in configurable batches (`IngestionParams.batch_size` on `Caster` / `GraphEngine`)
 - **Batch Prefetch**: While one batch is cast and written, `Caster.process_data_source` can prefetch up to `IngestionParams.batch_prefetch` additional batches from `AbstractDataSource.iter_batches` (bounded memory, overlapped I/O)
 - **Parallel Execution**: Utilize multiple cores for faster processing (`n_cores` parameter of `Caster`)

@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.31]
+
+### Added
+
+- **`install_tigergraph_queries` CLI** — upload `.gsql` query definitions from a directory to a target graph and run **`INSTALL QUERY`** for each (connection via **`TigergraphConfig`** / **`TIGERGRAPH_*`** env vars; optional **`--graph`**, **`--prefix`**).
+- **TigerGraph API token cache** — secret-based REST tokens are cached per process for **`(gsql_url, graph, secret)`**, so ingestion no longer calls the token API on every **`ConnectionManager`** open during batch upserts. Entries respect server expiration (with a refresh buffer); cache is invalidated on REST++ **401** responses.
+
+### Fixed
+
+- **SQL auto-join with declarative resources** — **`apply_auto_joins`** no longer assumes **`ResourceConfig.root`**; it builds the actor tree from **`pipeline`** when only the contract config is available (**`ResourceRuntime.root`** unchanged at runtime).
+
+### Documentation
+
+- **[Features and practices](docs/concepts/features_and_practices.md)** — TigerGraph token caching under Performance Optimization.
+
 ## [1.7.30]
 
 ### Added
