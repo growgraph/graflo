@@ -17,6 +17,7 @@ from graflo.architecture.graph_types import (
     LocationIndex,
     TransformPayload,
     VertexRep,
+    merge_observation_with_transform_buffer,
 )
 from graflo.architecture.pipeline.runtime.actor.config import (
     VertexActorConfig,
@@ -1389,3 +1390,186 @@ def test_vertex_from_doc_does_not_steal_other_vertex_buffer_payloads() -> None:
     assert len(metric_docs) == 2
     assert {"type": "VOL", "value": 93115.0} in metric_docs
     assert {"type": "PRC", "value": 42.5} in metric_docs
+
+
+def test_rename_removed_keys_strips_source_from_merged_view() -> None:
+    observation = {
+        "s_context": "ctx",
+        "a_title": "title",
+        "r_id": "1",
+        "number": "42",
+    }
+    buffer = [
+        TransformPayload(
+            named={"context": "ctx", "title": "title", "bkuid": "42"},
+            removed_keys=frozenset({"s_context", "a_title", "number"}),
+        )
+    ]
+    merged = merge_observation_with_transform_buffer(observation, buffer)
+    assert set(merged.keys()) == {"context", "title", "bkuid", "r_id"}
+    assert merged["context"] == "ctx"
+    assert merged["bkuid"] == "42"
+
+
+def test_rename_removes_source_keys_from_vertex_effective_doc() -> None:
+    vc = VertexConfig.from_dict(
+        {
+            "vertices": [
+                {
+                    "name": "resource",
+                    "properties": ["context", "title", "bkuid", "r_id", "r_name"],
+                    "indexes": [{"fields": ["bkuid"]}],
+                }
+            ]
+        }
+    )
+    pipeline = [
+        {
+            "transform": {
+                "rename": {
+                    "s_context": "context",
+                    "a_title": "title",
+                    "number": "bkuid",
+                }
+            }
+        },
+        {"vertex": "resource"},
+    ]
+    anw = ActorWrapper(pipeline=pipeline)
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=vc,
+            edge_config=EdgeConfig(),
+            transforms={},
+        )
+    )
+    loc = LocationIndex(path=(0,))
+    doc = {
+        "s_context": "ctx1",
+        "a_title": "t1",
+        "r_id": "rid",
+        "r_name": "rname",
+        "number": "42",
+    }
+    ctx = ActionContext()
+    ctx = anw(ctx, doc=doc)
+
+    assert "s_context" not in ctx.obs_buffer[loc]
+    assert "a_title" not in ctx.obs_buffer[loc]
+    assert "number" not in ctx.obs_buffer[loc]
+    assert ctx.obs_buffer[loc]["context"] == "ctx1"
+    assert ctx.obs_buffer[loc]["bkuid"] == "42"
+
+    vertex = ctx.acc_vertex["resource"][loc][0].vertex
+    assert "s_context" not in vertex
+    assert "a_title" not in vertex
+    assert "number" not in vertex
+    assert vertex["context"] == "ctx1"
+    assert vertex["bkuid"] == "42"
+    assert ctx.obs_buffer[loc]["r_id"] == "rid"
+
+
+def test_rename_then_key_transform_feed_doc_excludes_source_keys() -> None:
+    pipeline = [
+        {
+            "transform": {
+                "rename": {
+                    "s_context": "context",
+                    "a_title": "title",
+                    "number": "bkuid",
+                }
+            }
+        },
+        {
+            "transform": {
+                "call": {
+                    "module": "graflo.util.transform",
+                    "foo": "snake_to_camel",
+                    "target": "keys",
+                }
+            }
+        },
+    ]
+    anw = ActorWrapper(pipeline=pipeline)
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=VertexConfig(vertices=[]),
+            edge_config=EdgeConfig(),
+            transforms={},
+        )
+    )
+    loc = LocationIndex(path=(0,))
+    doc = {
+        "s_context": "ctx1",
+        "a_title": "t1",
+        "r_id": "rid",
+        "r_name": "rname",
+        "number": "42",
+    }
+    ctx = ActionContext()
+    ctx = anw(ctx, doc=doc)
+
+    rename_payload = ctx.transform_buffer[loc][0]
+    assert rename_payload.removed_keys == frozenset({"s_context", "a_title", "number"})
+
+    key_payload = ctx.transform_buffer[loc][1]
+    assert "s_context" not in key_payload.named
+    assert "sContext" not in key_payload.named
+    assert "a_title" not in key_payload.named
+    assert "aTitle" not in key_payload.named
+    assert key_payload.named["context"] == "ctx1"
+    assert key_payload.named["bkuid"] == "42"
+    assert key_payload.named["rId"] == "rid"
+    assert key_payload.named["rName"] == "rname"
+
+
+def test_infer_vertex_from_rename_destination_keys() -> None:
+    vc = VertexConfig.from_dict(
+        {
+            "vertices": [
+                {
+                    "name": "resource",
+                    "properties": ["context", "title", "bkuid"],
+                    "indexes": [{"fields": ["bkuid"]}],
+                }
+            ]
+        }
+    )
+    pipeline = [
+        {
+            "transform": {
+                "rename": {
+                    "s_context": "context",
+                    "a_title": "title",
+                    "number": "bkuid",
+                }
+            }
+        },
+    ]
+    anw = ActorWrapper(pipeline=pipeline)
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=vc,
+            edge_config=EdgeConfig(),
+            transforms={},
+        )
+    )
+    vertex_wrappers = anw.find_descendants(actor_type=VertexActor)
+    assert len(vertex_wrappers) == 1
+    assert vertex_wrappers[0].actor.name == "resource"
+
+    loc = LocationIndex(path=(0,))
+    ctx = ActionContext()
+    ctx = anw(
+        ctx,
+        doc={
+            "s_context": "ctx1",
+            "a_title": "t1",
+            "number": "42",
+        },
+    )
+    assert ctx.acc_vertex["resource"][loc][0].vertex == {
+        "context": "ctx1",
+        "title": "t1",
+        "bkuid": "42",
+    }

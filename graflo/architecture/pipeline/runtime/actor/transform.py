@@ -32,9 +32,11 @@ class TransformActor(Actor):
         self._skip_on_missing_input_keys = False
         self._tolerate_transform_errors = True
         self._required_doc_keys: frozenset[str] = frozenset()
+        self._rename_source_keys: frozenset[str] = frozenset()
 
         if config.rename is not None:
             self.t = Transform(rename=config.rename)
+            self._rename_source_keys = frozenset(config.rename.keys())
             return
 
         if config.call is None:
@@ -266,7 +268,15 @@ class TransformActor(Actor):
                 nulled_fields=nulled_fields,
             )
             return ctx
-        _update_doc = self._format_transform_result(transform_result)
+        if self._rename_source_keys:
+            base = TransformPayload.from_result(transform_result)
+            _update_doc = TransformPayload(
+                named=base.named,
+                positional=base.positional,
+                removed_keys=self._rename_source_keys,
+            )
+        else:
+            _update_doc = self._format_transform_result(transform_result)
         ctx.transform_buffer[lindex].append(_update_doc)
         ctx.record_transform_observation(location=lindex, payload=_update_doc)
         return ctx

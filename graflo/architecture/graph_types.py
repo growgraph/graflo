@@ -357,6 +357,7 @@ class TransformPayload(ConfigBaseModel):
 
     named: dict[str, Any] = Field(default_factory=dict)
     positional: tuple[Any, ...] = Field(default_factory=tuple)
+    removed_keys: frozenset[str] = Field(default_factory=frozenset)
 
     @classmethod
     def from_result(cls, result: Any) -> TransformPayload:
@@ -398,6 +399,9 @@ def merge_observation_with_transform_buffer(
     merged: dict[str, Any] = dict(observation)
     for item in buffer_items:
         merged.update(context_dict_from_transform_buffer_item(item))
+        if isinstance(item, TransformPayload) and item.removed_keys:
+            for k in item.removed_keys:
+                merged.pop(k, None)
     return merged
 
 
