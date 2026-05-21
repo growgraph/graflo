@@ -32,10 +32,12 @@ class TransformActor(Actor):
         self._call_config = None
         self._fail_fast = False
         self._tolerate_transform_errors = True
-        self._required_doc_keys: frozenset[str] = frozenset()
+        self._declared_input_keys: frozenset[str] = frozenset()
+        self._rename_map: dict[str, str] | None = None
 
         if config.rename is not None:
             self.t = Transform(rename=config.rename)
+            self._rename_map = dict(config.rename)
             return
 
         if config.call is None:
@@ -91,15 +93,44 @@ class TransformActor(Actor):
         self._fail_fast = init_ctx.fail_fast
         self._tolerate_transform_errors = init_ctx.tolerate_transform_errors
         if self.t.target == "keys" or self.t.strategy == "all":
-            self._required_doc_keys = frozenset()
+            self._declared_input_keys = frozenset()
             return
-        if self.t.rename and not self._fail_fast:
-            self._required_doc_keys = frozenset()
+        if self._rename_map is not None and not self._fail_fast:
+            self._declared_input_keys = frozenset()
             return
         required: set[str] = set(self.t.input)
         for group in self.t.input_groups:
             required.update(group)
-        self._required_doc_keys = frozenset(required)
+        self._declared_input_keys = frozenset(required)
+
+    @staticmethod
+    def _extract_observation(nargs: tuple[Any, ...], **kwargs: Any) -> Any:
+        """Return the observation slice: dict row or scalar/list positional value."""
+        if kwargs:
+            observation: Any | None = kwargs.get("doc")
+        elif nargs:
+            observation = nargs[0]
+        else:
+            raise ValueError(f"{type(TransformActor).__name__}: doc should be provided")
+        if observation is None:
+            raise ValueError(f"{type(TransformActor).__name__}: doc should be provided")
+        return observation
+
+    @staticmethod
+    def _observation_keys(observation: Any) -> frozenset[str]:
+        if isinstance(observation, dict):
+            return frozenset(str(k) for k in observation.keys())
+        return frozenset()
+
+    def _missing_declared_keys(self, observation: Any) -> frozenset[str]:
+        if not self._declared_input_keys or not isinstance(observation, dict):
+            return frozenset()
+        return self._declared_input_keys - self._observation_keys(observation)
+
+    def _rename_removed_keys(self, observation: Any) -> frozenset[str]:
+        if self._rename_map is None or not isinstance(observation, dict):
+            return frozenset()
+        return frozenset(src for src in self._rename_map if src in observation)
 
     def fetch_important_items(self) -> dict[str, Any]:
         items = self._fetch_items_from_dict(("transform",))
@@ -212,17 +243,6 @@ class TransformActor(Actor):
         self.t = Transform(**transform_kwargs)
         self._refresh_missing_key_guard(init_ctx)
 
-    def _extract_doc(self, nargs: tuple[Any, ...], **kwargs: Any) -> dict[str, Any]:
-        if kwargs:
-            doc: dict[str, Any] | None = kwargs.get("doc")
-        elif nargs:
-            doc = nargs[0]
-        else:
-            raise ValueError(f"{type(self).__name__}: doc should be provided")
-        if doc is None:
-            raise ValueError(f"{type(self).__name__}: doc should be provided")
-        return doc
-
     def _format_transform_result(self, result: Any) -> TransformPayload:
         return TransformPayload.from_result(result)
 
@@ -244,21 +264,22 @@ class TransformActor(Actor):
         self, ctx: ExtractionContext, lindex: LocationIndex, *nargs: Any, **kwargs: Any
     ) -> ExtractionContext:
         logger.debug("transforms : %s %s", id(self.transforms), len(self.transforms))
-        doc = self._extract_doc(nargs, **kwargs)
-        if self._required_doc_keys:
-            missing = self._required_doc_keys - doc.keys()
-            if missing:
-                if self._fail_fast:
-                    raise TransformException(
-                        f"Missing required input keys: {sorted(missing)}"
-                    )
-                return ctx
+        observation = self._extract_observation(nargs, **kwargs)
+        missing = self._missing_declared_keys(observation)
+        if missing:
+            if self._fail_fast:
+                raise TransformException(
+                    f"Missing required input keys: {sorted(missing)}"
+                )
+            return ctx
         try:
-            transform_result = self.t(doc)
+            transform_result = self.t(observation)
         except Exception as exc:
             if not self._tolerate_transform_errors:
                 raise
-            nulled_fields = self.t.planned_output_field_names(doc)
+            nulled_fields = self.t.planned_output_field_names(
+                observation if isinstance(observation, dict) else None
+            )
             if nulled_fields:
                 payload = TransformPayload(named={k: None for k in nulled_fields})
                 ctx.transform_buffer[lindex].append(payload)
@@ -271,12 +292,12 @@ class TransformActor(Actor):
                 nulled_fields=nulled_fields,
             )
             return ctx
-        if self.t.rename:
+        if self._rename_map is not None:
             base = TransformPayload.from_result(transform_result)
             _update_doc = TransformPayload(
                 named=base.named,
                 positional=base.positional,
-                removed_keys=frozenset(src for src in self.t.rename if src in doc),
+                removed_keys=self._rename_removed_keys(observation),
             )
         else:
             _update_doc = self._format_transform_result(transform_result)

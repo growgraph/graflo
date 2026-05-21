@@ -77,9 +77,12 @@ class DescendActor(Actor):
 
         transform_output_fields: set[str] = set()
         for an in self.descendants:
-            if isinstance(an.actor, TransformActor):
+            if (
+                isinstance(an.actor, TransformActor)
+                and an.actor._rename_map is not None
+            ):
                 transform_output_fields.update(
-                    str(k) for k in an.actor.t.rename.values()
+                    str(v) for v in an.actor._rename_map.values()
                 )
 
         if not transform_output_fields:

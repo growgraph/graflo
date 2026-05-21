@@ -20,6 +20,7 @@ from graflo.architecture.graph_types import (
     merge_observation_with_transform_buffer,
 )
 from graflo.architecture.pipeline.runtime.actor.config import (
+    TransformActorConfig,
     VertexActorConfig,
     normalize_actor_step,
     validate_actor_step,
@@ -1450,6 +1451,78 @@ def test_rename_raises_when_fail_fast_true() -> None:
     ctx = ActionContext()
     with pytest.raises(Exception, match="Missing required input keys"):
         anw(ctx, loc, doc={"s_context": "ctx1", "number": "42"})
+
+
+def _scalar_transform_actor(*, fail_fast: bool) -> TransformActor:
+    actor = TransformActor.from_config(
+        TransformActorConfig.model_validate(
+            {
+                "type": "transform",
+                "call": {
+                    "module": "builtins",
+                    "foo": "int",
+                    "input": ["missing_field"],
+                    "output": ["n"],
+                },
+            }
+        )
+    )
+    actor.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=VertexConfig(vertices=[]),
+            edge_config=EdgeConfig(),
+            transforms={},
+            fail_fast=fail_fast,
+        )
+    )
+    return actor
+
+
+def test_transform_actor_scalar_observation_runs_positional_not_dict_key_guard() -> (
+    None
+):
+    """Scalar observations bypass dict key guard and invoke the transform positionally."""
+    actor = _scalar_transform_actor(fail_fast=True)
+    loc = LocationIndex(path=(0,))
+    ctx = ActionContext()
+    ctx = actor(ctx, loc, "42")
+    assert ctx.transform_buffer[loc][0].named == {"n": 42}
+
+
+def test_transform_actor_dict_observation_fail_fast_raises() -> None:
+    actor = _scalar_transform_actor(fail_fast=True)
+    loc = LocationIndex(path=(0,))
+    ctx = ActionContext()
+    with pytest.raises(Exception, match="Missing required input keys"):
+        actor(ctx, loc, doc={"other": "value"})
+
+
+def test_transform_actor_scalar_positional_int_transform() -> None:
+    actor = TransformActor.from_config(
+        TransformActorConfig.model_validate(
+            {
+                "type": "transform",
+                "call": {
+                    "module": "builtins",
+                    "foo": "int",
+                    "strategy": "all",
+                    "output": ["n"],
+                },
+            }
+        )
+    )
+    actor.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=VertexConfig(vertices=[]),
+            edge_config=EdgeConfig(),
+            transforms={},
+            fail_fast=False,
+        )
+    )
+    loc = LocationIndex(path=(0,))
+    ctx = ActionContext()
+    ctx = actor(ctx, loc, "7")
+    assert ctx.transform_buffer[loc][0].named == {"n": 7}
 
 
 def test_rename_removed_keys_strips_source_from_merged_view() -> None:
