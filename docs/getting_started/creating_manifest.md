@@ -76,6 +76,7 @@ Defines ingestion behavior.
 - `transforms`: reusable named transforms as a **list** (each entry must define `name`) and referenced from resources via `transform.call.use`
 - Optional per-resource flags include:
   - **`drop_trivial_input_fields`** (default `false`): when `true`, top-level keys whose value is `null` or `""` are removed **before** the actor pipeline runs. Only the top-level dict is filtered (nested structures are not recursed); numeric zero and boolean false are kept. Useful for sparse wide tables (CSV/SQL) without custom transforms.
+  - **`fail_fast`** (default `false`): when `true`, transform steps fail if required input keys are missing (rename: every source key must be present; call: every `input` key). When `false`, rename applies only to keys present in the row and functional transforms skip the step when inputs are missing.
   - **`tolerate_transform_errors`** (default `true`): when `true`, a failing transform nulls its declared outputs and the pipeline continues; when `false`, transform exceptions fail the document (subject to caster **`on_doc_error`**). See [Document cast errors](../concepts/ingestion_doc_errors.md).
 
 **TigerGraph attribute defaults (schema / `db_profile`, not ingestion):** under `schema.db_profile`, optional **`default_property_values`** declares GSQL `DEFAULT` literals per logical vertex property and per logical edge type, for example:

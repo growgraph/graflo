@@ -136,9 +136,7 @@ def test_resource_drop_trivial_input_fields_false_passes_doc_unchanged(
     assert snapshots == [expected_at_extract_entry]
 
 
-def test_resource_skip_actors_on_missing_input_keys_true_skips_missing_transform() -> (
-    None
-):
+def test_resource_fail_fast_false_skips_missing_transform_step() -> None:
     vc = VertexConfig.from_dict(
         {
             "vertices": [
@@ -167,7 +165,7 @@ def test_resource_skip_actors_on_missing_input_keys_true_skips_missing_transform
                 },
                 {"vertex": "person", "from": {"id": "id"}},
             ],
-            "skip_actors_on_missing_input_keys": True,
+            "fail_fast": False,
         },
         vc,
         ec,
@@ -177,7 +175,46 @@ def test_resource_skip_actors_on_missing_input_keys_true_skips_missing_transform
     assert entities["person"] == [{"id": "u-1"}]
 
 
-def test_resource_drop_trivial_input_fields_large_doc_auto_skips_missing_transform(
+def test_resource_fail_fast_true_raises_on_missing_transform_input() -> None:
+    vc = VertexConfig.from_dict(
+        {
+            "vertices": [
+                {
+                    "name": "person",
+                    "properties": ["id", "age"],
+                    "identity": ["id"],
+                }
+            ]
+        }
+    )
+    ec = EdgeConfig.from_dict({"edges": []})
+    resource = _runtime(
+        {
+            "name": "strict_missing_transform",
+            "pipeline": [
+                {
+                    "transform": {
+                        "call": {
+                            "module": "builtins",
+                            "foo": "int",
+                            "input": ["missing_age"],
+                            "output": ["age"],
+                        }
+                    }
+                },
+                {"vertex": "person", "from": {"id": "id"}},
+            ],
+            "fail_fast": True,
+        },
+        vc,
+        ec,
+    )
+
+    with pytest.raises(Exception, match="Missing required input keys"):
+        resource({"id": "u-1"})
+
+
+def test_resource_drop_trivial_input_fields_large_doc_skips_transform_when_input_stripped(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     vc = VertexConfig.from_dict(
