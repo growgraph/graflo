@@ -80,10 +80,9 @@ def render_filters(
         >>> # Returns: "FILTER user.field == 'value' && user.age > 18"
     """
     if filters is not None:
-        if not isinstance(filters, FilterExpression):
-            ff = FilterExpression.from_dict(filters)
-        else:
-            ff = filters
+        from graflo.filter.onto import parse_filter_expression
+
+        ff = parse_filter_expression(filters)
         literal_condition = ff(doc_name=doc_name, kind=ExpressionFlavor.AQL)
         filter_clause = f"FILTER {literal_condition}"
     else:

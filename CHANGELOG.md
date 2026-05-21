@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`parse_filter_expression`** — unified YAML/JSON filter loader for Bindings, `SelectSpec.where`, `VertexConfig.filters`, and Arango helpers.
+- **Bindings filter tests** — `test/architecture/test_bindings_filters.py` for logical-operator SQL pushdown.
+
+### Fixed
+
+- **`TableConnector.filters`** — YAML logical shorthand (`OR`, `AND`, `NOT`, `IF_THEN` keys) now parses at Bindings load (same as vertex filters); previously failed at `build_query` via `model_validate` only.
+- **SQL `IF_THEN`** — renders as `(NOT antecedent OR consequent)` instead of invalid `... IF_THEN ...` text.
+- **SQL nested composites** — parenthesize composite operands under `AND`/`OR` for correct precedence.
+
+### Changed
+
+- **`TableConnector.filters`** — coerced through `parse_filter_expression` at connector validation (fail fast on malformed shorthand).
+
 ## [1.7.32]
 
 ### Added

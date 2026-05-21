@@ -352,9 +352,11 @@ class SelectSpec(ConfigBaseModel):
 
         # WHERE
         if self.where:
+            from graflo.filter.onto import parse_filter_expression
+
             we = (
-                FilterExpression.from_dict(self.where)
-                if isinstance(self.where, dict)
+                parse_filter_expression(self.where)
+                if isinstance(self.where, (dict, list))
                 else self.where
             )
             where_str = we(kind=ExpressionFlavor.SQL)

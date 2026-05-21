@@ -327,7 +327,9 @@ class Vertex(ConfigBaseModel):
             if isinstance(item, FilterExpression):
                 result.append(item)
             elif isinstance(item, (dict, list)):
-                result.append(FilterExpression.from_dict(item))
+                from graflo.filter.onto import parse_filter_expression
+
+                result.append(parse_filter_expression(item))
             else:
                 raise ValueError(
                     "each filter must be a FilterExpression instance or a dict/list (parsed as FilterExpression)"

@@ -22,6 +22,42 @@ Durations must parse as a fixed **`pandas.Timedelta`** (wall-clock offset). Cale
 
 At runtime, the read-only **`date_field`** property on connectors resolves to **`time_filter.column`** when present (for code and docs that read “which column is the event time?”). Manifests and patches must use the nested **`time_filter`** object; older flat `date_*` keys are not accepted.
 
+## Pushdown filters (`TableConnector.filters`)
+
+`TableConnector` (and `SelectSpec.where` on **`view`**) accept **`FilterExpression`** trees in YAML. Filters are parsed when **Bindings** load (`parse_filter_expression`), so invalid shorthand fails at manifest validation—not on first SQL execution.
+
+Use the **same logical-operator shorthand** as `VertexConfig.filters` in the schema block:
+
+| Operator | YAML key | SQL pushdown |
+| -------- | -------- | -------------- |
+| AND | `AND:` | `… AND …` |
+| OR | `OR:` | `… OR …` |
+| NOT | `NOT:` | `NOT …` |
+| Implication | `IF_THEN:` | `(NOT antecedent OR consequent)` |
+
+Example on a connector (also valid in **`ConnectorUpdate`** patches):
+
+```yaml
+connectors:
+  - name: events_table
+    table_name: events
+    filters:
+      - OR:
+          - {field: status, cmp_operator: "==", value: [active]}
+          - {field: status, cmp_operator: "==", value: [pending]}
+      - IF_THEN:
+          - {field: kind, cmp_operator: "==", value: [quote]}
+          - {field: amount, cmp_operator: ">", value: [0]}
+```
+
+**Semantics:**
+
+- Several top-level **`filters`** list entries are **`AND`**-joined (same as multiple pushdown clauses).
+- For **OR across fields**, use **one** composite entry (`OR:` or `operator: OR` + `deps`).
+- Nested composites are parenthesized in SQL for correct precedence.
+
+Full cookbook and `view.where` notes: [Table connector views — Bindings filter cookbook](table_connector_views.md#bindings-filter-cookbook-tableconnectorfilters).
+
 ## Manifest vs patches
 
 The **GraphManifest** (and its `bindings` block) holds the normal contract only: **`connectors`**, **`resource_connector`**, optional **`connector_connection`**, optional **`staging_proxy`**. It does **not** include a `connector_updates` key—patches are **outside** the canonical manifest.
@@ -137,7 +173,7 @@ When patching **`time_filter`**, the merged payload replaces the entire nested o
 
 ## Related concepts
 
-- [Table connector views and `SelectSpec`](table_connector_views.md) — advanced `TableConnector` SQL shape.
+- [Table connector views and `SelectSpec`](table_connector_views.md) — advanced `TableConnector` SQL shape and [Bindings filter cookbook](table_connector_views.md#bindings-filter-cookbook-tableconnectorfilters).
 - [Explicit `connector_connection` proxy wiring](../examples/example-9.md) — manifest example for `conn_proxy`.
 - Bindings overview in [Concepts overview](index.md).
 

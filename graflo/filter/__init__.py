@@ -1,25 +1,34 @@
 """Filter expression system for database queries.
 
 This package provides a flexible system for creating and evaluating filter expressions
-that can be translated into different database query languages (AQL, Cypher, Python).
+that can be translated into different database query languages (AQL, Cypher, SQL, Python).
 
 Key Components:
-    - LogicalOperator: Logical operations (AND, OR, NOT, IMPLICATION)
+    - LogicalOperator: Logical operations (AND, OR, NOT, IMPLICATION / IF_THEN)
     - ComparisonOperator: Comparison operations (==, !=, >, <, etc.)
     - FilterExpression: Filter expression (leaf or composite logical formulae)
+    - parse_filter_expression: Unified YAML/JSON loader (Bindings, SelectSpec, graph DB)
+
+SQL notes:
+    - IF_THEN (IMPLICATION) renders as ``(NOT antecedent OR consequent)``.
+    - Use ExpressionFlavor.PYTHON for in-memory implication evaluation on documents.
 
 Example:
-    >>> from graflo.filter import FilterExpression
-    >>> expr = FilterExpression.from_dict({
+    >>> from graflo.filter import FilterExpression, parse_filter_expression
+    >>> expr = parse_filter_expression({
     ...     "AND": [
     ...         {"field": "age", "cmp_operator": ">=", "value": 18},
-    ...         {"field": "status", "cmp_operator": "==", "value": "active"}
+    ...         {"field": "status", "cmp_operator": "==", "value": "active"},
     ...     ]
     ... })
-    >>> # Converts to: "age >= 18 AND status == 'active'"
 """
 
-from .onto import ComparisonOperator, FilterExpression, LogicalOperator
+from .onto import (
+    ComparisonOperator,
+    FilterExpression,
+    LogicalOperator,
+    parse_filter_expression,
+)
 from .select import ALL_BASE_COLUMNS, SelectSpec
 
 __all__ = [
@@ -28,4 +37,5 @@ __all__ = [
     "FilterExpression",
     "LogicalOperator",
     "SelectSpec",
+    "parse_filter_expression",
 ]
