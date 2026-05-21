@@ -178,6 +178,31 @@ def test_filter_expression_sql_composite_and():
     assert " AND " in out
 
 
+def test_filter_expression_sql_if_then_implication() -> None:
+    """IF_THEN renders as SQL implication (NOT antecedent OR consequent)."""
+    ant = FilterExpression(
+        kind="leaf",
+        field="name",
+        cmp_operator=ComparisonOperator.EQ,
+        value=["Open"],
+    )
+    cons = FilterExpression(
+        kind="leaf",
+        field="value",
+        cmp_operator=ComparisonOperator.GT,
+        value=[0],
+    )
+    expr = FilterExpression(
+        kind="composite",
+        operator=LogicalOperator.IMPLICATION,
+        deps=[ant, cons],
+    )
+    out = expr(kind=ExpressionFlavor.SQL)
+    assert isinstance(out, str)
+    assert "IF_THEN" not in out
+    assert out == '(NOT ("name" = \'Open\') OR ("value" > 0))'
+
+
 # ---------------------------------------------------------------------------
 # Tests for 'foo' key in YAML filters (dunder-method shorthand)
 # ---------------------------------------------------------------------------

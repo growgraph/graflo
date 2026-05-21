@@ -9,7 +9,14 @@ import pathlib
 import re
 from typing import TYPE_CHECKING, Any, Self
 
-from pydantic import AliasChoices, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    AliasChoices,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.onto import BaseEnum
@@ -268,6 +275,23 @@ class TableConnector(ResourceConnector):
         description="SelectSpec or dict for declarative view (alternative to table+joins+filters).",
     )
 
+    @field_validator("filters", mode="before")
+    @classmethod
+    def _coerce_filters(cls, v: Any) -> list[Any]:
+        from graflo.filter.onto import parse_filter_expression
+
+        if v is None:
+            return []
+        if not isinstance(v, list):
+            raise ValueError("filters must be a list")
+        result: list[Any] = []
+        for i, item in enumerate(v):
+            try:
+                result.append(parse_filter_expression(item))
+            except (ValueError, ValidationError) as e:
+                raise ValueError(f"filters[{i}]: {e}") from e
+        return result
+
     @field_validator("view", mode="before")
     @classmethod
     def _coerce_view(cls, v: Any) -> Any:
@@ -479,18 +503,15 @@ class TableConnector(ResourceConnector):
     def _coerce_filter_expression(
         cls, raw_filter: Any, base_alias: str | None
     ) -> FilterExpression | None:
-        from graflo.filter.onto import FilterExpression
+        from graflo.filter.onto import parse_filter_expression
 
-        if isinstance(raw_filter, FilterExpression):
-            payload = raw_filter.model_dump(mode="python")
-            return FilterExpression.model_validate(
-                cls._qualify_filter_payload(payload, base_alias)
-            )
-        if isinstance(raw_filter, dict):
-            return FilterExpression.model_validate(
-                cls._qualify_filter_payload(raw_filter, base_alias)
-            )
-        return None
+        if raw_filter is None:
+            return None
+        expr = parse_filter_expression(raw_filter)
+        if base_alias is None:
+            return expr
+        payload = expr.model_dump(mode="python")
+        return parse_filter_expression(cls._qualify_filter_payload(payload, base_alias))
 
 
 class SparqlConnector(ResourceConnector):

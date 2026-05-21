@@ -22,6 +22,7 @@ Product capabilities, the `migrate_schema` workflow, performance levers, and aut
 - **PostgreSQL Schema Inference** — infer schemas from normalised PostgreSQL databases (3NF) with PK/FK constraints.
 - **RDF / OWL Schema Inference** — infer schemas from OWL/RDFS ontologies: `owl:Class` → vertices, `owl:ObjectProperty` → edges, `owl:DatatypeProperty` → vertex **properties**.
 - **SelectSpec** — declarative SQL view on top of `TableConnector` (`view` field): `kind="type_lookup"` for polymorphic relation rows joined to type lookup table(s), or `kind="select"` for full `from` / `joins` / `select` / `where`. See [Table connector views and SelectSpec](table_connector_views.md).
+- **Bindings SQL filters** — `TableConnector.filters` and `view.where` use the same YAML logical-operator shorthand as vertex `filters` (`OR:`, `AND:`, `NOT:`, `IF_THEN:`), validated when Bindings load and rendered to SQL `WHERE` (including `IF_THEN` as `(NOT … OR …)`). See [Bindings filter cookbook](table_connector_views.md#bindings-filter-cookbook-tableconnectorfilters).
 
 ### Schema Migration (v1)
 - **Read-only planning first** — use `migrate_schema plan --from-schema-path ... --to-schema-path ...` to generate a deterministic operation plan before any writes.

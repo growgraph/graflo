@@ -18,6 +18,96 @@ Implementation references:
 
 - `graflo.architecture.contract.bindings.TableConnector` (`view`, `build_query`)
 - `graflo.filter.select.SelectSpec` (`kind="type_lookup"` | `kind="select"`)
+- `graflo.filter.parse_filter_expression` (YAML shorthand and discriminated forms)
+
+## Bindings filter cookbook (`TableConnector.filters`)
+
+SQL table connectors can push filters into the generated `SELECT` **before** rows reach
+the ingestion pipeline. **Bindings** accept the **same simplified logical-operator YAML**
+used on vertex `filters` in the schema—no need for verbose `operator` + `deps` unless
+you prefer that style.
+
+Pushdown filters are validated when **Bindings** load (fail fast). Each list entry is
+parsed with `parse_filter_expression`, same as `VertexConfig.filters` and graph DB
+helpers.
+
+### Logical operators (summary)
+
+| Key | Arity | SQL |
+| --- | ----- | --- |
+| `AND` | 2+ deps | `a AND b AND …` |
+| `OR` | 2+ deps | `a OR b OR …` |
+| `NOT` | 1 dep | `NOT …` |
+| `IF_THEN` | exactly 2 deps | `(NOT antecedent OR consequent)` |
+
+`IF_THEN` is for row predicates in SQL. For in-memory document checks during vertex
+write, use `ExpressionFlavor.PYTHON` on the schema vertex `filters` block instead.
+
+### YAML forms (all supported on `filters`)
+
+**Logical shorthand** (operator as key)—**recommended in Bindings**:
+
+```yaml
+connectors:
+  - name: events_pg
+    table_name: events
+    filters:
+      - OR:
+          - {field: status, cmp_operator: "==", value: [active]}
+          - {field: status, cmp_operator: "==", value: [pending]}
+```
+
+**Discriminated composite** (`operator` + `deps`):
+
+```yaml
+    filters:
+      - operator: AND
+        deps:
+          - {field: region, cmp_operator: "==", value: [eu]}
+          - {field: score, cmp_operator: ">", value: [0]}
+```
+
+**`NOT` and `IF_THEN` shorthand:**
+
+```yaml
+    filters:
+      - NOT:
+          - {field: deleted_at, cmp_operator: IS_NULL}
+      - IF_THEN:
+          - {field: event_type, cmp_operator: "==", value: [trade]}
+          - {field: notional, cmp_operator: ">", value: [0]}
+```
+
+**Leaf shorthand** (no `kind`):
+
+```yaml
+    filters:
+      - {field: class_name, cmp_operator: IS_NOT_NULL}
+```
+
+**`view.where`** (on `SelectSpec`) uses the same keys:
+
+```yaml
+    view:
+      kind: select
+      where:
+        OR:
+          - {field: a, cmp_operator: "==", value: [1]}
+          - {field: b, cmp_operator: "==", value: [2]}
+```
+
+### Semantics
+
+| Topic | Behavior |
+| ----- | -------- |
+| **Multiple `filters` entries** | Combined with **`AND`** (same as several pushdown clauses). |
+| **OR across clauses** | Use **one** composite filter (`OR:` or `operator: OR`). |
+| **`IF_THEN` in SQL** | Rendered as `(NOT antecedent OR consequent)`; not the literal token `IF_THEN`. |
+| **Nested AND/OR** | Composite operands are parenthesized in SQL for correct precedence. |
+| **`view.where`** | Same shorthand as above (`SelectSpec` uses the same parser). |
+
+Copy patterns from vertex `filters` in the schema block; they now parse identically on
+table connectors.
 
 ## When to use `view` vs plain `joins`
 
