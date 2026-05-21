@@ -175,12 +175,13 @@ class ResourceConfig(ConfigBaseModel):
             "the actor pipeline runs."
         ),
     )
-    skip_actors_on_missing_input_keys: bool | None = PydanticField(
-        default=None,
+    fail_fast: bool = PydanticField(
+        default=False,
         description=(
-            "If True, actors that declare required input keys may skip execution when keys are "
-            "missing in the current document instead of raising indexing errors. "
-            "If None, defaults to drop_trivial_input_fields."
+            "If True, a transform step fails when required input keys are missing in the "
+            "current document (rename: all source keys must be present; call: all input keys). "
+            "If False (default), rename applies only to keys present in the document and "
+            "functional transforms skip the step when inputs are missing."
         ),
     )
     tolerate_transform_errors: bool = PydanticField(

@@ -575,6 +575,13 @@ class Transform(ProtoTransform):
         if self.is_mapping:
             input_doc = nargs[0]
             if isinstance(input_doc, dict):
+                if self.rename:
+                    present = {
+                        self.rename[src]: input_doc[src]
+                        for src in self.rename
+                        if src in input_doc
+                    }
+                    return present
                 output_values = [input_doc[k] for k in self.input]
             else:
                 output_values = list(nargs)
@@ -704,7 +711,9 @@ class Transform(ProtoTransform):
             return (self.dress.key, self.dress.value)
 
         if self.rename:
-            return tuple(self.rename.values())
+            if doc is None:
+                return tuple(self.rename.values())
+            return tuple(self.rename[src] for src in self.rename if src in doc)
 
         if self.output:
             return self.output

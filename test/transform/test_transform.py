@@ -71,6 +71,13 @@ def test_map_doc():
     assert r["y"] == 0.1234
 
 
+def test_map_doc_partial_missing_key():
+    t = Transform(rename={"x": "y", "z": "w"})  # type: ignore
+    r = t({"x": 1})
+    assert r == {"y": 1}
+    assert "w" not in r
+
+
 def test_input_output():
     kwargs = {"input": ["x"], "output": ["y"]}
     t = Transform(**kwargs)  # type: ignore

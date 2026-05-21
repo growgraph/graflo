@@ -17,6 +17,7 @@ from graflo.architecture.contract.ingestion.transform import (
     KeySelectionConfig,
     ProtoTransform,
     Transform,
+    TransformException,
 )
 
 logger = logging.getLogger(__name__)
@@ -29,14 +30,12 @@ class TransformActor(Actor):
         self.transforms: dict[str, ProtoTransform] = {}
         self.call_use: str | None = None
         self._call_config = None
-        self._skip_on_missing_input_keys = False
+        self._fail_fast = False
         self._tolerate_transform_errors = True
         self._required_doc_keys: frozenset[str] = frozenset()
-        self._rename_source_keys: frozenset[str] = frozenset()
 
         if config.rename is not None:
             self.t = Transform(rename=config.rename)
-            self._rename_source_keys = frozenset(config.rename.keys())
             return
 
         if config.call is None:
@@ -89,13 +88,12 @@ class TransformActor(Actor):
         self.t = Transform(**transform_kwargs)
 
     def _refresh_missing_key_guard(self, init_ctx: ActorInitContext) -> None:
-        self._skip_on_missing_input_keys = init_ctx.skip_actors_on_missing_input_keys
+        self._fail_fast = init_ctx.fail_fast
         self._tolerate_transform_errors = init_ctx.tolerate_transform_errors
-        if (
-            not self._skip_on_missing_input_keys
-            or self.t.target == "keys"
-            or self.t.strategy == "all"
-        ):
+        if self.t.target == "keys" or self.t.strategy == "all":
+            self._required_doc_keys = frozenset()
+            return
+        if self.t.rename and not self._fail_fast:
             self._required_doc_keys = frozenset()
             return
         required: set[str] = set(self.t.input)
@@ -247,8 +245,13 @@ class TransformActor(Actor):
     ) -> ExtractionContext:
         logger.debug("transforms : %s %s", id(self.transforms), len(self.transforms))
         doc = self._extract_doc(nargs, **kwargs)
-        if self._skip_on_missing_input_keys and self._required_doc_keys:
-            if not self._required_doc_keys.issubset(doc):
+        if self._required_doc_keys:
+            missing = self._required_doc_keys - doc.keys()
+            if missing:
+                if self._fail_fast:
+                    raise TransformException(
+                        f"Missing required input keys: {sorted(missing)}"
+                    )
                 return ctx
         try:
             transform_result = self.t(doc)
@@ -268,12 +271,12 @@ class TransformActor(Actor):
                 nulled_fields=nulled_fields,
             )
             return ctx
-        if self._rename_source_keys:
+        if self.t.rename:
             base = TransformPayload.from_result(transform_result)
             _update_doc = TransformPayload(
                 named=base.named,
                 positional=base.positional,
-                removed_keys=self._rename_source_keys,
+                removed_keys=frozenset(src for src in self.t.rename if src in doc),
             )
         else:
             _update_doc = self._format_transform_result(transform_result)

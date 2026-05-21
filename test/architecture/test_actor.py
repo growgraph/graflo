@@ -1392,6 +1392,66 @@ def test_vertex_from_doc_does_not_steal_other_vertex_buffer_payloads() -> None:
     assert {"type": "PRC", "value": 42.5} in metric_docs
 
 
+def test_rename_partial_when_fail_fast_false() -> None:
+    pipeline = [
+        {
+            "transform": {
+                "rename": {
+                    "s_context": "context",
+                    "a_title": "title",
+                    "number": "bkuid",
+                    "missing_field": "opt",
+                }
+            }
+        },
+    ]
+    anw = ActorWrapper(pipeline=pipeline)
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=VertexConfig(vertices=[]),
+            edge_config=EdgeConfig(),
+            transforms={},
+            fail_fast=False,
+        )
+    )
+    loc = LocationIndex(path=(0,))
+    ctx = ActionContext()
+    ctx = anw(
+        ctx,
+        doc={"s_context": "ctx1", "a_title": "t1", "number": "42"},
+    )
+    payload = ctx.transform_buffer[loc][0]
+    assert payload.named == {"context": "ctx1", "title": "t1", "bkuid": "42"}
+    assert payload.removed_keys == frozenset({"s_context", "a_title", "number"})
+
+
+def test_rename_raises_when_fail_fast_true() -> None:
+    pipeline = [
+        {
+            "transform": {
+                "rename": {
+                    "s_context": "context",
+                    "a_title": "title",
+                    "number": "bkuid",
+                }
+            }
+        },
+    ]
+    anw = ActorWrapper(pipeline=pipeline)
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=VertexConfig(vertices=[]),
+            edge_config=EdgeConfig(),
+            transforms={},
+            fail_fast=True,
+        )
+    )
+    loc = LocationIndex(path=(0,))
+    ctx = ActionContext()
+    with pytest.raises(Exception, match="Missing required input keys"):
+        anw(ctx, loc, doc={"s_context": "ctx1", "number": "42"})
+
+
 def test_rename_removed_keys_strips_source_from_merged_view() -> None:
     observation = {
         "s_context": "ctx",

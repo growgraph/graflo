@@ -218,11 +218,6 @@ class ResourceRuntime:
         allowed_vertex_names: set[str] | None,
         target_db_flavor: DBType | None,
     ) -> ActorInitContext:
-        skip_on_missing_input_keys = (
-            self.config.skip_actors_on_missing_input_keys
-            if self.config.skip_actors_on_missing_input_keys is not None
-            else self.config.drop_trivial_input_fields
-        )
         return ActorInitContext(
             vertex_config=self._vertex_config,
             edge_config=self._edge_config,
@@ -233,7 +228,7 @@ class ResourceRuntime:
             infer_edge_only={spec.edge_id for spec in self.config.infer_edge_only},
             infer_edge_except=infer_edge_except,
             strict_references=strict_references,
-            skip_actors_on_missing_input_keys=skip_on_missing_input_keys,
+            fail_fast=self.config.fail_fast,
             tolerate_transform_errors=self.config.tolerate_transform_errors,
             target_db_flavor=target_db_flavor,
         )
