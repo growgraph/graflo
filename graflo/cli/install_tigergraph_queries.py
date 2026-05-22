@@ -1,7 +1,11 @@
 """Install GSQL queries from a directory into TigerGraph.
 
-Reads ``.gsql`` files, uploads each query definition to the target graph, then runs
-``INSTALL QUERY`` so queries are compiled and ready to run.
+Reads ``.gsql`` files, rewrites the graph name in each query header (the token between
+``) FOR GRAPH`` and ``{``), uploads the definition, then runs ``INSTALL QUERY``.
+
+Files may use any graph name or placeholder in the header, for example::
+
+    CREATE OR REPLACE DISTRIBUTED QUERY myQuery() FOR GRAPH accounting { ... }
 
 Connection settings are loaded from environment variables via
 :class:`~graflo.db.TigergraphConfig` (default ``TIGERGRAPH_*``; use ``--prefix`` for
@@ -30,13 +34,50 @@ from graflo.db.tigergraph.conn import TigerGraphConnection
 logger = logging.getLogger(__name__)
 
 _CREATE_QUERY_RE = re.compile(
-    r"CREATE\s+(?:OR\s+REPLACE\s+)?QUERY\s+([A-Za-z_][A-Za-z0-9_]*)",
+    r"CREATE\s+(?:OR\s+REPLACE\s+)?(?:DISTRIBUTED\s+)?QUERY\s+([A-Za-z_][A-Za-z0-9_]*)",
+    re.IGNORECASE,
+)
+
+# Match the graph name in a query header only: `...) FOR GRAPH <name> {`
+# Does not touch `USE GRAPH` or other references inside the query body.
+_FOR_GRAPH_HEADER_RE = re.compile(
+    r"(\))\s+for\s+graph\s+([^{]+?)\s*(\{)",
     re.IGNORECASE,
 )
 
 
+def substitute_for_graph_header(content: str, graph_name: str) -> tuple[str, list[str]]:
+    """Replace graph name(s) in ``) FOR GRAPH <name> {`` header clause(s).
+
+    Returns the updated content and the previous name(s) stripped from the header.
+    """
+    previous_names: list[str] = []
+
+    def _replacer(match: re.Match[str]) -> str:
+        previous = match.group(2).strip()
+        previous_names.append(previous)
+        return f"{match.group(1)} FOR GRAPH {graph_name} {match.group(3)}"
+
+    updated, count = _FOR_GRAPH_HEADER_RE.subn(_replacer, content)
+    return updated, previous_names
+
+
+def prepare_gsql_content(content: str, graph_name: str) -> tuple[str, list[str]]:
+    """Rewrite query header graph name(s) before upload.
+
+    Returns prepared content and the previous header graph name(s).
+    """
+    prepared, previous_names = substitute_for_graph_header(content, graph_name)
+    if not previous_names:
+        raise ValueError(
+            "Could not find ') FOR GRAPH <name> {' in query definition "
+            "(expected CREATE ... QUERY name(...) FOR GRAPH <name> { ... })"
+        )
+    return prepared, previous_names
+
+
 def query_name_from_gsql(content: str, *, fallback: str | None = None) -> str | None:
-    """Return the query name from a GSQL ``CREATE [OR REPLACE] QUERY`` statement."""
+    """Return the query name from a GSQL ``CREATE [OR REPLACE] [DISTRIBUTED] QUERY``."""
     match = _CREATE_QUERY_RE.search(content)
     if match:
         return match.group(1)
@@ -74,13 +115,27 @@ def install_queries_from_directory(
         raise click.ClickException(f"No files matching {pattern!r} in {queries_dir}")
 
     for path in paths:
-        content = path.read_text(encoding="utf-8")
-        query_name = query_name_from_gsql(content, fallback=path.stem)
+        raw_content = path.read_text(encoding="utf-8")
+        query_name = query_name_from_gsql(raw_content, fallback=path.stem)
         if not query_name:
             raise click.ClickException(
                 f"Could not determine query name for {path} "
-                "(expected CREATE QUERY name(...) in file)"
+                "(expected CREATE [OR REPLACE] [DISTRIBUTED] QUERY name(...) in file)"
             )
+
+        try:
+            content, previous_names = prepare_gsql_content(raw_content, graph_name)
+        except ValueError as exc:
+            raise click.ClickException(f"{path.name}: {exc}") from exc
+
+        for previous in previous_names:
+            if previous != graph_name and logger.isEnabledFor(logging.DEBUG):
+                logger.debug(
+                    "FOR GRAPH header in %s: %r -> %r",
+                    path.name,
+                    previous,
+                    graph_name,
+                )
 
         logger.info("Uploading query %r from %s", query_name, path.name)
         upload_cmd = f"USE GRAPH {graph_name}\n{content}"
@@ -169,3 +224,7 @@ def install_tigergraph_queries(
         sys.exit(1)
 
     click.echo("\nAll queries installed successfully.")
+
+
+if __name__ == "__main__":
+    install_tigergraph_queries()

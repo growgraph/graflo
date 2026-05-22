@@ -1,8 +1,12 @@
 """Tests for TigerGraph query install CLI helpers."""
 
+import pytest
+
 from graflo.cli.install_tigergraph_queries import (
     _gsql_response_indicates_error,
+    prepare_gsql_content,
     query_name_from_gsql,
+    substitute_for_graph_header,
 )
 
 
@@ -14,6 +18,50 @@ def test_query_name_from_create_query() -> None:
 def test_query_name_from_create_or_replace_query() -> None:
     content = "CREATE OR REPLACE QUERY triples() FOR GRAPH accounting { }"
     assert query_name_from_gsql(content) == "triples"
+
+
+def test_query_name_from_distributed_query() -> None:
+    content = (
+        "CREATE OR REPLACE DISTRIBUTED QUERY myQuery(INT x) "
+        "FOR GRAPH <<GRAPH_NAME>> { }"
+    )
+    assert query_name_from_gsql(content) == "myQuery"
+
+
+def test_substitute_for_graph_header_hardcoded_name() -> None:
+    template = "CREATE QUERY countGB() FOR GRAPH public { PRINT 1; }"
+    prepared, previous = substitute_for_graph_header(template, "my_graph")
+    assert previous == ["public"]
+    assert "FOR GRAPH my_graph {" in prepared
+
+
+def test_substitute_for_graph_header_placeholder() -> None:
+    template = "CREATE OR REPLACE DISTRIBUTED QUERY q() FOR GRAPH <<GRAPH_NAME>> { }"
+    prepared, previous = substitute_for_graph_header(template, "production")
+    assert previous == ["<<GRAPH_NAME>>"]
+    assert "FOR GRAPH production {" in prepared
+
+
+def test_substitute_for_graph_header_does_not_touch_body() -> None:
+    template = (
+        "CREATE OR REPLACE DISTRIBUTED QUERY q() FOR GRAPH template { "
+        "USE GRAPH template; }"
+    )
+    prepared, _ = substitute_for_graph_header(template, "production")
+    assert "FOR GRAPH production {" in prepared
+    assert "USE GRAPH template;" in prepared
+
+
+def test_substitute_for_graph_header_whitespace() -> None:
+    template = "CREATE QUERY q() FOR GRAPH  accounting  {\n  PRINT 1;\n}"
+    prepared, previous = substitute_for_graph_header(template, "target")
+    assert previous == ["accounting"]
+    assert prepared.startswith("CREATE QUERY q() FOR GRAPH target {")
+
+
+def test_prepare_gsql_content_raises_without_header() -> None:
+    with pytest.raises(ValueError, match="FOR GRAPH"):
+        prepare_gsql_content("CREATE QUERY q() { PRINT 1; }", "g")
 
 
 def test_query_name_fallback_to_stem() -> None:
