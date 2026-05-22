@@ -93,6 +93,11 @@ class RunOutput(BaseModel):
     runs: list[QueryBatchResult]
 
 
+def _tigergraph_config(prefix: str | None, *, ssl_verify: bool) -> TigergraphConfig:
+    config = TigergraphConfig.from_env(prefix=prefix)
+    return config.model_copy(update={"ssl_verify": ssl_verify})
+
+
 def _resolve_graph_name(config: TigergraphConfig, graph: str | None) -> str:
     if graph:
         return graph
@@ -280,6 +285,13 @@ def _load_input_json(input_path: Path | None, inline_json: str | None) -> object
     ),
 )
 @click.option(
+    "--ssl-verify",
+    is_flag=True,
+    default=False,
+    show_default=True,
+    help="Verify TLS certificates when connecting to TigerGraph.",
+)
+@click.option(
     "-v",
     "--verbose",
     is_flag=True,
@@ -291,6 +303,7 @@ def run_tigergraph_queries(
     output_path: Path | None,
     graph: str | None,
     prefix: str | None,
+    ssl_verify: bool,
     verbose: bool,
 ) -> None:
     """Run installed TigerGraph queries from a JSON parameter spec."""
@@ -311,7 +324,7 @@ def run_tigergraph_queries(
     if not specs:
         raise click.ClickException("No queries to run")
 
-    config = TigergraphConfig.from_env(prefix=prefix)
+    config = _tigergraph_config(prefix, ssl_verify=ssl_verify)
     graph_name = _resolve_graph_name(config, graph)
     conn = TigerGraphConnection(config)
 

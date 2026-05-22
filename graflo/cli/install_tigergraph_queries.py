@@ -90,6 +90,11 @@ def _gsql_response_indicates_error(response: str) -> bool:
     return "error" in lower
 
 
+def _tigergraph_config(prefix: str | None, *, ssl_verify: bool) -> TigergraphConfig:
+    config = TigergraphConfig.from_env(prefix=prefix)
+    return config.model_copy(update={"ssl_verify": ssl_verify})
+
+
 def _resolve_graph_name(config: TigergraphConfig, graph: str | None) -> str:
     if graph:
         return graph
@@ -189,6 +194,13 @@ def install_queries_from_directory(
     help="Glob pattern for query files inside --queries-dir.",
 )
 @click.option(
+    "--ssl-verify",
+    is_flag=True,
+    default=False,
+    show_default=True,
+    help="Verify TLS certificates when connecting to TigerGraph.",
+)
+@click.option(
     "-v",
     "--verbose",
     is_flag=True,
@@ -199,6 +211,7 @@ def install_tigergraph_queries(
     graph: str | None,
     prefix: str | None,
     pattern: str,
+    ssl_verify: bool,
     verbose: bool,
 ) -> None:
     """Upload and install GSQL queries from a directory into TigerGraph."""
@@ -207,7 +220,7 @@ def install_tigergraph_queries(
         format="%(levelname)s %(name)s: %(message)s",
     )
 
-    config = TigergraphConfig.from_env(prefix=prefix)
+    config = _tigergraph_config(prefix, ssl_verify=ssl_verify)
     graph_name = _resolve_graph_name(config, graph)
     conn = TigerGraphConnection(config)
 

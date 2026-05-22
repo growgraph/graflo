@@ -4,6 +4,7 @@ import pytest
 
 from graflo.cli.install_tigergraph_queries import (
     _gsql_response_indicates_error,
+    _tigergraph_config,
     prepare_gsql_content,
     query_name_from_gsql,
     substitute_for_graph_header,
@@ -66,6 +67,19 @@ def test_prepare_gsql_content_raises_without_header() -> None:
 
 def test_query_name_fallback_to_stem() -> None:
     assert query_name_from_gsql("SELECT 1", fallback="my_query") == "my_query"
+
+
+def test_tigergraph_config_cli_overrides_ssl_verify(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TIGERGRAPH_URI", "https://localhost:14240")
+    monkeypatch.setenv("TIGERGRAPH_SSL_VERIFY", "true")
+
+    config = _tigergraph_config(None, ssl_verify=False)
+    assert config.ssl_verify is False
+
+    config = _tigergraph_config(None, ssl_verify=True)
+    assert config.ssl_verify is True
 
 
 def test_gsql_response_error_heuristic() -> None:
