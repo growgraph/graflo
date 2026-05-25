@@ -15,6 +15,7 @@ ingestion_model = manifest.require_ingestion_model()
 # This automatically reads ARANGO_URI, ARANGO_USERNAME, ARANGO_PASSWORD, etc.
 conn_conf = ArangoConfig.from_docker_env()
 
+
 # Alternative: Create config directly or use environment variables
 # Set ARANGO_URI, ARANGO_USERNAME, ARANGO_PASSWORD, ARANGO_DATABASE env vars
 # conn_conf = ArangoConfig()  # Reads from environment variables

@@ -108,6 +108,7 @@ conn_conf = ArangoConfig.from_docker_env()
 # conn_conf = TigergraphConfig.from_docker_env()
 # conn_conf = FalkordbConfig.from_docker_env()
 
+
 db_type = conn_conf.connection_type
 ```
 

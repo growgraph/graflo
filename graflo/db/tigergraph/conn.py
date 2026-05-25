@@ -735,21 +735,27 @@ class TigerGraphConnection(Connection):
                     raise ValueError(f"No token in response: {result}")
 
             except requests.exceptions.HTTPError as e:
+                response = e.response
+                if response is None:
+                    all_404_errors = False
+                    logger.debug(f"HTTP error without response on {url}: {e}")
+                    last_error = e
+                    continue
+
+                status_code = response.status_code
                 # Track if this was a 404 error
-                if e.response.status_code != 404:
+                if status_code != 404:
                     all_404_errors = False
 
                 # If 404 and we have more endpoints to try, continue
-                if e.response.status_code == 404 and len(endpoints_to_try) > 1:
+                if status_code == 404 and len(endpoints_to_try) > 1:
                     logger.debug(
                         f"Endpoint {url} returned 404, trying next endpoint..."
                     )
                     last_error = e
                     continue
                 # For other HTTP errors, log and try next endpoint if available
-                logger.debug(
-                    f"HTTP error {e.response.status_code} on {url}: {e.response.text}"
-                )
+                logger.debug(f"HTTP error {status_code} on {url}: {response.text}")
                 last_error = e
                 continue
             except Exception as e:
@@ -1668,8 +1674,10 @@ class TigerGraphConnection(Connection):
             return response.json()
 
         except requests_exceptions.HTTPError as errh:
+            err_response = errh.response
             if (
-                errh.response.status_code == 401
+                err_response is not None
+                and err_response.status_code == 401
                 and self.api_token
                 and self._token_cache_key
             ):
@@ -1677,7 +1685,8 @@ class TigerGraphConnection(Connection):
 
             # For TigerGraph 4.2.1, if token auth fails with 401/REST-10018, try Basic Auth fallback
             if (
-                errh.response.status_code == 401
+                err_response is not None
+                and err_response.status_code == 401
                 and self.api_token
                 and self.config.username
                 and self.config.password
@@ -3984,8 +3993,10 @@ class TigerGraphConnection(Connection):
 
         except requests_exceptions.HTTPError as errh:
             # For TigerGraph 4.2.1, if token auth fails with 401/REST-10018, try Basic Auth fallback
+            err_response = errh.response
             if (
-                errh.response.status_code == 401
+                err_response is not None
+                and err_response.status_code == 401
                 and self.api_token
                 and self.config.username
                 and self.config.password

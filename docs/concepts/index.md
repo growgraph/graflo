@@ -121,4 +121,6 @@ The overview above is continued in dedicated pages (formerly a single long docum
 - [Core components](core_components.md) — schema, ingestion, edges, DataSources, resources, actors, location scoping, transforms
 - [Features, migration, and practices](features_and_practices.md) — product features, `migrate_schema` CLI, performance notes, best practices
 
+- [Graph database targets](graph_database_targets.md) — compare output backends (deployment, storage, query languages, Graflo trade-offs)
+
 Focused topics: [Transforms](transforms.md), [Table connector views](table_connector_views.md) (SQL **`filters`** / **`view.where`** with logical operators `AND` / `OR` / `NOT` / `IF_THEN`), [Runtime connector updates](runtime_connector_updates.md) (patches, **`time_filter`** / **`ColumnTimeFilter`**, pushdown **`filters`**), [Backend indexes](backend_indexes.md), [Ingestion doc errors](ingestion_doc_errors.md), [Object storage (S3 staging)](object_storage.md), [Manifest evolution](manifest_evolution.md).

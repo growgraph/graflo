@@ -107,6 +107,7 @@ ingestion_model = manifest.require_ingestion_model()
 # Load config from docker/neo4j/.env (recommended)
 conn_conf = Neo4jConfig.from_docker_env()
 
+
 # Or create config directly
 # conn_conf = Neo4jConfig(
 #     uri="bolt://localhost:7688",

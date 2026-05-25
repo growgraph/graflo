@@ -18,6 +18,8 @@ Example:
 """
 
 from enum import EnumMeta
+from typing import Any
+
 from strenum import StrEnum
 
 
@@ -35,19 +37,19 @@ class MetaEnum(EnumMeta):
         >>> "invalid" in MyEnum  # False
     """
 
-    def __contains__(self, member: object) -> bool:
+    def __contains__(cls: type[Any], value: object) -> bool:
         """Check if an item is a valid member of the enum.
 
         Args:
-            item: Value to check for membership
+            value: Value to check for membership
 
         Returns:
             bool: True if the item is a valid enum member, False otherwise
         """
-        if isinstance(member, self):
+        if isinstance(value, cls):
             return True
         try:
-            self(member)
+            cls(value)
             return True
         except ValueError:
             return False
@@ -148,6 +150,7 @@ class DBType(StrEnum, metaclass=MetaEnum):
     FALKORDB = "falkordb"
     MEMGRAPH = "memgraph"
     NEBULA = "nebula"
+    GRAFEO = "grafeo"
 
     # Source databases (SQL, NoSQL, RDF)
     POSTGRES = "postgres"
@@ -166,4 +169,5 @@ DB_TYPE_TO_EXPRESSION_FLAVOR: dict[DBType, ExpressionFlavor] = {
     DBType.MEMGRAPH: ExpressionFlavor.CYPHER,
     DBType.NEBULA: ExpressionFlavor.NGQL,
     DBType.TIGERGRAPH: ExpressionFlavor.GSQL,
+    DBType.GRAFEO: ExpressionFlavor.CYPHER,
 }

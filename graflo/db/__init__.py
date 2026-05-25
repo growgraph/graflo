@@ -40,6 +40,7 @@ from .connection import (
     ArangoConfig,
     DBConfig,
     FalkordbConfig,
+    GrafeoConfig,
     MemgraphConfig,
     MinioConfig,
     NebulaConfig,
@@ -51,6 +52,7 @@ from .connection import (
     parse_dotenv_file,
 )
 from .falkordb.conn import FalkordbConnection
+from .grafeo.conn import GrafeoConnection
 from .manager import ConnectionManager
 from .memgraph.conn import MemgraphConnection
 from .nebula.conn import NebulaConnection
@@ -72,6 +74,7 @@ __all__ = [
     "DBConfig",
     "ConnectionManager",
     "FalkordbConfig",
+    "GrafeoConfig",
     "MemgraphConfig",
     "MinioConfig",
     "S3EndpointConfig",
@@ -83,6 +86,7 @@ __all__ = [
     "TigergraphConfig",
     "ArangoConnection",
     "FalkordbConnection",
+    "GrafeoConnection",
     "MemgraphConnection",
     "NebulaConnection",
     "Neo4jConnection",

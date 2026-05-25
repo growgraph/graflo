@@ -13,7 +13,7 @@ It is a **Python package** and **Graph Schema & Transformation Language (GSTL)**
 
 ### What you get
 
-- **One pipeline, several graph databases** — The same manifest targets ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, or NebulaGraph; `DatabaseProfile` and DB-aware types absorb naming, defaults, and indexing differences.
+- **One pipeline, several graph databases** — The same manifest targets ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph, or embedded [Grafeo](https://github.com/GrafeoDB/grafeo); `DatabaseProfile` and DB-aware types absorb naming, defaults, and indexing differences.
 - **Explicit identities** — Vertex identity fields and indexes back upserts so reloads merge on keys instead of blindly duplicating nodes.
 - **Reusable ingestion** — `ResourceConfig` actor pipelines (including **vertex** / **vertex_router** / **edge** steps) bind to files, SQL, SPARQL/RDF, APIs, or in-memory batches via `Bindings` and the `DataSourceRegistry`. A single flat row can populate multiple same-type vertices in distinct named slots (`role`) and emit multiple edges in one `edge: links` step. Per-resource **`tolerate_transform_errors`** (default on) keeps ingestion moving when an individual transform step fails.
 - **Manifest-first sanitization** — `Sanitizer` (backed by `graflo.architecture.evolution` **`SanitizeOp`**) normalizes schema identifiers (reserved words, TigerGraph relation/index constraints) and synchronizes related ingestion mappings via `sanitize_manifest(GraphManifest)`. `GraphEngine.infer_manifest(...)` applies it automatically; lower-level `SQLInferenceManager` does not—sanitize the manifest yourself when assembling contracts outside the engine.
@@ -54,7 +54,7 @@ It is a **Python package** and **Graph Schema & Transformation Language (GSTL)**
 
 ### Supported targets
 
-The graph engines listed in **What you get** are the supported **output** `DBType` values in `graflo.onto`. Each backend uses its own `Connection` implementation under the shared `ConnectionManager` / `DBWriter` / `GraphEngine` flow.
+The graph engines listed in **What you get** are the supported **output** `DBType` values in `graflo.onto`. Each backend uses its own `Connection` implementation under the shared `ConnectionManager` / `DBWriter` / `GraphEngine` flow. See [Graph database targets](concepts/graph_database_targets.md) for a comparison matrix (deployment, storage, query languages, and trade-offs).
 
 <!-- [![pytest](https://github.com/growgraph/graflo/actions/workflows/pytest.yml/badge.svg)](https://github.com/growgraph/graflo/actions/workflows/pytest.yml) -->
 
@@ -150,7 +150,7 @@ For PostgreSQL workflows, `infer_manifest(...)` returns a full manifest contract
 ## Requirements
 
 - Python 3.11 or higher (3.11 and 3.12 officially supported)
-- A graph database (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, or NebulaGraph) as target
+- A graph database as target — see [Graph database targets](concepts/graph_database_targets.md); embedded [Grafeo](https://github.com/GrafeoDB/grafeo) needs no external server
 - Optional: PostgreSQL for SQL data sources and schema inference
 - Optional extras (see [Installation](getting_started/installation.md)): `dev` (tests and typing), `docs` (MkDocs), `plot` (`plot_manifest` via `pygraphviz`; system Graphviz required)
 - Full dependency list in `pyproject.toml`

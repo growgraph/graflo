@@ -1,5 +1,7 @@
 # Examples 
 
+Most examples default to a server-backed database (Docker under `docker/`). See [Graph database targets](../concepts/graph_database_targets.md) to compare backends. For an **embedded** [Grafeo](https://github.com/GrafeoDB/grafeo) target (no separate server), use [Example 7](example-7.md#grafeo-embedded-alternative).
+
 1. [CSV with Multiple Tabular Sources](example-1.md)
 2. [JSON with Self-Reference Vertices](example-2.md)
 3. [CSV with Edge Weights and Multiple Relations](example-3.md)

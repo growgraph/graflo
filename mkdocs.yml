@@ -58,6 +58,7 @@ nav:
     -   Concepts Overview: concepts/index.md
     -   Architecture diagrams: concepts/architecture_diagrams.md
     -   Core components: concepts/core_components.md
+    -   Graph database targets: concepts/graph_database_targets.md
     -   Features, migration, and practices: concepts/features_and_practices.md
     -   Manifest evolution: concepts/manifest_evolution.md
     -   Object storage (S3 staging): concepts/object_storage.md

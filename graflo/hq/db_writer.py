@@ -300,6 +300,7 @@ class DBWriter:
                                 DBType.NEO4J,
                                 DBType.FALKORDB,
                                 DBType.MEMGRAPH,
+                                DBType.GRAFEO,
                             ):
                                 if merge_props is not None:
                                     edge_kw["relationship_merge_properties"] = (

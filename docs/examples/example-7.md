@@ -152,9 +152,32 @@ The resulting graph has three vertex types and five edge types:
 
 ## Run the Example
 
+**Default (server):** requires ArangoDB, Neo4j, TigerGraph, or FalkorDB. Start the database via Docker and load config from `docker/<db>/.env`:
+
 ```bash
 cd examples/7-objects-relations
 uv run python ingest.py
+```
+
+### Grafeo embedded alternative {#grafeo-embedded-alternative}
+
+To run **without** a graph server, swap the connection block in [`ingest.py`](https://github.com/growgraph/graflo/tree/main/examples/7-objects-relations/ingest.py) for [Grafeo](https://github.com/GrafeoDB/grafeo) (in-memory or file-backed). Compare targets in [Graph database targets](../concepts/graph_database_targets.md).
+
+```python
+from graflo.db import GrafeoConfig
+
+# conn_conf = GrafeoConfig.in_memory(database="objects_relations")
+conn_conf = GrafeoConfig(database="objects_relations", path="objects_relations.grafeo")
+```
+
+Then run `uv run python ingest.py` as above. Full `GrafeoConfig` options: [Quick Start → Grafeo](../getting_started/quickstart.md#grafeo-embedded-target).
+
+Expected output:
+
+```
+Ingestion complete!
+Schema: objects_relations
+Vertices: ['person', 'vehicle', 'institution']
 ```
 
 ## Key Takeaways
