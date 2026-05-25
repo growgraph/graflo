@@ -40,7 +40,7 @@ description = "A framework for transforming tabular (CSV, SQL) and hierarchical 
 name = "graflo"
 readme = "README.md"
 requires-python = ">=3.11"
-version = "1.7.33"
+version = "1.7.34"
 
 [project.optional-dependencies]
 dev = [
@@ -68,6 +68,7 @@ install_tigergraph_queries = "graflo.cli.install_tigergraph_queries:install_tige
 manage_dbs = "graflo.cli.manage_dbs:manage_dbs"
 migrate_schema = "graflo.cli.migrate_schema:migrate_schema"
 plot_manifest = "graflo.cli.plot_manifest:plot_manifest"
+run_tigergraph_queries = "graflo.cli.run_tigergraph_queries:run_tigergraph_queries"
 xml2json = "graflo.cli.plot_schema:xml2json"
 
 [project.urls]
