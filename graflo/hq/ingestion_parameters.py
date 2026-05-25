@@ -1,4 +1,4 @@
-"""Ingestion parameters and row-error models for the caster.
+"""Ingestion parameters and per-document cast-failure models for the caster.
 
 This module exists to keep `graflo/hq/caster.py` focused on casting logic, while
 keeping ingestion-policy types stable and importable.
@@ -14,33 +14,34 @@ from pydantic import BaseModel, ConfigDict, Field
 from graflo.architecture.graph_types import GraphContainer
 
 
-class RowErrorBudgetExceeded(RuntimeError):
-    """Raised when total row cast failures exceed ``IngestionParams.max_row_errors``."""
+class DocErrorBudgetExceeded(RuntimeError):
+    """Raised when total document cast failures exceed ``IngestionParams.max_doc_errors``."""
 
     def __init__(
         self,
         *,
         total_failures: int,
         limit: int,
-        dead_letter_path: Path | None,
+        doc_error_sink_path: Path | None,
     ) -> None:
         self.total_failures = total_failures
         self.limit = limit
-        self.dead_letter_path = dead_letter_path
-        dl = str(dead_letter_path) if dead_letter_path else "(not configured)"
+        self.doc_error_sink_path = doc_error_sink_path
+        sink = str(doc_error_sink_path) if doc_error_sink_path else "(not configured)"
         super().__init__(
-            f"Row error budget exceeded: {total_failures} total failures "
-            f"(limit {limit}). Dead letter: {dl}"
+            f"Document error budget exceeded: {total_failures} total failures "
+            f"(limit {limit}). Doc error sink (jsonl.gz): {sink}"
         )
 
 
-class RowCastFailure(BaseModel):
-    """Structured record for a single row that failed during resource casting."""
+class DocCastFailure(BaseModel):
+    """Structured record for one source document that failed during resource casting."""
 
     resource_name: str
-    row_index: int
+    doc_index: int
     exception_type: str
     message: str
+    failure_kind: Literal["document", "transform"] = "document"
     traceback: str = Field(
         default="",
         description="Formatted traceback, truncated to the configured max length.",
@@ -49,15 +50,27 @@ class RowCastFailure(BaseModel):
         default=None,
         description="Subset or truncated JSON of the source document for debugging.",
     )
+    location_path: tuple[str | int | None, ...] | None = Field(
+        default=None,
+        description="Extraction location path when failure_kind is transform.",
+    )
+    transform_label: str | None = Field(
+        default=None,
+        description="Transform name or module.foo when failure_kind is transform.",
+    )
+    nulled_fields: tuple[str, ...] | None = Field(
+        default=None,
+        description="Output fields set to None when failure_kind is transform.",
+    )
 
 
 class CastBatchResult(BaseModel):
-    """Outcome of casting a batch through a resource (possibly with skipped rows)."""
+    """Outcome of casting a batch through a resource (possibly with skipped documents)."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     graph: GraphContainer
-    failures: list[RowCastFailure] = Field(default_factory=list)
+    failures: list[DocCastFailure] = Field(default_factory=list)
 
 
 class IngestionParams(BaseModel):
@@ -84,6 +97,14 @@ class IngestionParams(BaseModel):
         ge=1,
         description="Number of source items to group per batch for casting and writes.",
     )
+    batch_prefetch: int = Field(
+        default=2,
+        ge=1,
+        description=(
+            "How many batches to prefetch ahead while processing current batch. "
+            "Keeps ingestion lazy with bounded memory."
+        ),
+    )
     dry: bool = False
     init_only: bool = False
     limit_files: int | None = None
@@ -98,8 +119,20 @@ class IngestionParams(BaseModel):
     strict_references: bool = True
     strict_registry: bool = True
     dynamic_edges: bool = False
-    on_row_error: Literal["skip", "fail"] = "skip"
-    row_error_dead_letter_path: Path | None = None
-    max_row_errors: int | None = None
-    row_error_doc_preview_max_bytes: int = 4096
-    row_error_doc_keys: tuple[str, ...] | None = None
+    on_doc_error: Literal["skip", "fail"] = "skip"
+    doc_error_sink_path: Path | None = Field(
+        default=None,
+        description=(
+            "Append gzip-compressed JSONL cast-failure records (typical suffix .jsonl.gz)."
+        ),
+    )
+    max_doc_errors: int | None = None
+    doc_error_preview_max_bytes: int = 4096
+    doc_error_preview_keys: tuple[str, ...] | None = None
+    drop_empty_identity_docs: bool = Field(
+        default=True,
+        description=(
+            "After casting, remove vertex docs and edge tuples where all schema "
+            "identity fields for that vertex type are missing, null, or empty string."
+        ),
+    )

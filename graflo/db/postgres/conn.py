@@ -36,8 +36,6 @@ from graflo.architecture.onto_sql import (
 )
 from graflo.db.connection import PostgresConfig
 
-from graflo.hq.fuzzy_matcher import FuzzyMatcher
-
 from .inference_utils import (
     infer_edge_vertices_from_table_name,
     infer_vertex_from_column_name,
@@ -859,6 +857,8 @@ class PostgresConnection:
 
         # Create fuzzy matcher once for all tables (significant performance improvement)
         # Caching is enabled by default for better performance
+        from graflo.hq.fuzzy_matcher import FuzzyMatcher
+
         matcher = FuzzyMatcher(vertex_table_names, threshold=0.6, enable_cache=True)
 
         tables = self.get_tables(schema_name)

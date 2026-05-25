@@ -56,8 +56,19 @@ nav:
     -   Creating a Manifest: getting_started/creating_manifest.md
 -   Concepts:
     -   Concepts Overview: concepts/index.md
+    -   Architecture diagrams: concepts/architecture_diagrams.md
+    -   Core components: concepts/core_components.md
+    -   Graph database targets: concepts/graph_database_targets.md
+    -   Features, migration, and practices: concepts/features_and_practices.md
+    -   Manifest evolution: concepts/manifest_evolution.md
+    -   Object storage (S3 staging): concepts/object_storage.md
     -   Transforms: concepts/transforms.md
+    -   Table connector views and SelectSpec: concepts/table_connector_views.md
+    -   Runtime connector updates: concepts/runtime_connector_updates.md
     -   Backend Index Behavior: concepts/backend_indexes.md
+    -   Document cast errors and doc error sink: concepts/ingestion_doc_errors.md
+-   Guides:
+    -   TigerGraph bulk load (CSV + LOADING JOB): guides/tigergraph_bulk_load.md
 -   Examples:
     -   Examples Index: examples/index.md
     -   1 - Ingest Multiple Tabular Sources (CSV, ArangoDB): examples/example-1.md
@@ -66,9 +77,12 @@ nav:
     -   4 - Dynamic Relations from Keys (Neo4j): examples/example-4.md
     -   5 - Ingesting Data from PostgreSQL Tables: examples/example-5.md
     -   6 - RDF / Turtle Ingestion with Explicit Resource Mapping: examples/example-6.md
-    -   7 - Polymorphic Objects and Relations (vertex_router / edge_router): examples/example-7.md
+    -   7 - Polymorphic Objects and Relations (vertex_router + dynamic edge): examples/example-7.md
     -   8 - Multi-Edge Weights with Filters and dress Transform: examples/example-8.md
     -   9 - Explicit connector_connection Proxy Wiring: examples/example-9.md
+    -   10 - TigerGraph bulk load and S3 staging: examples/example-10.md
+    -   11 - Flat-row dynamic edges with vertex_router: examples/example-11.md
+    -   12 - Vertex Roles and Multi-intent Edges: examples/example-12.md
 -   API Reference: reference/
 -   Contributing: contributing.md
 markdown_extensions:

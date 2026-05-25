@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - Python 3.11+
-- A graph database (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph, or Grafeo) if you plan to use database features. Grafeo is embedded and requires no external server, it is included as a core dependency.
+- A graph database if you plan to ingest into a target — see [Graph database targets](../concepts/graph_database_targets.md). **[Grafeo](https://github.com/GrafeoDB/grafeo)** is embedded and needs no external server.
 
 ## Installation Methods
 
@@ -93,7 +93,7 @@ print(graflo.__version__)
 
 Instructions on how to spin up ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph, and Apache Fuseki as Docker containers using `docker compose` are provided here: [github.com/growgraph/graflo/docker](https://github.com/growgraph/graflo/tree/main/docker)
 
-**Grafeo** requires no Docker or external services, it runs embedded in-process. See the [Quick Start Guide](quickstart.md) for `GrafeoConfig` usage.
+**[Grafeo](https://github.com/GrafeoDB/grafeo)** needs no Docker stack — use `GrafeoConfig` as in [Quick Start → Grafeo](quickstart.md#grafeo-embedded-target).
 
 ## Configuration
 

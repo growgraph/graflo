@@ -9,7 +9,7 @@ Instead of manually defining schemas and exporting data to files, this example s
 - **Automatically detect** vertex-like and edge-like tables in PostgreSQL using intelligent heuristics
 - **Infer the graph schema** from the database structure
 - **Map PostgreSQL types** to graflo Field types automatically
-- **Create bindings** that map PostgreSQL tables to graph resources
+- **Infer bindings automatically** that map PostgreSQL tables to graph resources
 - **Ingest data directly** from PostgreSQL into a graph database
 
 ## Requirements
@@ -64,7 +64,7 @@ The example uses a PostgreSQL database with a typical 3NF (Third Normal Form) sc
 
 ## Automatic Manifest Inference
 
-The `GraphEngine.infer_manifest()` method automatically analyzes your PostgreSQL database and creates a complete `GraphManifest` (with `schema` + `ingestion_model`). This process involves several sophisticated steps:
+The `GraphEngine.infer_manifest()` method automatically analyzes your PostgreSQL database and creates a complete `GraphManifest` (with `schema` + `ingestion_model` + `bindings`). This process involves several sophisticated steps:
 
 ### How Schema Inference Works
 
@@ -321,25 +321,23 @@ with open(schema_output_file, "w") as f:
 logger.info(f"Inferred schema saved to {schema_output_file}")
 ```
 
-### Step 5: Create Bindings from PostgreSQL Tables
+### Step 5: Use Inferred Bindings (or Override Them)
 
-Create `Bindings` that map PostgreSQL tables to resources:
+`infer_manifest(...)` already infers `bindings` (including `resource_connector` and
+`connector_connection`) from the same PostgreSQL introspection snapshot:
 
 ```python
-
 from graflo.hq import GraphEngine
 
 # Create GraphEngine instance
 engine = GraphEngine()
 
-# Create bindings from PostgreSQL tables
-bindings = engine.create_bindings(
-    postgres_conf,
-    schema_name="public"
-)
+# infer_manifest now returns schema + ingestion_model + bindings
+manifest = engine.infer_manifest(postgres_conf, schema_name="public")
+bindings = manifest.require_bindings()
 ```
 
-**Optional: datetime columns for date-range filtering**
+**Optional: override inferred bindings for date-range filtering**
 
 To restrict ingestion to a time window, pass `datetime_columns`: a mapping from resource (table) name to the name of the datetime column used for filtering. Use this together with `IngestionParams(datetime_after=..., datetime_before=...)` in the ingestion step:
 
@@ -363,7 +361,7 @@ This creates `TableConnector` instances for each table, which:
 - Map table names to resource names (e.g., `users` table → `users` resource)
 - Store PostgreSQL connection configuration
 - Enable the Caster to query data directly from PostgreSQL using SQL
-- Optionally store a `date_field` for date-range filtering when `datetime_columns` is provided
+- Optionally set **`time_filter.column`** (via `datetime_columns` → **`ColumnTimeFilter`**) so per-table ingestion date ranges know which column to filter on
 
 **How Bindings Work:**
 
@@ -409,7 +407,7 @@ ingestion_params = IngestionParams(
     # or datetime_column below)
     # datetime_after="2020-01-01",
     # datetime_before="2021-01-01",
-    # datetime_column="created_at",  # default column when a connector has no date_field
+    # datetime_column="created_at",  # default column when a connector has no time_filter column hint
 )
 
 engine.define_and_ingest(
@@ -681,7 +679,7 @@ Understanding how data flows from PostgreSQL to the graph database:
 
 1. **Connection**: Establish connection to PostgreSQL database
 2. **Schema Inference**: Analyze database structure and generate graflo Schema
-3. **Bindings Creation**: Create bindings that map PostgreSQL tables to resources
+3. **Bindings Inference**: Build bindings that map PostgreSQL tables to resources
 4. **Ingestion Process**:
    - For each resource, query the corresponding PostgreSQL table
    - Transform each row according to the resource mapping

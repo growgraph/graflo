@@ -1,8 +1,16 @@
 """Resource connectors and named binding collections."""
 
-from .core import Bindings, ResourceConnectorBinding
+from .core import (
+    Bindings,
+    BindingsConfig,
+    BindingsRegistry,
+    ResourceConnectorBinding,
+    StagingProxyBinding,
+)
+from .column_time_filter import ColumnTimeFilter
 from .connectors import (
     BoundSourceKind,
+    ConnectorUpdate,
     FileConnector,
     JoinClause,
     ResourceConnector,
@@ -12,8 +20,13 @@ from .connectors import (
 
 __all__ = [
     "Bindings",
+    "BindingsConfig",
+    "BindingsRegistry",
     "BoundSourceKind",
+    "ColumnTimeFilter",
+    "ConnectorUpdate",
     "ResourceConnectorBinding",
+    "StagingProxyBinding",
     "FileConnector",
     "JoinClause",
     "ResourceConnector",

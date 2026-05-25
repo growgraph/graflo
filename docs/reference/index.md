@@ -31,6 +31,8 @@ Database connection and management components:
 - **[Cypher helpers](db/cypher/__init__.md)** — Shared Cypher utilities ([escape](db/cypher/escape.md), [relationship MERGE](db/cypher/rel_merge.md))
 - **[FalkorDB](db/falkordb/__init__.md)**:
   - [Connection](db/falkordb/conn.md): FalkorDB-specific connection implementation
+- **[Grafeo](db/grafeo/__init__.md)** ([project](https://github.com/GrafeoDB/grafeo)):
+  - [Connection](db/grafeo/conn.md): Embedded Grafeo connection (in-memory or file-backed)
 - **[TigerGraph](db/tigergraph/__init__.md)**:
   - [Connection](db/tigergraph/conn.md): TigerGraph-specific connection implementation with REST++ API and GSQL support
 - **[NebulaGraph](db/nebula/__init__.md)**:

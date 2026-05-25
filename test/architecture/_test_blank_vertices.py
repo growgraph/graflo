@@ -15,10 +15,9 @@ logger = logging.getLogger(__name__)
 @pytest.fixture()
 def schema_ibes_vertices():
     tc = yaml.safe_load("""
-    blank_vertices:
-    -   publication
     vertices:
     -   name: publication
+        blank: true
         fields:
         -   datetime_review
         -   datetime_announce

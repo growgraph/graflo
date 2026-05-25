@@ -13,10 +13,7 @@ core_schema:
     vertex_config:
         vertices:
         -   identity:
-            -   _key
             -   _uri
-            -   fullName
-            -   orcid
             name: Researcher
             properties:
             -   name: _key
@@ -24,22 +21,7 @@ core_schema:
             -   name: fullName
             -   name: orcid
         -   identity:
-            -   _key
             -   _uri
-            -   instName
-            -   country
-            name: Institution
-            properties:
-            -   name: _key
-            -   name: _uri
-            -   name: instName
-            -   name: country
-        -   identity:
-            -   _key
-            -   _uri
-            -   title
-            -   year
-            -   doi
             name: Publication
             properties:
             -   name: _key
@@ -47,5 +29,13 @@ core_schema:
             -   name: title
             -   name: year
             -   name: doi
+        -   identity:
+            -   _uri
+            name: Institution
+            properties:
+            -   name: _key
+            -   name: _uri
+            -   name: instName
+            -   name: country
 metadata:
     name: academic_kg

@@ -11,7 +11,7 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from graflo.architecture.contract.declarations.ingestion_model import IngestionModel
+from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.schema import Schema
 from graflo.data_source import DataSourceFactory, DataSourceRegistry
 from graflo.data_source.sql import SQLConfig, SQLDataSource
@@ -329,8 +329,6 @@ class RegistryBuilder:
             sql_config = SQLConfig(
                 connection_string=connection_string,
                 query=query,
-                pagination=True,
-                page_size=ingestion_params.batch_size,
             )
             sql_source = SQLDataSource(config=sql_config)
 

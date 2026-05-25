@@ -11,7 +11,7 @@ This guide will help you get started with graflo by showing you how to transform
 - `DataSource` defines where data comes from (files, APIs, SQL databases, in-memory objects).
 - `Bindings` manages the mapping of resources to their physical data sources (files or PostgreSQL tables). 
 - `DataSourceRegistry` maps DataSources to Resources (many DataSources can map to the same Resource).
-- Database backend configurations use Pydantic `BaseSettings` with environment variable support. Use `ArangoConfig`, `Neo4jConfig`, `TigergraphConfig`, `FalkordbConfig`, `MemgraphConfig`, `NebulaConfig`, or `PostgresConfig` directly, or load from docker `.env` files using `from_docker_env()`. All configs inherit from `DBConfig` and support unified `database`/`schema_name` structure with `effective_database` and `effective_schema` properties for database-agnostic access. If `effective_schema` is not set, `GraphEngine.define_schema()` automatically uses `schema.metadata.name` as fallback.
+- Database backend configurations use Pydantic `BaseSettings` with environment variable support. Use `ArangoConfig`, `Neo4jConfig`, `TigergraphConfig`, `FalkordbConfig`, `MemgraphConfig`, `NebulaConfig`, `GrafeoConfig`, or `PostgresConfig` directly, or load from docker `.env` files using `from_docker_env()`. All configs inherit from `DBConfig` and support unified `database`/`schema_name` structure with `effective_database` and `effective_schema` properties for database-agnostic access. If `effective_schema` is not set, `GraphEngine.define_schema()` automatically uses `schema.metadata.name` as fallback.
 
 ## Basic Example
 
@@ -126,7 +126,7 @@ engine.define_and_ingest(
 # )
 ```
 
-Here `schema` defines the logical graph, while `ingestion_model` defines resources/transforms and `bindings` maps resources to physical data sources. See [Creating a Manifest](creating_manifest.md) and [Concepts — Schema](../concepts/index.md#schema) for details.
+Here `schema` defines the logical graph, while `ingestion_model` defines resources/transforms and `bindings` maps resources to physical data sources. See [Creating a Manifest](creating_manifest.md) and [Concepts — Schema](../concepts/core_components.md#schema) for details.
 
 `Bindings` maps resource names (from `IngestionModel`) to one or more physical data sources (the same resource may list several connectors):
 - **FileConnector**: For file-based resources with `regex` for matching filenames and `sub_path` for the directory to search
@@ -178,16 +178,16 @@ from graflo.db.connection.onto import PostgresConfig
 # Connect to PostgreSQL
 pg_config = PostgresConfig.from_docker_env()  # Or from_env(), or create directly
 
-# Create GraphEngine and infer schema from PostgreSQL (automatically detects vertices and edges)
+# Create GraphEngine and infer a full manifest from PostgreSQL
+# (automatically detects vertices/edges/resources and also infers bindings)
 # Connection is automatically managed inside infer_manifest()
 engine = GraphEngine()
 manifest = engine.infer_manifest(pg_config, schema_name="public")
 
-# Create bindings from PostgreSQL tables
-engine = GraphEngine()
-bindings = engine.create_bindings(pg_config, schema_name="public")
+# Inferred bindings are available on the manifest by default
+bindings = manifest.require_bindings()
 
-# Or create bindings manually
+# You can still create or override bindings manually when needed
 from graflo.architecture.contract.bindings import Bindings, TableConnector
 
 bindings = Bindings()
@@ -317,6 +317,21 @@ uv run ingest \
     --data-source-config-path data_sources.yaml
 ```
 
+## Document cast errors and `--doc-error-sink`
+
+If some source documents fail while casting a resource (bad shape, transform error, etc.), you can keep ingesting the rest with **`--on-doc-error skip`** (the default) and record each failure as gzip-compressed JSON lines:
+
+```bash
+uv run ingest \
+    --db-config-path config/db.yaml \
+    --schema-path config/manifest.yaml \
+    --source-path data/ \
+    --on-doc-error skip \
+    --doc-error-sink ./artifacts/doc_cast_failures.jsonl.gz
+```
+
+Inspect the file with **`zcat ./artifacts/doc_cast_failures.jsonl.gz | head`**. The same option exists on **`IngestionParams.doc_error_sink_path`** when you drive **`Caster`** or **`GraphEngine`** from Python. Full behavior (budget limits, document preview bounds, logging when no path is set) is described under [Document cast errors and doc error sink](../concepts/ingestion_doc_errors.md).
+
 ## Database Configuration Options
 
 graflo supports multiple ways to configure database connections:
@@ -373,7 +388,9 @@ export NEBULA_SCHEMA_NAME=mygraph
 export NEBULA_VERSION=3  # "3" for v3.x (nGQL) or "5" for v5.x (GQL)
 ```
 
-**Grafeo (embedded, no server required):**
+### Grafeo embedded target {#grafeo-embedded-target}
+
+[Grafeo](https://github.com/GrafeoDB/grafeo) is a Rust-native graph database that runs **in-process** (see [Graph database targets](../concepts/graph_database_targets.md) for how it compares to server backends) (no Docker or separate server). Graflo ships it as a core dependency; use `GrafeoConfig` like any other `DBConfig`:
 
 ```python
 from graflo.db.connection.onto import GrafeoConfig
@@ -397,7 +414,7 @@ export POSTGRES_SCHEMA_NAME=public
 Then load the config:
 
 ```python
-from graflo.db.connection.onto import ArangoConfig, Neo4jConfig, TigergraphConfig, FalkordbConfig, MemgraphConfig, NebulaConfig, PostgresConfig, GrafeoConfig
+from graflo.db.connection.onto import ArangoConfig, Neo4jConfig, TigergraphConfig, FalkordbConfig, MemgraphConfig, NebulaConfig, PostgresConfig
 
 # Load from default environment variables
 arango_conf = ArangoConfig.from_env()
@@ -408,8 +425,7 @@ memgraph_conf = MemgraphConfig.from_env()
 nebula_conf = NebulaConfig.from_env()
 pg_conf = PostgresConfig.from_env()
 
-# Grafeo (no env vars needed — embedded)
-grafeo_conf = GrafeoConfig.in_memory(database="mygraph")
+# Grafeo: no env vars — see [Grafeo embedded target](#grafeo-embedded-target) above
 ```
 
 ### Multiple Configurations with Prefixes

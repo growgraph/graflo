@@ -12,8 +12,9 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from graflo.architecture.contract.ingestion.resource import ResourceConfig
 from graflo.architecture.pipeline.runtime.actor import ActorWrapper, EdgeActor
-from graflo.architecture.contract.declarations.resource import Resource
+from graflo.architecture.contract.runtime import ResourceRuntime
 from graflo.filter.onto import ComparisonOperator, FilterExpression
 from graflo.architecture.contract.bindings import JoinClause, TableConnector
 
@@ -29,7 +30,7 @@ _TARGET_ALIAS = "t"
 
 
 def enrich_edge_connector_with_joins(
-    resource: Resource,
+    resource: ResourceRuntime | ResourceConfig,
     connector: TableConnector,
     bindings: Bindings,
     vertex_config: VertexConfig,
@@ -45,7 +46,8 @@ def enrich_edge_connector_with_joins(
     provided explicit join specs).
 
     Args:
-        resource: The Resource whose pipeline is inspected.
+        resource: Declarative :class:`ResourceConfig` or initialized
+            :class:`ResourceRuntime` whose pipeline is inspected.
         connector: The table connector to enrich (mutated in-place).
         bindings: The Bindings collection holding all vertex table connectors.
         vertex_config: VertexConfig for looking up primary keys.
@@ -53,7 +55,7 @@ def enrich_edge_connector_with_joins(
     if connector.joins:
         return
 
-    edge_actors = _collect_edge_actors(resource.root)
+    edge_actors = _collect_edge_actors(_actor_root_for_joins(resource))
     if not edge_actors:
         return
 
@@ -64,6 +66,10 @@ def enrich_edge_connector_with_joins(
         edge = ea.edge
         der = ea.derivation
         if not der.match_source or not der.match_target:
+            continue
+        # Dynamic EdgeActors (source_type_field set) resolve types at row-processing
+        # time; static vertex type info is not available for JOIN generation.
+        if edge is None:
             continue
 
         source_info = _vertex_table_info(edge.source, bindings, vertex_config)
@@ -126,6 +132,13 @@ def enrich_edge_connector_with_joins(
 # ------------------------------------------------------------------
 # Internal helpers
 # ------------------------------------------------------------------
+
+
+def _actor_root_for_joins(resource: ResourceRuntime | ResourceConfig) -> ActorWrapper:
+    """Return the actor tree used to discover edge steps for SQL auto-join."""
+    if isinstance(resource, ResourceRuntime):
+        return resource.root
+    return ActorWrapper(*resource.pipeline)
 
 
 def _collect_edge_actors(wrapper: ActorWrapper) -> list[EdgeActor]:

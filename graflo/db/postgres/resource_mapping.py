@@ -2,21 +2,28 @@
 
 This module provides functionality to map PostgreSQL tables (both vertex and edge tables)
 to graflo Resource objects that can be used for data ingestion.
+
+Resources here use the original PostgreSQL column names. Reserved-word /
+target-DB-specific renames are applied a posteriori via
+:class:`graflo.hq.sanitizer.Sanitizer`.
 """
 
-import logging
-from collections import defaultdict
-from typing import Any
+from __future__ import annotations
 
-from graflo.architecture.contract.declarations.resource import Resource
+import logging
+from typing import TYPE_CHECKING, Any
+
+from graflo.architecture.contract.ingestion.resource import Resource
 from graflo.architecture.schema.vertex import VertexConfig
 from .conn import EdgeTableInfo, SchemaIntrospectionResult
-from graflo.hq.fuzzy_matcher import FuzzyMatcher
 from .inference_utils import (
     detect_separator,
     split_by_separator,
 )
 from ...architecture import EdgeConfig
+
+if TYPE_CHECKING:
+    from graflo.hq.fuzzy_matcher import FuzzyMatcher
 
 logger = logging.getLogger(__name__)
 
@@ -40,37 +47,21 @@ class PostgresResourceMapper:
         self,
         table_name: str,
         vertex_name: str,
-        vertex_attribute_mappings: defaultdict[str, dict[str, str]],
     ) -> Resource:
         """Create a Resource for a vertex table.
+
+        The resulting pipeline is a single ``{"vertex": vertex_name}`` step.
+        Field renames driven by reserved-word sanitization are added later by
+        :class:`graflo.hq.sanitizer.Sanitizer`.
 
         Args:
             table_name: Name of the PostgreSQL table
             vertex_name: Name of the vertex type (typically same as table_name)
-            vertex_attribute_mappings: Dictionary mapping vertex names to field mappings
-                                     (original_field -> sanitized_field) for transformations
 
         Returns:
             Resource: Resource configured to ingest vertex data
         """
         apply: list[dict[str, Any]] = [{"vertex": vertex_name}]
-
-        source_to_vertex_field_map = vertex_attribute_mappings[vertex_name]
-        if source_to_vertex_field_map:
-            # Vertex actor expects `from` in {vertex_field: doc_field} format.
-            vertex_field_to_source_map = {
-                vertex_field: source_field
-                for source_field, vertex_field in source_to_vertex_field_map.items()
-                if source_field != vertex_field
-            }
-            if vertex_field_to_source_map:
-                apply = [{"vertex": vertex_name, "from": vertex_field_to_source_map}]
-                logger.debug(
-                    "Added field mappings for vertex '%s': %s",
-                    vertex_name,
-                    vertex_field_to_source_map,
-                )
-
         resource = Resource(
             name=table_name,
             pipeline=apply,
@@ -87,16 +78,16 @@ class PostgresResourceMapper:
         edge_table_info: EdgeTableInfo,
         vertex_config: VertexConfig,
         matcher: FuzzyMatcher,
-        vertex_attribute_mappings: defaultdict[str, dict[str, str]],
     ) -> Resource:
         """Create a Resource for an edge table.
+
+        Field renames driven by reserved-word sanitization are added later by
+        :class:`graflo.hq.sanitizer.Sanitizer`.
 
         Args:
             edge_table_info: Edge table information from introspection
             vertex_config: Vertex configuration for source/target validation
             matcher: Optional fuzzy matcher for better performance (with caching enabled)
-            vertex_attribute_mappings: Dictionary mapping vertex names to field mappings
-                                     (original_field -> sanitized_field) for transformations
 
         Returns:
             Resource: Resource configured to ingest edge data
@@ -108,7 +99,6 @@ class PostgresResourceMapper:
         target_column = edge_table_info.target_column
         relation = edge_table_info.relation
 
-        # Verify source and target vertices exist
         if source_table not in vertex_config.vertex_set:
             raise ValueError(
                 f"Source vertex '{source_table}' for edge table '{table_name}' "
@@ -121,16 +111,12 @@ class PostgresResourceMapper:
                 f"not found in vertex config"
             )
 
-        # Get primary key fields for source and target vertices
         source_vertex_obj = vertex_config[source_table]
         target_vertex_obj = vertex_config[target_table]
 
-        # Logical identity replaces implicit primary-index semantics.
         source_pk_fields = list(source_vertex_obj.identity)
         target_pk_fields = list(target_vertex_obj.identity)
 
-        # Use heuristics to infer PK field names from column names
-        # This handles cases like "bla_user" -> "user" vertex -> use "id" or matched field
         source_pk_field = self._infer_pk_field_from_column(
             source_column,
             source_table,
@@ -144,67 +130,23 @@ class PostgresResourceMapper:
             matcher,
         )
 
-        # Create apply list using source_vertex and target_vertex pattern
-        # This pattern explicitly specifies which vertex type each mapping targets,
-        # avoiding attribute collisions between different vertex types
-        apply = []
+        apply: list[dict[str, Any]] = []
 
-        # Get all column names from the edge table for mapping
-        edge_column_names = {col.name for col in edge_table_info.columns}
-
-        # First mapping: map source foreign key column to source vertex's primary key field
         if source_column:
-            source_map = {source_column: source_pk_field}
-            # Add attribute mappings for the source vertex
-            # These mappings transform original field names to sanitized field names
-            source_attr_mappings = vertex_attribute_mappings[source_table]
-            # Add mappings for columns that match original field names that were sanitized
-            for orig_field, sanitized_field in source_attr_mappings.items():
-                # Only add mapping if:
-                # 1. The column exists in the edge table
-                # 2. It's not already mapped (e.g., as the source_column -> source_pk_field)
-                # 3. The sanitized field is different from the original (actual sanitization occurred)
-                if (
-                    orig_field in edge_column_names
-                    and orig_field != source_column
-                    and orig_field != sanitized_field
-                ):
-                    source_map[orig_field] = sanitized_field
+            apply.append(
+                {
+                    "vertex": source_table,
+                    "from": {source_pk_field: source_column},
+                }
+            )
 
-            # from format: {vertex_field: doc_field}
-            source_from = {v_f: d_f for d_f, v_f in source_map.items()}
-            source_map_config = {
-                "vertex": source_table,
-                "from": source_from,
-            }
-            apply.append(source_map_config)
-
-        # Second mapping: map target foreign key column to target vertex's primary key field
         if target_column:
-            target_map = {target_column: target_pk_field}
-            # Add attribute mappings for the target vertex
-            # These mappings transform original field names to sanitized field names
-            target_attr_mappings = vertex_attribute_mappings[target_table]
-            # Add mappings for columns that match original field names that were sanitized
-            for orig_field, sanitized_field in target_attr_mappings.items():
-                # Only add mapping if:
-                # 1. The column exists in the edge table
-                # 2. It's not already mapped (e.g., as the target_column -> target_pk_field)
-                # 3. The sanitized field is different from the original (actual sanitization occurred)
-                if (
-                    orig_field in edge_column_names
-                    and orig_field != target_column
-                    and orig_field != sanitized_field
-                ):
-                    target_map[orig_field] = sanitized_field
-
-            # from format: {vertex_field: doc_field}
-            target_from = {v_f: d_f for d_f, v_f in target_map.items()}
-            target_map_config = {
-                "vertex": target_table,
-                "from": target_from,
-            }
-            apply.append(target_map_config)
+            apply.append(
+                {
+                    "vertex": target_table,
+                    "from": {target_pk_field: target_column},
+                }
+            )
 
         resource = Resource(
             name=table_name,
@@ -291,7 +233,6 @@ class PostgresResourceMapper:
         introspection_result: SchemaIntrospectionResult,
         vertex_config: VertexConfig,
         edge_config: EdgeConfig,
-        vertex_attribute_mappings: defaultdict[str, dict[str, str]],
         fuzzy_threshold: float | None = None,
     ) -> list[Resource]:
         """Create Resources from PostgreSQL tables.
@@ -304,38 +245,32 @@ class PostgresResourceMapper:
             vertex_config: Inferred vertex configuration
             edge_config: Inferred edge configuration
             fuzzy_threshold: Similarity threshold for fuzzy matching (0.0 to 1.0)
-            vertex_attribute_mappings: Dictionary mapping vertex names to field mappings
-                                     (original_field -> sanitized_field) for transformations
 
         Returns:
             list[Resource]: List of Resources for all tables
         """
         resources = []
 
-        # Create fuzzy matcher once for all edge tables (significant performance improvement)
-        # Caching is enabled by default for better performance
         vertex_names = list(vertex_config.vertex_set)
         threshold = (
             fuzzy_threshold if fuzzy_threshold is not None else self.fuzzy_threshold
         )
+        from graflo.hq.fuzzy_matcher import FuzzyMatcher
+
         matcher = FuzzyMatcher(vertex_names, threshold, enable_cache=True)
 
-        # Map vertex tables to resources
         vertex_tables = introspection_result.vertex_tables
         for table_info in vertex_tables:
             table_name = table_info.name
-            vertex_name = table_name  # Use table name as vertex name
-            resource = self.create_vertex_resource(
-                table_name, vertex_name, vertex_attribute_mappings
-            )
+            vertex_name = table_name
+            resource = self.create_vertex_resource(table_name, vertex_name)
             resources.append(resource)
 
-        # Map edge tables to resources
         edge_tables = introspection_result.edge_tables
         for edge_table_info in edge_tables:
             try:
                 resource = self.create_edge_resource(
-                    edge_table_info, vertex_config, matcher, vertex_attribute_mappings
+                    edge_table_info, vertex_config, matcher
                 )
                 resources.append(resource)
             except ValueError as e:

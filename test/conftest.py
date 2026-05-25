@@ -19,6 +19,10 @@ logger = logging.getLogger(__name__)
 def pytest_configure(config):
     config.addinivalue_line(
         "markers",
+        "bulk_e2e: TigerGraph native bulk E2E tests (skipped unless --run-bulk-e2e)",
+    )
+    config.addinivalue_line(
+        "markers",
         "performance: performance / stress tests (skipped unless --run-performance)",
     )
     config.addinivalue_line(
@@ -28,6 +32,12 @@ def pytest_configure(config):
 
 def pytest_addoption(parser):
     parser.addoption("--reset", action="store_true")
+    parser.addoption(
+        "--run-bulk-e2e",
+        action="store_true",
+        default=False,
+        help="Run TigerGraph native bulk E2E tests marked @pytest.mark.bulk_e2e",
+    )
     parser.addoption(
         "--run-performance",
         action="store_true",
@@ -44,6 +54,7 @@ def pytest_addoption(parser):
 
 def pytest_collection_modifyitems(config, items):
     _skip_map = {
+        "bulk_e2e": ("--run-bulk-e2e", "need --run-bulk-e2e option to run"),
         "performance": ("--run-performance", "need --run-performance option to run"),
         "nebula": ("--run-nebula", "need --run-nebula option to run"),
     }

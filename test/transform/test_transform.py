@@ -1,8 +1,9 @@
 import logging
+from typing import Any
 
 import pytest
 
-from graflo.architecture.contract.declarations.transform import (
+from graflo.architecture.contract.ingestion.transform import (
     DressConfig,
     KeySelectionConfig,
     ProtoTransform,
@@ -17,6 +18,11 @@ from graflo.util.transform import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _transform_from_config(config: dict[str, Any]) -> Transform:
+    """Build ``Transform`` from manifest-style dict (coerces str/list ``input``/``output``)."""
+    return Transform.model_validate(config)
 
 
 @pytest.fixture
@@ -40,7 +46,7 @@ def test_to_int():
         "input": "x",
         "output": "y",
     }
-    t = Transform(**kwargs)  # type: ignore
+    t = _transform_from_config(kwargs)
     assert t("12345") == {"y": 12345}
 
 
@@ -52,40 +58,47 @@ def test_round():
         "output": "y",
         "params": {"ndigits": 3},
     }
-    t = Transform(**kwargs)  # type: ignore
+    t = _transform_from_config(kwargs)
     r = t(0.1234)
     assert r == {"y": 0.123}
 
 
 def test_map():
     kwargs = {"rename": {"x": "y"}}
-    t = Transform(**kwargs)  # type: ignore
+    t = _transform_from_config(kwargs)
     r = t(0.1234)
     assert r["y"] == 0.1234
 
 
 def test_map_doc():
     kwargs = {"rename": {"x": "y"}}
-    t = Transform(**kwargs)  # type: ignore
+    t = _transform_from_config(kwargs)
     r = t({"x": 0.1234})
     assert r["y"] == 0.1234
 
 
+def test_map_doc_partial_missing_key():
+    t = Transform(rename={"x": "y", "z": "w"})
+    r = t({"x": 1})
+    assert r == {"y": 1}
+    assert "w" not in r
+
+
 def test_input_output():
     kwargs = {"input": ["x"], "output": ["y"]}
-    t = Transform(**kwargs)  # type: ignore
+    t = _transform_from_config(kwargs)
     assert t(0.1)["y"] == 0.1
 
 
 def test_functional_output_defaults_to_input_single():
     kwargs = {"module": "builtins", "foo": "int", "input": "value"}
-    t = Transform(**kwargs)  # type: ignore
+    t = _transform_from_config(kwargs)
     assert t({"value": "7"}) == {"value": 7}
 
 
 def test_mapping_output_defaults_to_input_list():
     kwargs = {"input": ["x", "z"]}
-    t = Transform(**kwargs)  # type: ignore
+    t = _transform_from_config(kwargs)
     assert t({"x": 1, "z": 2}) == {"x": 1, "z": 2}
 
 
@@ -103,7 +116,7 @@ def test_dress():
         "dress": {"key": "name", "value": "value"},
         "params": {"ndigits": 3},
     }
-    t = Transform(**kwargs)  # type: ignore
+    t = _transform_from_config(kwargs)
     r = t({"Open": 0.1234})
     assert r == {"name": "Open", "value": 0.123}
 
@@ -128,9 +141,19 @@ def test_dress_complete():
         "dress": {"key": "name", "value": "value"},
         "params": {"ndigits": 3},
     }
-    t = Transform(**kwargs)  # type: ignore
+    t = _transform_from_config(kwargs)
     r = t(doc)
     assert r == {"name": "Open", "value": 17.9}
+
+
+def test_dress_without_function_uses_input_value():
+    kwargs = {
+        "input": ["vol"],
+        "dress": {"key": "type", "value": "value"},
+    }
+    t = _transform_from_config(kwargs)
+    r = t({"vol": 0.123})
+    assert r == {"type": "vol", "value": 0.123}
 
 
 def test_dress_derives_output():
@@ -141,7 +164,7 @@ def test_dress_derives_output():
         "input": ["Volume"],
         "dress": {"key": "name", "value": "value"},
     }
-    t = Transform(**kwargs)  # type: ignore
+    t = _transform_from_config(kwargs)
     assert t.output == ("name", "value")
     assert t.dress is not None
     assert t.dress.key == "name"
@@ -195,7 +218,7 @@ def test_switch_legacy_rejected():
         "params": {"ndigits": 3},
     }
     with pytest.raises(ValueError, match="Legacy `switch` is no longer supported"):
-        Transform(**kwargs)  # type: ignore
+        _transform_from_config(kwargs)
 
 
 def test_dress_list_legacy_rejected():
@@ -207,7 +230,7 @@ def test_dress_list_legacy_rejected():
         "params": {"ndigits": 3},
     }
     with pytest.raises(ValueError, match="List-style `dress` is no longer supported"):
-        Transform(**kwargs)  # type: ignore
+        _transform_from_config(kwargs)
 
 
 def test_split_keep_part():
@@ -219,7 +242,7 @@ def test_split_keep_part():
         "fields": "id",
         "params": {"sep": "/", "keep": -1},
     }
-    t = Transform(**kwargs)  # type: ignore
+    t = _transform_from_config(kwargs)
     r = t(doc)
     assert r == {"id": "A123"}
 
@@ -233,7 +256,7 @@ def test_split_keep_part_longer():
         "fields": "doi",
         "params": {"sep": "/", "keep": [-2, -1]},
     }
-    t = Transform(**kwargs)  # type: ignore
+    t = _transform_from_config(kwargs)
     r = t(doc)
     assert r["doi"] == "10.1007/978-3-123"
 

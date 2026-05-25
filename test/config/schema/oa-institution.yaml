@@ -34,13 +34,13 @@ schema:
 ingestion_model:
     resources:
     -   name: institutions
-        apply:
+        pipeline:
         -   vertex: institution
         -   transform:
                 call:
                     use: keep_suffix_id
         -   key: associated_institutions
-            apply:
+            pipeline:
             -   vertex: institution
             -   transform:
                     call:

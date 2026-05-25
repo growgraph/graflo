@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Self
+from typing import Any, Self, cast
 
 from pydantic import Field, PrivateAttr, field_validator, model_validator
 
 from graflo.architecture.base import ConfigBaseModel
 from .connectors import (
+    ConnectorUpdate,
     FileConnector,
     ResourceConnector,
     SparqlConnector,
@@ -35,8 +36,19 @@ class ConnectorConnectionBinding(ConfigBaseModel):
     conn_proxy: str
 
 
-class Bindings(ConfigBaseModel):
-    """Named resource connectors with explicit resource linkage."""
+class StagingProxyBinding(ConfigBaseModel):
+    """Named staging profile -> runtime connection-proxy (e.g. S3 credentials).
+
+    Used by TigerGraph bulk ingest to resolve ``S3GeneralizedConnConfig`` without
+    putting secrets in the manifest.
+    """
+
+    name: str
+    conn_proxy: str
+
+
+class BindingsConfig(ConfigBaseModel):
+    """Declarative bindings contract (connectors and resource wiring)."""
 
     connectors: list[FileConnector | TableConnector | SparqlConnector] = Field(
         default_factory=list
@@ -62,6 +74,12 @@ class Bindings(ConfigBaseModel):
         default_factory=dict
     )
     _connector_to_conn_proxy: dict[str, str] = PrivateAttr(default_factory=dict)
+    staging_proxy: list[StagingProxyBinding | dict[str, str]] = Field(
+        default_factory=list,
+        description="Optional named staging endpoints (S3) -> conn_proxy wiring.",
+    )
+    _staging_proxy_typed: list[StagingProxyBinding] = PrivateAttr(default_factory=list)
+    _staging_name_to_conn_proxy: dict[str, str] = PrivateAttr(default_factory=dict)
 
     @property
     def connector_connection_bindings(
@@ -69,6 +87,49 @@ class Bindings(ConfigBaseModel):
     ) -> list[ConnectorConnectionBinding]:
         # Expose typed entries for downstream components (type-checker friendly).
         return self._connector_connection_typed
+
+    @field_validator("staging_proxy", mode="before")
+    @classmethod
+    def _coerce_staging_proxy_entries(
+        cls, v: Any
+    ) -> list[StagingProxyBinding | dict[str, str]]:
+        if v is None:
+            return []
+        if not isinstance(v, list):
+            raise ValueError(
+                "staging_proxy must be a list of {name, conn_proxy} entries"
+            )
+        coerced: list[StagingProxyBinding | dict[str, str]] = []
+        for i, item in enumerate(v):
+            if isinstance(item, StagingProxyBinding):
+                coerced.append(item)
+                continue
+            if isinstance(item, dict):
+                missing = [k for k in ("name", "conn_proxy") if k not in item]
+                if missing:
+                    raise ValueError(
+                        f"Invalid staging_proxy entry at index {i}: missing {missing}."
+                    )
+                coerced.append(StagingProxyBinding.model_validate(item))
+                continue
+            raise ValueError(
+                f"Invalid staging_proxy entry at index {i}: got {type(item).__name__}."
+            )
+        return coerced
+
+    def _rebuild_staging_proxy_index(self) -> None:
+        self._staging_name_to_conn_proxy = {}
+        for m in self._staging_proxy_typed:
+            existing = self._staging_name_to_conn_proxy.get(m.name)
+            if existing is not None and existing != m.conn_proxy:
+                raise ValueError(
+                    f"Duplicate staging_proxy name '{m.name}' with conflicting conn_proxy."
+                )
+            self._staging_name_to_conn_proxy[m.name] = m.conn_proxy
+
+    def get_staging_conn_proxy(self, name: str) -> str | None:
+        """Return ``conn_proxy`` for a staging profile name, if declared."""
+        return self._staging_name_to_conn_proxy.get(name)
 
     def _rebuild_indexes(self) -> None:
         self._connectors_index = {}
@@ -209,6 +270,11 @@ class Bindings(ConfigBaseModel):
             ConnectorConnectionBinding.model_validate(m) if isinstance(m, dict) else m
             for m in self.connector_connection
         ]
+        self._staging_proxy_typed = [
+            StagingProxyBinding.model_validate(m) if isinstance(m, dict) else m
+            for m in self.staging_proxy
+        ]
+        self._rebuild_staging_proxy_index()
 
         for connector in self.connectors:
             if connector.resource_name is None:
@@ -266,6 +332,42 @@ class Bindings(ConfigBaseModel):
         """Return the mapped runtime proxy name for a given connector."""
         return self._connector_to_conn_proxy.get(connector.hash)
 
+    def get_connectors_for_resource(
+        self, resource_name: str
+    ) -> list[TableConnector | FileConnector | SparqlConnector]:
+        """Return connectors bound to *resource_name*, in binding order (unique by hash)."""
+        result: list[TableConnector | FileConnector | SparqlConnector] = []
+        for h in self._resource_to_connector_hashes.get(resource_name, []):
+            c = self._connectors_index.get(h)
+            if isinstance(c, (TableConnector, FileConnector, SparqlConnector)):
+                result.append(c)
+        return result
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | list[Any]) -> Self:
+        if isinstance(data, list):
+            raise ValueError(
+                "Bindings.from_dict expects a mapping with 'connectors' and optional "
+                "'resource_connector'. List-style connector payloads are not supported."
+            )
+        legacy_keys = {
+            "postgres_connections",
+            "table_connectors",
+            "file_connectors",
+            "sparql_connectors",
+        }
+        found_legacy = sorted(k for k in legacy_keys if k in data)
+        if found_legacy:
+            raise ValueError(
+                "Legacy Bindings init keys are not supported. "
+                f"Unsupported keys: {', '.join(found_legacy)}."
+            )
+        return cls.model_validate(data)
+
+
+class BindingsRegistry(BindingsConfig):
+    """Mutable bindings registry for programmatic connector updates."""
+
     def bind_connector_to_conn_proxy(
         self,
         connector: TableConnector | FileConnector | SparqlConnector,
@@ -307,26 +409,64 @@ class Bindings(ConfigBaseModel):
 
         self._rebuild_connector_to_conn_proxy()
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any] | list[Any]) -> Self:
-        if isinstance(data, list):
-            raise ValueError(
-                "Bindings.from_dict expects a mapping with 'connectors' and optional "
-                "'resource_connector'. List-style connector payloads are not supported."
+    def apply_connector_update(self, update: ConnectorUpdate) -> None:
+        """Patch a connector in-place in this binding (re-hashes and reindexes).
+
+        Uses ``model_validate`` on merged data so connector validators (including
+        hash recomputation) run; ``model_copy(update=...)`` would not re-run them.
+        """
+        connector_hash = self._resolve_connector_ref_to_hash(update.connector)
+        old = self._connectors_index[connector_hash]
+        patch = update.as_patch()
+        if not patch:
+            return
+        merged = old.model_dump(mode="python")
+        merged.update(patch)
+        new = cast(
+            TableConnector | FileConnector | SparqlConnector,
+            old.__class__.model_validate(merged),
+        )
+        self.replace_connector(old, new)
+
+    def replace_connector(
+        self,
+        old: ResourceConnector | str,
+        new: TableConnector | FileConnector | SparqlConnector,
+    ) -> None:
+        """Swap *old* for *new*, preserving resource wiring and conn_proxy by hash."""
+        old_hash = (
+            old.hash
+            if isinstance(old, ResourceConnector)
+            else self._resolve_connector_ref_to_hash(old)
+        )
+        if old_hash not in self._connectors_index:
+            raise KeyError(f"Connector not found for hash={old_hash!r}")
+
+        old_connector = self._connectors_index[old_hash]
+        if new.name is None and old_connector.name is not None:
+            object.__setattr__(new, "name", old_connector.name)
+
+        replaced = False
+        for idx, c in enumerate(self.connectors):
+            if c.hash == old_hash:
+                self.connectors[idx] = new
+                replaced = True
+                break
+        if not replaced:
+            raise KeyError(
+                f"Connector with hash={old_hash!r} not found in bindings.connectors list"
             )
-        legacy_keys = {
-            "postgres_connections",
-            "table_connectors",
-            "file_connectors",
-            "sparql_connectors",
-        }
-        found_legacy = sorted(k for k in legacy_keys if k in data)
-        if found_legacy:
-            raise ValueError(
-                "Legacy Bindings init keys are not supported. "
-                f"Unsupported keys: {', '.join(found_legacy)}."
-            )
-        return cls.model_validate(data)
+
+        new_hash = new.hash
+        for hashes in self._resource_to_connector_hashes.values():
+            for i, h in enumerate(hashes):
+                if h == old_hash:
+                    hashes[i] = new_hash
+
+        old_proxy = self._connector_to_conn_proxy.pop(old_hash, None)
+        self._rebuild_indexes()
+        if old_proxy is not None:
+            self._connector_to_conn_proxy[new_hash] = old_proxy
 
     def add_connector(
         self,
@@ -381,13 +521,5 @@ class Bindings(ConfigBaseModel):
         # Keep the public contract field in sync for serialization / downstream.
         self.resource_connector = list(self._resource_connector_typed)
 
-    def get_connectors_for_resource(
-        self, resource_name: str
-    ) -> list[TableConnector | FileConnector | SparqlConnector]:
-        """Return connectors bound to *resource_name*, in binding order (unique by hash)."""
-        result: list[TableConnector | FileConnector | SparqlConnector] = []
-        for h in self._resource_to_connector_hashes.get(resource_name, []):
-            c = self._connectors_index.get(h)
-            if isinstance(c, (TableConnector, FileConnector, SparqlConnector)):
-                result.append(c)
-        return result
+
+Bindings = BindingsRegistry

@@ -3,10 +3,9 @@ schema:
         name: ibes
     graph:
         vertex_config:
-            blank_vertices:
-            -   publication
             vertices:
             -   name: publication
+                blank: true
                 properties:
                 -   datetime_review
                 -   datetime_announce
@@ -78,7 +77,7 @@ ingestion_model:
     resources:
     -   name: ibes
         encoding: ISO-8859-1
-        apply:
+        pipeline:
         -   vertex: ticker
         -   vertex: analyst
         -   vertex: recommendation

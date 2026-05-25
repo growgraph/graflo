@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from .base import Actor, ActorConstants, ActorInitContext
 from .config import VertexActorConfig
@@ -11,6 +11,7 @@ from graflo.architecture.graph_types import (
     LocationIndex,
     TransformPayload,
     VertexRep,
+    merge_observation_with_transform_buffer,
 )
 from graflo.architecture.schema.vertex import VertexConfig
 from graflo.onto import ExpressionFlavor
@@ -26,6 +27,8 @@ class VertexActor(Actor):
         self.keep_fields: tuple[str, ...] | None = (
             tuple(config.keep_fields) if config.keep_fields else None
         )
+        self.extraction_scope: Literal["full", "mapped_only"] = config.extraction_scope
+        self.role: str | None = config.role
         self.vertex_config: VertexConfig
         self.allowed_vertex_names: set[str] | None = None
 
@@ -34,7 +37,9 @@ class VertexActor(Actor):
         return cls(config)
 
     def fetch_important_items(self) -> dict[str, Any]:
-        return self._fetch_items_from_dict(("name", "from_doc", "keep_fields"))
+        return self._fetch_items_from_dict(
+            ("name", "from_doc", "keep_fields", "extraction_scope", "role")
+        )
 
     def finish_init(self, init_ctx: ActorInitContext) -> None:
         self.vertex_config = init_ctx.vertex_config
@@ -102,14 +107,14 @@ class VertexActor(Actor):
         vertex_keys: tuple[str, ...],
     ) -> list[dict[str, Any]]:
         index_keys = tuple(self.vertex_config.identity_fields(self.name))
-        payloads = ctx.buffer_transforms[lindex]
+        payloads = ctx.transform_buffer[lindex]
         extracted_docs = [
             self._extract_vertex_doc_from_transformed_item(
                 item, vertex_keys, index_keys
             )
             for item in payloads
         ]
-        ctx.buffer_transforms[lindex] = [
+        ctx.transform_buffer[lindex] = [
             item
             for item in payloads
             if not (
@@ -125,6 +130,9 @@ class VertexActor(Actor):
         self, ctx: ExtractionContext, lindex: LocationIndex, *nargs: Any, **kwargs: Any
     ) -> ExtractionContext:
         doc: dict[str, Any] = kwargs.get("doc", {})
+        buffer_items: list[Any] = list(ctx.transform_buffer.get(lindex, []))
+        effective_doc = merge_observation_with_transform_buffer(doc, buffer_items)
+        ctx.obs_buffer[lindex] = dict(effective_doc)
 
         # Early-exit for disallowed vertex types.
         # This must happen before any ctx.acc_vertex[...] access.
@@ -142,32 +150,77 @@ class VertexActor(Actor):
         vertex_keys_list = self.vertex_config.property_names(self.name)
         vertex_keys: tuple[str, ...] = tuple(vertex_keys_list)
 
+        # When a role is set the vertex is stored at a named sub-slot so that
+        # multiple vertices of the same type in the same row (e.g. buyer/seller)
+        # occupy distinct accumulator locations. Transforms are always read from
+        # the bare row lindex; only storage moves to the role slot.
+        effective_lindex = lindex.extend((self.role, 0)) if self.role else lindex
+
         agg = []
         if self.from_doc:
-            projected = {v_f: doc.get(d_f) for v_f, d_f in self.from_doc.items()}
-            if any(v is not None for v in projected.values()):
-                agg.append(projected)
+            source_keys = set(self.from_doc.values())
+            consumed_from_buffer = False
+            for item in ctx.transform_buffer[lindex]:
+                if isinstance(item, TransformPayload) and source_keys.issubset(
+                    item.named
+                ):
+                    projected = {
+                        v_f: item.named[d_f] for v_f, d_f in self.from_doc.items()
+                    }
+                    if any(v is not None for v in projected.values()):
+                        agg.append(projected)
+                    for k in source_keys:
+                        item.named.pop(k, None)
+                    consumed_from_buffer = True
+            ctx.transform_buffer[lindex] = [
+                item
+                for item in ctx.transform_buffer[lindex]
+                if not (
+                    isinstance(item, TransformPayload)
+                    and not item.named
+                    and not item.positional
+                )
+                and not (isinstance(item, dict) and not item)
+            ]
+            if not consumed_from_buffer:
+                projected = {
+                    v_f: effective_doc.get(d_f) for v_f, d_f in self.from_doc.items()
+                }
+                if any(v is not None for v in projected.values()):
+                    agg.append(projected)
+            buffer_vertex_keys = tuple(k for k in vertex_keys if k not in self.from_doc)
+        else:
+            buffer_vertex_keys = vertex_keys
 
-        agg.extend(self._process_transformed_items(ctx, lindex, doc, vertex_keys))
+        agg.extend(
+            self._process_transformed_items(
+                ctx, lindex, effective_doc, buffer_vertex_keys
+            )
+        )
 
-        remaining_keys = set(vertex_keys) - set().union(*[d.keys() for d in agg])
-        passthrough_doc = {k: doc.pop(k) for k in remaining_keys if k in doc}
-        if passthrough_doc:
-            agg.append(passthrough_doc)
+        if self.extraction_scope == "full":
+            remaining_keys = set(vertex_keys) - set().union(*[d.keys() for d in agg])
+            # When keep_fields is set, restrict passthrough to only those declared fields.
+            if self.keep_fields is not None:
+                remaining_keys = remaining_keys & set(self.keep_fields)
+            passthrough_doc = {
+                k: effective_doc.get(k) for k in remaining_keys if k in effective_doc
+            }
+            if passthrough_doc:
+                agg.append(passthrough_doc)
 
         merged = merge_doc_basis(
             agg, index_keys=tuple(self.vertex_config.identity_fields(self.name))
         )
 
-        obs_ctx = {q: w for q, w in doc.items() if not isinstance(w, (dict, list))}
         for m in merged:
-            vertex_rep = VertexRep(vertex=m, ctx=obs_ctx)
-            ctx.acc_vertex[self.name][lindex].append(vertex_rep)
+            vertex_rep = VertexRep(vertex=m)
+            ctx.acc_vertex[self.name][effective_lindex].append(vertex_rep)
             ctx.record_vertex_observation(
                 vertex_name=self.name,
-                location=lindex,
+                location=effective_lindex,
                 vertex=vertex_rep.vertex,
-                ctx=vertex_rep.ctx,
+                ctx={},
             )
         return ctx
 

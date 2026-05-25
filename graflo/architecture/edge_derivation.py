@@ -6,7 +6,7 @@ threaded through :class:`~graflo.architecture.graph_types.EdgeIntent`, and used 
 :func:`~graflo.architecture.pipeline.runtime.actor.edge_render.render_edge`.
 
 When :attr:`EdgeDerivation.relation_from_key` is true, the ingestion
-:class:`~graflo.architecture.contract.declarations.edge_derivation_registry.EdgeDerivationRegistry`
+:class:`~graflo.architecture.contract.runtime.edge_derivation.EdgeDerivationRegistry`
 records the edge id so :class:`~graflo.architecture.schema.db_aware.EdgeConfigDBAware` (with overlay)
 can align TigerGraph DDL with runtime.
 """

@@ -12,7 +12,7 @@ Instead of manually writing a YAML schema, this example shows how to:
 
 ## Requirements
 
-- A target graph database running (ArangoDB, Neo4j, TigerGraph, FalkorDB, or Grafeo)
+- A target graph database running (ArangoDB, Neo4j, TigerGraph, or FalkorDB)
 - GraFlo installed (`pip install graflo` or `uv add graflo`). RDF/SPARQL stacks (`rdflib`, `SPARQLWrapper`) are **core** dependencies—no separate extra is required.
 
 ## Dataset: Academic Knowledge Graph
@@ -108,9 +108,6 @@ conn_conf = ArangoConfig.from_docker_env()
 # conn_conf = TigergraphConfig.from_docker_env()
 # conn_conf = FalkordbConfig.from_docker_env()
 
-# Alternative: Grafeo (embedded, no server needed)
-# from graflo.db.connection.onto import GrafeoConfig
-# conn_conf = GrafeoConfig(path="graph.grafeo")  # or GrafeoConfig.in_memory()
 
 db_type = conn_conf.connection_type
 ```

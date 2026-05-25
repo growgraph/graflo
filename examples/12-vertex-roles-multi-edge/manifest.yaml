@@ -1,0 +1,70 @@
+schema:
+    metadata:
+        name: vertex_roles_multi_edge
+    graph:
+        vertex_config:
+            vertices:
+            -   name: person
+                properties:
+                -   id
+                -   name
+                -   age
+                identity:
+                -   id
+        edge_config:
+            edges:
+            -   source: person
+                target: person
+                relation: is_child_of
+            -   source: person
+                target: person
+                relation: is_parent_of
+    db_profile: {}
+
+ingestion_model:
+    resources:
+    -   name: family_edges
+        infer_edges: false
+        pipeline:
+        # Three vertices of the same type extracted from one flat row.
+        # 'from' is {vertex_field: doc_field}; only mismatches need listing.
+        # Remaining vertex properties (name, age) are picked up by passthrough.
+        # 'self' carries all metadata from the row (name, age picked up via passthrough).
+        # 'from' only needs to list the renamed field (person col → id property).
+        -   vertex: person
+            role: self
+            from:
+                id: person
+
+        # Parent and child only provide an ID in this row.
+        # keep_fields restricts passthrough so name/age from the self columns are
+        # not incorrectly attributed to the parent/child placeholders.
+        -   vertex: person
+            role: parent
+            from:
+                id: parent
+            keep_fields:
+            -   id
+
+        -   vertex: person
+            role: child
+            from:
+                id: child
+            keep_fields:
+            -   id
+
+        # Two edges declared in one step — one per link, one per row.
+        -   edge:
+                links:
+                -   source_role: self
+                    target_role: parent
+                    relation: is_child_of
+                -   source_role: self
+                    target_role: child
+                    relation: is_parent_of
+
+bindings:
+    connectors:
+    -   regex: "^family_edges\\.csv$"
+        sub_path: .
+        resource_name: family_edges

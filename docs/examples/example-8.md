@@ -22,4 +22,4 @@ uv run python ingest.py
 
 ## Related
 
-- [Polymorphic routing (Example 7)](example-7.md) uses `vertex_router` / `edge_router` for type-discriminated tables; this example uses **filters** on a vertex type and **multi-weight** edges instead.
+- [Polymorphic routing (Example 7)](example-7.md) uses `vertex_router` + dynamic `edge` for type-discriminated tables; this example uses **filters** on a vertex type and **multi-weight** edges instead.

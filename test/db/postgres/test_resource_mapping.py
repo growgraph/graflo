@@ -1,6 +1,10 @@
-"""Tests for PostgreSQL resource mapping."""
+"""Tests for PostgreSQL resource mapping.
 
-from collections import defaultdict
+These tests cover the *un-sanitized* mapping output (resources use original
+PostgreSQL column names). Reserved-word / DB-flavor renames are applied a
+posteriori via :class:`graflo.hq.sanitizer.Sanitizer` and exercised in
+``test/architecture/evolution/test_sanitize.py``.
+"""
 
 from graflo.architecture.schema.edge import EdgeConfig
 from graflo.architecture.onto_sql import (
@@ -60,62 +64,34 @@ def _build_edge_table_info() -> EdgeTableInfo:
     )
 
 
-def test_create_vertex_resource_with_field_mappings():
+def test_create_vertex_resource_emits_minimal_pipeline():
     mapper = PostgresResourceMapper()
-    attribute_mappings = defaultdict(dict, {"users": {"user-name": "user_name"}})
 
     resource = mapper.create_vertex_resource(
         table_name="users",
         vertex_name="users",
-        vertex_attribute_mappings=attribute_mappings,
     )
 
     assert resource.name == "users"
-    assert resource.pipeline == [
-        {"vertex": "users", "from": {"user_name": "user-name"}}
-    ]
+    assert resource.pipeline == [{"vertex": "users"}]
 
 
-def test_create_vertex_resource_without_field_mappings():
-    mapper = PostgresResourceMapper()
-    attribute_mappings = defaultdict(dict)
-
-    resource = mapper.create_vertex_resource(
-        table_name="products",
-        vertex_name="products",
-        vertex_attribute_mappings=attribute_mappings,
-    )
-
-    assert resource.pipeline == [{"vertex": "products"}]
-
-
-def test_create_edge_resource_uses_identity_and_sanitized_mappings():
+def test_create_edge_resource_uses_identity_columns():
     mapper = PostgresResourceMapper()
     edge_table = _build_edge_table_info()
     vertex_config = _build_vertex_config()
     matcher = FuzzyMatcher(["users", "products"], threshold=0.8, enable_cache=True)
-    attribute_mappings = defaultdict(
-        dict,
-        {
-            "users": {"user-name": "user_name"},
-            "products": {"product-name": "product_name"},
-        },
-    )
 
     resource = mapper.create_edge_resource(
         edge_table_info=edge_table,
         vertex_config=vertex_config,
         matcher=matcher,
-        vertex_attribute_mappings=attribute_mappings,
     )
 
     assert resource.name == "purchases"
     assert resource.pipeline == [
-        {"vertex": "users", "from": {"id": "user_id", "user_name": "user-name"}},
-        {
-            "vertex": "products",
-            "from": {"product_code": "product_id", "product_name": "product-name"},
-        },
+        {"vertex": "users", "from": {"id": "user_id"}},
+        {"vertex": "products", "from": {"product_code": "product_id"}},
     ]
 
 
@@ -126,14 +102,12 @@ def test_create_edge_resource_raises_for_unknown_vertex():
     )
     vertex_config = _build_vertex_config()
     matcher = FuzzyMatcher(["users", "products"], threshold=0.8, enable_cache=True)
-    attribute_mappings = defaultdict(dict)
 
     try:
         mapper.create_edge_resource(
             edge_table_info=edge_table,
             vertex_config=vertex_config,
             matcher=matcher,
-            vertex_attribute_mappings=attribute_mappings,
         )
         assert False, "Expected ValueError for unknown target vertex"
     except ValueError as exc:
@@ -150,8 +124,6 @@ def test_create_resources_from_tables_skips_invalid_edges():
     introspection_result = SchemaIntrospectionResult(
         schema_name="public",
         vertex_tables=[
-            # only name is relevant for mapper vertex resources
-            # other fields are intentionally minimal but valid
             VertexTableInfo(
                 name="users",
                 schema_name="public",
@@ -170,19 +142,11 @@ def test_create_resources_from_tables_skips_invalid_edges():
         edge_tables=[edge_table_valid, edge_table_invalid],
         raw_tables=[],
     )
-    attribute_mappings = defaultdict(
-        dict,
-        {
-            "users": {"user-name": "user_name"},
-            "products": {"product-name": "product_name"},
-        },
-    )
 
     resources = mapper.create_resources_from_tables(
         introspection_result=introspection_result,
         vertex_config=vertex_config,
         edge_config=EdgeConfig(),
-        vertex_attribute_mappings=attribute_mappings,
         fuzzy_threshold=0.8,
     )
 

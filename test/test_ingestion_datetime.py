@@ -2,7 +2,7 @@
 
 from graflo.filter.sql import datetime_range_where_sql
 from graflo.hq.caster import IngestionParams
-from graflo.architecture.contract.bindings import TableConnector
+from graflo.architecture.contract.bindings import ColumnTimeFilter, TableConnector
 
 
 def test_ingestion_params_datetime_defaults():
@@ -68,11 +68,10 @@ def test_datetime_range_where_sql_iso_format():
 
 
 def test_sql_query_where_combines_connector_and_ingestion_datetime():
-    """Query WHERE combines TableConnector date_filter and ingestion datetime range."""
+    """Query WHERE combines TableConnector time_filter and ingestion datetime range."""
     connector = TableConnector(
         table_name="events",
-        date_field="dt",
-        date_filter="!= '2020-01-01'",
+        time_filter=ColumnTimeFilter(column="dt", not_equals="2020-01-01"),
     )
     connector_where = connector.build_where_clause()
     dt_where = datetime_range_where_sql(

@@ -5,6 +5,466 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.33]
+
+### Added
+
+- **`parse_filter_expression`** — unified YAML/JSON filter loader for Bindings, `SelectSpec.where`, `VertexConfig.filters`, and Arango helpers.
+- **Bindings filter tests** — `test/architecture/test_bindings_filters.py` for logical-operator SQL pushdown.
+
+### Fixed
+
+- **`TableConnector.filters`** — YAML logical shorthand (`OR`, `AND`, `NOT`, `IF_THEN` keys) now parses at Bindings load (same as vertex filters); previously failed at `build_query` via `model_validate` only.
+- **SQL `IF_THEN`** — renders as `(NOT antecedent OR consequent)` instead of invalid `... IF_THEN ...` text.
+- **SQL nested composites** — parenthesize composite operands under `AND`/`OR` for correct precedence.
+
+### Changed
+
+- **`TableConnector.filters`** — coerced through `parse_filter_expression` at connector validation (fail fast on malformed shorthand).
+
+## [1.7.32]
+
+### Added
+
+- **`Resource.fail_fast`** (default **`false`**) — when **`true`**, transform steps raise if required input keys are missing; when **`false`**, rename applies only to keys present in the document and functional transforms skip the step when inputs are missing.
+
+### Changed
+
+- **Rename transforms** — partial per-document rename (absent source keys are ignored); **`TransformPayload.removed_keys`** lists only source keys actually renamed in that row.
+- **`drop_trivial_input_fields`** — no longer controls transform missing-key policy (use **`fail_fast`** instead).
+
+## [1.7.31]
+
+### Added
+
+- **`install_tigergraph_queries` CLI** — upload `.gsql` query definitions from a directory to a target graph and run **`INSTALL QUERY`** for each (connection via **`TigergraphConfig`** / **`TIGERGRAPH_*`** env vars; optional **`--graph`**, **`--prefix`**).
+- **TigerGraph API token cache** — secret-based REST tokens are cached per process for **`(gsql_url, graph, secret)`**, so ingestion no longer calls the token API on every **`ConnectionManager`** open during batch upserts. Entries respect server expiration (with a refresh buffer); cache is invalidated on REST++ **401** responses.
+
+### Breaking
+
+- **`Resource.skip_actors_on_missing_input_keys`** removed — use **`fail_fast`** (inverted semantics: **`fail_fast: false`** ≈ old **`skip_actors_on_missing_input_keys: true`**).
+
+### Fixed
+
+- **SQL auto-join with declarative resources** — **`apply_auto_joins`** no longer assumes **`ResourceConfig.root`**; it builds the actor tree from **`pipeline`** when only the contract config is available (**`ResourceRuntime.root`** unchanged at runtime).
+
+### Documentation
+
+- **[Features and practices](docs/concepts/features_and_practices.md)** — TigerGraph token caching under Performance Optimization.
+
+## [1.7.30]
+
+### Added
+
+- **`tolerate_transform_errors`** on **`ResourceConfig`** (default **`true`**) — a failing transform step sets its declared output fields to **`None`**, records a **`failure_kind=transform`** row in the doc error sink, and the rest of the resource pipeline (vertices, edges, later transforms) continues for that document. Set **`tolerate_transform_errors: false`** to fail fast on transform exceptions.
+
+### Changed
+
+- **`VertexActor` + `from_doc`** — transform-buffer projection is selective: only **`TransformPayload`** entries whose **`named`** keys cover the **`from_doc`** source fields are consumed, so dressed or pivot outputs for other vertex types are not stolen. Dressed dict payloads (`__transformed_value#*`) are handled consistently with passthrough from the merged observation doc.
+- **Blank vertices in `VertexConfig`** — mark placeholder types with **`blank: true`** on each **`Vertex`** (identity defaults to **`id`**). **`VertexConfig.blank_vertices`** is now a derived name list, not a separate manifest field. Runtime **`ResourceRuntime`** scopes **`VertexConfig`** to vertices referenced by the resource pipeline only; unreferenced blank types are no longer injected automatically.
+- **Ingestion contract layout** — declarative **`ResourceConfig`** lives under **`graflo.architecture.contract.ingestion`**; schema-bound execution is **`ResourceRuntime`** / **`build_resource_runtime`** under **`graflo.architecture.contract.runtime`**. **`Resource`** remains an internal alias for **`ResourceConfig`**.
+
+### Breaking
+
+- **Top-level `blank_vertices` on `vertex_config`** — no longer read from manifests; set **`blank: true`** on the corresponding **`vertices`** entries instead (silent ignore under `extra="ignore"` if the old key is left in place).
+- **Runtime blank vertex scope** — blank vertex types must appear in the resource pipeline (or edge inference selectors) to be present in the per-resource runtime **`VertexConfig`**; relying on schema-wide blank placeholders without a matching actor step will not add them at cast time.
+- **Imports** — prefer **`ResourceConfig`** from **`graflo.architecture.contract`** (or **`graflo.architecture.contract.ingestion`**); **`graflo.architecture.contract.declarations.resource`** is not the canonical module path.
+
+### Documentation
+
+- **[Document cast errors](docs/concepts/ingestion_doc_errors.md)** — **`tolerate_transform_errors`** and transform failure records.
+- **[Core components](docs/concepts/core_components.md)** — **`ResourceConfig`** / **`ResourceRuntime`**, per-vertex **`blank`**, **`from_doc`** with dressed transforms, identity defaults.
+- **[Architecture diagrams](docs/concepts/architecture_diagrams.md)** — contract and blank-vertex model aligned with 1.7.30.
+- **[Creating a manifest](docs/getting_started/creating_manifest.md)** — **`tolerate_transform_errors`** and blank vertex YAML.
+
+## [1.7.29]
+
+### Added
+
+- **Empty-identity filter on cast batches** — after resource casting, **`Caster`** can drop vertex docs and edge tuples whose schema identity fields are all missing, `null`, or `""` before **`DBWriter`** (identity rules from **`VertexConfig`**, not **`GraphContainer`**). Controlled by **`IngestionParams.drop_empty_identity_docs`** (default **`true`**). Blank vertex collections are exempt.
+
+## [1.7.27]
+
+### Added
+
+- **`ColumnTimeFilter`** — shared pandas-like time window on a single column (`column`, optional `start` / `end`, optional `interval` as a **`pandas.Timedelta`** string such as `"7D"` or `"2h"` for day/hour windows, optional `not_equals`, optional `start_inclusive` / `end_inclusive`). Rendered to SQL via **`FilterExpression`** (same path as other pushdown filters). Calendar-style offsets (for example month arithmetic) are not supported when `pandas.Timedelta` rejects the string; use explicit `start` / `end` ISO bounds instead.
+- **`FileConnector.time_filter`** and **`TableConnector.time_filter`** — canonical field replacing duplicated `date_field` / `date_filter` / `date_range_*` fields on the wire.
+- **Bindings — runtime connector patches**: **`ConnectorUpdate`**, **`Bindings.apply_connector_update`**, and **`Bindings.replace_connector`** so defining-field changes re-hash and reindex correctly while preserving **`conn_proxy`** wiring. Patches are applied **after** manifest load (not stored on `GraphManifest`).
+
+### Breaking
+
+- **Connector time fields** — top-level `date_field`, `date_filter`, `date_range_start`, and `date_range_days` are no longer accepted on manifests or merged patches; use nested **`time_filter`** (**`ColumnTimeFilter`**) only.
+
+### Documentation
+
+- **[Runtime connector updates](docs/concepts/runtime_connector_updates.md)** — `time_filter` / **`ColumnTimeFilter`** (YAML + Python), patch examples, and registry timing.
+- **[Concepts overview](docs/concepts/index.md)** — bindings bullet and focused-topic link for runtime patches and SQL time filters.
+- **[Table connector views](docs/concepts/table_connector_views.md)** — cross-link to time filters vs `view` / `joins`.
+- **[Example 5 – PostgreSQL](docs/examples/example-5.md)** — `datetime_columns` now documented as setting **`time_filter.column`** on connectors; ingestion date-range comment aligned.
+- **`creating_manifest.md`** — `connectors` may include optional **`time_filter`** on file/table connectors.
+
+
+## [1.7.26]
+
+### Breaking
+
+- **`graflo.architecture.evolution.RenameEntitiesOp` removed**: evolution rename operations are now split into
+  **`RenameVerticesOp`**, **`RenameRelationsOp`**, and **`RenameResourcesOp`** (no backward-compat alias).
+  Migration example:
+
+  ```python
+  # old
+  # RenameEntitiesOp(vertices=..., edges=..., resources=...)
+
+  # new
+  [
+      RenameVerticesOp(vertices=...),
+      RenameRelationsOp(relations=...),
+      RenameResourcesOp(resources=...),
+  ]
+  ```
+
+### Added
+
+- **Manifest evolution ops expanded**:
+  **`RemoveEdgesOp`**, **`MergeEdgesOp`**, **`RenameEdgePropertiesOp`**, **`RemoveEdgePropertiesOp`**,
+  **`AddVertexPropertiesOp`**, and **`AddEdgePropertiesOp`**.
+- **Propagation coverage for new ops** across manifest surfaces:
+  schema (`core_schema`), ingestion resources/selectors, and `DatabaseProfile` (`edge_specs`, edge defaults/indexes).
+
+## [1.7.25]
+
+### Fixed
+
+- **Import cycles** between `graflo.architecture.evolution`, `graflo.hq`, and `graflo.db`
+  (including “partially initialized module” errors when importing `rewrite` or PostgreSQL
+  paths during package startup).
+
+### Changed
+
+- **`graflo` package**: `GraphEngine`, `Caster`, `IngestionParams`, and other `graflo.hq`
+  exports resolve lazily via `__getattr__`; `ConnectionManager` and `ConnectionType` are
+  also lazy so `import graflo` does not eagerly load orchestration or the full DB stack.
+- **`graflo.architecture.evolution`**: op models (`SanitizeOp`, …) load at import time;
+  `apply_evolution` and other `apply_*` functions load lazily on first attribute access.
+- **`Sanitizer`**: applies ops via public `apply_manifest_ops_inplace` instead of private
+  `_dispatch_op`.
+- **`rewrite_vertex_weights_vertex_field_names`**: defers `Weight` import to avoid pulling
+  heavy modules during `rewrite` initialization.
+- **Evolution / DB utilities**: `load_reserved_words` and `sanitize_attribute_name` are
+  imported lazily inside the functions that need them (avoids `graflo.db` ↔ `graflo.hq`
+  recursion during evolution apply).
+- **DB ↔ HQ boundaries**: TigerGraph `bulk_load_finalize` lazily imports S3 connection
+  types; PostgreSQL inference/mapping lazily imports `FuzzyMatcher`; `BulkSessionCoordinator`
+  lazily imports `ConnectionManager`; several `hq` modules import config and Postgres types
+  from `graflo.db.connection` / `graflo.db.manager` / `graflo.db.postgres.conn` instead of
+  `from graflo.db import …`.
+
+### Documentation
+
+- [Manifest evolution](docs/concepts/manifest_evolution.md) now includes a tutorial section with
+  relation/property evolution recipes and guidance on `RenameRelationsOp` vs `MergeEdgesOp`.
+
+## [1.7.24] - 2026-05-07
+
+### Added
+
+- **`graflo.architecture.evolution` — sanitization and field renames as ops**:
+  **`SanitizeOp`** / **`apply_sanitize`** (reserved-word-safe storage names, per-vertex field renames,
+  TigerGraph per-relation identity harmonization) and **`RenameVertexFieldsOp`** /
+  **`apply_rename_vertex_fields`** (schema + ingestion rewrite for explicit vertex-field renames),
+  with helpers in **`sanitize`**, **`rewrite`**, and **`db_profile`** modules.
+- **`SparqlEndpointConfig`**: when **`dataset`** is unset or empty, endpoint URLs use the
+  **`test`** path segment so Fuseki never receives invalid paths such as **`//sparql`** (aligned
+  with integration-test defaults).
+- **TigerGraph connection**: list graph and per-graph vertex/edge type helpers; query snapshots
+  around destructive work; **`delete_all=True`** on full teardown now requires
+  **`confirm_global_teardown=True`**; global **`DROP VERTEX` / `DROP EDGE`** skips types still
+  referenced by **other** graphs so unrelated installed queries are not silently invalidated.
+
+### Changed
+
+- **`Sanitizer`**: manifest sanitization is implemented by dispatching
+  **`SanitizeOp`** through **`graflo.architecture.evolution`** (same **`sanitize_manifest`**
+  entrypoint for callers).
+- **`SQLInferenceManager`**: PostgreSQL inference no longer mutates the contract for the target
+  DB flavor; **`infer_artifacts`** / **`infer_complete_schema`** return **unsanitized** schema +
+  ingestion. Apply **`Sanitizer(...).sanitize_manifest(...)`** (or **`apply_sanitize`**) when you
+  need reserved-word / TigerGraph normalization.
+- **`PostgresResourceMapper`**: inferred **`Resource`** pipelines keep **source (PostgreSQL) column
+  names**; field renames for the target flavor are applied when the manifest is sanitized, not
+  during mapper construction.
+- **`GraphEngine.infer_manifest`**: still returns a full **`GraphManifest`** (schema +
+  ingestion_model + bindings) and now runs **`Sanitizer`** on that manifest **before** returning,
+  so the high-level PostgreSQL inference path stays target-flavor-safe.
+- **`docker/fuseki`**: Fuseki 6–style image, **`fix-perms`** init for the data volume, and a
+  **`shiro.ini`** template wired through compose for basic auth (credentials from **`TS_*`**
+  env vars).
+
+### Documentation
+
+- [Manifest evolution](docs/concepts/manifest_evolution.md), [Core components](docs/concepts/core_components.md),
+  [Architecture diagrams](docs/concepts/architecture_diagrams.md), and the [documentation home](docs/index.md)
+  updated for evolution-backed **`SanitizeOp`**, the **`SQLInferenceManager`** vs **`GraphEngine.infer_manifest`**
+  sanitization split, and **`SparqlEndpointConfig`** dataset URL behavior.
+
+## [1.7.23] - 2026-04-23
+
+### Added
+
+- **`GraphManifest.rename_entities(...)`**: manifest-level rename helper for coordinated vertex/edge/resource renames across `schema`, `ingestion_model`, and `bindings` references.
+
+### Changed
+
+- **`GraphEngine.infer_manifest` now returns full contracts by default** for PostgreSQL inference:
+  inferred manifests now include `schema`, `ingestion_model`, and `bindings` (`connectors`,
+  `resource_connector`, `connector_connection`) instead of requiring a separate bindings pass.
+- **Inference pipeline reuse**: PostgreSQL schema/resources/bindings now share a single
+  introspection snapshot, avoiding duplicate introspection and keeping inferred contract blocks
+  in sync.
+
+### Documentation
+
+- Quick start and PostgreSQL example docs now describe `infer_manifest(...)` as producing
+  full manifests with bindings by default, while still documenting manual/override bindings
+  workflows for advanced cases.
+
+## [1.7.22] - 2026-04-22
+
+### Added
+
+- **`graflo.architecture.evolution`**: Manifest evolution MVP — `apply_evolution`, `RemoveVerticesOp`,
+  `MergeVerticesOp`; cascade remove (schema edges, ingestion resources, `resource_connector` rows,
+  `db_profile`); merge vertices (union logical schema, redirect/dedupe edges, rewrite pipelines and
+  infer/extra_weights, merge DB profile keys). Compare contract identity with `graflo.migrate.io.manifest_hash`.
+  Default MINOR bump on `schema.metadata.version` via `bump_semver_minor` (opt out with `bump_version=False`).
+
+### Documentation
+
+- [Manifest evolution](docs/concepts/manifest_evolution.md) concept page; [Creating a Manifest](docs/getting_started/creating_manifest.md) “Evolving a manifest” section.
+- **Concepts split**: [Concepts overview](docs/concepts/index.md) is a short landing page; long-form content moved to
+  [Architecture diagrams](docs/concepts/architecture_diagrams.md), [Core components](docs/concepts/core_components.md),
+  and [Features, migration, and practices](docs/concepts/features_and_practices.md). Site nav and cross-links updated
+  (e.g. schema migration anchors on the home page and Quick Start).
+
+## [1.7.21] - 2026-04-21
+
+### Added
+
+- **`graflo.object_storage`**: S3-compatible helpers — `MinioConfig` / `S3EndpointConfig`, boto3 client factories,
+  `ensure_bucket_exists` / `ensure_staging_bucket_for_config`, and `upload_staged_csvs`
+  (TigerGraph bulk staging imports `upload_staged_csvs` from here).
+- **Documentation**: [Object storage (S3 staging)](docs/concepts/object_storage.md) concept page;
+  Concepts overview links staging to that page.
+
+### Breaking
+
+- **`InferenceManager` removed**: PostgreSQL inference now lives in
+  `graflo.hq.sql_inferencer.SQLInferenceManager`. Replace
+  `from graflo.hq.inferencer import InferenceManager` with
+  `from graflo.hq.sql_inferencer import SQLInferenceManager` (also exported from
+  `graflo.hq`).
+
+### Changed
+
+- **`RdfInferenceManager.infer_schema`**: RDF-inferred vertices use `identity: ["_uri"]`.
+  Cross-class `owl:ObjectProperty` declarations produce per-resource pipeline steps that
+  materialize the target vertex from the predicate URI field, then emit the edge. Same-class
+  object properties are not expanded automatically (custom pipelines still apply).
+
+- **`VertexRouterActor` role normalization**: `role` is now normalized from
+  `type_field` when omitted, and router storage/addressing uses `role` as the single
+  internal slot key. `type_field` remains the type discriminator source.
+- **Explicit vertex extraction policy**: `VertexActorConfig` and
+  `VertexRouterActorConfig` now support `extraction_scope: full | mapped_only`
+  (default `full`). `mapped_only` limits extraction to explicitly mapped fields
+  from `from`/`vertex_from_map`; `full` preserves passthrough behavior.
+- **Shared vertex extraction config surface**: common options (`from`, `keep_fields`,
+  `extraction_scope`, `role`) are consolidated in a shared
+  `VertexExtractionOptionsConfig`, and actor-specific models inherit from it.
+
+## [1.7.20]- 2026-04-19
+
+### Changed
+
+- **`vertex_router`**: Removed `field_map` and `prefix`. Use `from` (same contract as `vertex`) for
+  `{vertex_field: doc_field}` projection, optional `keep_fields` to restrict passthrough, and
+  `vertex_from_map` for per-type overrides. The merged observation is passed through to the routed
+  `VertexActor` with no separate rename/slice step.
+
+## [1.7.19] - 2026-04-14
+
+### Added
+
+- **`role` on `vertex` step** (`VertexActorConfig`): optional named accumulator slot. When set,
+  the vertex is stored at `lindex.extend((role, 0))` instead of bare `lindex`, allowing multiple
+  vertices of the same type to occupy distinct slots in the same flat row (e.g. `role: self`,
+  `role: parent`, `role: child` — all `person`). A downstream `edge` step references the slot
+  via the new `source_role` / `target_role` aliases.
+
+- **`source_role` / `target_role` on `edge` step** (`EdgeActorConfig`): ergonomic aliases for
+  `source_type_field` / `target_type_field`. Both names look up the same accumulator slot;
+  `source_role` is preferred when the slot was populated by a `vertex+role` step, while
+  `source_type_field` remains idiomatic when a `vertex_router` step was used. Mutually exclusive
+  with their counterparts.
+
+- **`links` list on `edge` step** (`EdgeActorConfig`): multi-intent edge declaration. When set,
+  each item in `links` is an `EdgeLinkConfig` that emits one edge intent per row. This replaces
+  the need for two (or more) nearly identical `edge` steps when a single flat row encodes multiple
+  relationship types. Mutually exclusive with all top-level source/target fields on the same step.
+
+- **`EdgeLinkConfig`** model: per-link binding inside a `links` edge step. Supports `source` /
+  `target` (static types), `source_type_field` / `target_type_field` (dynamic slots from
+  `vertex_router`), `source_role` / `target_role` (dynamic slots from `vertex+role`), `relation`,
+  `relation_field`, `match_source`, `match_target`.
+
+- **`keep_fields` now enforced in passthrough** (`VertexActor`): the field was already present in
+  `VertexActorConfig` but had no effect. The passthrough step in `VertexActor.__call__` now
+  restricts the set of automatically absorbed columns to `keep_fields` when it is set. Use on
+  role-vertex steps to prevent shared row columns (e.g. `name`) from leaking into placeholder
+  vertices that only carry an ID.
+
+### Changed
+
+- **Passthrough non-mutation when `role` is set** (`VertexActor.__call__`): without `role`,
+  the existing `doc.pop` behaviour is preserved (backward-compatible). When `role` is set,
+  passthrough uses `doc.get` so that sibling role-vertex steps operating on the same shared doc
+  each see all row columns. This is the correct behaviour for multi-role flat-row pipelines and
+  has no effect on single-vertex pipelines.
+
+### Documentation
+
+- **`docs/examples/example-12.md`**: new example — *Vertex Roles and Multi-intent Edges*.
+  CSV `person,parent,child,name,age`; one `person` vertex type; two `person→person` edge types
+  (`is_child_of`, `is_parent_of`); three `vertex+role` steps + one `edge: links` step.
+  Covers `role`, `keep_fields`, `from` direction, passthrough behaviour, and `links`.
+- **`docs/examples/index.md`**: entry 12 added.
+- **`mkdocs.yml`**: examples 11 and 12 added to nav (example 11 was missing).
+- **`docs/concepts/index.md`**: Actor section updated — `role` and `keep_fields` on `VertexActor`;
+  `source_role` / `target_role` / `links` on `EdgeActor`; scenario matrix extended.
+
+### Examples
+
+- **`examples/12-vertex-roles-multi-edge/`**: `family_edges.csv`, `manifest.yaml`, `ingest.py`
+  demonstrating the vertex-role + multi-link pattern end-to-end.
+
+---
+
+## [1.7.18] - 2026-04-14
+
+### Added
+
+- **Dynamic `EdgeActor` mixed mode**: `EdgeActorConfig` now accepts one static side
+  (`from` / `to`) combined with one dynamic slot side (`source_type_field` /
+  `target_type_field`). Previously both slot fields had to be set together; now any
+  combination is valid — both dynamic (fully dynamic), one static + one dynamic
+  (mixed), or both static (static mode).  The `_call_dynamic` path handles all three
+  uniformly.
+
+### Removed
+
+- **`EdgeRouterActor`** and **`EdgeRouterActorConfig`** are removed from the codebase.
+  The replacement is a `vertex_router` step per dynamic endpoint (each with its own
+  `type_field`) followed by a dynamic `edge` step with `source_type_field` /
+  `target_type_field` set to the corresponding `type_field` values.  Mixed-mode edges
+  (one static endpoint, one dynamic) are now supported natively by `EdgeActor`.
+  `CHANGELOG.md` retains historical references to `EdgeRouterActor` for audit purposes.
+
+### Changed
+
+- **`VertexRouterActor`** vertices are always stored at `lindex.extend((type_field, 0))`
+  (`type_field` doubles as the accumulator slot name); this was already the behaviour
+  after the previous refactor and is now the only supported mode.
+- **`EdgeActorConfig.validate_type_sources`**: the constraint
+  `"source_type_field and target_type_field must both be set or both be absent"` is
+  lifted; each side is validated independently (must have exactly one of static or
+  dynamic, but the two sides may differ).
+- **`objects-relations` test schema and example 7 manifest** migrated from `edge_router`
+  to two `vertex_router` steps + dynamic `edge`.
+
+### Documentation
+
+- **`docs/examples/example-7.md`**: rewritten to describe the `vertex_router` +
+  dynamic `edge` pattern; flat-row variant section retained as a cross-reference to
+  Example 11.
+- **`docs/concepts/index.md`**: actor class diagram and scenario matrix updated;
+  deprecated `EdgeRouterActor` entry removed.
+- **`docs/concepts/table_connector_views.md`**: YAML pipeline sketch updated from
+  `edge_router` to `vertex_router` + `edge`.
+
+## [1.7.17] - 2026-04-13
+
+### Added
+
+- **`SelectSpec`** (`kind="select"`): ergonomic **`select`** items — simple identifier
+  strings and dicts **`{base, as}`** / **`{from_join, column, as}`** (plus legacy
+  **`{expr, alias}`**). **`SelectSpec.concat_select_parts`** merges join/select
+  fragments from multiple specs when composing in Python.
+- **`ALL_BASE_COLUMNS`** (`"all_base"`): vocal default for “all base columns”
+  (expands to **`{base_alias}.*`** when joins exist). **`SelectSpec.base_alias`**
+  and **`TableConnector.base_alias`** (default **`base`**) replace the former
+  hard-coded `r` alias in generated SQL.
+
+### Changed
+
+- **Default `SelectSpec.select`**: **`["all_base"]`** instead of **`["*"]`** so
+  multi-table views default to base-row columns only.
+
+### Documentation
+
+- **`docs/concepts/table_connector_views.md`**: base table defaults, structured
+  select, **`all_base`** / **`base_alias`**, **`concat_select_parts`** sketch, YAML
+  anchor note.
+
+## [1.7.16] - 2026-04-10
+
+### Added
+
+- **`merge_observation_with_transform_buffer`** (and alias **`merge_row_doc_with_transform_buffer`**) in **`graflo.architecture.graph_types`**: merges a nested JSON observation slice with **`ExtractionContext.buffer_transforms`** entries at the same **`LocationIndex`** in pipeline order (later transform output overrides earlier keys and conflicts with the raw observation).
+- **`IngestionParams.batch_prefetch`**: bounded queue depth for prefetching the next source batch(es) while the current batch is cast and written—keeps **`iter_batches`** lazy with smoother overlap between fetch and processing.
+- **`BulkSessionCoordinator`** (**`graflo.hq.bulk_session`**): backend-agnostic begin/finalize lifecycle for optional native bulk ingest sessions (feature detection and **`UnsupportedBulkLoad`** handling stay on connections).
+
+### Changed
+
+- **Native bulk writes**: **`DBWriter.write`** treats a non-empty **`bulk_session_id`** as “append via the connection’s bulk interface” (no TigerGraph-only branching in the writer). **`bindings`** / **`connection_provider`** are no longer passed into **`write`**; finalize still receives them from the coordinator after the ingest run.
+- **`VertexRouterActor` / `EdgeRouterActor`**: routing reads type fields, relation fields, and projected identity columns from the **merged** observation (raw slice + transform buffer), including **`{prefix}{type_field}`** fallback for vertex routers when **`prefix`** is set.
+- **`Caster`**: TigerGraph-specific bulk session helpers replaced with **`_ensure_bulk_session`** / **`_finalize_bulk_session`** backed by **`BulkSessionCoordinator`**; **`process_data_source`** pipelines batch iteration through the prefetch queue.
+
+### Documentation
+
+- Concepts: router actors + transform buffer merge; **`docs/concepts/table_connector_views.md`** (table connector views).
+
+## [1.7.15] - 2026-04-08
+
+### Added
+
+- **TigerGraph native bulk ingest**: Optional **`TigergraphConfig.bulk_load`** stages per-type CSV under a local **`staging_dir`**, then runs **`CREATE LOADING JOB` / `RUN LOADING JOB`** via GSQL (REST++ upsert path unchanged). **`Bindings.staging_proxy`** names map to runtime S3 credentials through **`ConnectionProvider.get_generalized_config_by_proxy`**; use **`S3GeneralizedConnConfig`** and **`boto3`** upload when **`s3_conn_proxy` / `s3_staging_name`** is set. Not supported: **`blank_vertices`** and resources with **`extra_weights`**. Dependency: **`boto3`** (required for S3 staging).
+
+### Changed
+
+## [1.7.14] - 2026-04-08
+
+- **`Resource.drop_trivial_input_fields` + actor missing-key handling**: Added **`Resource.skip_actors_on_missing_input_keys`** (optional). When enabled, transform actors skip execution if required input keys are missing (instead of raising key-index errors). If unset (`null`/`None`), it automatically defaults to the value of **`drop_trivial_input_fields`**.
+
+## [1.7.13] - 2026-04-07
+
+
+### Changed
+
+- **`SQLDataSource`**: Executes the configured query once per `iter_batches` call and streams rows with SQLAlchemy **`stream_results`** and **`fetchmany`**, instead of mutating SQL with **`LIMIT`/`OFFSET`** and re-running per page. This avoids large-offset discarded scans on backends that support server-side cursors. Optional **`limit`** still caps the number of rows read in application code (no SQL **`OFFSET`** pagination).
+- **`SQLConfig`**: Fields **`pagination`** and **`page_size`** are deprecated and ignored (left optional so existing configs keep validating under **`extra="forbid"`**). Control batch size via **`iter_batches(batch_size=...)`** and total row cap via **`limit`**.
+- **`RegistryBuilder`**: No longer passes SQL pagination options into **`SQLConfig`** when registering PostgreSQL table sources.
+- **Sanitizer API is manifest-first**: `graflo.hq.sanitizer.Sanitizer` now exposes `sanitize_manifest(GraphManifest)` as the contract-level entrypoint, applying naming/index normalization on `schema` and synchronizing ingestion mappings in `ingestion_model` when needed.
+
+### Added
+
+- **Tests**: **`test_sql_data_source_postgres_streaming_limit_25`** in **`test/data_source/test_api_data_source.py`** hits a real PostgreSQL instance from **`PostgresConfig.from_docker_env()`** (skips when unavailable) and asserts **`iter_batches`** batching and **`limit`**.
+- **Document cast failure sink (gzip JSONL)**: Optional **`IngestionParams.doc_error_sink_path`**, CLI **`ingest --doc-error-sink`**, and **`DocErrorSink`** / **`JsonlGzDocErrorSink`** append gzip-compressed JSON lines (one **`DocCastFailure`** JSON object per line, field **`doc_index`**). See **Concepts → Document cast errors and doc error sink**.
+
+### Breaking
+
+- **Removed schema-only sanitizer API**: `SchemaSanitizer` and `sanitize(schema, ingestion_model=...)` were removed. Update call sites to create/use `GraphManifest` and call `Sanitizer.sanitize_manifest(manifest)`.
+- **Per-document cast error API rename**: `RowCastFailure` → **`DocCastFailure`** (`row_index` → **`doc_index`** in JSON), `RowErrorBudgetExceeded` → **`DocErrorBudgetExceeded`**, `on_row_error` → **`on_doc_error`**, `max_row_errors` → **`max_doc_errors`**, `row_error_doc_preview_max_bytes` → **`doc_error_preview_max_bytes`**, `row_error_doc_keys` → **`doc_error_preview_keys`**, CLI **`--on-row-error`** → **`--on-doc-error`**, log extra key **`row_cast_failure`** → **`doc_cast_failure`**.
 
 ## [1.8.0] - 2026-04-07
 

@@ -5,15 +5,17 @@ for graph database operations, coordinating between inference, connector mapping
 and data ingestion.
 """
 
+import inspect
 import logging
 
 from graflo.architecture.contract.manifest import GraphManifest
-from graflo.architecture.contract.declarations.ingestion_model import IngestionModel
+from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.schema import Schema
 from graflo.onto import DBType
 from graflo.architecture.onto_sql import SchemaIntrospectionResult
-from graflo.db import ConnectionManager, PostgresConnection
-from graflo.db import DBConfig, PostgresConfig, SparqlEndpointConfig
+from graflo.db.connection import DBConfig, PostgresConfig, SparqlEndpointConfig
+from graflo.db.manager import ConnectionManager
+from graflo.db.postgres.conn import PostgresConnection
 from graflo.hq.caster import Caster, IngestionParams
 from graflo.hq.connection_provider import (
     ConnectionProvider,
@@ -21,7 +23,8 @@ from graflo.hq.connection_provider import (
     InMemoryConnectionProvider,
     SparqlGeneralizedConnConfig,
 )
-from graflo.hq.inferencer import InferenceManager
+from graflo.hq.sanitizer import Sanitizer
+from graflo.hq.sql_inferencer import SQLInferenceManager
 from graflo.hq.resource_mapper import ResourceMapper
 from graflo.architecture.contract.bindings import Bindings
 
@@ -120,7 +123,7 @@ class GraphEngine:
                 raw_tables, schema_name) suitable for serialization.
         """
         with PostgresConnection(postgres_config) as postgres_conn:
-            inferencer = InferenceManager(
+            inferencer = SQLInferenceManager(
                 conn=postgres_conn,
                 target_db_flavor=self.target_db_flavor,
             )
@@ -146,23 +149,94 @@ class GraphEngine:
                 any relation (and resources/actors that reference them). Default False.
 
         Returns:
-            GraphManifest: Inferred manifest with schema and ingestion model.
+            GraphManifest: Inferred manifest with schema, ingestion model, and bindings.
         """
         with PostgresConnection(postgres_config) as postgres_conn:
-            inferencer = InferenceManager(
+            inferencer = SQLInferenceManager(
                 conn=postgres_conn,
                 target_db_flavor=self.target_db_flavor,
                 fuzzy_threshold=fuzzy_threshold,
             )
-            schema, ingestion_model = inferencer.infer_complete_schema(
-                schema_name=schema_name
+            artifacts = inferencer.infer_artifacts(schema_name=schema_name)
+            schema, ingestion_model = artifacts.schema, artifacts.ingestion_model
+            bindings, provider = (
+                self.resource_mapper.create_bindings_with_provider_from_introspection(
+                    introspection_result=artifacts.introspection_result,
+                    conn=postgres_conn,
+                    schema_name=schema_name,
+                )
             )
+            self.connection_provider = provider
         if discard_disconnected_vertices:
             disconnected = schema.remove_disconnected_vertices()
             ingestion_model.prune_to_graph(
                 schema.core_schema, disconnected=disconnected
             )
-        return GraphManifest(graph_schema=schema, ingestion_model=ingestion_model)
+            connected_resources = {
+                resource.name for resource in ingestion_model.resources
+            }
+            connectors = list(bindings.connectors)
+            resource_connector = list(bindings.resource_connector)
+            connector_connection = list(bindings.connector_connection)
+
+            connector_refs_all = set()
+            for connector in connectors:
+                connector_refs_all.add(connector.hash)
+                if connector.name:
+                    connector_refs_all.add(connector.name)
+            filtered_resource_connector = []
+            mapped_connector_refs = set()
+            for mapping in resource_connector:
+                if isinstance(mapping, dict):
+                    resource_name = mapping.get("resource")
+                    connector_ref = mapping.get("connector")
+                else:
+                    resource_name = mapping.resource
+                    connector_ref = mapping.connector
+                if (
+                    resource_name in connected_resources
+                    and isinstance(connector_ref, str)
+                    and connector_ref in connector_refs_all
+                ):
+                    filtered_resource_connector.append(mapping)
+                    mapped_connector_refs.add(connector_ref)
+            filtered_connectors = [
+                connector
+                for connector in connectors
+                if connector.resource_name in connected_resources
+                or connector.hash in mapped_connector_refs
+                or (
+                    connector.name is not None
+                    and connector.name in mapped_connector_refs
+                )
+            ]
+            valid_connector_refs = set()
+            for connector in filtered_connectors:
+                valid_connector_refs.add(connector.hash)
+                if connector.name:
+                    valid_connector_refs.add(connector.name)
+            filtered_connector_connection = []
+            for mapping in connector_connection:
+                if isinstance(mapping, dict):
+                    connector_ref = mapping.get("connector")
+                else:
+                    connector_ref = mapping.connector
+                if connector_ref in valid_connector_refs:
+                    filtered_connector_connection.append(mapping)
+            bindings_dict = bindings.to_dict(skip_defaults=False)
+            bindings_dict["connectors"] = filtered_connectors
+            bindings_dict["resource_connector"] = filtered_resource_connector
+            bindings_dict["connector_connection"] = filtered_connector_connection
+            bindings = Bindings.from_dict(bindings_dict)
+        manifest = GraphManifest(
+            graph_schema=schema, ingestion_model=ingestion_model, bindings=bindings
+        )
+        # Apply DB-flavor-specific sanitization a posteriori (reserved words,
+        # TigerGraph identity normalization, etc.). Sanitizer is the single
+        # entry point that maps `target_db_flavor` to the corresponding
+        # evolution ops.
+        Sanitizer(self.target_db_flavor).sanitize_manifest(manifest)
+        return manifest
 
     def create_bindings(
         self,
@@ -178,8 +252,8 @@ class GraphEngine:
             postgres_config: PostgresConfig instance
             schema_name: Schema name to introspect
             datetime_columns: Optional mapping of resource/table name to datetime
-                column name for date-range filtering (sets date_field per
-                TableConnector). Use with IngestionParams.datetime_after /
+                column name for date-range filtering (sets ``time_filter.column`` per
+                ``TableConnector``). Use with IngestionParams.datetime_after /
                 datetime_before.
             type_lookup_overrides: Optional mapping of table name to type_lookup
                 spec for edge tables where source/target types come from a
@@ -325,7 +399,13 @@ class GraphEngine:
         ingestion_params = ingestion_params or IngestionParams()
         if ingestion_params.clear_data:
             with ConnectionManager(connection_config=target_db_config) as db_client:
-                db_client.clear_data(schema)
+                clear_result = db_client.clear_data(schema)
+                if inspect.isawaitable(clear_result):
+                    raise TypeError(
+                        "clear_data must be synchronous so ingestion only starts "
+                        "after data clearing has completed."
+                    )
+
         caster = Caster(
             schema=schema,
             ingestion_model=ingestion_model,

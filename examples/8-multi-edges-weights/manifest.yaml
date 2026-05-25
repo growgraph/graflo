@@ -79,7 +79,7 @@ ingestion_model:
             value: value
     resources:
     -   name: ticker_data
-        apply:
+        pipeline:
         -   transform:
                 call:
                     use: round_str_ndigits_3_metric

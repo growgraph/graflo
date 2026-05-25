@@ -9,13 +9,26 @@ import pathlib
 import re
 from typing import TYPE_CHECKING, Any, Self
 
-from pydantic import AliasChoices, Field, field_validator, model_validator
+from pydantic import (
+    AliasChoices,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.onto import BaseEnum
 
+from .column_time_filter import ColumnTimeFilter
+
+# SQL identifier for TableConnector.base_alias validation (matches SelectSpec).
+_BASE_TABLE_ALIAS_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\Z")
+
 if TYPE_CHECKING:
     from graflo.db import PostgresConfig
+    from graflo.filter.onto import FilterExpression
 else:
     try:
         from graflo.db import PostgresConfig
@@ -39,6 +52,32 @@ class BoundSourceKind(BaseEnum):
     FILE = "file"
     SQL_TABLE = "sql_table"
     SPARQL = "sparql"
+
+
+class ConnectorUpdate(ConfigBaseModel):
+    """Patch payload for an existing connector (applied after manifest load).
+
+    Only ``connector`` is a fixed field; any other keys are captured as extras and
+    merged into the resolved connector via ``model_validate`` (so validators,
+    including hash recomputation, run). New connector types and fields do not
+    require changes to this model. Not part of the stored ``GraphManifest``;
+    load from a separate file or build in code, then call
+    ``Bindings.apply_connector_update``.
+
+    Attributes:
+        connector: Connector ``name`` or ``hash`` (same resolution as bindings).
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    connector: str = Field(
+        ...,
+        description="Connector reference: name or hash of the connector to patch.",
+    )
+
+    def as_patch(self) -> dict[str, Any]:
+        """Return extra keys as a patch mapping (excludes ``connector``)."""
+        return dict(self.model_extra or {})
 
 
 class ResourceConnector(ConfigBaseModel, abc.ABC):
@@ -110,31 +149,25 @@ class FileConnector(ResourceConnector):
     Attributes:
         regex: Regular expression pattern for matching filenames
         sub_path: Path to search for matching files (default: "./")
-        date_field: Name of the date field to filter on (for date-based filtering)
-        date_filter: SQL-style date filter condition (e.g., "> '2020-10-10'")
-        date_range_start: Start date for range filtering (e.g., "2015-11-11")
-        date_range_days: Number of days after start date (used with date_range_start)
+        time_filter: Optional structured filter on a date/time column (shared with
+            :class:`TableConnector`), using :class:`~graflo.architecture.contract.bindings.column_time_filter.ColumnTimeFilter`.
     """
 
     regex: str | None = None
     sub_path: pathlib.Path = Field(default_factory=lambda: pathlib.Path("./"))
-    date_field: str | None = None
-    date_filter: str | None = None
-    date_range_start: str | None = None
-    date_range_days: int | None = None
+    time_filter: ColumnTimeFilter | None = None
 
     @model_validator(mode="after")
     def _validate_file_connector(self) -> Self:
-        """Ensure sub_path is a Path and validate date filtering parameters."""
+        """Ensure sub_path is a Path."""
         if not isinstance(self.sub_path, pathlib.Path):
             object.__setattr__(self, "sub_path", pathlib.Path(self.sub_path))
-        if (self.date_filter or self.date_range_start) and not self.date_field:
-            raise ValueError(
-                "date_field is required when using date_filter or date_range_start"
-            )
-        if self.date_range_days is not None and not self.date_range_start:
-            raise ValueError("date_range_start is required when using date_range_days")
         return self
+
+    @property
+    def date_field(self) -> str | None:
+        """Column used for time filtering, if any (compat alias for ``time_filter.column``)."""
+        return self.time_filter.column if self.time_filter else None
 
     def matches(self, resource_identifier: str) -> bool:
         """Check if connector matches a filename.
@@ -158,7 +191,8 @@ class JoinClause(ConfigBaseModel):
     """Specification for a SQL JOIN operation.
 
     Used by TableConnector to describe multi-table queries. Each JoinClause
-    adds one JOIN to the generated SQL.
+    adds one JOIN to the generated SQL. The base row uses ``TableConnector.base_alias``
+    (default ``base``), not a hard-coded name.
 
     Attributes:
         table: Table name to join (e.g. "all_classes").
@@ -203,12 +237,11 @@ class TableConnector(ResourceConnector):
         table_name: Exact table name or regex pattern
         schema_name: Schema name (optional, defaults to public)
         database: Database name (optional)
-        date_field: Name of the date field to filter on (for date-based filtering)
-        date_filter: SQL-style date filter condition (e.g., "> '2020-10-10'")
-        date_range_start: Start date for range filtering (e.g., "2015-11-11")
-        date_range_days: Number of days after start date (used with date_range_start)
+        time_filter: Optional structured filter on a date/time column, rendered
+            via :class:`~graflo.filter.onto.FilterExpression` in SQL.
         filters: General-purpose pushdown filters rendered as SQL WHERE fragments.
         joins: Multi-table JOIN specifications (auto-generated or explicit).
+        base_alias: SQL alias for the base table when ``joins`` is non-empty.
         select_columns: Explicit SELECT column list. None means ``*`` for the
             base table (plus aliased columns from joins).
     """
@@ -220,10 +253,7 @@ class TableConnector(ResourceConnector):
         default=None, validation_alias=AliasChoices("schema_name", "schema")
     )
     database: str | None = None
-    date_field: str | None = None
-    date_filter: str | None = None
-    date_range_start: str | None = None
-    date_range_days: int | None = None
+    time_filter: ColumnTimeFilter | None = None
     filters: list[Any] = Field(
         default_factory=list,
         description="Pushdown FilterExpression filters (rendered to SQL WHERE).",
@@ -231,6 +261,10 @@ class TableConnector(ResourceConnector):
     joins: list[JoinClause] = Field(
         default_factory=list,
         description="JOIN clauses for multi-table queries.",
+    )
+    base_alias: str = Field(
+        default="base",
+        description="SQL alias for the base table row when joins are present.",
     )
     select_columns: list[str] | None = Field(
         default=None,
@@ -240,6 +274,23 @@ class TableConnector(ResourceConnector):
         default=None,
         description="SelectSpec or dict for declarative view (alternative to table+joins+filters).",
     )
+
+    @field_validator("filters", mode="before")
+    @classmethod
+    def _coerce_filters(cls, v: Any) -> list[Any]:
+        from graflo.filter.onto import parse_filter_expression
+
+        if v is None:
+            return []
+        if not isinstance(v, list):
+            raise ValueError("filters must be a list")
+        result: list[Any] = []
+        for i, item in enumerate(v):
+            try:
+                result.append(parse_filter_expression(item))
+            except (ValueError, ValidationError) as e:
+                raise ValueError(f"filters[{i}]: {e}") from e
+        return result
 
     @field_validator("view", mode="before")
     @classmethod
@@ -254,16 +305,26 @@ class TableConnector(ResourceConnector):
 
     @model_validator(mode="after")
     def _validate_table_connector(self) -> Self:
-        """Validate table_name and date filtering parameters."""
+        """Validate table_name and join wiring."""
         if not self.table_name:
             raise ValueError("table_name is required for TableConnector")
-        if (self.date_filter or self.date_range_start) and not self.date_field:
+        if not _BASE_TABLE_ALIAS_IDENT.match(self.base_alias):
             raise ValueError(
-                "date_field is required when using date_filter or date_range_start"
+                "base_alias must be a simple SQL identifier "
+                "(ASCII letter, digit, underscore)"
             )
-        if self.date_range_days is not None and not self.date_range_start:
-            raise ValueError("date_range_start is required when using date_range_days")
+        join_aliases = {jc.alias or jc.table for jc in self.joins}
+        if self.base_alias in join_aliases:
+            raise ValueError(
+                f"base_alias {self.base_alias!r} conflicts with a join alias "
+                f"{sorted(join_aliases)}"
+            )
         return self
+
+    @property
+    def date_field(self) -> str | None:
+        """Column used for time filtering, if any (compat alias for ``time_filter.column``)."""
+        return self.time_filter.column if self.time_filter else None
 
     def matches(self, resource_identifier: str) -> bool:
         """Check if connector matches a table name.
@@ -300,41 +361,30 @@ class TableConnector(ResourceConnector):
     def bound_source_kind(self) -> BoundSourceKind:
         return BoundSourceKind.SQL_TABLE
 
-    def build_where_clause(self) -> str:
-        """Build SQL WHERE clause from date filtering parameters **and** general filters.
+    def build_where_clause(self, base_alias: str | None = None) -> str:
+        """Build SQL WHERE clause from time filter **and** general filters.
 
         Returns:
             WHERE clause string (without the WHERE keyword) or empty string if no filters
         """
-        from graflo.filter.onto import FilterExpression
         from graflo.onto import ExpressionFlavor
 
         conditions: list[str] = []
 
-        # Date-specific conditions (legacy fields)
-        if self.date_field:
-            if self.date_range_start and self.date_range_days is not None:
-                conditions.append(
-                    f"\"{self.date_field}\" >= '{self.date_range_start}'::date"
-                )
-                conditions.append(
-                    f"\"{self.date_field}\" < '{self.date_range_start}'::date + INTERVAL '{self.date_range_days} days'"
-                )
-            elif self.date_filter:
-                filter_parts = self.date_filter.strip().split(None, 1)
-                if len(filter_parts) == 2:
-                    operator, value = filter_parts
-                    if not (value.startswith("'") and value.endswith("'")):
-                        if len(value) == 10 and value.count("-") == 2:
-                            value = f"'{value}'"
-                    conditions.append(f'"{self.date_field}" {operator} {value}')
-                else:
-                    conditions.append(f'"{self.date_field}" {self.date_filter}')
+        if self.time_filter is not None:
+            expr = self.time_filter.as_filter_expression()
+            if expr is not None:
+                filt_expr = self._coerce_filter_expression(expr, base_alias)
+                if filt_expr is not None:
+                    rendered = filt_expr(kind=ExpressionFlavor.SQL)
+                    if rendered:
+                        conditions.append(str(rendered))
 
         # General-purpose FilterExpression filters
         for filt in self.filters:
-            if isinstance(filt, FilterExpression):
-                rendered = filt(kind=ExpressionFlavor.SQL)
+            filt_expr = self._coerce_filter_expression(filt, base_alias)
+            if filt_expr is not None:
+                rendered = filt_expr(kind=ExpressionFlavor.SQL)
                 if rendered:
                     conditions.append(str(rendered))
 
@@ -347,7 +397,7 @@ class TableConnector(ResourceConnector):
 
         When ``view`` is set, delegates to ``view.build_sql()``. Otherwise
         incorporates the base table, any JoinClauses, explicit select_columns,
-        date filters, and FilterExpression filters.
+        time_filter, and FilterExpression filters.
 
         Args:
             effective_schema: Schema to use if ``self.schema_name`` is None.
@@ -360,8 +410,12 @@ class TableConnector(ResourceConnector):
             from graflo.filter.select import SelectSpec
 
             if isinstance(self.view, SelectSpec):
-                return self.view.build_sql(schema=schema, base_table=self.table_name)
-        base_alias = "r" if self.joins else None
+                query = self.view.build_sql(schema=schema, base_table=self.table_name)
+                where = self.build_where_clause(base_alias=self.view.base_alias)
+                if where:
+                    return self._append_where_condition(query, where)
+                return query
+        base_alias = self.base_alias if self.joins else None
         base_ref = f'"{schema}"."{self.table_name}"'
         if base_alias:
             base_ref_aliased = f"{base_ref} {base_alias}"
@@ -404,11 +458,60 @@ class TableConnector(ResourceConnector):
         query = f"SELECT {select_clause} FROM {from_clause}"
 
         # --- WHERE ---
-        where = self.build_where_clause()
+        where = self.build_where_clause(base_alias=base_alias)
         if where:
             query += f" WHERE {where}"
 
         return query
+
+    @staticmethod
+    def _append_where_condition(query: str, condition: str) -> str:
+        """Append a SQL condition to *query* preserving an existing WHERE clause."""
+        if re.search(r"\bWHERE\b", query, flags=re.IGNORECASE):
+            return f"{query} AND {condition}"
+        return f"{query} WHERE {condition}"
+
+    @staticmethod
+    def _qualified_column_ref(column: str, base_alias: str | None) -> str:
+        if base_alias:
+            return f'{base_alias}."{column}"'
+        return f'"{column}"'
+
+    @classmethod
+    def _qualify_filter_payload(
+        cls, payload: dict[str, Any], base_alias: str | None
+    ) -> dict[str, Any]:
+        qualified = dict(payload)
+        if base_alias is None:
+            return qualified
+        if qualified.get("kind") == "leaf":
+            field = qualified.get("field")
+            if isinstance(field, str) and "." not in field:
+                qualified["field"] = f"{base_alias}.{field}"
+            return qualified
+        deps = qualified.get("deps")
+        if isinstance(deps, list):
+            qualified["deps"] = [
+                cls._qualify_filter_payload(dep, base_alias)
+                if isinstance(dep, dict)
+                else dep
+                for dep in deps
+            ]
+        return qualified
+
+    @classmethod
+    def _coerce_filter_expression(
+        cls, raw_filter: Any, base_alias: str | None
+    ) -> FilterExpression | None:
+        from graflo.filter.onto import parse_filter_expression
+
+        if raw_filter is None:
+            return None
+        expr = parse_filter_expression(raw_filter)
+        if base_alias is None:
+            return expr
+        payload = expr.model_dump(mode="python")
+        return parse_filter_expression(cls._qualify_filter_payload(payload, base_alias))
 
 
 class SparqlConnector(ResourceConnector):

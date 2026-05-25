@@ -1,4 +1,4 @@
-"""Example 7: Objects and Relations with vertex_router and edge_router.
+"""Example 7: Objects and Relations with vertex_router and dynamic edge.
 
 Ingests polymorphic entities (Person, Vehicle, Institution) from objects.csv
 and dynamic relations (EMPLOYED_BY, OWNS, FUNDS, etc.) from relations.csv
@@ -28,9 +28,10 @@ ingestion_model = manifest.require_ingestion_model()
 
 # Load config from docker/arango/.env (or neo4j, tigergraph, falkordb)
 conn_conf = ArangoConfig.from_docker_env()
-# Alternative: Grafeo (embedded, no server needed)
+# Alternative: Grafeo — embedded, no server (see docs/examples/example-7.md)
 # from graflo.db import GrafeoConfig
-# conn_conf = GrafeoConfig(path="graph.grafeo")  # or GrafeoConfig.in_memory()
+# conn_conf = GrafeoConfig.in_memory(database="objects_relations")
+# conn_conf = GrafeoConfig(database="objects_relations", path="objects_relations.grafeo")
 db_type = conn_conf.connection_type
 
 bindings = Bindings()

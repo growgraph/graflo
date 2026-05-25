@@ -21,7 +21,7 @@ schema:
 ingestion_model:
     resources:
     -   name: relations
-        apply:
+        pipeline:
         -   vertex: company
             from:
                 name: company_a

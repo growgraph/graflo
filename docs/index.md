@@ -13,9 +13,10 @@ It is a **Python package** and **Graph Schema & Transformation Language (GSTL)**
 
 ### What you get
 
-- **One pipeline, several graph databases** — The same manifest targets ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph, or Grafeo; `DatabaseProfile` and DB-aware types absorb naming, defaults, and indexing differences.
+- **One pipeline, several graph databases** — The same manifest targets ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph, or embedded [Grafeo](https://github.com/GrafeoDB/grafeo); `DatabaseProfile` and DB-aware types absorb naming, defaults, and indexing differences.
 - **Explicit identities** — Vertex identity fields and indexes back upserts so reloads merge on keys instead of blindly duplicating nodes.
-- **Reusable ingestion** — `Resource` actor pipelines (including **vertex_router** / **edge_router** steps and the **`VertexRouterActor`** / **`EdgeRouterActor`** implementations) bind to files, SQL, SPARQL/RDF, APIs, or in-memory batches via `Bindings` and the `DataSourceRegistry`.
+- **Reusable ingestion** — `ResourceConfig` actor pipelines (including **vertex** / **vertex_router** / **edge** steps) bind to files, SQL, SPARQL/RDF, APIs, or in-memory batches via `Bindings` and the `DataSourceRegistry`. A single flat row can populate multiple same-type vertices in distinct named slots (`role`) and emit multiple edges in one `edge: links` step. Per-resource **`tolerate_transform_errors`** (default on) keeps ingestion moving when an individual transform step fails.
+- **Manifest-first sanitization** — `Sanitizer` (backed by `graflo.architecture.evolution` **`SanitizeOp`**) normalizes schema identifiers (reserved words, TigerGraph relation/index constraints) and synchronizes related ingestion mappings via `sanitize_manifest(GraphManifest)`. `GraphEngine.infer_manifest(...)` applies it automatically; lower-level `SQLInferenceManager` does not—sanitize the manifest yourself when assembling contracts outside the engine.
 
 ### What’s in the manifest
 
@@ -35,7 +36,7 @@ It is a **Python package** and **Graph Schema & Transformation Language (GSTL)**
 |-------|------|------|
 | **Logical graph schema** | Manifest `schema`: vertex/edge definitions, identities, typed **properties**, DB profile. Constrains pipeline output and projection; not a separate queue between steps. | `Schema`, `VertexConfig`, `EdgeConfig` (under `core_schema`). |
 | **Source instance** | Concrete input: file, SQL table, SPARQL endpoint, API payload, in-memory rows. | `AbstractDataSource` + `DataSourceType`. |
-| **Resource** | Ordered actors; resources are looked up by name when sources are registered. | `Resource` in `IngestionModel`. |
+| **Resource** | Ordered actors; resources are looked up by name when sources are registered. | `ResourceConfig` in `IngestionModel`; `ResourceRuntime` at cast time. |
 | **Covariant graph** (`GraphContainer`) | Batches of vertices/edges before load. | `GraphContainer`. |
 | **DB-aware projection** | Physical names, defaults, indexes for the target. | `Schema.resolve_db_aware()`, `VertexConfigDBAware`, `EdgeConfigDBAware`. |
 | **Graph DB** | Target LPG; each `DBType` has its own connector, orchestrated the same way. | `ConnectionManager`, `DBWriter`, per-backend `Connection`. |
@@ -53,7 +54,7 @@ It is a **Python package** and **Graph Schema & Transformation Language (GSTL)**
 
 ### Supported targets
 
-The graph engines listed in **What you get** are the supported **output** `DBType` values in `graflo.onto`. Each backend uses its own `Connection` implementation under the shared `ConnectionManager` / `DBWriter` / `GraphEngine` flow.
+The graph engines listed in **What you get** are the supported **output** `DBType` values in `graflo.onto`. Each backend uses its own `Connection` implementation under the shared `ConnectionManager` / `DBWriter` / `GraphEngine` flow. See [Graph database targets](concepts/graph_database_targets.md) for a comparison matrix (deployment, storage, query languages, and trade-offs).
 
 <!-- [![pytest](https://github.com/growgraph/graflo/actions/workflows/pytest.yml/badge.svg)](https://github.com/growgraph/graflo/actions/workflows/pytest.yml) -->
 
@@ -64,6 +65,8 @@ The graph engines listed in **What you get** are the supported **output** `DBTyp
 GraFlo targets the LPG model:
 
 - **Vertices** — nodes with typed **properties** (manifest key: `properties`) and logical **identity** keys for upserts.
+  - Duplicate vertex property definitions are merged by name; conflicting typed duplicates are rejected.
+  - Identity fallback from all properties is opt-in via `VertexConfig.identity_from_all_properties` and is disabled by default.
 - **Edges** — directed relationships between vertices; relationship attributes are declared as **`properties`** on the logical edge (same list-of-names-or-`Field` shape as vertices).
 
 ### Schema
@@ -87,6 +90,10 @@ Resources and transforms are part of `IngestionModel`, not `Schema`.
 
 A `Resource` is the central abstraction that bridges data sources and the graph schema. Each Resource defines a reusable pipeline of actors (descend, transform, vertex, edge) that maps raw records to graph elements. Data sources bind to Resources by name via the `DataSourceRegistry`, so the same transformation logic applies regardless of whether data arrives from a file, an API, or a SPARQL endpoint.
 
+- **`vertex` step `role`**: assign a named accumulator slot to a static-type vertex step so multiple vertices of the same type in one flat row occupy distinct slots (e.g. `role: self`, `role: parent`, `role: child` all as `person`). Use `extraction_scope: mapped_only` to extract only explicit `from` mappings, or keep the default `extraction_scope: full` and use `keep_fields` to restrict passthrough.
+- **`edge` step `links`**: declare multiple edge intents in one step — each list item emits one edge per row with its own `source_role`/`target_role` (or `source_type_field`/`target_type_field`) and `relation`.
+- **`source_role` / `target_role`** on `edge` steps: role-first aliases for `source_type_field` / `target_type_field` when the slot was populated by a `vertex+role` or `vertex_router+role` step.
+
 For wide rows with many empty or null columns, **`drop_trivial_input_fields`** (default `false`) removes only **top-level** keys whose value is `null` or `""` before the pipeline runs. The filter is **shallow**: nested dicts and lists are not walked, and empty `{}` / `[]` values are kept because they are not `null` or `""`. **`0`** and **`false`** are kept.
 
 For **TigerGraph**, optional attribute defaults belong in the covariant physical layer: **`schema.db_profile.default_property_values`** maps logical vertex/edge properties to YAML literals that GraFlo turns into GSQL **`DEFAULT`** clauses when defining the graph schema (same idea as `CREATE VERTEX Sensor (id STRING PRIMARY KEY, reading FLOAT DEFAULT -1.0)` in the [TigerGraph schema reference](https://docs.tigergraph.com/gsql-ref/4.2/ddl-and-loading/defining-a-graph-schema)).
@@ -106,15 +113,17 @@ The `DataSourceRegistry` manages `AbstractDataSource` adapters, each carrying a 
 
 ### GraphEngine
 
-`GraphEngine` orchestrates end-to-end operations: schema inference, schema definition in the target database, connector creation from data sources, and data ingestion.
+`GraphEngine` orchestrates end-to-end operations: schema/manifest inference, schema definition in the target database, connector creation from data sources, and data ingestion.
+For PostgreSQL workflows, `infer_manifest(...)` returns a full manifest contract
+(`schema` + `ingestion_model` + `bindings`) and runs target-`DBType` **`Sanitizer`** on that manifest before returning.
 
 ## More capabilities
 
 - **SPARQL & RDF** — Endpoints and RDF files; optional OWL/RDFS schema inference (`rdflib`, `SPARQLWrapper` in the default install).
 - **Schema inference** — From PostgreSQL-style 3NF layouts (PK/FK heuristics) or from OWL/RDFS (`owl:Class` → vertices, `owl:ObjectProperty` → edges, `owl:DatatypeProperty` → vertex fields). See [Example 5](examples/example-5.md).
-- **Schema migrations** — Plan and apply guarded schema deltas (`migrate_schema` console script → `graflo.cli.migrate_schema`; library in `graflo.migrate`). Compare `from` / `to` schemas before execution to preview deltas and blocked high-risk operations. See [Concepts — Schema Migration](concepts/index.md#schema-migration-v1).
+- **Schema migrations** — Plan and apply guarded schema deltas (`migrate_schema` console script → `graflo.cli.migrate_schema`; library in `graflo.migrate`). Compare `from` / `to` schemas before execution to preview deltas and blocked high-risk operations. See [Concepts — Schema Migration](concepts/features_and_practices.md#schema-migration-v1).
 - **Typed `properties`** — Optional field types (`INT`, `FLOAT`, `STRING`, `DATETIME`, `BOOL`) on vertices and edges.
-- **Batching & concurrency** — Configurable batch sizes, worker counts (`IngestionParams.n_cores`), and DB write concurrency (`IngestionParams.max_concurrent_db_ops` / `DBWriter`).
+- **Batching & concurrency** — Configurable batch sizes (`IngestionParams.batch_size`), bounded prefetch of upcoming batches (`IngestionParams.batch_prefetch`), worker counts (`IngestionParams.n_cores`), and DB write concurrency (`IngestionParams.max_concurrent_db_ops` / `DBWriter`).
 - **Advanced filtering** — Server-side filtering (e.g. TigerGraph REST++ API), client-side filter expressions, and **SelectSpec** for declarative SQL view/filter control before data reaches Resources.
 - **Blank vertices** — Intermediate nodes for complex relationship modelling.
 
@@ -123,8 +132,8 @@ The `DataSourceRegistry` manages `AbstractDataSource` adapters, each carrying a 
 - [Installation](getting_started/installation.md)
 - [Quick Start Guide](getting_started/quickstart.md)
 - [Concepts (architecture diagrams)](concepts/index.md)
-- [Concepts — Schema Migration](concepts/index.md#schema-migration-v1)
-- [Concepts — Comparing Two Schemas](concepts/index.md#comparing-two-schemas)
+- [Concepts — Schema Migration](concepts/features_and_practices.md#schema-migration-v1)
+- [Concepts — Comparing Two Schemas](concepts/features_and_practices.md#comparing-two-schemas)
 - [API Reference](reference/index.md)
 - [Examples](examples/index.md)
 
@@ -141,7 +150,7 @@ The `DataSourceRegistry` manages `AbstractDataSource` adapters, each carrying a 
 ## Requirements
 
 - Python 3.11 or higher (3.11 and 3.12 officially supported)
-- A graph database (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph, or Grafeo) as target. Grafeo is embedded and ships as a core dependency, no external server needed.
+- A graph database as target — see [Graph database targets](concepts/graph_database_targets.md); embedded [Grafeo](https://github.com/GrafeoDB/grafeo) needs no external server
 - Optional: PostgreSQL for SQL data sources and schema inference
 - Optional extras (see [Installation](getting_started/installation.md)): `dev` (tests and typing), `docs` (MkDocs), `plot` (`plot_manifest` via `pygraphviz`; system Graphviz required)
 - Full dependency list in `pyproject.toml`

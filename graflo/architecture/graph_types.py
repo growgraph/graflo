@@ -274,18 +274,6 @@ class GraphContainer(ConfigBaseModel):
         for k, v in self.edges.items():
             self.edges[k] = _pick_unique_dict(v)
 
-    def loop_over_relations(self, edge_def: tuple[str, str, str | None]):
-        """Iterate over edges matching the given edge definition.
-
-        Args:
-            edge_def: Tuple of (source, target, optional_relation)
-
-        Returns:
-            Generator yielding matching edge IDs
-        """
-        source, target, _ = edge_def
-        return (ed for ed in self.edges if source == ed[0] and target == ed[1])
-
     @classmethod
     def from_docs_list(
         cls, list_default_dicts: list[defaultdict[GraphEntity, list]]
@@ -357,13 +345,11 @@ class VertexRep(ConfigBaseModel):
 
     Attributes:
         vertex: doc representing a vertex
-        ctx: context (for edge definition upstream
     """
 
     model_config = ConfigDict(kw_only=True)  # type: ignore[assignment]
 
-    vertex: dict
-    ctx: dict
+    vertex: dict[str, Any]
 
 
 class TransformPayload(ConfigBaseModel):
@@ -371,6 +357,7 @@ class TransformPayload(ConfigBaseModel):
 
     named: dict[str, Any] = Field(default_factory=dict)
     positional: tuple[Any, ...] = Field(default_factory=tuple)
+    removed_keys: frozenset[str] = Field(default_factory=frozenset)
 
     @classmethod
     def from_result(cls, result: Any) -> TransformPayload:
@@ -383,6 +370,47 @@ class TransformPayload(ConfigBaseModel):
     def context_doc(self) -> dict[str, Any]:
         """Named values available for weight and relation extraction."""
         return dict(self.named)
+
+
+def context_dict_from_transform_buffer_item(item: Any) -> dict[str, Any]:
+    """Map one ``transform_buffer`` entry to a flat context dict (named keys only)."""
+    if isinstance(item, TransformPayload):
+        return item.context_doc()
+    if isinstance(item, dict):
+        return dict(item)
+    return {}
+
+
+def merge_observation_with_transform_buffer(
+    observation: dict[str, Any],
+    buffer_items: list[Any],
+) -> dict[str, Any]:
+    """Merge a JSON observation slice with transform outputs at the same location.
+
+    ``observation`` is the current dict-shaped fragment of the nested document
+    passed into actors (often a child object under a :class:`DescendActor`).
+    ``buffer_items`` are the entries in ``ExtractionContext.transform_buffer``
+    for the same :class:`LocationIndex`.
+
+    Starts from a shallow copy of ``observation``; each buffer entry (in pipeline
+    order) updates the merged view, so later transforms override earlier keys
+    and transform output overrides the raw JSON on key conflicts.
+    """
+    merged: dict[str, Any] = dict(observation)
+    for item in buffer_items:
+        merged.update(context_dict_from_transform_buffer_item(item))
+        if isinstance(item, TransformPayload) and item.removed_keys:
+            for k in item.removed_keys:
+                merged.pop(k, None)
+    return merged
+
+
+def merge_row_doc_with_transform_buffer(
+    doc: dict[str, Any],
+    buffer_items: list[Any],
+) -> dict[str, Any]:
+    """Backward-compatible alias for :func:`merge_observation_with_transform_buffer`."""
+    return merge_observation_with_transform_buffer(doc, buffer_items)
 
 
 class ProvenancePath(ConfigBaseModel):
@@ -411,6 +439,17 @@ class TransformObservation(ConfigBaseModel):
     location: LocationIndex
     payload: TransformPayload
     provenance: ProvenancePath
+
+
+class TransformCastFailure(ConfigBaseModel):
+    """One transform step that failed during extraction (tolerance mode)."""
+
+    location: LocationIndex
+    transform_label: str
+    exception_type: str
+    message: str
+    traceback: str = ""
+    nulled_fields: tuple[str, ...] = Field(default_factory=tuple)
 
 
 class EdgeIntent(ConfigBaseModel):
@@ -445,6 +484,11 @@ class LocationIndex(ConfigBaseModel):
 
     def extend(self, extension: tuple[str | int | None, ...]) -> LocationIndex:
         return LocationIndex(path=(*self.path, *extension))
+
+    def parent(self) -> LocationIndex | None:
+        if not self.path:
+            return None
+        return LocationIndex(path=self.path[:-1])
 
     def depth(self) -> int:
         return len(self.path)
@@ -484,8 +528,8 @@ def _default_dict_transforms() -> defaultdict[LocationIndex, list[Any]]:
     return defaultdict(list)
 
 
-def _default_edge_requests() -> list[tuple[Any, LocationIndex]]:
-    return []
+def _default_dict_observations() -> dict[LocationIndex, dict[str, Any]]:
+    return {}
 
 
 def _default_vertex_observations() -> list[VertexObservation]:
@@ -500,13 +544,17 @@ def _default_edge_intents() -> list[EdgeIntent]:
     return []
 
 
+def _default_transform_failures() -> list[TransformCastFailure]:
+    return []
+
+
 class ExtractionContext(ConfigBaseModel):
     """Extraction-phase context.
 
     Attributes:
         acc_vertex: Local accumulation of extracted vertices
-        buffer_transforms: Buffer for transform payloads (defaultdict[LocationIndex, list])
-        edge_requests: Explicit edge assembly requests collected during extraction
+        transform_buffer: Buffer for transform payloads (defaultdict[LocationIndex, list])
+        obs_buffer: Merged observation context per location (dict[LocationIndex, dict])
         vertex_observations: Explicit extracted vertex observations
         transform_observations: Explicit extracted transform observations
         edge_intents: Explicit edge intents for assembly phase
@@ -517,8 +565,8 @@ class ExtractionContext(ConfigBaseModel):
     # Pydantic cannot schema nested defaultdict with custom key types (e.g. LocationIndex),
     # so we use Any; runtime type is as documented in Attributes
     acc_vertex: Any = Field(default_factory=outer_factory)
-    buffer_transforms: Any = Field(default_factory=_default_dict_transforms)
-    edge_requests: Any = Field(default_factory=_default_edge_requests)
+    transform_buffer: Any = Field(default_factory=_default_dict_transforms)
+    obs_buffer: Any = Field(default_factory=_default_dict_observations)
     vertex_observations: list[VertexObservation] = Field(
         default_factory=_default_vertex_observations
     )
@@ -526,6 +574,9 @@ class ExtractionContext(ConfigBaseModel):
         default_factory=_default_transform_observations
     )
     edge_intents: list[EdgeIntent] = Field(default_factory=_default_edge_intents)
+    transform_failures: list[TransformCastFailure] = Field(
+        default_factory=_default_transform_failures
+    )
 
     def record_vertex_observation(
         self, *, vertex_name: str, location: LocationIndex, vertex: dict, ctx: dict
@@ -567,6 +618,26 @@ class ExtractionContext(ConfigBaseModel):
             )
         )
 
+    def record_transform_failure(
+        self,
+        *,
+        location: LocationIndex,
+        transform_label: str,
+        exc: BaseException,
+        traceback_text: str,
+        nulled_fields: tuple[str, ...],
+    ) -> None:
+        self.transform_failures.append(
+            TransformCastFailure(
+                location=location,
+                transform_label=transform_label,
+                exception_type=type(exc).__name__,
+                message=str(exc),
+                traceback=traceback_text,
+                nulled_fields=nulled_fields,
+            )
+        )
+
 
 class AssemblyContext(ConfigBaseModel):
     """Assembly-phase context built from extraction outputs."""
@@ -581,16 +652,12 @@ class AssemblyContext(ConfigBaseModel):
         return self.extraction.acc_vertex
 
     @property
-    def buffer_transforms(self) -> Any:
-        return self.extraction.buffer_transforms
+    def transform_buffer(self) -> Any:
+        return self.extraction.transform_buffer
 
     @property
-    def edge_requests(self) -> Any:
-        return self.extraction.edge_requests
-
-    @edge_requests.setter
-    def edge_requests(self, value: Any) -> None:
-        self.extraction.edge_requests = value
+    def obs_buffer(self) -> Any:
+        return self.extraction.obs_buffer
 
     @property
     def edge_intents(self) -> list[EdgeIntent]:
@@ -605,6 +672,15 @@ class GraphAssemblyResult(ConfigBaseModel):
     """Result of graph assembly phase."""
 
     entities: Any = Field(default_factory=dd_factory)
+
+
+class ResourceCastResult(ConfigBaseModel):
+    """Outcome of casting one document through a resource pipeline."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    entities: Any
+    transform_failures: list[TransformCastFailure] = Field(default_factory=list)
 
 
 class ActionContext(ExtractionContext):

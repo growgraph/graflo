@@ -1,5 +1,5 @@
 from graflo.architecture.contract.bindings import Bindings
-from graflo.architecture.contract.declarations.ingestion_model import IngestionModel
+from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.schema import Schema
 from graflo.hq.caster import IngestionParams
@@ -123,8 +123,8 @@ def test_resource_finish_init_does_not_mutate_shared_schema_edge_config() -> Non
     # Shared logical schema stays untouched.
     assert len(schema.core_schema.edge_config.edges) == 0
     # Runtime resource edge configs receive local dynamic edge registrations.
-    assert len(ingestion_model.resources[0].edge_config.edges) == 1
-    assert len(ingestion_model.resources[1].edge_config.edges) == 1
+    assert len(ingestion_model.fetch_resource("r1").edge_config.edges) == 1
+    assert len(ingestion_model.fetch_resource("r2").edge_config.edges) == 1
 
 
 def test_bindings_reject_inline_credentials_payload() -> None:
@@ -138,3 +138,49 @@ def test_bindings_reject_inline_credentials_payload() -> None:
         assert False, "Expected inline credentials to be rejected"
     except ValueError as exc:
         assert "Legacy Bindings init keys are not supported" in str(exc)
+
+
+def test_manifest_canonical_roundtrip_keeps_bindings_contract_blocks() -> None:
+    manifest = GraphManifest.from_config(
+        {
+            "schema": {
+                "metadata": {"name": "kg"},
+                "core_schema": {
+                    "vertex_config": {
+                        "vertices": [
+                            {"name": "person", "properties": ["id"], "identity": ["id"]}
+                        ]
+                    },
+                    "edge_config": {"edges": []},
+                },
+            },
+            "ingestion_model": {
+                "resources": [{"name": "people", "pipeline": [{"vertex": "person"}]}]
+            },
+            "bindings": {
+                "connectors": [
+                    {
+                        "name": "people_table",
+                        "resource_name": "people",
+                        "table_name": "people",
+                        "schema_name": "public",
+                    }
+                ],
+                "resource_connector": [
+                    {"resource": "people", "connector": "people_table"}
+                ],
+                "connector_connection": [
+                    {"connector": "people_table", "conn_proxy": "postgres_source"}
+                ],
+            },
+        }
+    )
+    minimal = manifest.to_minimal_canonical_dict()
+    assert "bindings" in minimal
+    assert minimal["bindings"]["resource_connector"][0]["resource"] == "people"
+    assert minimal["bindings"]["connector_connection"][0]["conn_proxy"] == (
+        "postgres_source"
+    )
+
+    roundtrip = GraphManifest.from_config(minimal).to_minimal_canonical_dict()
+    assert roundtrip == minimal

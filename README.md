@@ -14,7 +14,7 @@
 
 - **One pipeline, several graph databases** — The same manifest targets ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph, or Grafeo; `DatabaseProfile` and DB-aware types absorb naming, defaults, and indexing differences.
 - **Explicit identities** — Vertex identity fields and indexes back upserts so reloads merge on keys instead of blindly duplicating nodes.
-- **Reusable ingestion** — `Resource` actor pipelines (including **vertex_router** / **edge_router** steps) bind to files, SQL, SPARQL/RDF, APIs, or in-memory batches via `Bindings` and the `DataSourceRegistry`.
+- **Reusable ingestion** — `Resource` actor pipelines (including **vertex_router** / **edge** steps) bind to files, SQL, SPARQL/RDF, APIs, or in-memory batches via `Bindings` and the `DataSourceRegistry`.
 
 ### What’s in the manifest
 

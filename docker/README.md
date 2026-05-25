@@ -17,6 +17,7 @@ This will start all available graph database services:
 - Memgraph (port 7687)
 - NebulaGraph (port 9669)
 - PostgreSQL (port 5432)
+- MinIO (API port 9000, console 9001)
 
 **Stop all services:**
 ```shell
@@ -157,6 +158,40 @@ FalkorDB is a Redis-based graph database that supports OpenCypher.
 from graflo.db.connection.onto import FalkordbConfig
 config = FalkordbConfig.from_docker_env()
 ```
+
+## MinIO
+
+MinIO provides S3-compatible object storage ([Docker Hub image](https://hub.docker.com/r/minio/minio)). Use it for bulk staging (e.g. TigerGraph examples that upload staged CSVs).
+
+**Run:**
+```shell
+cd minio
+docker compose --env-file .env --profile graflo.minio up -d
+```
+
+**Endpoints:**
+- S3 API: `http://127.0.0.1:9000` (host port configurable via `MINIO_API_PORT` in `.env`)
+- Web console: `http://127.0.0.1:9001` (configurable via `MINIO_CONSOLE_PORT`)
+
+The S3 API and the console use **different** host ports. Tools such as boto3 and `examples/10-tigergraph-bulk-s3` must reach the **API** port (`MINIO_API_PORT` / `MINIO_ENDPOINT`), not the console URL (e.g. `/endpoints` on the console port).
+
+**Port conflicts:** If `docker compose` fails with `port is already allocated` (often **9001**), another process is using that host port. Set `MINIO_CONSOLE_PORT` (and `MINIO_API_PORT` if needed) to free values in `docker/minio/.env`, remove any stuck container (`docker rm -f graflo.minio`), then `docker compose --env-file .env --profile graflo.minio up -d` again. While the MinIO container is not running, you will see connection refused on the API port even if something unrelated responds on 9001.
+
+When TigerGraph runs in Docker and GraFlo uploads from the host, set **`MINIO_LOADER_ENDPOINT`** (or **`MINIO_TIGERGRAPH_ENDPOINT`**) to the MinIO URL **as seen from the TigerGraph container** (e.g. `http://172.17.0.1:9003` or `http://host.docker.internal:9003`). That value is used only in the GSQL `CREATE DATA_SOURCE` for bulk loads; boto3 on the host still uses `MINIO_HOSTNAME` / `MINIO_API_PORT`.
+
+Default credentials are `minioadmin` / `minioadmin` (`MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`). Staging bucket name defaults (`MINIO_STAGING_BUCKET`, etc.) live in `docker/minio/.env`; you can still create buckets in the console or with `mc`.
+
+**Programmatic connection (boto3 / bulk staging):**
+```python
+from graflo.db import MinioConfig
+from graflo.object_storage import ensure_staging_bucket_for_config
+
+config = MinioConfig.from_docker_env()
+ensure_staging_bucket_for_config(config)
+# config.endpoint_url, config.access_key, config.secret_key, config.bucket, …
+```
+
+Implementation helpers (`upload_staged_csvs`, boto3 client factories, bucket ensure) live in **`graflo.object_storage`**. See **docs/concepts/object_storage.md** in the repo for staging vs ingestion connectors.
 
 ## Memgraph
 

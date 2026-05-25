@@ -1,6 +1,6 @@
-# Example 7: Polymorphic Objects and Relations with `vertex_router` and `edge_router`
+# Example 7: Polymorphic Objects and Relations with `vertex_router` and dynamic `edge`
 
-This example demonstrates how to ingest polymorphic entity data from a single objects table and dynamic relations from a relations table, using `vertex_router` and `edge_router` to route rows to the correct vertex types and edge types based on type discriminator columns.
+This example demonstrates how to ingest polymorphic entity data from a single objects table and dynamic relations from a relations table, using `vertex_router` to route rows to the correct vertex types and a dynamic `edge` step to create edges with types and relation names resolved at extraction time.
 
 ## Overview
 
@@ -12,9 +12,8 @@ The dataset contains:
 Instead of separate resources per entity type, this schema uses:
 
 1. **`vertex_router`** — Routes each objects row to the correct vertex type (`person`, `vehicle`, `institution`) via `type_map`
-2. **`edge_router`** — Creates edges with dynamic source/target types and relation names via `relation_map`
-
-This connector is ideal for EAV-style or polymorphic data where one table holds multiple entity types and another holds relation tuples.
+2. Two **`vertex_router`** steps on the relations resource — Accumulate source and target vertices into typed slots
+3. A dynamic **`edge`** step — Creates edges with relation names resolved from `relation_field` via `relation_map`
 
 ## Data
 
@@ -43,7 +42,7 @@ ec3cd5f9-8a75-49af-adc8-654eab637ebc,01dbf082-514a-4c6b-ae05-b0ec66c30f35,COLLEA
 
 ## Core Schema Ideas
 
-### 1) `vertex_router` with `type_map`
+### 1) `vertex_router` with `type_map` (objects resource)
 
 `vertex_router` inspects a type discriminator field and routes each row to the appropriate vertex type:
 
@@ -64,25 +63,35 @@ resources:
 
 Each row is dispatched to the correct `VertexActor` for that type. Fields are projected per vertex config; extra columns for other types are ignored.
 
-### 2) `edge_router` with `relation_map`
+### 2) Two `vertex_router` steps + dynamic `edge` (relations resource)
 
-`edge_router` creates edges with dynamic source/target types and relation names from document fields:
+The relations resource uses two `vertex_router` steps to accumulate both endpoints, then a dynamic `edge` step to resolve the edge type at extraction time:
 
 ```yaml
   - name: relations
     pipeline:
-      - edge_router:
-          source_type_field: source_type
-          target_type_field: target_type
-          source_fields:
+      - vertex_router:
+          type_field: source_type
+          role: source
+          from:
             id: source_id
-          target_fields:
-            id: target_id
-          relation_field: relation_type
           type_map:
             Person: person
             Vehicle: vehicle
             Institution: institution
+      - vertex_router:
+          type_field: target_type
+          role: target
+          from:
+            id: target_id
+          type_map:
+            Person: person
+            Vehicle: vehicle
+            Institution: institution
+      - edge:
+          source_role: source
+          target_role: target
+          relation_field: relation_type
           relation_map:
             EMPLOYED_BY: employed_by
             OWNS: owns
@@ -91,12 +100,11 @@ Each row is dispatched to the correct `VertexActor` for that type. Fields are pr
             INVESTS_IN: invests_in
 ```
 
-- `source_type_field` / `target_type_field`: Columns that specify source and target vertex types
-- `source_fields` / `target_fields`: Map document columns to vertex identity fields (e.g. `source_id` → `id`)
-- `relation_field`: Column with the relation name (e.g. `EMPLOYED_BY`)
+- `role`: Names the accumulator slot (`lindex.(role, 0)`) for each `vertex_router` endpoint
+- `source_role` / `target_role`: Match upstream `vertex_router.role`; the edge actor finds vertex types by scanning those role slots
+- `from`: Projects relation-table columns onto vertex fields (e.g. `id: source_id`), same as on a `vertex` step
+- `relation_field`: Column with the raw relation name (e.g. `EMPLOYED_BY`)
 - `relation_map`: Maps raw relation values to canonical names (e.g. `EMPLOYED_BY` → `employed_by`)
-
-For database ingestion, pre-declare all edge types in `edge_config` so collections are created during schema definition. The edge_router maps relation names to these edges at runtime.
 
 ### 3) Pre-declare edges for database ingestion
 
@@ -144,72 +152,50 @@ The resulting graph has three vertex types and five edge types:
 
 ## Run the Example
 
-```python
-import pathlib
-
-from suthing import FileHandle
-
-from graflo import Bindings, GraphManifest
-from graflo.db import ArangoConfig
-from graflo.hq import GraphEngine
-from graflo.hq.caster import IngestionParams
-from graflo.architecture.contract.bindings import FileConnector
-
-manifest = GraphManifest.from_config(FileHandle.load("manifest.yaml"))
-manifest.finish_init()
-schema = manifest.require_schema()
-ingestion_model = manifest.require_ingestion_model()
-conn_conf = ArangoConfig.from_docker_env()
-# Alternative: Grafeo (embedded, no server needed)
-# from graflo.db import GrafeoConfig
-# conn_conf = GrafeoConfig(path="graph.grafeo")  # or GrafeoConfig.in_memory()
-db_type = conn_conf.connection_type
-
-bindings = Bindings()
-objects_connector = FileConnector(
-    regex=r"^objects\.csv$",
-    sub_path=pathlib.Path("."),
-)
-bindings.add_connector(
-    objects_connector,
-)
-bindings.bind_resource("objects", objects_connector)
-relations_connector = FileConnector(
-    regex=r"^relations\.csv$",
-    sub_path=pathlib.Path("."),
-)
-bindings.add_connector(
-    relations_connector,
-)
-bindings.bind_resource("relations", relations_connector)
-
-engine = GraphEngine(target_db_flavor=db_type)
-ingest_manifest = manifest.model_copy(update={"bindings": bindings})
-ingest_manifest.finish_init()
-engine.define_and_ingest(
-    manifest=ingest_manifest,
-    target_db_config=conn_conf,
-    ingestion_params=IngestionParams(clear_data=True),
-    recreate_schema=True,
-)
-```
-
-Run from the example directory:
+**Default (server):** requires ArangoDB, Neo4j, TigerGraph, or FalkorDB. Start the database via Docker and load config from `docker/<db>/.env`:
 
 ```bash
 cd examples/7-objects-relations
 uv run python ingest.py
 ```
 
+### Grafeo embedded alternative {#grafeo-embedded-alternative}
+
+To run **without** a graph server, swap the connection block in [`ingest.py`](https://github.com/growgraph/graflo/tree/main/examples/7-objects-relations/ingest.py) for [Grafeo](https://github.com/GrafeoDB/grafeo) (in-memory or file-backed). Compare targets in [Graph database targets](../concepts/graph_database_targets.md).
+
+```python
+from graflo.db import GrafeoConfig
+
+# conn_conf = GrafeoConfig.in_memory(database="objects_relations")
+conn_conf = GrafeoConfig(database="objects_relations", path="objects_relations.grafeo")
+```
+
+Then run `uv run python ingest.py` as above. Full `GrafeoConfig` options: [Quick Start → Grafeo](../getting_started/quickstart.md#grafeo-embedded-target).
+
+Expected output:
+
+```
+Ingestion complete!
+Schema: objects_relations
+Vertices: ['person', 'vehicle', 'institution']
+```
+
 ## Key Takeaways
 
 1. **`vertex_router`** routes polymorphic rows to the correct vertex type using a type discriminator column and `type_map`.
-2. **`edge_router`** creates edges with dynamic source/target types and relation names from relation tables.
-3. **`relation_map`** normalizes relation names (e.g. `EMPLOYED_BY` → `employed_by`) for consistent schema.
-4. **Single-table polymorphism** — one objects table and one relations table can model a rich graph without separate resources per type.
+2. Two **`vertex_router`** steps on a relations resource accumulate both endpoint vertices into named role slots.
+3. The dynamic **`edge`** step resolves source/target types from those slots and normalizes relation names via `relation_map`.
+4. **`source_role` / `target_role`** on the `edge` step should equal the `role` of the corresponding `vertex_router` steps.
 5. **Order matters** — ingest objects (vertices) before relations (edges) so that edge endpoints exist when edges are created.
+
+---
+
+## Variant: Flat-row pattern
+
+When source and target vertices appear **in the same row** (e.g. a denormalized CSV where each row encodes a complete relationship tuple), the same `vertex_router` + `edge` pattern works without any changes. See [Example 11](example-11.md) for a fully runnable flat-row example.
 
 ## Next Steps
 
-- Explore [vertex_router](../reference/architecture/pipeline/runtime/actor/vertex_router.md) and [edge_router](../reference/architecture/pipeline/runtime/actor/edge_router.md) in the API reference.
+- Explore [vertex_router](../reference/architecture/pipeline/runtime/actor/vertex_router.md) in the API reference.
+- See [Example 11](example-11.md) for the flat-row `vertex_router` + dynamic `EdgeActor` pattern.
 - See the [full example code](https://github.com/growgraph/graflo/tree/main/examples/7-objects-relations) for the complete implementation.

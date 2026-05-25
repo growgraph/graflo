@@ -8,15 +8,21 @@ Tests cover:
 
 from __future__ import annotations
 
+import os
+import tempfile
+
 import pytest
 
 from graflo.filter.onto import ComparisonOperator, FilterExpression, LogicalOperator
+from graflo.filter.select import SelectSpec
 from graflo.onto import ExpressionFlavor
 from graflo.architecture.contract.bindings import (
     Bindings,
+    ColumnTimeFilter,
     JoinClause,
     TableConnector,
 )
+from graflo.data_source.sql import SQLConfig, SQLDataSource
 
 
 # ---------------------------------------------------------------
@@ -150,8 +156,11 @@ class TestTableConnectorBuildQuery:
     def test_with_date_filter(self):
         tp = TableConnector(
             table_name="events",
-            date_field="created_at",
-            date_filter="> '2020-01-01'",
+            time_filter=ColumnTimeFilter(
+                column="created_at",
+                start="2020-01-01",
+                start_inclusive=False,
+            ),
         )
         q = tp.build_query("public")
         assert 'WHERE "created_at" >' in q
@@ -198,9 +207,9 @@ class TestTableConnectorBuildQuery:
         q = tp.build_query("public")
         assert "LEFT JOIN" in q
         assert '"public"."addresses" a' in q
-        assert 'r."address_id" = a."id"' in q
-        # base table aliased as 'r'
-        assert "r.*" in q
+        assert 'base."address_id" = a."id"' in q
+        # base table aliased as 'base'
+        assert "base.*" in q
 
     def test_with_two_joins_same_table(self):
         """CMDB-style: two joins to same table with different aliases."""
@@ -235,8 +244,8 @@ class TestTableConnectorBuildQuery:
         # Both JOINs present
         assert '"sn"."classes" s' in q
         assert '"sn"."classes" t' in q
-        assert 'r."parent" = s."id"' in q
-        assert 'r."child" = t."id"' in q
+        assert 'base."parent" = s."id"' in q
+        assert 'base."child" = t."id"' in q
         # IS NOT NULL filters
         assert 's."id" IS NOT NULL' in q
         assert 't."id" IS NOT NULL' in q
@@ -267,6 +276,165 @@ class TestTableConnectorBuildQuery:
         q = tp.build_query()
         assert '"public"."t"' in q
 
+    def test_view_query_includes_connector_filters(self):
+        view = SelectSpec(
+            kind="select",
+            select=[{"base": "id"}],
+        )
+        filt = FilterExpression(
+            kind="leaf",
+            field="status",
+            cmp_operator=ComparisonOperator.EQ,
+            value=["active"],
+        )
+        tp = TableConnector(table_name="users", view=view, filters=[filt])
+        q = tp.build_query("public")
+        assert "WHERE" in q
+        assert "\"status\" = 'active'" in q
+
+    def test_view_query_appends_connector_filters_to_existing_where(self):
+        view = SelectSpec(
+            kind="select",
+            select=[{"base": "id"}],
+            where=FilterExpression(
+                kind="leaf",
+                field="role",
+                cmp_operator=ComparisonOperator.EQ,
+                value=["admin"],
+            ),
+        )
+        filt = FilterExpression(
+            kind="leaf",
+            field="status",
+            cmp_operator=ComparisonOperator.EQ,
+            value=["active"],
+        )
+        tp = TableConnector(table_name="users", view=view, filters=[filt])
+        q = tp.build_query("public")
+        assert "\"role\" = 'admin'" in q
+        assert "\"status\" = 'active'" in q
+        assert " AND " in q
+
+    def test_view_query_supports_dict_filter_entries(self):
+        view = SelectSpec(
+            kind="select",
+            select=[{"base": "id"}],
+        )
+        tp = TableConnector(
+            table_name="users",
+            view=view,
+            filters=[
+                {
+                    "kind": "leaf",
+                    "field": "status",
+                    "cmp_operator": ComparisonOperator.EQ,
+                    "value": ["active"],
+                }
+            ],
+        )
+        q = tp.build_query("public")
+        assert "\"status\" = 'active'" in q
+
+    def test_dict_filter_without_kind_model_validates_as_leaf(self):
+        """Pushdown dicts from YAML often omit ``kind``; model_validate must infer leaf."""
+        expr = FilterExpression.model_validate(
+            {
+                "cmp_operator": ComparisonOperator.IS_NOT_NULL,
+                "field": "source.sys_id",
+            }
+        )
+        assert expr.kind == "leaf"
+        assert expr(kind=ExpressionFlavor.SQL) == 'source."sys_id" IS NOT NULL'
+
+    def test_untagged_composite_operator_not_consumed_as_unary(self):
+        """Logical ``operator`` + ``deps`` must stay composite (not unary_op)."""
+        inner = {"field": "a", "cmp_operator": ComparisonOperator.EQ, "value": [1]}
+        expr = FilterExpression.model_validate(
+            {"operator": "AND", "deps": [inner, dict(inner)]}
+        )
+        assert expr.kind == "composite"
+        assert expr.operator == LogicalOperator.AND
+        assert len(expr.deps) == 2
+
+    def test_joined_query_qualifies_date_and_filter_columns(self):
+        filt = FilterExpression(
+            kind="leaf",
+            field="status",
+            cmp_operator=ComparisonOperator.EQ,
+            value=["active"],
+        )
+        tp = TableConnector(
+            table_name="events",
+            time_filter=ColumnTimeFilter(
+                column="created_at",
+                start="2024-01-01",
+                start_inclusive=True,
+            ),
+            filters=[filt],
+            joins=[
+                JoinClause(
+                    table="users",
+                    alias="u",
+                    on_self="user_id",
+                    on_other="id",
+                )
+            ],
+        )
+        q = tp.build_query("public")
+        assert "base.\"created_at\" >= '2024-01-01'" in q
+        assert "base.\"status\" = 'active'" in q
+
+    def test_date_range_query_runs_on_sqlite_without_interval(self):
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        conn_str = f"sqlite:///{path}"
+        from sqlalchemy import create_engine, text
+
+        engine = create_engine(conn_str)
+        with engine.connect() as conn:
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE events (
+                        id INTEGER PRIMARY KEY,
+                        dt TEXT NOT NULL
+                    )
+                    """
+                )
+            )
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO events (id, dt) VALUES
+                        (1, '2024-01-01'),
+                        (2, '2024-01-02'),
+                        (3, '2024-01-03')
+                    """
+                )
+            )
+            conn.commit()
+
+        tp = TableConnector(
+            table_name="events",
+            schema_name="main",
+            time_filter=ColumnTimeFilter(
+                column="dt",
+                start="2024-01-01",
+                interval="2D",
+            ),
+        )
+        query = tp.build_query("main")
+        assert "INTERVAL" not in query
+
+        ds = SQLDataSource(
+            config=SQLConfig(
+                connection_string=conn_str,
+                query=query.replace('"main".', ""),
+            )
+        )
+        rows = list(ds)
+        assert len(rows) == 2
+
 
 # ---------------------------------------------------------------
 # Phase 3: Auto-JOIN generation
@@ -278,9 +446,7 @@ class TestAutoJoin:
 
     def _make_schema_and_patterns(self):
         """Build a minimal Schema + Connectors for the CMDB-like scenario."""
-        from graflo.architecture.contract.declarations.ingestion_model import (
-            IngestionModel,
-        )
+        from graflo.architecture.contract.ingestion import IngestionModel
         from graflo.architecture.schema import Schema
 
         schema = Schema.model_validate(
@@ -345,6 +511,25 @@ class TestAutoJoin:
 
         enrich_edge_connector_with_joins(
             resource=resource,
+            connector=connector,
+            bindings=bindings,
+            vertex_config=schema.core_schema.vertex_config,
+        )
+
+        assert len(connector.joins) == 2
+
+    def test_enrichment_accepts_resource_config_without_finish_init(self):
+        from graflo.hq.auto_join import enrich_edge_connector_with_joins
+
+        schema, ingestion_model, bindings = self._make_schema_and_patterns()
+        resource_config = ingestion_model.resources[0]
+        connector = bindings.get_connectors_for_resource("abc_relations")[0]
+        assert isinstance(connector, TableConnector)
+        connector.joins = []
+        connector.filters = []
+
+        enrich_edge_connector_with_joins(
+            resource=resource_config,
             connector=connector,
             bindings=bindings,
             vertex_config=schema.core_schema.vertex_config,

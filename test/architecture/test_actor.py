@@ -11,13 +11,21 @@ from graflo.architecture.pipeline.runtime.actor import (
     VertexActor,
 )
 from graflo.architecture.schema.edge import EdgeConfig
-from graflo.architecture.graph_types import ActionContext, LocationIndex, VertexRep
+from graflo.architecture.graph_types import (
+    ActionContext,
+    ExtractionContext,
+    LocationIndex,
+    TransformPayload,
+    VertexRep,
+    merge_observation_with_transform_buffer,
+)
 from graflo.architecture.pipeline.runtime.actor.config import (
+    TransformActorConfig,
     VertexActorConfig,
     normalize_actor_step,
     validate_actor_step,
 )
-from graflo.architecture.contract.declarations.transform import (
+from graflo.architecture.contract.ingestion.transform import (
     DressConfig,
     KeySelectionConfig,
     ProtoTransform,
@@ -82,10 +90,7 @@ def test_mapper_value(resource_concept, schema_vc_openalex):
     ctx = anw(ctx, doc=test_doc)
     assert len(ctx.acc_vertex) == 1
     assert ctx.acc_vertex["concept"][LocationIndex(path=(0,))] == [
-        VertexRep(
-            vertex={"wikidata": "Q123", "mag": 105794591},
-            ctx={"wikidata": "https://www.wikidata.org/wiki/Q123"},
-        )
+        VertexRep(vertex={"wikidata": "Q123", "mag": 105794591})
     ]
 
 
@@ -106,13 +111,7 @@ def test_transform_shortcut(resource_openalex_works, schema_vc_openalex):
     ctx = ActionContext()
     ctx = anw(ctx, doc=doc)
     assert ctx.acc_vertex["work"][LocationIndex(path=(0,))] == [
-        VertexRep(
-            vertex={"_key": "A123", "doi": "10.1007/978-3-123"},
-            ctx={
-                "doi": "https://doi.org/10.1007/978-3-123",
-                "id": "https://openalex.org/A123",
-            },
-        )
+        VertexRep(vertex={"_key": "A123", "doi": "10.1007/978-3-123"})
     ]
 
 
@@ -398,7 +397,7 @@ def test_transform_tuple_output_maps_to_vertex_index_fields_in_order():
     ctx = ActionContext()
     ctx = anw(ctx, doc={"unused": "value"})
     assert ctx.acc_vertex["pair"][LocationIndex(path=(0,))] == [
-        VertexRep(vertex={"left": "L", "right": "R"}, ctx={"unused": "value"}),
+        VertexRep(vertex={"left": "L", "right": "R"}),
     ]
 
 
@@ -428,7 +427,7 @@ def test_transform_named_proto_binding_executes_with_registered_transform():
 
     ctx = ActionContext()
     ctx = anw(ctx, doc={"value": "7"})
-    payload = ctx.buffer_transforms[LocationIndex(path=(0,))][0]
+    payload = ctx.transform_buffer[LocationIndex(path=(0,))][0]
     assert payload.named == {"v": 7}
     assert payload.positional == ()
 
@@ -455,7 +454,7 @@ def test_transform_named_proto_binding_inherits_input_output_from_library():
 
     ctx = ActionContext()
     ctx = anw(ctx, doc={"value": "7"})
-    payload = ctx.buffer_transforms[LocationIndex(path=(0,))][0]
+    payload = ctx.transform_buffer[LocationIndex(path=(0,))][0]
     assert payload.named == {"v": 7}
     assert payload.positional == ()
 
@@ -494,7 +493,7 @@ def test_transform_named_proto_binding_local_io_overrides_library_io():
 
     ctx = ActionContext()
     ctx = anw(ctx, doc={"raw_value": "8", "value": "7"})
-    payload = ctx.buffer_transforms[LocationIndex(path=(0,))][0]
+    payload = ctx.transform_buffer[LocationIndex(path=(0,))][0]
     assert payload.named == {"parsed": 8}
     assert payload.positional == ()
 
@@ -523,7 +522,7 @@ def test_transform_named_proto_inherits_target_keys_from_library():
 
     ctx = ActionContext()
     ctx = anw(ctx, doc={"zipCode": "NW1"})
-    payload = ctx.buffer_transforms[LocationIndex(path=(0,))][0]
+    payload = ctx.transform_buffer[LocationIndex(path=(0,))][0]
     assert payload.named == {"zip_code": "NW1"}
     assert payload.positional == ()
 
@@ -561,7 +560,7 @@ def test_transform_named_proto_call_overrides_library_keys_selection():
 
     ctx = ActionContext()
     ctx = anw(ctx, doc={"raw_id": "1", "raw_label": "Alice"})
-    payload = ctx.buffer_transforms[LocationIndex(path=(0,))][0]
+    payload = ctx.transform_buffer[LocationIndex(path=(0,))][0]
     assert payload.named == {"raw_id": "1", "label": "Alice"}
     assert payload.positional == ()
 
@@ -597,6 +596,53 @@ def test_transform_named_proto_keys_merge_fails_when_call_has_input():
         )
 
 
+def test_sequential_transforms_second_sees_merged_row_from_first() -> None:
+    """Later transform steps read doc merged with prior transform_buffer at the same lindex."""
+    anw = ActorWrapper(
+        [
+            {
+                "transform": {
+                    "call": {
+                        "use": "snake_keys",
+                    }
+                }
+            },
+            {
+                "transform": {
+                    "call": {
+                        "module": "builtins",
+                        "foo": "float",
+                        "input": ["prc"],
+                    }
+                }
+            },
+        ]
+    )
+    transforms = {
+        "snake_keys": ProtoTransform(
+            name="snake_keys",
+            module="graflo.util.transform",
+            foo="camel_to_snake",
+            target="keys",
+        ),
+    }
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=VertexConfig(vertices=[]),
+            edge_config=EdgeConfig(),
+            transforms=transforms,
+        )
+    )
+    loc = LocationIndex(path=(0,))
+    ctx = ActionContext()
+    ctx = anw(ctx, doc={"PRC": "3.5", "id": 1})
+    items = ctx.transform_buffer[loc]
+    assert len(items) == 2
+    # Key transform maps PRC -> prc; first payload is the full row with renamed keys.
+    assert items[0].named["prc"] == "3.5"
+    assert items[1].named == {"prc": 3.5}
+
+
 def test_transform_named_proto_binding_inherits_dress_from_library():
     anw = ActorWrapper(
         pipeline=[
@@ -629,7 +675,7 @@ def test_transform_named_proto_binding_inherits_dress_from_library():
 
     ctx = ActionContext()
     ctx = anw(ctx, doc={"Volume": "9000"})
-    payload = ctx.buffer_transforms[LocationIndex(path=(0,))][0]
+    payload = ctx.transform_buffer[LocationIndex(path=(0,))][0]
     assert payload.named == {"name": "Volume", "value": 9000}
     assert payload.positional == ()
 
@@ -654,7 +700,7 @@ def test_transform_inline_function_without_output_defaults_to_input():
 
     ctx = ActionContext()
     ctx = anw(ctx, doc={"value": "9"})
-    payload = ctx.buffer_transforms[LocationIndex(path=(0,))][0]
+    payload = ctx.transform_buffer[LocationIndex(path=(0,))][0]
     assert payload.named == {"value": 9}
     assert payload.positional == ()
 
@@ -684,7 +730,7 @@ def test_transform_inline_function_strategy_each_initializes_and_executes():
 
     ctx = ActionContext()
     ctx = anw(ctx, doc={"value": "11"})
-    payload = ctx.buffer_transforms[LocationIndex(path=(0,))][0]
+    payload = ctx.transform_buffer[LocationIndex(path=(0,))][0]
     assert payload.named == {"value": 11}
     assert payload.positional == ()
 
@@ -709,9 +755,46 @@ def test_transform_inline_function_strategy_all_receives_document():
 
     ctx = ActionContext()
     ctx = anw(ctx, doc={"value": 11, "other": "x"})
-    payload = ctx.buffer_transforms[LocationIndex(path=(0,))][0]
+    payload = ctx.transform_buffer[LocationIndex(path=(0,))][0]
     assert payload.named == {"value": 11, "other": "x"}
     assert payload.positional == ()
+
+
+def test_transform_call_dress_shorthand_without_function():
+    anw = ActorWrapper(
+        pipeline=[
+            {
+                "transform": {
+                    "call": {
+                        "input": ["vol"],
+                        "dress": {"key": "type", "value": "value"},
+                    }
+                }
+            }
+        ]
+    )
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=VertexConfig(vertices=[]),
+            edge_config=EdgeConfig(),
+            transforms={},
+        )
+    )
+
+    ctx = ActionContext()
+    ctx = anw(ctx, doc={"vol": 0.123})
+    payload = ctx.transform_buffer[LocationIndex(path=(0,))][0]
+    assert payload.named == {"type": "vol", "value": 0.123}
+    assert payload.positional == ()
+
+
+def test_transform_call_dress_shorthand_requires_input():
+    with pytest.raises(ValueError, match="Invalid transform step"):
+        ActorWrapper(
+            pipeline=[
+                {"transform": {"call": {"dress": {"key": "type", "value": "value"}}}}
+            ]
+        )
 
 
 def test_transform_target_keys_updates_vertex_fields():
@@ -753,10 +836,7 @@ def test_transform_target_keys_updates_vertex_fields():
     ctx = ActionContext()
     ctx = anw(ctx, doc={"raw_id": "1", "raw_label": "Alice"})
     assert ctx.acc_vertex["entity"][LocationIndex(path=(0,))] == [
-        VertexRep(
-            vertex={"id": "1", "label": "Alice"},
-            ctx={"raw_id": "1", "raw_label": "Alice"},
-        ),
+        VertexRep(vertex={"id": "1", "label": "Alice"}),
     ]
 
 
@@ -810,10 +890,7 @@ def test_transform_target_keys_multiple_steps_compose_for_vertex():
     ctx = ActionContext()
     ctx = anw(ctx, doc={"raw_id": "1", "raw_label": "Alice"})
     assert ctx.acc_vertex["entity"][LocationIndex(path=(0,))] == [
-        VertexRep(
-            vertex={"id": "1", "label": "Alice"},
-            ctx={"raw_id": "1", "raw_label": "Alice"},
-        ),
+        VertexRep(vertex={"id": "1", "label": "Alice"}),
     ]
 
 
@@ -852,7 +929,7 @@ def test_transform_grouped_input_call_outputs_named_payload():
             "lname_child": "Turing",
         },
     )
-    payload = ctx.buffer_transforms[LocationIndex(path=(0,))][0]
+    payload = ctx.transform_buffer[LocationIndex(path=(0,))][0]
     assert payload.named == {"parent_name": "Ada Lovelace", "child_name": "Alan Turing"}
     assert payload.positional == ()
 
@@ -888,7 +965,7 @@ def test_transform_grouped_call_use_inherits_input_groups():
             "lname_child": "Turing",
         },
     )
-    payload = ctx.buffer_transforms[LocationIndex(path=(0,))][0]
+    payload = ctx.transform_buffer[LocationIndex(path=(0,))][0]
     assert payload.named == {"parent_name": "Ada Lovelace", "child_name": "Alan Turing"}
     assert payload.positional == ()
 
@@ -936,7 +1013,7 @@ def test_transform_grouped_call_use_accepts_inline_input_groups_override():
             "lname_child": "Turing",
         },
     )
-    payload = ctx.buffer_transforms[LocationIndex(path=(0,))][0]
+    payload = ctx.transform_buffer[LocationIndex(path=(0,))][0]
     assert payload.named == {"parent_name": "Ada Lovelace", "child_name": "Alan Turing"}
     assert payload.positional == ()
 
@@ -984,7 +1061,7 @@ def test_transform_grouped_call_use_inline_groups_do_not_inherit_proto_output_gr
             "lname_child": "Turing",
         },
     )
-    payload = ctx.buffer_transforms[LocationIndex(path=(0,))][0]
+    payload = ctx.transform_buffer[LocationIndex(path=(0,))][0]
     assert payload.named == {"parent_name": "Ada Lovelace", "child_name": "Alan Turing"}
     assert payload.positional == ()
 
@@ -1019,7 +1096,7 @@ def test_transform_call_inline_module_foo_path_remains_supported():
             "last_name": "Lovelace",
         },
     )
-    payload = ctx.buffer_transforms[LocationIndex(path=(0,))][0]
+    payload = ctx.transform_buffer[LocationIndex(path=(0,))][0]
     assert payload.named == {"full_name": "Ada Lovelace"}
     assert payload.positional == ()
 
@@ -1253,3 +1330,379 @@ def test_extraction_context_records_observations(
     assert all(
         obs.provenance.path == obs.location.path for obs in ctx.transform_observations
     )
+
+
+def test_vertex_from_doc_does_not_steal_other_vertex_buffer_payloads() -> None:
+    """from_doc Identifier must not consume pivot payloads meant for Metric."""
+    vc = VertexConfig.model_validate(
+        {
+            "vertices": [
+                {
+                    "name": "Identifier",
+                    "properties": ["type", "value"],
+                    "identity": ["type", "value"],
+                },
+                {
+                    "name": "Metric",
+                    "properties": ["type", "value"],
+                    "identity": ["type", "value"],
+                },
+            ]
+        }
+    )
+    init = ActorInitContext(
+        vertex_config=vc,
+        edge_config=EdgeConfig(),
+        transforms={},
+    )
+    identifier = VertexActor.from_config(
+        VertexActorConfig(
+            type="vertex",
+            vertex="Identifier",
+            from_doc={"type": "itype", "value": "ivalue"},
+        )
+    )
+    metric = VertexActor.from_config(
+        VertexActorConfig(type="vertex", vertex="Metric"),
+    )
+    identifier.finish_init(init)
+    metric.finish_init(init)
+
+    loc = LocationIndex(())
+    ctx = ExtractionContext()
+    ctx.transform_buffer[loc].extend(
+        [
+            TransformPayload(named={"type": "VOL", "value": 93115.0}),
+            TransformPayload(named={"type": "PRC", "value": 42.5}),
+            TransformPayload(named={"itype": "CUSIP", "ivalue": "03073T10"}),
+            TransformPayload(named={"itype": "TICKER", "ivalue": "AMGP"}),
+        ]
+    )
+
+    identifier(ctx, loc, doc={})
+    metric(ctx, loc, doc={})
+
+    id_docs = [rep.vertex for rep in ctx.acc_vertex["Identifier"][loc]]
+    metric_docs = [rep.vertex for rep in ctx.acc_vertex["Metric"][loc]]
+
+    assert len(id_docs) == 2
+    assert {"type": "TICKER", "value": "AMGP"} in id_docs
+    assert {"type": "CUSIP", "value": "03073T10"} in id_docs
+    assert len(metric_docs) == 2
+    assert {"type": "VOL", "value": 93115.0} in metric_docs
+    assert {"type": "PRC", "value": 42.5} in metric_docs
+
+
+def test_rename_partial_when_fail_fast_false() -> None:
+    pipeline = [
+        {
+            "transform": {
+                "rename": {
+                    "s_context": "context",
+                    "a_title": "title",
+                    "number": "bkuid",
+                    "missing_field": "opt",
+                }
+            }
+        },
+    ]
+    anw = ActorWrapper(pipeline=pipeline)
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=VertexConfig(vertices=[]),
+            edge_config=EdgeConfig(),
+            transforms={},
+            fail_fast=False,
+        )
+    )
+    loc = LocationIndex(path=(0,))
+    ctx = ActionContext()
+    ctx = anw(
+        ctx,
+        doc={"s_context": "ctx1", "a_title": "t1", "number": "42"},
+    )
+    payload = ctx.transform_buffer[loc][0]
+    assert payload.named == {"context": "ctx1", "title": "t1", "bkuid": "42"}
+    assert payload.removed_keys == frozenset({"s_context", "a_title", "number"})
+
+
+def test_rename_raises_when_fail_fast_true() -> None:
+    pipeline = [
+        {
+            "transform": {
+                "rename": {
+                    "s_context": "context",
+                    "a_title": "title",
+                    "number": "bkuid",
+                }
+            }
+        },
+    ]
+    anw = ActorWrapper(pipeline=pipeline)
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=VertexConfig(vertices=[]),
+            edge_config=EdgeConfig(),
+            transforms={},
+            fail_fast=True,
+        )
+    )
+    loc = LocationIndex(path=(0,))
+    ctx = ActionContext()
+    with pytest.raises(Exception, match="Missing required input keys"):
+        anw(ctx, loc, doc={"s_context": "ctx1", "number": "42"})
+
+
+def _scalar_transform_actor(*, fail_fast: bool) -> TransformActor:
+    actor = TransformActor.from_config(
+        TransformActorConfig.model_validate(
+            {
+                "type": "transform",
+                "call": {
+                    "module": "builtins",
+                    "foo": "int",
+                    "input": ["missing_field"],
+                    "output": ["n"],
+                },
+            }
+        )
+    )
+    actor.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=VertexConfig(vertices=[]),
+            edge_config=EdgeConfig(),
+            transforms={},
+            fail_fast=fail_fast,
+        )
+    )
+    return actor
+
+
+def test_transform_actor_scalar_observation_runs_positional_not_dict_key_guard() -> (
+    None
+):
+    """Scalar observations bypass dict key guard and invoke the transform positionally."""
+    actor = _scalar_transform_actor(fail_fast=True)
+    loc = LocationIndex(path=(0,))
+    ctx = ActionContext()
+    ctx = actor(ctx, loc, "42")
+    assert ctx.transform_buffer[loc][0].named == {"n": 42}
+
+
+def test_transform_actor_dict_observation_fail_fast_raises() -> None:
+    actor = _scalar_transform_actor(fail_fast=True)
+    loc = LocationIndex(path=(0,))
+    ctx = ActionContext()
+    with pytest.raises(Exception, match="Missing required input keys"):
+        actor(ctx, loc, doc={"other": "value"})
+
+
+def test_transform_actor_scalar_positional_int_transform() -> None:
+    actor = TransformActor.from_config(
+        TransformActorConfig.model_validate(
+            {
+                "type": "transform",
+                "call": {
+                    "module": "builtins",
+                    "foo": "int",
+                    "strategy": "all",
+                    "output": ["n"],
+                },
+            }
+        )
+    )
+    actor.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=VertexConfig(vertices=[]),
+            edge_config=EdgeConfig(),
+            transforms={},
+            fail_fast=False,
+        )
+    )
+    loc = LocationIndex(path=(0,))
+    ctx = ActionContext()
+    ctx = actor(ctx, loc, "7")
+    assert ctx.transform_buffer[loc][0].named == {"n": 7}
+
+
+def test_rename_removed_keys_strips_source_from_merged_view() -> None:
+    observation = {
+        "s_context": "ctx",
+        "a_title": "title",
+        "r_id": "1",
+        "number": "42",
+    }
+    buffer = [
+        TransformPayload(
+            named={"context": "ctx", "title": "title", "bkuid": "42"},
+            removed_keys=frozenset({"s_context", "a_title", "number"}),
+        )
+    ]
+    merged = merge_observation_with_transform_buffer(observation, buffer)
+    assert set(merged.keys()) == {"context", "title", "bkuid", "r_id"}
+    assert merged["context"] == "ctx"
+    assert merged["bkuid"] == "42"
+
+
+def test_rename_removes_source_keys_from_vertex_effective_doc() -> None:
+    vc = VertexConfig.from_dict(
+        {
+            "vertices": [
+                {
+                    "name": "resource",
+                    "properties": ["context", "title", "bkuid", "r_id", "r_name"],
+                    "indexes": [{"fields": ["bkuid"]}],
+                }
+            ]
+        }
+    )
+    pipeline = [
+        {
+            "transform": {
+                "rename": {
+                    "s_context": "context",
+                    "a_title": "title",
+                    "number": "bkuid",
+                }
+            }
+        },
+        {"vertex": "resource"},
+    ]
+    anw = ActorWrapper(pipeline=pipeline)
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=vc,
+            edge_config=EdgeConfig(),
+            transforms={},
+        )
+    )
+    loc = LocationIndex(path=(0,))
+    doc = {
+        "s_context": "ctx1",
+        "a_title": "t1",
+        "r_id": "rid",
+        "r_name": "rname",
+        "number": "42",
+    }
+    ctx = ActionContext()
+    ctx = anw(ctx, doc=doc)
+
+    assert "s_context" not in ctx.obs_buffer[loc]
+    assert "a_title" not in ctx.obs_buffer[loc]
+    assert "number" not in ctx.obs_buffer[loc]
+    assert ctx.obs_buffer[loc]["context"] == "ctx1"
+    assert ctx.obs_buffer[loc]["bkuid"] == "42"
+
+    vertex = ctx.acc_vertex["resource"][loc][0].vertex
+    assert "s_context" not in vertex
+    assert "a_title" not in vertex
+    assert "number" not in vertex
+    assert vertex["context"] == "ctx1"
+    assert vertex["bkuid"] == "42"
+    assert ctx.obs_buffer[loc]["r_id"] == "rid"
+
+
+def test_rename_then_key_transform_feed_doc_excludes_source_keys() -> None:
+    pipeline = [
+        {
+            "transform": {
+                "rename": {
+                    "s_context": "context",
+                    "a_title": "title",
+                    "number": "bkuid",
+                }
+            }
+        },
+        {
+            "transform": {
+                "call": {
+                    "module": "graflo.util.transform",
+                    "foo": "snake_to_camel",
+                    "target": "keys",
+                }
+            }
+        },
+    ]
+    anw = ActorWrapper(pipeline=pipeline)
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=VertexConfig(vertices=[]),
+            edge_config=EdgeConfig(),
+            transforms={},
+        )
+    )
+    loc = LocationIndex(path=(0,))
+    doc = {
+        "s_context": "ctx1",
+        "a_title": "t1",
+        "r_id": "rid",
+        "r_name": "rname",
+        "number": "42",
+    }
+    ctx = ActionContext()
+    ctx = anw(ctx, doc=doc)
+
+    rename_payload = ctx.transform_buffer[loc][0]
+    assert rename_payload.removed_keys == frozenset({"s_context", "a_title", "number"})
+
+    key_payload = ctx.transform_buffer[loc][1]
+    assert "s_context" not in key_payload.named
+    assert "sContext" not in key_payload.named
+    assert "a_title" not in key_payload.named
+    assert "aTitle" not in key_payload.named
+    assert key_payload.named["context"] == "ctx1"
+    assert key_payload.named["bkuid"] == "42"
+    assert key_payload.named["rId"] == "rid"
+    assert key_payload.named["rName"] == "rname"
+
+
+def test_infer_vertex_from_rename_destination_keys() -> None:
+    vc = VertexConfig.from_dict(
+        {
+            "vertices": [
+                {
+                    "name": "resource",
+                    "properties": ["context", "title", "bkuid"],
+                    "indexes": [{"fields": ["bkuid"]}],
+                }
+            ]
+        }
+    )
+    pipeline = [
+        {
+            "transform": {
+                "rename": {
+                    "s_context": "context",
+                    "a_title": "title",
+                    "number": "bkuid",
+                }
+            }
+        },
+    ]
+    anw = ActorWrapper(pipeline=pipeline)
+    anw.finish_init(
+        init_ctx=ActorInitContext(
+            vertex_config=vc,
+            edge_config=EdgeConfig(),
+            transforms={},
+        )
+    )
+    vertex_wrappers = anw.find_descendants(actor_type=VertexActor)
+    assert len(vertex_wrappers) == 1
+    assert vertex_wrappers[0].actor.name == "resource"
+
+    loc = LocationIndex(path=(0,))
+    ctx = ActionContext()
+    ctx = anw(
+        ctx,
+        doc={
+            "s_context": "ctx1",
+            "a_title": "t1",
+            "number": "42",
+        },
+    )
+    assert ctx.acc_vertex["resource"][loc][0].vertex == {
+        "context": "ctx1",
+        "title": "t1",
+        "bkuid": "42",
+    }

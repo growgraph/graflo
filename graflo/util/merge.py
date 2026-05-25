@@ -39,8 +39,7 @@ def merge_doc_basis(
     preceding document with index keys. If no documents have index keys, all
     documents are merged into a single document.
 
-    For VertexRep objects, the merge is performed on the `vertex` attribute, and
-    `ctx` dicts are merged among merged VertexReps.
+    For VertexRep objects, the merge is performed on the `vertex` attribute.
 
     Args:
         docs: Homogeneous list of documents (all dict or all VertexRep) to merge
@@ -93,7 +92,6 @@ def merge_doc_basis(
             if not (isinstance(target, VertexRep) and isinstance(source, VertexRep)):
                 raise TypeError("expected VertexRep for both target and source")
             target.vertex.update(source.vertex)
-            target.ctx.update(source.ctx)
         else:
             if not (isinstance(target, dict) and isinstance(source, dict)):
                 raise TypeError("expected dict for both target and source")
@@ -104,7 +102,7 @@ def merge_doc_basis(
         if is_vertexrep:
             if not isinstance(doc, VertexRep):
                 raise TypeError(f"expected VertexRep, got {type(doc).__name__}")
-            return VertexRep(vertex=doc.vertex.copy(), ctx=doc.ctx.copy())
+            return VertexRep(vertex=doc.vertex.copy())
         else:
             if not isinstance(doc, dict):
                 raise TypeError(f"expected dict, got {type(doc).__name__}")
@@ -147,7 +145,7 @@ def merge_doc_basis(
     elif pending_non_ids:
         # No documents with index keys: merge all into a single document
         if is_vertexrep:
-            merged_doc = VertexRep(vertex={}, ctx={})
+            merged_doc = VertexRep(vertex={})
         else:
             merged_doc = {}
         for pending in pending_non_ids:

@@ -164,7 +164,7 @@ def test_vertex_mixed_field_inputs():
 def test_vertex_config_property_names():
     """Test VertexConfig.property_names() returns string names."""
     vertex = Vertex(name="user", properties=["id", "name", "email"])  # type: ignore[arg-type]
-    config = VertexConfig(vertices=[vertex])
+    config = VertexConfig(vertices=[vertex], identity_from_all_properties=True)
 
     names = config.property_names("user")
     assert len(names) == 3
@@ -182,7 +182,7 @@ def test_vertex_config_properties_with_objects():
             Field(name="name", type=FieldType.STRING),
         ],
     )
-    config = VertexConfig(vertices=[vertex])
+    config = VertexConfig(vertices=[vertex], identity_from_all_properties=True)
 
     props = config.properties("user")
     assert len(props) == 2
@@ -224,7 +224,7 @@ def test_vertex_from_dict_with_typed_fields():
 
 
 def test_vertex_identity_defaults_to_fields():
-    """Test that identity defaults to all fields when not specified."""
+    """Test that identity remains empty on Vertex when not specified."""
     vertex = Vertex(
         name="user",
         properties=[
@@ -233,7 +233,7 @@ def test_vertex_identity_defaults_to_fields():
         ],
     )
 
-    assert vertex.identity == ["id", "email"]
+    assert vertex.identity == []
 
     # Field objects should still be accessible
     assert len(vertex.properties) == 2
@@ -274,7 +274,7 @@ def test_invalid_field_type_in_dict():
 def test_init(vertex_pub):
     """Original test: Test Vertex.from_dict() with existing fixture."""
     vc = Vertex.from_dict(vertex_pub)
-    assert vc.identity == ["arxiv", "doi", "created", "data_source"]
+    assert vc.identity == []
     # Fields are now Field objects, so check count
     assert len(vc.properties) == 4
     # Verify they're Field objects
@@ -294,7 +294,7 @@ def test_get_properties_with_defaults_tigergraph():
         ],
     )
 
-    config = VertexConfig(vertices=[vertex])
+    config = VertexConfig(vertices=[vertex], identity_from_all_properties=True)
     db_cfg = VertexConfigDBAware(
         logical=config,
         database_features=DatabaseProfile(db_flavor=DBType.TIGERGRAPH),
@@ -321,7 +321,7 @@ def test_get_properties_with_defaults_other_db():
         ],
     )
 
-    config = VertexConfig(vertices=[vertex])
+    config = VertexConfig(vertices=[vertex], identity_from_all_properties=True)
     db_cfg = VertexConfigDBAware(
         logical=config,
         database_features=DatabaseProfile(db_flavor=DBType.ARANGO),
@@ -365,7 +365,7 @@ def test_vertex_config_properties_with_db_flavor():
             Field(name="name"),  # None type
         ],
     )
-    config = VertexConfig(vertices=[vertex])
+    config = VertexConfig(vertices=[vertex], identity_from_all_properties=True)
 
     props = config.properties("user")
     assert props[1].type is None  # Preserved
@@ -383,16 +383,87 @@ def test_vertex_config_properties_with_db_flavor():
 
 
 def test_vertex_config_remove_vertices():
-    """Test VertexConfig.remove_vertices removes vertices and updates blank_vertices."""
+    """Test VertexConfig.remove_vertices removes vertices and blank_vertices property."""
     v1 = Vertex.from_dict({"name": "a", "properties": ["id"]})
-    v2 = Vertex.from_dict({"name": "b", "properties": ["id"]})
+    v2 = Vertex.from_dict({"name": "b", "properties": ["id"], "blank": True})
     v3 = Vertex.from_dict({"name": "c", "properties": ["id"]})
     config = VertexConfig(
         vertices=[v1, v2, v3],
-        blank_vertices=["b"],
+        identity_from_all_properties=True,
     )
     assert config.vertex_set == {"a", "b", "c"}
     config.remove_vertices({"b", "c"})
     assert config.vertex_set == {"a"}
     assert config.vertices[0].name == "a"
     assert config.blank_vertices == []
+
+
+def test_vertex_config_identity_fallback_when_flag_enabled():
+    """Compatibility flag enables identity fallback to all property names."""
+    vertex = Vertex(name="user", properties=["id", "name"])  # type: ignore[arg-type]
+    config = VertexConfig(vertices=[vertex], identity_from_all_properties=True)
+    assert config.identity_fields("user") == ["id", "name"]
+
+
+def test_blank_vertex_defaults_to_id_identity():
+    """Blank vertices still default to id identity when omitted."""
+    blank = Vertex(name="placeholder", properties=[], blank=True)
+    cfg = VertexConfig(vertices=[blank])
+    assert cfg.identity_fields("placeholder") == ["id"]
+    assert cfg.property_names("placeholder") == ["id"]
+
+
+def test_vertex_properties_merge_duplicate_typed_and_untyped():
+    """Duplicate fields merge by name and keep typed variant."""
+    vertex = Vertex(
+        name="user",
+        properties=[
+            {"name": "id"},
+            {"name": "id", "type": "INT"},
+            {"name": "name"},
+            {"name": "name"},
+        ],  # type: ignore[arg-type]
+        identity=["id", "id"],
+    )
+    assert vertex.property_names == ["id", "name"]
+    assert vertex.identity == ["id"]
+    assert vertex.properties[0].type == FieldType.INT
+
+
+def test_vertex_properties_conflicting_duplicate_types_raise():
+    """Duplicate field names with different non-null types must fail."""
+    with pytest.raises(ValueError, match="Conflicting field types"):
+        Vertex(
+            name="user",
+            properties=[  # type: ignore[arg-type]
+                {"name": "id", "type": "INT"},
+                {"name": "id", "type": "STRING"},
+            ],
+            identity=["id"],
+        )
+
+
+def test_resource_runtime_vertex_config_excludes_unreferenced_blank_vertices():
+    """Blank vertices outside the resource pipeline are not in runtime config."""
+    from graflo.architecture.contract.ingestion.resource import Resource
+    from graflo.architecture.contract.runtime import build_resource_runtime
+    from graflo.architecture.schema.edge import EdgeConfig
+
+    schema_vc = VertexConfig(
+        vertices=[
+            Vertex(name="ticker", properties=["cusip"], identity=["cusip"]),  # type: ignore[arg-type]
+            Vertex(name="publication", properties=[], blank=True),
+        ]
+    )
+    config = Resource(
+        name="ibes",
+        pipeline=[{"vertex": "ticker"}],
+    )
+    resource = build_resource_runtime(
+        config,
+        vertex_config=schema_vc,
+        edge_config=EdgeConfig(),
+        transforms={},
+    )
+    assert resource.vertex_config.vertex_set == {"ticker"}
+    assert resource.vertex_config.blank_vertices == []

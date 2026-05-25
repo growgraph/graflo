@@ -62,7 +62,7 @@ bindings: {}
 Defines the graph contract.
 
 - `metadata`: human-facing identity (`name`, optional `version`)
-- `graph.vertex_config`: vertex types, **`properties`**, identity keys
+- `graph.vertex_config`: vertex types, **`properties`**, identity keys; optional **`blank: true`** for placeholder vertices (auto **`id`** identity)
 - `graph.edge_config`: source/target relationships, optional `relation`, edge **`properties`**, `identities`
 - `db_profile`: DB-specific physical behavior (indexes, naming, **`default_property_values`** for TigerGraph GSQL `DEFAULT` on vertex/edge attributes, backend details)
 
@@ -74,7 +74,10 @@ Defines ingestion behavior.
 
 - `resources`: named pipelines (`name`) with ordered actor steps
 - `transforms`: reusable named transforms as a **list** (each entry must define `name`) and referenced from resources via `transform.call.use`
-- Optional per-resource flags include **`drop_trivial_input_fields`** (default `false`): when `true`, top-level keys whose value is `null` or `""` are removed **before** the actor pipeline runs. Only the top-level dict is filtered (nested structures are not recursed); numeric zero and boolean false are kept. Useful for sparse wide tables (CSV/SQL) without custom transforms.
+- Optional per-resource flags include:
+  - **`drop_trivial_input_fields`** (default `false`): when `true`, top-level keys whose value is `null` or `""` are removed **before** the actor pipeline runs. Only the top-level dict is filtered (nested structures are not recursed); numeric zero and boolean false are kept. Useful for sparse wide tables (CSV/SQL) without custom transforms.
+  - **`fail_fast`** (default `false`): when `true`, transform steps fail if required input keys are missing (rename: every source key must be present; call: every `input` key). When `false`, rename applies only to keys present in the row and functional transforms skip the step when inputs are missing.
+  - **`tolerate_transform_errors`** (default `true`): when `true`, a failing transform nulls its declared outputs and the pipeline continues; when `false`, transform exceptions fail the document (subject to caster **`on_doc_error`**). See [Document cast errors](../concepts/ingestion_doc_errors.md).
 
 **TigerGraph attribute defaults (schema / `db_profile`, not ingestion):** under `schema.db_profile`, optional **`default_property_values`** declares GSQL `DEFAULT` literals per logical vertex property and per logical edge type, for example:
 
@@ -101,7 +104,7 @@ Use `ingestion_model` for **how source records become vertices/edges**.
 
 Defines source wiring (`Bindings`).
 
-- **`connectors`**: list of `FileConnector`, `TableConnector`, or `SparqlConnector` entries (where each row points at paths, tables, or RDF/SPARQL sources).
+- **`connectors`**: list of `FileConnector`, `TableConnector`, or `SparqlConnector` entries (where each row points at paths, tables, or RDF/SPARQL sources). For **`TableConnector`**, optional **`filters`** push down SQL `WHERE` clauses using the same **`FilterExpression`** shorthand as vertex **`filters`** in the schema (`AND`, `OR`, `NOT`, `IF_THEN` as YAML keys). Optional nested **`time_filter`** (**`ColumnTimeFilter`**) restricts rows by a date/time column. See [Runtime connector updates](../concepts/runtime_connector_updates.md) and [Table connector views](../concepts/table_connector_views.md#bindings-filter-cookbook-tableconnectorfilters).
 - **`resource_connector`**: list of `{"resource": "<ingestion resource name>", "connector": "<connector name or hash>"}` rows linking `IngestionModel.resources[*].name` to a connector. The same `resource` may appear on **multiple rows** with different `connector` values (several physical sources for one pipeline).
 - **`connector_connection`** (optional): list of `{"connector": "<connector name or hash>", "conn_proxy": "<label>"}` rows. This keeps manifests **non-secret**: only proxy *names* appear in YAML; runtime code registers each `conn_proxy` on a `ConnectionProvider` with the real `GeneralizedConnConfig` (PostgreSQL, SPARQL, etc.).
 
@@ -158,6 +161,10 @@ ingestion_model = manifest.require_ingestion_model()
 
 `finish_init()` performs runtime wiring and consistency checks across schema and ingestion model.
 
+## Evolving a manifest
+
+To apply structured changes to an existing manifest (remove vertex types, merge types into one name, and update resources and `db_profile` in sync), use **`graflo.architecture.evolution`**. That layer operates on the manifest contract only; it does not migrate data already stored in a graph database—plan to **reingest** after deploying the new manifest. See [Manifest evolution](../concepts/manifest_evolution.md) for operations, `manifest_hash`, and examples.
+
 ## Minimal run path
 
 ```python
@@ -175,6 +182,7 @@ engine.define_and_ingest(
 
 ## See also
 
+- [Manifest evolution](../concepts/manifest_evolution.md)
 - [Quick Start](quickstart.md)
 - [Concepts](../concepts/index.md)
 - [Examples](../examples/index.md)

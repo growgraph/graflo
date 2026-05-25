@@ -69,6 +69,10 @@ OperatorMapping = MappingProxyType(
     }
 )
 
+_LOGICAL_OPERATOR_JSON_VALUES: frozenset[str] = frozenset(
+    m.value for m in LogicalOperator
+)
+
 
 class ComparisonOperator(BaseEnum):
     """Comparison operators for field comparisons.
@@ -145,10 +149,26 @@ class FilterExpression(ConfigBaseModel):
         """Map leaf 'operator' or 'foo' (YAML/kwargs) to unary_op; infer kind and cmp_operator."""
         if not isinstance(data, dict):
             return data
+        data = dict(data)
         if data.get("kind") == "composite":
             return data
+
+        if data.get("kind") is None:
+            op = data.get("operator")
+            if isinstance(op, LogicalOperator):
+                data["kind"] = "composite"
+                return data
+            if isinstance(op, str) and op in _LOGICAL_OPERATOR_JSON_VALUES:
+                data["kind"] = "composite"
+                return data
+            deps = data.get("deps")
+            if isinstance(deps, list) and len(deps) > 0:
+                data["kind"] = "composite"
+                return data
+            if data.get("cmp_operator") is not None or data.get("field") is not None:
+                data["kind"] = "leaf"
+
         raw_op = None
-        data = dict(data)
         if "operator" in data and isinstance(data["operator"], str):
             raw_op = data.pop("operator")
         elif "foo" in data and isinstance(data["foo"], str):
@@ -480,21 +500,46 @@ class FilterExpression(ConfigBaseModel):
                 return foo(self.value[0])
         return False
 
+    @staticmethod
+    def _wrap_composite_operand(
+        dep: FilterExpression, rendered: str, kind: ExpressionFlavor
+    ) -> str:
+        """Parenthesize nested composite operands for SQL/Cypher precedence."""
+        if (
+            kind in (ExpressionFlavor.SQL, ExpressionFlavor.CYPHER)
+            and dep.kind == "composite"
+        ):
+            return f"({rendered})"
+        return rendered
+
+    def _render_dep(
+        self, dep: FilterExpression, doc_name: str, kind: ExpressionFlavor
+    ) -> str:
+        rendered = str(dep(kind=kind, doc_name=doc_name))
+        return self._wrap_composite_operand(dep, rendered, kind)
+
     def _cast_generic(self, doc_name: str, kind: ExpressionFlavor) -> str:
         if self.operator is None:
             raise ValueError("composite expression requires operator")
+        if (
+            kind == ExpressionFlavor.SQL
+            and self.operator == LogicalOperator.IMPLICATION
+        ):
+            if len(self.deps) != 2:
+                raise ValueError("IF_THEN composite requires exactly 2 deps")
+            antecedent = self._render_dep(self.deps[0], doc_name, kind)
+            consequent = self._render_dep(self.deps[1], doc_name, kind)
+            return f"(NOT ({antecedent}) OR ({consequent}))"
         if len(self.deps) == 1:
             if self.operator == LogicalOperator.NOT:
-                result = self.deps[0](kind=kind, doc_name=doc_name)
+                result = self._render_dep(self.deps[0], doc_name, kind)
                 if doc_name == "" and kind == ExpressionFlavor.GSQL:
                     return f"!{result}"
-                return f"{self.operator} {result}"
+                return f"NOT {result}"
             raise ValueError(
                 f" length of deps = {len(self.deps)} but operator is not {LogicalOperator.NOT}"
             )
-        deps_str = [dep(kind=kind, doc_name=doc_name) for dep in self.deps]
-        # __call__ returns str | bool; join expects str
-        deps_str_cast: list[str] = [str(x) for x in deps_str]
+        deps_str_cast = [self._render_dep(dep, doc_name, kind) for dep in self.deps]
         if doc_name == "" and kind == ExpressionFlavor.GSQL:
             if self.operator == LogicalOperator.AND:
                 return " && ".join(deps_str_cast)
@@ -514,3 +559,30 @@ class FilterExpression(ConfigBaseModel):
         return OperatorMapping[self.operator](
             [dep(kind=kind, **kwargs) for dep in self.deps]
         )
+
+
+def parse_filter_expression(raw: Any) -> FilterExpression:
+    """Parse YAML/JSON/dict/list/filter model into a :class:`FilterExpression`.
+
+    Uses :meth:`FilterExpression.from_dict` for logical shorthand (``OR``, ``AND``,
+    ``NOT``, ``IF_THEN`` keys) and leaf shorthand; uses ``model_validate`` for
+    discriminated ``kind`` / ``operator`` + ``deps`` payloads.
+    """
+    if isinstance(raw, FilterExpression):
+        return raw
+    if isinstance(raw, dict):
+        if raw.get("kind") is not None:
+            return FilterExpression.model_validate(raw)
+        keys = list(raw.keys())
+        if len(keys) == 1:
+            norm_k = keys[0].upper() if isinstance(keys[0], str) else keys[0]
+            if norm_k in _LOGICAL_OPERATOR_JSON_VALUES:
+                return FilterExpression.from_dict(raw)
+        if "operator" in raw or "deps" in raw:
+            return FilterExpression.model_validate(raw)
+        return FilterExpression.from_dict(raw)
+    if isinstance(raw, list):
+        return FilterExpression.from_dict(raw)
+    raise ValueError(
+        f"expected FilterExpression, dict, or list, got {type(raw).__name__}"
+    )

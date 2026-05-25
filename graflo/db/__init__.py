@@ -42,11 +42,14 @@ from .connection import (
     FalkordbConfig,
     GrafeoConfig,
     MemgraphConfig,
+    MinioConfig,
     NebulaConfig,
     Neo4jConfig,
     PostgresConfig,
     SparqlEndpointConfig,
+    S3EndpointConfig,
     TigergraphConfig,
+    parse_dotenv_file,
 )
 from .falkordb.conn import FalkordbConnection
 from .grafeo.conn import GrafeoConnection
@@ -73,6 +76,9 @@ __all__ = [
     "FalkordbConfig",
     "GrafeoConfig",
     "MemgraphConfig",
+    "MinioConfig",
+    "S3EndpointConfig",
+    "parse_dotenv_file",
     "NebulaConfig",
     "Neo4jConfig",
     "PostgresConfig",

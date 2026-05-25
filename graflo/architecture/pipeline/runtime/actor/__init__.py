@@ -3,7 +3,7 @@
 This submodule provides:
 - Actor: Abstract base class for all actors
 - VertexActor, EdgeActor, TransformActor, DescendActor
-- VertexRouterActor, EdgeRouterActor
+- VertexRouterActor
 - ActorWrapper: Wrapper for managing actor instances
 """
 
@@ -14,7 +14,6 @@ from .base import (
 )
 from .descend import DescendActor
 from .edge import EdgeActor
-from .edge_router import EdgeRouterActor
 from .transform import TransformActor
 from .vertex import VertexActor
 from .vertex_router import VertexRouterActor
@@ -27,7 +26,6 @@ __all__ = [
     "ActorWrapper",
     "DescendActor",
     "EdgeActor",
-    "EdgeRouterActor",
     "TransformActor",
     "VertexActor",
     "VertexRouterActor",

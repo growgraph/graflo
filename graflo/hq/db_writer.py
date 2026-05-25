@@ -13,11 +13,11 @@ from uuid import uuid4
 
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema import EdgeRuntime, SchemaDBAware
-from graflo.architecture.contract.declarations.ingestion_model import IngestionModel
+from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.graph_types import GraphContainer
 from graflo.architecture.schema import Schema
-from graflo.db import ConnectionManager
-from graflo.db import DBConfig
+from graflo.db.connection import DBConfig
+from graflo.db.manager import ConnectionManager
 from graflo.onto import DBType
 
 logger = logging.getLogger(__name__)
@@ -61,19 +61,51 @@ class DBWriter:
         gc: GraphContainer,
         conn_conf: DBConfig,
         resource_name: str | None,
+        *,
+        bulk_session_id: str | None = None,
     ) -> None:
         """Push *gc* to the database (vertices, extra weights, then edges).
 
+        When *bulk_session_id* is provided, appends rows using the connection's
+        native bulk interface instead of using per-record writes.
+
         .. note::
-            *gc* is mutated in-place: blank-vertex keys are updated and blank
-            edges are extended after the vertex round-trip.
+            *gc* is mutated in-place for the REST path: blank-vertex keys are
+            updated and blank edges are extended after the vertex round-trip.
+            The bulk path does not support blank vertices or ``extra_weights``.
         """
+        if bulk_session_id:
+            self._validate_bulk_resource(resource_name)
+            if self.dry:
+                logger.debug(
+                    "Dry run: would append batch to bulk session %s",
+                    bulk_session_id,
+                )
+                return
+
+            def _append() -> None:
+                with ConnectionManager(connection_config=conn_conf) as db:
+                    db.bulk_load_append(bulk_session_id, gc, self.schema)
+
+            await asyncio.to_thread(_append)
+            return
+
         resource = self.ingestion_model.fetch_resource(resource_name)
 
         await self._push_vertices(gc, conn_conf)
         self._resolve_blank_edges(gc, conn_conf)
         await self._enrich_extra_weights(gc, conn_conf, resource)
         await self._push_edges(gc, conn_conf)
+
+    def _validate_bulk_resource(self, resource_name: str | None) -> None:
+        if resource_name is None:
+            return
+        resource = self.ingestion_model.fetch_resource(resource_name)
+        if resource.config.extra_weights:
+            raise ValueError(
+                "Native bulk ingest does not support resources with extra_weights "
+                "(those require DB round-trips). Use REST ingest or disable extra_weights."
+            )
 
     # ------------------------------------------------------------------
     # Vertices
@@ -183,7 +215,7 @@ class DBWriter:
 
         def _sync():
             with ConnectionManager(connection_config=conn_conf) as db:
-                for entry in resource.extra_weights:
+                for entry in resource.config.extra_weights:
                     edge = entry.edge
                     if not entry.vertex_weights:
                         continue
@@ -214,77 +246,91 @@ class DBWriter:
     # ------------------------------------------------------------------
 
     async def _push_edges(self, gc: GraphContainer, conn_conf: DBConfig) -> None:
-        """Insert all edges in *gc*."""
+        """Insert all edges in *gc*.
+
+        Each key in ``gc.edges`` is a concrete ``(source, target, relation)``
+        triple produced by the extraction pipeline.  We look up the matching
+        schema :class:`Edge` for each key (trying an exact match first, then a
+        ``relation=None`` schema entry for dynamic-relation edges) and fire one
+        async task per key — one DB write per concrete relation, no inner loop.
+        """
         schema_db = self._db_aware_for(conn_conf)
         vc = schema_db.vertex_config
         ec = schema_db.edge_config
+        core_ec = self.schema.core_schema.edge_config
         semaphore = asyncio.Semaphore(self.max_concurrent)
 
-        async def _push_one(edge_id: tuple, edge: Edge):
+        def _schema_edge_for(edge_id: tuple) -> Edge | None:
+            """Return the schema Edge for a gc edge key, or None if not declared."""
+            if edge_id in core_ec:
+                return core_ec.edge_for(edge_id)
+            # Dynamic-relation edges: schema declares (source, target, None).
+            null_id = (edge_id[0], edge_id[1], None)
+            if null_id in core_ec:
+                return core_ec.edge_for(null_id)
+            return None
+
+        async def _push_one(edge_id: tuple, docs: list) -> None:
+            edge = _schema_edge_for(edge_id)
+            if edge is None:
+                return
             async with semaphore:
 
-                def _sync():
+                def _sync() -> None:
+                    _, _, relation = edge_id
                     with ConnectionManager(connection_config=conn_conf) as db:
                         runtime = ec.runtime(edge)
                         merge_props: tuple[str, ...] | None = None
                         mp = ec.relationship_merge_property_names(edge)
                         if mp:
                             merge_props = tuple(mp)
-                        for ee in gc.loop_over_relations(edge_id):
-                            _, _, relation = ee
-                            if not self.dry:
-                                data, relation_name = self._project_edge_docs_for_db(
-                                    docs=gc.edges[ee],
-                                    relation=relation,
-                                    runtime=runtime,
-                                    conn_type=conn_conf.connection_type,
-                                )
-                                edge_kw: dict = {
-                                    "filter_uniques": False,
-                                    "dry": self.dry,
-                                    "collection_name": runtime.storage_name(),
-                                }
-                                if conn_conf.connection_type in (
-                                    DBType.NEO4J,
-                                    DBType.FALKORDB,
-                                    DBType.MEMGRAPH,
-                                    DBType.GRAFEO,
-                                ):
+                        if not self.dry:
+                            data, relation_name = self._project_edge_docs_for_db(
+                                docs=docs,
+                                relation=relation,
+                                runtime=runtime,
+                                conn_type=conn_conf.connection_type,
+                            )
+                            edge_kw: dict = {
+                                "filter_uniques": False,
+                                "dry": self.dry,
+                                "collection_name": runtime.storage_name(),
+                            }
+                            if conn_conf.connection_type in (
+                                DBType.NEO4J,
+                                DBType.FALKORDB,
+                                DBType.MEMGRAPH,
+                                DBType.GRAFEO,
+                            ):
+                                if merge_props is not None:
+                                    edge_kw["relationship_merge_properties"] = (
+                                        merge_props
+                                    )
+                            elif conn_conf.connection_type == DBType.ARANGO:
+                                if self.ingestion_model.edges_on_duplicate == "upsert":
+                                    edge_kw["on_duplicate"] = "upsert"
                                     if merge_props is not None:
-                                        edge_kw["relationship_merge_properties"] = (
+                                        edge_kw["uniq_weight_fields"] = list(
                                             merge_props
                                         )
-                                elif conn_conf.connection_type == DBType.ARANGO:
-                                    if (
-                                        self.ingestion_model.edges_on_duplicate
-                                        == "upsert"
-                                    ):
-                                        edge_kw["on_duplicate"] = "upsert"
-                                        if merge_props is not None:
-                                            edge_kw["uniq_weight_fields"] = list(
-                                                merge_props
-                                            )
-                                db.insert_edges_batch(
-                                    docs_edges=data,
-                                    source_class=vc.vertex_dbname(edge.source),
-                                    target_class=vc.vertex_dbname(edge.target),
-                                    relation_name=relation_name,
-                                    match_keys_source=tuple(
-                                        vc.identity_fields(edge.source)
-                                    ),
-                                    match_keys_target=tuple(
-                                        vc.identity_fields(edge.target)
-                                    ),
-                                    **edge_kw,
-                                )
+                            db.insert_edges_batch(
+                                docs_edges=data,
+                                source_class=vc.vertex_dbname(edge.source),
+                                target_class=vc.vertex_dbname(edge.target),
+                                relation_name=relation_name,
+                                match_keys_source=tuple(
+                                    vc.identity_fields(edge.source)
+                                ),
+                                match_keys_target=tuple(
+                                    vc.identity_fields(edge.target)
+                                ),
+                                **edge_kw,
+                            )
 
                 await asyncio.to_thread(_sync)
 
         await asyncio.gather(
-            *[
-                _push_one(edge_id, edge)
-                for edge_id, edge in self.schema.core_schema.edge_config.items()
-            ]
+            *[_push_one(edge_id, docs) for edge_id, docs in gc.edges.items()]
         )
 
     def _db_aware_for(self, conn_conf: DBConfig) -> SchemaDBAware:
