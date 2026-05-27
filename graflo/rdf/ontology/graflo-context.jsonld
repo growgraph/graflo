@@ -1,0 +1,105 @@
+{
+    "@context": {
+        "gf": "https://ontology.growgraph.dev/graflo/",
+        "xsd": "http://www.w3.org/2001/XMLSchema#",
+        "GraphManifest": "gf:GraphManifest",
+        "Schema": "gf:Schema",
+        "CoreSchema": "gf:CoreSchema",
+        "GraphMetadata": "gf:GraphMetadata",
+        "DatabaseProfile": "gf:DatabaseProfile",
+        "VertexDefinition": "gf:VertexDefinition",
+        "EdgeDefinition": "gf:EdgeDefinition",
+        "FieldDefinition": "gf:FieldDefinition",
+        "IngestionModel": "gf:IngestionModel",
+        "ResourceDefinition": "gf:ResourceDefinition",
+        "ProtoTransform": "gf:ProtoTransform",
+        "Transform": "gf:Transform",
+        "DressConfig": "gf:DressConfig",
+        "KeySelectionConfig": "gf:KeySelectionConfig",
+        "BindingsConfig": "gf:BindingsConfig",
+        "FileConnector": "gf:FileConnector",
+        "TableConnector": "gf:TableConnector",
+        "SparqlConnector": "gf:SparqlConnector",
+        "hasSchema": {
+            "@id": "gf:hasSchema",
+            "@type": "@id"
+        },
+        "hasIngestionModel": {
+            "@id": "gf:hasIngestionModel",
+            "@type": "@id"
+        },
+        "hasBindings": {
+            "@id": "gf:hasBindings",
+            "@type": "@id"
+        },
+        "hasCoreSchema": {
+            "@id": "gf:hasCoreSchema",
+            "@type": "@id"
+        },
+        "hasMetadata": {
+            "@id": "gf:hasMetadata",
+            "@type": "@id"
+        },
+        "hasDatabaseProfile": {
+            "@id": "gf:hasDatabaseProfile",
+            "@type": "@id"
+        },
+        "definesVertex": {
+            "@id": "gf:definesVertex",
+            "@type": "@id"
+        },
+        "definesEdge": {
+            "@id": "gf:definesEdge",
+            "@type": "@id"
+        },
+        "hasField": {
+            "@id": "gf:hasField",
+            "@type": "@id"
+        },
+        "edgeSource": {
+            "@id": "gf:edgeSource",
+            "@type": "@id"
+        },
+        "edgeTarget": {
+            "@id": "gf:edgeTarget",
+            "@type": "@id"
+        },
+        "hasResource": {
+            "@id": "gf:hasResource",
+            "@type": "@id"
+        },
+        "hasTransform": {
+            "@id": "gf:hasTransform",
+            "@type": "@id"
+        },
+        "hasPipelineStep": {
+            "@id": "gf:hasPipelineStep",
+            "@type": "@id"
+        },
+        "hasConnector": {
+            "@id": "gf:hasConnector",
+            "@type": "@id"
+        },
+        "name": "gf:name",
+        "version": "gf:version",
+        "description": "gf:description",
+        "identityField": "gf:identityField",
+        "relation": "gf:relation",
+        "stepIndex": {
+            "@id": "gf:stepIndex",
+            "@type": "xsd:integer"
+        },
+        "stepPayload": "gf:stepPayload",
+        "actorType": "gf:actorType",
+        "transformModule": "gf:transformModule",
+        "transformFunction": "gf:transformFunction",
+        "transformInput": "gf:transformInput",
+        "transformOutput": "gf:transformOutput",
+        "transformParams": "gf:transformParams",
+        "resourcePayload": "gf:resourcePayload",
+        "connectorPayload": "gf:connectorPayload",
+        "profilePayload": "gf:profilePayload",
+        "edgePayload": "gf:edgePayload",
+        "vertexPayload": "gf:vertexPayload"
+    }
+}

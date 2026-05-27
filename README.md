@@ -8,13 +8,18 @@
 [![pre-commit](https://github.com/growgraph/graflo/actions/workflows/pre-commit.yml/badge.svg)](https://github.com/growgraph/graflo/actions/workflows/pre-commit.yml)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.15446131.svg)]( https://doi.org/10.5281/zenodo.15446131)
 
-**GraFlo** is a manifest-driven toolkit for **labeled property graphs (LPGs)**: describe vertices, edges, and ingestion (`GraphManifest` — YAML or Python), then project and load into a target graph database.
+**GraFlo** is a manifest-driven schema and ingestion layer for **labeled property graphs (LPGs)**.
+Write a `GraphManifest` (YAML or Python) once — it defines vertices, edges, typed properties,
+identities, and DB profile — then infer, validate, migrate, and load into any supported graph engine.
 
 ### What you get
 
 - **One pipeline, several graph databases** — The same manifest targets ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, or NebulaGraph; `DatabaseProfile` and DB-aware types absorb naming, defaults, and indexing differences.
 - **Explicit identities** — Vertex identity fields and indexes back upserts so reloads merge on keys instead of blindly duplicating nodes.
 - **Reusable ingestion** — `Resource` actor pipelines (including **vertex_router** / **edge** steps) bind to files, SQL, SPARQL/RDF, APIs, or in-memory batches via `Bindings` and the `DataSourceRegistry`.
+- **Schema as the contract** — `GraphManifest` is the single source of truth: vertex/edge definitions,
+  typed properties, identity fields, and DB profile are validated at `finish_init` time, not at
+  write time. Schema migrations are first-class (`graflo migrate_schema`).
 
 ### What’s in the manifest
 
