@@ -8,13 +8,19 @@
 [![pre-commit](https://github.com/growgraph/graflo/actions/workflows/pre-commit.yml/badge.svg)](https://github.com/growgraph/graflo/actions/workflows/pre-commit.yml)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.15446131.svg)]( https://doi.org/10.5281/zenodo.15446131)
 
-**GraFlo** is a manifest-driven toolkit for **labeled property graphs (LPGs)**: describe vertices, edges, and ingestion (`GraphManifest` — YAML or Python), then project and load into a target graph database.
+**GraFlo** is a manifest-driven schema and ingestion layer for **labeled property graphs (LPGs)**.
+Write a `GraphManifest` (YAML or Python) once — it defines vertices, edges, typed properties,
+identities, and DB profile — then infer, validate, migrate, and load into any supported graph engine.
 
 ### What you get
 
 - **One pipeline, several graph databases** — The same manifest targets ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, or NebulaGraph; `DatabaseProfile` and DB-aware types absorb naming, defaults, and indexing differences.
 - **Explicit identities** — Vertex identity fields and indexes back upserts so reloads merge on keys instead of blindly duplicating nodes.
 - **Reusable ingestion** — `Resource` actor pipelines (including **vertex_router** / **edge** steps) bind to files, SQL, SPARQL/RDF, APIs, or in-memory batches via `Bindings` and the `DataSourceRegistry`.
+- **Schema as the contract** — `GraphManifest` is the single source of truth: vertex/edge definitions,
+  typed properties, identity fields, and DB profile are validated at `finish_init` time, not at
+  write time. Schema migrations are first-class (`graflo migrate_schema`).
+- **Manifest as linked data** — The [GraFlo ontology](https://growgraph.github.io/graflo/model/graflo_ontology/) (`gf:` at `ontology.growgraph.dev`) lets you export manifests to RDF and round-trip them for tooling, provenance, and SPARQL-facing catalogs.
 
 ### What’s in the manifest
 
@@ -56,7 +62,8 @@ The graph engines listed in **What you get** are the supported **output** `DBTyp
 
 ## More capabilities
 
-- **SPARQL & RDF** — Endpoints and RDF files (`.ttl`, `.rdf`, `.n3`, …); optional OWL/RDFS schema inference (`rdflib`, `SPARQLWrapper` in the default install).
+- **GraFlo ontology (manifest RDF)** — Serialize any `GraphManifest` to RDF (Turtle, JSON-LD) using the published vocabulary at [`https://ontology.growgraph.dev/graflo`](https://ontology.growgraph.dev/graflo) (`owl:versionInfo` **1.0.0**). Covers schema, ingestion (resources, transforms, pipeline actors), and bindings. Round-trip via `graflo.rdf` or the `manifest-to-rdf` / `rdf-to-manifest` CLI. This is the **meta-model** of GraFlo itself — distinct from importing a **domain** OWL ontology into an LPG schema (`RdfInferenceManager`). Details: [docs — GraFlo ontology](https://growgraph.github.io/graflo/model/graflo_ontology/).
+- **SPARQL & RDF** — Endpoints and RDF files (`.ttl`, `.rdf`, `.n3`, …); optional OWL/RDFS **domain** schema inference (`rdflib`, `SPARQLWrapper` in the default install).
 - **Schema inference** — From PostgreSQL-style 3NF layouts (PK/FK heuristics) or from OWL/RDFS (`owl:Class` → vertices, `owl:ObjectProperty` → edges, `owl:DatatypeProperty` → vertex fields).
 - **Schema migrations** — Plan and apply guarded schema deltas (`migrate_schema` console script → `graflo.cli.migrate_schema`; library in `graflo.migrate`; see docs).
 - **Typed `properties`** — Optional field types (`INT`, `FLOAT`, `STRING`, `DATETIME`, `BOOL`) on vertices and edges.
@@ -212,7 +219,35 @@ caster = Caster(schema=schema, ingestion_model=ingestion_model)
 # ... continue with ingestion
 ```
 
-### RDF / SPARQL Ingestion
+### Manifest ↔ RDF (GraFlo ontology)
+
+```bash
+# Serialize manifest YAML to Turtle (embeds gf: vocabulary when --include-ontology is default)
+uv run manifest-to-rdf manifest.yaml \
+  --base-uri https://growgraph.dev/manifests/mygraph/v1 \
+  --format turtle \
+  --output mygraph.ttl
+
+# Restore YAML from RDF
+uv run rdf-to-manifest mygraph.ttl \
+  --manifest-uri https://growgraph.dev/manifests/mygraph/v1 \
+  --output manifest.restored.yaml
+```
+
+```python
+from graflo import GraphManifest
+from graflo.rdf import ManifestRdfDeserializer, ManifestRdfSerializer
+
+manifest = GraphManifest.from_yaml("manifest.yaml")
+base = "https://growgraph.dev/manifests/mygraph/v1"
+
+ttl = ManifestRdfSerializer().to_turtle(manifest, base)
+restored = ManifestRdfDeserializer().from_turtle(ttl, base.rstrip("/"))
+```
+
+Ontology source: `graflo/rdf/ontology/graflo.ttl`. See [GraFlo ontology](https://growgraph.github.io/graflo/model/graflo_ontology/).
+
+### RDF / SPARQL Ingestion (domain ontology → LPG)
 
 ```python
 from pathlib import Path

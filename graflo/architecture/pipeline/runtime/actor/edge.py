@@ -15,7 +15,7 @@ from graflo.architecture.graph_types import (
     Weight,
     merge_observation_with_transform_buffer,
 )
-from graflo.architecture.schema.vertex import VertexConfig
+from graflo.architecture.schema.vertex import VertexConfig, VertexName
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +87,7 @@ class EdgeActor(Actor):
             self.edge: Edge | None = None
             self.vertex_config: VertexConfig | None = None
             self.edge_config: EdgeConfig | None = None
-            self.allowed_vertex_names: set[str] | None = None
+            self.allowed_vertex_names: set[VertexName] | None = None
             return
 
         self._link_actors = []
@@ -134,7 +134,7 @@ class EdgeActor(Actor):
 
         self.vertex_config: VertexConfig | None = None
         self.edge_config: EdgeConfig | None = None
-        self.allowed_vertex_names: set[str] | None = None
+        self.allowed_vertex_names: set[VertexName] | None = None
 
     @property
     def relation_field(self) -> str | None:
@@ -380,7 +380,7 @@ class EdgeActor(Actor):
         ctx.record_edge_intent(edge=edge, location=lindex, derivation=derivation)
         return ctx
 
-    def references_vertices(self) -> set[str]:
+    def references_vertices(self) -> set[VertexName]:
         if self._link_actors:
             result: set[str] = set()
             for la in self._link_actors:

@@ -20,7 +20,7 @@ from __future__ import annotations
 import ast
 import json
 import logging
-from typing import Any
+from typing import Any, TypeAlias
 
 from pydantic import (
     ConfigDict,
@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 
 # Type accepted for vertex properties before normalization (for use by Edge/WeightConfig)
 PropertiesInputType = list[str] | list["Field"] | list[dict[str, Any]]
+VertexName: TypeAlias = str
 
 
 class FieldType(BaseEnum):
@@ -82,7 +83,7 @@ class Field(ConfigBaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str = PydanticField(
+    name: VertexName = PydanticField(
         ...,
         description="Name of the field (e.g. column or attribute name).",
     )
@@ -403,8 +404,10 @@ class VertexConfig(ConfigBaseModel):
             "When false, explicit identity is required except for blank vertices."
         ),
     )
-    _vertices_map: dict[str, Vertex] | None = PrivateAttr(default=None)
-    _vertex_numeric_fields_map: dict[str, object] | None = PrivateAttr(default=None)
+    _vertices_map: dict[VertexName, Vertex] | None = PrivateAttr(default=None)
+    _vertex_numeric_fields_map: dict[VertexName, object] | None = PrivateAttr(
+        default=None
+    )
 
     @model_validator(mode="after")
     def build_vertices_map(self) -> "VertexConfig":
@@ -441,7 +444,7 @@ class VertexConfig(ConfigBaseModel):
             for field_name in missing:
                 vertex.properties.append(Field(name=field_name, type=None))
 
-    def _get_vertices_map(self) -> dict[str, Vertex]:
+    def _get_vertices_map(self) -> dict[VertexName, Vertex]:
         """Return the vertices map (set by model validator)."""
         if self._vertices_map is None:
             raise RuntimeError("VertexConfig not fully initialized")
@@ -465,7 +468,7 @@ class VertexConfig(ConfigBaseModel):
         """
         return list(self._get_vertices_map().values())
 
-    def _get_vertex_by_name(self, identifier: str) -> Vertex:
+    def _get_vertex_by_name(self, identifier: VertexName) -> Vertex:
         """Get vertex by logical vertex name."""
         m = self._get_vertices_map()
         if identifier in m:
@@ -476,11 +479,11 @@ class VertexConfig(ConfigBaseModel):
             f"Available names: {available_names}"
         )
 
-    def identity_fields(self, vertex_name: str) -> list[str]:
+    def identity_fields(self, vertex_name: VertexName) -> list[str]:
         """Get identity fields for a vertex."""
         return list(self._get_vertices_map()[vertex_name].identity)
 
-    def properties(self, vertex_name: str) -> list[Field]:
+    def properties(self, vertex_name: VertexName) -> list[Field]:
         """Vertex properties as Field objects."""
 
         vertex = self._get_vertex_by_name(vertex_name)
@@ -489,7 +492,7 @@ class VertexConfig(ConfigBaseModel):
 
     def property_names(
         self,
-        vertex_name: str,
+        vertex_name: VertexName,
     ) -> list[str]:
         """Vertex property names as strings."""
 

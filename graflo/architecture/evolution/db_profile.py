@@ -7,10 +7,10 @@ from typing import Any
 
 from graflo.architecture.database_features import (
     DatabaseProfile,
+    EdgePhysicalSpec,
     EdgePropertyDefaults,
-    EdgeVariantSpec,
 )
-from graflo.architecture.graph_types import EdgeId, Index
+from graflo.architecture.graph_types import EdgeId, EdgePhysicalKey, Index
 from graflo.architecture.schema import Schema
 
 logger = logging.getLogger(__name__)
@@ -57,6 +57,72 @@ def apply_vertex_removal_to_db_profile(
     ]
 
 
+def apply_vertex_rename_to_db_profile(
+    profile: DatabaseProfile, vertex_renames: dict[str, str]
+) -> None:
+    """Rename logical vertex keys in *profile*."""
+    if not vertex_renames:
+        return
+
+    new_vs: dict[str, str] = {}
+    for k, v in profile.vertex_storage_names.items():
+        nk = vertex_renames.get(k, k)
+        if nk in new_vs and new_vs[nk] != v:
+            raise ValueError(
+                f"Conflicting vertex_storage_names for logical {nk!r}: "
+                f"{new_vs[nk]!r} vs {v!r}"
+            )
+        new_vs[nk] = v
+    profile.vertex_storage_names = new_vs
+
+    new_vi: dict[str, list[Any]] = {}
+    for k, vlist in profile.vertex_indexes.items():
+        nk = vertex_renames.get(k, k)
+        new_vi.setdefault(nk, []).extend(list(vlist))
+    profile.vertex_indexes = new_vi
+
+    new_specs: list[EdgePhysicalSpec] = []
+    for s in profile.edge_specs:
+        new_specs.append(
+            EdgePhysicalSpec(
+                source=vertex_renames.get(s.source, s.source),
+                target=vertex_renames.get(s.target, s.target),
+                relation=s.relation,
+                purpose=s.purpose,
+                relation_name=s.relation_name,
+                indexes=list(s.indexes),
+                indexes_mode=s.indexes_mode,
+            )
+        )
+    profile.edge_specs = new_specs
+
+    dpv = profile.default_property_values
+    if dpv is None:
+        return
+
+    new_vertices: dict[str, dict[str, Any]] = {}
+    for k, props in dpv.vertices.items():
+        nk = vertex_renames.get(k, k)
+        if nk in new_vertices and new_vertices[nk] != props:
+            raise ValueError(
+                f"Conflicting default_property_values.vertices for logical {nk!r}"
+            )
+        new_vertices[nk] = dict(props)
+    object.__setattr__(dpv, "vertices", new_vertices)
+
+    new_edges: list[EdgePropertyDefaults] = []
+    for e in dpv.edges:
+        new_edges.append(
+            EdgePropertyDefaults(
+                source=vertex_renames.get(e.source, e.source),
+                target=vertex_renames.get(e.target, e.target),
+                relation=e.relation,
+                values=dict(e.values),
+            )
+        )
+    object.__setattr__(dpv, "edges", new_edges)
+
+
 def apply_vertex_merge_to_db_profile(
     profile: DatabaseProfile,
     from_vertices: set[str],
@@ -86,12 +152,12 @@ def apply_vertex_merge_to_db_profile(
         new_vi.setdefault(nk, []).extend(list(vlist))
     profile.vertex_indexes = new_vi
 
-    new_specs: list[EdgeVariantSpec] = []
+    new_specs: list[EdgePhysicalSpec] = []
     for s in profile.edge_specs:
         src = m.get(s.source, s.source)
         tgt = m.get(s.target, s.target)
         new_specs.append(
-            EdgeVariantSpec(
+            EdgePhysicalSpec(
                 source=src,
                 target=tgt,
                 relation=s.relation,
@@ -243,7 +309,7 @@ def apply_field_rename_to_db_profile(
         )
     profile.vertex_indexes = new_vertex_indexes
 
-    new_specs: list[EdgeVariantSpec] = []
+    new_specs: list[EdgePhysicalSpec] = []
     for spec in profile.edge_specs:
         if edge_vertex_lookup is not None:
             source_name, target_name = edge_vertex_lookup.get(
@@ -255,7 +321,7 @@ def apply_field_rename_to_db_profile(
         merged.update(renames.get(source_name) or {})
         merged.update(renames.get(target_name) or {})
         new_specs.append(
-            EdgeVariantSpec(
+            EdgePhysicalSpec(
                 source=spec.source,
                 target=spec.target,
                 relation=spec.relation,
@@ -287,7 +353,7 @@ def apply_relation_rename_to_db_profile(
     """Rename logical edge relation keys in edge specs/default edge values."""
     if not relation_renames:
         return
-    new_specs: list[EdgeVariantSpec] = []
+    new_specs: list[EdgePhysicalSpec] = []
     for spec in profile.edge_specs:
         new_relation = (
             relation_renames.get(spec.relation, spec.relation)
@@ -345,9 +411,9 @@ def apply_relation_removal_to_db_profile(
 
 def merge_relation_entries_in_db_profile(profile: DatabaseProfile) -> None:
     """Merge duplicate edge-spec/default entries created by relation remaps."""
-    merged_specs: dict[tuple[str, str, str | None, str | None], EdgeVariantSpec] = {}
+    merged_specs: dict[EdgePhysicalKey, EdgePhysicalSpec] = {}
     for spec in profile.edge_specs:
-        key = (spec.source, spec.target, spec.relation, spec.purpose)
+        key = spec.physical_key
         current = merged_specs.get(key)
         if current is None:
             merged_specs[key] = spec
@@ -373,17 +439,16 @@ def merge_relation_entries_in_db_profile(profile: DatabaseProfile) -> None:
         return
     merged_defaults: dict[EdgeId, EdgePropertyDefaults] = {}
     for edge in dpv.edges:
-        edge_id: EdgeId = (edge.source, edge.target, edge.relation)
-        current = merged_defaults.get(edge_id)
+        current = merged_defaults.get(edge.edge_id)
         if current is None:
-            merged_defaults[edge_id] = edge
+            merged_defaults[edge.edge_id] = edge
             continue
         merged_values = _merge_vertex_default_maps(
             dict(current.values),
             dict(edge.values),
             label="default_property_values.edges",
         )
-        merged_defaults[edge_id] = current.model_copy(
+        merged_defaults[edge.edge_id] = current.model_copy(
             update={"values": merged_values}, deep=True
         )
     object.__setattr__(dpv, "edges", list(merged_defaults.values()))
@@ -430,7 +495,7 @@ def apply_edge_property_removal_to_db_profile(
     """Remove edge property references from edge indexes/default values."""
     if not removals_by_relation:
         return
-    updated_specs: list[EdgeVariantSpec] = []
+    updated_specs: list[EdgePhysicalSpec] = []
     for spec in profile.edge_specs:
         removals = (
             removals_by_relation.get(spec.relation, set())

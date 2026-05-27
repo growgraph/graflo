@@ -1,0 +1,685 @@
+@prefix gf:   <https://ontology.growgraph.dev/graflo/> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+
+<https://ontology.growgraph.dev/graflo> a owl:Ontology ;
+    owl:versionIRI <https://ontology.growgraph.dev/graflo/1.0.0> ;
+    owl:versionInfo "1.0.0" ;
+    rdfs:label "GraFlo Ontology"@en ;
+    skos:prefLabel "GraFlo Ontology"@en ;
+    rdfs:comment "OWL vocabulary describing GraFlo GraphManifest contracts: schema, ingestion, bindings, transforms, and pipeline actors."@en .
+
+#################################################################
+# Classes
+#################################################################
+
+gf:GrafloArtifact a owl:Class ;
+    rdfs:label "GraFlo artifact"@en ;
+    skos:prefLabel "Artifact"@en .
+
+gf:GraphManifest a owl:Class ;
+    rdfs:subClassOf gf:GrafloArtifact , prov:Entity ;
+    rdfs:label "Graph manifest"@en ;
+    skos:prefLabel "GraphManifest"@en .
+
+gf:Schema a owl:Class ;
+    rdfs:subClassOf gf:GrafloArtifact ;
+    rdfs:label "Graph schema document"@en ;
+    skos:prefLabel "Schema"@en .
+
+gf:CoreSchema a owl:Class ;
+    rdfs:subClassOf gf:GrafloArtifact ;
+    rdfs:label "Core schema"@en ;
+    skos:prefLabel "CoreSchema"@en .
+
+gf:VertexConfig a owl:Class ;
+    rdfs:subClassOf gf:GrafloArtifact ;
+    rdfs:label "Vertex config"@en ;
+    skos:prefLabel "VertexConfig"@en ;
+    rdfs:comment "Manifest-facing vertex_config block containing vertex declarations and identity policy."@en .
+
+gf:EdgeConfig a owl:Class ;
+    rdfs:subClassOf gf:GrafloArtifact ;
+    rdfs:label "Edge config"@en ;
+    skos:prefLabel "EdgeConfig"@en ;
+    rdfs:comment "Manifest-facing edge_config block containing edge declarations."@en .
+
+gf:GraphMetadata a owl:Class ;
+    rdfs:subClassOf gf:GrafloArtifact ;
+    rdfs:label "Graph metadata"@en ;
+    skos:prefLabel "Metadata"@en .
+
+gf:DatabaseProfile a owl:Class ;
+    rdfs:subClassOf gf:GrafloArtifact ;
+    rdfs:label "Database profile"@en ;
+    skos:prefLabel "DatabaseProfile"@en .
+
+gf:Vertex a owl:Class ;
+    rdfs:subClassOf gf:GrafloArtifact ;
+    rdfs:label "Vertex"@en ;
+    skos:prefLabel "Vertex"@en ;
+    rdfs:comment "Manifest-facing vertex item in vertex_config.vertices."@en .
+
+gf:Edge a owl:Class ;
+    rdfs:subClassOf gf:GrafloArtifact ;
+    rdfs:label "Edge"@en ;
+    skos:prefLabel "Edge"@en ;
+    rdfs:comment "Manifest-facing edge item in edge_config.edges."@en .
+
+gf:Field a owl:Class ;
+    rdfs:subClassOf gf:GrafloArtifact ;
+    rdfs:label "Field"@en ;
+    skos:prefLabel "Field"@en ;
+    rdfs:comment "Manifest-facing field item used in vertex.properties and edge.properties."@en .
+
+gf:Identity a owl:Class ;
+    rdfs:subClassOf gf:GrafloArtifact ;
+    rdfs:label "Identity field"@en ;
+    skos:prefLabel "Identity"@en ;
+    rdfs:comment "Manifest-facing identity element (string) promoted to a first-class ontology node for traceability."@en .
+
+gf:IngestionModel a owl:Class ;
+    rdfs:subClassOf gf:GrafloArtifact ;
+    rdfs:label "Ingestion model"@en ;
+    skos:prefLabel "IngestionModel"@en .
+
+gf:Resource a owl:Class ;
+    rdfs:subClassOf gf:GrafloArtifact ;
+    rdfs:label "Resource"@en ;
+    skos:prefLabel "Resource"@en .
+
+gf:EdgeInferSpec a owl:Class ;
+    rdfs:subClassOf gf:GrafloArtifact ;
+    rdfs:label "Edge inference selector"@en ;
+    skos:prefLabel "EdgeInferSpec"@en .
+
+gf:ProtoTransform a owl:Class ;
+    rdfs:subClassOf gf:GrafloArtifact , prov:Activity ;
+    rdfs:label "Proto transform"@en ;
+    skos:prefLabel "ProtoTransform"@en .
+
+gf:Transform a owl:Class ;
+    rdfs:subClassOf gf:ProtoTransform ;
+    rdfs:label "Transform"@en ;
+    skos:prefLabel "Transform"@en .
+
+gf:DressConfig a owl:Class ;
+    rdfs:subClassOf gf:GrafloArtifact ;
+    rdfs:label "Dress configuration"@en ;
+    skos:prefLabel "DressConfig"@en .
+
+gf:KeySelectionConfig a owl:Class ;
+    rdfs:subClassOf gf:GrafloArtifact ;
+    rdfs:label "Key selection configuration"@en ;
+    skos:prefLabel "KeySelectionConfig"@en .
+
+gf:Actor a owl:Class ;
+    rdfs:subClassOf gf:GrafloArtifact ;
+    rdfs:label "Actor"@en ;
+    skos:prefLabel "Actor"@en .
+
+gf:VertexProducingActor a owl:Class ;
+    rdfs:subClassOf gf:Actor ;
+    rdfs:label "Vertex-producing actor"@en ;
+    skos:prefLabel "VertexProducingActor"@en .
+
+gf:VertexActor a owl:Class ;
+    rdfs:subClassOf gf:VertexProducingActor ;
+    rdfs:label "Vertex actor"@en ;
+    skos:prefLabel "VertexActor"@en ;
+    rdfs:comment "Manifest-facing actor name (vertex)."@en .
+
+gf:EdgeActor a owl:Class ;
+    rdfs:subClassOf gf:Actor ;
+    rdfs:label "Edge actor"@en ;
+    skos:prefLabel "EdgeActor"@en ;
+    rdfs:comment "Manifest-facing actor name (edge)."@en .
+
+gf:TransformActor a owl:Class ;
+    rdfs:subClassOf gf:Actor ;
+    rdfs:label "Transform actor"@en ;
+    skos:prefLabel "TransformActor"@en .
+
+gf:DescendActor a owl:Class ;
+    rdfs:subClassOf gf:Actor ;
+    rdfs:label "Descend actor"@en ;
+    skos:prefLabel "DescendActor"@en .
+
+gf:VertexRouterActor a owl:Class ;
+    rdfs:subClassOf gf:VertexProducingActor ;
+    rdfs:label "Vertex router actor"@en ;
+    skos:prefLabel "VertexRouterActor"@en .
+
+gf:Bindings a owl:Class ;
+    rdfs:subClassOf gf:GrafloArtifact ;
+    rdfs:label "Bindings"@en ;
+    skos:prefLabel "Bindings"@en .
+
+gf:BoundConnector a owl:Class ;
+    rdfs:subClassOf gf:GrafloArtifact ;
+    rdfs:label "Bound connector"@en ;
+    skos:prefLabel "BoundConnector"@en .
+
+gf:FileConnector a owl:Class ;
+    rdfs:subClassOf gf:BoundConnector ;
+    rdfs:label "File connector"@en ;
+    skos:prefLabel "FileConnector"@en .
+
+gf:TableConnector a owl:Class ;
+    rdfs:subClassOf gf:BoundConnector ;
+    rdfs:label "Table connector"@en ;
+    skos:prefLabel "TableConnector"@en .
+
+gf:SparqlConnector a owl:Class ;
+    rdfs:subClassOf gf:BoundConnector ;
+    rdfs:label "SPARQL connector"@en ;
+    skos:prefLabel "SparqlConnector"@en .
+
+gf:ResourceConnectorBinding a owl:Class ;
+    rdfs:subClassOf gf:GrafloArtifact ;
+    rdfs:label "Resource connector binding"@en ;
+    skos:prefLabel "ResourceConnectorBinding"@en .
+
+gf:ConnectorConnectionBinding a owl:Class ;
+    rdfs:subClassOf gf:GrafloArtifact ;
+    rdfs:label "Connector connection binding"@en ;
+    skos:prefLabel "ConnectorConnectionBinding"@en .
+
+gf:StagingProxyBinding a owl:Class ;
+    rdfs:subClassOf gf:GrafloArtifact ;
+    rdfs:label "Staging proxy binding"@en ;
+    skos:prefLabel "StagingProxyBinding"@en .
+
+gf:EdgePhysicalSpec a owl:Class ;
+    rdfs:subClassOf gf:GrafloArtifact ;
+    rdfs:label "Edge physical spec"@en ;
+    skos:prefLabel "EdgePhysicalSpec"@en .
+
+gf:Index a owl:Class ;
+    rdfs:subClassOf gf:GrafloArtifact ;
+    rdfs:label "Database index"@en ;
+    skos:prefLabel "Index"@en .
+
+gf:FieldType a owl:Class ;
+    rdfs:label "Field type enumeration"@en ;
+    skos:prefLabel "FieldType"@en .
+
+gf:DBType a owl:Class ;
+    rdfs:label "Database type enumeration"@en ;
+    skos:prefLabel "DBType"@en .
+
+gf:BoundSourceKind a owl:Class ;
+    rdfs:label "Bound source kind enumeration"@en ;
+    skos:prefLabel "BoundSourceKind"@en .
+
+gf:TransformTarget a owl:Class ;
+    rdfs:label "Transform target enumeration"@en ;
+    skos:prefLabel "TransformTarget"@en .
+
+gf:TransformStrategy a owl:Class ;
+    rdfs:label "Transform strategy enumeration"@en ;
+    skos:prefLabel "TransformStrategy"@en .
+
+gf:KeySelectionMode a owl:Class ;
+    rdfs:label "Key selection mode enumeration"@en ;
+    skos:prefLabel "KeySelectionMode"@en .
+
+gf:EdgeDuplicatePolicy a owl:Class ;
+    rdfs:label "Edge duplicate policy enumeration"@en ;
+    skos:prefLabel "EdgeDuplicatePolicy"@en .
+
+#################################################################
+# Object properties
+#################################################################
+
+gf:hasSchema a owl:ObjectProperty ;
+    rdfs:domain gf:GraphManifest ;
+    rdfs:range gf:Schema .
+
+gf:hasIngestionModel a owl:ObjectProperty ;
+    rdfs:domain gf:GraphManifest ;
+    rdfs:range gf:IngestionModel .
+
+gf:hasBindings a owl:ObjectProperty ;
+    rdfs:domain gf:GraphManifest ;
+    rdfs:range gf:Bindings .
+
+gf:hasCoreSchema a owl:ObjectProperty ;
+    rdfs:domain gf:Schema ;
+    rdfs:range gf:CoreSchema .
+
+gf:hasVertexConfig a owl:ObjectProperty ;
+    rdfs:domain gf:CoreSchema ;
+    rdfs:range gf:VertexConfig ;
+    rdfs:comment "Manifest path: core_schema.vertex_config."@en .
+
+gf:hasEdgeConfig a owl:ObjectProperty ;
+    rdfs:domain gf:CoreSchema ;
+    rdfs:range gf:EdgeConfig ;
+    rdfs:comment "Manifest path: core_schema.edge_config."@en .
+
+gf:hasMetadata a owl:ObjectProperty ;
+    rdfs:domain gf:Schema ;
+    rdfs:range gf:GraphMetadata .
+
+gf:hasDatabaseProfile a owl:ObjectProperty ;
+    rdfs:domain gf:Schema ;
+    rdfs:range gf:DatabaseProfile .
+
+gf:hasVertex a owl:ObjectProperty ;
+    rdfs:domain gf:VertexConfig ;
+    rdfs:range gf:Vertex ;
+    rdfs:comment "Manifest-facing edge from VertexConfig to Vertex items."@en .
+
+gf:hasEdge a owl:ObjectProperty ;
+    rdfs:domain gf:EdgeConfig ;
+    rdfs:range gf:Edge ;
+    rdfs:comment "Manifest-facing edge from EdgeConfig to Edge items."@en .
+
+gf:hasField a owl:ObjectProperty ;
+    rdfs:domain gf:Vertex , gf:Edge ;
+    rdfs:range gf:Field .
+
+gf:hasIdentity a owl:ObjectProperty ;
+    rdfs:domain gf:Vertex , gf:Edge ;
+    rdfs:range gf:Identity ;
+    rdfs:comment "Manifest-facing identity chain node for vertex and edge identities."@en .
+
+gf:edgeSource a owl:ObjectProperty ;
+    rdfs:domain gf:Edge ;
+    rdfs:range gf:Vertex .
+
+gf:edgeTarget a owl:ObjectProperty ;
+    rdfs:domain gf:Edge ;
+    rdfs:range gf:Vertex .
+
+gf:hasResource a owl:ObjectProperty ;
+    rdfs:domain gf:IngestionModel ;
+    rdfs:range gf:Resource .
+
+gf:hasTransform a owl:ObjectProperty ;
+    rdfs:domain gf:IngestionModel ;
+    rdfs:range gf:ProtoTransform .
+
+gf:hasActor a owl:ObjectProperty ;
+    rdfs:domain gf:Resource , gf:DescendActor ;
+    rdfs:range gf:Actor .
+
+gf:targetsVertex a owl:ObjectProperty ;
+    rdfs:domain gf:VertexProducingActor ;
+    rdfs:range gf:Vertex ;
+    rdfs:comment "Vertex type(s) this actor produces observations for."@en .
+
+gf:targetsEdge a owl:ObjectProperty ;
+    rdfs:domain gf:EdgeActor ;
+    rdfs:range gf:Edge ;
+    rdfs:comment "Edge type(s) this actor may produce."@en .
+
+gf:executesTransform a owl:ObjectProperty ;
+    rdfs:domain gf:TransformActor ;
+    rdfs:range gf:ProtoTransform ;
+    rdfs:comment "Connects a transform actor step to the declared transform definition it executes."@en .
+
+gf:hasDress a owl:ObjectProperty ;
+    rdfs:domain gf:ProtoTransform ;
+    rdfs:range gf:DressConfig .
+
+gf:hasKeySelection a owl:ObjectProperty ;
+    rdfs:domain gf:ProtoTransform ;
+    rdfs:range gf:KeySelectionConfig .
+
+gf:hasConnector a owl:ObjectProperty ;
+    rdfs:domain gf:Bindings ;
+    rdfs:range gf:BoundConnector .
+
+gf:bindsResourceToConnector a owl:ObjectProperty ;
+    rdfs:domain gf:Bindings ;
+    rdfs:range gf:ResourceConnectorBinding .
+
+gf:bindsConnectorToConnProxy a owl:ObjectProperty ;
+    rdfs:domain gf:Bindings ;
+    rdfs:range gf:ConnectorConnectionBinding .
+
+gf:hasStagingProxy a owl:ObjectProperty ;
+    rdfs:domain gf:Bindings ;
+    rdfs:range gf:StagingProxyBinding .
+
+gf:hasVertexIndex a owl:ObjectProperty ;
+    rdfs:domain gf:DatabaseProfile ;
+    rdfs:range gf:Index ;
+    rdfs:comment "Database profile secondary index attached to a logical vertex."@en .
+
+gf:hasEdgeSpec a owl:ObjectProperty ;
+    rdfs:domain gf:DatabaseProfile ;
+    rdfs:range gf:EdgePhysicalSpec ;
+    rdfs:comment "Database profile edge physical specification."@en .
+
+gf:refinesEdge a owl:ObjectProperty ;
+    rdfs:domain gf:EdgePhysicalSpec ;
+    rdfs:range gf:Edge ;
+    rdfs:comment "Logical Edge this physical spec is a DB-layer refinement of."@en .
+
+gf:hasIndex a owl:ObjectProperty ;
+    rdfs:domain gf:EdgePhysicalSpec ;
+    rdfs:range gf:Index ;
+    rdfs:comment "Secondary index attached to an edge physical specification."@en .
+
+gf:hasEdgeInferOnly a owl:ObjectProperty ;
+    rdfs:domain gf:Resource ;
+    rdfs:range gf:EdgeInferSpec .
+
+gf:hasEdgeInferExcept a owl:ObjectProperty ;
+    rdfs:domain gf:Resource ;
+    rdfs:range gf:EdgeInferSpec .
+
+#################################################################
+# Datatype properties
+#################################################################
+
+gf:name a owl:DatatypeProperty ;
+    rdfs:range xsd:string .
+
+gf:version a owl:DatatypeProperty ;
+    rdfs:range xsd:string .
+
+gf:description a owl:DatatypeProperty ;
+    rdfs:range xsd:string .
+
+gf:enumValue a owl:DatatypeProperty ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Canonical string value for a named enumeration individual." .
+
+gf:fieldType a owl:ObjectProperty ;
+    rdfs:domain gf:Field ;
+    rdfs:range gf:FieldType .
+
+gf:dbFlavor a owl:ObjectProperty ;
+    rdfs:domain gf:DatabaseProfile ;
+    rdfs:range gf:DBType .
+
+gf:targetNamespace a owl:DatatypeProperty ;
+    rdfs:range xsd:string .
+
+gf:identityName a owl:DatatypeProperty ;
+    rdfs:domain gf:Identity ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Identity token value as shown in manifest identity arrays."@en .
+
+gf:relation a owl:DatatypeProperty ;
+    rdfs:range xsd:string .
+
+gf:blank a owl:DatatypeProperty ;
+    rdfs:domain gf:Vertex ;
+    rdfs:range xsd:boolean .
+
+gf:edgesOnDuplicate a owl:ObjectProperty ;
+    rdfs:domain gf:IngestionModel ;
+    rdfs:range gf:EdgeDuplicatePolicy .
+
+gf:resourceName a owl:DatatypeProperty ;
+    rdfs:range xsd:string .
+
+gf:connectorName a owl:DatatypeProperty ;
+    rdfs:range xsd:string .
+
+gf:connProxy a owl:DatatypeProperty ;
+    rdfs:range xsd:string .
+
+gf:actorType a owl:DatatypeProperty ;
+    rdfs:domain gf:Actor ;
+    rdfs:range xsd:string .
+
+gf:stepIndex a owl:DatatypeProperty ;
+    rdfs:domain gf:Actor ;
+    rdfs:range xsd:integer .
+
+gf:stepPayload a owl:DatatypeProperty ;
+    rdfs:domain gf:Actor ;
+    rdfs:range xsd:string ;
+    rdfs:comment "JSON-encoded pipeline step dict for lossless round-trip." .
+
+gf:transformModule a owl:DatatypeProperty ;
+    rdfs:domain gf:ProtoTransform ;
+    rdfs:range xsd:string .
+
+gf:transformFunction a owl:DatatypeProperty ;
+    rdfs:domain gf:ProtoTransform ;
+    rdfs:range xsd:string .
+
+gf:transformInput a owl:DatatypeProperty ;
+    rdfs:domain gf:ProtoTransform ;
+    rdfs:range xsd:string .
+
+gf:transformOutput a owl:DatatypeProperty ;
+    rdfs:domain gf:ProtoTransform ;
+    rdfs:range xsd:string .
+
+gf:transformParams a owl:DatatypeProperty ;
+    rdfs:domain gf:ProtoTransform ;
+    rdfs:range xsd:string ;
+    rdfs:comment "JSON-encoded transform params dict." .
+
+gf:transformTarget a owl:ObjectProperty ;
+    rdfs:domain gf:ProtoTransform ;
+    rdfs:range gf:TransformTarget .
+
+gf:transformStrategy a owl:ObjectProperty ;
+    rdfs:domain gf:Transform ;
+    rdfs:range gf:TransformStrategy .
+
+gf:renameMap a owl:DatatypeProperty ;
+    rdfs:domain gf:Transform ;
+    rdfs:range xsd:string ;
+    rdfs:comment "JSON-encoded rename dict." .
+
+gf:dressKey a owl:DatatypeProperty ;
+    rdfs:domain gf:DressConfig ;
+    rdfs:range xsd:string .
+
+gf:dressValue a owl:DatatypeProperty ;
+    rdfs:domain gf:DressConfig ;
+    rdfs:range xsd:string .
+
+gf:keySelectionMode a owl:ObjectProperty ;
+    rdfs:domain gf:KeySelectionConfig ;
+    rdfs:range gf:KeySelectionMode .
+
+gf:keySelectionName a owl:DatatypeProperty ;
+    rdfs:domain gf:KeySelectionConfig ;
+    rdfs:range xsd:string .
+
+gf:boundSourceKind a owl:ObjectProperty ;
+    rdfs:domain gf:BoundConnector ;
+    rdfs:range gf:BoundSourceKind .
+
+gf:connectorPayload a owl:DatatypeProperty ;
+    rdfs:domain gf:BoundConnector ;
+    rdfs:range xsd:string ;
+    rdfs:comment "JSON-encoded connector configuration excluding hash." .
+
+gf:resourcePayload a owl:DatatypeProperty ;
+    rdfs:domain gf:Resource ;
+    rdfs:range xsd:string ;
+    rdfs:comment "JSON-encoded resource scalar/list fields excluding pipeline and name." .
+
+gf:profilePayload a owl:DatatypeProperty ;
+    rdfs:domain gf:DatabaseProfile ;
+    rdfs:range xsd:string ;
+    rdfs:comment "JSON-encoded database profile extension fields." .
+
+gf:edgePayload a owl:DatatypeProperty ;
+    rdfs:domain gf:Edge ;
+    rdfs:range xsd:string ;
+    rdfs:comment "JSON-encoded edge extension fields (identities, type, by, etc.)." .
+
+gf:vertexPayload a owl:DatatypeProperty ;
+    rdfs:domain gf:Vertex ;
+    rdfs:range xsd:string ;
+    rdfs:comment "JSON-encoded vertex extension fields (filters, etc.)." .
+
+gf:artifactIndex a owl:DatatypeProperty ;
+    rdfs:range xsd:integer ;
+    rdfs:comment "Stable ordering index for list-valued manifest children." .
+
+gf:edgeIdentities a owl:DatatypeProperty ;
+    rdfs:domain gf:Edge ;
+    rdfs:range xsd:string ;
+    rdfs:comment "JSON-encoded edge identity token groups from edge.identities." .
+
+gf:edgeType a owl:DatatypeProperty ;
+    rdfs:domain gf:Edge ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Edge materialization mode such as direct or indirect." .
+
+gf:edgeBy a owl:DatatypeProperty ;
+    rdfs:domain gf:Edge ;
+    rdfs:range xsd:string ;
+    rdfs:comment "For indirect edges, the vertex type that defines the edge." .
+
+gf:profileVertexName a owl:DatatypeProperty ;
+    rdfs:domain gf:Index ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Logical vertex name this database profile index belongs to." .
+
+gf:indexName a owl:DatatypeProperty ;
+    rdfs:domain gf:Index ;
+    rdfs:range xsd:string .
+
+gf:indexField a owl:DatatypeProperty ;
+    rdfs:domain gf:Index ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Ordered field list for this index; one triple per field." .
+
+gf:indexUnique a owl:DatatypeProperty ;
+    rdfs:domain gf:Index ;
+    rdfs:range xsd:boolean .
+
+gf:indexType a owl:DatatypeProperty ;
+    rdfs:domain gf:Index ;
+    rdfs:range xsd:string .
+
+gf:indexDeduplicate a owl:DatatypeProperty ;
+    rdfs:domain gf:Index ;
+    rdfs:range xsd:boolean .
+
+gf:indexSparse a owl:DatatypeProperty ;
+    rdfs:domain gf:Index ;
+    rdfs:range xsd:boolean .
+
+gf:indexExcludeEdgeEndpoints a owl:DatatypeProperty ;
+    rdfs:domain gf:Index ;
+    rdfs:range xsd:boolean .
+
+gf:specSource a owl:DatatypeProperty ;
+    rdfs:domain gf:EdgePhysicalSpec ;
+    rdfs:range xsd:string .
+
+gf:specTarget a owl:DatatypeProperty ;
+    rdfs:domain gf:EdgePhysicalSpec ;
+    rdfs:range xsd:string .
+
+gf:specRelation a owl:DatatypeProperty ;
+    rdfs:domain gf:EdgePhysicalSpec ;
+    rdfs:range xsd:string .
+
+gf:specPurpose a owl:DatatypeProperty ;
+    rdfs:domain gf:EdgePhysicalSpec ;
+    rdfs:range xsd:string .
+
+gf:specRelationName a owl:DatatypeProperty ;
+    rdfs:domain gf:EdgePhysicalSpec ;
+    rdfs:range xsd:string .
+
+gf:specIndexesMode a owl:DatatypeProperty ;
+    rdfs:domain gf:EdgePhysicalSpec ;
+    rdfs:range xsd:string .
+
+gf:forceTypes a owl:DatatypeProperty ;
+    rdfs:domain gf:VertexConfig ;
+    rdfs:range xsd:string ;
+    rdfs:comment "JSON-encoded mapping of vertex names to forced inferred types." .
+
+gf:identityFromAllProperties a owl:DatatypeProperty ;
+    rdfs:domain gf:VertexConfig ;
+    rdfs:range xsd:boolean ;
+    rdfs:comment "Whether vertices without explicit identity default to all property names." .
+
+gf:vertexIndexes a owl:DatatypeProperty ;
+    rdfs:domain gf:DatabaseProfile ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Legacy JSON-encoded database profile vertex indexes (superseded by gf:hasVertexIndex)." .
+
+gf:edgeSpecs a owl:DatatypeProperty ;
+    rdfs:domain gf:DatabaseProfile ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Legacy JSON-encoded database profile edge specs (superseded by gf:hasEdgeSpec)." .
+
+#################################################################
+# FieldType individuals
+#################################################################
+
+gf:INT a gf:FieldType ; gf:enumValue "INT" ; rdfs:label "INT" ; skos:prefLabel "INT" .
+gf:UINT a gf:FieldType ; gf:enumValue "UINT" ; rdfs:label "UINT" ; skos:prefLabel "UINT" .
+gf:FLOAT a gf:FieldType ; gf:enumValue "FLOAT" ; rdfs:label "FLOAT" ; skos:prefLabel "FLOAT" .
+gf:DOUBLE a gf:FieldType ; gf:enumValue "DOUBLE" ; rdfs:label "DOUBLE" ; skos:prefLabel "DOUBLE" .
+gf:BOOL a gf:FieldType ; gf:enumValue "BOOL" ; rdfs:label "BOOL" ; skos:prefLabel "BOOL" .
+gf:STRING a gf:FieldType ; gf:enumValue "STRING" ; rdfs:label "STRING" ; skos:prefLabel "STRING" .
+gf:DATETIME a gf:FieldType ; gf:enumValue "DATETIME" ; rdfs:label "DATETIME" ; skos:prefLabel "DATETIME" .
+
+#################################################################
+# DBType individuals
+#################################################################
+
+gf:ArangoDB a gf:DBType ; gf:enumValue "arango" ; rdfs:label "ArangoDB" ; skos:prefLabel "ArangoDB" .
+gf:Neo4j a gf:DBType ; gf:enumValue "neo4j" ; rdfs:label "Neo4j" ; skos:prefLabel "Neo4j" .
+gf:TigerGraph a gf:DBType ; gf:enumValue "tigergraph" ; rdfs:label "TigerGraph" ; skos:prefLabel "TigerGraph" .
+gf:FalkorDB a gf:DBType ; gf:enumValue "falkordb" ; rdfs:label "FalkorDB" ; skos:prefLabel "FalkorDB" .
+gf:Memgraph a gf:DBType ; gf:enumValue "memgraph" ; rdfs:label "Memgraph" ; skos:prefLabel "Memgraph" .
+gf:Nebula a gf:DBType ; gf:enumValue "nebula" ; rdfs:label "Nebula" ; skos:prefLabel "Nebula" .
+gf:Postgres a gf:DBType ; gf:enumValue "postgres" ; rdfs:label "Postgres" ; skos:prefLabel "Postgres" .
+gf:MySQL a gf:DBType ; gf:enumValue "mysql" ; rdfs:label "MySQL" ; skos:prefLabel "MySQL" .
+gf:MongoDB a gf:DBType ; gf:enumValue "mongodb" ; rdfs:label "MongoDB" ; skos:prefLabel "MongoDB" .
+gf:SQLite a gf:DBType ; gf:enumValue "sqlite" ; rdfs:label "SQLite" ; skos:prefLabel "SQLite" .
+gf:SparqlEndpoint a gf:DBType ; gf:enumValue "sparql" ; rdfs:label "SPARQL endpoint" ; skos:prefLabel "SparqlEndpoint" .
+
+#################################################################
+# BoundSourceKind individuals
+#################################################################
+
+gf:FileSource a gf:BoundSourceKind ; gf:enumValue "file" ; rdfs:label "File source" ; skos:prefLabel "FileSource" .
+gf:SqlTableSource a gf:BoundSourceKind ; gf:enumValue "sql_table" ; rdfs:label "SQL table source" ; skos:prefLabel "SqlTableSource" .
+gf:SparqlSource a gf:BoundSourceKind ; gf:enumValue "sparql" ; rdfs:label "SPARQL source" ; skos:prefLabel "SparqlSource" .
+
+#################################################################
+# TransformTarget individuals
+#################################################################
+
+gf:ValuesTarget a gf:TransformTarget ; gf:enumValue "values" ; rdfs:label "Values target" ; skos:prefLabel "ValuesTarget" .
+gf:KeysTarget a gf:TransformTarget ; gf:enumValue "keys" ; rdfs:label "Keys target" ; skos:prefLabel "KeysTarget" .
+
+#################################################################
+# TransformStrategy individuals
+#################################################################
+
+gf:SingleStrategy a gf:TransformStrategy ; gf:enumValue "single" ; rdfs:label "Single strategy" ; skos:prefLabel "SingleStrategy" .
+gf:EachStrategy a gf:TransformStrategy ; gf:enumValue "each" ; rdfs:label "Each strategy" ; skos:prefLabel "EachStrategy" .
+gf:AllStrategy a gf:TransformStrategy ; gf:enumValue "all" ; rdfs:label "All strategy" ; skos:prefLabel "AllStrategy" .
+
+#################################################################
+# KeySelectionMode individuals
+#################################################################
+
+gf:AllKeysMode a gf:KeySelectionMode ; gf:enumValue "all" ; rdfs:label "All keys" ; skos:prefLabel "AllKeysMode" .
+gf:IncludeKeysMode a gf:KeySelectionMode ; gf:enumValue "include" ; rdfs:label "Include keys" ; skos:prefLabel "IncludeKeysMode" .
+gf:ExcludeKeysMode a gf:KeySelectionMode ; gf:enumValue "exclude" ; rdfs:label "Exclude keys" ; skos:prefLabel "ExcludeKeysMode" .
+
+#################################################################
+# EdgeDuplicatePolicy individuals
+#################################################################
+
+gf:IgnoreDuplicate a gf:EdgeDuplicatePolicy ; gf:enumValue "ignore" ; rdfs:label "Ignore duplicate" ; skos:prefLabel "IgnoreDuplicate" .
+gf:UpsertDuplicate a gf:EdgeDuplicatePolicy ; gf:enumValue "upsert" ; rdfs:label "Upsert duplicate" ; skos:prefLabel "UpsertDuplicate" .

@@ -9,6 +9,7 @@ from pydantic import Field as PydanticField, TypeAdapter, model_validator
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.contract.ingestion.transform import DressConfig
 from graflo.architecture.edge_derivation import EdgeDerivation
+from graflo.architecture.schema.vertex import VertexName
 
 from .normalize import normalize_actor_step
 
@@ -49,7 +50,9 @@ class VertexActorConfig(VertexExtractionOptionsConfig):
     type: Literal["vertex"] = PydanticField(
         default="vertex", description="Actor type discriminator"
     )
-    vertex: str = PydanticField(..., description="Name of the vertex type to create")
+    vertex: VertexName = PydanticField(
+        ..., description="Name of the vertex type to create"
+    )
 
     @model_validator(mode="before")
     @classmethod

@@ -66,6 +66,8 @@ nav:
     -   Runtime connector updates: concepts/runtime_connector_updates.md
     -   Backend Index Behavior: concepts/backend_indexes.md
     -   Document cast errors and doc error sink: concepts/ingestion_doc_errors.md
+-   Model:
+    -   GraFlo ontology (manifest RDF): model/graflo_ontology.md
 -   Guides:
     -   TigerGraph bulk load (CSV + LOADING JOB): guides/tigergraph_bulk_load.md
 -   Examples:

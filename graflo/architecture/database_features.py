@@ -5,24 +5,37 @@ This module stores physical DB features that are separate from logical graph ide
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import AliasChoices, Field as PydanticField, model_validator
 
 from graflo.architecture.base import ConfigBaseModel
-from graflo.architecture.graph_types import EdgeId, Index
+from graflo.architecture.graph_types import EdgeId, EdgePhysicalKey, Index
+from graflo.architecture.schema.vertex import VertexName
 from graflo.onto import DBType
 
+if TYPE_CHECKING:
+    from graflo.architecture.schema.edge import EdgeConfig
 
-class EdgeVariantSpec(ConfigBaseModel):
-    """Unified edge physical variant spec keyed by edge identity + purpose."""
 
-    source: str = PydanticField(..., description="Edge source vertex name.")
-    target: str = PydanticField(..., description="Edge target vertex name.")
+class EdgeRef(ConfigBaseModel):
+    """Reference to a logical edge identity."""
+
+    source: VertexName = PydanticField(..., description="Edge source vertex name.")
+    target: VertexName = PydanticField(..., description="Edge target vertex name.")
     relation: str | None = PydanticField(
         default=None,
         description="Logical relation for edge identity (source, target, relation).",
     )
+
+    @property
+    def edge_id(self) -> EdgeId:
+        return (self.source, self.target, self.relation)
+
+
+class EdgePhysicalSpec(EdgeRef):
+    """Unified edge physical spec keyed by edge identity + purpose."""
+
     purpose: str | None = PydanticField(
         default=None,
         description="DB-only purpose identifier for physical edge variant.",
@@ -44,19 +57,13 @@ class EdgeVariantSpec(ConfigBaseModel):
     )
 
     @property
-    def edge_id(self) -> EdgeId:
-        return (self.source, self.target, self.relation)
+    def physical_key(self) -> EdgePhysicalKey:
+        return (self.source, self.target, self.relation, self.purpose)
 
 
-class EdgePropertyDefaults(ConfigBaseModel):
+class EdgePropertyDefaults(EdgeRef):
     """Per logical edge type: optional GSQL ``DEFAULT`` values for edge attributes."""
 
-    source: str = PydanticField(..., description="Logical source vertex name.")
-    target: str = PydanticField(..., description="Logical target vertex name.")
-    relation: str | None = PydanticField(
-        default=None,
-        description="Logical relation; must match edge identity (use null for default relation).",
-    )
     values: dict[str, Any] = PydanticField(
         default_factory=dict,
         description="Edge attribute name to default value (YAML/JSON literals).",
@@ -98,15 +105,15 @@ class DatabaseProfile(ConfigBaseModel):
             "GraphEngine uses this before falling back to schema.metadata.name."
         ),
     )
-    vertex_storage_names: dict[str, str] = PydanticField(
+    vertex_storage_names: dict[VertexName, str] = PydanticField(
         default_factory=dict,
         description="Physical vertex collection/label names keyed by logical vertex name.",
     )
-    vertex_indexes: dict[str, list[Index]] = PydanticField(
+    vertex_indexes: dict[VertexName, list[Index]] = PydanticField(
         default_factory=dict,
         description="Secondary indexes per vertex name (identity excluded).",
     )
-    edge_specs: list[EdgeVariantSpec] = PydanticField(
+    edge_specs: list[EdgePhysicalSpec] = PydanticField(
         default_factory=list,
         description="Unified edge physical specs keyed by edge identity + purpose.",
     )
@@ -122,26 +129,21 @@ class DatabaseProfile(ConfigBaseModel):
     @model_validator(mode="after")
     def _normalize_edge_specs(self) -> "DatabaseProfile":
         def _variant_key(
-            spec: EdgeVariantSpec,
-        ) -> tuple[str, str, str | None, str | None]:
-            return (
-                spec.source,
-                spec.target,
-                spec.relation,
-                spec.purpose,
-            )
+            spec: EdgePhysicalSpec,
+        ) -> EdgePhysicalKey:
+            return spec.physical_key
 
         def _ensure_variant(
-            merged: dict[tuple[str, str, str | None, str | None], EdgeVariantSpec],
+            merged: dict[EdgePhysicalKey, EdgePhysicalSpec],
             *,
             source: str,
             target: str,
             relation: str | None,
             purpose: str | None,
-        ) -> EdgeVariantSpec:
+        ) -> EdgePhysicalSpec:
             key = (source, target, relation, purpose)
             if key not in merged:
-                merged[key] = EdgeVariantSpec(
+                merged[key] = EdgePhysicalSpec(
                     source=source,
                     target=target,
                     relation=relation,
@@ -149,7 +151,7 @@ class DatabaseProfile(ConfigBaseModel):
                 )
             return merged[key]
 
-        merged: dict[tuple[str, str, str | None, str | None], EdgeVariantSpec] = {}
+        merged: dict[EdgePhysicalKey, EdgePhysicalSpec] = {}
 
         for item in self.edge_specs:
             variant = _ensure_variant(
@@ -170,6 +172,15 @@ class DatabaseProfile(ConfigBaseModel):
 
         object.__setattr__(self, "edge_specs", list(merged.values()))
         return self
+
+    def validate_against_schema(self, edge_config: "EdgeConfig") -> None:
+        """Assert all edge specs reference declared logical edges."""
+        for spec in self.edge_specs:
+            if spec.edge_id not in edge_config:
+                raise ValueError(
+                    f"EdgePhysicalSpec {spec.physical_key!r} references undeclared "
+                    f"edge {spec.edge_id!r}"
+                )
 
     def vertex_property_default(
         self, vertex_name: str, property_name: str
@@ -224,7 +235,7 @@ class DatabaseProfile(ConfigBaseModel):
         self,
         edge_id: EdgeId,
         purpose: str | None = None,
-    ) -> EdgeVariantSpec | None:
+    ) -> EdgePhysicalSpec | None:
         for item in self.edge_specs:
             if item.edge_id != edge_id:
                 continue
@@ -344,7 +355,7 @@ class DatabaseProfile(ConfigBaseModel):
         self,
         edge_id: EdgeId,
         purpose: str | None = None,
-    ) -> EdgeVariantSpec | None:
+    ) -> EdgePhysicalSpec | None:
         spec = self._edge_variant_spec(edge_id=edge_id, purpose=purpose)
         if spec is None and purpose is not None:
             spec = self._edge_variant_spec(edge_id=edge_id, purpose=None)
@@ -360,7 +371,7 @@ class DatabaseProfile(ConfigBaseModel):
         spec = self._edge_variant_spec(edge_id=edge_id, purpose=purpose)
         if spec is None:
             source, target, relation = edge_id
-            spec = EdgeVariantSpec(
+            spec = EdgePhysicalSpec(
                 source=source,
                 target=target,
                 relation=relation,
@@ -377,7 +388,7 @@ class DatabaseProfile(ConfigBaseModel):
         self,
         edge_id: EdgeId,
         purpose: str | None = None,
-    ) -> EdgeVariantSpec | None:
+    ) -> EdgePhysicalSpec | None:
         spec = self._edge_variant_spec(edge_id=edge_id, purpose=purpose)
         if spec is None and purpose is not None:
             spec = self._edge_variant_spec(edge_id=edge_id, purpose=None)
@@ -393,7 +404,7 @@ class DatabaseProfile(ConfigBaseModel):
         spec = self._edge_variant_spec(edge_id=edge_id, purpose=purpose)
         if spec is None:
             source, target, relation = edge_id
-            spec = EdgeVariantSpec(
+            spec = EdgePhysicalSpec(
                 source=source,
                 target=target,
                 relation=relation,

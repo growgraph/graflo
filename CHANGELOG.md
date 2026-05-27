@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0]
+
+### Added
+
+- **GraFlo meta-ontology** — OWL vocabulary at `https://ontology.growgraph.dev/graflo` (`owl:versionIRI` `…/1.0.0`, `owl:versionInfo` `1.0.0`) describing `GraphManifest`, `Schema`, `IngestionModel`, `ProtoTransform`, pipeline actor steps, bindings, and related enumerations. Shipped as `graflo/rdf/ontology/graflo.ttl` plus JSON-LD context `graflo-context.jsonld`.
+- **`graflo.rdf`** — `ManifestRdfSerializer` / `ManifestRdfDeserializer` for bidirectional conversion between `GraphManifest` (YAML/Pydantic) and RDF (Turtle, JSON-LD, N-Triples, RDF/XML).
+- **CLI** — `manifest-to-rdf` and `rdf-to-manifest` console scripts (`graflo.rdf.cli`).
+
+### Documentation
+
+- **[GraFlo ontology](docs/model/graflo_ontology.md)** — meta-model vs user-domain RDF (`RdfInferenceManager`), versioning, URI layout, CLI, and round-trip semantics.
+- **Interactive ontology visualization** — custom hierarchical class graph (rectangular nodes, subClassOf and optional property edges, pan/zoom) embedded on the GraFlo ontology page; built via `docs/scripts/build_ontology_viz.py` with committed assets under `docs/assets/graflo-ontology-viz/`.
+- **README** and **docs index** — feature overview and quick links for manifest ↔ RDF workflows.
+
 ## [1.7.33]
 
 ### Added

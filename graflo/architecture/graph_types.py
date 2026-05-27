@@ -66,9 +66,14 @@ def _pick_unique_dict(docs: list) -> list:
     return list(seen.values())
 
 
+# Identifier aliases (kept here to avoid importing schema, which creates cycles).
+VertexName: TypeAlias = str
+
 # Edge identifier layers:
 # - EdgeId: schema-level edge definition key (source, target, relation)
 EdgeId: TypeAlias = tuple[str, str, str | None]
+# - EdgePhysicalKey: physical edge specification key (source, target, relation, purpose)
+EdgePhysicalKey: TypeAlias = tuple[str, str, str | None, str | None]
 GraphEntity: TypeAlias = str | EdgeId
 
 logger = logging.getLogger(__name__)
@@ -257,7 +262,7 @@ class GraphContainer(ConfigBaseModel):
         linear: List of default dictionaries containing linear data
     """
 
-    vertices: dict[str, list] = Field(default_factory=dict)
+    vertices: dict[VertexName, list] = Field(default_factory=dict)
     edges: dict[tuple[str, str, str | None], list] = Field(default_factory=dict)
     linear: list[defaultdict[str | tuple[str, str, str | None], list[Any]]] = Field(
         default_factory=list

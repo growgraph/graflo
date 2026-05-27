@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Literal
 
-from .base import Actor, ActorInitContext
+from .base import ActorInitContext, VertexProducingActor
 from .config import (
     VertexActorConfig,
     VertexRouterActorConfig,
@@ -15,7 +15,7 @@ from graflo.architecture.graph_types import (
     LocationIndex,
     merge_observation_with_transform_buffer,
 )
-from graflo.architecture.schema.vertex import VertexConfig
+from graflo.architecture.schema.vertex import VertexConfig, VertexName
 
 if TYPE_CHECKING:
     from .wrapper import ActorWrapper
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class VertexRouterActor(Actor):
+class VertexRouterActor(VertexProducingActor):
     """Routes documents to the correct VertexActor based on a type field.
 
     The merged observation (document + same-location transform buffer) is passed
@@ -111,6 +111,9 @@ class VertexRouterActor(Actor):
 
     def count(self) -> int:
         return 1 + sum(w.count() for w in self._vertex_actors.values())
+
+    def references_vertices(self) -> set[VertexName]:
+        return set(self._vertex_actors.keys())
 
     def __call__(
         self, ctx: ExtractionContext, lindex: LocationIndex, *nargs: Any, **kwargs: Any

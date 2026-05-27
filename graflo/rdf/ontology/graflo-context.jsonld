@@ -1,0 +1,252 @@
+{
+    "@context": {
+        "gf": "https://ontology.growgraph.dev/graflo/",
+        "skos": "http://www.w3.org/2004/02/skos/core#",
+        "xsd": "http://www.w3.org/2001/XMLSchema#",
+        "GraphManifest": "gf:GraphManifest",
+        "Schema": "gf:Schema",
+        "CoreSchema": "gf:CoreSchema",
+        "VertexConfig": "gf:VertexConfig",
+        "EdgeConfig": "gf:EdgeConfig",
+        "GraphMetadata": "gf:GraphMetadata",
+        "DatabaseProfile": "gf:DatabaseProfile",
+        "Vertex": "gf:Vertex",
+        "Edge": "gf:Edge",
+        "Field": "gf:Field",
+        "Identity": "gf:Identity",
+        "IngestionModel": "gf:IngestionModel",
+        "Resource": "gf:Resource",
+        "ProtoTransform": "gf:ProtoTransform",
+        "Transform": "gf:Transform",
+        "DressConfig": "gf:DressConfig",
+        "KeySelectionConfig": "gf:KeySelectionConfig",
+        "Bindings": "gf:Bindings",
+        "Actor": "gf:Actor",
+        "VertexActor": "gf:VertexActor",
+        "EdgeActor": "gf:EdgeActor",
+        "TransformActor": "gf:TransformActor",
+        "DescendActor": "gf:DescendActor",
+        "VertexRouterActor": "gf:VertexRouterActor",
+        "FileConnector": "gf:FileConnector",
+        "TableConnector": "gf:TableConnector",
+        "SparqlConnector": "gf:SparqlConnector",
+        "BoundConnector": "gf:BoundConnector",
+        "EdgeInferSpec": "gf:EdgeInferSpec",
+        "ResourceConnectorBinding": "gf:ResourceConnectorBinding",
+        "ConnectorConnectionBinding": "gf:ConnectorConnectionBinding",
+        "StagingProxyBinding": "gf:StagingProxyBinding",
+        "EdgePhysicalSpec": "gf:EdgePhysicalSpec",
+        "Index": "gf:Index",
+        "hasSchema": {
+            "@id": "gf:hasSchema",
+            "@type": "@id"
+        },
+        "hasIngestionModel": {
+            "@id": "gf:hasIngestionModel",
+            "@type": "@id"
+        },
+        "hasBindings": {
+            "@id": "gf:hasBindings",
+            "@type": "@id"
+        },
+        "hasCoreSchema": {
+            "@id": "gf:hasCoreSchema",
+            "@type": "@id"
+        },
+        "hasVertexConfig": {
+            "@id": "gf:hasVertexConfig",
+            "@type": "@id"
+        },
+        "hasEdgeConfig": {
+            "@id": "gf:hasEdgeConfig",
+            "@type": "@id"
+        },
+        "hasMetadata": {
+            "@id": "gf:hasMetadata",
+            "@type": "@id"
+        },
+        "hasDatabaseProfile": {
+            "@id": "gf:hasDatabaseProfile",
+            "@type": "@id"
+        },
+        "hasVertex": {
+            "@id": "gf:hasVertex",
+            "@type": "@id"
+        },
+        "hasEdge": {
+            "@id": "gf:hasEdge",
+            "@type": "@id"
+        },
+        "hasField": {
+            "@id": "gf:hasField",
+            "@type": "@id"
+        },
+        "hasIdentity": {
+            "@id": "gf:hasIdentity",
+            "@type": "@id"
+        },
+        "edgeSource": {
+            "@id": "gf:edgeSource",
+            "@type": "@id"
+        },
+        "edgeTarget": {
+            "@id": "gf:edgeTarget",
+            "@type": "@id"
+        },
+        "hasResource": {
+            "@id": "gf:hasResource",
+            "@type": "@id"
+        },
+        "hasTransform": {
+            "@id": "gf:hasTransform",
+            "@type": "@id"
+        },
+        "hasActor": {
+            "@id": "gf:hasActor",
+            "@type": "@id"
+        },
+        "executesTransform": {
+            "@id": "gf:executesTransform",
+            "@type": "@id"
+        },
+        "hasDress": {
+            "@id": "gf:hasDress",
+            "@type": "@id"
+        },
+        "hasKeySelection": {
+            "@id": "gf:hasKeySelection",
+            "@type": "@id"
+        },
+        "hasConnector": {
+            "@id": "gf:hasConnector",
+            "@type": "@id"
+        },
+        "bindsResourceToConnector": {
+            "@id": "gf:bindsResourceToConnector",
+            "@type": "@id"
+        },
+        "bindsConnectorToConnProxy": {
+            "@id": "gf:bindsConnectorToConnProxy",
+            "@type": "@id"
+        },
+        "hasStagingProxy": {
+            "@id": "gf:hasStagingProxy",
+            "@type": "@id"
+        },
+        "hasVertexIndex": {
+            "@id": "gf:hasVertexIndex",
+            "@type": "@id"
+        },
+        "hasEdgeSpec": {
+            "@id": "gf:hasEdgeSpec",
+            "@type": "@id"
+        },
+        "hasIndex": {
+            "@id": "gf:hasIndex",
+            "@type": "@id"
+        },
+        "hasEdgeInferOnly": {
+            "@id": "gf:hasEdgeInferOnly",
+            "@type": "@id"
+        },
+        "hasEdgeInferExcept": {
+            "@id": "gf:hasEdgeInferExcept",
+            "@type": "@id"
+        },
+        "name": "gf:name",
+        "version": "gf:version",
+        "description": "gf:description",
+        "enumValue": "gf:enumValue",
+        "fieldType": {
+            "@id": "gf:fieldType",
+            "@type": "@id"
+        },
+        "dbFlavor": {
+            "@id": "gf:dbFlavor",
+            "@type": "@id"
+        },
+        "targetNamespace": "gf:targetNamespace",
+        "identityName": "gf:identityName",
+        "relation": "gf:relation",
+        "edgeIdentities": "gf:edgeIdentities",
+        "edgeType": "gf:edgeType",
+        "edgeBy": "gf:edgeBy",
+        "profileVertexName": "gf:profileVertexName",
+        "indexName": "gf:indexName",
+        "indexField": "gf:indexField",
+        "indexUnique": {
+            "@id": "gf:indexUnique",
+            "@type": "xsd:boolean"
+        },
+        "indexType": "gf:indexType",
+        "indexDeduplicate": {
+            "@id": "gf:indexDeduplicate",
+            "@type": "xsd:boolean"
+        },
+        "indexSparse": {
+            "@id": "gf:indexSparse",
+            "@type": "xsd:boolean"
+        },
+        "indexExcludeEdgeEndpoints": {
+            "@id": "gf:indexExcludeEdgeEndpoints",
+            "@type": "xsd:boolean"
+        },
+        "specSource": "gf:specSource",
+        "specTarget": "gf:specTarget",
+        "specRelation": "gf:specRelation",
+        "specPurpose": "gf:specPurpose",
+        "specRelationName": "gf:specRelationName",
+        "specIndexesMode": "gf:specIndexesMode",
+        "blank": {
+            "@id": "gf:blank",
+            "@type": "xsd:boolean"
+        },
+        "edgesOnDuplicate": {
+            "@id": "gf:edgesOnDuplicate",
+            "@type": "@id"
+        },
+        "resourceName": "gf:resourceName",
+        "connectorName": "gf:connectorName",
+        "connProxy": "gf:connProxy",
+        "stepIndex": {
+            "@id": "gf:stepIndex",
+            "@type": "xsd:integer"
+        },
+        "stepPayload": "gf:stepPayload",
+        "actorType": "gf:actorType",
+        "transformModule": "gf:transformModule",
+        "transformFunction": "gf:transformFunction",
+        "transformInput": "gf:transformInput",
+        "transformOutput": "gf:transformOutput",
+        "transformParams": "gf:transformParams",
+        "transformTarget": {
+            "@id": "gf:transformTarget",
+            "@type": "@id"
+        },
+        "dressKey": "gf:dressKey",
+        "dressValue": "gf:dressValue",
+        "keySelectionMode": {
+            "@id": "gf:keySelectionMode",
+            "@type": "@id"
+        },
+        "keySelectionName": "gf:keySelectionName",
+        "boundSourceKind": {
+            "@id": "gf:boundSourceKind",
+            "@type": "@id"
+        },
+        "artifactIndex": {
+            "@id": "gf:artifactIndex",
+            "@type": "xsd:integer"
+        },
+        "vertexIndexes": "gf:vertexIndexes",
+        "edgeSpecs": "gf:edgeSpecs",
+        "forceTypes": "gf:forceTypes",
+        "identityFromAllProperties": "gf:identityFromAllProperties",
+        "resourcePayload": "gf:resourcePayload",
+        "connectorPayload": "gf:connectorPayload",
+        "profilePayload": "gf:profilePayload",
+        "edgePayload": "gf:edgePayload",
+        "vertexPayload": "gf:vertexPayload",
+        "prefLabel": "skos:prefLabel"
+    }
+}

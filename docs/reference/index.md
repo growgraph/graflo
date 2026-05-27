@@ -44,6 +44,13 @@ Database connection and management components:
   - [Resource Mapping](db/postgres/resource_mapping.md): Mapping PostgreSQL tables to graflo Resources
   - [Type Mapping](db/postgres/types.md): PostgreSQL to graflo type conversion
 
+## RDF
+
+Manifest serialization and domain ontology inference:
+
+- **[Manifest ↔ RDF (`graflo.rdf`)](rdf/index.md)**: `ManifestRdfSerializer`, `ManifestRdfDeserializer`, GraFlo meta-ontology
+- **[RDF inference (`RdfInferenceManager`)](hq/rdf_inferencer.md)**: User OWL/RDFS TBox → GraFlo `Schema` + ingestion
+
 ## Core Components
 
 Main graflo functionality:
@@ -79,6 +86,7 @@ Graph visualization and plotting:
 CLI tools for graflo operations:
 
 - **[Ingest](cli/ingest.md)**: Data ingestion commands
+- **Manifest ↔ RDF**: `manifest-to-rdf`, `rdf-to-manifest` (see [GraFlo ontology](../model/graflo_ontology.md#cli))
 - **[Database Management](cli/manage_dbs.md)**: Database administration commands
 - **[Schema Visualization](cli/plot_manifest.md)**: Schema visualization commands
 - **[XML to JSON](cli/xml2json.md)**: XML data conversion utilities
