@@ -35,11 +35,12 @@ jobs:
                 version: "0.9.28"
         -   name: Install dependencies
             run: |
-                uv sync --extra docs
+                uv sync --extra docs --extra dev
 
         -   name: Generate ontology visualization
             run: |
-                uv run python docs/scripts/build_ontology_viz.py
+                uv run python docs/scripts/build_ontology_viz.py 
+                uv run pre-commit run --files docs/assets/graflo-ontology-viz/*.json || true
 
         -   name: Verify committed viz assets are fresh
             run: |
