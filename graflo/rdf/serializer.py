@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from rdflib import BNode, Graph, RDF, URIRef
 from rdflib.namespace import XSD
@@ -18,6 +18,7 @@ from graflo.architecture.contract.ingestion.transform import (
     KeySelectionConfig,
     ProtoTransform,
 )
+from graflo.architecture.graph_types import EdgeId
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import Field, Vertex
 from graflo.rdf import namespace as ns
@@ -48,17 +49,35 @@ class ManifestRdfSerializer:
 
         manifest_uri = URIRef(base_uri.rstrip("/"))
         graph.add((manifest_uri, RDF.type, ns.GraphManifest))
+        vertex_uri_by_name: dict[str, URIRef] | None = None
+        edge_uri_by_id: dict[EdgeId, URIRef] | None = None
 
         if manifest.graph_schema is not None:
             schema_uri = URIRef(join_uri(base_uri, "schema"))
             graph.add((manifest_uri, ns.hasSchema, schema_uri))
             self._emit_schema(graph, schema_uri, manifest.graph_schema)
+            core_uri = URIRef(join_uri(str(schema_uri), "core"))
+            vertex_uri_by_name = {
+                vertex.name: URIRef(join_uri(str(core_uri), "vertex", vertex.name))
+                for vertex in manifest.graph_schema.core_schema.vertex_config.vertices
+            }
+            edge_uri_by_id = {
+                edge.edge_id: URIRef(
+                    join_uri(str(core_uri), "edge", self._edge_key(edge))
+                )
+                for edge in manifest.graph_schema.core_schema.edge_config.edges
+            }
 
         if manifest.ingestion_model is not None:
             ingestion_uri = URIRef(join_uri(base_uri, "ingestion"))
             graph.add((manifest_uri, ns.hasIngestionModel, ingestion_uri))
             self._emit_ingestion_model(
-                graph, base_uri, ingestion_uri, manifest.ingestion_model
+                graph,
+                base_uri,
+                ingestion_uri,
+                manifest.ingestion_model,
+                vertex_uri_by_name=vertex_uri_by_name,
+                edge_uri_by_id=edge_uri_by_id,
             )
 
         if manifest.bindings is not None:
@@ -90,33 +109,72 @@ class ManifestRdfSerializer:
         graph.add((schema_uri, ns.hasCoreSchema, core_uri))
         graph.add((core_uri, RDF.type, ns.CoreSchema))
 
+        vertex_config_uri = URIRef(join_uri(str(core_uri), "vertex-config"))
+        graph.add((core_uri, ns.hasVertexConfig, vertex_config_uri))
+        graph.add((vertex_config_uri, RDF.type, ns.VertexConfig))
+        self._emit_vertex_config(
+            graph, vertex_config_uri, schema.core_schema.vertex_config
+        )
+
+        edge_config_uri = URIRef(join_uri(str(core_uri), "edge-config"))
+        graph.add((core_uri, ns.hasEdgeConfig, edge_config_uri))
+        graph.add((edge_config_uri, RDF.type, ns.EdgeConfig))
+
         vertex_uri_by_name: dict[str, URIRef] = {}
         for index, vertex in enumerate(schema.core_schema.vertex_config.vertices):
             vertex_uri = URIRef(join_uri(str(core_uri), "vertex", vertex.name))
             vertex_uri_by_name[vertex.name] = vertex_uri
-            graph.add((core_uri, ns.definesVertex, vertex_uri))
+            graph.add((vertex_config_uri, ns.hasVertex, vertex_uri))
             add_literal(graph, vertex_uri, ns.artifactIndex, index)
             self._emit_vertex(graph, vertex_uri, vertex)
 
+        edge_uri_by_id: dict[EdgeId, URIRef] = {}
         for index, edge in enumerate(schema.core_schema.edge_config.edges):
             edge_key = self._edge_key(edge)
             edge_uri = URIRef(join_uri(str(core_uri), "edge", edge_key))
-            graph.add((core_uri, ns.definesEdge, edge_uri))
+            edge_uri_by_id[edge.edge_id] = edge_uri
+            graph.add((edge_config_uri, ns.hasEdge, edge_uri))
             add_literal(graph, edge_uri, ns.artifactIndex, index)
             self._emit_edge(graph, edge_uri, edge, vertex_uri_by_name)
 
         profile_uri = URIRef(join_uri(str(schema_uri), "db-profile"))
         graph.add((schema_uri, ns.hasDatabaseProfile, profile_uri))
-        self._emit_database_profile(graph, profile_uri, schema.db_profile)
+        self._emit_database_profile(
+            graph, profile_uri, schema.db_profile, edge_uri_by_id=edge_uri_by_id
+        )
+
+    def _emit_vertex_config(
+        self,
+        graph: Graph,
+        vertex_config_uri: URIRef,
+        vertex_config: Any,
+    ) -> None:
+        if vertex_config.force_types:
+            graph.add(
+                (
+                    vertex_config_uri,
+                    ns.forceTypes,
+                    json_literal(vertex_config.force_types),
+                )
+            )
+        add_literal(
+            graph,
+            vertex_config_uri,
+            ns.identityFromAllProperties,
+            vertex_config.identity_from_all_properties,
+        )
 
     def _emit_vertex(self, graph: Graph, vertex_uri: URIRef, vertex: Vertex) -> None:
-        graph.add((vertex_uri, RDF.type, ns.VertexDefinition))
+        graph.add((vertex_uri, RDF.type, ns.Vertex))
         add_literal(graph, vertex_uri, ns.name, vertex.name)
         add_literal(graph, vertex_uri, ns.description, vertex.description)
         add_literal(graph, vertex_uri, ns.blank, vertex.blank)
 
         for identity in vertex.identity:
-            add_literal(graph, vertex_uri, ns.identityField, identity)
+            identity_node = BNode()
+            graph.add((vertex_uri, ns.hasIdentity, identity_node))
+            graph.add((identity_node, RDF.type, ns.Identity))
+            add_literal(graph, identity_node, ns.identityName, identity)
 
         payload = {}
         if vertex.filters:
@@ -145,7 +203,7 @@ class ManifestRdfSerializer:
             field_obj = field
         field_uri = URIRef(join_uri(str(owner_uri), "field", field_obj.name))
         graph.add((owner_uri, ns.hasField, field_uri))
-        graph.add((field_uri, RDF.type, ns.FieldDefinition))
+        graph.add((field_uri, RDF.type, ns.Field))
         add_literal(graph, field_uri, ns.artifactIndex, index)
         add_literal(graph, field_uri, ns.name, field_obj.name)
         add_literal(graph, field_uri, ns.description, field_obj.description)
@@ -155,7 +213,7 @@ class ManifestRdfSerializer:
                 field_uri,
                 ns.fieldType,
                 str(field_obj.type),
-                ns.FIELD_TYPE_INDIVIDUALS,
+                ns.ENUM_REGISTRIES["field_type"],
             )
 
     def _emit_edge(
@@ -165,7 +223,7 @@ class ManifestRdfSerializer:
         edge: Edge,
         vertex_uri_by_name: dict[str, URIRef],
     ) -> None:
-        graph.add((edge_uri, RDF.type, ns.EdgeDefinition))
+        graph.add((edge_uri, RDF.type, ns.Edge))
         add_literal(graph, edge_uri, ns.relation, edge.relation)
         add_literal(graph, edge_uri, ns.description, edge.description)
 
@@ -178,11 +236,11 @@ class ManifestRdfSerializer:
 
         payload: dict[str, Any] = {}
         if edge.identities:
-            payload["identities"] = edge.identities
+            graph.add((edge_uri, ns.edgeIdentities, json_literal(edge.identities)))
         if edge.type is not None:
-            payload["type"] = str(edge.type)
+            add_literal(graph, edge_uri, ns.edgeType, str(edge.type))
         if edge.by is not None:
-            payload["by"] = edge.by
+            add_literal(graph, edge_uri, ns.edgeBy, edge.by)
         if payload:
             graph.add((edge_uri, ns.edgePayload, json_literal(payload)))
 
@@ -190,7 +248,12 @@ class ManifestRdfSerializer:
             self._emit_field(graph, edge_uri, field, index)
 
     def _emit_database_profile(
-        self, graph: Graph, profile_uri: URIRef, profile: Any
+        self,
+        graph: Graph,
+        profile_uri: URIRef,
+        profile: Any,
+        *,
+        edge_uri_by_id: dict[EdgeId, URIRef] | None = None,
     ) -> None:
         graph.add((profile_uri, RDF.type, ns.DatabaseProfile))
         add_enum_individual(
@@ -198,19 +261,95 @@ class ManifestRdfSerializer:
             profile_uri,
             ns.dbFlavor,
             str(profile.db_flavor),
-            ns.DB_TYPE_INDIVIDUALS,
+            ns.ENUM_REGISTRIES["db_type"],
         )
         add_literal(graph, profile_uri, ns.targetNamespace, profile.target_namespace)
+        self._emit_profile_indexes(
+            graph, profile_uri, profile, edge_uri_by_id=edge_uri_by_id
+        )
 
-        payload = profile.model_dump(
-            mode="json",
-            by_alias=True,
-            exclude={"db_flavor", "target_namespace"},
-            exclude_none=True,
-            exclude_defaults=True,
+        payload = self._model_payload(
+            profile, ns.MODEL_PAYLOAD_EXCLUDES["database_profile"]
         )
         if payload:
             graph.add((profile_uri, ns.profilePayload, json_literal(payload)))
+
+    def _emit_profile_indexes(
+        self,
+        graph: Graph,
+        profile_uri: URIRef,
+        profile: Any,
+        *,
+        edge_uri_by_id: dict[EdgeId, URIRef] | None = None,
+    ) -> None:
+        for vertex_name, indexes in profile.vertex_indexes.items():
+            for index_position, index in enumerate(indexes):
+                index_uri = URIRef(
+                    join_uri(
+                        str(profile_uri),
+                        "vertex-index",
+                        vertex_name,
+                        str(index_position),
+                    )
+                )
+                graph.add((profile_uri, ns.hasVertexIndex, index_uri))
+                self._emit_index(
+                    graph,
+                    index_uri,
+                    index,
+                    vertex_name=vertex_name,
+                )
+
+        for spec_position, edge_spec in enumerate(profile.edge_specs):
+            spec_uri = URIRef(
+                join_uri(str(profile_uri), "edge-spec", str(spec_position))
+            )
+            graph.add((profile_uri, ns.hasEdgeSpec, spec_uri))
+            graph.add((spec_uri, RDF.type, ns.EdgePhysicalSpec))
+            add_literal(graph, spec_uri, ns.specSource, edge_spec.source)
+            add_literal(graph, spec_uri, ns.specTarget, edge_spec.target)
+            add_literal(graph, spec_uri, ns.specRelation, edge_spec.relation)
+            add_literal(graph, spec_uri, ns.specPurpose, edge_spec.purpose)
+            add_literal(graph, spec_uri, ns.specRelationName, edge_spec.relation_name)
+            add_literal(graph, spec_uri, ns.specIndexesMode, edge_spec.indexes_mode)
+            if edge_uri_by_id is not None:
+                edge_uri = edge_uri_by_id.get(
+                    (edge_spec.source, edge_spec.target, edge_spec.relation)
+                )
+                if edge_uri is not None:
+                    graph.add((spec_uri, ns.refinesEdge, edge_uri))
+
+            for index_position, index in enumerate(edge_spec.indexes):
+                index_uri = URIRef(
+                    join_uri(str(spec_uri), "index", str(index_position))
+                )
+                graph.add((spec_uri, ns.hasIndex, index_uri))
+                self._emit_index(graph, index_uri, index)
+
+    def _emit_index(
+        self,
+        graph: Graph,
+        index_uri: URIRef,
+        index: Any,
+        *,
+        vertex_name: str | None = None,
+    ) -> None:
+        graph.add((index_uri, RDF.type, ns.Index))
+        add_literal(graph, index_uri, ns.profileVertexName, vertex_name)
+        add_literal(graph, index_uri, ns.indexName, index.name)
+        add_literal(graph, index_uri, ns.indexUnique, index.unique)
+        index_type = getattr(index.type, "value", str(index.type))
+        add_literal(graph, index_uri, ns.indexType, index_type)
+        add_literal(graph, index_uri, ns.indexDeduplicate, index.deduplicate)
+        add_literal(graph, index_uri, ns.indexSparse, index.sparse)
+        add_literal(
+            graph,
+            index_uri,
+            ns.indexExcludeEdgeEndpoints,
+            index.exclude_edge_endpoints,
+        )
+        for field in index.fields:
+            add_literal(graph, index_uri, ns.indexField, field)
 
     def _emit_ingestion_model(
         self,
@@ -218,6 +357,9 @@ class ManifestRdfSerializer:
         base_uri: str,
         ingestion_uri: URIRef,
         ingestion_model: Any,
+        *,
+        vertex_uri_by_name: dict[str, URIRef] | None = None,
+        edge_uri_by_id: dict[EdgeId, URIRef] | None = None,
     ) -> None:
         graph.add((ingestion_uri, RDF.type, ns.IngestionModel))
         add_enum_individual(
@@ -225,15 +367,18 @@ class ManifestRdfSerializer:
             ingestion_uri,
             ns.edgesOnDuplicate,
             ingestion_model.edges_on_duplicate,
-            ns.EDGE_DUPLICATE_POLICY_INDIVIDUALS,
+            ns.ENUM_REGISTRIES["edge_duplicate_policy"],
         )
 
+        transform_uri_by_name: dict[str, URIRef] = {}
         for index, transform in enumerate(ingestion_model.transforms):
             transform_uri = URIRef(
                 join_uri(
                     base_uri, "ingestion", "transform", transform.name or "unnamed"
                 )
             )
+            if transform.name:
+                transform_uri_by_name[transform.name] = transform_uri
             graph.add((ingestion_uri, ns.hasTransform, transform_uri))
             add_literal(graph, transform_uri, ns.artifactIndex, index)
             self._emit_proto_transform(graph, transform_uri, transform)
@@ -244,7 +389,14 @@ class ManifestRdfSerializer:
             )
             graph.add((ingestion_uri, ns.hasResource, resource_uri))
             add_literal(graph, resource_uri, ns.artifactIndex, index)
-            self._emit_resource(graph, resource_uri, resource)
+            self._emit_resource(
+                graph,
+                resource_uri,
+                resource,
+                transform_uri_by_name=transform_uri_by_name,
+                vertex_uri_by_name=vertex_uri_by_name,
+                edge_uri_by_id=edge_uri_by_id,
+            )
 
     def _emit_proto_transform(
         self,
@@ -281,7 +433,7 @@ class ManifestRdfSerializer:
             transform_uri,
             ns.transformTarget,
             transform.target,
-            ns.TRANSFORM_TARGET_INDIVIDUALS,
+            ns.ENUM_REGISTRIES["transform_target"],
         )
 
         if transform.dress is not None:
@@ -313,33 +465,38 @@ class ManifestRdfSerializer:
             keys_uri,
             ns.keySelectionMode,
             keys.mode,
-            ns.KEY_SELECTION_MODE_INDIVIDUALS,
+            ns.ENUM_REGISTRIES["key_selection_mode"],
         )
         for key_name in keys.names:
             add_literal(graph, keys_uri, ns.keySelectionName, key_name)
 
-    def _emit_resource(self, graph: Graph, resource_uri: URIRef, resource: Any) -> None:
-        graph.add((resource_uri, RDF.type, ns.ResourceDefinition))
+    def _emit_resource(
+        self,
+        graph: Graph,
+        resource_uri: URIRef,
+        resource: Any,
+        *,
+        transform_uri_by_name: dict[str, URIRef] | None = None,
+        vertex_uri_by_name: dict[str, URIRef] | None = None,
+        edge_uri_by_id: dict[EdgeId, URIRef] | None = None,
+    ) -> None:
+        graph.add((resource_uri, RDF.type, ns.Resource))
         add_literal(graph, resource_uri, ns.name, resource.name)
 
-        payload = resource.model_dump(
-            mode="json",
-            by_alias=True,
-            exclude={"name", "pipeline"},
-            exclude_none=True,
-            exclude_defaults=True,
-        )
+        payload = self._model_payload(resource, ns.MODEL_PAYLOAD_EXCLUDES["resource"])
         if payload:
             graph.add((resource_uri, ns.resourcePayload, json_literal(payload)))
 
         for index, step in enumerate(resource.pipeline):
-            step_node = BNode()
-            graph.add((resource_uri, ns.hasPipelineStep, step_node))
-            step_type = actor_step_type(step)
-            graph.add((step_node, RDF.type, URIRef(str(actor_step_class(step_type)))))
-            add_literal(graph, step_node, ns.actorType, step_type)
-            add_literal(graph, step_node, ns.stepIndex, index)
-            graph.add((step_node, ns.stepPayload, json_literal(step)))
+            step_node = self._emit_actor_step(
+                graph,
+                step,
+                index=index,
+                transform_uri_by_name=transform_uri_by_name,
+                vertex_uri_by_name=vertex_uri_by_name,
+                edge_uri_by_id=edge_uri_by_id,
+            )
+            graph.add((resource_uri, ns.hasActor, step_node))
 
         for spec in resource.infer_edge_only:
             spec_uri = BNode()
@@ -366,6 +523,111 @@ class ManifestRdfSerializer:
             )
         )
 
+    def _emit_actor_step(
+        self,
+        graph: Graph,
+        step: dict[str, Any],
+        *,
+        index: int,
+        transform_uri_by_name: dict[str, URIRef] | None = None,
+        vertex_uri_by_name: dict[str, URIRef] | None = None,
+        edge_uri_by_id: dict[EdgeId, URIRef] | None = None,
+    ) -> BNode:
+        step_node = BNode()
+        step_type = actor_step_type(step)
+        graph.add((step_node, RDF.type, URIRef(str(actor_step_class(step_type)))))
+        graph.add((step_node, RDF.type, ns.Actor))
+        add_literal(graph, step_node, ns.actorType, step_type)
+        add_literal(graph, step_node, ns.stepIndex, index)
+        graph.add((step_node, ns.stepPayload, json_literal(step)))
+        if step_type == "vertex":
+            vertex_name = step.get("vertex")
+            if (
+                isinstance(vertex_name, str)
+                and vertex_uri_by_name is not None
+                and vertex_name in vertex_uri_by_name
+            ):
+                graph.add(
+                    (step_node, ns.targetsVertex, vertex_uri_by_name[vertex_name])
+                )
+        if step_type == "vertex_router" and vertex_uri_by_name is not None:
+            type_map = step.get("type_map")
+            if isinstance(type_map, dict):
+                for mapped in type_map.values():
+                    if isinstance(mapped, str) and mapped in vertex_uri_by_name:
+                        graph.add(
+                            (step_node, ns.targetsVertex, vertex_uri_by_name[mapped])
+                        )
+        if step_type == "edge" and edge_uri_by_id is not None:
+
+            def _link_edge(source: str, target: str, relation: str | None) -> None:
+                edge_uri = edge_uri_by_id.get((source, target, relation))
+                if edge_uri is not None:
+                    graph.add((step_node, ns.targetsEdge, edge_uri))
+
+            source = step.get("from")
+            target = step.get("to")
+            relation = step.get("relation")
+            if isinstance(source, str) and isinstance(target, str):
+                _link_edge(
+                    source, target, relation if isinstance(relation, str) else None
+                )
+            links = step.get("links")
+            if isinstance(links, list):
+                for link in links:
+                    if not isinstance(link, dict):
+                        continue
+                    link_source = link.get("from")
+                    link_target = link.get("to")
+                    link_relation = link.get("relation")
+                    if isinstance(link_source, str) and isinstance(link_target, str):
+                        _link_edge(
+                            link_source,
+                            link_target,
+                            link_relation if isinstance(link_relation, str) else None,
+                        )
+        if step_type == "transform":
+            transform_name = step.get("name")
+            if not isinstance(transform_name, str):
+                call_spec = step.get("call")
+                if isinstance(call_spec, dict):
+                    use_name = call_spec.get("use")
+                    if isinstance(use_name, str):
+                        transform_name = use_name
+            if not isinstance(transform_name, str):
+                transform_step = step.get("transform")
+                if isinstance(transform_step, dict):
+                    direct_name = transform_step.get("name")
+                    if isinstance(direct_name, str):
+                        transform_name = direct_name
+                    nested_call = transform_step.get("call")
+                    if not isinstance(transform_name, str) and isinstance(
+                        nested_call, dict
+                    ):
+                        nested_use = nested_call.get("use")
+                        if isinstance(nested_use, str):
+                            transform_name = nested_use
+            if isinstance(transform_name, str) and transform_uri_by_name is not None:
+                transform_uri = transform_uri_by_name.get(transform_name)
+                if transform_uri is not None:
+                    graph.add((step_node, ns.executesTransform, transform_uri))
+
+        if step_type == "descend":
+            nested_steps = step.get("pipeline")
+            if isinstance(nested_steps, list):
+                for nested_index, nested_step in enumerate(nested_steps):
+                    if isinstance(nested_step, dict):
+                        nested_node = self._emit_actor_step(
+                            graph,
+                            cast(dict[str, Any], nested_step),
+                            index=nested_index,
+                            transform_uri_by_name=transform_uri_by_name,
+                            vertex_uri_by_name=vertex_uri_by_name,
+                            edge_uri_by_id=edge_uri_by_id,
+                        )
+                        graph.add((step_node, ns.hasActor, nested_node))
+        return step_node
+
     def _emit_bindings(
         self,
         graph: Graph,
@@ -373,7 +635,7 @@ class ManifestRdfSerializer:
         bindings_uri: URIRef,
         bindings: Any,
     ) -> None:
-        graph.add((bindings_uri, RDF.type, ns.BindingsConfig))
+        graph.add((bindings_uri, RDF.type, ns.Bindings))
 
         for index, connector in enumerate(bindings.connectors):
             connector_hash = connector.hash or connector.__class__.__name__
@@ -447,18 +709,23 @@ class ManifestRdfSerializer:
             connector_uri,
             ns.boundSourceKind,
             connector.bound_source_kind().value,
-            ns.BOUND_SOURCE_KIND_INDIVIDUALS,
+            ns.ENUM_REGISTRIES["bound_source_kind"],
         )
 
-        payload = connector.model_dump(
+        payload = self._model_payload(connector, ns.MODEL_PAYLOAD_EXCLUDES["connector"])
+        if payload:
+            graph.add((connector_uri, ns.connectorPayload, json_literal(payload)))
+
+    @staticmethod
+    def _model_payload(model: Any, exclude_fields: set[str]) -> dict[str, Any]:
+        payload = model.model_dump(
             mode="json",
             by_alias=True,
-            exclude={"hash", "name", "resource_name"},
+            exclude=exclude_fields,
             exclude_none=True,
             exclude_defaults=True,
         )
-        if payload:
-            graph.add((connector_uri, ns.connectorPayload, json_literal(payload)))
+        return payload if isinstance(payload, dict) else {}
 
     @staticmethod
     def _edge_key(edge: Edge) -> str:

@@ -23,6 +23,7 @@ from .db_profile import (
     apply_storage_name_sanitization_to_db_profile,
     apply_vertex_merge_to_db_profile,
     apply_vertex_removal_to_db_profile,
+    apply_vertex_rename_to_db_profile,
     merge_relation_entries_in_db_profile,
 )
 from .merge_core import (
@@ -636,6 +637,17 @@ def _apply_rename_entities(
                         mapping["resource"],
                     )
 
+    schema = manifest.graph_schema
+    if schema is not None and (vertex_map or edge_map):
+        if vertex_map:
+            apply_vertex_rename_to_db_profile(schema.db_profile, vertex_map)
+        if edge_map:
+            apply_relation_rename_to_db_profile(schema.db_profile, edge_map)
+        if isinstance(schema_payload, dict):
+            schema_payload["db_profile"] = schema.db_profile.to_dict(
+                skip_defaults=False
+            )
+
     updated = GraphManifest.from_dict(payload)
     manifest.graph_schema = updated.graph_schema
     manifest.ingestion_model = updated.ingestion_model
@@ -672,6 +684,8 @@ def apply_remove_edges(manifest: GraphManifest, op: RemoveEdgesOp) -> None:
     schema = manifest.graph_schema
     if schema is None:
         raise ValueError("remove_edges requires graph_schema")
+    apply_relation_removal_to_db_profile(schema.db_profile, removed)
+    schema.db_profile = _revalidate_db_profile(schema.db_profile)
     schema.core_schema = CoreSchema(
         vertex_config=schema.core_schema.vertex_config,
         edge_config=EdgeConfig(
@@ -682,8 +696,6 @@ def apply_remove_edges(manifest: GraphManifest, op: RemoveEdgesOp) -> None:
             ]
         ),
     )
-    apply_relation_removal_to_db_profile(schema.db_profile, removed)
-    schema.db_profile = _revalidate_db_profile(schema.db_profile)
     schema.finish_init()
 
     if manifest.ingestion_model is not None:

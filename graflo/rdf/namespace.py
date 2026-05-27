@@ -3,6 +3,13 @@
 from __future__ import annotations
 
 from rdflib import Namespace
+from rdflib.term import URIRef
+
+from graflo.architecture.contract.bindings.connectors import (
+    FileConnector as FileConnectorModel,
+    SparqlConnector as SparqlConnectorModel,
+    TableConnector as TableConnectorModel,
+)
 
 GF_ONTOLOGY_IRI = "https://ontology.growgraph.dev/graflo"
 GF_VERSION = "1.0.0"
@@ -14,25 +21,29 @@ GF = Namespace(GF_BASE)
 GraphManifest = GF.GraphManifest
 Schema = GF.Schema
 CoreSchema = GF.CoreSchema
+VertexConfig = GF.VertexConfig
+EdgeConfig = GF.EdgeConfig
 GraphMetadata = GF.GraphMetadata
 DatabaseProfile = GF.DatabaseProfile
-VertexDefinition = GF.VertexDefinition
-EdgeDefinition = GF.EdgeDefinition
-FieldDefinition = GF.FieldDefinition
+Vertex = GF.Vertex
+Edge = GF.Edge
+Field = GF.Field
+Identity = GF.Identity
 IngestionModel = GF.IngestionModel
-ResourceDefinition = GF.ResourceDefinition
+Resource = GF.Resource
 EdgeInferSpec = GF.EdgeInferSpec
 ProtoTransform = GF.ProtoTransform
 Transform = GF.Transform
 DressConfig = GF.DressConfig
 KeySelectionConfig = GF.KeySelectionConfig
-ActorStep = GF.ActorStep
-VertexActorStep = GF.VertexActorStep
-EdgeActorStep = GF.EdgeActorStep
-TransformActorStep = GF.TransformActorStep
-DescendActorStep = GF.DescendActorStep
-VertexRouterActorStep = GF.VertexRouterActorStep
-BindingsConfig = GF.BindingsConfig
+Actor = GF.Actor
+VertexProducingActor = GF.VertexProducingActor
+VertexActorStep = GF.VertexActor
+EdgeActorStep = GF.EdgeActor
+TransformActorStep = GF.TransformActor
+DescendActorStep = GF.DescendActor
+VertexRouterActorStep = GF.VertexRouterActor
+Bindings = GF.Bindings
 BoundConnector = GF.BoundConnector
 FileConnector = GF.FileConnector
 TableConnector = GF.TableConnector
@@ -40,28 +51,40 @@ SparqlConnector = GF.SparqlConnector
 ResourceConnectorBinding = GF.ResourceConnectorBinding
 ConnectorConnectionBinding = GF.ConnectorConnectionBinding
 StagingProxyBinding = GF.StagingProxyBinding
+EdgePhysicalSpec = GF.EdgePhysicalSpec
+Index = GF.Index
 
 # Object properties
 hasSchema = GF.hasSchema
 hasIngestionModel = GF.hasIngestionModel
 hasBindings = GF.hasBindings
 hasCoreSchema = GF.hasCoreSchema
+hasVertexConfig = GF.hasVertexConfig
+hasEdgeConfig = GF.hasEdgeConfig
 hasMetadata = GF.hasMetadata
 hasDatabaseProfile = GF.hasDatabaseProfile
-definesVertex = GF.definesVertex
-definesEdge = GF.definesEdge
+hasVertex = GF.hasVertex
+hasEdge = GF.hasEdge
 hasField = GF.hasField
+hasIdentity = GF.hasIdentity
 edgeSource = GF.edgeSource
 edgeTarget = GF.edgeTarget
 hasResource = GF.hasResource
 hasTransform = GF.hasTransform
-hasPipelineStep = GF.hasPipelineStep
+hasActor = GF.hasActor
+targetsVertex = GF.targetsVertex
+targetsEdge = GF.targetsEdge
+executesTransform = GF.executesTransform
 hasDress = GF.hasDress
 hasKeySelection = GF.hasKeySelection
 hasConnector = GF.hasConnector
 bindsResourceToConnector = GF.bindsResourceToConnector
 bindsConnectorToConnProxy = GF.bindsConnectorToConnProxy
 hasStagingProxy = GF.hasStagingProxy
+hasVertexIndex = GF.hasVertexIndex
+hasEdgeSpec = GF.hasEdgeSpec
+refinesEdge = GF.refinesEdge
+hasIndex = GF.hasIndex
 hasEdgeInferOnly = GF.hasEdgeInferOnly
 hasEdgeInferExcept = GF.hasEdgeInferExcept
 
@@ -73,7 +96,7 @@ enumValue = GF.enumValue
 fieldType = GF.fieldType
 dbFlavor = GF.dbFlavor
 targetNamespace = GF.targetNamespace
-identityField = GF.identityField
+identityName = GF.identityName
 relation = GF.relation
 blank = GF.blank
 edgesOnDuplicate = GF.edgesOnDuplicate
@@ -102,6 +125,27 @@ profilePayload = GF.profilePayload
 edgePayload = GF.edgePayload
 vertexPayload = GF.vertexPayload
 artifactIndex = GF.artifactIndex
+forceTypes = GF.forceTypes
+identityFromAllProperties = GF.identityFromAllProperties
+edgeIdentities = GF.edgeIdentities
+edgeType = GF.edgeType
+edgeBy = GF.edgeBy
+vertexIndexes = GF.vertexIndexes
+edgeSpecs = GF.edgeSpecs
+profileVertexName = GF.profileVertexName
+indexName = GF.indexName
+indexField = GF.indexField
+indexUnique = GF.indexUnique
+indexType = GF.indexType
+indexDeduplicate = GF.indexDeduplicate
+indexSparse = GF.indexSparse
+indexExcludeEdgeEndpoints = GF.indexExcludeEdgeEndpoints
+specSource = GF.specSource
+specTarget = GF.specTarget
+specRelation = GF.specRelation
+specPurpose = GF.specPurpose
+specRelationName = GF.specRelationName
+specIndexesMode = GF.specIndexesMode
 
 # Actor step type mapping
 ACTOR_STEP_CLASSES: dict[str, object] = {
@@ -169,4 +213,37 @@ CONNECTOR_CLASSES: dict[str, object] = {
     "FileConnector": FileConnector,
     "TableConnector": TableConnector,
     "SparqlConnector": SparqlConnector,
+}
+
+CONNECTOR_CLASS_BY_RDF_TYPE: dict[URIRef, str] = {
+    FileConnector: "FileConnector",
+    TableConnector: "TableConnector",
+    SparqlConnector: "SparqlConnector",
+}
+
+CONNECTOR_MODELS = {
+    "FileConnector": FileConnectorModel,
+    "TableConnector": TableConnectorModel,
+    "SparqlConnector": SparqlConnectorModel,
+}
+
+ENUM_REGISTRIES: dict[str, dict[str, object]] = {
+    "db_type": DB_TYPE_INDIVIDUALS,
+    "field_type": FIELD_TYPE_INDIVIDUALS,
+    "bound_source_kind": BOUND_SOURCE_KIND_INDIVIDUALS,
+    "transform_target": TRANSFORM_TARGET_INDIVIDUALS,
+    "transform_strategy": TRANSFORM_STRATEGY_INDIVIDUALS,
+    "key_selection_mode": KEY_SELECTION_MODE_INDIVIDUALS,
+    "edge_duplicate_policy": EDGE_DUPLICATE_POLICY_INDIVIDUALS,
+}
+
+MODEL_PAYLOAD_EXCLUDES: dict[str, set[str]] = {
+    "database_profile": {
+        "db_flavor",
+        "target_namespace",
+        "vertex_indexes",
+        "edge_specs",
+    },
+    "resource": {"name", "pipeline"},
+    "connector": {"hash", "name", "resource_name"},
 }

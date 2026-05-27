@@ -55,6 +55,23 @@ We welcome contributions to GraFlo! This document provides guidelines and instru
 - Include examples in docstrings where appropriate
 - Update the changelog for significant changes
 
+To build and preview the docs site locally:
+
+```bash
+uv sync --extra docs
+uv run mkdocs serve
+```
+
+If you edit the GraFlo meta-ontology (`graflo/rdf/ontology/graflo.ttl`), regenerate the interactive visualization and commit the updated assets:
+
+```bash
+uv run python docs/scripts/build_ontology_viz.py
+```
+
+Visual tweaks and the graph viewer live in repo-owned files under `docs/scripts/ontology_viz/` and are copied into `docs/assets/graflo-ontology-viz/` at build time. **Do not edit packages inside `.venv`.**
+
+CI runs the same script and fails if `docs/assets/graflo-ontology-viz/` is out of date with the committed ontology.
+
 ## Testing
 
 - Write tests for all new features

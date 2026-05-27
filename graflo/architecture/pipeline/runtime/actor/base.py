@@ -11,7 +11,7 @@ from graflo.architecture.contract.runtime.edge_derivation import (
 from graflo.architecture.schema.edge import EdgeConfig
 from graflo.architecture.graph_types import EdgeId, ExtractionContext, LocationIndex
 from graflo.architecture.contract.ingestion.transform import ProtoTransform
-from graflo.architecture.schema.vertex import VertexConfig
+from graflo.architecture.schema.vertex import VertexConfig, VertexName
 from graflo.onto import DBType
 
 
@@ -32,7 +32,7 @@ class ActorInitContext:
     edge_derivation: EdgeDerivationRegistry = field(
         default_factory=EdgeDerivationRegistry
     )
-    allowed_vertex_names: set[str] | None = None
+    allowed_vertex_names: set[VertexName] | None = None
     infer_edges: bool = True
     infer_edge_only: set[EdgeId] = field(default_factory=set)
     infer_edge_except: set[EdgeId] = field(default_factory=set)
@@ -68,7 +68,7 @@ class Actor(ABC):
         """Get the count of items processed by this actor."""
         return 1
 
-    def references_vertices(self) -> set[str]:
+    def references_vertices(self) -> set[VertexName]:
         """Return vertex names this actor references."""
         return set()
 
@@ -101,3 +101,14 @@ class Actor(ABC):
     def fetch_actors(self, level: int, edges: list) -> tuple[int, type, str, list]:
         """Fetch actor information for tree representation."""
         return level, type(self), str(self), edges
+
+
+class VertexProducingActor(Actor, ABC):
+    """Abstract base for actors that produce vertex observations."""
+
+    vertex_config: VertexConfig
+
+    @abstractmethod
+    def references_vertices(self) -> set[VertexName]:
+        """Return vertex names this actor can emit."""
+        raise NotImplementedError

@@ -32,7 +32,7 @@ from graflo.architecture.graph_types import (
     EdgeId,
     EdgeType,
 )
-from graflo.architecture.schema.vertex import Field, VertexConfig
+from graflo.architecture.schema.vertex import Field, VertexConfig, VertexName
 
 
 # Default relation name for TigerGraph edges when relation is not specified
@@ -68,11 +68,11 @@ class Edge(ConfigBaseModel):
     in pipeline edge steps, not on this model.
     """
 
-    source: str = PydanticField(
+    source: VertexName = PydanticField(
         ...,
         description="Source vertex type name (e.g. user, company).",
     )
-    target: str = PydanticField(
+    target: VertexName = PydanticField(
         ...,
         description="Target vertex type name (e.g. post, company).",
     )

@@ -9,6 +9,8 @@ from rdflib import Graph, URIRef
 from rdflib.namespace import OWL, RDF
 
 from graflo import GraphManifest
+from graflo.architecture.database_features import EdgePhysicalSpec
+from graflo.architecture.graph_types import Index
 from graflo.rdf import namespace as ns
 from graflo.rdf.deserializer import ManifestRdfDeserializer
 from graflo.rdf.serializer import ManifestRdfSerializer
@@ -108,3 +110,71 @@ def test_json_ld_output_is_parseable() -> None:
     graph.parse(data=payload, format="json-ld")
     restored = ManifestRdfDeserializer().from_graph(graph, BASE_URI.rstrip("/"))
     assert _canonical(restored) == _canonical(manifest)
+
+
+def test_round_trip_preserves_vertex_config_policy_fields() -> None:
+    original = _load_example_manifest("1-ingest-csv")
+    assert original.graph_schema is not None
+    original.graph_schema.core_schema.vertex_config.force_types = {
+        "Person": ["STRING", "INT"]
+    }
+    original.graph_schema.core_schema.vertex_config.identity_from_all_properties = False
+
+    serializer = ManifestRdfSerializer(include_ontology=False)
+    deserializer = ManifestRdfDeserializer()
+    restored = deserializer.from_graph(
+        serializer.to_graph(original, BASE_URI), BASE_URI.rstrip("/")
+    )
+
+    assert restored.graph_schema is not None
+    restored_vertex_cfg = restored.graph_schema.core_schema.vertex_config
+    assert restored_vertex_cfg.force_types == {"Person": ["STRING", "INT"]}
+    assert restored_vertex_cfg.identity_from_all_properties is False
+
+
+def test_context_has_new_vertex_config_and_label_terms() -> None:
+    context_path = (
+        pathlib.Path(__file__).resolve().parents[2]
+        / "graflo"
+        / "rdf"
+        / "ontology"
+        / "graflo-context.jsonld"
+    )
+    payload = context_path.read_text(encoding="utf-8")
+    assert '"forceTypes": "gf:forceTypes"' in payload
+    assert '"identityFromAllProperties": "gf:identityFromAllProperties"' in payload
+    assert '"prefLabel": "skos:prefLabel"' in payload
+
+
+def test_profile_and_transform_actor_semantic_links_are_emitted() -> None:
+    manifest = _load_example_manifest("2-ingest-self-references")
+    assert manifest.graph_schema is not None
+    manifest.graph_schema.db_profile.vertex_indexes = {
+        "Person": [Index(fields=["name"])]
+    }
+    manifest.graph_schema.db_profile.edge_specs = [
+        EdgePhysicalSpec(
+            source="Person",
+            target="Person",
+            relation="follows",
+            indexes=[Index(fields=["created_at"])],
+        )
+    ]
+
+    graph = ManifestRdfSerializer(include_ontology=False).to_graph(manifest, BASE_URI)
+
+    profile_nodes = list(graph.subjects(RDF.type, ns.DatabaseProfile))
+    assert profile_nodes
+    profile_node = profile_nodes[0]
+    vertex_index_nodes = list(graph.objects(profile_node, ns.hasVertexIndex))
+    edge_spec_nodes = list(graph.objects(profile_node, ns.hasEdgeSpec))
+    assert vertex_index_nodes
+    assert edge_spec_nodes
+    assert any(graph.objects(vertex_index_nodes[0], ns.indexField))
+    assert any(graph.objects(edge_spec_nodes[0], ns.hasIndex))
+
+    transform_actor_nodes = list(graph.subjects(RDF.type, ns.TransformActorStep))
+    assert transform_actor_nodes
+    assert any(
+        any(graph.objects(node, ns.executesTransform)) for node in transform_actor_nodes
+    )

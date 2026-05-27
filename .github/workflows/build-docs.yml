@@ -37,6 +37,14 @@ jobs:
             run: |
                 uv sync --extra docs
 
+        -   name: Generate ontology visualization
+            run: |
+                uv run python docs/scripts/build_ontology_viz.py
+
+        -   name: Verify committed viz assets are fresh
+            run: |
+                git diff --exit-code docs/assets/graflo-ontology-viz/
+
         -   name: Build site
             run: |
                 uv run mkdocs build --site-dir _site

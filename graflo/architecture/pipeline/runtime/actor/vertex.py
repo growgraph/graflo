@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from .base import Actor, ActorConstants, ActorInitContext
+from .base import ActorConstants, ActorInitContext, VertexProducingActor
 from .config import VertexActorConfig
 from graflo.architecture.graph_types import (
     ExtractionContext,
@@ -13,12 +13,12 @@ from graflo.architecture.graph_types import (
     VertexRep,
     merge_observation_with_transform_buffer,
 )
-from graflo.architecture.schema.vertex import VertexConfig
+from graflo.architecture.schema.vertex import VertexConfig, VertexName
 from graflo.onto import ExpressionFlavor
 from graflo.util.merge import merge_doc_basis
 
 
-class VertexActor(Actor):
+class VertexActor(VertexProducingActor):
     """Actor for processing vertex data."""
 
     def __init__(self, config: VertexActorConfig):
@@ -30,7 +30,7 @@ class VertexActor(Actor):
         self.extraction_scope: Literal["full", "mapped_only"] = config.extraction_scope
         self.role: str | None = config.role
         self.vertex_config: VertexConfig
-        self.allowed_vertex_names: set[str] | None = None
+        self.allowed_vertex_names: set[VertexName] | None = None
 
     @classmethod
     def from_config(cls, config: VertexActorConfig) -> VertexActor:
@@ -224,5 +224,5 @@ class VertexActor(Actor):
             )
         return ctx
 
-    def references_vertices(self) -> set[str]:
+    def references_vertices(self) -> set[VertexName]:
         return {self.name}

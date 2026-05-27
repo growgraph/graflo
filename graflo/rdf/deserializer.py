@@ -7,11 +7,6 @@ from typing import Any
 from rdflib import BNode, Graph, Literal, URIRef
 from rdflib.namespace import RDF
 
-from graflo.architecture.contract.bindings.connectors import (
-    FileConnector,
-    SparqlConnector,
-    TableConnector,
-)
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.rdf import namespace as ns
 from graflo.rdf.utils import parse_json_literal, reverse_enum
@@ -76,27 +71,58 @@ class ManifestRdfDeserializer:
     def _parse_core_schema(
         self, graph: Graph, core_uri: URIRef | BNode
     ) -> dict[str, Any]:
+        vertex_config_uri = self._object(graph, core_uri, ns.hasVertexConfig)
+        edge_config_uri = self._object(graph, core_uri, ns.hasEdgeConfig)
         vertices = self._ordered_nodes(
             graph,
-            core_uri,
-            ns.definesVertex,
+            vertex_config_uri,
+            ns.hasVertex,
             self._parse_vertex,
         )
         edges = self._ordered_nodes(
             graph,
-            core_uri,
-            ns.definesEdge,
+            edge_config_uri,
+            ns.hasEdge,
             self._parse_edge,
         )
         return {
-            "vertex_config": {"vertices": vertices},
+            "vertex_config": self._parse_vertex_config(
+                graph, vertex_config_uri, vertices
+            ),
             "edge_config": {"edges": edges},
         }
 
+    def _parse_vertex_config(
+        self,
+        graph: Graph,
+        vertex_config_uri: URIRef | BNode | None,
+        vertices: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        vertex_config: dict[str, Any] = {"vertices": vertices}
+        force_types = parse_json_literal(
+            self._literal(graph, vertex_config_uri, ns.forceTypes)
+        )
+        if isinstance(force_types, dict):
+            vertex_config["force_types"] = force_types
+
+        identity_from_all_properties = self._literal(
+            graph, vertex_config_uri, ns.identityFromAllProperties
+        )
+        if identity_from_all_properties is not None:
+            vertex_config["identity_from_all_properties"] = (
+                identity_from_all_properties.lower() == "true"
+            )
+        return vertex_config
+
     def _parse_vertex(self, graph: Graph, vertex_uri: URIRef | BNode) -> dict[str, Any]:
+        identities = []
+        for identity_node in self._related_nodes(graph, vertex_uri, ns.hasIdentity):
+            identity = self._literal(graph, identity_node, ns.identityName)
+            if identity is not None:
+                identities.append(identity)
         vertex: dict[str, Any] = {
             "name": self._literal(graph, vertex_uri, ns.name),
-            "identity": self._literals(graph, vertex_uri, ns.identityField),
+            "identity": identities,
             "properties": self._ordered_nodes(
                 graph,
                 vertex_uri,
@@ -129,7 +155,7 @@ class ManifestRdfDeserializer:
             return name
         field: dict[str, Any] = {"name": name}
         if field_type_uri is not None:
-            field_type = reverse_enum(ns.FIELD_TYPE_INDIVIDUALS, field_type_uri)
+            field_type = reverse_enum(ns.ENUM_REGISTRIES["field_type"], field_type_uri)
             if field_type is not None:
                 field["type"] = field_type
         if description is not None:
@@ -153,6 +179,17 @@ class ManifestRdfDeserializer:
         payload = parse_json_literal(self._literal(graph, edge_uri, ns.edgePayload))
         if isinstance(payload, dict):
             edge.update(payload)
+        identities = parse_json_literal(
+            self._literal(graph, edge_uri, ns.edgeIdentities)
+        )
+        if isinstance(identities, list):
+            edge["identities"] = identities
+        edge_type = self._literal(graph, edge_uri, ns.edgeType)
+        if edge_type is not None:
+            edge["type"] = edge_type
+        edge_by = self._literal(graph, edge_uri, ns.edgeBy)
+        if edge_by is not None:
+            edge["by"] = edge_by
 
         properties = self._ordered_nodes(
             graph,
@@ -171,12 +208,13 @@ class ManifestRdfDeserializer:
         profile: dict[str, Any] = {}
         db_flavor_uri = self._object(graph, profile_uri, ns.dbFlavor)
         if db_flavor_uri is not None:
-            db_flavor = reverse_enum(ns.DB_TYPE_INDIVIDUALS, db_flavor_uri)
+            db_flavor = reverse_enum(ns.ENUM_REGISTRIES["db_type"], db_flavor_uri)
             if db_flavor is not None:
                 profile["db_flavor"] = db_flavor
         target_namespace = self._literal(graph, profile_uri, ns.targetNamespace)
         if target_namespace is not None:
             profile["target_namespace"] = target_namespace
+        self._parse_profile_indexes(graph, profile_uri, profile)
 
         payload = parse_json_literal(
             self._literal(graph, profile_uri, ns.profilePayload)
@@ -185,6 +223,90 @@ class ManifestRdfDeserializer:
             profile.update(payload)
         return profile
 
+    def _parse_profile_indexes(
+        self,
+        graph: Graph,
+        profile_uri: URIRef | BNode,
+        profile: dict[str, Any],
+    ) -> None:
+        vertex_indexes: dict[str, list[dict[str, Any]]] = {}
+        for index_node in self._related_nodes(graph, profile_uri, ns.hasVertexIndex):
+            index_payload = self._parse_index(graph, index_node)
+            vertex_name = self._literal(graph, index_node, ns.profileVertexName)
+            if vertex_name is None:
+                continue
+            vertex_indexes.setdefault(vertex_name, []).append(index_payload)
+        if vertex_indexes:
+            profile["vertex_indexes"] = vertex_indexes
+
+        edge_specs: list[dict[str, Any]] = []
+        for spec_node in self._related_nodes(graph, profile_uri, ns.hasEdgeSpec):
+            spec_payload: dict[str, Any] = {
+                "source": self._literal(graph, spec_node, ns.specSource),
+                "target": self._literal(graph, spec_node, ns.specTarget),
+            }
+            relation = self._literal(graph, spec_node, ns.specRelation)
+            if relation is not None:
+                spec_payload["relation"] = relation
+            purpose = self._literal(graph, spec_node, ns.specPurpose)
+            if purpose is not None:
+                spec_payload["purpose"] = purpose
+            relation_name = self._literal(graph, spec_node, ns.specRelationName)
+            if relation_name is not None:
+                spec_payload["relation_name"] = relation_name
+            indexes_mode = self._literal(graph, spec_node, ns.specIndexesMode)
+            if indexes_mode is not None:
+                spec_payload["indexes_mode"] = indexes_mode
+            indexes = [
+                self._parse_index(graph, index_node)
+                for index_node in self._related_nodes(graph, spec_node, ns.hasIndex)
+            ]
+            if indexes:
+                spec_payload["indexes"] = indexes
+            edge_specs.append(spec_payload)
+        if edge_specs:
+            profile["edge_specs"] = edge_specs
+
+        # Backward compatibility with legacy JSON payload predicates.
+        if "vertex_indexes" not in profile:
+            legacy_vertex_indexes = parse_json_literal(
+                self._literal(graph, profile_uri, ns.vertexIndexes)
+            )
+            if isinstance(legacy_vertex_indexes, dict):
+                profile["vertex_indexes"] = legacy_vertex_indexes
+        if "edge_specs" not in profile:
+            legacy_edge_specs = parse_json_literal(
+                self._literal(graph, profile_uri, ns.edgeSpecs)
+            )
+            if isinstance(legacy_edge_specs, list):
+                profile["edge_specs"] = legacy_edge_specs
+
+    def _parse_index(self, graph: Graph, index_node: URIRef | BNode) -> dict[str, Any]:
+        index: dict[str, Any] = {
+            "fields": self._literals(graph, index_node, ns.indexField)
+        }
+        name = self._literal(graph, index_node, ns.indexName)
+        if name is not None:
+            index["name"] = name
+        unique = self._literal(graph, index_node, ns.indexUnique)
+        if unique is not None:
+            index["unique"] = unique.lower() == "true"
+        index_type = self._literal(graph, index_node, ns.indexType)
+        if index_type is not None:
+            index["type"] = index_type
+        deduplicate = self._literal(graph, index_node, ns.indexDeduplicate)
+        if deduplicate is not None:
+            index["deduplicate"] = deduplicate.lower() == "true"
+        sparse = self._literal(graph, index_node, ns.indexSparse)
+        if sparse is not None:
+            index["sparse"] = sparse.lower() == "true"
+        exclude_edge_endpoints = self._literal(
+            graph, index_node, ns.indexExcludeEdgeEndpoints
+        )
+        if exclude_edge_endpoints is not None:
+            index["exclude_edge_endpoints"] = exclude_edge_endpoints.lower() == "true"
+        return index
+
     def _parse_ingestion_model(
         self, graph: Graph, ingestion_uri: URIRef | BNode
     ) -> dict[str, Any]:
@@ -192,7 +314,7 @@ class ManifestRdfDeserializer:
         duplicate_uri = self._object(graph, ingestion_uri, ns.edgesOnDuplicate)
         if duplicate_uri is not None:
             duplicate = reverse_enum(
-                ns.EDGE_DUPLICATE_POLICY_INDIVIDUALS, duplicate_uri
+                ns.ENUM_REGISTRIES["edge_duplicate_policy"], duplicate_uri
             )
             if duplicate is not None:
                 model["edges_on_duplicate"] = duplicate
@@ -246,7 +368,7 @@ class ManifestRdfDeserializer:
 
         target_uri = self._object(graph, transform_uri, ns.transformTarget)
         if target_uri is not None:
-            target = reverse_enum(ns.TRANSFORM_TARGET_INDIVIDUALS, target_uri)
+            target = reverse_enum(ns.ENUM_REGISTRIES["transform_target"], target_uri)
             if target is not None:
                 transform["target"] = target
 
@@ -261,7 +383,7 @@ class ManifestRdfDeserializer:
         if keys_uri is not None:
             mode_uri = self._object(graph, keys_uri, ns.keySelectionMode)
             mode = (
-                reverse_enum(ns.KEY_SELECTION_MODE_INDIVIDUALS, mode_uri)
+                reverse_enum(ns.ENUM_REGISTRIES["key_selection_mode"], mode_uri)
                 if mode_uri
                 else "all"
             )
@@ -316,18 +438,39 @@ class ManifestRdfDeserializer:
         graph: Graph,
         resource_uri: URIRef | BNode,
     ) -> list[dict[str, Any]]:
-        step_nodes = self._related_nodes(graph, resource_uri, ns.hasPipelineStep)
+        step_nodes = self._related_nodes(graph, resource_uri, ns.hasActor)
         indexed_steps: list[tuple[int, dict[str, Any]]] = []
         for step_node in step_nodes:
             index_literal = self._literal(graph, step_node, ns.stepIndex)
             index = int(index_literal) if index_literal is not None else 0
-            payload = parse_json_literal(
-                self._literal(graph, step_node, ns.stepPayload)
-            )
-            if isinstance(payload, dict):
+            payload = self._parse_actor_step(graph, step_node)
+            if payload:
                 indexed_steps.append((index, payload))
         indexed_steps.sort(key=lambda item: item[0])
         return [step for _, step in indexed_steps]
+
+    def _parse_actor_step(
+        self, graph: Graph, step_node: URIRef | BNode
+    ) -> dict[str, Any]:
+        payload = parse_json_literal(self._literal(graph, step_node, ns.stepPayload))
+        if not isinstance(payload, dict):
+            return {}
+
+        actor_type = self._literal(graph, step_node, ns.actorType)
+        if actor_type == "descend":
+            nested_nodes = self._related_nodes(graph, step_node, ns.hasActor)
+            nested_indexed: list[tuple[int, dict[str, Any]]] = []
+            for nested_node in nested_nodes:
+                nested_index_literal = self._literal(graph, nested_node, ns.stepIndex)
+                nested_index = (
+                    int(nested_index_literal) if nested_index_literal is not None else 0
+                )
+                nested_payload = self._parse_actor_step(graph, nested_node)
+                if nested_payload:
+                    nested_indexed.append((nested_index, nested_payload))
+            nested_indexed.sort(key=lambda item: item[0])
+            payload["pipeline"] = [item for _, item in nested_indexed]
+        return payload
 
     def _parse_edge_infer_spec(
         self,
@@ -396,16 +539,11 @@ class ManifestRdfDeserializer:
     def _parse_connector(
         self, graph: Graph, connector_uri: URIRef | BNode
     ) -> dict[str, Any]:
-        connector_types = {
-            str(ns.FileConnector): FileConnector,
-            str(ns.TableConnector): TableConnector,
-            str(ns.SparqlConnector): SparqlConnector,
-        }
         rdf_types = {str(value) for value in graph.objects(connector_uri, RDF.type)}
-        connector_cls = FileConnector
-        for type_iri, cls in connector_types.items():
-            if type_iri in rdf_types:
-                connector_cls = cls
+        connector_model = "FileConnector"
+        for rdf_type, model_name in ns.CONNECTOR_CLASS_BY_RDF_TYPE.items():
+            if str(rdf_type) in rdf_types:
+                connector_model = model_name
                 break
 
         connector: dict[str, Any] = {}
@@ -422,6 +560,7 @@ class ManifestRdfDeserializer:
         if isinstance(payload, dict):
             connector.update(payload)
 
+        connector_cls = ns.CONNECTOR_MODELS[connector_model]
         validated = connector_cls.model_validate(connector)
         return validated.model_dump(
             mode="json", by_alias=True, exclude={"hash"}, exclude_none=True
@@ -430,10 +569,12 @@ class ManifestRdfDeserializer:
     def _ordered_nodes(
         self,
         graph: Graph,
-        subject: URIRef | BNode,
+        subject: URIRef | BNode | None,
         predicate: URIRef,
         parser: Any,
     ) -> list[Any]:
+        if subject is None:
+            return []
         indexed: list[tuple[int, Any]] = []
         for node in self._related_nodes(graph, subject, predicate):
             index_literal = self._literal(graph, node, ns.artifactIndex)

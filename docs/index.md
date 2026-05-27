@@ -21,6 +21,7 @@ It is a **Python package** and **Graph Schema & Transformation Language (GSTL)**
 - **Schema as the contract** — `GraphManifest` is the single source of truth: vertex/edge definitions,
   typed properties, identity fields, and DB profile are validated at `finish_init` time, not at
   write time. Schema migrations are first-class (`graflo migrate_schema`).
+- **Manifest as linked data** — Export and restore manifests as RDF via the [GraFlo ontology](model/graflo_ontology.md) (`manifest-to-rdf` / `rdf-to-manifest` CLI, `graflo.rdf` API).
 - **Manifest-first sanitization** — `Sanitizer` (backed by `graflo.architecture.evolution` **`SanitizeOp`**) normalizes schema identifiers (reserved words, TigerGraph relation/index constraints) and synchronizes related ingestion mappings via `sanitize_manifest(GraphManifest)`. `GraphEngine.infer_manifest(...)` applies it automatically; lower-level `SQLInferenceManager` does not—sanitize the manifest yourself when assembling contracts outside the engine.
 
 ### What’s in the manifest
@@ -124,7 +125,8 @@ For PostgreSQL workflows, `infer_manifest(...)` returns a full manifest contract
 
 ## More capabilities
 
-- **SPARQL & RDF** — Endpoints and RDF files; optional OWL/RDFS schema inference (`rdflib`, `SPARQLWrapper` in the default install).
+- **GraFlo ontology (manifest RDF)** — Publish and query manifests as linked data: OWL vocabulary at `https://ontology.growgraph.dev/graflo` (v1.0.0), plus `manifest-to-rdf` / `rdf-to-manifest` CLI and `graflo.rdf` serializers. See [GraFlo ontology](model/graflo_ontology.md).
+- **SPARQL & RDF** — Endpoints and RDF files; optional OWL/RDFS **domain** schema inference (`rdflib`, `SPARQLWrapper` in the default install).
 - **Schema inference** — From PostgreSQL-style 3NF layouts (PK/FK heuristics) or from OWL/RDFS (`owl:Class` → vertices, `owl:ObjectProperty` → edges, `owl:DatatypeProperty` → vertex fields). See [Example 5](examples/example-5.md).
 - **Schema migrations** — Plan and apply guarded schema deltas (`migrate_schema` console script → `graflo.cli.migrate_schema`; library in `graflo.migrate`). Compare `from` / `to` schemas before execution to preview deltas and blocked high-risk operations. See [Concepts — Schema Migration](concepts/features_and_practices.md#schema-migration-v1).
 - **Typed `properties`** — Optional field types (`INT`, `FLOAT`, `STRING`, `DATETIME`, `BOOL`) on vertices and edges.
@@ -137,6 +139,7 @@ For PostgreSQL workflows, `infer_manifest(...)` returns a full manifest contract
 - [Installation](getting_started/installation.md)
 - [Quick Start Guide](getting_started/quickstart.md)
 - [Concepts (architecture diagrams)](concepts/index.md)
+- [GraFlo ontology — manifest ↔ RDF](model/graflo_ontology.md)
 - [Concepts — Schema Migration](concepts/features_and_practices.md#schema-migration-v1)
 - [Concepts — Comparing Two Schemas](concepts/features_and_practices.md#comparing-two-schemas)
 - [API Reference](reference/index.md)

@@ -46,6 +46,7 @@ class Schema(ConfigBaseModel):
 
     def finish_init(self) -> None:
         self.core_schema.finish_init()
+        self.db_profile.validate_against_schema(self.core_schema.edge_config)
 
     def remove_disconnected_vertices(self) -> set[str]:
         return self.core_schema.remove_disconnected_vertices()
