@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Literal, Sequence
+from typing import Any, Literal, Sequence, cast
 
 from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.contract.manifest import GraphManifest
@@ -34,6 +34,7 @@ from .merge_core import (
 )
 from .ops import (
     AddEdgePropertiesOp,
+    AddInverseEdgesOp,
     AddVertexPropertiesOp,
     MergeEdgesOp,
     MergeVerticesOp,
@@ -885,6 +886,228 @@ def apply_add_edge_properties(manifest: GraphManifest, op: AddEdgePropertiesOp) 
     schema.finish_init()
 
 
+def apply_add_inverse_edges(manifest: GraphManifest, op: AddInverseEdgesOp) -> None:
+    """Add inverse edges for mapped relations across schema and ingestion resources."""
+    relation_map = {
+        source: target
+        for source, target in op.relations.items()
+        if isinstance(source, str) and isinstance(target, str)
+    }
+    if not relation_map:
+        return
+
+    schema = manifest.graph_schema
+    if schema is None:
+        raise ValueError("add_inverse_edges requires graph_schema")
+
+    edges = list(schema.core_schema.edge_config.edges)
+    existing_edge_ids = {edge.edge_id for edge in edges}
+    for edge in list(edges):
+        if edge.relation is None:
+            continue
+        inverse_relation = relation_map.get(edge.relation)
+        if inverse_relation is None:
+            continue
+        inverse_edge_id = (edge.target, edge.source, inverse_relation)
+        if inverse_edge_id in existing_edge_ids:
+            continue
+        edges.append(
+            edge.model_copy(
+                deep=True,
+                update={
+                    "source": edge.target,
+                    "target": edge.source,
+                    "relation": inverse_relation,
+                },
+            )
+        )
+        existing_edge_ids.add(inverse_edge_id)
+
+    schema.core_schema = CoreSchema(
+        vertex_config=schema.core_schema.vertex_config,
+        edge_config=edge_config_from_edges(edges),
+    )
+    schema.finish_init()
+
+    if manifest.ingestion_model is not None:
+        from graflo.architecture.contract.ingestion.resource import Resource
+
+        resources: list[Resource] = []
+        for resource in manifest.ingestion_model.resources:
+            payload = resource.to_dict(skip_defaults=False)
+
+            pipeline = payload.get("pipeline")
+            if isinstance(pipeline, list):
+                pipeline_steps: list[dict[str, Any]] = [
+                    cast(dict[str, Any], step)
+                    for step in pipeline
+                    if isinstance(step, dict)
+                ]
+                existing_pipeline_edges: set[tuple[str, str, str]] = set()
+                for step in pipeline_steps:
+                    edge_payload_raw = step.get("edge")
+                    if not isinstance(edge_payload_raw, dict):
+                        continue
+                    edge_payload = cast(dict[str, Any], edge_payload_raw)
+                    source = edge_payload.get("from")
+                    target = edge_payload.get("to")
+                    if not isinstance(source, str) or not isinstance(target, str):
+                        source = edge_payload.get("source")
+                        target = edge_payload.get("target")
+                    relation = edge_payload.get("relation")
+                    if (
+                        isinstance(source, str)
+                        and isinstance(target, str)
+                        and isinstance(relation, str)
+                    ):
+                        existing_pipeline_edges.add((source, target, relation))
+
+                for step in list(pipeline_steps):
+                    edge_payload_raw = step.get("edge")
+                    if not isinstance(edge_payload_raw, dict):
+                        continue
+                    edge_payload = cast(dict[str, Any], edge_payload_raw)
+
+                    source = edge_payload.get("from")
+                    target = edge_payload.get("to")
+                    if not isinstance(source, str) or not isinstance(target, str):
+                        source = edge_payload.get("source")
+                        target = edge_payload.get("target")
+                    relation = edge_payload.get("relation")
+                    if not (
+                        isinstance(source, str)
+                        and isinstance(target, str)
+                        and isinstance(relation, str)
+                    ):
+                        continue
+
+                    inverse_relation = relation_map.get(relation)
+                    if inverse_relation is None:
+                        continue
+                    inverse_key = (target, source, inverse_relation)
+                    if inverse_key in existing_pipeline_edges:
+                        continue
+
+                    inverse_edge = dict(edge_payload)
+                    if isinstance(edge_payload.get("from"), str):
+                        inverse_edge["from"] = target
+                    if isinstance(edge_payload.get("to"), str):
+                        inverse_edge["to"] = source
+                    if isinstance(edge_payload.get("source"), str):
+                        inverse_edge["source"] = target
+                    if isinstance(edge_payload.get("target"), str):
+                        inverse_edge["target"] = source
+                    inverse_edge["relation"] = inverse_relation
+
+                    inverse_step = dict(step)
+                    inverse_step["edge"] = inverse_edge
+                    pipeline_steps.append(inverse_step)
+                    existing_pipeline_edges.add(inverse_key)
+                payload["pipeline"] = pipeline_steps
+
+            for spec_key in ("infer_edge_only", "infer_edge_except"):
+                specs = payload.get(spec_key)
+                if not isinstance(specs, list):
+                    continue
+                spec_dicts: list[dict[str, Any]] = [
+                    cast(dict[str, Any], spec)
+                    for spec in specs
+                    if isinstance(spec, dict)
+                ]
+                existing_specs: set[tuple[str, str, str]] = set()
+                for spec in spec_dicts:
+                    source = spec.get("source")
+                    target = spec.get("target")
+                    relation = spec.get("relation")
+                    if (
+                        isinstance(source, str)
+                        and isinstance(target, str)
+                        and isinstance(relation, str)
+                    ):
+                        existing_specs.add((source, target, relation))
+                for spec in list(spec_dicts):
+                    source = spec.get("source")
+                    target = spec.get("target")
+                    relation = spec.get("relation")
+                    if not (
+                        isinstance(source, str)
+                        and isinstance(target, str)
+                        and isinstance(relation, str)
+                    ):
+                        continue
+                    inverse_relation = relation_map.get(relation)
+                    if inverse_relation is None:
+                        continue
+                    inverse_key = (target, source, inverse_relation)
+                    if inverse_key in existing_specs:
+                        continue
+                    inverse_spec = dict(spec)
+                    inverse_spec["source"] = target
+                    inverse_spec["target"] = source
+                    inverse_spec["relation"] = inverse_relation
+                    spec_dicts.append(inverse_spec)
+                    existing_specs.add(inverse_key)
+                payload[spec_key] = spec_dicts
+
+            extra_weights = payload.get("extra_weights")
+            if isinstance(extra_weights, list):
+                extra_entries: list[dict[str, Any]] = [
+                    cast(dict[str, Any], entry)
+                    for entry in extra_weights
+                    if isinstance(entry, dict)
+                ]
+                existing_extra: set[tuple[str, str, str]] = set()
+                for entry in extra_entries:
+                    edge_payload_raw = entry.get("edge")
+                    if not isinstance(edge_payload_raw, dict):
+                        continue
+                    edge_payload = cast(dict[str, Any], edge_payload_raw)
+                    source = edge_payload.get("source")
+                    target = edge_payload.get("target")
+                    relation = edge_payload.get("relation")
+                    if (
+                        isinstance(source, str)
+                        and isinstance(target, str)
+                        and isinstance(relation, str)
+                    ):
+                        existing_extra.add((source, target, relation))
+                for entry in list(extra_entries):
+                    edge_payload_raw = entry.get("edge")
+                    if not isinstance(edge_payload_raw, dict):
+                        continue
+                    edge_payload = cast(dict[str, Any], edge_payload_raw)
+                    source = edge_payload.get("source")
+                    target = edge_payload.get("target")
+                    relation = edge_payload.get("relation")
+                    if not (
+                        isinstance(source, str)
+                        and isinstance(target, str)
+                        and isinstance(relation, str)
+                    ):
+                        continue
+                    inverse_relation = relation_map.get(relation)
+                    if inverse_relation is None:
+                        continue
+                    inverse_key = (target, source, inverse_relation)
+                    if inverse_key in existing_extra:
+                        continue
+                    inverse_edge = dict(edge_payload)
+                    inverse_edge["source"] = target
+                    inverse_edge["target"] = source
+                    inverse_edge["relation"] = inverse_relation
+                    inverse_entry = dict(entry)
+                    inverse_entry["edge"] = inverse_edge
+                    extra_entries.append(inverse_entry)
+                    existing_extra.add(inverse_key)
+                payload["extra_weights"] = extra_entries
+
+            resources.append(Resource.model_validate(payload))
+        manifest.ingestion_model.resources = resources
+        manifest.ingestion_model = IngestionModel.model_validate(
+            manifest.ingestion_model.to_dict(skip_defaults=False)
+        )
+
+
 def apply_sanitize(manifest: GraphManifest, op: SanitizeOp) -> None:
     """Apply DB-flavor-specific sanitization to *manifest* in place.
 
@@ -961,6 +1184,8 @@ def _dispatch_op(manifest: GraphManifest, op: Any) -> None:
         apply_remove_edge_properties(manifest, op)
     elif isinstance(op, AddEdgePropertiesOp):
         apply_add_edge_properties(manifest, op)
+    elif isinstance(op, AddInverseEdgesOp):
+        apply_add_inverse_edges(manifest, op)
     elif isinstance(op, SanitizeOp):
         apply_sanitize(manifest, op)
     else:
@@ -983,6 +1208,7 @@ def apply_manifest_ops_inplace(
         | RenameEdgePropertiesOp
         | RemoveEdgePropertiesOp
         | AddEdgePropertiesOp
+        | AddInverseEdgesOp
         | SanitizeOp
     ],
 ) -> None:
@@ -1011,6 +1237,7 @@ def apply_evolution(
         | RenameEdgePropertiesOp
         | RemoveEdgePropertiesOp
         | AddEdgePropertiesOp
+        | AddInverseEdgesOp
         | SanitizeOp
     ],
     *,

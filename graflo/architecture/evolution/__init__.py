@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Any
 
 from .ops import (
+    AddInverseEdgesOp,
     AddEdgePropertiesOp,
     AddVertexPropertiesOp,
     ManifestOp,
@@ -29,6 +30,7 @@ _APPLY_EXPORTS = frozenset(
     {
         "apply_evolution",
         "apply_add_edge_properties",
+        "apply_add_inverse_edges",
         "apply_add_vertex_properties",
         "apply_merge_edges",
         "apply_merge_vertices",
@@ -47,6 +49,7 @@ _APPLY_EXPORTS = frozenset(
 
 __all__ = [
     "AddEdgePropertiesOp",
+    "AddInverseEdgesOp",
     "AddVertexPropertiesOp",
     "ManifestOp",
     "MergeEdgesOp",
@@ -63,6 +66,7 @@ __all__ = [
     "SanitizeOp",
     "apply_evolution",
     "apply_add_edge_properties",
+    "apply_add_inverse_edges",
     "apply_add_vertex_properties",
     "apply_merge_edges",
     "apply_merge_vertices",

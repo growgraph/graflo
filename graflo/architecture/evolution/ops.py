@@ -181,6 +181,18 @@ class AddEdgePropertiesOp(ConfigBaseModel):
     )
 
 
+class AddInverseEdgesOp(ConfigBaseModel):
+    """Add inverse edge relations for matching relations across schema and ingestion."""
+
+    op: Literal["add_inverse_edges"] = "add_inverse_edges"
+    relations: dict[str, str] = PydanticField(
+        ...,
+        description=(
+            "Relation inverse map: ``{relation_name: inverse_relation_name}``."
+        ),
+    )
+
+
 class SanitizeOp(ConfigBaseModel):
     """Apply DB-flavor-specific name/field sanitization to a manifest.
 
@@ -221,6 +233,7 @@ ManifestOp = Annotated[
     | RenameEdgePropertiesOp
     | RemoveEdgePropertiesOp
     | AddEdgePropertiesOp
+    | AddInverseEdgesOp
     | SanitizeOp,
     PydanticField(discriminator="op"),
 ]

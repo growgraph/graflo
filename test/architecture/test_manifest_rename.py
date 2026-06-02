@@ -1,8 +1,13 @@
 import pytest
 
 from graflo.architecture.contract import GraphManifest
+from graflo.architecture.contract.ingestion.resource import (
+    EdgeInferSpec,
+    ResourceExtraWeightEntry,
+)
 from graflo.architecture.evolution import (
     AddEdgePropertiesOp,
+    AddInverseEdgesOp,
     AddVertexPropertiesOp,
     MergeEdgesOp,
     RemoveEdgesOp,
@@ -302,3 +307,67 @@ def test_remove_edge_properties_rejects_identity_fields() -> None:
             [RemoveEdgePropertiesOp(removals={"works_at": ["since"]})],
             bump_version=False,
         )
+
+
+def test_add_inverse_edges_updates_schema_and_ingestion_with_dedup() -> None:
+    manifest = GraphManifest.from_dict(_sample_manifest_payload())
+    assert manifest.ingestion_model is not None
+    # Existing inverse entries should be preserved and deduplicated.
+    resource = manifest.ingestion_model.resources[0]
+    resource.pipeline.append(
+        {
+            "edge": {
+                "from": "company",
+                "to": "person",
+                "relation": "employs",
+                "properties": [{"name": "since"}, {"name": "weight"}],
+            }
+        }
+    )
+    resource.infer_edge_only.append(
+        EdgeInferSpec(source="company", target="person", relation="employs")
+    )
+    resource.extra_weights.append(
+        ResourceExtraWeightEntry.model_validate(
+            {"edge": {"source": "company", "target": "person", "relation": "employs"}}
+        )
+    )
+
+    out = apply_evolution(
+        manifest,
+        [AddInverseEdgesOp(relations={"works_at": "employs"})],
+        bump_version=False,
+    )
+
+    assert out.graph_schema is not None
+    schema_edge_ids = [
+        edge.edge_id for edge in out.graph_schema.core_schema.edge_config.edges
+    ]
+    assert ("person", "company", "works_at") in schema_edge_ids
+    assert ("company", "person", "employs") in schema_edge_ids
+    assert ("person", "company", "employee_of") in schema_edge_ids
+    assert schema_edge_ids.count(("company", "person", "employs")) == 1
+
+    assert out.ingestion_model is not None
+    out_resource = out.ingestion_model.resources[0]
+    edge_steps = [
+        step["edge"]
+        for step in out_resource.pipeline
+        if isinstance(step, dict) and isinstance(step.get("edge"), dict)
+    ]
+    pipeline_keys = [
+        (step.get("from"), step.get("to"), step.get("relation")) for step in edge_steps
+    ]
+    assert ("person", "company", "works_at") in pipeline_keys
+    assert ("company", "person", "employs") in pipeline_keys
+    assert pipeline_keys.count(("company", "person", "employs")) == 1
+
+    infer_keys = [spec.edge_id for spec in out_resource.infer_edge_only]
+    assert ("person", "company", "works_at") in infer_keys
+    assert ("company", "person", "employs") in infer_keys
+    assert infer_keys.count(("company", "person", "employs")) == 1
+
+    extra_keys = [entry.edge.edge_id for entry in out_resource.extra_weights]
+    assert ("person", "company", "works_at") in extra_keys
+    assert ("company", "person", "employs") in extra_keys
+    assert extra_keys.count(("company", "person", "employs")) == 1
