@@ -5,16 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.8.0]
+## [1.8.1]
 
 ### Added
 
+- **`AddInverseEdgesOp`** — manifest evolution op (`add_inverse_edges`) that backfills inverse schema edges and ingestion mirrors for a `{forward_relation: inverse_relation}` map, with deduplication by `(source, target, relation)`.
+
+## [1.8.0]
+
+### Added
 - **GraFlo meta-ontology** — OWL vocabulary at `https://ontology.growgraph.dev/graflo` (`owl:versionIRI` `…/1.0.0`, `owl:versionInfo` `1.0.0`) describing `GraphManifest`, `Schema`, `IngestionModel`, `ProtoTransform`, pipeline actor steps, bindings, and related enumerations. Shipped as `graflo/rdf/ontology/graflo.ttl` plus JSON-LD context `graflo-context.jsonld`.
 - **`graflo.rdf`** — `ManifestRdfSerializer` / `ManifestRdfDeserializer` for bidirectional conversion between `GraphManifest` (YAML/Pydantic) and RDF (Turtle, JSON-LD, N-Triples, RDF/XML).
 - **CLI** — `manifest-to-rdf` and `rdf-to-manifest` console scripts (`graflo.rdf.cli`).
 
 ### Documentation
 
+- **[Manifest evolution](docs/concepts/manifest_evolution.md)** — documents **`AddInverseEdgesOp`** (inverse schema edges and ingestion mirrors).
 - **[GraFlo ontology](docs/model/graflo_ontology.md)** — meta-model vs user-domain RDF (`RdfInferenceManager`), versioning, URI layout, CLI, and round-trip semantics.
 - **Interactive ontology visualization** — custom hierarchical class graph (rectangular nodes, subClassOf and optional property edges, pan/zoom) embedded on the GraFlo ontology page; built via `docs/scripts/build_ontology_viz.py` with committed assets under `docs/assets/graflo-ontology-viz/`.
 - **README** and **docs index** — feature overview and quick links for manifest ↔ RDF workflows.

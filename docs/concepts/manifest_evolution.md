@@ -24,12 +24,14 @@ GraFlo provides **contract-level** operations that transform a validated `GraphM
 | **Rename edge fields** | Per-relation edge property renames across schema edge properties/identities, `db_profile` edge indexes/defaults, and edge actor `properties` payloads. |
 | **Remove edge fields** | Removes per-relation edge properties, prunes edge index/default references, and rewrites edge actor `properties`. |
 | **Add edge fields** | Adds properties to existing relations for edge-schema enrichment. |
+| **Add inverse edges** | For each mapped relation `R -> R_inv`, appends inverse schema edges (swap `source`/`target`, copy properties/identities/type/description) and mirrors matching ingestion references in explicit `pipeline` edge actors, `infer_edge_only` / `infer_edge_except`, and `extra_weights[*].edge`. Skips duplicates when the inverse `(source, target, relation)` already exists. |
 | **Sanitize** | Target-`DBType` policy: reserved-word-safe names on `DatabaseProfile`, reserved vertex field renames, and (for TigerGraph) consistent identity tuples per edge relation. This is the same work **`graflo.hq.sanitizer.Sanitizer`** applies by building a single **`SanitizeOp`**. |
 
 ## API
 
 ```python
 from graflo.architecture.evolution import (
+    AddInverseEdgesOp,
     MergeEdgesOp,
     MergeVerticesOp,
     RenameRelationsOp,
@@ -48,6 +50,10 @@ b = apply_evolution(
         MergeVerticesOp(op="merge_vertices", sources=["user", "person"], into="party"),
         RenameRelationsOp(op="rename_relations", relations={"works_at": "employed_by"}),
         MergeEdgesOp(op="merge_edges", sources=["employee_of"], into="employed_by"),
+        AddInverseEdgesOp(
+            op="add_inverse_edges",
+            relations={"employed_by": "employs"},
+        ),
     ],
     bump_version=True,  # default: increment schema metadata MINOR (see bump_semver_minor)
 )
@@ -59,7 +65,7 @@ apply_sanitize(manifest, SanitizeOp(db_flavor=DBType.TIGERGRAPH))
 ```
 
 - **`bump_version`**: when `True` or `"minor"` (default), increments the numeric `MAJOR.MINOR.PATCH` prefix of `schema.metadata.version` if present (prerelease suffix preserved). Pass `bump_version=False` to leave the version string unchanged.
-- **Imports**: `graflo.architecture.evolution` re-exports the ops and apply helpers; lower-level functions such as `apply_remove_vertices`, `apply_merge_vertices`, `apply_rename_relations`, `apply_rename_vertex_properties`, and `apply_sanitize` mutate a manifest in place (used mainly internally and by `Sanitizer`).
+- **Imports**: `graflo.architecture.evolution` re-exports the ops and apply helpers; lower-level functions such as `apply_remove_vertices`, `apply_merge_vertices`, `apply_rename_relations`, `apply_add_inverse_edges`, `apply_rename_vertex_properties`, and `apply_sanitize` mutate a manifest in place (used mainly internally and by `Sanitizer`).
 
 ## Tutorial: relation and property evolution
 
@@ -136,11 +142,32 @@ enriched = apply_evolution(
 )
 ```
 
+### 5) Add inverse edge relations (bidirectional modeling)
+
+Use this when a forward relation already exists in schema and ingestion (for example `person --works_at--> company`) and you want the reverse kind without hand-authoring every mirror (`company --employs--> person`).
+
+```python
+from graflo.architecture.evolution import AddInverseEdgesOp, apply_evolution
+
+bidirectional = apply_evolution(
+    manifest,
+    [
+        AddInverseEdgesOp(
+            relations={"works_at": "employs"},
+        )
+    ],
+    bump_version=False,
+)
+```
+
+For each schema edge whose `relation` is a key in the map, the op appends an inverse edge with swapped endpoints and the mapped relation name, copying the rest of the edge definition. Ingestion resources get matching inverse entries in explicit pipeline edge steps, `infer_edge_only` / `infer_edge_except`, and `extra_weights`; existing inverses are left unchanged (deduplicated by `(source, target, relation)`).
+
 ### Choosing `RenameRelationsOp` vs `MergeEdgesOp`
 
 - Use `RenameRelationsOp` when there is a one-to-one label replacement.
 - Use `MergeEdgesOp` when multiple relation labels should collapse into one canonical relation.
-- Both propagate to schema, `DatabaseProfile` (`edge_specs`, defaults/indexes), and ingestion selectors/resources.
+- Use `AddInverseEdgesOp` when forward and reverse relations should coexist with different labels (not a rename of the same edge kind).
+- `RenameRelationsOp` and `MergeEdgesOp` propagate to schema, `DatabaseProfile` (`edge_specs`, defaults/indexes), and ingestion selectors/resources. `AddInverseEdgesOp` does not rename existing relations; it only adds missing inverse edges and ingestion mirrors.
 
 ## Scope notes
 
