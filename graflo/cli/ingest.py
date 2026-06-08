@@ -220,8 +220,14 @@ def ingest(
                 ds_config_copy = ds_config.copy()
                 resource_name = ds_config_copy.pop("resource_name")
                 source_type = ds_config_copy.pop("source_type", None)
+                if source_type is not None and str(source_type).lower() == "api":
+                    raise click.UsageError(
+                        "API data sources must be declared in manifest bindings "
+                        "(APIConnector) and ingested via GraphEngine with a "
+                        "ConnectionProvider; --data-source-config-path does not "
+                        "support source_type: api."
+                    )
 
-                # Create data source using factory
                 data_source = DataSourceFactory.create_data_source(
                     source_type=source_type, **ds_config_copy
                 )

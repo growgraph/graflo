@@ -6,8 +6,10 @@ Internal code should import these classes from ``graflo.architecture.contract.bi
 from graflo.architecture.contract.bindings import (
     Bindings,
     BoundSourceKind,
+    APIConnector,
     FileConnector,
     JoinClause,
+    PaginationConfig,
     ResourceConnector,
     SparqlConnector,
     TableConnector,
@@ -16,8 +18,10 @@ from graflo.architecture.contract.bindings import (
 __all__ = [
     "Bindings",
     "BoundSourceKind",
+    "APIConnector",
     "FileConnector",
     "JoinClause",
+    "PaginationConfig",
     "ResourceConnector",
     "SparqlConnector",
     "TableConnector",

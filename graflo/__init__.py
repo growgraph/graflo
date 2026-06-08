@@ -61,6 +61,7 @@ def __dir__() -> list[str]:
 
 # --- Architecture ----------------------------------------------------------
 from .architecture import (  # noqa: E402
+    APIConnector,
     Bindings,
     FileConnector,
     GraphMetadata,
@@ -158,6 +159,7 @@ __all__ = [
     # Enums & utilities
     "AggregationType",
     "DBType",
+    "APIConnector",
     "FileConnector",
     "Bindings",
     "JoinClause",

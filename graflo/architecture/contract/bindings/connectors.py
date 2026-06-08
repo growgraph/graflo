@@ -28,6 +28,8 @@ _BASE_TABLE_ALIAS_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\Z")
 
 if TYPE_CHECKING:
     from graflo.db import PostgresConfig
+    from graflo.data_source.api import APIConfig
+    from graflo.connection_models import ApiAuth
     from graflo.filter.onto import FilterExpression
 else:
     try:
@@ -47,11 +49,13 @@ class BoundSourceKind(BaseEnum):
         FILE: File-based connector (directory + pattern or paths).
         SQL_TABLE: SQL table / database-backed connector.
         SPARQL: SPARQL / RDF connector (endpoint or local RDF via rdflib).
+        API: REST API connector (path + pagination on a runtime base URL).
     """
 
     FILE = "file"
     SQL_TABLE = "sql_table"
     SPARQL = "sparql"
+    API = "api"
 
 
 class ConnectorUpdate(ConfigBaseModel):
@@ -592,4 +596,107 @@ class SparqlConnector(ResourceConnector):
             f"?s ?p ?o . "
             f"{graph_close} "
             "}"
+        )
+
+
+class PaginationConfig(ConfigBaseModel):
+    """Configuration for API pagination (contract-level, secret-free).
+
+    Supports offset, cursor, and page-based strategies.
+    """
+
+    strategy: str = "offset"
+    offset_param: str = "offset"
+    limit_param: str = "limit"
+    cursor_param: str = "cursor"
+    page_param: str = "page"
+    per_page_param: str = "per_page"
+    initial_offset: int = 0
+    initial_page: int = 1
+    initial_cursor: str | None = None
+    page_size: int = 100
+    cursor_path: str | None = None
+    has_more_path: str | None = None
+    data_path: str | None = None
+
+
+class APIConnector(ResourceConnector):
+    """Connector for REST API endpoints.
+
+    Declares the non-secret access pattern (path, method, pagination). Runtime
+    ``base_url`` and credentials are supplied via ``connector_connection`` ->
+    ``conn_proxy`` -> :class:`~graflo.hq.connection_provider.ApiGeneralizedConnConfig`.
+
+    Attributes:
+        path: Relative endpoint path (e.g. ``/api/users``).
+        method: HTTP method (default ``GET``).
+        params: Static query parameters.
+        pagination: Pagination strategy and response path configuration.
+        headers: Non-secret HTTP headers.
+        timeout: Request timeout in seconds.
+        retries: Number of retry attempts.
+        retry_backoff_factor: Backoff factor for retries.
+        retry_status_forcelist: HTTP status codes to retry on.
+        verify: Verify SSL certificates.
+    """
+
+    path: str = Field(..., description="Relative API endpoint path")
+    method: str = "GET"
+    params: dict[str, Any] = Field(default_factory=dict)
+    pagination: PaginationConfig | None = None
+    headers: dict[str, str] = Field(default_factory=dict)
+    timeout: float | None = None
+    retries: int = 0
+    retry_backoff_factor: float = 0.1
+    retry_status_forcelist: list[int] = Field(
+        default_factory=lambda: [500, 502, 503, 504]
+    )
+    verify: bool = True
+
+    @staticmethod
+    def _join_url(base_url: str, path: str) -> str:
+        return f"{base_url.rstrip('/')}/{path.lstrip('/')}"
+
+    def matches(self, resource_identifier: str) -> bool:
+        """Match resource name, connector name, or path tail."""
+        if self.name is not None and resource_identifier == self.name:
+            return True
+        if self.resource_name is not None and resource_identifier == self.resource_name:
+            return True
+        path_tail = self.path.rstrip("/").rsplit("/", 1)[-1]
+        return resource_identifier in {self.path, path_tail}
+
+    def bound_source_kind(self) -> BoundSourceKind:
+        return BoundSourceKind.API
+
+    def build_api_config(
+        self,
+        *,
+        base_url: str,
+        auth: "ApiAuth | None" = None,
+        default_headers: dict[str, str] | None = None,
+        page_size_override: int | None = None,
+    ) -> "APIConfig":
+        """Merge contract fields with runtime connection config into ``APIConfig``."""
+        from graflo.data_source.api import APIConfig
+
+        headers = dict(default_headers or {})
+        headers.update(self.headers)
+
+        pagination = self.pagination
+        if pagination is not None and page_size_override is not None:
+            pagination = pagination.model_copy(update={"page_size": page_size_override})
+
+        return APIConfig(
+            url=self._join_url(base_url, self.path),
+            method=self.method,
+            headers=headers,
+            auth=auth,
+            params=dict(self.params),
+            timeout=self.timeout,
+            retries=self.retries,
+            retry_backoff_factor=self.retry_backoff_factor,
+            retry_status_forcelist=list(self.retry_status_forcelist),
+            verify=self.verify,
+            pagination=pagination,
         )

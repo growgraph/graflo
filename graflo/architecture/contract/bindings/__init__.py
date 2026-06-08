@@ -9,16 +9,19 @@ from .core import (
 )
 from .column_time_filter import ColumnTimeFilter
 from .connectors import (
+    APIConnector,
     BoundSourceKind,
     ConnectorUpdate,
     FileConnector,
     JoinClause,
+    PaginationConfig,
     ResourceConnector,
     SparqlConnector,
     TableConnector,
 )
 
 __all__ = [
+    "APIConnector",
     "Bindings",
     "BindingsConfig",
     "BindingsRegistry",
@@ -29,6 +32,7 @@ __all__ = [
     "StagingProxyBinding",
     "FileConnector",
     "JoinClause",
+    "PaginationConfig",
     "ResourceConnector",
     "SparqlConnector",
     "TableConnector",

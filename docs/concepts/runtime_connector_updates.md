@@ -1,6 +1,6 @@
 # Runtime connector updates
 
-Each `FileConnector`, `TableConnector`, and `SparqlConnector` gets a deterministic **`hash`** from its defining fields (excluding `name` and `resource_name`). `Bindings` indexes connectors and resource wiring by that hash, and `connector_connection` maps each connector to a `conn_proxy` by resolved hash.
+Each `FileConnector`, `TableConnector`, `SparqlConnector`, and **`APIConnector`** gets a deterministic **`hash`** from its defining fields (excluding `name` and `resource_name`). `Bindings` indexes connectors and resource wiring by that hash, and `connector_connection` maps each connector to a `conn_proxy` by resolved hash.
 
 If you change defining fields (for example narrowing a `time_filter` window (`start` / `interval` / `end`), adding `filters`, or adjusting file `regex`), the hash changes. You must **replace** the old connector in `Bindings` and **re-wire** internal maps; appending a second connector or using `add_connector` alone can leave stale hash entries.
 
@@ -79,7 +79,7 @@ Then call **`Bindings.apply_connector_update`** or **`replace_connector`** befor
 `ConnectorUpdate` is the typed carrier for one patch:
 
 - **Required:** `connector` — connector **`name`** or **`hash`** (same resolution as `resource_connector.connector` and `connector_connection.connector`).
-- **Any other keys:** merged onto that connector’s current data; same **field names** as `TableConnector` / `FileConnector` / `SparqlConnector`, but **only for fields you change** (patch-only). Do not repeat `table_name`, `rdf_class`, etc. unless you are actually changing them.
+- **Any other keys:** merged onto that connector’s current data; same **field names** as `TableConnector` / `FileConnector` / `SparqlConnector` / **`APIConnector`**, but **only for fields you change** (patch-only). Do not repeat `table_name`, `rdf_class`, `path`, etc. unless you are actually changing them.
 
 Extra keys use Pydantic `extra="allow"`, so new connector fields do not require extending `ConnectorUpdate`.
 
@@ -155,7 +155,7 @@ Resolves `update.connector`, merges `old.model_dump(mode="python")` with the pat
 
 ### `Bindings.replace_connector`
 
-Lower-level: `replace_connector(old, new)` where `old` is an existing connector instance or a **name/hash string**, and `new` is the fully built replacement (`TableConnector` | `FileConnector` | `SparqlConnector`). If `new.name` is unset and the old connector had a name, the name is copied onto `new`. Resource→connector hash lists and `conn_proxy` mappings move from the old hash to `new.hash`, then name/hash indexes are rebuilt.
+Lower-level: `replace_connector(old, new)` where `old` is an existing connector instance or a **name/hash string**, and `new` is the fully built replacement (`TableConnector` | `FileConnector` | `SparqlConnector` | **`APIConnector`**). If `new.name` is unset and the old connector had a name, the name is copied onto `new`. Resource→connector hash lists and `conn_proxy` mappings move from the old hash to `new.hash`, then name/hash indexes are rebuilt.
 
 Use this when you already built `new` yourself; use `apply_connector_update` for dict-shaped patches.
 
@@ -173,6 +173,7 @@ When patching **`time_filter`**, the merged payload replaces the entire nested o
 
 ## Related concepts
 
+- [API connector and pagination](api_connector.md) — **`APIConnector`**, **`PaginationConfig`**, auth via **`conn_proxy`**
 - [Table connector views and `SelectSpec`](table_connector_views.md) — advanced `TableConnector` SQL shape and [Bindings filter cookbook](table_connector_views.md#bindings-filter-cookbook-tableconnectorfilters).
 - [Explicit `connector_connection` proxy wiring](../examples/example-9.md) — manifest example for `conn_proxy`.
 - Bindings overview in [Concepts overview](index.md).

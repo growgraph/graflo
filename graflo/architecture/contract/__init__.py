@@ -1,11 +1,13 @@
 """Declarative contracts: manifest, bindings, ingestion models, resources, transforms."""
 
 from .bindings import (
+    APIConnector,
     Bindings,
     BoundSourceKind,
     ColumnTimeFilter,
     FileConnector,
     JoinClause,
+    PaginationConfig,
     ResourceConnector,
     SparqlConnector,
     TableConnector,
@@ -22,6 +24,7 @@ from .ingestion import (
 from .manifest import GraphManifest
 
 __all__ = [
+    "APIConnector",
     "Bindings",
     "BoundSourceKind",
     "ColumnTimeFilter",
@@ -29,6 +32,7 @@ __all__ = [
     "GraphManifest",
     "IngestionModel",
     "JoinClause",
+    "PaginationConfig",
     "ProtoTransform",
     "Resource",
     "ResourceConfig",

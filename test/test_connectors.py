@@ -590,3 +590,32 @@ def test_table_connector_time_filter_pandas_interval_hours() -> None:
 def test_column_time_filter_invalid_interval() -> None:
     with pytest.raises(ValueError, match="Invalid pandas timedelta"):
         ColumnTimeFilter(column="ts", start="2020-01-01", interval="not_a_timedelta")
+
+
+def test_api_connector_basic() -> None:
+    from graflo.architecture.contract.bindings import APIConnector, PaginationConfig
+
+    connector = APIConnector(
+        name="users_api",
+        path="/api/users",
+        pagination=PaginationConfig(page_size=50),
+    )
+    assert connector.bound_source_kind() == BoundSourceKind.API
+    assert connector.matches("users_api")
+    assert connector.matches("users")
+
+
+def test_api_connector_build_api_config() -> None:
+    from graflo.architecture.contract.bindings import APIConnector
+    from graflo.hq.connection_provider import ApiAuth
+
+    connector = APIConnector(path="/v1/items", method="GET")
+    config = connector.build_api_config(
+        base_url="https://api.example.com",
+        auth=ApiAuth(auth_type="bearer", token="secret"),
+        default_headers={"Accept": "application/json"},
+    )
+    assert config.url == "https://api.example.com/v1/items"
+    assert config.auth is not None
+    assert config.auth.token == "secret"
+    assert config.headers["Accept"] == "application/json"

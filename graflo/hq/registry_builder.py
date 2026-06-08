@@ -17,6 +17,7 @@ from graflo.data_source import DataSourceFactory, DataSourceRegistry
 from graflo.data_source.sql import SQLConfig, SQLDataSource
 from graflo.filter.sql import datetime_range_where_sql
 from graflo.hq.connection_provider import (
+    ApiGeneralizedConnConfig,
     ConnectionProvider,
     EmptyConnectionProvider,
     PostgresGeneralizedConnConfig,
@@ -24,6 +25,7 @@ from graflo.hq.connection_provider import (
 )
 from graflo.architecture.contract.bindings import (
     BoundSourceKind,
+    APIConnector,
     FileConnector,
     SparqlConnector,
     TableConnector,
@@ -157,6 +159,32 @@ class RegistryBuilder:
                     except Exception as e:
                         msg = (
                             f"Failed to register SPARQL source for resource "
+                            f"'{resource_name}' (connector '{cref}'): {e}"
+                        )
+                        failures.append(msg)
+                        if strict:
+                            continue
+
+                elif kind == BoundSourceKind.API:
+                    if not isinstance(connector, APIConnector):
+                        msg = (
+                            f"Connector '{cref}' for resource '{resource_name}' "
+                            f"is not an APIConnector"
+                        )
+                        logger.warning("%s, skipping", msg)
+                        failures.append(msg)
+                        continue
+                    try:
+                        self._register_api_sources(
+                            registry,
+                            resource_name,
+                            connector,
+                            ingestion_params,
+                            provider,
+                        )
+                    except Exception as e:
+                        msg = (
+                            f"Failed to register API source for resource "
                             f"'{resource_name}' (connector '{cref}'): {e}"
                         )
                         failures.append(msg)
@@ -445,3 +473,46 @@ class RegistryBuilder:
                 exc_info=True,
             )
             raise
+
+    def _register_api_sources(
+        self,
+        registry: DataSourceRegistry,
+        resource_name: str,
+        connector: APIConnector,
+        ingestion_params: "IngestionParams",
+        connection_provider: ConnectionProvider,
+    ) -> None:
+        """Register REST API data sources for a resource."""
+        from graflo.data_source.api import APIDataSource
+
+        generalized = (
+            connection_provider.get_generalized_conn_config(connector)
+            if hasattr(connection_provider, "get_generalized_conn_config")
+            else None
+        )
+        if not isinstance(generalized, ApiGeneralizedConnConfig):
+            logger.warning(
+                "API connector for resource '%s' has no RestApiConnConfig, skipping",
+                resource_name,
+            )
+            return
+
+        runtime = generalized.config
+        page_size_override = (
+            ingestion_params.batch_size if connector.pagination is not None else None
+        )
+        api_config = connector.build_api_config(
+            base_url=runtime.base_url,
+            auth=runtime.auth,
+            default_headers=runtime.default_headers,
+            page_size_override=page_size_override,
+        )
+        api_source = APIDataSource(config=api_config)
+        registry.register(api_source, resource_name=resource_name)
+
+        logger.info(
+            "Created API data source for path '%s' at '%s' mapped to resource '%s'",
+            connector.path,
+            api_config.url,
+            resource_name,
+        )

@@ -26,7 +26,7 @@ identities, and DB profile — then infer, validate, migrate, and load into any 
 
 - **`schema`** — `Schema`: metadata, **`core_schema`** (vertices, edges, typed **`properties`**, identities), and **`db_profile`** (`DatabaseProfile`: target flavor, storage names, secondary indexes, TigerGraph `default_property_values`, …).
 - **`ingestion_model`** — `IngestionModel`: named **`resources`** (actor sequences: *descend*, *transform*, *vertex*, *edge*, …) and a registry of reusable **`transforms`**.
-- **`bindings`** — Connectors (e.g. `FileConnector`, `TableConnector`, `SparqlConnector`) plus **`resource_connector`** wiring. Optional **`connector_connection`** maps connectors to **`conn_proxy`** labels so YAML stays secret-free; a runtime **`ConnectionProvider`** supplies credentials.
+- **`bindings`** — Connectors (e.g. `FileConnector`, `TableConnector`, `SparqlConnector`, **`APIConnector`**) plus **`resource_connector`** wiring. Optional **`connector_connection`** maps connectors to **`conn_proxy`** labels so YAML stays secret-free; a runtime **`ConnectionProvider`** supplies credentials. See [API connector and pagination](docs/concepts/api_connector.md) for REST pagination strategies.
 
 ### Runtime path
 
@@ -53,7 +53,7 @@ identities, and DB profile — then infer, validate, migrate, and load into any 
 | `SQL` — relational tables (docs focus on PostgreSQL; other engines via SQLAlchemy where supported) | `TableConnector` | `SQLDataSource` | automatic for PostgreSQL-style 3NF (PK/FK heuristics) |
 | `SPARQL` — RDF files (`.ttl`, `.rdf`, `.n3`) | `SparqlConnector` | `RdfFileDataSource` | automatic (OWL/RDFS ontology) |
 | `SPARQL` — SPARQL endpoints (Fuseki, …) | `SparqlConnector` | `SparqlEndpointDataSource` | automatic (OWL/RDFS ontology) |
-| `API` — REST APIs | — | `APIDataSource` | manual |
+| `API` — REST APIs | `APIConnector` | `APIDataSource` | manual |
 | `IN_MEMORY` — list / DataFrame | — | `InMemoryDataSource` | manual |
 
 ### Supported targets

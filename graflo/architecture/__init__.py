@@ -10,6 +10,7 @@ See ``docs/importing.md`` in the package.
 """
 
 from .contract import (
+    APIConnector,
     Bindings,
     FileConnector,
     GraphManifest,
@@ -38,6 +39,7 @@ from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.schema.vertex import FieldType, Vertex, VertexConfig
 
 __all__ = [
+    "APIConnector",
     "Bindings",
     "CoreSchema",
     "DatabaseProfile",

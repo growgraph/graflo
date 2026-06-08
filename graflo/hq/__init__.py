@@ -17,11 +17,15 @@ from graflo.hq.doc_error_sink import (
     failure_sinks_from_ingestion_params,
 )
 from graflo.hq.connection_provider import (
+    ApiAuth,
+    ApiGeneralizedConnConfig,
     ConnectionProvider,
     EmptyConnectionProvider,
-    InMemoryConnectionProvider,
     GeneralizedConnConfig,
+    InMemoryConnectionProvider,
     PostgresGeneralizedConnConfig,
+    RestApiConnConfig,
+    S3GeneralizedConnConfig,
     SparqlGeneralizedConnConfig,
     SparqlAuth,
 )
@@ -33,6 +37,8 @@ from graflo.hq.resource_mapper import ResourceMapper
 from graflo.hq.sanitizer import Sanitizer
 
 __all__ = [
+    "ApiAuth",
+    "ApiGeneralizedConnConfig",
     "CastBatchResult",
     "Caster",
     "DocErrorSink",
@@ -45,6 +51,8 @@ __all__ = [
     "InMemoryConnectionProvider",
     "GeneralizedConnConfig",
     "PostgresGeneralizedConnConfig",
+    "RestApiConnConfig",
+    "S3GeneralizedConnConfig",
     "SparqlGeneralizedConnConfig",
     "DocCastFailure",
     "DocErrorBudgetExceeded",
