@@ -1,3 +1,4 @@
+
 abstract: >-
   Manifest-driven graph schema and ingestion for labeled property graphs:
   define schemas in GraphManifest (YAML/Python), ingest from CSV/JSON/Parquet/SQL/RDF/SPARQL/API,
@@ -7,12 +8,10 @@ authors:
 - affiliation: GrowGraph
   family-names: Belikov
   given-names: Alexander
-  orcid: 0000-0002-5649-0913
+  orcid: https://orcid.org/0000-0002-5649-0913  
 cff-version: 1.2.0
 date-released: '2025-05-16'
-doi: 10.5281/zenodo.15446131
-license: []
-license-url: https://github.com/growgraph/graflo/blob/main/LICENSE
+license: "BUSL-1.1"
 message: If you use this software, please cite it using the metadata from this file.
 title: GraFlo — Graph Schema & Transformation Language (GSTL)
 type: software
