@@ -73,14 +73,14 @@ GraFlo targets the LPG model:
 - **Vertices** — nodes with typed **properties** (manifest key: `properties`) and logical **identity** keys for upserts.
   - Duplicate vertex property definitions are merged by name; conflicting typed duplicates are rejected.
   - Identity fallback from all properties is opt-in via `VertexConfig.identity_from_all_properties` and is disabled by default.
-- **Edges** — directed relationships between vertices; relationship attributes are declared as **`properties`** on the logical edge (same list-of-names-or-`Field` shape as vertices).
+- **Edges** — relationships between vertices ( **`directed: true`** by default); set **`directed: false`** for logically undirected kinds. Relationship attributes are declared as **`properties`** on the logical edge (same list-of-names-or-`Field` shape as vertices). TigerGraph can project undirected edges to `UNDIRECTED EDGE` DDL or pair directed edges via **`db_profile.edge_specs[*].reverse_edge`** (`WITH REVERSE_EDGE`).
 
 ### Schema
 
 The `Schema` is the single source of truth for **graph structure** (not for ingestion transforms):
 
 - **Vertex definitions** — vertex types, **`properties`** (optionally typed: `INT`, `FLOAT`, `STRING`, `DATETIME`, `BOOL`), identity, and filters. **Secondary indexes** and physical naming live under **`schema.db_profile`** (`DatabaseProfile`: e.g. `vertex_indexes`, `edge_specs`; see [Backend indexes](concepts/backend_indexes.md)).
-- **Edge definitions** — source/target (and optional `relation`), **`properties`** for relationship payload, and optional **`identities`** for parallel-edge / MERGE semantics.
+- **Edge definitions** — source/target (and optional `relation`), optional **`directed`** (default `true`), **`properties`** for relationship payload, and optional **`identities`** for parallel-edge / MERGE semantics.
 - **Schema inference** — generate schemas from PostgreSQL 3NF databases (PK/FK heuristics) or from OWL/RDFS ontologies.
 
 Resources and transforms are part of `IngestionModel`, not `Schema`.

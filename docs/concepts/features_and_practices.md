@@ -123,4 +123,5 @@ Schema comparison gives you a predictable transition path between versions. Inst
 9. Use PostgreSQL schema inference for automatic schema generation from normalized databases (3NF) with proper PK/FK constraints
 10. Use RDF/OWL schema inference (`infer_schema_from_rdf`) when ingesting data from SPARQL endpoints or `.ttl` files with a well-defined ontology
 11. Specify property types for better validation and database-specific optimizations, especially when targeting TigerGraph
+12. **Bidirectional edges**: choose one strategy — (a) two directed logical edges + `AddInverseEdgesOp` for portability; (b) TigerGraph `edge_specs[*].reverse_edge` for a native `WITH REVERSE_EDGE` pair with one load path; (c) `directed: false` for truly symmetric relationships (`UNDIRECTED EDGE` on TigerGraph). Do not combine `reverse_edge` with a second logical reverse edge or `AddInverseEdgesOp` on the same forward relation.
 

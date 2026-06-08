@@ -98,6 +98,7 @@ An `Edge` describes edges and their logical identities. It allows:
 - Optional uniqueness semantics through **`identities`** (multiple candidate keys are allowed)
 - **`properties`**: relationship payload (names and optional types), same accepted forms as vertex properties (strings, `Field`, or dicts with at least `name`)
 - Optional static **`relation`** label (e.g. Neo4j relationship type) when it is not derived at ingest time
+- **`directed`** (default `true`): when `false`, the edge is logically undirected; `AddInverseEdgesOp` does not duplicate it. On TigerGraph, `directed: false` maps to `UNDIRECTED EDGE` DDL; bidirectional directed pairs can use `db_profile.edge_specs[*].reverse_edge` (`WITH REVERSE_EDGE`) instead of a second logical edge.
 
 Ingestion-only controls (**`relation_field`**, **`relation_from_key`**, **`match_source`**, **`match_target`**, vertex-sourced edge payload) live on **`EdgeActor`** steps and **`EdgeDerivation`**, not on the logical `Edge` model.
 
@@ -107,6 +108,7 @@ Ingestion-only controls (**`relation_field`**, **`relation_from_key`**, **`match
 - **`source`**: Source vertex name (required)
 - **`target`**: Target vertex name (required)
 - **`identities`**: Logical identity keys for the edge (each key can induce uniqueness)
+- **`directed`**: When `true` (default), `source`→`target` direction matters; when `false`, the edge is logically undirected
 - **`properties`**: Declared relationship attributes (typed or untyped)
 
 **Neo4j, Memgraph, FalkorDB — relationship `MERGE` keys:** Writers match source and target nodes on vertex identity, then `MERGE` the relationship. Which **relationship properties** participate in that `MERGE` (so multiple edges between the same two vertices do not collapse) is derived as follows: use the **first** `identities` key, keep only tokens that refer to relationship payload (skip `source` and `target`; the `relation` token becomes the `relation` property on the relationship where used). If that produces no fields—e.g. `identities` is empty—the writer falls back to **all** names in **`Edge.properties`**. Declare `identities` when the full property list is a superset of what should define edge uniqueness.
@@ -121,10 +123,55 @@ Vertex fields that should appear on edges are configured via **edge actor** opti
 
 #### Edge behavior control
 - Edge physical variants should be modeled with `schema.db_profile.edge_specs[*].purpose` (YAML) / `db_profile.edge_specs[*].purpose` (in code).
+- TigerGraph bidirectional pairs: `schema.db_profile.edge_specs[*].reverse_edge` emits `WITH REVERSE_EDGE` in GSQL (see [TigerGraph connection](../reference/db/tigergraph/conn.md#edge-direction-in-gsql)).
 - `Edge.aux` is no longer a behavior switch.
 
 > DB-only physical edge metadata (including `purpose`) is configured under
 > **`schema.db_profile.edge_specs`**, not on `Edge`.
+
+
+#### Directed, undirected, and bidirectional edges
+
+Logical edges are **directed by default** (`directed: true`). Direction matters for ingestion semantics and for evolution ops such as [`AddInverseEdgesOp`](manifest_evolution.md#5-add-inverse-edge-relations-bidirectional-modeling).
+
+| Modeling goal | GraFlo config | TigerGraph GSQL (when `db_flavor: tigergraph`) |
+|---------------|---------------|------------------------------------------------|
+| Single direction | `directed: true` (default), one logical edge | `ADD DIRECTED EDGE ...` |
+| Portable forward + reverse labels | Two logical directed edges, or one forward + `AddInverseEdgesOp` | Two `ADD DIRECTED EDGE` statements |
+| TG-native directed pair, one load path | One logical edge + `edge_specs[*].reverse_edge` | `ADD DIRECTED EDGE ... WITH REVERSE_EDGE="rev_name"` |
+| Symmetric / direction-agnostic | `directed: false` on one logical edge | `ADD UNDIRECTED EDGE ...` |
+
+**Undirected example:**
+
+```yaml
+edge_config:
+  edges:
+    - source: user
+      target: user
+      relation: friend_of
+      directed: false
+      properties: [on_date]
+```
+
+**TigerGraph reverse pair example** (do not also add a second logical edge for the reverse relation):
+
+```yaml
+edge_config:
+  edges:
+    - source: user
+      target: user
+      relation: is_following
+db_profile:
+  db_flavor: tigergraph
+  edge_specs:
+    - source: user
+      target: user
+      relation: is_following
+      relation_name: is_following
+      reverse_edge: is_followed_by
+```
+
+`reverse_edge` is TigerGraph-only physical metadata on `EdgePhysicalSpec`. It is mutually exclusive with `directed: false` on the logical edge.
 
 #### Matching and filtering (ingestion)
 - **`match_source`** / **`match_target`** / **`match`**: edge **actor** options for branch selection when building edges from hierarchical documents

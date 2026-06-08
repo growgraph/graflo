@@ -63,7 +63,7 @@ Defines the graph contract.
 
 - `metadata`: human-facing identity (`name`, optional `version`)
 - `graph.vertex_config`: vertex types, **`properties`**, identity keys; optional **`blank: true`** for placeholder vertices (auto **`id`** identity)
-- `graph.edge_config`: source/target relationships, optional `relation`, edge **`properties`**, `identities`
+- `graph.edge_config`: source/target relationships, optional `relation`, optional **`directed`** (default `true`), edge **`properties`**, `identities`
 - `db_profile`: DB-specific physical behavior (indexes, naming, **`default_property_values`** for TigerGraph GSQL `DEFAULT` on vertex/edge attributes, backend details)
 
 Use `schema` for **what graph exists**.
@@ -97,6 +97,8 @@ db_profile:
 ```
 
 This corresponds to overriding TigerGraph’s built-in defaults (e.g. `reading FLOAT DEFAULT -1.0`); see the [TigerGraph “Defining a Graph Schema”](https://docs.tigergraph.com/gsql-ref/4.2/ddl-and-loading/defining-a-graph-schema) documentation.
+
+**TigerGraph edge direction (schema / `db_profile`):** logical **`directed: false`** on an edge becomes `UNDIRECTED EDGE` in GSQL. For bidirectional *directed* pairs on TigerGraph only, declare one forward logical edge and set **`reverse_edge`** on the matching `edge_specs` entry (GSQL `WITH REVERSE_EDGE`) instead of authoring a second logical edge — or use [manifest evolution `AddInverseEdgesOp`](../concepts/manifest_evolution.md#5-add-inverse-edge-relations-bidirectional-modeling) for a portable second edge. See [Core components — Edge](../concepts/core_components.md#edge).
 
 Use `ingestion_model` for **how source records become vertices/edges**.
 

@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
-from typing import Any, Literal, Sequence, cast
+from typing import Any, Literal, Sequence
 
 from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.contract.manifest import GraphManifest
@@ -12,7 +11,7 @@ from graflo.architecture.pipeline.runtime.actor import ActorWrapper
 from graflo.architecture.database_features import DatabaseProfile
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.core import CoreSchema
-from graflo.architecture.schema.edge import Edge, EdgeConfig
+from graflo.architecture.schema.edge import EdgeConfig
 from graflo.architecture.schema.vertex import Field, Vertex, VertexConfig
 
 from .db_profile import (
@@ -25,7 +24,15 @@ from .db_profile import (
     apply_vertex_merge_to_db_profile,
     apply_vertex_removal_to_db_profile,
     apply_vertex_rename_to_db_profile,
+    apply_inverse_edges_to_db_profile,
     merge_relation_entries_in_db_profile,
+)
+from .inverse_edges import (
+    _append_inverse_flat_specs,
+    _append_inverses_for_nested_edges,
+    _as_dict_list,
+    _schema_edges_with_inverses,
+    append_inverses_to_pipeline,
 )
 from .merge_core import (
     edge_config_from_edges,
@@ -68,8 +75,6 @@ from .sanitize import (
 from .version import bump_semver_minor
 
 logger = logging.getLogger(__name__)
-
-EdgeTriple = tuple[str, str, str]
 
 
 def _revalidate_db_profile(profile: DatabaseProfile) -> DatabaseProfile:
@@ -889,146 +894,6 @@ def apply_add_edge_properties(manifest: GraphManifest, op: AddEdgePropertiesOp) 
     schema.finish_init()
 
 
-def _as_dict_list(value: Any) -> list[dict[str, Any]]:
-    if not isinstance(value, list):
-        return []
-    return [cast(dict[str, Any], item) for item in value if isinstance(item, dict)]
-
-
-def _edge_triple_from_payload(payload: dict[str, Any]) -> EdgeTriple | None:
-    """Return (source, target, relation) from a pipeline or schema edge dict."""
-    source = payload.get("from")
-    target = payload.get("to")
-    if not isinstance(source, str) or not isinstance(target, str):
-        source = payload.get("source")
-        target = payload.get("target")
-    relation = payload.get("relation")
-    if (
-        isinstance(source, str)
-        and isinstance(target, str)
-        and isinstance(relation, str)
-    ):
-        return source, target, relation
-    return None
-
-
-def _collect_edge_triples(payloads: Iterable[dict[str, Any]]) -> set[EdgeTriple]:
-    triples: set[EdgeTriple] = set()
-    for payload in payloads:
-        triple = _edge_triple_from_payload(payload)
-        if triple is not None:
-            triples.add(triple)
-    return triples
-
-
-def _swapped_edge_payload(
-    edge_payload: dict[str, Any], inverse_relation: str
-) -> dict[str, Any]:
-    triple = _edge_triple_from_payload(edge_payload)
-    if triple is None:
-        raise ValueError("edge payload must define source, target, and relation")
-    source, target, _ = triple
-    inverse_edge = dict(edge_payload)
-    if isinstance(edge_payload.get("from"), str):
-        inverse_edge["from"] = target
-    if isinstance(edge_payload.get("to"), str):
-        inverse_edge["to"] = source
-    if isinstance(edge_payload.get("source"), str):
-        inverse_edge["source"] = target
-    if isinstance(edge_payload.get("target"), str):
-        inverse_edge["target"] = source
-    inverse_edge["relation"] = inverse_relation
-    return inverse_edge
-
-
-def _append_inverse_flat_specs(
-    specs: list[dict[str, Any]], relation_map: dict[str, str]
-) -> list[dict[str, Any]]:
-    existing = _collect_edge_triples(specs)
-    out = list(specs)
-    for spec in specs:
-        triple = _edge_triple_from_payload(spec)
-        if triple is None:
-            continue
-        source, target, relation = triple
-        inverse_relation = relation_map.get(relation)
-        if inverse_relation is None:
-            continue
-        inverse_triple = (target, source, inverse_relation)
-        if inverse_triple in existing:
-            continue
-        inverse_spec = dict(spec)
-        inverse_spec["source"] = target
-        inverse_spec["target"] = source
-        inverse_spec["relation"] = inverse_relation
-        out.append(inverse_spec)
-        existing.add(inverse_triple)
-    return out
-
-
-def _append_inverses_for_nested_edges(
-    entries: list[dict[str, Any]],
-    relation_map: dict[str, str],
-    *,
-    edge_key: str,
-) -> list[dict[str, Any]]:
-    edge_payloads = [
-        cast(dict[str, Any], entry[edge_key])
-        for entry in entries
-        if isinstance(entry.get(edge_key), dict)
-    ]
-    existing = _collect_edge_triples(edge_payloads)
-    out = list(entries)
-    for entry in entries:
-        edge_raw = entry.get(edge_key)
-        if not isinstance(edge_raw, dict):
-            continue
-        edge_payload = cast(dict[str, Any], edge_raw)
-        triple = _edge_triple_from_payload(edge_payload)
-        if triple is None:
-            continue
-        source, target, relation = triple
-        inverse_relation = relation_map.get(relation)
-        if inverse_relation is None:
-            continue
-        inverse_triple = (target, source, inverse_relation)
-        if inverse_triple in existing:
-            continue
-        inverse_entry = dict(entry)
-        inverse_entry[edge_key] = _swapped_edge_payload(edge_payload, inverse_relation)
-        out.append(inverse_entry)
-        existing.add(inverse_triple)
-    return out
-
-
-def _schema_edges_with_inverses(
-    edges: list[Edge], relation_map: dict[str, str]
-) -> list[Edge]:
-    existing_edge_ids = {edge.edge_id for edge in edges}
-    out = list(edges)
-    for edge in edges:
-        if edge.relation is None:
-            continue
-        inverse_relation = relation_map.get(edge.relation)
-        if inverse_relation is None:
-            continue
-        inverse_edge_id = (edge.target, edge.source, inverse_relation)
-        if inverse_edge_id in existing_edge_ids:
-            continue
-        out.append(
-            edge.model_copy(
-                deep=True,
-                update={
-                    "source": edge.target,
-                    "target": edge.source,
-                    "relation": inverse_relation,
-                },
-            )
-        )
-        existing_edge_ids.add(inverse_edge_id)
-    return out
-
-
 def apply_add_inverse_edges(manifest: GraphManifest, op: AddInverseEdgesOp) -> None:
     """Add inverse edges for mapped relations across schema and ingestion resources."""
     relation_map = {
@@ -1043,15 +908,17 @@ def apply_add_inverse_edges(manifest: GraphManifest, op: AddInverseEdgesOp) -> N
     if schema is None:
         raise ValueError("add_inverse_edges requires graph_schema")
 
+    new_edges = _schema_edges_with_inverses(
+        list(schema.core_schema.edge_config.edges),
+        relation_map,
+        schema.db_profile,
+    )
     schema.core_schema = CoreSchema(
         vertex_config=schema.core_schema.vertex_config,
-        edge_config=edge_config_from_edges(
-            _schema_edges_with_inverses(
-                list(schema.core_schema.edge_config.edges),
-                relation_map,
-            )
-        ),
+        edge_config=edge_config_from_edges(new_edges),
     )
+    apply_inverse_edges_to_db_profile(schema.db_profile, relation_map, new_edges)
+    schema.db_profile = _revalidate_db_profile(schema.db_profile)
     schema.finish_init()
 
     if manifest.ingestion_model is None:
@@ -1065,8 +932,10 @@ def apply_add_inverse_edges(manifest: GraphManifest, op: AddInverseEdgesOp) -> N
 
         pipeline_steps = _as_dict_list(payload.get("pipeline"))
         if pipeline_steps:
-            payload["pipeline"] = _append_inverses_for_nested_edges(
-                pipeline_steps, relation_map, edge_key="edge"
+            payload["pipeline"] = append_inverses_to_pipeline(
+                pipeline_steps,
+                relation_map,
+                new_edges,
             )
 
         for spec_key in ("infer_edge_only", "infer_edge_except"):
@@ -1077,7 +946,10 @@ def apply_add_inverse_edges(manifest: GraphManifest, op: AddInverseEdgesOp) -> N
         extra_entries = _as_dict_list(payload.get("extra_weights"))
         if extra_entries:
             payload["extra_weights"] = _append_inverses_for_nested_edges(
-                extra_entries, relation_map, edge_key="edge"
+                extra_entries,
+                relation_map,
+                edge_key="edge",
+                schema_edges=new_edges,
             )
 
         resources.append(Resource.model_validate(payload))

@@ -235,6 +235,8 @@ class ManifestRdfSerializer:
             graph.add((edge_uri, ns.edgeTarget, target_uri))
 
         payload: dict[str, Any] = {}
+        if not edge.directed:
+            payload["directed"] = edge.directed
         if edge.identities:
             graph.add((edge_uri, ns.edgeIdentities, json_literal(edge.identities)))
         if edge.type is not None:

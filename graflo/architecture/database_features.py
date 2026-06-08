@@ -55,6 +55,14 @@ class EdgePhysicalSpec(EdgeRef):
             "inherit=base only, append=base+variant, replace=variant only."
         ),
     )
+    reverse_edge: str | None = PydanticField(
+        default=None,
+        description=(
+            "TigerGraph only: GSQL WITH REVERSE_EDGE name. Creates a paired reverse "
+            "edge type with swapped endpoints. Mutually exclusive with logical "
+            "directed=false on the edge."
+        ),
+    )
 
     @property
     def physical_key(self) -> EdgePhysicalKey:
@@ -163,6 +171,16 @@ class DatabaseProfile(ConfigBaseModel):
             )
             if item.relation_name is not None:
                 variant.relation_name = item.relation_name
+            if item.reverse_edge is not None:
+                if (
+                    variant.reverse_edge is not None
+                    and variant.reverse_edge != item.reverse_edge
+                ):
+                    raise ValueError(
+                        f"Conflicting reverse_edge for edge spec {variant.physical_key!r}: "
+                        f"{variant.reverse_edge!r} vs {item.reverse_edge!r}"
+                    )
+                variant.reverse_edge = item.reverse_edge
             existing = {tuple(ix.fields) for ix in variant.indexes}
             for idx in item.indexes:
                 if tuple(idx.fields) not in existing:
@@ -426,6 +444,16 @@ class DatabaseProfile(ConfigBaseModel):
         if spec is not None and spec.relation_name is not None:
             return spec.relation_name
         return default_relation
+
+    def edge_reverse_edge_name(
+        self,
+        edge_id: EdgeId,
+        purpose: str | None = None,
+    ) -> str | None:
+        spec = self._edge_variant_spec(edge_id=edge_id, purpose=purpose)
+        if spec is None:
+            return None
+        return spec.reverse_edge
 
     def edge_storage_name(
         self,
