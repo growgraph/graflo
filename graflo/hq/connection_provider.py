@@ -6,7 +6,7 @@ This module defines a connector-centric runtime indirection:
 
 from __future__ import annotations
 
-from typing import Literal, Protocol
+from typing import Protocol
 
 from pydantic import BaseModel, Field
 
@@ -17,58 +17,30 @@ from graflo.architecture.contract.bindings import (
     TableConnector,
 )
 from graflo.db.connection import PostgresConfig, SparqlEndpointConfig
-
-
-class SparqlAuth(BaseModel):
-    """Authentication payload for SPARQL endpoint access."""
-
-    username: str | None = None
-    password: str | None = None
-
-
-class PostgresGeneralizedConnConfig(BaseModel):
-    """Generalized runtime config variant for SQL/Postgres connections."""
-
-    kind: Literal["postgres"] = "postgres"
-    config: PostgresConfig
-
-
-class SparqlGeneralizedConnConfig(BaseModel):
-    """Generalized runtime config variant for SPARQL endpoint connections."""
-
-    kind: Literal["sparql"] = "sparql"
-    config: SparqlEndpointConfig
-
-
-class S3GeneralizedConnConfig(BaseModel):
-    """Runtime credentials and defaults for S3 staging (TigerGraph bulk ingest)."""
-
-    kind: Literal["s3"] = "s3"
-    bucket: str | None = Field(
-        default=None,
-        description="Default bucket when TigergraphBulkLoadConfig.s3_bucket is unset.",
-    )
-    region: str | None = Field(default=None)
-    aws_access_key_id: str | None = Field(default=None)
-    aws_secret_access_key: str | None = Field(default=None)
-    endpoint_url: str | None = Field(
-        default=None, description="For S3-compatible endpoints (MinIO, etc.)."
-    )
-    loader_endpoint_url: str | None = Field(
-        default=None,
-        description=(
-            "S3 endpoint URL as seen by TigerGraph when it runs in another network "
-            "namespace (e.g. Docker). Used only in CREATE DATA_SOURCE for LOADING JOB; "
-            "boto3 continues to use endpoint_url."
-        ),
-    )
-
-
-GeneralizedConnConfig = (
-    PostgresGeneralizedConnConfig
-    | SparqlGeneralizedConnConfig
-    | S3GeneralizedConnConfig
+from graflo.connection_models import (
+    ApiAuth,
+    ApiGeneralizedConnConfig,
+    GeneralizedConnConfig,
+    PostgresGeneralizedConnConfig,
+    RestApiConnConfig,
+    S3GeneralizedConnConfig,
+    SparqlAuth,
+    SparqlGeneralizedConnConfig,
 )
+
+__all__ = [
+    "ApiAuth",
+    "ApiGeneralizedConnConfig",
+    "ConnectionProvider",
+    "EmptyConnectionProvider",
+    "GeneralizedConnConfig",
+    "InMemoryConnectionProvider",
+    "PostgresGeneralizedConnConfig",
+    "RestApiConnConfig",
+    "S3GeneralizedConnConfig",
+    "SparqlAuth",
+    "SparqlGeneralizedConnConfig",
+]
 
 
 class ConnectionProvider(Protocol):
@@ -136,19 +108,14 @@ class InMemoryConnectionProvider(BaseModel):
     - Legacy: per-resource maps (``postgres_by_resource`` / ``sparql_by_resource``)
     """
 
-    # New wiring.
     configs_by_proxy: dict[str, GeneralizedConnConfig] = Field(default_factory=dict)
     proxy_by_connector_hash: dict[str, str] = Field(default_factory=dict)
 
-    # Legacy wiring (kept to avoid breaking existing providers).
     postgres_by_resource: dict[str, PostgresConfig] = Field(default_factory=dict)
     sparql_by_resource: dict[str, SparqlEndpointConfig] = Field(default_factory=dict)
     sparql_by_endpoint: dict[str, SparqlEndpointConfig] = Field(default_factory=dict)
     default_sparql: SparqlEndpointConfig | None = None
 
-    # ------------------------------------------------------------------
-    # New API
-    # ------------------------------------------------------------------
     def register_generalized_config(
         self, *, conn_proxy: str, config: GeneralizedConnConfig
     ) -> None:
@@ -224,9 +191,6 @@ class InMemoryConnectionProvider(BaseModel):
         """Store S3 staging credentials/config under *conn_proxy*."""
         self.configs_by_proxy[conn_proxy] = config
 
-    # ------------------------------------------------------------------
-    # Legacy API
-    # ------------------------------------------------------------------
     def get_postgres_config(
         self, resource_name: str, connector: TableConnector
     ) -> PostgresConfig | None:

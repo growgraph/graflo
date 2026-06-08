@@ -163,7 +163,7 @@ An `AbstractDataSource` subclass defines where data comes from and how it is ret
 | `FILE` | `FileDataSource` | JSON, JSONL, CSV/TSV, Parquet files |
 | `SPARQL` | `RdfFileDataSource` | Turtle (`.ttl`), RDF/XML (`.rdf`), N3 (`.n3`), JSON-LD files — parsed via `rdflib` |
 | `SPARQL` | `SparqlEndpointDataSource` | Remote SPARQL endpoints (e.g. Apache Fuseki) queried via `SPARQLWrapper` |
-| `API` | `APIDataSource` | REST API endpoints with pagination, authentication, and retry logic |
+| `API` | `APIConnector` / `APIDataSource` | REST API endpoints via bindings + `conn_proxy`; [pagination strategies](../concepts/api_connector.md) |
 | `SQL` | `SQLDataSource` | SQL databases via SQLAlchemy with parameterised queries |
 | `IN_MEMORY` | `InMemoryDataSource` | Python objects (lists, DataFrames) already in memory |
 

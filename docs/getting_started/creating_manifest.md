@@ -104,15 +104,15 @@ Use `ingestion_model` for **how source records become vertices/edges**.
 
 Defines source wiring (`Bindings`).
 
-- **`connectors`**: list of `FileConnector`, `TableConnector`, or `SparqlConnector` entries (where each row points at paths, tables, or RDF/SPARQL sources). For **`TableConnector`**, optional **`filters`** push down SQL `WHERE` clauses using the same **`FilterExpression`** shorthand as vertex **`filters`** in the schema (`AND`, `OR`, `NOT`, `IF_THEN` as YAML keys). Optional nested **`time_filter`** (**`ColumnTimeFilter`**) restricts rows by a date/time column. See [Runtime connector updates](../concepts/runtime_connector_updates.md) and [Table connector views](../concepts/table_connector_views.md#bindings-filter-cookbook-tableconnectorfilters).
+- **`connectors`**: list of `FileConnector`, `TableConnector`, `SparqlConnector`, or `APIConnector` entries (paths, tables, RDF/SPARQL sources, or REST API paths). For **`TableConnector`**, optional **`filters`** push down SQL `WHERE` clauses using the same **`FilterExpression`** shorthand as vertex **`filters`** in the schema (`AND`, `OR`, `NOT`, `IF_THEN` as YAML keys). Optional nested **`time_filter`** (**`ColumnTimeFilter`**) restricts rows by a date/time column. **`APIConnector`** declares the endpoint **`path`**, HTTP method, static **`params`**, and optional **`pagination`** (`offset`, `page`, or `cursor` strategy — see [API connector and pagination](../concepts/api_connector.md)). Register **`base_url`** and bearer/basic credentials at runtime via **`connector_connection`** → **`conn_proxy`**. See also [Runtime connector updates](../concepts/runtime_connector_updates.md) and [Table connector views](../concepts/table_connector_views.md#bindings-filter-cookbook-tableconnectorfilters).
 - **`resource_connector`**: list of `{"resource": "<ingestion resource name>", "connector": "<connector name or hash>"}` rows linking `IngestionModel.resources[*].name` to a connector. The same `resource` may appear on **multiple rows** with different `connector` values (several physical sources for one pipeline).
-- **`connector_connection`** (optional): list of `{"connector": "<connector name or hash>", "conn_proxy": "<label>"}` rows. This keeps manifests **non-secret**: only proxy *names* appear in YAML; runtime code registers each `conn_proxy` on a `ConnectionProvider` with the real `GeneralizedConnConfig` (PostgreSQL, SPARQL, etc.).
+- **`connector_connection`** (optional): list of `{"connector": "<connector name or hash>", "conn_proxy": "<label>"}` rows. This keeps manifests **non-secret**: only proxy *names* appear in YAML; runtime code registers each `conn_proxy` on a `ConnectionProvider` with the real `GeneralizedConnConfig` (PostgreSQL, SPARQL, **REST API**, etc.).
 
 Connector references in `resource_connector` / `connector_connection` must match a connector’s declared **`name`** or canonical **`hash`**. Ingestion **resource names** are not connector references (they can map 1→*n*). Duplicate connector `name` values and conflicting `conn_proxy` mappings for the same connector hash are rejected at validation time.
 
 The block can be left empty in-file (`bindings: {}`) and supplied at runtime for env-specific deployments.
 
-Use `bindings` for **where data comes from** (and optionally **which proxy label** supplies runtime credentials for each SQL/SPARQL connector).
+Use `bindings` for **where data comes from** (and optionally **which proxy label** supplies runtime credentials for each SQL/SPARQL/**API** connector).
 
 ### Runtime proxy wiring (example)
 
@@ -182,6 +182,7 @@ engine.define_and_ingest(
 
 ## See also
 
+- [API connector and pagination](../concepts/api_connector.md)
 - [Manifest evolution](../concepts/manifest_evolution.md)
 - [Quick Start](quickstart.md)
 - [Concepts](../concepts/index.md)

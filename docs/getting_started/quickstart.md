@@ -229,80 +229,82 @@ engine.define_and_ingest(
 
 ## Using API Data Sources
 
-You can also ingest data from REST API endpoints:
+REST API ingestion uses bindings + `conn_proxy`, like SQL and SPARQL. The manifest declares the endpoint **`path`** and optional **`pagination`**; runtime code registers **`base_url`** and credentials.
+
+**Pagination strategies** (on **`APIConnector.pagination`**):
+
+| Strategy | Default query params | Typical API style |
+| -------- | -------------------- | ----------------- |
+| **`offset`** | `offset`, `limit` | `?offset=0&limit=100` |
+| **`page`** | `page`, `per_page` | `?page=1&per_page=25` |
+| **`cursor`** | `cursor` | opaque next-token in response JSON |
+
+All parameter names, JSON paths (`data_path`, `has_more_path`, `cursor_path`), and loop behaviour are documented in **[API connector and pagination](../concepts/api_connector.md)**.
+
+```yaml
+# manifest.yaml (bindings excerpt)
+bindings:
+  connectors:
+    - name: users_api
+      path: /api/users
+      pagination:
+        strategy: offset
+        offset_param: offset
+        limit_param: limit
+        page_size: 100
+        data_path: data
+        has_more_path: has_more
+  resource_connector:
+    - resource: users
+      connector: users_api
+  connector_connection:
+    - connector: users_api
+      conn_proxy: api_source
+```
 
 ```python
-from graflo import Caster, DataSourceRegistry, GraphManifest
-from graflo.data_source import DataSourceFactory, APIConfig, PaginationConfig
+import os
+from graflo.hq import GraphEngine
+from graflo.hq.caster import IngestionParams
+from graflo.hq.connection_provider import (
+    ApiAuth,
+    ApiGeneralizedConnConfig,
+    InMemoryConnectionProvider,
+    RestApiConnConfig,
+)
 
 manifest = GraphManifest.from_config(FileHandle.load("manifest.yaml"))
 manifest.finish_init()
-schema = manifest.require_schema()
-ingestion_model = manifest.require_ingestion_model()
+bindings = manifest.require_bindings()
 
-# Create API data source
-api_config = APIConfig(
-    url="https://api.example.com/users",
-    method="GET",
-    pagination=PaginationConfig(
-        strategy="offset",
-        offset_param="offset",
-        limit_param="limit",
-        page_size=100,
-        has_more_path="has_more",
-        data_path="data",
+provider = InMemoryConnectionProvider()
+provider.register_generalized_config(
+    conn_proxy="api_source",
+    config=ApiGeneralizedConnConfig(
+        config=RestApiConnConfig(
+            base_url="https://api.example.com",
+            auth=ApiAuth(auth_type="bearer", token=os.environ["API_TOKEN"]),
+        )
     ),
 )
+provider.bind_from_bindings(bindings=bindings)
 
-api_source = DataSourceFactory.create_api_data_source(api_config)
-
-# Register with resource
-registry = DataSourceRegistry()
-registry.register(api_source, resource_name="users")
-
-# Ingest
-from graflo.hq.caster import IngestionParams
-from graflo.hq import GraphEngine
-
-# Define schema first (required before ingestion)
 engine = GraphEngine()
-engine.define_schema(
+engine.define_and_ingest(
     manifest=manifest,
     target_db_config=conn_conf,
-    recreate_schema=False,
-)
-
-# Then ingest using Caster
-caster = Caster(schema=schema, ingestion_model=ingestion_model)
-ingestion_params = IngestionParams()  # Use default parameters
-
-import asyncio
-
-asyncio.run(
-    caster.ingest_data_sources(
-        data_source_registry=registry,
-        conn_conf=conn_conf,  # Target database config
-        ingestion_params=ingestion_params,
-    )
+    connection_provider=provider,
+    ingestion_params=IngestionParams(),
 )
 ```
 
 ## Using Configuration Files
 
-You can also use a configuration file to define data sources:
+File and SQL data sources can still be defined in a sidecar config for the CLI. **API sources must use manifest bindings** (`APIConnector`); `--data-source-config-path` rejects `source_type: api`.
 
 ```yaml
 # data_sources.yaml
 data_sources:
-  - source_type: api
-    resource_name: users
-    config:
-      url: https://api.example.com/users
-      method: GET
-      pagination:
-        strategy: offset
-        page_size: 100
-        data_path: data
   - source_type: file
     resource_name: products
     path: data/products.json

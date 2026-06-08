@@ -1,14 +1,14 @@
 """REST API data source implementation.
 
-This module provides a data source for REST API endpoints, supporting
-full HTTP configuration including authentication, headers, pagination,
-and retry logic.
+Runtime HTTP executor for API connectors. Configuration is built by
+:class:`~graflo.architecture.contract.bindings.APIConnector.build_api_config`
+from contract fields plus runtime credentials from a connection provider.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any, Iterator
+from typing import Iterator
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -18,73 +18,25 @@ from urllib3.util.retry import Retry
 from pydantic import Field
 
 from graflo.architecture.base import ConfigBaseModel
+from graflo.architecture.contract.bindings import PaginationConfig
 from graflo.data_source.base import AbstractDataSource, DataSourceType
+from graflo.connection_models import ApiAuth
 
 logger = logging.getLogger(__name__)
 
 
-class PaginationConfig(ConfigBaseModel):
-    """Configuration for API pagination.
-
-    Supports multiple pagination strategies:
-    - offset: Offset-based pagination (offset, limit)
-    - cursor: Cursor-based pagination (cursor parameter)
-    - page: Page-based pagination (page, per_page)
-
-    Attributes:
-        strategy: Pagination strategy ('offset', 'cursor', 'page')
-        offset_param: Parameter name for offset (default: 'offset')
-        limit_param: Parameter name for limit (default: 'limit')
-        cursor_param: Parameter name for cursor (default: 'cursor')
-        page_param: Parameter name for page (default: 'page')
-        per_page_param: Parameter name for per_page (default: 'per_page')
-        initial_offset: Initial offset value (default: 0)
-        initial_page: Initial page value (default: 1)
-        page_size: Number of items per page (default: 100)
-        cursor_path: JSON path to cursor in response (for cursor-based)
-        has_more_path: JSON path to has_more flag in response
-        data_path: JSON path to data array in response (default: root)
-    """
-
-    strategy: str = "offset"  # 'offset', 'cursor', 'page'
-    offset_param: str = "offset"
-    limit_param: str = "limit"
-    cursor_param: str = "cursor"
-    page_param: str = "page"
-    per_page_param: str = "per_page"
-    initial_offset: int = 0
-    initial_page: int = 1
-    page_size: int = 100
-    cursor_path: str | None = None  # JSON path like "next_cursor"
-    has_more_path: str | None = None  # JSON path like "has_more"
-    data_path: str | None = None  # JSON path to data array, None means root
-
-
 class APIConfig(ConfigBaseModel):
-    """Configuration for REST API data source.
+    """Merged runtime configuration for REST API requests.
 
-    Attributes:
-        url: API endpoint URL
-        method: HTTP method (default: 'GET')
-        headers: HTTP headers as dictionary
-        auth: Authentication configuration
-            - For Basic auth: {'type': 'basic', 'username': '...', 'password': '...'}
-            - For Bearer token: {'type': 'bearer', 'token': '...'}
-            - For Digest auth: {'type': 'digest', 'username': '...', 'password': '...'}
-        params: Query parameters as dictionary
-        timeout: Request timeout in seconds (default: None for no timeout)
-        retries: Number of retry attempts (default: 0)
-        retry_backoff_factor: Backoff factor for retries (default: 0.1)
-        retry_status_forcelist: HTTP status codes to retry on (default: [500, 502, 503, 504])
-        verify: Verify SSL certificates (default: True)
-        pagination: Pagination configuration (default: None)
+    Built exclusively via :meth:`APIConnector.build_api_config`; not intended
+    for direct construction in manifests or factory helpers.
     """
 
     url: str
     method: str = "GET"
     headers: dict[str, str] = Field(default_factory=dict)
-    auth: dict[str, Any] | None = None
-    params: dict[str, Any] = Field(default_factory=dict)
+    auth: ApiAuth | None = None
+    params: dict[str, object] = Field(default_factory=dict)
     timeout: float | None = None
     retries: int = 0
     retry_backoff_factor: float = 0.1
@@ -96,28 +48,14 @@ class APIConfig(ConfigBaseModel):
 
 
 class APIDataSource(AbstractDataSource):
-    """Data source for REST API endpoints.
-
-    This class provides a data source for REST API endpoints, supporting
-    full HTTP configuration, authentication, pagination, and retry logic.
-    Returns JSON responses as hierarchical dictionaries, similar to JSON files.
-
-    Attributes:
-        config: API configuration
-    """
+    """Data source for REST API endpoints."""
 
     config: APIConfig
     source_type: DataSourceType = DataSourceType.API
 
     def _create_session(self) -> requests.Session:
-        """Create a requests session with retry configuration.
-
-        Returns:
-            Configured requests session
-        """
         session = requests.Session()
 
-        # Configure retries
         if self.config.retries > 0:
             retry_strategy = Retry(
                 total=self.config.retries,
@@ -128,41 +66,31 @@ class APIDataSource(AbstractDataSource):
             session.mount("http://", adapter)
             session.mount("https://", adapter)
 
-        # Configure authentication
-        if self.config.auth:
-            auth_type = self.config.auth.get("type", "").lower()
-            if auth_type == "basic":
+        auth = self.config.auth
+        if auth is not None:
+            if auth.auth_type == "basic":
                 session.auth = HTTPBasicAuth(
-                    self.config.auth.get("username", ""),
-                    self.config.auth.get("password", ""),
+                    auth.username or "",
+                    auth.password or "",
                 )
-            elif auth_type == "digest":
+            elif auth.auth_type == "digest":
                 session.auth = HTTPDigestAuth(
-                    self.config.auth.get("username", ""),
-                    self.config.auth.get("password", ""),
+                    auth.username or "",
+                    auth.password or "",
                 )
-            elif auth_type == "bearer":
-                token = self.config.auth.get("token", "")
-                session.headers["Authorization"] = f"Bearer {token}"
+            elif auth.auth_type == "bearer":
+                token = auth.token or ""
+                session.headers[auth.header_name] = f"{auth.prefix} {token}".strip()
+            elif auth.auth_type == "api_key":
+                session.headers[auth.header_name] = auth.token or ""
 
-        # Set headers
         session.headers.update(self.config.headers)
-
         return session
 
     def _extract_data(self, response: dict | list) -> list[dict]:
-        """Extract data array from API response.
-
-        Args:
-            response: API response as dictionary or list
-
-        Returns:
-            List of data items
-        """
         if self.config.pagination and self.config.pagination.data_path:
-            # Navigate JSON path
             parts = self.config.pagination.data_path.split(".")
-            data = response
+            data: object = response
             for part in parts:
                 if isinstance(data, dict):
                     data = data.get(part)
@@ -172,34 +100,23 @@ class APIDataSource(AbstractDataSource):
                     return []
             if isinstance(data, list):
                 return data
-            elif isinstance(data, dict):
+            if isinstance(data, dict):
                 return [data]
-            else:
-                return []
-        else:
-            # Root level data
-            if isinstance(response, list):
-                return response
-            elif isinstance(response, dict):
-                return [response]
-            else:
-                return []
+            return []
+
+        if isinstance(response, list):
+            return response
+        if isinstance(response, dict):
+            return [response]
+        return []
 
     def _has_more(self, response: dict) -> bool:
-        """Check if there are more pages to fetch.
-
-        Args:
-            response: API response as dictionary
-
-        Returns:
-            True if there are more pages
-        """
         if not self.config.pagination:
             return False
 
         if self.config.pagination.has_more_path:
             parts = self.config.pagination.has_more_path.split(".")
-            value = response
+            value: object = response
             for part in parts:
                 if isinstance(value, dict):
                     value = value.get(part)
@@ -207,24 +124,14 @@ class APIDataSource(AbstractDataSource):
                     return False
             return bool(value)
 
-        # Default: check if data array is not empty
-        data = self._extract_data(response)
-        return len(data) > 0
+        return len(self._extract_data(response)) > 0
 
     def _get_next_cursor(self, response: dict) -> str | None:
-        """Get next cursor from response.
-
-        Args:
-            response: API response as dictionary
-
-        Returns:
-            Next cursor value or None
-        """
         if not self.config.pagination or not self.config.pagination.cursor_path:
             return None
 
         parts = self.config.pagination.cursor_path.split(".")
-        value = response
+        value: object = response
         for part in parts:
             if isinstance(value, dict):
                 value = value.get(part)
@@ -235,51 +142,35 @@ class APIDataSource(AbstractDataSource):
     def iter_batches(
         self, batch_size: int = 1000, limit: int | None = None
     ) -> Iterator[list[dict]]:
-        """Iterate over API data in batches.
-
-        Args:
-            batch_size: Number of items per batch
-            limit: Maximum number of items to retrieve
-
-        Yields:
-            list[dict]: Batches of documents as dictionaries
-        """
         session = self._create_session()
         total_items = 0
 
         try:
-            # Initialize pagination state
-            offset = (
-                self.config.pagination.initial_offset if self.config.pagination else 0
-            )
-            page = self.config.pagination.initial_page if self.config.pagination else 1
-            cursor: str | None = None
+            pagination = self.config.pagination
+            offset = pagination.initial_offset if pagination else 0
+            page = pagination.initial_page if pagination else 1
+            cursor: str | None = pagination.initial_cursor if pagination else None
 
             while True:
                 if limit is not None and total_items >= limit:
                     break
 
-                # Build request parameters
-                params = self.config.params.copy()
+                params = dict(self.config.params)
 
-                page_limit = (
-                    self.config.pagination.page_size if self.config.pagination else 0
-                )
-                if self.config.pagination is not None and limit is not None:
+                page_limit = pagination.page_size if pagination else 0
+                if pagination is not None and limit is not None:
                     page_limit = min(page_limit, limit - total_items)
 
-                # Add pagination parameters
-                if self.config.pagination:
-                    if self.config.pagination.strategy == "offset":
-                        params[self.config.pagination.offset_param] = offset
-                        params[self.config.pagination.limit_param] = page_limit
-                    elif self.config.pagination.strategy == "page":
-                        params[self.config.pagination.page_param] = page
-                        params[self.config.pagination.per_page_param] = page_limit
-                    elif self.config.pagination.strategy == "cursor" and cursor:
-                        params[self.config.pagination.cursor_param] = cursor
+                if pagination:
+                    if pagination.strategy == "offset":
+                        params[pagination.offset_param] = offset
+                        params[pagination.limit_param] = page_limit
+                    elif pagination.strategy == "page":
+                        params[pagination.page_param] = page
+                        params[pagination.per_page_param] = page_limit
+                    elif pagination.strategy == "cursor" and cursor is not None:
+                        params[pagination.cursor_param] = cursor
 
-                # Make request
                 try:
                     response = session.request(
                         method=self.config.method,
@@ -294,11 +185,9 @@ class APIDataSource(AbstractDataSource):
                     logger.error(f"API request failed: {e}")
                     break
 
-                # Extract data from response
                 items = self._extract_data(data)
 
-                # Process items in batches
-                batch = []
+                batch: list[dict] = []
                 for item in items:
                     if limit is not None and total_items >= limit:
                         break
@@ -309,30 +198,26 @@ class APIDataSource(AbstractDataSource):
                         yield batch
                         batch = []
 
-                # Yield remaining items
                 if batch:
                     yield batch
 
-                # Check if we should continue
                 if limit is not None and total_items >= limit:
                     break
 
-                # Update pagination state
-                if self.config.pagination:
-                    if self.config.pagination.strategy == "offset":
+                if pagination:
+                    if pagination.strategy == "offset":
                         if not self._has_more(data):
                             break
                         offset += page_limit
-                    elif self.config.pagination.strategy == "page":
+                    elif pagination.strategy == "page":
                         if not self._has_more(data):
                             break
                         page += 1
-                    elif self.config.pagination.strategy == "cursor":
+                    elif pagination.strategy == "cursor":
                         cursor = self._get_next_cursor(data)
                         if not cursor:
                             break
                 else:
-                    # No pagination, single request
                     break
 
         finally:

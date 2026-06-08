@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.2]
+
+### Added
+
+- **`APIConnector`** — REST API bindings contract with `path`, HTTP options, and `PaginationConfig` (offset/limit, cursor, page-based).
+- **Docs:** [API connector and pagination](docs/concepts/api_connector.md) — pagination strategies, field reference, and examples.
+- **`ApiGeneralizedConnConfig` / `RestApiConnConfig` / `ApiAuth`** — runtime base URL and bearer/basic/digest/api_key credentials via `conn_proxy`.
+- **`RegistryBuilder`** — builds `APIDataSource` instances from `APIConnector` + connection provider.
+
+### Changed
+
+- **Breaking:** API ingestion must use manifest `bindings` (`APIConnector` + `connector_connection`); removed `DataSourceFactory.create_api_data_source`, inline `APIConfig` auth/URL construction, and CLI `--data-source-config-path` support for `source_type: api`.
+
 ## [1.8.1]
 
 ### Added

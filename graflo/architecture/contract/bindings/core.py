@@ -9,11 +9,14 @@ from pydantic import Field, PrivateAttr, field_validator, model_validator
 from graflo.architecture.base import ConfigBaseModel
 from .connectors import (
     ConnectorUpdate,
+    APIConnector,
     FileConnector,
     ResourceConnector,
     SparqlConnector,
     TableConnector,
 )
+
+AnyConnector = FileConnector | TableConnector | SparqlConnector | APIConnector
 
 
 class ResourceConnectorBinding(ConfigBaseModel):
@@ -50,9 +53,7 @@ class StagingProxyBinding(ConfigBaseModel):
 class BindingsConfig(ConfigBaseModel):
     """Declarative bindings contract (connectors and resource wiring)."""
 
-    connectors: list[FileConnector | TableConnector | SparqlConnector] = Field(
-        default_factory=list
-    )
+    connectors: list[AnyConnector] = Field(default_factory=list)
     # Accept dict entries at init-time (see validators below).
     # Internally and at runtime, Graflo uses typed lists derived from these.
     resource_connector: list[ResourceConnectorBinding | dict[str, str]] = Field(
@@ -254,6 +255,8 @@ class BindingsConfig(ConfigBaseModel):
             return connector.table_name
         if isinstance(connector, SparqlConnector):
             return connector.rdf_class
+        if isinstance(connector, APIConnector):
+            return connector.path
         raise TypeError(f"Unsupported connector type: {type(connector)!r}")
 
     @model_validator(mode="after")
@@ -326,20 +329,18 @@ class BindingsConfig(ConfigBaseModel):
                 )
             self._connector_to_conn_proxy[connector_hash] = mapping.conn_proxy
 
-    def get_conn_proxy_for_connector(
-        self, connector: TableConnector | FileConnector | SparqlConnector
-    ) -> str | None:
+    def get_conn_proxy_for_connector(self, connector: AnyConnector) -> str | None:
         """Return the mapped runtime proxy name for a given connector."""
         return self._connector_to_conn_proxy.get(connector.hash)
 
-    def get_connectors_for_resource(
-        self, resource_name: str
-    ) -> list[TableConnector | FileConnector | SparqlConnector]:
+    def get_connectors_for_resource(self, resource_name: str) -> list[AnyConnector]:
         """Return connectors bound to *resource_name*, in binding order (unique by hash)."""
-        result: list[TableConnector | FileConnector | SparqlConnector] = []
+        result: list[AnyConnector] = []
         for h in self._resource_to_connector_hashes.get(resource_name, []):
             c = self._connectors_index.get(h)
-            if isinstance(c, (TableConnector, FileConnector, SparqlConnector)):
+            if isinstance(
+                c, (TableConnector, FileConnector, SparqlConnector, APIConnector)
+            ):
                 result.append(c)
         return result
 
@@ -370,7 +371,7 @@ class BindingsRegistry(BindingsConfig):
 
     def bind_connector_to_conn_proxy(
         self,
-        connector: TableConnector | FileConnector | SparqlConnector,
+        connector: AnyConnector,
         conn_proxy: str,
     ) -> None:
         """Bind a connector to a non-secret runtime proxy name.
@@ -423,7 +424,7 @@ class BindingsRegistry(BindingsConfig):
         merged = old.model_dump(mode="python")
         merged.update(patch)
         new = cast(
-            TableConnector | FileConnector | SparqlConnector,
+            AnyConnector,
             old.__class__.model_validate(merged),
         )
         self.replace_connector(old, new)
@@ -431,7 +432,7 @@ class BindingsRegistry(BindingsConfig):
     def replace_connector(
         self,
         old: ResourceConnector | str,
-        new: TableConnector | FileConnector | SparqlConnector,
+        new: AnyConnector,
     ) -> None:
         """Swap *old* for *new*, preserving resource wiring and conn_proxy by hash."""
         old_hash = (
@@ -470,7 +471,7 @@ class BindingsRegistry(BindingsConfig):
 
     def add_connector(
         self,
-        connector: TableConnector | FileConnector | SparqlConnector,
+        connector: AnyConnector,
     ) -> None:
         if connector.name is None:
             object.__setattr__(
@@ -506,7 +507,7 @@ class BindingsRegistry(BindingsConfig):
     def bind_resource(
         self,
         resource_name: str,
-        connector: TableConnector | FileConnector | SparqlConnector,
+        connector: AnyConnector,
     ) -> None:
         if connector.hash not in self._connectors_index:
             raise KeyError(f"Connector not found for hash='{connector.hash}'")

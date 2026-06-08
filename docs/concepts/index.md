@@ -46,7 +46,7 @@ flowchart LR
 - **GraphManifest** — the canonical top-level contract that composes `schema`, `ingestion_model`, and `bindings`. High-level **contract evolution** (remove/merge vertex types and keep ingestion aligned) is described in [Manifest evolution](manifest_evolution.md).
 - **Schema** — the declarative logical graph model (`Schema`): vertex/edge definitions, identities, typed **`properties`**, and DB profile.
 - **IngestionModel** — reusable resources and transforms used to map records into graph entities.
-- **Bindings** — named `FileConnector` / `TableConnector` / `SparqlConnector` list plus `resource_connector` (many rows per resource allowed: resource→0..n connectors) and optional `connector_connection` (connector **name** or **hash**→`conn_proxy` for runtime `ConnectionProvider` resolution without secrets in the manifest). **Connector patches** (narrow a SQL **`time_filter`** window, add **`filters`**, …) are **not** part of the stored manifest: load `Bindings`, then apply **`Bindings.apply_connector_update`** / **`replace_connector`** from external config or code before **`GraphEngine`** or registry build; see [Runtime connector updates](runtime_connector_updates.md) (**`ColumnTimeFilter`** and patch YAML). Optional **`staging_proxy`** maps logical staging profile names to `conn_proxy` keys for **TigerGraph bulk S3 upload** (credentials via `S3GeneralizedConnConfig`, not in YAML). Staging is separate from ingestion connectors; see [Object storage (S3 staging)](object_storage.md). Each connector exposes a **bound source modality** (`BoundSourceKind`: file, SQL table, SPARQL) for dispatch, distinct from the abstract ingestion **Resource**. See [TigerGraph bulk load](../guides/tigergraph_bulk_load.md).
+- **Bindings** — named `FileConnector` / `TableConnector` / `SparqlConnector` / **`APIConnector`** list plus `resource_connector` (many rows per resource allowed: resource→0..n connectors) and optional `connector_connection` (connector **name** or **hash**→`conn_proxy` for runtime `ConnectionProvider` resolution without secrets in the manifest). **`APIConnector`** carries REST path, HTTP options, and **`PaginationConfig`** (offset, page, or cursor strategies); see [API connector and pagination](api_connector.md). **Connector patches** (narrow a SQL **`time_filter`** window, add **`filters`**, …) are **not** part of the stored manifest: load `Bindings`, then apply **`Bindings.apply_connector_update`** / **`replace_connector`** from external config or code before **`GraphEngine`** or registry build; see [Runtime connector updates](runtime_connector_updates.md) (**`ColumnTimeFilter`** and patch YAML). Optional **`staging_proxy`** maps logical staging profile names to `conn_proxy` keys for **TigerGraph bulk S3 upload** (credentials via `S3GeneralizedConnConfig`, not in YAML). Staging is separate from ingestion connectors; see [Object storage (S3 staging)](object_storage.md). Each connector exposes a **bound source modality** (`BoundSourceKind`: file, SQL table, SPARQL, **API**) for dispatch, distinct from the abstract ingestion **Resource**. See [TigerGraph bulk load](../guides/tigergraph_bulk_load.md).
 - **Database-Independent Graph Representation** — a `GraphContainer` of vertices and edges, independent of any target database.
 - **Graph DB** — the target LPG store (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph).
 
@@ -67,6 +67,7 @@ flowchart LR
         FP[FileConnector]
         TP[TableConnector]
         SP[SparqlConnector]
+        AP[APIConnector]
     end
     subgraph datasources [DataSource Layer]
         subgraph rdfFamily ["RdfDataSource (abstract)"]
@@ -75,6 +76,7 @@ flowchart LR
         end
         FileDS[FileDataSource]
         SQLDS[SQLDataSource]
+        ApiDS[APIDataSource]
     end
     subgraph pipeline [Shared Pipeline]
         Sch[Schema]
@@ -89,12 +91,13 @@ flowchart LR
     Fuseki --> SP --> SparqlDS --> Res
     Files --> FP --> FileDS --> Res
     PG --> TP --> SQLDS --> Res
+    AP --> ApiDS --> Res
     Sch --> Res
     Sch --> Asm
     Res --> Ex --> Asm --> GC --> DBW
 ```
 
-- **Bindings** (`FileConnector`, `TableConnector`, `SparqlConnector`) describe *where* data comes from (file paths, SQL tables, SPARQL endpoints). Multiple connectors may attach to the same ingestion resource name; optional **`connector_connection`** entries assign each SQL/SPARQL connector a **`conn_proxy`** by **connector `name` or `hash`** (not by resource name). The `ConnectionProvider` turns that label into real connection config at runtime so manifests stay credential-free.
+- **Bindings** (`FileConnector`, `TableConnector`, `SparqlConnector`, **`APIConnector`**) describe *where* data comes from (file paths, SQL tables, SPARQL endpoints, REST API paths). Multiple connectors may attach to the same ingestion resource name; optional **`connector_connection`** entries assign each SQL/SPARQL/**API** connector a **`conn_proxy`** by **connector `name` or `hash`** (not by resource name). The `ConnectionProvider` turns that label into real connection config at runtime so manifests stay credential-free. REST pagination is configured on **`APIConnector.pagination`** — see [API connector and pagination](api_connector.md).
 - **DataSources** (`AbstractDataSource` subclasses) handle *how* to read data in batches. Each carries a `DataSourceType` and is registered in the `DataSourceRegistry`.
 - **Resources** define *what* to extract — each **`ResourceConfig`** (manifest `ingestion_model.resources`) is a reusable actor pipeline (descend → transform → vertex → edge) executed at cast time by **`ResourceRuntime`**. Optional **`drop_trivial_input_fields`: `true`** removes top-level keys whose value is `null` or `""` **before** actors run (shallow only; `0` and `false` stay). Optional **`fail_fast`: `true`** makes transform steps fail when required input keys are missing; default **`false`** allows partial rename and skips functional transform steps with missing inputs. Optional **`tolerate_transform_errors`: `true`** (default) continues the pipeline when a transform step fails at runtime. **TigerGraph** physical defaults for missing attributes belong in **`schema.db_profile.default_property_values`** (GSQL `DEFAULT` at DDL time), not in the covariant `GraphContainer` assembly path.
 - **GraphContainer** (covariant graph representation) collects the resulting vertices and edges in a database-independent format.
@@ -121,4 +124,4 @@ The overview above is continued in dedicated pages (formerly a single long docum
 - [Core components](core_components.md) — schema, ingestion, edges, DataSources, resources, actors, location scoping, transforms
 - [Features, migration, and practices](features_and_practices.md) — product features, `migrate_schema` CLI, performance notes, best practices
 
-Focused topics: [Transforms](transforms.md), [Table connector views](table_connector_views.md) (SQL **`filters`** / **`view.where`** with logical operators `AND` / `OR` / `NOT` / `IF_THEN`), [Runtime connector updates](runtime_connector_updates.md) (patches, **`time_filter`** / **`ColumnTimeFilter`**, pushdown **`filters`**), [Backend indexes](backend_indexes.md), [Ingestion doc errors](ingestion_doc_errors.md), [Object storage (S3 staging)](object_storage.md), [Manifest evolution](manifest_evolution.md), [GraFlo ontology (manifest ↔ RDF)](../model/graflo_ontology.md).
+Focused topics: [Transforms](transforms.md), [Table connector views](table_connector_views.md) (SQL **`filters`** / **`view.where`** with logical operators `AND` / `OR` / `NOT` / `IF_THEN`), [API connector and pagination](api_connector.md) (**`PaginationConfig`**: offset, page, cursor), [Runtime connector updates](runtime_connector_updates.md) (patches, **`time_filter`** / **`ColumnTimeFilter`**, pushdown **`filters`**), [Backend indexes](backend_indexes.md), [Ingestion doc errors](ingestion_doc_errors.md), [Object storage (S3 staging)](object_storage.md), [Manifest evolution](manifest_evolution.md), [GraFlo ontology (manifest ↔ RDF)](../model/graflo_ontology.md).

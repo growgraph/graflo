@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import pytest
 
-from graflo.architecture.contract.bindings import Bindings, TableConnector
+from graflo.architecture.contract.bindings import APIConnector, Bindings, TableConnector
 from graflo.db import PostgresConfig
 from graflo.hq.connection_provider import (
+    ApiGeneralizedConnConfig,
     InMemoryConnectionProvider,
     PostgresGeneralizedConnConfig,
+    RestApiConnConfig,
 )
 
 
@@ -240,3 +242,24 @@ def test_bindings_generated_shape_supports_proxy_resolution() -> None:
     assert len(resolved) == 1
     assert resolved[0].name == "users"
     assert bindings.get_conn_proxy_for_connector(resolved[0]) == "postgres_source"
+
+
+def test_api_connector_conn_proxy_resolution() -> None:
+    connector = APIConnector(name="users_api", path="/api/users")
+    bindings = Bindings(
+        connectors=[connector],
+        connector_connection=[{"connector": "users_api", "conn_proxy": "api_source"}],
+    )
+    assert bindings.get_conn_proxy_for_connector(connector) == "api_source"
+
+    provider = InMemoryConnectionProvider()
+    provider.register_generalized_config(
+        conn_proxy="api_source",
+        config=ApiGeneralizedConnConfig(
+            config=RestApiConnConfig(base_url="https://api.example.com")
+        ),
+    )
+    provider.bind_connector_to_conn_proxy(connector=connector, conn_proxy="api_source")
+    cfg = provider.get_generalized_conn_config(connector)
+    assert isinstance(cfg, ApiGeneralizedConnConfig)
+    assert cfg.config.base_url == "https://api.example.com"
