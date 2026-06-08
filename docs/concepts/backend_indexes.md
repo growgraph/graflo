@@ -8,6 +8,8 @@ In manifests, physical index and naming configuration lives under **`schema.db_p
 
 - **Identity index**: Required for vertex matching/upserts. Uses `Vertex.identity` (or `_key`/`id` for blank vertices). Each backend handles this differently.
 - **Secondary indexes**: Optional indexes for query performance. Configured in `db_profile.vertex_indexes` and `db_profile.edge_specs[*].indexes`.
+`edge_specs` entries may also set TigerGraph-only **`reverse_edge`** (paired reverse edge type; see [TigerGraph connection](../reference/db/tigergraph/conn.md#edge-direction-in-gsql)) and **`relation_name`** overrides in addition to **`indexes`**.
+
 
 The `vertex_indexes` on **`db_profile`** are for **secondary** indexes only. Identity is handled by the backend during `define_vertex_indexes` or at collection/vertex-type creation.
 

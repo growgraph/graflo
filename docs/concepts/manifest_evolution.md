@@ -24,7 +24,7 @@ GraFlo provides **contract-level** operations that transform a validated `GraphM
 | **Rename edge fields** | Per-relation edge property renames across schema edge properties/identities, `db_profile` edge indexes/defaults, and edge actor `properties` payloads. |
 | **Remove edge fields** | Removes per-relation edge properties, prunes edge index/default references, and rewrites edge actor `properties`. |
 | **Add edge fields** | Adds properties to existing relations for edge-schema enrichment. |
-| **Add inverse edges** | For each mapped relation `R -> R_inv`, appends inverse schema edges (swap `source`/`target`, copy properties/identities/type/description) and mirrors matching ingestion references in explicit `pipeline` edge actors, `infer_edge_only` / `infer_edge_except`, and `extra_weights[*].edge`. Skips duplicates when the inverse `(source, target, relation)` already exists. |
+| **Add inverse edges** | For each **directed** forward relation `R -> R_inv`, appends inverse schema edges and mirrors ingestion (`pipeline` EdgeActor steps including dynamic endpoints, `relation_field`, redefined `relation_map`, nested `descend`), `infer_edge_only` / `infer_edge_except`, `extra_weights`, and `db_profile`. Skips `directed: false`, TigerGraph `edge_specs[*].reverse_edge`, and existing inverse triples. |
 | **Sanitize** | Target-`DBType` policy: reserved-word-safe names on `DatabaseProfile`, reserved vertex field renames, and (for TigerGraph) consistent identity tuples per edge relation. This is the same work **`graflo.hq.sanitizer.Sanitizer`** applies by building a single **`SanitizeOp`**. |
 
 ## API
@@ -160,14 +160,61 @@ bidirectional = apply_evolution(
 )
 ```
 
-For each schema edge whose `relation` is a key in the map, the op appends an inverse edge with swapped endpoints and the mapped relation name, copying the rest of the edge definition. Ingestion resources get matching inverse entries in explicit pipeline edge steps, `infer_edge_only` / `infer_edge_except`, and `extra_weights`; existing inverses are left unchanged (deduplicated by `(source, target, relation)`).
+For each **directed** schema edge whose `relation` is a key in the map, the op appends an inverse edge with swapped endpoints and the mapped relation name, copying properties, identities, and `directed: true`. The op **does not** run when:
+
+- the forward edge has **`directed: false`** (use one undirected logical edge or TigerGraph `UNDIRECTED EDGE` instead), or
+- the forward edge’s TigerGraph **`edge_specs[*].reverse_edge`** is already set (TigerGraph owns the paired reverse type via `WITH REVERSE_EDGE`).
+
+**What gets mirrored in ingestion**
+
+| Location | Inverse behavior |
+|----------|------------------|
+| Static `pipeline` edge step (`from`/`to`/`relation`) | Duplicate step with swapped endpoints and inverse `relation` |
+| Dynamic edge step (`source_role`/`target_role`, mixed static+dynamic) | Duplicate step with swapped roles/static sides; `match_source`/`match_target` swapped |
+| `relation_field` | Same field name on the inverse step |
+| `relation_map` on the step | Redefined: same raw keys map to inverse canonical names (`EMPLOYED_BY: employed_by` forward → `EMPLOYED_BY: employs` after `employed_by -> employs`) |
+| `links` | Each link item inverted independently |
+| Nested `descend` pipelines | Recursively mirrored |
+| `infer_edge_only` / `infer_edge_except` / `extra_weights` | Static triple specs appended when missing |
+
+**Dynamic EdgeActor example** (after `AddInverseEdgesOp(relations={"employed_by": "employs"})`):
+
+Forward step:
+
+```yaml
+- edge:
+    source_role: source
+    target_role: target
+    relation_field: relation_type
+    relation_map:
+      EMPLOYED_BY: employed_by
+```
+
+Appended inverse step:
+
+```yaml
+- edge:
+    source_role: target
+    target_role: source
+    relation_field: relation_type
+    relation_map:
+      EMPLOYED_BY: employs
+```
+
+**Choosing a bidirectional strategy** (see also [Core components — Edge](core_components.md#directed-undirected-and-bidirectional-edges)):
+
+| Goal | Approach |
+|------|----------|
+| Portable across DBs | Two logical directed edges + `AddInverseEdgesOp` |
+| TigerGraph-native pair, single load path | One logical edge + `db_profile.edge_specs[*].reverse_edge` |
+| Truly symmetric (friends, co-authors) | One logical edge with `directed: false` → `UNDIRECTED EDGE` on TigerGraph |
 
 ### Choosing `RenameRelationsOp` vs `MergeEdgesOp`
 
 - Use `RenameRelationsOp` when there is a one-to-one label replacement.
 - Use `MergeEdgesOp` when multiple relation labels should collapse into one canonical relation.
 - Use `AddInverseEdgesOp` when forward and reverse relations should coexist with different labels (not a rename of the same edge kind).
-- `RenameRelationsOp` and `MergeEdgesOp` propagate to schema, `DatabaseProfile` (`edge_specs`, defaults/indexes), and ingestion selectors/resources. `AddInverseEdgesOp` does not rename existing relations; it only adds missing inverse edges and ingestion mirrors.
+- `RenameRelationsOp` and `MergeEdgesOp` propagate to schema, `DatabaseProfile` (`edge_specs`, defaults/indexes), and ingestion selectors/resources. `AddInverseEdgesOp` also propagates to `db_profile` and does not rename existing relations; it only adds missing inverse edges and ingestion mirrors.
 
 ## Scope notes
 

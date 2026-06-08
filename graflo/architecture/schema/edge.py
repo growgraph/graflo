@@ -84,6 +84,13 @@ class Edge(ConfigBaseModel):
         default=None,
         description="Optional semantic description of edge intent, direction semantics, and business meaning.",
     )
+    directed: bool = PydanticField(
+        default=True,
+        description=(
+            "When True (default), source→target direction matters. When False, the edge "
+            "is logically undirected; inverse-edge ops must not duplicate it."
+        ),
+    )
 
     identities: list[list[str]] = PydanticField(
         default_factory=list,

@@ -12,6 +12,7 @@ from graflo.architecture.database_features import (
 )
 from graflo.architecture.graph_types import EdgeId, EdgePhysicalKey, Index
 from graflo.architecture.schema import Schema
+from graflo.architecture.schema.edge import Edge
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +93,7 @@ def apply_vertex_rename_to_db_profile(
                 relation_name=s.relation_name,
                 indexes=list(s.indexes),
                 indexes_mode=s.indexes_mode,
+                reverse_edge=s.reverse_edge,
             )
         )
     profile.edge_specs = new_specs
@@ -165,6 +167,7 @@ def apply_vertex_merge_to_db_profile(
                 relation_name=s.relation_name,
                 indexes=list(s.indexes),
                 indexes_mode=s.indexes_mode,
+                reverse_edge=s.reverse_edge,
             )
         )
     profile.edge_specs = new_specs
@@ -329,6 +332,7 @@ def apply_field_rename_to_db_profile(
                 relation_name=spec.relation_name,
                 indexes=_rewrite_index_fields(list(spec.indexes), merged),
                 indexes_mode=spec.indexes_mode,
+                reverse_edge=spec.reverse_edge,
             )
         )
     profile.edge_specs = new_specs
@@ -531,3 +535,70 @@ def apply_edge_property_removal_to_db_profile(
         }
         new_edges.append(edge.model_copy(update={"values": values}, deep=True))
     object.__setattr__(dpv, "edges", new_edges)
+
+
+def apply_inverse_edges_to_db_profile(
+    profile: DatabaseProfile,
+    relation_map: dict[str, str],
+    edges: list[Edge],
+) -> None:
+    """Append inverse edge_specs and default_property_values for directed forward edges."""
+    if not relation_map:
+        return
+
+    edge_by_id: dict[EdgeId, Edge] = {edge.edge_id: edge for edge in edges}
+    existing_spec_keys = {spec.physical_key for spec in profile.edge_specs}
+    new_specs = list(profile.edge_specs)
+
+    for spec in profile.edge_specs:
+        forward_edge = edge_by_id.get(spec.edge_id)
+        if forward_edge is None or not forward_edge.directed:
+            continue
+        if spec.reverse_edge is not None:
+            continue
+        if spec.relation is None or spec.relation not in relation_map:
+            continue
+        inverse_relation = relation_map[spec.relation]
+        # inverse_edge_id: EdgeId = (spec.target, spec.source, inverse_relation)
+        inverse_spec = EdgePhysicalSpec(
+            source=spec.target,
+            target=spec.source,
+            relation=inverse_relation,
+            purpose=spec.purpose,
+            relation_name=spec.relation_name,
+            indexes=[idx.model_copy(deep=True) for idx in spec.indexes],
+            indexes_mode=spec.indexes_mode,
+        )
+        if inverse_spec.physical_key not in existing_spec_keys:
+            new_specs.append(inverse_spec)
+            existing_spec_keys.add(inverse_spec.physical_key)
+
+    profile.edge_specs = new_specs
+
+    dpv = profile.default_property_values
+    if dpv is None:
+        return
+
+    existing_default_ids = {entry.edge_id for entry in dpv.edges}
+    new_defaults = list(dpv.edges)
+    for entry in dpv.edges:
+        if entry.relation is None or entry.relation not in relation_map:
+            continue
+        forward_edge = edge_by_id.get(entry.edge_id)
+        if forward_edge is not None and not forward_edge.directed:
+            continue
+        inverse_relation = relation_map[entry.relation]
+        inverse_id: EdgeId = (entry.target, entry.source, inverse_relation)
+        if inverse_id in existing_default_ids:
+            continue
+        new_defaults.append(
+            EdgePropertyDefaults(
+                source=entry.target,
+                target=entry.source,
+                relation=inverse_relation,
+                values=dict(entry.values),
+            )
+        )
+        existing_default_ids.add(inverse_id)
+
+    object.__setattr__(dpv, "edges", new_defaults)

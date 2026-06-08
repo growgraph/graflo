@@ -39,7 +39,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 from graflo.architecture.contract.bindings import Bindings
 
@@ -2365,6 +2365,38 @@ class TigerGraphConnection(Connection):
                     fields.add(token)
         return fields
 
+    @staticmethod
+    def _tigergraph_edge_ddl_kind(edge: Edge) -> Literal["directed", "undirected"]:
+        return "undirected" if not edge.directed else "directed"
+
+    @staticmethod
+    def _edge_ddl_keyword(kind: Literal["directed", "undirected"]) -> str:
+        return "UNDIRECTED" if kind == "undirected" else "DIRECTED"
+
+    def _tigergraph_reverse_edge_name(
+        self,
+        edge: Edge,
+        db_profile: DatabaseProfile | None,
+    ) -> str | None:
+        if db_profile is None or db_profile.db_flavor != DBType.TIGERGRAPH:
+            return None
+        return db_profile.edge_reverse_edge_name(edge.edge_id)
+
+    def _validate_tigergraph_edge_ddl_config(
+        self,
+        edge: Edge,
+        db_profile: DatabaseProfile | None,
+    ) -> tuple[Literal["directed", "undirected"], str | None]:
+        kind = self._tigergraph_edge_ddl_kind(edge)
+        reverse_edge = self._tigergraph_reverse_edge_name(edge, db_profile)
+        if reverse_edge is not None:
+            if kind == "undirected":
+                raise ValueError(
+                    f"reverse_edge cannot be set for undirected edge {edge.edge_id!r}"
+                )
+            _validate_tigergraph_schema_name(reverse_edge, "reverse_edge")
+        return kind, reverse_edge
+
     def _get_edge_add_statement(
         self,
         edge: Edge,
@@ -2374,13 +2406,13 @@ class TigerGraphConnection(Connection):
         target_vertex: str,
         db_profile: DatabaseProfile | None = None,
     ) -> str:
-        """Generate ADD DIRECTED EDGE statement for a schema change job.
+        """Generate ADD DIRECTED/UNDIRECTED EDGE statement for a schema change job.
 
         Args:
             edge: Edge object to generate statement for
 
         Returns:
-            str: GSQL ADD DIRECTED EDGE statement
+            str: GSQL ADD edge statement (optionally with WITH REVERSE_EDGE)
         """
         # TigerGraph discriminators are derived from logical edge identity.
         indexed_field_names = self._edge_identity_discriminator_fields(edge)
@@ -2448,20 +2480,25 @@ class TigerGraphConnection(Connection):
         # Combine FROM/TO and discriminator with commas
         from_to_line = ",\n".join(from_to_parts)
 
+        ddl_kind, reverse_edge = self._validate_tigergraph_edge_ddl_config(
+            edge, db_profile
+        )
+        ddl_keyword = self._edge_ddl_keyword(ddl_kind)
+        reverse_suffix = (
+            f' WITH REVERSE_EDGE="{reverse_edge}"' if reverse_edge is not None else ""
+        )
+
         # Build the complete statement
         if edge_attrs:
-            # Has attributes - add comma after FROM/TO line (which may include discriminator)
-            # edge_attrs already has proper indentation, so we just need to add it after a comma
-            return (
-                f"ADD DIRECTED EDGE {relation_db} (\n"
+            body = (
+                f"ADD {ddl_keyword} EDGE {relation_db} (\n"
                 f"{from_to_line},\n"
                 f"{edge_attrs}\n"
-                f"    )"
+                f"    ){reverse_suffix}"
             )
-        else:
-            # No attributes - FROM/TO line (which may include discriminator) is the last thing
-            # No trailing comma needed
-            return f"ADD DIRECTED EDGE {relation_db} (\n{from_to_line}\n    )"
+            return body
+        body = f"ADD {ddl_keyword} EDGE {relation_db} (\n{from_to_line}\n    ){reverse_suffix}"
+        return body
 
     def _get_edge_group_create_statement(
         self,
@@ -2546,15 +2583,23 @@ class TigerGraphConnection(Connection):
         # Join all FROM/TO pairs with |
         all_from_to = " |\n".join(from_to_lines)
 
+        ddl_kind, reverse_edge = self._validate_tigergraph_edge_ddl_config(
+            first_edge, db_profile
+        )
+        ddl_keyword = self._edge_ddl_keyword(ddl_kind)
+        reverse_suffix = (
+            f' WITH REVERSE_EDGE="{reverse_edge}"' if reverse_edge is not None else ""
+        )
+
         # Build the complete statement
         if edge_attrs:
-            # Has attributes - add comma after FROM/TO section
             return (
-                f"ADD DIRECTED EDGE {relation} (\n{all_from_to},\n{edge_attrs}\n    )"
+                f"ADD {ddl_keyword} EDGE {relation} (\n{all_from_to},\n{edge_attrs}\n    )"
+                f"{reverse_suffix}"
             )
-        else:
-            # No attributes - FROM/TO section is the last thing
-            return f"ADD DIRECTED EDGE {relation} (\n{all_from_to}\n    )"
+        return (
+            f"ADD {ddl_keyword} EDGE {relation} (\n{all_from_to}\n    ){reverse_suffix}"
+        )
 
     def _batch_schema_statements(
         self, schema_change_stmts: list[str], graph_name: str, max_job_size: int
@@ -2702,14 +2747,20 @@ class TigerGraphConnection(Connection):
             _validate_tigergraph_schema_name(edge_dbname, "edge")
             self._validate_tigergraph_edge_property_names(edge, db_schema.edge_config)
 
-        # Group edges by relation
-        edges_by_relation: dict[str, list[Edge]] = defaultdict(list)
+        # Group edges by DDL kind, relation name, and reverse_edge pairing
+        edges_by_group: dict[tuple[str, str, str | None], list[Edge]] = defaultdict(
+            list
+        )
         for edge in edges_to_create:
-            key = relation_names[id(edge)]
-            edges_by_relation[key].append(edge)
+            ddl_kind = self._tigergraph_edge_ddl_kind(edge)
+            reverse_edge = self._tigergraph_reverse_edge_name(
+                edge, db_schema.db_profile
+            )
+            key = (ddl_kind, relation_names[id(edge)], reverse_edge)
+            edges_by_group[key].append(edge)
 
-        # Create one statement per relation with all FROM/TO pairs
-        for relation, edge_group in edges_by_relation.items():
+        # Create one statement per group with all FROM/TO pairs
+        for (_ddl_kind, relation, _reverse_edge), edge_group in edges_by_group.items():
             ddl_edges = [
                 self._edge_for_tigergraph_ddl(e, db_schema.edge_config)
                 for e in edge_group
