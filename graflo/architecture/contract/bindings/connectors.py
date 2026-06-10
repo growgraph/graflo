@@ -7,7 +7,7 @@ import hashlib
 import json
 import pathlib
 import re
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any, Literal, Self
 
 from pydantic import (
     AliasChoices,
@@ -605,16 +605,34 @@ class PaginationConfig(ConfigBaseModel):
     Supports offset, cursor, and page-based strategies.
     """
 
-    strategy: str = "offset"
+    strategy: Literal["offset", "page", "cursor"] = "offset"
     offset_param: str = "offset"
-    limit_param: str = "limit"
+    limit_param: str = Field(
+        default="limit",
+        description=(
+            "Query parameter name for page size (offset strategy only). "
+            "The value sent is ``page_size``, not a total item cap."
+        ),
+    )
     cursor_param: str = "cursor"
     page_param: str = "page"
-    per_page_param: str = "per_page"
+    per_page_param: str = Field(
+        default="per_page",
+        description=(
+            "Query parameter name for page size (page strategy only). "
+            "The value sent is ``page_size``, not a total item cap."
+        ),
+    )
     initial_offset: int = 0
     initial_page: int = 1
     initial_cursor: str | None = None
-    page_size: int = 100
+    page_size: int = Field(
+        default=100,
+        description=(
+            "Records requested per HTTP page. Sent as the value of "
+            "``limit_param`` (offset) or ``per_page_param`` (page)."
+        ),
+    )
     cursor_path: str | None = None
     has_more_path: str | None = None
     data_path: str | None = None

@@ -104,14 +104,14 @@ flowchart TD
 | ----- | ------- | ------- | ------- |
 | **`strategy`** | `"offset"` | all | `"offset"`, `"page"`, or `"cursor"` |
 | **`offset_param`** | `"offset"` | offset | Query param for skip/offset |
-| **`limit_param`** | `"limit"` | offset | Query param for page size |
+| **`limit_param`** | `"limit"` | offset | Query param **name** for page size; value comes from **`page_size`** |
 | **`page_param`** | `"page"` | page | Query param for 1-based page index |
-| **`per_page_param`** | `"per_page"` | page | Query param for page size |
+| **`per_page_param`** | `"per_page"` | page | Query param **name** for page size; value comes from **`page_size`** |
 | **`cursor_param`** | `"cursor"` | cursor | Query param for opaque cursor token |
 | **`initial_offset`** | `0` | offset | First request offset |
 | **`initial_page`** | `1` | page | First request page number |
 | **`initial_cursor`** | `null` | cursor | Send cursor on the **first** request when the API requires it |
-| **`page_size`** | `100` | all | Records requested per HTTP call |
+| **`page_size`** | `100` | all | Records requested per HTTP call (sent as the value of **`limit_param`** or **`per_page_param`**) |
 | **`data_path`** | `null` (root) | all | Dot path to the array of records in the JSON response |
 | **`has_more_path`** | `null` | offset, page | Dot path to a boolean “more pages” flag |
 | **`cursor_path`** | `null` | cursor | Dot path to the **next** cursor in the response body |

@@ -154,6 +154,21 @@ def test_api_data_source_iter_batches(mock_api_server):
     assert all_items[2]["id"] == 3
 
 
+def test_api_data_source_iter_batches_respects_total_limit(mock_api_server):
+    api_source, _ = _build_registry(mock_api_server, "kg", page_size=2)
+    all_items: list[dict] = []
+    for batch in api_source.iter_batches(batch_size=1, limit=2):
+        all_items.extend(batch)
+    assert len(all_items) == 2
+    assert all_items[0]["id"] == 1
+    assert all_items[1]["id"] == 2
+
+
+def test_pagination_config_rejects_unknown_strategy():
+    with pytest.raises(ValueError):
+        PaginationConfig(strategy="unknown")  # type: ignore[arg-type]
+
+
 def test_sql_data_source_postgres_streaming_limit_25():
     try:
         postgres_conf = PostgresConfig.from_docker_env()
