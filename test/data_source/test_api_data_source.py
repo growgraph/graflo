@@ -2,6 +2,7 @@
 
 import asyncio
 from os.path import dirname, realpath
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -152,6 +153,83 @@ def test_api_data_source_iter_batches(mock_api_server):
     assert all_items[0]["id"] == 1
     assert all_items[1]["id"] == 2
     assert all_items[2]["id"] == 3
+
+
+def test_api_data_source_iter_batches_respects_total_limit(mock_api_server):
+    api_source, _ = _build_registry(mock_api_server, "kg", page_size=2)
+    all_items: list[dict] = []
+    for batch in api_source.iter_batches(batch_size=1, limit=2):
+        all_items.extend(batch)
+    assert len(all_items) == 2
+    assert all_items[0]["id"] == 1
+    assert all_items[1]["id"] == 2
+
+
+def test_pagination_config_rejects_unknown_strategy():
+    with pytest.raises(ValueError):
+        PaginationConfig(strategy="unknown")  # type: ignore[arg-type]
+
+
+def test_row_annotations_merged_as_defaults() -> None:
+    from graflo.data_source.api import APIConfig
+
+    config = APIConfig(
+        url="http://example.com/api",
+        row_annotations={"_src_type": "User", "_tgt_type": "Group"},
+    )
+    source = APIDataSource(config=config)
+
+    response = MagicMock()
+    response.json.return_value = [{"id": 1, "name": "alice"}]
+    response.raise_for_status.return_value = None
+
+    with patch.object(source, "_create_session") as create_session:
+        session = MagicMock()
+        session.request.return_value = response
+        create_session.return_value = session
+
+        rows = [row for batch in source.iter_batches() for row in batch]
+
+    assert rows == [
+        {
+            "_src_type": "User",
+            "_tgt_type": "Group",
+            "id": 1,
+            "name": "alice",
+        }
+    ]
+
+
+def test_row_annotations_doc_wins_on_collision() -> None:
+    from graflo.data_source.api import APIConfig
+
+    config = APIConfig(
+        url="http://example.com/api",
+        row_annotations={"_src_type": "User"},
+    )
+    source = APIDataSource(config=config)
+
+    response = MagicMock()
+    response.json.return_value = [{"_src_type": "Override", "id": 1}]
+    response.raise_for_status.return_value = None
+
+    with patch.object(source, "_create_session") as create_session:
+        session = MagicMock()
+        session.request.return_value = response
+        create_session.return_value = session
+
+        rows = [row for batch in source.iter_batches() for row in batch]
+
+    assert rows == [{"_src_type": "Override", "id": 1}]
+
+
+def test_api_connector_build_api_config_passes_row_annotations() -> None:
+    connector = APIConnector(
+        path="/api/query",
+        row_annotations={"_rel": "RelationC"},
+    )
+    config = connector.build_api_config(base_url="https://api.example.com")
+    assert config.row_annotations == {"_rel": "RelationC"}
 
 
 def test_sql_data_source_postgres_streaming_limit_25():

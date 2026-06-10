@@ -6,7 +6,8 @@
 [![PyPI Downloads](https://static.pepy.tech/badge/graflo)](https://pepy.tech/projects/graflo)
 [![License: BSL](https://img.shields.io/badge/license-BSL--1.1-green)](https://github.com/growgraph/graflo/blob/main/LICENSE)
 [![pre-commit](https://github.com/growgraph/graflo/actions/workflows/pre-commit.yml/badge.svg)](https://github.com/growgraph/graflo/actions/workflows/pre-commit.yml)
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.15446131.svg)]( https://doi.org/10.5281/zenodo.15446131)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20601698.svg)](https://doi.org/10.5281/zenodo.20601698)
+
 
 **GraFlo** is a manifest-driven schema and ingestion layer for **labeled property graphs (LPGs)**.
 Write a `GraphManifest` (YAML or Python) once — it defines vertices, edges, typed properties,

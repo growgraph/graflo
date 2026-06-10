@@ -8,7 +8,7 @@ from contract fields plus runtime credentials from a connection provider.
 from __future__ import annotations
 
 import logging
-from typing import Iterator
+from typing import Any, Iterator
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -45,6 +45,7 @@ class APIConfig(ConfigBaseModel):
     )
     verify: bool = True
     pagination: PaginationConfig | None = None
+    row_annotations: dict[str, Any] = Field(default_factory=dict)
 
 
 class APIDataSource(AbstractDataSource):
@@ -191,7 +192,7 @@ class APIDataSource(AbstractDataSource):
                 for item in items:
                     if limit is not None and total_items >= limit:
                         break
-                    batch.append(item)
+                    batch.append({**self.config.row_annotations, **item})
                     total_items += 1
 
                     if len(batch) >= batch_size:

@@ -619,3 +619,35 @@ def test_api_connector_build_api_config() -> None:
     assert config.auth is not None
     assert config.auth.token == "secret"
     assert config.headers["Accept"] == "application/json"
+
+
+def test_api_connector_row_annotations_in_hash() -> None:
+    from graflo.architecture.contract.bindings import APIConnector
+
+    base = APIConnector(path="/api/query", params={"query": "show USER"})
+    annotated = APIConnector(
+        path="/api/query",
+        params={"query": "show USER"},
+        row_annotations={"_src_type": "User"},
+    )
+    assert base.hash != annotated.hash
+
+
+def test_table_connector_rejects_row_annotations() -> None:
+    with pytest.raises(ValidationError, match="row_annotations is not implemented"):
+        TableConnector.model_validate(
+            {
+                "table_name": "events",
+                "row_annotations": {"_src_type": "Event"},
+            }
+        )
+
+
+def test_file_connector_rejects_row_annotations() -> None:
+    with pytest.raises(ValidationError, match="row_annotations is not implemented"):
+        FileConnector.model_validate(
+            {
+                "regex": ".*",
+                "row_annotations": {"_src_type": "File"},
+            }
+        )

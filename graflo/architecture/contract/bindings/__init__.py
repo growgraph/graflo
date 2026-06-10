@@ -4,6 +4,7 @@ from .core import (
     Bindings,
     BindingsConfig,
     BindingsRegistry,
+    ConnectorTemplate,
     ResourceConnectorBinding,
     StagingProxyBinding,
 )
@@ -25,6 +26,7 @@ __all__ = [
     "Bindings",
     "BindingsConfig",
     "BindingsRegistry",
+    "ConnectorTemplate",
     "BoundSourceKind",
     "ColumnTimeFilter",
     "ConnectorUpdate",

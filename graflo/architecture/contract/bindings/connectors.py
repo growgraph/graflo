@@ -7,7 +7,7 @@ import hashlib
 import json
 import pathlib
 import re
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any, Literal, Self
 
 from pydantic import (
     AliasChoices,
@@ -107,6 +107,14 @@ class ResourceConnector(ConfigBaseModel, abc.ABC):
         exclude=True,
         description="Deterministic internal connector id derived from defining fields.",
     )
+    row_annotations: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Constant fields merged into every fetched row as defaults (response "
+            "fields take priority). Only implemented for :class:`APIConnector`; "
+            "other connector types reject non-empty values."
+        ),
+    )
 
     def _hash_payload(self) -> dict[str, Any]:
         payload = self.model_dump(
@@ -166,6 +174,8 @@ class FileConnector(ResourceConnector):
         """Ensure sub_path is a Path."""
         if not isinstance(self.sub_path, pathlib.Path):
             object.__setattr__(self, "sub_path", pathlib.Path(self.sub_path))
+        if self.row_annotations:
+            raise ValueError("row_annotations is not implemented for FileConnector")
         return self
 
     @property
@@ -323,6 +333,8 @@ class TableConnector(ResourceConnector):
                 f"base_alias {self.base_alias!r} conflicts with a join alias "
                 f"{sorted(join_aliases)}"
             )
+        if self.row_annotations:
+            raise ValueError("row_annotations is not implemented for TableConnector")
         return self
 
     @property
@@ -553,6 +565,13 @@ class SparqlConnector(ResourceConnector):
         default=None, description="Path to a local RDF file"
     )
 
+    @model_validator(mode="after")
+    def _reject_row_annotations(self) -> Self:
+        # TODO: implement row_annotations for SparqlConnector row payloads.
+        if self.row_annotations:
+            raise ValueError("row_annotations is not implemented for SparqlConnector")
+        return self
+
     def matches(self, resource_identifier: str) -> bool:
         """Match by the local name (fragment) of the rdf:Class URI.
 
@@ -605,16 +624,34 @@ class PaginationConfig(ConfigBaseModel):
     Supports offset, cursor, and page-based strategies.
     """
 
-    strategy: str = "offset"
+    strategy: Literal["offset", "page", "cursor"] = "offset"
     offset_param: str = "offset"
-    limit_param: str = "limit"
+    limit_param: str = Field(
+        default="limit",
+        description=(
+            "Query parameter name for page size (offset strategy only). "
+            "The value sent is ``page_size``, not a total item cap."
+        ),
+    )
     cursor_param: str = "cursor"
     page_param: str = "page"
-    per_page_param: str = "per_page"
+    per_page_param: str = Field(
+        default="per_page",
+        description=(
+            "Query parameter name for page size (page strategy only). "
+            "The value sent is ``page_size``, not a total item cap."
+        ),
+    )
     initial_offset: int = 0
     initial_page: int = 1
     initial_cursor: str | None = None
-    page_size: int = 100
+    page_size: int = Field(
+        default=100,
+        description=(
+            "Records requested per HTTP page. Sent as the value of "
+            "``limit_param`` (offset) or ``per_page_param`` (page)."
+        ),
+    )
     cursor_path: str | None = None
     has_more_path: str | None = None
     data_path: str | None = None
@@ -632,6 +669,7 @@ class APIConnector(ResourceConnector):
         method: HTTP method (default ``GET``).
         params: Static query parameters.
         pagination: Pagination strategy and response path configuration.
+        row_annotations: Constant fields merged into every fetched row (doc wins).
         headers: Non-secret HTTP headers.
         timeout: Request timeout in seconds.
         retries: Number of retry attempts.
@@ -699,4 +737,5 @@ class APIConnector(ResourceConnector):
             retry_status_forcelist=list(self.retry_status_forcelist),
             verify=self.verify,
             pagination=pagination,
+            row_annotations=dict(self.row_annotations),
         )

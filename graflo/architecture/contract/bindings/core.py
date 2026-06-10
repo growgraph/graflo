@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Self, cast
 
-from pydantic import Field, PrivateAttr, field_validator, model_validator
+from pydantic import ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
 from graflo.architecture.base import ConfigBaseModel
 from .connectors import (
@@ -17,6 +17,173 @@ from .connectors import (
 )
 
 AnyConnector = FileConnector | TableConnector | SparqlConnector | APIConnector
+
+_TEMPLATE_METADATA_KEYS = frozenset({"name", "conn_proxy"})
+_TEMPLATE_MERGE_DICT_KEYS = frozenset({"params", "row_annotations", "headers"})
+
+
+class ConnectorTemplate(ConfigBaseModel):
+    """Named connector defaults referenced by ``base`` on connector entries.
+
+    Template-only metadata (not copied onto connectors): ``name``, ``conn_proxy``.
+    All other fields are merged into expanded connectors (dict fields such as
+    ``params`` are deep-merged; scalars and blocks like ``pagination`` are replaced
+    when the connector entry provides them explicitly).
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    name: str = Field(
+        ..., description="Template name referenced by connector ``base``."
+    )
+    conn_proxy: str | None = Field(
+        default=None,
+        description=(
+            "Template metadata: auto-wires ``connector_connection`` for expanded "
+            "connectors that declare ``name``."
+        ),
+    )
+
+
+def _connector_template_to_dict(
+    template: ConnectorTemplate | dict[str, Any],
+) -> dict[str, Any]:
+    if isinstance(template, ConnectorTemplate):
+        return template.model_dump(mode="python")
+    if isinstance(template, dict):
+        return dict(template)
+    raise TypeError(
+        f"connector_templates entries must be ConnectorTemplate or dict, "
+        f"got {type(template).__name__}"
+    )
+
+
+def _template_connector_fields(template: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in template.items() if k not in _TEMPLATE_METADATA_KEYS}
+
+
+def _deep_merge_connector_template(
+    base: dict[str, Any], override: dict[str, Any]
+) -> dict[str, Any]:
+    result = dict(base)
+    for key, value in override.items():
+        if key == "base":
+            continue
+        if (
+            key in _TEMPLATE_MERGE_DICT_KEYS
+            and isinstance(result.get(key), dict)
+            and isinstance(value, dict)
+        ):
+            result[key] = {**result[key], **value}
+        else:
+            result[key] = value
+    return result
+
+
+def _connector_connection_refs(
+    entries: list[ConnectorConnectionBinding | dict[str, str]],
+) -> set[str]:
+    refs: set[str] = set()
+    for item in entries:
+        if isinstance(item, ConnectorConnectionBinding):
+            refs.add(item.connector)
+            continue
+        if isinstance(item, dict) and "connector" in item:
+            connector_ref = item["connector"]
+            if isinstance(connector_ref, str):
+                refs.add(connector_ref)
+    return refs
+
+
+def _expand_connectors_from_templates(data: dict[str, Any]) -> dict[str, Any]:
+    templates_raw = data.get("connector_templates")
+    if not templates_raw:
+        return data
+
+    if not isinstance(templates_raw, list):
+        raise ValueError("connector_templates must be a list")
+
+    template_index: dict[str, dict[str, Any]] = {}
+    for i, raw_template in enumerate(templates_raw):
+        if not isinstance(raw_template, (ConnectorTemplate, dict)):
+            raise ValueError(
+                f"connector_templates[{i}] must be ConnectorTemplate or dict, "
+                f"got {type(raw_template).__name__}."
+            )
+        template = _connector_template_to_dict(
+            cast(ConnectorTemplate | dict[str, Any], raw_template)
+        )
+        name = template.get("name")
+        if not isinstance(name, str) or not name:
+            raise ValueError(
+                f"connector_templates[{i}] must declare a non-empty string 'name'."
+            )
+        if name in template_index:
+            raise ValueError(f"Duplicate connector_template name '{name}'.")
+        template_index[name] = template
+
+    connectors_raw = data.get("connectors")
+    if connectors_raw is None:
+        return data
+    if not isinstance(connectors_raw, list):
+        raise ValueError("connectors must be a list")
+
+    connector_connection = list(data.get("connector_connection") or [])
+    connection_refs = _connector_connection_refs(connector_connection)
+    expanded_connectors: list[Any] = []
+
+    for i, raw_connector in enumerate(connectors_raw):
+        if not isinstance(raw_connector, dict):
+            expanded_connectors.append(raw_connector)
+            continue
+
+        connector = dict(raw_connector)
+        base_name = connector.get("base")
+        if base_name is None:
+            expanded_connectors.append(connector)
+            continue
+
+        if not isinstance(base_name, str) or not base_name:
+            raise ValueError(
+                f"connectors[{i}]: 'base' must be a non-empty template name."
+            )
+
+        template = template_index.get(base_name)
+        if template is None:
+            raise ValueError(
+                f"connectors[{i}]: unknown connector template '{base_name}'."
+            )
+
+        merged = _deep_merge_connector_template(
+            _template_connector_fields(template),
+            connector,
+        )
+        merged.pop("base", None)
+
+        conn_proxy = merged.pop("conn_proxy", None)
+        if conn_proxy is None:
+            conn_proxy = template.get("conn_proxy")
+
+        connector_name = merged.get("name")
+        if conn_proxy is not None:
+            if not isinstance(connector_name, str) or not connector_name:
+                raise ValueError(
+                    f"connectors[{i}]: connector expanded from template "
+                    f"'{base_name}' must declare 'name' when template "
+                    "defines conn_proxy."
+                )
+            if connector_name not in connection_refs:
+                connector_connection.append(
+                    {"connector": connector_name, "conn_proxy": conn_proxy}
+                )
+                connection_refs.add(connector_name)
+
+        expanded_connectors.append(merged)
+
+    data = dict(data)
+    data["connectors"] = expanded_connectors
+    data["connector_connection"] = connector_connection
+    return data
 
 
 class ResourceConnectorBinding(ConfigBaseModel):
@@ -53,6 +220,19 @@ class StagingProxyBinding(ConfigBaseModel):
 class BindingsConfig(ConfigBaseModel):
     """Declarative bindings contract (connectors and resource wiring)."""
 
+    connector_templates: list[ConnectorTemplate] = Field(
+        default_factory=list,
+        description=(
+            "Named connector defaults for ``base:`` expansion on connector entries."
+        ),
+    )
+    conn_proxy: str | None = Field(
+        default=None,
+        description=(
+            "Default runtime connection proxy for connectors without an explicit "
+            "``connector_connection`` entry."
+        ),
+    )
     connectors: list[AnyConnector] = Field(default_factory=list)
     # Accept dict entries at init-time (see validators below).
     # Internally and at runtime, Graflo uses typed lists derived from these.
@@ -88,6 +268,39 @@ class BindingsConfig(ConfigBaseModel):
     ) -> list[ConnectorConnectionBinding]:
         # Expose typed entries for downstream components (type-checker friendly).
         return self._connector_connection_typed
+
+    @model_validator(mode="before")
+    @classmethod
+    def _expand_connector_templates(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        return _expand_connectors_from_templates(dict(data))
+
+    @field_validator("connector_templates", mode="before")
+    @classmethod
+    def _coerce_connector_templates(cls, v: Any) -> list[ConnectorTemplate]:
+        if v is None:
+            return []
+        if not isinstance(v, list):
+            raise ValueError("connector_templates must be a list")
+        coerced: list[ConnectorTemplate] = []
+        for i, item in enumerate(v):
+            if isinstance(item, ConnectorTemplate):
+                coerced.append(item)
+                continue
+            if isinstance(item, dict):
+                try:
+                    coerced.append(ConnectorTemplate.model_validate(item))
+                except Exception as e:  # noqa: BLE001
+                    raise ValueError(
+                        f"Invalid connector_templates entry at index {i}: {item!r}."
+                    ) from e
+                continue
+            raise ValueError(
+                f"Invalid connector_templates entry at index {i}: expected dict or "
+                f"ConnectorTemplate, got {type(item).__name__}."
+            )
+        return coerced
 
     @field_validator("staging_proxy", mode="before")
     @classmethod
@@ -328,6 +541,11 @@ class BindingsConfig(ConfigBaseModel):
                     f"'{connector_hash}' (existing='{existing}', new='{mapping.conn_proxy}')."
                 )
             self._connector_to_conn_proxy[connector_hash] = mapping.conn_proxy
+
+        if self.conn_proxy is not None:
+            for connector in self.connectors:
+                if connector.hash not in self._connector_to_conn_proxy:
+                    self._connector_to_conn_proxy[connector.hash] = self.conn_proxy
 
     def get_conn_proxy_for_connector(self, connector: AnyConnector) -> str | None:
         """Return the mapped runtime proxy name for a given connector."""
