@@ -226,6 +226,66 @@ Prefer an explicit **`has_more_path`** when the API returns a full final page *a
 
 Use **`APIConnector.params`** for filters that do not change between pages (tenant id, `active=true`, API version flags). Pagination params are merged on top each iteration; static params are preserved.
 
+## Static row annotations
+
+Use **`row_annotations`** on **`APIConnector`** (declared on the shared **`ResourceConnector`** base) to stamp constant fields onto every fetched row. Annotations are merged as **defaults**: if the API response already contains a key, the response value wins. Prefer `_`-prefixed keys (e.g. `_src_type`) to avoid colliding with payload fields.
+
+Typical use: polymorphic edge queries where the HTTP response has uniform `source` / `target` columns but no vertex-type discriminator. Stamp types at the connector, then route with **`vertex_router`** in the resource pipeline:
+
+```yaml
+bindings:
+  connector_templates:
+    - name: edge_query_base
+      path: /api/query
+      resource_name: polymorphic_edges
+      conn_proxy: api_source
+      pagination:
+        strategy: offset
+        page_size: 100
+
+  conn_proxy: api_source   # optional default for connectors without connector_connection
+
+  connectors:
+    - name: edge_typeA_typeB
+      base: edge_query_base
+      params:
+        query: 'search TypeA where ... show key as source, explode #RelationC:TypeB.key as target'
+      row_annotations:
+        _src_type: TypeA
+        _tgt_type: TypeB
+        _rel: RelationC
+```
+
+```yaml
+resources:
+  - name: polymorphic_edges
+    pipeline:
+      - type: vertex_router
+        type_field: _src_type
+        role: src
+        from: {id: source}
+      - type: vertex_router
+        type_field: _tgt_type
+        role: tgt
+        from: {id: target}
+      - type: edge
+        source_role: src
+        target_role: tgt
+        relation_field: _rel
+```
+
+`row_annotations` is only implemented for API connectors today; other connector types reject non-empty values.
+
+## Connector templates
+
+Declare reusable defaults under **`bindings.connector_templates`** and reference them from connectors with **`base: <template_name>`**. Expansion happens when **`Bindings`** is loaded:
+
+- Dict fields (`params`, `row_annotations`, `headers`) are **deep-merged** (connector keys win).
+- Scalars and blocks such as **`pagination`** are **replaced** when the connector entry provides them.
+- Template **`conn_proxy`** auto-appends **`connector_connection`** for named connectors (explicit entries win).
+- Template **`resource_name`** is inherited unless overridden on the connector.
+- Top-level **`conn_proxy`** on **`bindings`** applies to any connector without an explicit **`connector_connection`** mapping.
+
 ## HTTP options on the connector
 
 | Field | Default | Notes |
