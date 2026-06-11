@@ -22,26 +22,73 @@ from graflo.onto import DBType
 logger = logging.getLogger(__name__)
 
 
+def _vertex_field_sanitizer(
+    schema: Schema,
+    reserved_words: set[str],
+    *,
+    db_flavor: DBType | None = None,
+):
+    """Return ``(sanitize, should_run)`` for vertex property name sanitization."""
+    from graflo.db.util import (
+        load_tigergraph_identifier_rules,
+        sanitize_attribute_name,
+        sanitize_tigergraph_identifier,
+    )
+
+    flavor = db_flavor if db_flavor is not None else schema.db_profile.db_flavor
+    if flavor == DBType.TIGERGRAPH:
+        rules = load_tigergraph_identifier_rules()
+        if rules is None:
+            if not reserved_words:
+                return None, False
+            return (
+                lambda name: sanitize_attribute_name(name, reserved_words),
+                True,
+            )
+        effective_reserved = reserved_words or set(rules.reserved_words_upper)
+
+        def sanitize(name: str) -> str:
+            return sanitize_tigergraph_identifier(
+                name,
+                effective_reserved,
+                rules.forbidden_prefixes,
+                rules.invalid_characters,
+            )
+
+        return sanitize, True
+
+    if not reserved_words:
+        return None, False
+
+    return (lambda name: sanitize_attribute_name(name, reserved_words), True)
+
+
 def compute_vertex_field_renames(
     schema: Schema,
     reserved_words: set[str],
+    *,
+    db_flavor: DBType | None = None,
 ) -> dict[str, dict[str, str]]:
     """Compute per-vertex field rename map for a flavor's reserved-word set.
 
     Pure: returns ``{vertex_name: {old_field: new_field}}`` without mutating
     ``schema``. Vertices/fields whose names are not reserved are absent from
     the result.
+
+    For TigerGraph, also renames fields whose names contain invalid identifier
+    characters or forbidden prefixes.
     """
-    from graflo.db.util import sanitize_attribute_name
+    sanitize, should_run = _vertex_field_sanitizer(
+        schema, reserved_words, db_flavor=db_flavor
+    )
+    if not should_run or sanitize is None:
+        return {}
 
     renames: dict[str, dict[str, str]] = {}
-    if not reserved_words:
-        return renames
-
     for vertex in schema.core_schema.vertex_config.vertices:
         per_vertex: dict[str, str] = {}
         for field in vertex.properties:
-            sanitized = sanitize_attribute_name(field.name, reserved_words)
+            sanitized = sanitize(field.name)
             if sanitized != field.name:
                 per_vertex[field.name] = sanitized
         if per_vertex:

@@ -971,6 +971,7 @@ def apply_sanitize(manifest: GraphManifest, op: SanitizeOp) -> None:
        ingestion via the same field-rename code path.
     """
     from graflo.db.util import load_reserved_words
+    from graflo.onto import DBType
 
     if manifest.graph_schema is None:
         return
@@ -981,13 +982,19 @@ def apply_sanitize(manifest: GraphManifest, op: SanitizeOp) -> None:
     else:
         reserved_words = load_reserved_words(op.db_flavor)
 
-    if reserved_words:
+    run_name_sanitization = bool(reserved_words) or op.db_flavor == DBType.TIGERGRAPH
+    if run_name_sanitization:
         apply_storage_name_sanitization_to_db_profile(
-            schema.db_profile, schema, reserved_words
+            schema.db_profile,
+            schema,
+            reserved_words,
+            db_flavor=op.db_flavor,
         )
         schema.db_profile = _revalidate_db_profile(schema.db_profile)
 
-        field_renames = compute_vertex_field_renames(schema, reserved_words)
+        field_renames = compute_vertex_field_renames(
+            schema, reserved_words, db_flavor=op.db_flavor
+        )
         if field_renames:
             apply_rename_vertex_properties(
                 manifest,
