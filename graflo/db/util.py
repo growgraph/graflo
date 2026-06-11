@@ -26,13 +26,24 @@ from __future__ import annotations
 
 import json
 import logging
+from functools import lru_cache
 from pathlib import Path
+from typing import NamedTuple
 
 from arango.exceptions import CursorNextError
 
 from graflo.onto import DBType
 
 logger = logging.getLogger(__name__)
+
+TIGERGRAPH_INVALID_CHAR_REPLACEMENT = "__"
+TIGERGRAPH_FORBIDDEN_PREFIX_REPLACEMENT = "tg_"
+
+
+class TigerGraphIdentifierRules(NamedTuple):
+    reserved_words_upper: frozenset[str]
+    forbidden_prefixes: tuple[str, ...]
+    invalid_characters: tuple[str, ...]
 
 
 def get_data_from_cursor(cursor, limit=None):
@@ -221,6 +232,76 @@ def load_reserved_words(db_flavor: DBType) -> set[str]:
 
     # Return uppercase set for case-insensitive comparison
     return {word.upper() for word in reserved_words}
+
+
+@lru_cache(maxsize=1)
+def load_tigergraph_identifier_rules() -> TigerGraphIdentifierRules | None:
+    """Load TigerGraph identifier rules from ``reserved_words.json`` (cached)."""
+    json_path = Path(__file__).parent / "tigergraph" / "reserved_words.json"
+    try:
+        with open(json_path, "r") as f:
+            reserved_data = json.load(f)
+    except FileNotFoundError:
+        logger.warning(
+            "Could not find reserved_words.json at %s, skipping TigerGraph rules",
+            json_path,
+        )
+        return None
+    except json.JSONDecodeError as e:
+        logger.warning(
+            "Could not parse reserved_words.json: %s, skipping TigerGraph rules", e
+        )
+        return None
+
+    reserved_words: set[str] = set()
+    reserved_words.update(
+        reserved_data.get("reserved_words", {}).get("gsql_keywords", [])
+    )
+    reserved_words.update(
+        reserved_data.get("reserved_words", {}).get("cpp_keywords", [])
+    )
+    forbidden = tuple(reserved_data.get("forbidden_prefixes", []))
+    invalid_chars = tuple(
+        reserved_data.get("invalid_characters", {}).get("characters", [])
+    )
+    return TigerGraphIdentifierRules(
+        reserved_words_upper=frozenset(w.upper() for w in reserved_words),
+        forbidden_prefixes=forbidden,
+        invalid_characters=invalid_chars,
+    )
+
+
+def _replace_invalid_tigergraph_characters(
+    name: str, invalid_characters: tuple[str, ...]
+) -> str:
+    if not invalid_characters:
+        return name
+    invalid_set = set(invalid_characters)
+    return "".join(
+        TIGERGRAPH_INVALID_CHAR_REPLACEMENT if char in invalid_set else char
+        for char in name
+    )
+
+
+def sanitize_tigergraph_identifier(
+    name: str,
+    reserved_words: set[str],
+    forbidden_prefixes: tuple[str, ...],
+    invalid_characters: tuple[str, ...],
+    suffix: str = "_attr",
+) -> str:
+    """Sanitize a TigerGraph identifier for invalid chars, prefixes, and reserved words."""
+    if not name:
+        return name
+
+    result = _replace_invalid_tigergraph_characters(name, invalid_characters)
+
+    for prefix in forbidden_prefixes:
+        if result.startswith(prefix):
+            result = f"{TIGERGRAPH_FORBIDDEN_PREFIX_REPLACEMENT}{result}"
+            break
+
+    return sanitize_attribute_name(result, reserved_words, suffix=suffix)
 
 
 def sanitize_attribute_name(

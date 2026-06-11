@@ -636,3 +636,185 @@ def test_identity_normalization_leaves_non_identity_properties_untouched():
     assert props_by_name["email"].type == FieldType.STRING
     assert "score" in props_by_name
     assert props_by_name["score"].type == FieldType.FLOAT
+
+
+# -- TigerGraph identifier sanitization (invalid chars, prefixes, reserved) --
+
+
+def test_sanitize_tigergraph_identifier_uses_double_underscore_replacement():
+    from graflo.db.util import (
+        TIGERGRAPH_INVALID_CHAR_REPLACEMENT,
+        load_tigergraph_identifier_rules,
+        sanitize_tigergraph_identifier,
+    )
+
+    rules = load_tigergraph_identifier_rules()
+    assert rules is not None
+    reserved = set(rules.reserved_words_upper)
+
+    assert TIGERGRAPH_INVALID_CHAR_REPLACEMENT == "__"
+    assert (
+        sanitize_tigergraph_identifier(
+            "my-entity",
+            reserved,
+            rules.forbidden_prefixes,
+            rules.invalid_characters,
+        )
+        == "my__entity"
+    )
+    assert (
+        sanitize_tigergraph_identifier(
+            "user_name",
+            reserved,
+            rules.forbidden_prefixes,
+            rules.invalid_characters,
+        )
+        == "user_name"
+    )
+    assert (
+        sanitize_tigergraph_identifier(
+            "a.b",
+            reserved,
+            rules.forbidden_prefixes,
+            rules.invalid_characters,
+        )
+        == "a__b"
+    )
+
+
+def _build_tigergraph_manifest(
+    *,
+    vertices: list[Vertex] | None = None,
+    edges: list[Edge] | None = None,
+    pipeline_a: list[dict] | None = None,
+    resource_name: str | None = None,
+) -> GraphManifest:
+    from graflo.architecture.database_features import DatabaseProfile
+
+    meta = GraphMetadata(name="tg_sanitize", version="1.0.0")
+    vertex_list = vertices or [
+        Vertex(
+            name="my-entity",
+            properties=[Field(name="id")],
+            identity=["id"],
+        ),
+    ]
+    vc = VertexConfig(
+        vertices=vertex_list,
+        force_types={},
+    )
+    default_edges = [
+        Edge(
+            source="my-entity",
+            target="my-entity",
+            relation="knows-someone",
+        ),
+    ]
+    ec = EdgeConfig(edges=default_edges if edges is None else edges)
+    core = CoreSchema(vertex_config=vc, edge_config=ec)
+    schema = Schema(
+        metadata=meta,
+        core_schema=core,
+        db_profile=DatabaseProfile(db_flavor=DBType.TIGERGRAPH),
+    )
+    primary_vertex = resource_name or vertex_list[0].name
+    ingestion = {
+        "resources": [
+            {
+                "name": primary_vertex,
+                "pipeline": pipeline_a or [{"vertex": primary_vertex}],
+            },
+        ],
+        "transforms": [],
+    }
+    manifest = GraphManifest.from_config(
+        {
+            "schema": schema.to_dict(skip_defaults=False),
+            "ingestion_model": ingestion,
+        }
+    )
+    manifest.finish_init()
+    return manifest
+
+
+def test_apply_sanitize_tigergraph_vertex_storage_name_invalid_chars():
+    manifest = _build_tigergraph_manifest()
+    apply_sanitize(manifest, SanitizeOp(db_flavor=DBType.TIGERGRAPH))
+
+    schema = manifest.require_schema()
+    assert schema.db_profile.vertex_storage_name("my-entity") == "my__entity"
+
+
+def test_apply_sanitize_tigergraph_edge_relation_name_invalid_chars():
+    manifest = _build_tigergraph_manifest()
+    apply_sanitize(manifest, SanitizeOp(db_flavor=DBType.TIGERGRAPH))
+
+    schema = manifest.require_schema()
+    edge = schema.core_schema.edge_config.edges[0]
+    assert (
+        schema.db_profile.edge_relation_name(
+            edge.edge_id,
+            default_relation=edge.relation,
+        )
+        == "knows__someone"
+    )
+
+
+def test_apply_sanitize_tigergraph_field_invalid_chars_propagates_to_ingestion():
+    manifest = _build_tigergraph_manifest(
+        vertices=[
+            Vertex(
+                name="users",
+                properties=[Field(name="id"), Field(name="user-name")],
+                identity=["id"],
+            ),
+        ],
+        edges=[],
+        pipeline_a=[{"vertex": "users"}],
+        resource_name="users",
+    )
+    apply_sanitize(manifest, SanitizeOp(db_flavor=DBType.TIGERGRAPH))
+
+    schema = manifest.require_schema()
+    user_props = [f.name for f in schema.core_schema.vertex_config["users"].properties]
+    assert "user__name" in user_props
+    assert "user-name" not in user_props
+    assert "user_name" not in user_props
+
+    pipeline = manifest.require_ingestion_model().resources[0].pipeline
+    step = _vertex_actor_step(pipeline)
+    assert step["from"] == {"user__name": "user-name"}
+
+
+def test_apply_sanitize_tigergraph_forbidden_prefix():
+    manifest = _build_tigergraph_manifest(
+        vertices=[
+            Vertex(
+                name="gsql_sys_foo",
+                properties=[Field(name="id")],
+                identity=["id"],
+            ),
+        ],
+        edges=[],
+    )
+    apply_sanitize(manifest, SanitizeOp(db_flavor=DBType.TIGERGRAPH))
+
+    schema = manifest.require_schema()
+    assert schema.db_profile.vertex_storage_name("gsql_sys_foo") == "tg_gsql_sys_foo"
+
+
+def test_apply_sanitize_tigergraph_reserved_word_vertex_storage_name():
+    manifest = _build_tigergraph_manifest(
+        vertices=[
+            Vertex(
+                name="package",
+                properties=[Field(name="id")],
+                identity=["id"],
+            ),
+        ],
+        edges=[],
+    )
+    apply_sanitize(manifest, SanitizeOp(db_flavor=DBType.TIGERGRAPH))
+
+    schema = manifest.require_schema()
+    assert schema.db_profile.vertex_storage_name("package") == "package_vertex"

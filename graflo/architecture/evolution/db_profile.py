@@ -13,6 +13,7 @@ from graflo.architecture.database_features import (
 from graflo.architecture.graph_types import EdgeId, EdgePhysicalKey, Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.edge import Edge
+from graflo.onto import DBType
 
 logger = logging.getLogger(__name__)
 
@@ -204,10 +205,61 @@ def apply_vertex_merge_to_db_profile(
     object.__setattr__(dpv, "edges", new_edges)
 
 
+def _storage_name_sanitizer(
+    profile: DatabaseProfile,
+    reserved_words: set[str],
+    *,
+    db_flavor: DBType | None = None,
+):
+    """Return ``(sanitize, should_run)`` for storage/relation name sanitization."""
+    from graflo.db.util import (
+        load_tigergraph_identifier_rules,
+        sanitize_attribute_name,
+        sanitize_tigergraph_identifier,
+    )
+
+    flavor = db_flavor if db_flavor is not None else profile.db_flavor
+    if flavor == DBType.TIGERGRAPH:
+        rules = load_tigergraph_identifier_rules()
+        if rules is None:
+            if not reserved_words:
+                return None, False
+            return (
+                lambda name, suffix: sanitize_attribute_name(
+                    name, reserved_words, suffix=suffix
+                ),
+                True,
+            )
+        effective_reserved = reserved_words or set(rules.reserved_words_upper)
+
+        def sanitize(name: str, suffix: str) -> str:
+            return sanitize_tigergraph_identifier(
+                name,
+                effective_reserved,
+                rules.forbidden_prefixes,
+                rules.invalid_characters,
+                suffix=suffix,
+            )
+
+        return sanitize, True
+
+    if not reserved_words:
+        return None, False
+
+    return (
+        lambda name, suffix: sanitize_attribute_name(
+            name, reserved_words, suffix=suffix
+        ),
+        True,
+    )
+
+
 def apply_storage_name_sanitization_to_db_profile(
     profile: DatabaseProfile,
     schema: Schema,
     reserved_words: set[str],
+    *,
+    db_flavor: DBType | None = None,
 ) -> None:
     """Sanitize physical storage/relation names against a flavor's reserved words.
 
@@ -220,18 +272,20 @@ def apply_storage_name_sanitization_to_db_profile(
     when the current effective relation name collides with a reserved word or
     an existing vertex storage name.
 
+    For TigerGraph, also replaces invalid identifier characters and forbidden
+    prefixes using the same rules as DDL validation.
+
     Mutates ``profile`` in place.
     """
-    from graflo.db.util import sanitize_attribute_name
-
-    if not reserved_words:
+    sanitize, should_run = _storage_name_sanitizer(
+        profile, reserved_words, db_flavor=db_flavor
+    )
+    if not should_run or sanitize is None:
         return
 
     for vertex in schema.core_schema.vertex_config.vertices:
         dbname = profile.vertex_storage_name(vertex.name)
-        sanitized = sanitize_attribute_name(
-            dbname, reserved_words, suffix=f"_{VERTEX_SUFFIX}"
-        )
+        sanitized = sanitize(dbname, suffix=f"_{VERTEX_SUFFIX}")
         if sanitized != dbname:
             logger.debug("Sanitizing vertex name '%s' -> '%s'", dbname, sanitized)
             profile.vertex_storage_names[vertex.name] = sanitized
@@ -250,11 +304,7 @@ def apply_storage_name_sanitization_to_db_profile(
         )
         if original is None:
             continue
-        sanitized = sanitize_attribute_name(
-            original,
-            reserved_words,
-            suffix=f"_{RELATION_SUFFIX}",
-        )
+        sanitized = sanitize(original, suffix=f"_{RELATION_SUFFIX}")
         if sanitized in vertex_storage_names:
             base = f"{sanitized}_{RELATION_SUFFIX}"
             candidate = base
@@ -410,6 +460,25 @@ def apply_relation_removal_to_db_profile(
         dpv,
         "edges",
         [edge for edge in dpv.edges if edge.relation not in removed_relations],
+    )
+
+
+def apply_edge_id_removal_to_db_profile(
+    profile: DatabaseProfile, removed_edge_ids: set[EdgeId]
+) -> None:
+    """Drop edge specs/default values for removed logical edge triples."""
+    if not removed_edge_ids:
+        return
+    profile.edge_specs = [
+        spec for spec in profile.edge_specs if spec.edge_id not in removed_edge_ids
+    ]
+    dpv = profile.default_property_values
+    if dpv is None:
+        return
+    object.__setattr__(
+        dpv,
+        "edges",
+        [edge for edge in dpv.edges if edge.edge_id not in removed_edge_ids],
     )
 
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import Field as PydanticField
+from pydantic import Field as PydanticField, model_validator
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.onto import DBType
@@ -193,6 +193,73 @@ class AddInverseEdgesOp(ConfigBaseModel):
     )
 
 
+class EdgeSelector(ConfigBaseModel):
+    """Schema edge triple selector matching :data:`~graflo.architecture.graph_types.EdgeId`."""
+
+    source: str = PydanticField(..., description="Source vertex type name.")
+    target: str = PydanticField(..., description="Target vertex type name.")
+    relation: str | None = PydanticField(
+        default=None,
+        description="Relation name; ``None`` matches edges with no relation set.",
+    )
+
+    def edge_id(self) -> tuple[str, str, str | None]:
+        return self.source, self.target, self.relation
+
+
+class ProjectManifestOp(ConfigBaseModel):
+    """Project a manifest to a vertex/edge subgraph with consistent cascade.
+
+    Keeps only the requested logical vertices and edges (and optionally resources).
+    All schema, ``db_profile``, ingestion, and bindings references to removed
+    entities are pruned. Inverse edges are **not** auto-kept; list them explicitly
+    in ``keep_edges`` when needed.
+
+    With ``connectivity=\"induced_prune\"`` (v1 default), when ``keep_vertices`` is
+    set, vertex types from that list with no incident surviving edge are dropped.
+    """
+
+    op: Literal["project_manifest"] = "project_manifest"
+    keep_vertices: list[str] | None = PydanticField(
+        default=None,
+        description="Vertex type names to retain (after induced connectivity pruning).",
+    )
+    keep_edges: list[EdgeSelector] | None = PydanticField(
+        default=None,
+        description="Edge triples ``(source, target, relation)`` to retain.",
+    )
+    connectivity: Literal["induced_prune"] = PydanticField(
+        default="induced_prune",
+        description="How to interpret ``keep_vertices`` relative to surviving edges.",
+    )
+    keep_resources: list[str] | None = PydanticField(
+        default=None,
+        description="Optional ingestion resource names to retain after graph slice.",
+    )
+    strict: bool = PydanticField(
+        default=True,
+        description="When True, unknown vertex/edge selectors raise ``ValueError``.",
+    )
+
+    @model_validator(mode="after")
+    def _validate_projection_selectors(self) -> ProjectManifestOp:
+        if not self.keep_vertices and not self.keep_edges:
+            raise ValueError(
+                "project_manifest requires at least one of keep_vertices or keep_edges"
+            )
+        if self.keep_vertices and len(self.keep_vertices) != len(
+            set(self.keep_vertices)
+        ):
+            raise ValueError("keep_vertices entries must be unique")
+        if self.keep_edges:
+            edge_ids = [selector.edge_id() for selector in self.keep_edges]
+            if len(edge_ids) != len(set(edge_ids)):
+                raise ValueError(
+                    "keep_edges entries must be unique by (source, target, relation)"
+                )
+        return self
+
+
 class SanitizeOp(ConfigBaseModel):
     """Apply DB-flavor-specific name/field sanitization to a manifest.
 
@@ -234,6 +301,7 @@ ManifestOp = Annotated[
     | RemoveEdgePropertiesOp
     | AddEdgePropertiesOp
     | AddInverseEdgesOp
+    | ProjectManifestOp
     | SanitizeOp,
     PydanticField(discriminator="op"),
 ]

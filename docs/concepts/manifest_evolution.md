@@ -25,6 +25,7 @@ GraFlo provides **contract-level** operations that transform a validated `GraphM
 | **Remove edge fields** | Removes per-relation edge properties, prunes edge index/default references, and rewrites edge actor `properties`. |
 | **Add edge fields** | Adds properties to existing relations for edge-schema enrichment. |
 | **Add inverse edges** | For each **directed** forward relation `R -> R_inv`, appends inverse schema edges and mirrors ingestion (`pipeline` EdgeActor steps including dynamic endpoints, `relation_field`, redefined `relation_map`, nested `descend`), `infer_edge_only` / `infer_edge_except`, `extra_weights`, and `db_profile`. Skips `directed: false`, TigerGraph `edge_specs[*].reverse_edge`, and existing inverse triples. |
+| **Project manifest** | Keeps a logical subgraph by vertex names and/or edge triples `(source, target, relation)`. Prunes isolated vertex types from `keep_vertices` when they have no surviving edges (`connectivity: induced_prune`). Cascades to schema, `db_profile`, ingestion (pipeline steps, infer selectors, `extra_weights`), and bindings. Optional `keep_resources` filters ingestion resources. Inverse edges are not auto-kept. Fails if ingestion would be left empty. |
 | **Sanitize** | Target-`DBType` policy: reserved-word-safe names on `DatabaseProfile`, reserved vertex field renames, and (for TigerGraph) consistent identity tuples per edge relation. This is the same work **`graflo.hq.sanitizer.Sanitizer`** applies by building a single **`SanitizeOp`**. |
 
 ## API
@@ -32,8 +33,10 @@ GraFlo provides **contract-level** operations that transform a validated `GraphM
 ```python
 from graflo.architecture.evolution import (
     AddInverseEdgesOp,
+    EdgeSelector,
     MergeEdgesOp,
     MergeVerticesOp,
+    ProjectManifestOp,
     RenameRelationsOp,
     RemoveVerticesOp,
     SanitizeOp,
@@ -208,6 +211,29 @@ Appended inverse step:
 | Portable across DBs | Two logical directed edges + `AddInverseEdgesOp` |
 | TigerGraph-native pair, single load path | One logical edge + `db_profile.edge_specs[*].reverse_edge` |
 | Truly symmetric (friends, co-authors) | One logical edge with `directed: false` → `UNDIRECTED EDGE` on TigerGraph |
+
+### 6) Project to a subgraph slice
+
+Use when you need a smaller manifest that retains only specific vertex types and edge triples (for example agent experiments or publishing a focused contract):
+
+```python
+from graflo.architecture.evolution import EdgeSelector, ProjectManifestOp, apply_evolution
+
+slice = apply_evolution(
+    manifest,
+    [
+        ProjectManifestOp(
+            keep_vertices=["person", "company"],
+            keep_edges=[
+                EdgeSelector(source="person", target="company", relation="works_at"),
+            ],
+        )
+    ],
+    bump_version=False,
+)
+```
+
+With `keep_vertices` only, vertex types listed but not incident to any surviving edge are dropped (`connectivity: induced_prune`). List inverse edge triples explicitly in `keep_edges` when you need them; they are not inferred automatically.
 
 ### Choosing `RenameRelationsOp` vs `MergeEdgesOp`
 

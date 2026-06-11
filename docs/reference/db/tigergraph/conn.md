@@ -1,5 +1,9 @@
 # `graflo.db.tigergraph.conn`
 
+`TigerGraphConnection` is the public `Connection` facade. Implementation is split across
+`auth`, `rest_client`, `gsql_client`, `schema_ddl`, `graph_admin`, `data_ops`, and
+helper modules (`token_cache`, `gsql_parsers`, etc.).
+
 TigerGraph schema jobs emitted by `TigerGraphConnection` map logical `Edge` definitions and `DatabaseProfile.edge_specs` to GSQL `ADD` statements.
 
 ## Edge direction in GSQL

@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.5]
+
+### Changed
+
+- **TigerGraph connection refactor** — split the ~5,200-line `conn.py` into focused modules; `TigerGraphConnection` remains the sole public `Connection` implementation and orchestrates delegates for auth, REST++, GSQL, schema DDL, graph admin, and data operations.
+- **New internal modules** — `auth`, `rest_client`, `gsql_client`, `schema_ddl`, `graph_admin`, `data_ops`, `token_cache`, `document_utils`, `gsql_parsers`, `compat`, `bulk_session`, and `name_validation`; shared DDL helpers consolidated in `ddl_utils`.
+- **Token cache** — moved from `conn.py` to `token_cache.py` (re-exported from `conn` for backward compatibility).
+
+### Fixed
+
+- **`keep_absent_documents`** — restored ID extraction after the refactor (would have raised `AttributeError` at runtime).
+- **Graph deletion on multi-graph servers** — `delete_database` / `_drop_global_schema_types` no longer drop vertex or edge types still referenced by other graphs on the same instance.
+- **Internal delegate routing** — GSQL query discovery, token initialization, and REST++ calls in helper modules now route through `TigerGraphConnection` so test patches and token-cache invalidation behave consistently.
+
+### Added
+
+- **`ProjectManifestOp`** — manifest evolution op (`project_manifest`) that projects a `GraphManifest` to a requested vertex/edge subgraph. Keeps vertices and/or edge triples `(source, target, relation)` with `connectivity: induced_prune` (drops isolated vertex types from `keep_vertices`). Cascades consistently to schema, `db_profile`, ingestion (pipeline steps, `infer_edge_only` / `infer_edge_except`, `extra_weights`), and bindings. Optional `keep_resources` filters ingestion resources. Fails if projection would leave zero ingestion resources (same policy as `RemoveVerticesOp`). **`EdgeSelector`** models edge triple selectors; **`apply_remove_edge_ids`** / **`rewrite_remove_edge_ids_in_pipeline`** provide edge-id-aware removal (finer-grained than relation-only **`RemoveEdgesOp`**).
+- **Tests** — `test/architecture/test_manifest_projection.py` for **`ProjectManifestOp`**; `test_document_utils.py` for document helpers and `keep_absent_documents`; surviving-graph regression coverage in `test_db_creation.py`.
+- **Docs** — API reference pages for each TigerGraph submodule under `docs/reference/db/tigergraph/`.
+- **[Manifest evolution](docs/concepts/manifest_evolution.md)** — **`ProjectManifestOp`** subgraph projection recipe and operations table entry.
+
 ## [1.8.2]
 
 ### Added

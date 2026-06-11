@@ -7,6 +7,7 @@ from typing import Any, Literal, Sequence
 
 from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.contract.manifest import GraphManifest
+from graflo.architecture.graph_types import EdgeId
 from graflo.architecture.pipeline.runtime.actor import ActorWrapper
 from graflo.architecture.database_features import DatabaseProfile
 from graflo.architecture.schema import Schema
@@ -15,6 +16,7 @@ from graflo.architecture.schema.edge import EdgeConfig
 from graflo.architecture.schema.vertex import Field, Vertex, VertexConfig
 
 from .db_profile import (
+    apply_edge_id_removal_to_db_profile,
     apply_edge_property_removal_to_db_profile,
     apply_edge_property_rename_to_db_profile,
     apply_field_rename_to_db_profile,
@@ -46,6 +48,7 @@ from .ops import (
     AddVertexPropertiesOp,
     MergeEdgesOp,
     MergeVerticesOp,
+    ProjectManifestOp,
     RemoveEdgePropertiesOp,
     RemoveEdgesOp,
     RemoveVertexPropertiesOp,
@@ -63,11 +66,13 @@ from .rewrite import (
     rewrite_entity_names_in_pipeline,
     rewrite_extra_weights_vertex_field_names,
     rewrite_remove_relations_in_pipeline,
+    rewrite_remove_edge_ids_in_pipeline,
     rewrite_remove_vertex_properties_in_pipeline,
     rewrite_vertex_field_names_in_pipeline,
     rewrite_vertex_names_in_pipeline,
     rewrite_vertex_names_in_value,
 )
+from .project import compute_projection
 from .sanitize import (
     compute_vertex_field_renames,
     normalize_relation_identity,
@@ -140,6 +145,50 @@ def _filter_bindings_for_resources(
     from graflo.architecture.contract.bindings import Bindings
 
     manifest.bindings = Bindings.model_validate(data)
+
+
+def _edge_id_from_resource_spec(spec: Any) -> EdgeId | None:
+    """Extract logical edge id from infer/extra_weights dict payloads."""
+    if not isinstance(spec, dict):
+        return None
+    edge_payload = spec.get("edge")
+    if isinstance(edge_payload, dict):
+        source = edge_payload.get("source") or edge_payload.get("from")
+        target = edge_payload.get("target") or edge_payload.get("to")
+        relation = edge_payload.get("relation")
+    else:
+        source = spec.get("source")
+        target = spec.get("target")
+        relation = spec.get("relation")
+    if not isinstance(source, str) or not isinstance(target, str):
+        return None
+    rel = relation if isinstance(relation, str) else None
+    return source, target, rel
+
+
+def _apply_keep_resources(manifest: GraphManifest, allowed: set[str]) -> None:
+    """Retain only ingestion resources (and bindings rows) in *allowed*."""
+    if manifest.ingestion_model is None:
+        return
+    present = {resource.name for resource in manifest.ingestion_model.resources}
+    missing = allowed - present
+    if missing:
+        raise ValueError(
+            f"keep_resources not found on ingestion_model: {sorted(missing)}"
+        )
+    manifest.ingestion_model.resources = [
+        resource
+        for resource in manifest.ingestion_model.resources
+        if resource.name in allowed
+    ]
+    manifest.ingestion_model = IngestionModel.model_validate(
+        manifest.ingestion_model.to_dict(skip_defaults=False)
+    )
+    _filter_bindings_for_resources(manifest, allowed)
+    if not manifest.ingestion_model.resources:
+        raise ValueError(
+            "project_manifest would leave ingestion_model.resources empty; aborting."
+        )
 
 
 def _bump_schema_version(
@@ -746,6 +795,79 @@ def apply_remove_edges(manifest: GraphManifest, op: RemoveEdgesOp) -> None:
         )
 
 
+def apply_remove_edge_ids(
+    manifest: GraphManifest, removed_edge_ids: set[EdgeId]
+) -> None:
+    """Remove edges by logical triple and prune related references."""
+    if not removed_edge_ids:
+        return
+    schema = manifest.graph_schema
+    if schema is None:
+        raise ValueError("remove_edge_ids requires graph_schema")
+
+    apply_edge_id_removal_to_db_profile(schema.db_profile, removed_edge_ids)
+    schema.db_profile = _revalidate_db_profile(schema.db_profile)
+    schema.core_schema = CoreSchema(
+        vertex_config=schema.core_schema.vertex_config,
+        edge_config=EdgeConfig(
+            edges=[
+                edge
+                for edge in schema.core_schema.edge_config.edges
+                if edge.edge_id not in removed_edge_ids
+            ]
+        ),
+    )
+    schema.finish_init()
+
+    if manifest.ingestion_model is None:
+        return
+
+    from graflo.architecture.contract.ingestion.resource import Resource
+
+    resources: list[Resource] = []
+    for resource in manifest.ingestion_model.resources:
+        payload = resource.to_dict(skip_defaults=False)
+        pipeline = payload.get("pipeline")
+        if isinstance(pipeline, list):
+            payload["pipeline"] = rewrite_remove_edge_ids_in_pipeline(
+                pipeline, removed_edge_ids
+            )
+        for key in ("infer_edge_only", "infer_edge_except"):
+            specs = payload.get(key)
+            if isinstance(specs, list):
+                payload[key] = [
+                    spec
+                    for spec in specs
+                    if _edge_id_from_resource_spec(spec) not in removed_edge_ids
+                ]
+        extra_weights = payload.get("extra_weights")
+        if isinstance(extra_weights, list):
+            payload["extra_weights"] = [
+                entry
+                for entry in extra_weights
+                if _edge_id_from_resource_spec(entry) not in removed_edge_ids
+            ]
+        resources.append(Resource.model_validate(payload))
+    manifest.ingestion_model.resources = resources
+    manifest.ingestion_model = IngestionModel.model_validate(
+        manifest.ingestion_model.to_dict(skip_defaults=False)
+    )
+
+
+def apply_project_manifest(manifest: GraphManifest, op: ProjectManifestOp) -> None:
+    """Project manifest to surviving vertices/edges with consistent cascade."""
+    plan = compute_projection(manifest, op)
+    if plan.removed_edge_ids:
+        apply_remove_edge_ids(manifest, plan.removed_edge_ids)
+    if plan.removed_vertices:
+        apply_remove_vertices(
+            manifest,
+            RemoveVerticesOp(names=sorted(plan.removed_vertices)),
+        )
+    if op.keep_resources is not None:
+        _apply_keep_resources(manifest, set(op.keep_resources))
+
+
 def apply_merge_edges(manifest: GraphManifest, op: MergeEdgesOp) -> None:
     """Merge edge relation names into one canonical relation."""
     if op.into in set(op.sources):
@@ -971,6 +1093,7 @@ def apply_sanitize(manifest: GraphManifest, op: SanitizeOp) -> None:
        ingestion via the same field-rename code path.
     """
     from graflo.db.util import load_reserved_words
+    from graflo.onto import DBType
 
     if manifest.graph_schema is None:
         return
@@ -981,13 +1104,19 @@ def apply_sanitize(manifest: GraphManifest, op: SanitizeOp) -> None:
     else:
         reserved_words = load_reserved_words(op.db_flavor)
 
-    if reserved_words:
+    run_name_sanitization = bool(reserved_words) or op.db_flavor == DBType.TIGERGRAPH
+    if run_name_sanitization:
         apply_storage_name_sanitization_to_db_profile(
-            schema.db_profile, schema, reserved_words
+            schema.db_profile,
+            schema,
+            reserved_words,
+            db_flavor=op.db_flavor,
         )
         schema.db_profile = _revalidate_db_profile(schema.db_profile)
 
-        field_renames = compute_vertex_field_renames(schema, reserved_words)
+        field_renames = compute_vertex_field_renames(
+            schema, reserved_words, db_flavor=op.db_flavor
+        )
         if field_renames:
             apply_rename_vertex_properties(
                 manifest,
@@ -1038,6 +1167,8 @@ def _dispatch_op(manifest: GraphManifest, op: Any) -> None:
         apply_add_edge_properties(manifest, op)
     elif isinstance(op, AddInverseEdgesOp):
         apply_add_inverse_edges(manifest, op)
+    elif isinstance(op, ProjectManifestOp):
+        apply_project_manifest(manifest, op)
     elif isinstance(op, SanitizeOp):
         apply_sanitize(manifest, op)
     else:
@@ -1061,6 +1192,7 @@ def apply_manifest_ops_inplace(
         | RemoveEdgePropertiesOp
         | AddEdgePropertiesOp
         | AddInverseEdgesOp
+        | ProjectManifestOp
         | SanitizeOp
     ],
 ) -> None:
@@ -1090,6 +1222,7 @@ def apply_evolution(
         | RemoveEdgePropertiesOp
         | AddEdgePropertiesOp
         | AddInverseEdgesOp
+        | ProjectManifestOp
         | SanitizeOp
     ],
     *,
