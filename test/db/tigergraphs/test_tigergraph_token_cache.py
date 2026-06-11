@@ -166,7 +166,7 @@ def test_call_restpp_api_401_invalidates_cache(
     response.status_code = 401
     err = HTTPError(response=response)
 
-    with patch("graflo.db.tigergraph.conn.requests.get", side_effect=err):
+    with patch("graflo.db.tigergraph.rest_client.requests.get", side_effect=err):
         result = conn._call_restpp_api("/graph/my_graph/vertices/Person")
 
     assert isinstance(result, dict) and result.get("error") is True

@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.5]
+
+### Changed
+
+- **TigerGraph connection refactor** — split the ~5,200-line `conn.py` into focused modules; `TigerGraphConnection` remains the sole public `Connection` implementation and orchestrates delegates for auth, REST++, GSQL, schema DDL, graph admin, and data operations.
+- **New internal modules** — `auth`, `rest_client`, `gsql_client`, `schema_ddl`, `graph_admin`, `data_ops`, `token_cache`, `document_utils`, `gsql_parsers`, `compat`, `bulk_session`, and `name_validation`; shared DDL helpers consolidated in `ddl_utils`.
+- **Token cache** — moved from `conn.py` to `token_cache.py` (re-exported from `conn` for backward compatibility).
+
+### Fixed
+
+- **`keep_absent_documents`** — restored ID extraction after the refactor (would have raised `AttributeError` at runtime).
+- **Graph deletion on multi-graph servers** — `delete_database` / `_drop_global_schema_types` no longer drop vertex or edge types still referenced by other graphs on the same instance.
+- **Internal delegate routing** — GSQL query discovery, token initialization, and REST++ calls in helper modules now route through `TigerGraphConnection` so test patches and token-cache invalidation behave consistently.
+
+### Added
+
+- **Tests** — `test_document_utils.py` for document helpers and `keep_absent_documents`; surviving-graph regression coverage in `test_db_creation.py`.
+- **Docs** — API reference pages for each TigerGraph submodule under `docs/reference/db/tigergraph/`.
+
 ## [1.8.2]
 
 ### Added

@@ -17,8 +17,8 @@ def tigergraph_ddl_edge_projection(edge: Edge, ec: EdgeConfigDBAware) -> Edge:
     return edge_copy
 
 
-def edge_identity_discriminator_field_names(edge: Edge) -> list[str]:
-    """Sorted discriminator tokens (aligned with TigerGraph ADD DIRECTED EDGE)."""
+def edge_identity_discriminator_fields(edge: Edge) -> set[str]:
+    """Discriminator tokens (aligned with TigerGraph ADD DIRECTED EDGE)."""
     fields: set[str] = set()
     for identity_key in edge.identities:
         for token in identity_key:
@@ -29,4 +29,9 @@ def edge_identity_discriminator_field_names(edge: Edge) -> list[str]:
                 continue
             if token not in {"_from", "_to"}:
                 fields.add(token)
-    return sorted(fields)
+    return fields
+
+
+def edge_identity_discriminator_field_names(edge: Edge) -> list[str]:
+    """Sorted discriminator tokens (aligned with TigerGraph ADD DIRECTED EDGE)."""
+    return sorted(edge_identity_discriminator_fields(edge))
