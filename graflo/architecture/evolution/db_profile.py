@@ -463,6 +463,25 @@ def apply_relation_removal_to_db_profile(
     )
 
 
+def apply_edge_id_removal_to_db_profile(
+    profile: DatabaseProfile, removed_edge_ids: set[EdgeId]
+) -> None:
+    """Drop edge specs/default values for removed logical edge triples."""
+    if not removed_edge_ids:
+        return
+    profile.edge_specs = [
+        spec for spec in profile.edge_specs if spec.edge_id not in removed_edge_ids
+    ]
+    dpv = profile.default_property_values
+    if dpv is None:
+        return
+    object.__setattr__(
+        dpv,
+        "edges",
+        [edge for edge in dpv.edges if edge.edge_id not in removed_edge_ids],
+    )
+
+
 def merge_relation_entries_in_db_profile(profile: DatabaseProfile) -> None:
     """Merge duplicate edge-spec/default entries created by relation remaps."""
     merged_specs: dict[EdgePhysicalKey, EdgePhysicalSpec] = {}
