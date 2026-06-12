@@ -329,5 +329,5 @@ class TigerGraphAuth:
             error_msg += f" (all returned 404, graph '{graph_name}' may not exist yet)"
         if last_error:
             error_msg += f": {last_error}"
-        logger.error(error_msg)
+        logger.debug(error_msg)
         raise RuntimeError(error_msg)

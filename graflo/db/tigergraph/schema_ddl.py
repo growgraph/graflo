@@ -679,23 +679,15 @@ class SchemaDdlBuilder:
         # Estimate the size of the GSQL command to determine if we need to split it
         # Large SCHEMA_CHANGE JOBs (>30k chars) can cause parser failures with misleading errors
         # like "Missing return statement" (which is actually a parser size limit issue)
-        # We'll split into batches based on configurable max_job_size
-        # Batch vertices and edges separately, then concatenate
-        vertex_batches = (
+        # We'll split into batches based on configurable max_job_size.
+        # Batch all statements together to minimize GSQL jobs.
+        batches = (
             self._batch_schema_statements(
-                vertex_stmts, graph_name, self._conn.config.max_job_size
+                vertex_stmts + edge_stmts, graph_name, self._conn.config.max_job_size
             )
-            if vertex_stmts
+            if (vertex_stmts or edge_stmts)
             else []
         )
-        edge_batches = (
-            self._batch_schema_statements(
-                edge_stmts, graph_name, self._conn.config.max_job_size
-            )
-            if edge_stmts
-            else []
-        )
-        batches = vertex_batches + edge_batches
 
         # Execute batches sequentially
         for batch_idx, batch_stmts in enumerate(batches):
