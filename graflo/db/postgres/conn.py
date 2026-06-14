@@ -36,6 +36,9 @@ from graflo.architecture.onto_sql import (
 )
 from graflo.db.connection import PostgresConfig
 
+from graflo.db.conn import Connection
+from graflo.db.postgres.target_write import PostgresTargetWriteMixin
+
 from .inference_utils import (
     infer_edge_vertices_from_table_name,
     infer_vertex_from_column_name,
@@ -44,11 +47,12 @@ from .inference_utils import (
 logger = logging.getLogger(__name__)
 
 
-class PostgresConnection:
-    """PostgreSQL connection for schema introspection.
+class PostgresConnection(PostgresTargetWriteMixin, Connection):
+    """PostgreSQL connection for schema introspection and graph target writes.
 
     This class provides PostgreSQL-specific functionality for connecting to databases
     and introspecting 3NF schemas to identify vertex-like and edge-like tables.
+    It also supports writing graph data to vertex and edge junction tables.
 
     Attributes:
         config: PostgreSQL connection configuration
@@ -61,6 +65,7 @@ class PostgresConnection:
         Args:
             config: PostgreSQL connection configuration containing URI and credentials
         """
+        super().__init__()
         self.config = config
 
         # Validate required config values

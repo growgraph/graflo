@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.6]
+
+### Added
+
+- **`GraFloOutput`** — self-describing export artifact combining a full **`Schema`** (metadata, `core_schema`, `db_profile`) with a **`GraphContainer`** of vertices and edges. Python attribute `graph_schema` serializes as `"schema"` in JSON/YAML.
+- **Graph DB as source** — **`Connection.introspect_graph_schema()`**, **`fetch_all_docs()`**, and **`fetch_all_edges()`** on Neo4j and ArangoDB (`supports_graph_export = True`). Shared inference helpers in **`graflo.db.graph_introspection`** (`GraphSchemaInferencer`, `GraphIntrospectionResult`).
+- **`ConnectionManager.open_graph_connection()`** — opens graph connections for introspection/export without target-only validation; **`graph_export_flavors()`** lists backends with export support.
+- **`GraphEngine` graph workflows** — **`infer_schema_from_graph()`**, **`export_graph()`** (returns `GraFloOutput`), and **`migrate_graph()`** (graph→graph or graph→PostgreSQL in one pass with a single source connection and one target sanitization).
+- **PostgreSQL as graph target** — **`DBType.POSTGRES`** in target databases; **`PostgresTargetWriteMixin`** creates vertex tables and junction edge tables, with batch upserts and edge inserts via **`PostgresConnection`**.
+
+### Changed
+
+- **`GraphContainer` JSON edge keys** — edge dictionary keys serialize as JSON arrays `[source, target, relation]` (via **`serialize_edge_key`**) so vertex or relation names may contain `|` or other special characters without ambiguity.
+
+### Documentation
+
+- **[Graph export and migration](docs/concepts/graph_export_migration.md)** — quick-start sketch, `GraFloOutput`, graph-source introspection, `export_graph` / `migrate_graph`, and PostgreSQL as a relational graph target.
+- **[Example 13](docs/examples/example-13.md)** — step-by-step walkthrough and `examples/13-graph-export-migration/export_migrate.py` CLI.
+- **README**, **quickstart**, and **docs index** — PostgreSQL target, bi-directional graph workflows, and links to the new pages.
+
 ## [1.8.5]
 
 ### Changed

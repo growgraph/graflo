@@ -64,6 +64,7 @@ nav:
     -   Transforms: concepts/transforms.md
     -   Table connector views and SelectSpec: concepts/table_connector_views.md
     -   API connector and pagination: concepts/api_connector.md
+    -   Graph export and migration: concepts/graph_export_migration.md
     -   Runtime connector updates: concepts/runtime_connector_updates.md
     -   Backend Index Behavior: concepts/backend_indexes.md
     -   Document cast errors and doc error sink: concepts/ingestion_doc_errors.md
@@ -85,6 +86,7 @@ nav:
     -   10 - TigerGraph bulk load and S3 staging: examples/example-10.md
     -   11 - Flat-row dynamic edges with vertex_router: examples/example-11.md
     -   12 - Vertex Roles and Multi-intent Edges: examples/example-12.md
+    -   13 - Graph Export and Migration: examples/example-13.md
 -   API Reference: reference/
 -   Contributing: contributing.md
 markdown_extensions:

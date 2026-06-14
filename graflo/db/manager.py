@@ -32,6 +32,7 @@ from graflo.db.falkordb.conn import FalkordbConnection
 from graflo.db.memgraph.conn import MemgraphConnection
 from graflo.db.nebula.conn import NebulaConnection
 from graflo.db.neo4j.conn import Neo4jConnection
+from graflo.db.postgres.conn import PostgresConnection
 from graflo.db.tigergraph.conn import TigerGraphConnection
 
 
@@ -61,7 +62,38 @@ class ConnectionManager:
         DBType.FALKORDB: FalkordbConnection,
         DBType.MEMGRAPH: MemgraphConnection,
         DBType.NEBULA: NebulaConnection,
+        DBType.POSTGRES: PostgresConnection,
     }
+
+    @classmethod
+    def graph_export_flavors(cls) -> list[DBType]:
+        """Database types that support graph introspection and bulk export."""
+        return [
+            db_type
+            for db_type, conn_cls in cls.target_conn_mapping.items()
+            if getattr(conn_cls, "supports_graph_export", False)
+        ]
+
+    @classmethod
+    def open_graph_connection(cls, connection_config: DBConfig):
+        """Open a graph database connection without target-only validation.
+
+        Use for graph sources (introspection, export) as well as targets.
+        Caller is responsible for closing the connection.
+        """
+        db_type = connection_config.connection_type
+        conn_cls = cls.target_conn_mapping.get(db_type)
+        if conn_cls is None:
+            raise ValueError(
+                f"No graph connection implementation for database type {db_type!r}"
+            )
+        if not getattr(conn_cls, "supports_graph_export", False):
+            supported = [t.value for t in cls.graph_export_flavors()]
+            raise ValueError(
+                f"Database type {db_type!r} does not support graph export/introspection. "
+                f"Supported types: {supported}"
+            )
+        return conn_cls(config=cast(Any, connection_config))
 
     def __init__(
         self,

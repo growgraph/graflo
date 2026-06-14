@@ -5,18 +5,21 @@ for graph database operations, coordinating between inference, connector mapping
 and data ingestion.
 """
 
+import asyncio
 import inspect
 import logging
 
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.contract.ingestion import IngestionModel
-from graflo.architecture.schema import Schema
+from graflo.architecture.graph_types import GraphContainer
+from graflo.architecture.schema import GraFloOutput, Schema
 from graflo.onto import DBType
 from graflo.architecture.onto_sql import SchemaIntrospectionResult
 from graflo.db.connection import DBConfig, PostgresConfig, SparqlEndpointConfig
 from graflo.db.manager import ConnectionManager
 from graflo.db.postgres.conn import PostgresConnection
 from graflo.hq.caster import Caster, IngestionParams
+from graflo.hq.db_writer import DBWriter
 from graflo.hq.connection_provider import (
     ConnectionProvider,
     EmptyConnectionProvider,
@@ -512,3 +515,147 @@ class GraphEngine:
             provider = EmptyConnectionProvider()
         self.connection_provider = provider
         return bindings
+
+    # ------------------------------------------------------------------
+    # Graph source export / migration
+    # ------------------------------------------------------------------
+
+    def _introspect_and_export_from_graph(
+        self,
+        source_config: DBConfig,
+        *,
+        schema_name: str | None = None,
+        sample_limit: int = 100,
+        data_limit: int | None = None,
+    ) -> tuple[Schema, GraphContainer]:
+        """Open one source connection, introspect schema, and export data."""
+        conn = ConnectionManager.open_graph_connection(source_config)
+        try:
+            schema = conn.introspect_graph_schema(
+                schema_name=schema_name, sample_limit=sample_limit
+            )
+            data = self._export_graph_container(conn, schema, limit=data_limit)
+        finally:
+            conn.close()
+        return schema, data
+
+    def _sanitize_schema_for_target(
+        self, schema: Schema, target_db_flavor: DBType
+    ) -> Schema:
+        """Apply target DB flavor and sanitization to an introspected schema."""
+        schema.db_profile.db_flavor = target_db_flavor
+        manifest = GraphManifest(
+            graph_schema=schema,
+            ingestion_model=IngestionModel(resources=[]),
+        )
+        Sanitizer(target_db_flavor).sanitize_manifest(manifest)
+        return manifest.require_schema()
+
+    def infer_schema_from_graph(
+        self,
+        source_config: DBConfig,
+        *,
+        schema_name: str | None = None,
+        sample_limit: int = 100,
+        target_db_flavor: DBType | None = None,
+    ) -> Schema:
+        """Infer a graflo Schema from a graph database source."""
+        conn = ConnectionManager.open_graph_connection(source_config)
+        try:
+            schema = conn.introspect_graph_schema(
+                schema_name=schema_name, sample_limit=sample_limit
+            )
+        finally:
+            conn.close()
+        flavor = (
+            target_db_flavor if target_db_flavor is not None else self.target_db_flavor
+        )
+        return self._sanitize_schema_for_target(schema, flavor)
+
+    def export_graph(
+        self,
+        source_config: DBConfig,
+        *,
+        schema_name: str | None = None,
+        sample_limit: int = 100,
+        data_limit: int | None = None,
+    ) -> GraFloOutput:
+        """Export schema and data from a graph database into typed GraFlo output."""
+        schema, data = self._introspect_and_export_from_graph(
+            source_config,
+            schema_name=schema_name,
+            sample_limit=sample_limit,
+            data_limit=data_limit,
+        )
+        return GraFloOutput(graph_schema=schema, data=data)
+
+    def migrate_graph(
+        self,
+        source_config: DBConfig,
+        target_config: DBConfig,
+        *,
+        recreate_schema: bool = True,
+        graph_target_namespace: str | None = None,
+        sample_limit: int = 100,
+        data_limit: int | None = None,
+        clear_data: bool = False,
+    ) -> None:
+        """Migrate schema and data from one graph-capable database to another."""
+        raw_schema, data = self._introspect_and_export_from_graph(
+            source_config,
+            sample_limit=sample_limit,
+            data_limit=data_limit,
+        )
+        schema = self._sanitize_schema_for_target(
+            raw_schema, target_config.connection_type
+        )
+
+        manifest = GraphManifest(
+            graph_schema=schema,
+            ingestion_model=IngestionModel(resources=[]),
+        )
+
+        self.define_schema(
+            manifest=manifest,
+            target_db_config=target_config,
+            recreate_schema=recreate_schema,
+            graph_target_namespace=graph_target_namespace,
+        )
+
+        if clear_data:
+            with ConnectionManager(connection_config=target_config) as db_client:
+                db_client.clear_data(schema)
+
+        ingestion_model = IngestionModel(resources=[])
+        ingestion_model.finish_init(schema.core_schema)
+        writer = DBWriter(schema=schema, ingestion_model=ingestion_model)
+        asyncio.run(writer.write(gc=data, conn_conf=target_config, resource_name=None))
+
+    @staticmethod
+    def _export_graph_container(
+        conn,
+        schema: Schema,
+        *,
+        limit: int | None = None,
+    ) -> GraphContainer:
+        """Build a GraphContainer by reading all vertices and edges from *conn*."""
+        vertices: dict[str, list] = {}
+        edges: dict[tuple[str, str, str | None], list] = {}
+        vc = schema.core_schema.vertex_config
+
+        for vertex in vc.vertices:
+            docs = conn.fetch_all_docs(vertex.name, limit=limit)
+            if docs:
+                vertices[vertex.name] = docs
+
+        for edge in schema.core_schema.edge_config.values():
+            edge_docs = conn.fetch_all_edges(
+                edge.source,
+                edge.target,
+                edge.relation,
+                limit=limit,
+            )
+            if edge_docs:
+                edges[edge.edge_id] = edge_docs
+
+        return GraphContainer(vertices=vertices, edges=edges, linear=[])
