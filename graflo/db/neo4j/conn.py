@@ -35,6 +35,14 @@ from graflo.architecture.schema import Schema
 from graflo.architecture.schema.vertex import VertexConfig
 from graflo.db.conn import Connection, SchemaExistsError, consume_insert_edges_kwargs
 from graflo.db.cypher import rel_merge_props_map_from_row_index
+from graflo.db.graph_introspection import (
+    GraphEdgeIntrospection,
+    GraphIntrospectionResult,
+    GraphSchemaInferencer,
+    GraphVertexIntrospection,
+    infer_identity_fields,
+    strip_internal_properties,
+)
 from graflo.filter.onto import FilterExpression
 from graflo.onto import AggregationType
 from graflo.onto import DBType
@@ -72,6 +80,7 @@ class Neo4jConnection(Connection):
     """
 
     flavor = DBType.NEO4J
+    supports_graph_export = True
 
     def __init__(self, config: Neo4jConfig):
         """Initialize Neo4j connection.
@@ -821,3 +830,141 @@ class Neo4jConnection(Connection):
             NotImplementedError: This method is not implemented for Neo4j
         """
         raise NotImplementedError
+
+    def introspect_graph_schema(
+        self,
+        schema_name: str | None = None,
+        *,
+        sample_limit: int = 100,
+    ) -> Schema:
+        """Infer a graflo Schema from Neo4j via label and relationship sampling."""
+        resolved_name = schema_name or self.config.database or "neo4j"
+        labels_query = "CALL db.labels() YIELD label RETURN label"
+        try:
+            label_rows = self.execute(labels_query).data()
+            labels = [row["label"] for row in label_rows if row.get("label")]
+        except ClientError:
+            fallback = """
+                MATCH (n)
+                UNWIND labels(n) AS label
+                RETURN DISTINCT label
+            """
+            label_rows = self.execute(fallback).data()
+            labels = [row["label"] for row in label_rows if row.get("label")]
+
+        vertices: list[GraphVertexIntrospection] = []
+        for label in labels:
+            escaped = _cypher_escape_identifier(label)
+            props_query = f"""
+                MATCH (n:`{escaped}`)
+                WITH n LIMIT {sample_limit}
+                UNWIND keys(n) AS key
+                RETURN DISTINCT key
+            """
+            prop_rows = self.execute(props_query).data()
+            properties = [row["key"] for row in prop_rows if row.get("key")]
+            vertices.append(
+                GraphVertexIntrospection(
+                    name=label,
+                    properties=properties,
+                    identity=infer_identity_fields(properties),
+                )
+            )
+
+        edge_patterns_query = """
+            MATCH (a)-[r]->(b)
+            WITH labels(a)[0] AS source, type(r) AS relation, labels(b)[0] AS target
+            WHERE source IS NOT NULL AND target IS NOT NULL
+            RETURN DISTINCT source, relation, target
+        """
+        pattern_rows = self.execute(edge_patterns_query).data()
+        edges: list[GraphEdgeIntrospection] = []
+        for row in pattern_rows:
+            source = row.get("source")
+            target = row.get("target")
+            relation = row.get("relation")
+            if not source or not target:
+                continue
+            src_esc = _cypher_escape_identifier(source)
+            tgt_esc = _cypher_escape_identifier(target)
+            rel_esc = _cypher_escape_identifier(relation) if relation else None
+            rel_clause = f":`{rel_esc}`" if rel_esc else ""
+            edge_props_query = f"""
+                MATCH (a:`{src_esc}`)-[r{rel_clause}]->(b:`{tgt_esc}`)
+                WITH r LIMIT {sample_limit}
+                UNWIND keys(r) AS key
+                RETURN DISTINCT key
+            """
+            edge_prop_rows = self.execute(edge_props_query).data()
+            edge_properties = [r["key"] for r in edge_prop_rows if r.get("key")]
+            edges.append(
+                GraphEdgeIntrospection(
+                    source=source,
+                    target=target,
+                    relation=relation,
+                    properties=edge_properties,
+                )
+            )
+
+        introspection = GraphIntrospectionResult(
+            name=resolved_name,
+            vertices=vertices,
+            edges=edges,
+        )
+        return GraphSchemaInferencer(db_flavor=DBType.NEO4J).infer_schema(
+            introspection, schema_name=resolved_name
+        )
+
+    def fetch_all_docs(
+        self,
+        class_name: str,
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Fetch all nodes for a label."""
+        escaped = _cypher_escape_identifier(class_name)
+        limit_clause = f"LIMIT {limit}" if limit is not None else ""
+        query = f"""
+            MATCH (n:`{escaped}`)
+            RETURN properties(n) AS props
+            {limit_clause}
+        """
+        rows = self.execute(query).data()
+        return [
+            strip_internal_properties(row["props"]) for row in rows if row.get("props")
+        ]
+
+    def fetch_all_edges(
+        self,
+        source_class: str,
+        target_class: str,
+        relation_name: str | None,
+        *,
+        match_keys_source: tuple[str, ...] | None = None,
+        match_keys_target: tuple[str, ...] | None = None,
+        limit: int | None = None,
+        collection_name: str | None = None,
+    ) -> list[list[dict[str, Any]]]:
+        """Fetch all relationships between two labels."""
+        src_esc = _cypher_escape_identifier(source_class)
+        tgt_esc = _cypher_escape_identifier(target_class)
+        rel_clause = ""
+        if relation_name:
+            rel_esc = _cypher_escape_identifier(relation_name)
+            rel_clause = f":`{rel_esc}`"
+        limit_clause = f"LIMIT {limit}" if limit is not None else ""
+        query = f"""
+            MATCH (source:`{src_esc}`)-[r{rel_clause}]->(target:`{tgt_esc}`)
+            RETURN properties(source) AS source_props,
+                   properties(target) AS target_props,
+                   properties(r) AS edge_props
+            {limit_clause}
+        """
+        rows = self.execute(query).data()
+        result: list[list[dict[str, Any]]] = []
+        for row in rows:
+            source_doc = strip_internal_properties(row.get("source_props") or {})
+            target_doc = strip_internal_properties(row.get("target_props") or {})
+            edge_props = strip_internal_properties(row.get("edge_props") or {})
+            result.append([source_doc, target_doc, edge_props])
+        return result

@@ -147,6 +147,7 @@ class Connection(abc.ABC):
     """
 
     flavor: ClassVar[DBType] = DBType.ARANGO  # Overridden by subclasses
+    supports_graph_export: ClassVar[bool] = False
 
     def __init__(self):
         """Initialize the connection."""
@@ -545,4 +546,49 @@ class Connection(abc.ABC):
         """Close staging files, optionally upload to S3, run LOADING JOB, return GSQL log text."""
         raise UnsupportedBulkLoad(
             f"Database flavor {self.flavor!r} does not support native bulk load"
+        )
+
+    def introspect_graph_schema(
+        self,
+        schema_name: str | None = None,
+        *,
+        sample_limit: int = 100,
+    ) -> Schema:
+        """Infer a graflo :class:`Schema` from this graph database.
+
+        Graph connection subclasses implement sampling-based introspection.
+        """
+        raise NotImplementedError(
+            f"introspect_graph_schema is not implemented for {type(self).__name__}"
+        )
+
+    def fetch_all_docs(
+        self,
+        class_name: str,
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Fetch all documents for a vertex type/collection."""
+        raise NotImplementedError(
+            f"fetch_all_docs is not implemented for {type(self).__name__}"
+        )
+
+    def fetch_all_edges(
+        self,
+        source_class: str,
+        target_class: str,
+        relation_name: str | None,
+        *,
+        match_keys_source: tuple[str, ...] | None = None,
+        match_keys_target: tuple[str, ...] | None = None,
+        limit: int | None = None,
+        collection_name: str | None = None,
+    ) -> list[list[dict[str, Any]]]:
+        """Fetch all edges between two vertex types.
+
+        Returns:
+            List of ``[source_doc, target_doc, edge_properties]`` triples.
+        """
+        raise NotImplementedError(
+            f"fetch_all_edges is not implemented for {type(self).__name__}"
         )

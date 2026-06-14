@@ -227,6 +227,34 @@ engine.define_and_ingest(
 )
 ```
 
+## Graph export and migration
+
+Use an existing **Neo4j** or **ArangoDB** database as a source — no manifest YAML required. Export a self-describing **`GraFloOutput`**, migrate graph→graph, or land the model in **PostgreSQL** as vertex and junction edge tables.
+
+```python
+from graflo import GraphEngine, DBType
+from graflo.db import Neo4jConfig, ArangoConfig, PostgresConfig
+
+engine = GraphEngine(target_db_flavor=DBType.ARANGO)
+
+neo4j = Neo4jConfig.from_docker_env()
+arango = ArangoConfig.from_docker_env()
+postgres = PostgresConfig.from_docker_env()
+
+# Export typed output (schema + GraphContainer)
+output = engine.export_graph(neo4j)
+output.to_yaml("export.yaml")
+
+# Neo4j → Arango migration
+engine.migrate_graph(neo4j, arango, recreate_schema=True)
+
+# Neo4j → Postgres (relational vertex + edge tables)
+pg_engine = GraphEngine(target_db_flavor=DBType.POSTGRES)
+pg_engine.migrate_graph(neo4j, postgres, recreate_schema=True)
+```
+
+Full walkthrough: [Example 13](../examples/example-13.md) · [Graph export and migration](../concepts/graph_export_migration.md)
+
 ## Using API Data Sources
 
 REST API ingestion uses bindings + `conn_proxy`, like SQL and SPARQL. The manifest declares the endpoint **`path`** and optional **`pagination`**; runtime code registers **`base_url`** and credentials.

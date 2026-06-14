@@ -4,6 +4,7 @@ For lighter imports, prefer:
 
 - ``graflo.architecture.schema`` — graph schema types
 - ``graflo.architecture.contract`` — manifest, bindings, resources, transforms
+- ``graflo.architecture.graph_types`` — runtime containers, contexts, indexes (or submodules)
 - ``graflo.architecture.pipeline.runtime`` — actors and executor
 
 See ``docs/importing.md`` in the package.
@@ -29,6 +30,7 @@ from .graph_types import Index
 from graflo.architecture.schema import (
     CoreSchema,
     EdgeConfigDBAware,
+    GraFloOutput,
     GraphMetadata,
     GraphModel,
     Schema,
@@ -48,6 +50,7 @@ __all__ = [
     "EdgeConfigDBAware",
     "FieldType",
     "FileConnector",
+    "GraFloOutput",
     "GraphManifest",
     "GraphMetadata",
     "GraphModel",

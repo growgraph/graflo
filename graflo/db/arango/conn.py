@@ -40,6 +40,14 @@ from graflo.architecture.schema.vertex import VertexConfig
 from graflo.db.arango.query import fetch_fields_query
 from graflo.db.arango.util import render_filters
 from graflo.db.conn import Connection, SchemaExistsError, consume_insert_edges_kwargs
+from graflo.db.graph_introspection import (
+    GraphEdgeIntrospection,
+    GraphIntrospectionResult,
+    GraphSchemaInferencer,
+    GraphVertexIntrospection,
+    infer_identity_fields,
+    strip_internal_properties,
+)
 from graflo.db.util import get_data_from_cursor, json_serializer
 from graflo.filter.onto import FilterExpression
 from graflo.onto import AggregationType
@@ -108,6 +116,15 @@ def _arango_edge_upsert_match_literal(
     return "{" + inner + "}"
 
 
+def _arango_safe_collection_name(name: str) -> str:
+    """Validate collection name for safe AQL interpolation."""
+    import re
+
+    if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_\-]*", name):
+        raise ValueError(f"Unsafe ArangoDB collection name: {name!r}")
+    return name
+
+
 class ArangoConnection(Connection):
     """ArangoDB-specific implementation of the Connection interface.
 
@@ -121,6 +138,7 @@ class ArangoConnection(Connection):
     """
 
     flavor = DBType.ARANGO
+    supports_graph_export = True
 
     def __init__(self, config: ArangoConfig):
         """Initialize ArangoDB connection.
@@ -1253,3 +1271,155 @@ class ArangoConnection(Connection):
         s3 = f"}} in {collection_name}"
         q0 = s1 + s2 + s3
         return q0
+
+    def introspect_graph_schema(
+        self,
+        schema_name: str | None = None,
+        *,
+        sample_limit: int = 100,
+    ) -> Schema:
+        """Infer a graflo Schema from ArangoDB via collection sampling."""
+        resolved_name = schema_name or self.config.database or "arango"
+        collections = self.get_collections()
+        vertex_collections: list[str] = []
+        edge_collections: list[str] = []
+        for coll in collections:
+            name = coll.get("name")
+            if not name or name.startswith("_"):
+                continue
+            if coll.get("type") == 3:
+                edge_collections.append(name)
+            elif coll.get("type") == 2:
+                vertex_collections.append(name)
+
+        vertices: list[GraphVertexIntrospection] = []
+        for coll_name in vertex_collections:
+            safe = _arango_safe_collection_name(coll_name)
+            props_query = f"""
+                FOR doc IN {safe}
+                    LIMIT {sample_limit}
+                    FOR key IN ATTRIBUTES(doc)
+                        FILTER key NOT IN ['_id', '_key', '_rev']
+                        RETURN DISTINCT key
+            """
+            prop_rows = get_data_from_cursor(self.execute(props_query))
+            properties = [row for row in prop_rows if isinstance(row, str)]
+            vertices.append(
+                GraphVertexIntrospection(
+                    name=coll_name,
+                    properties=properties,
+                    identity=infer_identity_fields(properties),
+                )
+            )
+
+        edges: list[GraphEdgeIntrospection] = []
+        for coll_name in edge_collections:
+            safe = _arango_safe_collection_name(coll_name)
+            pattern_query = f"""
+                FOR edge IN {safe}
+                    LIMIT {sample_limit}
+                    COLLECT source = SPLIT(edge._from, '/')[0],
+                            target = SPLIT(edge._to, '/')[0]
+                    RETURN {{ source, target }}
+            """
+            pattern_rows = get_data_from_cursor(self.execute(pattern_query))
+            edge_props_query = f"""
+                FOR edge IN {safe}
+                    LIMIT {sample_limit}
+                    FOR key IN ATTRIBUTES(edge)
+                        FILTER key NOT IN ['_id', '_key', '_rev', '_from', '_to']
+                        RETURN DISTINCT key
+            """
+            edge_prop_rows = get_data_from_cursor(self.execute(edge_props_query))
+            edge_properties = [row for row in edge_prop_rows if isinstance(row, str)]
+            relation: str | None = None
+            if "relation" in edge_properties:
+                relation = "relation"
+            seen_pairs: set[tuple[str, str]] = set()
+            for row in pattern_rows:
+                if not isinstance(row, dict):
+                    continue
+                source = row.get("source")
+                target = row.get("target")
+                if not source or not target:
+                    continue
+                pair = (source, target)
+                if pair in seen_pairs:
+                    continue
+                seen_pairs.add(pair)
+                edges.append(
+                    GraphEdgeIntrospection(
+                        source=source,
+                        target=target,
+                        relation=relation,
+                        properties=edge_properties,
+                        collection_name=coll_name,
+                    )
+                )
+
+        introspection = GraphIntrospectionResult(
+            name=resolved_name,
+            vertices=vertices,
+            edges=edges,
+        )
+        return GraphSchemaInferencer(db_flavor=DBType.ARANGO).infer_schema(
+            introspection, schema_name=resolved_name
+        )
+
+    def fetch_all_docs(
+        self,
+        class_name: str,
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Fetch all documents from a vertex collection."""
+        safe = _arango_safe_collection_name(class_name)
+        limit_clause = f"LIMIT {limit}" if limit is not None else ""
+        query = f"""
+            FOR doc IN {safe}
+                {limit_clause}
+                RETURN UNSET(doc, '_id', '_rev')
+        """
+        rows = get_data_from_cursor(self.execute(query))
+        return [strip_internal_properties(row) for row in rows if isinstance(row, dict)]
+
+    def fetch_all_edges(
+        self,
+        source_class: str,
+        target_class: str,
+        relation_name: str | None,
+        *,
+        match_keys_source: tuple[str, ...] | None = None,
+        match_keys_target: tuple[str, ...] | None = None,
+        limit: int | None = None,
+        collection_name: str | None = None,
+    ) -> list[list[dict[str, Any]]]:
+        """Fetch all edges between two vertex collections."""
+        coll = collection_name or f"{source_class}_{target_class}_edges"
+        safe = _arango_safe_collection_name(coll)
+        limit_clause = f"LIMIT {limit}" if limit is not None else ""
+        query = f"""
+            FOR edge IN {safe}
+                FILTER STARTS_WITH(edge._from, CONCAT('{source_class}/'))
+                FILTER STARTS_WITH(edge._to, CONCAT('{target_class}/'))
+                {limit_clause}
+                LET source = DOCUMENT(edge._from)
+                LET target = DOCUMENT(edge._to)
+                RETURN {{
+                    source: UNSET(source, '_id', '_rev'),
+                    target: UNSET(target, '_id', '_rev'),
+                    weight: UNSET(edge, '_id', '_key', '_rev', '_from', '_to')
+                }}
+        """
+        rows = get_data_from_cursor(self.execute(query))
+        result: list[list[dict[str, Any]]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            source_doc = strip_internal_properties(row.get("source") or {})
+            target_doc = strip_internal_properties(row.get("target") or {})
+            edge_props = strip_internal_properties(row.get("weight") or {})
+            if relation_name and "relation" not in edge_props:
+                edge_props["relation"] = relation_name
+            result.append([source_doc, target_doc, edge_props])
+        return result

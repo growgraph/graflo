@@ -6,6 +6,7 @@ from .db_aware import (
     VertexConfigDBAware,
 )
 from .document import Schema
+from .graflo_output import GraFloOutput
 from .metadata import GraphMetadata
 
 # Server and legacy code refer to the logical graph (A) as ``GraphModel``.
@@ -15,6 +16,7 @@ __all__ = [
     "CoreSchema",
     "EdgeConfigDBAware",
     "EdgeRuntime",
+    "GraFloOutput",
     "GraphMetadata",
     "GraphModel",
     "Schema",

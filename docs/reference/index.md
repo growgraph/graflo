@@ -39,7 +39,7 @@ Database connection and management components:
   - [Query](db/nebula/query.md): nGQL and GQL query builders
   - [Utilities](db/nebula/util.md): Type mapping, value serialization, VID generation, filter rendering
 - **[PostgreSQL](db/postgres/__init__.md)**:
-  - [Connection](db/postgres/conn.md): PostgreSQL connection and schema introspection
+  - [Connection](db/postgres/conn.md): PostgreSQL connection, SQL schema introspection (3NF source), and **graph target** writes (vertex + junction edge tables)
   - [Schema Inference](db/postgres/schema_inference.md): Automatic schema generation from PostgreSQL 3NF databases
   - [Resource Mapping](db/postgres/resource_mapping.md): Mapping PostgreSQL tables to graflo Resources
   - [Type Mapping](db/postgres/types.md): PostgreSQL to graflo type conversion

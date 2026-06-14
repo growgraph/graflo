@@ -42,6 +42,7 @@ TARGET_DATABASES: set[DBType] = {
     DBType.FALKORDB,
     DBType.MEMGRAPH,
     DBType.NEBULA,
+    DBType.POSTGRES,
 }
 
 

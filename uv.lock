@@ -434,7 +434,7 @@ dependencies = [
 ]
 name = "graflo"
 source = {editable = "."}
-version = "1.8.5"
+version = "1.8.6"
 
 [package.metadata]
 provides-extras = ["dev", "docs", "plot"]
