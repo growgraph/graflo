@@ -131,15 +131,23 @@ class GraphAdmin:
             logger.debug(f"Creating graph '{name}' via GSQL: {gsql_commands}")
             try:
                 result = self._conn._execute_gsql(gsql_commands)
+                result_str = str(result)
+                result_lower = result_str.lower()
+
+                # Check for explicit failure
+                if gsql_result_has_error(result_str):
+                    error_msg = f"Failed to create graph '{name}': {result_str}"
+                    logger.error(error_msg)
+                    raise RuntimeError(error_msg)
+
                 logger.info(
-                    f"Successfully created graph '{name}' with types {all_types}: {result}"
+                    f"Successfully created graph '{name}' with types {all_types}: {result_str}"
                 )
                 # Verify the result doesn't indicate the graph already existed
-                result_str = str(result).lower()
                 if (
-                    "already exists" in result_str
-                    or "duplicate" in result_str
-                    or "graph already exists" in result_str
+                    "already exists" in result_lower
+                    or "duplicate" in result_lower
+                    or "graph already exists" in result_lower
                 ):
                     raise RuntimeError(f"Graph '{name}' already exists")
                 return result
@@ -193,7 +201,11 @@ class GraphAdmin:
         result_lower = result_str.lower()
 
         # Treat "does not exist" as a success: graph is already gone.
-        if "does not exist" in result_lower or "doesn't exist" in result_lower:
+        if (
+            "does not exist" in result_lower
+            or "doesn't exist" in result_lower
+            or "could not be dropped" in result_lower
+        ):
             logger.info(
                 f"Graph '{name}' did not exist; treating as successful deletion"
             )
@@ -1032,17 +1044,12 @@ class GraphAdmin:
         """
         snapshot: dict[str, list[str]] = {}
         for graph_name in self._conn._get_all_graph_names():
-            snapshot[graph_name] = self._conn._get_installed_queries(
-                graph_name=graph_name
-            )
+            # Get installed queries via GSQL; returns None if discovery failed (e.g. auth/permission error)
+            queries = self._conn._gsql._get_installed_queries_via_gsql(graph_name)
+            if queries is not None:
+                snapshot[graph_name] = queries
+            else:
+                logger.debug(
+                    f"Skipping query snapshot for graph '{graph_name}' due to discovery failure"
+                )
         return snapshot
-
-    def _gsql_result_has_error(self, result: str) -> bool:
-        """Return True when a GSQL response text signals a semantic/runtime failure."""
-        lowered = result.lower()
-        return (
-            "semantic check fails" in lowered
-            or "failed to" in lowered
-            or "parse error" in lowered
-            or "syntax error" in lowered
-        )

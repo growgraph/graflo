@@ -12,15 +12,13 @@ from requests import exceptions as requests_exceptions
 
 from graflo.architecture.schema import Schema
 from graflo.db.tigergraph.gsql_parsers import (
+    gsql_result_has_error,
     is_missing_query_endpoint_error,
     parse_installed_queries_from_ls,
-    parse_installed_queries_from_rest_endpoints,
     parse_installed_queries_from_show_query,
     parse_show_edge_output_with_vertices,
     parse_show_job_output,
     parse_show_output,
-    rest_error_suggests_auth_or_gateway,
-    rest_response_is_error,
 )
 from graflo.onto import DBType
 
@@ -154,56 +152,42 @@ class TigerGraphGsqlClient:
         Returns:
             List of installed query names, or ``None`` when GSQL discovery fails.
         """
-        queries: list[str] = []
         try:
             ls_output = self._conn._execute_gsql(f"USE GRAPH {graph_name}\nls")
-            queries = parse_installed_queries_from_ls(str(ls_output))
+            ls_output_str = str(ls_output)
+            if gsql_result_has_error(ls_output_str):
+                logger.debug(
+                    f"GSQL ls failed for graph '{graph_name}': {ls_output_str}"
+                )
+                return None
+
+            queries = parse_installed_queries_from_ls(ls_output_str)
+            if queries:
+                return queries
         except Exception as e:
             logger.debug(f"GSQL ls failed for graph '{graph_name}': {e}")
-
-        if queries:
-            return queries
+            return None
 
         try:
             show_output = self._conn._execute_gsql(
                 f"USE GRAPH {graph_name}\nSHOW QUERY *"
             )
-            return parse_installed_queries_from_show_query(str(show_output))
+            show_output_str = str(show_output)
+            if gsql_result_has_error(show_output_str):
+                logger.debug(
+                    f"GSQL SHOW QUERY * failed for graph '{graph_name}': {show_output_str}"
+                )
+                return None
+
+            return parse_installed_queries_from_show_query(show_output_str)
         except Exception as e:
             logger.debug(f"GSQL SHOW QUERY * failed for graph '{graph_name}': {e}")
             return None
 
-    def _get_installed_queries_via_rest(self, graph_name: str) -> list[str]:
-        """Discover installed queries via REST ``/endpoints/{graph}?dynamic=true``."""
-        endpoint = f"/endpoints/{graph_name}"
-        params = {"dynamic": "true"}
-        result = self._conn._call_restpp_api(endpoint, method="GET", params=params)
-        queries = parse_installed_queries_from_rest_endpoints(result, graph_name)
-        if queries:
-            return queries
-
-        if (
-            isinstance(result, dict)
-            and rest_response_is_error(result)
-            and rest_error_suggests_auth_or_gateway(result)
-            and self._conn.config.password
-        ):
-            logger.debug(
-                "REST /endpoints failed for graph '%s'; retrying with Basic Auth",
-                graph_name,
-            )
-            result = self._conn._call_restpp_api(
-                endpoint, method="GET", params=params, use_basic_auth=True
-            )
-            return parse_installed_queries_from_rest_endpoints(result, graph_name)
-
-        return queries
-
     def _get_installed_queries(self, graph_name: str | None = None) -> list[str]:
         """Return installed query names for a graph.
 
-        Uses GSQL catalog commands first (same auth path as schema operations), then
-        falls back to REST ``/endpoints/{graph_name}?dynamic=true`` when GSQL fails.
+        Uses GSQL catalog commands (same auth path as schema operations).
 
         Args:
             graph_name: Name of the graph (defaults to self._conn.graphname)
@@ -216,12 +200,8 @@ class TigerGraphGsqlClient:
         if gsql_queries is not None:
             return gsql_queries
 
-        rest_queries = self._get_installed_queries_via_rest(graph_name)
-        if rest_queries:
-            return rest_queries
-
         logger.warning(
-            "Could not discover installed queries for graph '%s' via GSQL or REST; "
+            "Could not discover installed queries for graph '%s' via GSQL; "
             "treating as empty",
             graph_name,
         )

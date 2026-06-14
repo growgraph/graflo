@@ -44,6 +44,12 @@ def gsql_result_has_error(result: str) -> bool:
         or "failed to" in lowered
         or "parse error" in lowered
         or "syntax error" in lowered
+        or "could not be" in lowered
+        or "error:" in lowered
+        or "error :" in lowered
+        or "does not exist" in lowered
+        or "doesn't exist" in lowered
+        or "currently not using any graphs" in lowered
     )
 
 
