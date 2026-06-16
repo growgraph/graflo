@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-
+- 
 - **`IngestionParams.connectors`** — optional subset filter for ingestion bindings (connector name or hash, same refs as `resource_connector.connector`). Intersects with `resources` when both are set; `RegistryBuilder` registers only matching connectors as data sources.
 - **`Bindings.resolve_connector_refs_to_hashes()`** — resolves connector refs for validation and registry filtering.
 - **On-disk layout** — `schema.yaml`, `INDEX.json`, and gzip JSONL chunks under `vertices/` and `edges/` (`graflo.architecture.backend`: **`GraFloIndex`**, **`GraFloLayout`**, **`GraFloBackendWriter`**, **`GraFloBackendReader`**).
