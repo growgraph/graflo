@@ -194,7 +194,12 @@ registry = DataSourceRegistry()
 registry.register(file_source, resource_name="users")
 
 caster = Caster(schema=schema, ingestion_model=ingestion_model)
-ingestion_params = IngestionParams(batch_size=1000, clear_data=False)
+ingestion_params = IngestionParams(
+    batch_size=1000,
+    clear_data=False,
+    # resources=["users"],
+    # connectors=["users_files"],  # connector name or hash; intersects with resources
+)
 
 asyncio.run(
     caster.ingest_data_sources(

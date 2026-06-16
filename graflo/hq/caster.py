@@ -373,7 +373,9 @@ class Caster:
         self.schema.db_profile.db_flavor = db_flavor
         self.schema.finish_init()
 
-        allowed_resource_names = self._resolve_ingestion_scope(ingestion_params)
+        allowed_resource_names = self._resolve_ingestion_scope(
+            ingestion_params, bindings=bindings
+        )
 
         self.ingestion_model.finish_init(
             self.schema.core_schema,
@@ -403,7 +405,10 @@ class Caster:
         )
 
     def _resolve_ingestion_scope(
-        self, ingestion_params: IngestionParams
+        self,
+        ingestion_params: IngestionParams,
+        *,
+        bindings: Bindings | None = None,
     ) -> set[str] | None:
         if ingestion_params.resources is not None:
             known_resources = set(self.ingestion_model._resources.keys())
@@ -417,6 +422,13 @@ class Caster:
             allowed_resource_names: set[str] | None = requested_resources
         else:
             allowed_resource_names = None
+
+        if ingestion_params.connectors is not None:
+            if bindings is None:
+                raise ValueError(
+                    "ingestion_params.connectors requires bindings to resolve connector refs"
+                )
+            bindings.resolve_connector_refs_to_hashes(ingestion_params.connectors)
 
         if ingestion_params.vertices is not None:
             known_vertices = {

@@ -101,6 +101,9 @@ from graflo.hq import GraphEngine
 engine = GraphEngine()
 ingestion_params = IngestionParams(
     clear_data=False,
+    # resources=["users"],  # Optional: ingest only listed resources
+    # connectors=["users_files"],  # Optional: ingest only listed connectors (name or hash)
+    # vertices=["User"],  # Optional: cast only listed vertex types
 )
 
 # Attach bindings to the manifest before orchestration.
@@ -212,6 +215,9 @@ arango_config = ArangoConfig.from_docker_env()  # Target graph database
 engine = GraphEngine()
 ingestion_params = IngestionParams(
     clear_data=False,
+    # resources=["users"],  # Optional: ingest only listed resources
+    # connectors=["users_files"],  # Optional: ingest only listed connectors (name or hash)
+    # vertices=["User"],  # Optional: cast only listed vertex types
     # Optional: restrict to a date range with datetime_after, datetime_before, datetime_column
     # (use with create_bindings(..., datetime_columns={...}) for per-table columns)
 )

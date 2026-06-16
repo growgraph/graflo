@@ -114,6 +114,13 @@ def test_ingestion_params_accepts_resource_and_vertex_filters() -> None:
     assert params.vertices == ["v1"]
 
 
+def test_ingestion_params_accepts_connectors_filter() -> None:
+    params = IngestionParams(
+        resources=["r1"], connectors=["users_api"], vertices=["v1"]
+    )
+    assert params.connectors == ["users_api"]
+
+
 def _vertex_config_a_b_c() -> VertexConfig:
     return VertexConfig.from_dict(
         {

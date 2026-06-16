@@ -325,6 +325,7 @@ classDiagram
         +clear_data: bool
         +n_cores: int
         +resources: list[str]?
+        +connectors: list[str]?
         +vertices: list[str]?
         +batch_size: int
         +batch_prefetch: int

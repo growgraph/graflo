@@ -105,6 +105,7 @@ Schema comparison gives you a predictable transition path between versions. Inst
 - **Batch Processing**: Process large datasets in configurable batches (`IngestionParams.batch_size` on `Caster` / `GraphEngine`)
 - **Batch Prefetch**: While one batch is cast and written, `Caster.process_data_source` can prefetch up to `IngestionParams.batch_prefetch` additional batches from `AbstractDataSource.iter_batches` (bounded memory, overlapped I/O)
 - **Parallel Execution**: Utilize multiple cores for faster processing (`n_cores` parameter of `Caster`)
+- **Ingestion scope filters**: Limit a run to specific resources (`IngestionParams.resources`), connectors (`IngestionParams.connectors` — name or hash, same refs as `resource_connector`), and/or vertex types (`IngestionParams.vertices`). When both `resources` and `connectors` are set, only connectors bound to listed resources that also match the connector filter are ingested.
 - **Efficient Resource Handling**: Optimized processing of both table and tree-like data
 
 ## Best Practices

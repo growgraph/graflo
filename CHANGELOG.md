@@ -9,7 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`GraFloBackendConfig`** and **`GraFloBackendConnection`** — file-based graph backend registered as both **source** and **target** in `ConnectionManager` (`DBType.GRAFLO_BACKEND`). Use with existing **`migrate_graph()`** and **`ingest()`** / **`define_and_ingest()`** without API changes.
+
+- **`IngestionParams.connectors`** — optional subset filter for ingestion bindings (connector name or hash, same refs as `resource_connector.connector`). Intersects with `resources` when both are set; `RegistryBuilder` registers only matching connectors as data sources.
+- **`Bindings.resolve_connector_refs_to_hashes()`** — resolves connector refs for validation and registry filtering.
 - **On-disk layout** — `schema.yaml`, `INDEX.json`, and gzip JSONL chunks under `vertices/` and `edges/` (`graflo.architecture.backend`: **`GraFloIndex`**, **`GraFloLayout`**, **`GraFloBackendWriter`**, **`GraFloBackendReader`**).
 - **`target_flavor_hint`** on `GraFloBackendConfig` — optional pre-sanitization of exported `schema.yaml` for a known downstream `DBType`.
 - **API env wiring** — **`InMemoryConnectionProvider.register_api_config_from_env`** and **`register_all_api_configs_from_env`** load **`RestApiConnConfig`** from environment variables using proxy-scoped prefixes (`user_service` → `USER_SERVICE_BASE_URL`, …). **`RestApiConnConfig.from_env`** supports all **`ApiAuth`** types via **`AUTH_TYPE`**.
@@ -21,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **[Example 13](docs/examples/example-13.md)** — reworked around file backend: `export-backend`, `ingest-backend`, and replay via `--from-backend`; bundled CSV manifest for ingest-to-disk demo.
 - **Documentation** — [Graph export and migration](docs/concepts/graph_export_migration.md), README, quickstart, and docs index updated for file-backend workflows (1.8.7).
 - **API env wiring docs** — [API connector and pagination](docs/concepts/api_connector.md), quickstart, data-source reference, and [Example 14](docs/examples/example-14.md) document **`register_all_api_configs_from_env`** and proxy-scoped env prefixes.
+- **Ingestion scope docs** — `IngestionParams.connectors` documented in README, quickstart, [features and practices](docs/concepts/features_and_practices.md), architecture diagrams, and data-source reference.
 
 ## [1.8.6]
 

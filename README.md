@@ -165,6 +165,8 @@ ingestion_params = IngestionParams(
     clear_data=False,
     # max_items=1000,  # Optional: limit number of items to process
     # batch_size=10000,  # Optional: customize batch size
+    # resources=["users"],  # Optional: ingest only listed resources
+    # connectors=["users_files"],  # Optional: ingest only listed connectors (name or hash)
 )
 
 ingest_manifest = manifest.model_copy(update={"bindings": bindings})
