@@ -13,11 +13,11 @@ The `Schema` is the single source of truth for the LPG structure. It encapsulate
 - Automatic schema inference from normalized PostgreSQL databases (3NF with PK/FK) or from OWL/RDFS ontologies
 - Graph-source inference from Neo4j or ArangoDB via **`Connection.introspect_graph_schema()`** (see [Graph export and migration](graph_export_migration.md))
 
-### GraFloOutput and GraphContainer
+### GraFloOutput, GraphContainer, and file backend
 
 **`GraphContainer`** holds database-agnostic vertex and edge batches during ingestion or export. Edge keys are `(source, target, relation)` tuples in Python; JSON serialization uses compact array keys via **`serialize_edge_key`**.
 
-**`GraFloOutput`** bundles a full **`Schema`** with a **`GraphContainer`** for self-describing exports (`GraphEngine.export_graph()`). The Python field is `graph_schema`; JSON/YAML uses the key `"schema"`.
+**`GraFloOutput`** bundles a full **`Schema`** with a **`GraphContainer`** for in-memory use (`GraphEngine.export_graph()`). For durable exports, prefer **`GraFloBackendConfig`** — a `Connection` target that writes chunked gzip JSONL under `vertices/` and `edges/` plus `schema.yaml` and `INDEX.json`. See [Graph export and migration](graph_export_migration.md).
 
 ### IngestionModel
 The `IngestionModel` is the source of truth for ingestion runtime behavior. It encapsulates:

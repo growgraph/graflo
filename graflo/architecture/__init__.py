@@ -27,6 +27,7 @@ from .contract import (
 )
 from .database_features import DatabaseProfile
 from .graph_types import Index
+from graflo.architecture.backend import GraFloIndex
 from graflo.architecture.schema import (
     CoreSchema,
     EdgeConfigDBAware,
@@ -40,6 +41,21 @@ from graflo.architecture.schema import (
 from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.schema.vertex import FieldType, Vertex, VertexConfig
 
+_LAZY_EXPORTS = {
+    "GraFloBackendConfig": ("graflo.db.graflo_backend.config", "GraFloBackendConfig"),
+}
+
+
+def __getattr__(name: str):
+    if name in _LAZY_EXPORTS:
+        module_name, attr_name = _LAZY_EXPORTS[name]
+        import importlib
+
+        module = importlib.import_module(module_name)
+        return getattr(module, attr_name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 __all__ = [
     "APIConnector",
     "Bindings",
@@ -51,6 +67,8 @@ __all__ = [
     "FieldType",
     "FileConnector",
     "GraFloOutput",
+    "GraFloBackendConfig",
+    "GraFloIndex",
     "GraphManifest",
     "GraphMetadata",
     "GraphModel",

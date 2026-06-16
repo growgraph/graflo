@@ -1,0 +1,45 @@
+schema:
+    metadata:
+        name: hr
+    graph:
+        vertex_config:
+            vertices:
+            -   name: person
+                properties:
+                -   id
+                -   name
+                -   age
+                identity:
+                -   id
+            -   name: department
+                properties:
+                -   name
+                identity:
+                -   name
+        edge_config:
+            edges:
+            -   source: person
+                target: department
+    db_profile: {}
+ingestion_model:
+    resources:
+    -   name: people
+        pipeline:
+        -   vertex: person
+    -   name: departments
+        pipeline:
+        -   vertex: person
+            from:
+                id: person_id
+                name: person
+        -   vertex: department
+            from:
+                name: department
+bindings:
+    connectors:
+    -   regex: "^people.*\\.csv$"
+        sub_path: data
+        resource_name: people
+    -   regex: "^dep.*\\.csv$"
+        sub_path: data
+        resource_name: departments

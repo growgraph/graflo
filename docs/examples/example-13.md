@@ -1,142 +1,173 @@
-# Example 13: Graph export and migration
+# Example 13: GraFlo file backend (export, migration, ingest)
 
-This example shows how to treat an existing **Neo4j** or **ArangoDB** database as a GraFlo **source**: export a self-describing **`GraFloOutput`** artifact, migrate graph→graph, or land the same logical model in **PostgreSQL** as vertex and junction edge tables.
+This example shows how **`GraFloBackendConfig`** acts as a legitimate **source** and **target** in the existing pipeline — no live database required for dry-runs, and no monolithic YAML dumps.
 
-No manifest YAML is required — `GraphEngine` introspects the source, sanitizes the schema for the target flavor, and loads data in one pass.
+A file backend directory looks like:
+
+```
+artifacts/neo4j-backend/
+├── INDEX.json
+├── schema.yaml
+├── vertices/
+│   └── person.000.jsonl.gz
+└── edges/
+    └── person__knows__person.000.jsonl.gz
+```
 
 ## Prerequisites
 
 - Python 3.11+
-- A graph database with export support as **source** (Neo4j or ArangoDB)
-- Optional **target**: another supported LPG (ArangoDB, Neo4j, …) or PostgreSQL
-- Connection configs via environment variables or `docker/<backend>/.env` (see [Quick Start](../getting_started/quickstart.md))
+- Optional **graph source**: Neo4j or ArangoDB (for `export-backend`)
+- Optional **targets**: another LPG or PostgreSQL (for replay commands)
+- Connection configs via environment variables or `docker/<backend>/.env`
 
 ## Supported directions
 
-| Task | Method | Source | Target |
+| Task | API | Source | Target |
 |---|---|---|---|
-| Export schema + data | `export_graph()` | Neo4j, ArangoDB | `GraFloOutput` (file) |
-| Migrate graph→graph | `migrate_graph()` | Neo4j, ArangoDB | Any LPG target |
-| Migrate graph→SQL | `migrate_graph()` | Neo4j, ArangoDB | PostgreSQL |
-| Schema only | `infer_schema_from_graph()` | Neo4j, ArangoDB | — (`Schema`) |
+| Export graph to disk | `migrate_graph()` | Neo4j, ArangoDB, file backend | `GraFloBackendConfig` |
+| Replay from disk | `migrate_graph()` | `GraFloBackendConfig` | Any LPG / PostgreSQL |
+| Ingest resources to disk | `ingest()` / `define_and_ingest()` | CSV manifest resources | `GraFloBackendConfig` |
+| Schema only | `infer_schema_from_graph()` | Neo4j, ArangoDB, file backend | — (`Schema`) |
 
-## Step 1 — Connection configs
+## Step 1 — Export Neo4j to a file backend
+
+`migrate_graph()` introspects the source, streams data into chunked gzip JSONL files, and writes `schema.yaml` plus `INDEX.json`.
 
 ```python
-from graflo.db import Neo4jConfig, ArangoConfig, PostgresConfig
+from pathlib import Path
 
-# Recommended when using repo docker compose layouts
+from graflo import DBType, GraphEngine
+from graflo.db import Neo4jConfig
+from graflo.db.graflo_backend.config import GraFloBackendConfig
+
 neo4j = Neo4jConfig.from_docker_env()
-arango = ArangoConfig.from_docker_env()
-postgres = PostgresConfig.from_docker_env()
-
-# Or from process environment (NEO4J_URI, ARANGO_URI, POSTGRES_HOST, …)
-# neo4j = Neo4jConfig.from_env()
-```
-
-## Step 2 — Export typed output
-
-`export_graph()` introspects vertex labels/collections and edge types, samples properties for field inference, then fetches all documents and edge rows.
-
-```python
-from graflo import GraphEngine, DBType
-from graflo.architecture.schema import GraFloOutput
-
-engine = GraphEngine(target_db_flavor=DBType.ARANGO)
-
-output = engine.export_graph(
-    neo4j,
-    sample_limit=100,
-    data_limit=None,  # set e.g. 1000 to cap rows per type while testing
-)
-
-# Self-describing YAML: top-level keys "schema" and "data"
-output.to_yaml("artifacts/neo4j-export.yaml")
-
-# Round-trip
-restored = GraFloOutput.from_yaml("artifacts/neo4j-export.yaml")
-print(restored.core_schema.vertex_config.vertices)
-print(list(restored.data.vertices.keys()))
-```
-
-In Python, use `output.graph_schema` (alias `output.schema`). Serialized JSON/YAML uses the key `"schema"`.
-
-Edge keys inside `data.edges` serialize as JSON arrays, e.g. `["person","department","works_in"]`, so relation names may contain `|` without ambiguity.
-
-## Step 3 — Migrate Neo4j → ArangoDB
-
-`migrate_graph()` reuses a single source connection for introspection and export, sanitizes once for the target, defines DDL, and writes batches.
-
-```python
-from graflo import GraphEngine, DBType
+backend = GraFloBackendConfig(output_dir=Path("artifacts/neo4j-backend"))
 
 engine = GraphEngine(target_db_flavor=DBType.ARANGO)
 engine.migrate_graph(
     neo4j,
-    arango,
+    backend,
     recreate_schema=True,
-    clear_data=False,
     sample_limit=100,
+    data_limit=None,  # cap rows per type while testing, e.g. 1000
 )
 ```
 
-Set `recreate_schema=True` to drop and recreate target collections/labels. Use `clear_data=True` when keeping schema but wiping rows first.
+## Step 2 — Replay file backend → ArangoDB
 
-## Step 4 — Migrate Neo4j → PostgreSQL
-
-PostgreSQL targets map each vertex type to a table and each edge to a junction table `{source}_{target}_{relation}_edges` with `source_id`, `target_id`, optional weight columns, and a surrogate primary key for parallel edges.
+The same `migrate_graph()` signature works when the **source** is a file backend:
 
 ```python
-from graflo import GraphEngine, DBType
+from pathlib import Path
 
-pg_engine = GraphEngine(target_db_flavor=DBType.POSTGRES)
-pg_engine.migrate_graph(
-    neo4j,
-    postgres,
-    recreate_schema=True,
-)
-```
+from graflo import DBType, GraphEngine
+from graflo.db import ArangoConfig
+from graflo.db.graflo_backend.config import GraFloBackendConfig
 
-Inspect results with ordinary SQL:
-
-```sql
-SELECT * FROM public.person LIMIT 5;
-SELECT * FROM public.person_person_knows_edges LIMIT 5;
-```
-
-(Table names follow GraFlo vertex/edge naming helpers; exact names depend on the inferred schema.)
-
-## Step 5 — Schema only (no data copy)
-
-When you only need the logical model:
-
-```python
-from graflo import GraphEngine, DBType
+backend = GraFloBackendConfig(output_dir=Path("artifacts/neo4j-backend"))
+arango = ArangoConfig.from_docker_env()
 
 engine = GraphEngine(target_db_flavor=DBType.ARANGO)
-schema = engine.infer_schema_from_graph(neo4j, sample_limit=100)
-schema.to_yaml("artifacts/neo4j-schema.yaml")
+engine.migrate_graph(
+    backend,
+    arango,
+    recreate_schema=True,
+)
+```
+
+## Step 3 — Ingest CSV resources into a file backend
+
+Use `ingest()` when the **source** is a manifest with file/SQL/API resources and the **target** is on disk. This is the same ingestion path as loading into ArangoDB or Neo4j — only the target config changes.
+
+```python
+from pathlib import Path
+
+from suthing import FileHandle
+
+from graflo import DBType, GraphEngine, GraphManifest
+from graflo.db.graflo_backend.config import GraFloBackendConfig
+from graflo.hq.caster import IngestionParams
+
+manifest = GraphManifest.from_config(
+    FileHandle.load("examples/13-graph-export-migration/manifest.yaml")
+)
+manifest.finish_init()
+
+# Manifest file connectors use sub_path: data relative to the example directory.
+import os
+os.chdir("examples/13-graph-export-migration")
+
+backend = GraFloBackendConfig(output_dir=Path("artifacts/csv-backend"))
+engine = GraphEngine(target_db_flavor=DBType.GRAFLO_BACKEND)
+
+engine.define_and_ingest(
+    manifest=manifest,
+    target_db_config=backend,
+    ingestion_params=IngestionParams(clear_data=True),
+    recreate_schema=True,
+)
+```
+
+After ingestion, inspect the backend:
+
+```python
+from graflo.architecture.backend import GraFloBackendReader
+
+reader = GraFloBackendReader(Path("artifacts/csv-backend"))
+index = reader.read_index()
+print(index.vertices)  # record counts and chunk paths per vertex type
+```
+
+## Step 4 — Pre-sanitize schema for a future target
+
+When exporting to disk for a known downstream database, set `target_flavor_hint` so the stored `schema.yaml` is already sanitized:
+
+```python
+backend = GraFloBackendConfig(
+    output_dir=Path("artifacts/for-arango"),
+    target_flavor_hint=DBType.ARANGO,
+)
+engine.migrate_graph(neo4j, backend, recreate_schema=True)
+```
+
+## Step 5 — Migrate file backend → PostgreSQL
+
+```python
+from pathlib import Path
+
+from graflo import DBType, GraphEngine
+from graflo.db import PostgresConfig
+from graflo.db.graflo_backend.config import GraFloBackendConfig
+
+backend = GraFloBackendConfig(output_dir=Path("artifacts/neo4j-backend"))
+postgres = PostgresConfig.from_docker_env()
+
+engine = GraphEngine(target_db_flavor=DBType.POSTGRES)
+engine.migrate_graph(backend, postgres, recreate_schema=True)
 ```
 
 ## Runnable script
 
-See `examples/13-graph-export-migration/export_migrate.py` for a small CLI that runs export (default) or migration when configs are available:
-
 ```bash
-# Export Neo4j → YAML (safe default)
-uv run python examples/13-graph-export-migration/export_migrate.py export \
-  --output artifacts/neo4j-export.yaml
+# Neo4j → file backend
+uv run python examples/13-graph-export-migration/export_migrate.py export-backend \
+  --output-dir artifacts/neo4j-backend
 
-# Migrate Neo4j → Arango (destructive on target when --recreate-schema)
+# CSV manifest → file backend (ingest)
+uv run python examples/13-graph-export-migration/export_migrate.py ingest-backend \
+  --output-dir artifacts/csv-backend
+
+# File backend → ArangoDB
 uv run python examples/13-graph-export-migration/export_migrate.py migrate-arango \
-  --recreate-schema
+  --from-backend artifacts/neo4j-backend --recreate-schema
 
-# Migrate Neo4j → PostgreSQL
+# File backend → PostgreSQL
 uv run python examples/13-graph-export-migration/export_migrate.py migrate-postgres \
-  --recreate-schema
+  --from-backend artifacts/neo4j-backend --recreate-schema
 ```
 
 ## Related docs
 
 - [Graph export and migration](../concepts/graph_export_migration.md) — API reference and capability notes
-- [Example 5](example-5.md) — PostgreSQL as a **source** (3NF inference into a graph target)
+- [Example 1](example-1.md) — manifest-based CSV ingestion into a live graph DB
