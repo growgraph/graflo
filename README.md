@@ -61,14 +61,14 @@ identities, and DB profile — then infer, validate, migrate, and load into any 
 
 The engines listed in **What you get** are the supported **output** `DBType` values in `graflo.onto` (including **PostgreSQL** as a relational graph store). Each backend uses its own `Connection` implementation under the shared `ConnectionManager` / `DBWriter` / `GraphEngine` flow.
 
-**Graph sources** (introspection and bulk export) are supported on **Neo4j** and **ArangoDB** via `GraphEngine.export_graph()` and `GraphEngine.migrate_graph()`. See [Graph export and migration](docs/concepts/graph_export_migration.md).
+**Graph sources** (introspection and bulk export) are supported on **Neo4j**, **ArangoDB**, and the **GraFlo file backend** via `GraphEngine.migrate_graph()`. See [Graph export and migration](docs/concepts/graph_export_migration.md).
 
 ## More capabilities
 
 - **GraFlo ontology (manifest RDF)** — Serialize any `GraphManifest` to RDF (Turtle, JSON-LD) using the published vocabulary at [`https://ontology.growgraph.dev/graflo`](https://ontology.growgraph.dev/graflo) (`owl:versionInfo` **1.0.0**). Covers schema, ingestion (resources, transforms, pipeline actors), and bindings. Round-trip via `graflo.rdf` or the `manifest-to-rdf` / `rdf-to-manifest` CLI. This is the **meta-model** of GraFlo itself — distinct from importing a **domain** OWL ontology into an LPG schema (`RdfInferenceManager`). Details: [docs — GraFlo ontology](https://growgraph.github.io/graflo/model/graflo_ontology/).
 - **SPARQL & RDF** — Endpoints and RDF files (`.ttl`, `.rdf`, `.n3`, …); optional OWL/RDFS **domain** schema inference (`rdflib`, `SPARQLWrapper` in the default install).
 - **Schema inference** — From PostgreSQL-style 3NF layouts (PK/FK heuristics) or from OWL/RDFS (`owl:Class` → vertices, `owl:ObjectProperty` → edges, `owl:DatatypeProperty` → vertex fields).
-- **Graph export & migration** — Introspect Neo4j or ArangoDB, export typed **`GraFloOutput`** (schema + data), or migrate graph→graph / graph→PostgreSQL with `GraphEngine.export_graph()` / `migrate_graph()`.
+- **Graph export & migration** — Introspect Neo4j or ArangoDB, export to a **chunked file backend** (`GraFloBackendConfig`), ingest manifest resources to disk, or migrate graph→graph / graph→PostgreSQL with `GraphEngine.migrate_graph()` / `ingest()`.
 - **Schema migrations** — Plan and apply guarded schema deltas (`migrate_schema` console script → `graflo.cli.migrate_schema`; library in `graflo.migrate`; see docs).
 - **Typed `properties`** — Optional field types (`INT`, `FLOAT`, `STRING`, `DATETIME`, `BOOL`) on vertices and edges.
 - **Batching & concurrency** — Configurable batch sizes, worker counts, and DB write concurrency on `IngestionParams` / `DBWriter`.
@@ -226,28 +226,28 @@ caster = Caster(schema=schema, ingestion_model=ingestion_model)
 ### Graph export and migration
 
 ```python
+from pathlib import Path
+
 from graflo import GraphEngine, DBType
-from graflo.architecture.schema import GraFloOutput
 from graflo.db import Neo4jConfig, ArangoConfig, PostgresConfig
+from graflo.db.graflo_backend.config import GraFloBackendConfig
 
 engine = GraphEngine(target_db_flavor=DBType.ARANGO)
 
 neo4j = Neo4jConfig.from_env()
 arango = ArangoConfig.from_env()
 postgres = PostgresConfig.from_env()
+backend = GraFloBackendConfig(output_dir=Path("artifacts/neo4j-backend"))
 
-# Export typed output (schema + GraphContainer)
-output = engine.export_graph(neo4j)
-output.to_yaml("export.yaml")
+# Neo4j → chunked file backend
+engine.migrate_graph(neo4j, backend, recreate_schema=True)
 
-# Reload: GraFloOutput.from_yaml("export.yaml")
+# File backend → Arango migration
+engine.migrate_graph(backend, arango, recreate_schema=True)
 
-# Neo4j → Arango migration
-engine.migrate_graph(neo4j, arango, recreate_schema=True)
-
-# Neo4j → Postgres (relational vertex + junction edge tables)
+# File backend → Postgres (relational vertex + junction edge tables)
 pg_engine = GraphEngine(target_db_flavor=DBType.POSTGRES)
-pg_engine.migrate_graph(neo4j, postgres, recreate_schema=True)
+pg_engine.migrate_graph(backend, postgres, recreate_schema=True)
 ```
 
 See [Graph export and migration](docs/concepts/graph_export_migration.md) and [Example 13](docs/examples/example-13.md).

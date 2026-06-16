@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.7]
+
+### Added
+
+- **`GraFloBackendConfig`** and **`GraFloBackendConnection`** — file-based graph backend registered as both **source** and **target** in `ConnectionManager` (`DBType.GRAFLO_BACKEND`). Use with existing **`migrate_graph()`** and **`ingest()`** / **`define_and_ingest()`** without API changes.
+- **On-disk layout** — `schema.yaml`, `INDEX.json`, and gzip JSONL chunks under `vertices/` and `edges/` (`graflo.architecture.backend`: **`GraFloIndex`**, **`GraFloLayout`**, **`GraFloBackendWriter`**, **`GraFloBackendReader`**).
+- **`target_flavor_hint`** on `GraFloBackendConfig` — optional pre-sanitization of exported `schema.yaml` for a known downstream `DBType`.
+- **`GraphEngine._resolve_target_schema()`** — skips sanitization when migrating to a file backend unless `target_flavor_hint` is set.
+
+### Changed
+
+- **[Example 13](docs/examples/example-13.md)** — reworked around file backend: `export-backend`, `ingest-backend`, and replay via `--from-backend`; bundled CSV manifest for ingest-to-disk demo.
+- **Documentation** — [Graph export and migration](docs/concepts/graph_export_migration.md), README, quickstart, and docs index updated for file-backend workflows (1.8.7).
+
 ## [1.8.6]
 
 ### Added

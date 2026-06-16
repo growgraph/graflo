@@ -27,6 +27,7 @@ SOURCE_DATABASES: set[DBType] = {
     DBType.FALKORDB,  # Graph DBs can be sources
     DBType.MEMGRAPH,  # Graph DBs can be sources
     DBType.NEBULA,  # Graph DBs can be sources
+    DBType.GRAFLO_BACKEND,
     DBType.POSTGRES,  # SQL DBs
     DBType.MYSQL,
     DBType.MONGODB,
@@ -42,6 +43,7 @@ TARGET_DATABASES: set[DBType] = {
     DBType.FALKORDB,
     DBType.MEMGRAPH,
     DBType.NEBULA,
+    DBType.GRAFLO_BACKEND,
     DBType.POSTGRES,
 }
 

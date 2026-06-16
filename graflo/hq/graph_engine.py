@@ -551,6 +551,15 @@ class GraphEngine:
         Sanitizer(target_db_flavor).sanitize_manifest(manifest)
         return manifest.require_schema()
 
+    def _resolve_target_schema(self, schema: Schema, target_config: DBConfig) -> Schema:
+        """Resolve schema for migration/ingest target, honoring file-backend hints."""
+        if target_config.connection_type == DBType.GRAFLO_BACKEND:
+            hint = getattr(target_config, "target_flavor_hint", None)
+            if hint is None:
+                return schema
+            return self._sanitize_schema_for_target(schema, hint)
+        return self._sanitize_schema_for_target(schema, target_config.connection_type)
+
     def infer_schema_from_graph(
         self,
         source_config: DBConfig,
@@ -606,9 +615,7 @@ class GraphEngine:
             sample_limit=sample_limit,
             data_limit=data_limit,
         )
-        schema = self._sanitize_schema_for_target(
-            raw_schema, target_config.connection_type
-        )
+        schema = self._resolve_target_schema(raw_schema, target_config)
 
         manifest = GraphManifest(
             graph_schema=schema,

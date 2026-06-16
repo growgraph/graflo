@@ -15,7 +15,7 @@ It is a **Python package** and **Graph Schema & Transformation Language (GSTL)**
 
 ### What you get
 
-- **One pipeline, several graph databases** — The same manifest targets ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph, or **PostgreSQL** (relational vertex + junction edge tables); `DatabaseProfile` and DB-aware types absorb naming, defaults, and indexing differences.
+- One pipeline, several graph databases — The same manifest targets ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph, **PostgreSQL** (relational vertex + junction edge tables), or a **GraFlo file backend** on disk; `DatabaseProfile` and DB-aware types absorb naming, defaults, and indexing differences.
 - **Explicit identities** — Vertex identity fields and indexes back upserts so reloads merge on keys instead of blindly duplicating nodes.
 - **Reusable ingestion** — `ResourceConfig` actor pipelines (including **vertex** / **vertex_router** / **edge** steps) bind to files, SQL, SPARQL/RDF, APIs, or in-memory batches via `Bindings` and the `DataSourceRegistry`. A single flat row can populate multiple same-type vertices in distinct named slots (`role`) and emit multiple edges in one `edge: links` step. Per-resource **`tolerate_transform_errors`** (default on) keeps ingestion moving when an individual transform step fails.
 - **Schema as the contract** — `GraphManifest` is the single source of truth: vertex/edge definitions,
@@ -62,7 +62,7 @@ It is a **Python package** and **Graph Schema & Transformation Language (GSTL)**
 
 The engines listed in **What you get** are the supported **output** `DBType` values in `graflo.onto` (including **PostgreSQL** as a relational graph store). Each backend uses its own `Connection` implementation under the shared `ConnectionManager` / `DBWriter` / `GraphEngine` flow.
 
-**Graph sources** (introspection and bulk export) are supported on **Neo4j** and **ArangoDB** via `GraphEngine.export_graph()` and `GraphEngine.migrate_graph()`. See [Graph export and migration](concepts/graph_export_migration.md).
+**Graph sources** (introspection and bulk export) are supported on **Neo4j**, **ArangoDB**, and the **GraFlo file backend** via `GraphEngine.migrate_graph()` and `ConnectionManager.graph_export_flavors()`. See [Graph export and migration](concepts/graph_export_migration.md).
 
 <!-- [![pytest](https://github.com/growgraph/graflo/actions/workflows/pytest.yml/badge.svg)](https://github.com/growgraph/graflo/actions/workflows/pytest.yml) -->
 
@@ -125,14 +125,14 @@ The `DataSourceRegistry` manages `AbstractDataSource` adapters, each carrying a 
 For PostgreSQL workflows, `infer_manifest(...)` returns a full manifest contract
 (`schema` + `ingestion_model` + `bindings`) and runs target-`DBType` **`Sanitizer`** on that manifest before returning.
 
-Graph-source workflows (`infer_schema_from_graph`, `export_graph`, `migrate_graph`) introspect Neo4j or ArangoDB and load into any supported target — including PostgreSQL as a relational graph store. See [Graph export and migration](concepts/graph_export_migration.md).
+Graph-source workflows (`infer_schema_from_graph`, `migrate_graph`) introspect Neo4j, ArangoDB, or a file backend and load into any supported target — including PostgreSQL as a relational graph store. See [Graph export and migration](concepts/graph_export_migration.md).
 
 ## More capabilities
 
 - **GraFlo ontology (manifest RDF)** — Publish and query manifests as linked data: OWL vocabulary at `https://ontology.growgraph.dev/graflo` (v1.0.0), plus `manifest-to-rdf` / `rdf-to-manifest` CLI and `graflo.rdf` serializers. See [GraFlo ontology](model/graflo_ontology.md).
 - **SPARQL & RDF** — Endpoints and RDF files; optional OWL/RDFS **domain** schema inference (`rdflib`, `SPARQLWrapper` in the default install).
 - **Schema inference** — From PostgreSQL-style 3NF layouts (PK/FK heuristics) or from OWL/RDFS (`owl:Class` → vertices, `owl:ObjectProperty` → edges, `owl:DatatypeProperty` → vertex fields). See [Example 5](examples/example-5.md).
-- **Graph export & migration** — Introspect Neo4j or ArangoDB, export typed **`GraFloOutput`** (full `Schema` + `GraphContainer`), or migrate graph→graph / graph→PostgreSQL. See [Graph export and migration](concepts/graph_export_migration.md) and [Example 13](examples/example-13.md).
+- **Graph export & migration** — Introspect Neo4j or ArangoDB, export to a **chunked file backend** (`GraFloBackendConfig`), ingest manifest resources to disk, or migrate graph→graph / graph→PostgreSQL. See [Graph export and migration](concepts/graph_export_migration.md) and [Example 13](examples/example-13.md).
 - **Schema migrations** — Plan and apply guarded schema deltas (`migrate_schema` console script → `graflo.cli.migrate_schema`; library in `graflo.migrate`). Compare `from` / `to` schemas before execution to preview deltas and blocked high-risk operations. See [Concepts — Schema Migration](concepts/features_and_practices.md#schema-migration-v1).
 - **Typed `properties`** — Optional field types (`INT`, `FLOAT`, `STRING`, `DATETIME`, `BOOL`) on vertices and edges.
 - **Batching & concurrency** — Configurable batch sizes (`IngestionParams.batch_size`), bounded prefetch of upcoming batches (`IngestionParams.batch_prefetch`), worker counts (`IngestionParams.n_cores`), and DB write concurrency (`IngestionParams.max_concurrent_db_ops` / `DBWriter`).

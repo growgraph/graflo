@@ -11,6 +11,7 @@ from .onto import (
     SparqlEndpointConfig,
     TigergraphConfig,
 )
+from graflo.db.graflo_backend.config import GraFloBackendConfig
 from ... import DBType
 
 # Define this mapping in a separate file to avoid circular imports
@@ -23,6 +24,7 @@ DB_TYPE_MAPPING: Dict[DBType, Type[DBConfig]] = {
     DBType.NEBULA: NebulaConfig,
     DBType.POSTGRES: PostgresConfig,
     DBType.SPARQL: SparqlEndpointConfig,
+    DBType.GRAFLO_BACKEND: GraFloBackendConfig,
 }
 
 
