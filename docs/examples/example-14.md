@@ -26,7 +26,7 @@ Each `conn_proxy` maps to an uppercase env prefix (`user_service` → `USER_SERV
 | Variable | Required | Meaning |
 | -------- | -------- | ------- |
 | `{PREFIX}BASE_URL` | yes | API base URL |
-| `{PREFIX}AUTH_TYPE` | no | `bearer`, `basic`, `digest`, or `api_key` |
+| `{PREFIX}AUTH_TYPE` | no (default `bearer`) | `bearer`, `basic`, `digest`, or `api_key` |
 | `{PREFIX}TOKEN` | when using bearer/api_key | Token or API key value |
 | `{PREFIX}USERNAME` / `{PREFIX}PASSWORD` | when using basic/digest | Credentials |
 | `{PREFIX}HEADER_NAME` | no | Header for bearer/api_key (default `Authorization`) |

@@ -335,18 +335,20 @@ def test_register_api_config_from_env_custom_prefix(
     assert cfg.config.auth.token == "override-token"
 
 
-def test_register_api_config_from_env_token_without_auth_type_has_no_auth(
+def test_register_api_config_from_env_token_defaults_to_bearer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("USER_SERVICE_BASE_URL", "https://users.example.com")
-    monkeypatch.setenv("USER_SERVICE_TOKEN", "ignored-without-auth-type")
+    monkeypatch.setenv("USER_SERVICE_TOKEN", "secret-token")
 
     provider = InMemoryConnectionProvider()
     provider.register_api_config_from_env(conn_proxy="user_service")
 
     cfg = provider.get_generalized_config_by_proxy("user_service")
     assert isinstance(cfg, ApiGeneralizedConnConfig)
-    assert cfg.config.auth is None
+    assert cfg.config.auth is not None
+    assert cfg.config.auth.auth_type == "bearer"
+    assert cfg.config.auth.token == "secret-token"
 
 
 def test_register_api_config_from_env_missing_base_url(
@@ -426,7 +428,9 @@ def test_register_all_api_configs_from_env_prefix_map(
     assert users_cfg.config.auth is not None
     assert users_cfg.config.auth.token == "mapped-token"
     assert orders_cfg.config.base_url == "https://orders.example.com"
-    assert orders_cfg.config.auth is None
+    assert orders_cfg.config.auth is not None
+    assert orders_cfg.config.auth.auth_type == "bearer"
+    assert orders_cfg.config.auth.token is None
 
 
 def test_register_all_api_configs_from_env_skips_non_api_connectors(

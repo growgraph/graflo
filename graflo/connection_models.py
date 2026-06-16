@@ -49,7 +49,7 @@ class RestApiConnConfig(BaseModel):
         Supported variables (all prefixed with *env_prefix*):
 
         - ``BASE_URL`` (required)
-        - ``AUTH_TYPE``: ``bearer``, ``basic``, ``digest``, or ``api_key`` (optional)
+        - ``AUTH_TYPE``: ``bearer``, ``basic``, ``digest``, or ``api_key`` (default: ``bearer``)
         - ``TOKEN``, ``USERNAME``, ``PASSWORD``
         - ``HEADER_NAME``, ``PREFIX`` (bearer / api_key)
         """
@@ -59,29 +59,27 @@ class RestApiConnConfig(BaseModel):
                 f"Environment variable {env_prefix}BASE_URL is required for RestApiConnConfig"
             )
 
-        auth_type_raw = os.environ.get(f"{env_prefix}AUTH_TYPE")
-        auth: ApiAuth | None = None
-        if auth_type_raw is not None:
-            auth_type_lower = auth_type_raw.lower()
-            if auth_type_lower not in _VALID_AUTH_TYPES:
-                raise ValueError(
-                    f"Invalid {env_prefix}AUTH_TYPE={auth_type_raw!r}; "
-                    "expected bearer, basic, digest, or api_key"
-                )
-            auth = ApiAuth(
-                auth_type=cast(AuthType, auth_type_lower),
-                token=os.environ.get(f"{env_prefix}TOKEN"),
-                username=os.environ.get(f"{env_prefix}USERNAME"),
-                password=os.environ.get(f"{env_prefix}PASSWORD"),
-                header_name=cast(
-                    str,
-                    os.environ.get(f"{env_prefix}HEADER_NAME") or "Authorization",
-                ),
-                prefix=cast(
-                    str,
-                    os.environ.get(f"{env_prefix}PREFIX") or "Bearer",
-                ),
+        auth_type_raw = os.environ.get(f"{env_prefix}AUTH_TYPE", "bearer")
+        auth_type_lower = auth_type_raw.lower()
+        if auth_type_lower not in _VALID_AUTH_TYPES:
+            raise ValueError(
+                f"Invalid {env_prefix}AUTH_TYPE={auth_type_raw!r}; "
+                "expected bearer, basic, digest, or api_key"
             )
+        auth = ApiAuth(
+            auth_type=cast(AuthType, auth_type_lower),
+            token=os.environ.get(f"{env_prefix}TOKEN"),
+            username=os.environ.get(f"{env_prefix}USERNAME"),
+            password=os.environ.get(f"{env_prefix}PASSWORD"),
+            header_name=cast(
+                str,
+                os.environ.get(f"{env_prefix}HEADER_NAME") or "Authorization",
+            ),
+            prefix=cast(
+                str,
+                os.environ.get(f"{env_prefix}PREFIX") or "Bearer",
+            ),
+        )
 
         return cls(base_url=cast(str, base_url), auth=auth)
 

@@ -113,13 +113,13 @@ Call **`RestApiConnConfig.from_env(env_prefix)`** or use the provider helpers ab
 | Env var (with prefix) | Required | Meaning |
 | --------------------- | -------- | ------- |
 | `BASE_URL` | yes | API base URL |
-| `AUTH_TYPE` | no | `bearer`, `basic`, `digest`, or `api_key` |
+| `AUTH_TYPE` | no (default `bearer`) | `bearer`, `basic`, `digest`, or `api_key` |
 | `TOKEN` | when using bearer/api_key | Token or API key value |
 | `USERNAME` / `PASSWORD` | when using basic/digest | Credentials |
 | `HEADER_NAME` | no | Header for bearer/api_key (default `Authorization`) |
 | `PREFIX` | no | Bearer prefix (default `Bearer`) |
 
-Auth is configured only when **`AUTH_TYPE`** is set; `TOKEN` or `USERNAME` alone are ignored.
+`AUTH_TYPE` defaults to **`bearer`** when unset. Set `TOKEN`, `USERNAME`, or `PASSWORD` as needed for the chosen type.
 
 Non-secret headers belong on **`APIConnector.headers`** or **`RestApiConnConfig.default_headers`** (connector headers override defaults).
 
