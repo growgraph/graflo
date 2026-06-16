@@ -7,11 +7,14 @@ Used by :mod:`graflo.hq.connection_provider` and :mod:`graflo.data_source.api`.
 from __future__ import annotations
 
 import os
-from typing import Literal
+from typing import Literal, cast
 
 from pydantic import BaseModel, Field
 
 from graflo.db.connection import PostgresConfig, SparqlEndpointConfig
+
+AuthType = Literal["bearer", "basic", "digest", "api_key"]
+_VALID_AUTH_TYPES = frozenset({"bearer", "basic", "digest", "api_key"})
 
 
 class SparqlAuth(BaseModel):
@@ -40,22 +43,47 @@ class RestApiConnConfig(BaseModel):
     default_headers: dict[str, str] = Field(default_factory=dict)
 
     @classmethod
-    def from_env(cls, env_prefix: str = "REST_API_") -> RestApiConnConfig:
-        """Load REST API config from environment variables."""
+    def from_env(cls, env_prefix: str) -> RestApiConnConfig:
+        """Load REST API config from environment variables.
+
+        Supported variables (all prefixed with *env_prefix*):
+
+        - ``BASE_URL`` (required)
+        - ``AUTH_TYPE``: ``bearer``, ``basic``, ``digest``, or ``api_key`` (optional)
+        - ``TOKEN``, ``USERNAME``, ``PASSWORD``
+        - ``HEADER_NAME``, ``PREFIX`` (bearer / api_key)
+        """
         base_url = os.environ.get(f"{env_prefix}BASE_URL")
         if not base_url:
             raise ValueError(
                 f"Environment variable {env_prefix}BASE_URL is required for RestApiConnConfig"
             )
-        token = os.environ.get(f"{env_prefix}TOKEN")
-        username = os.environ.get(f"{env_prefix}USERNAME")
-        password = os.environ.get(f"{env_prefix}PASSWORD")
+
+        auth_type_raw = os.environ.get(f"{env_prefix}AUTH_TYPE")
         auth: ApiAuth | None = None
-        if token is not None:
-            auth = ApiAuth(auth_type="bearer", token=token)
-        elif username is not None or password is not None:
-            auth = ApiAuth(auth_type="basic", username=username, password=password)
-        return cls(base_url=base_url, auth=auth)
+        if auth_type_raw is not None:
+            auth_type_lower = auth_type_raw.lower()
+            if auth_type_lower not in _VALID_AUTH_TYPES:
+                raise ValueError(
+                    f"Invalid {env_prefix}AUTH_TYPE={auth_type_raw!r}; "
+                    "expected bearer, basic, digest, or api_key"
+                )
+            auth = ApiAuth(
+                auth_type=cast(AuthType, auth_type_lower),
+                token=os.environ.get(f"{env_prefix}TOKEN"),
+                username=os.environ.get(f"{env_prefix}USERNAME"),
+                password=os.environ.get(f"{env_prefix}PASSWORD"),
+                header_name=cast(
+                    str,
+                    os.environ.get(f"{env_prefix}HEADER_NAME") or "Authorization",
+                ),
+                prefix=cast(
+                    str,
+                    os.environ.get(f"{env_prefix}PREFIX") or "Bearer",
+                ),
+            )
+
+        return cls(base_url=cast(str, base_url), auth=auth)
 
 
 class PostgresGeneralizedConnConfig(BaseModel):

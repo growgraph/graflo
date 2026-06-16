@@ -69,6 +69,7 @@ The engines listed in **What you get** are the supported **output** `DBType` val
 - **SPARQL & RDF** — Endpoints and RDF files (`.ttl`, `.rdf`, `.n3`, …); optional OWL/RDFS **domain** schema inference (`rdflib`, `SPARQLWrapper` in the default install).
 - **Schema inference** — From PostgreSQL-style 3NF layouts (PK/FK heuristics) or from OWL/RDFS (`owl:Class` → vertices, `owl:ObjectProperty` → edges, `owl:DatatypeProperty` → vertex fields).
 - **Graph export & migration** — Introspect Neo4j or ArangoDB, export to a **chunked file backend** (`GraFloBackendConfig`), ingest manifest resources to disk, or migrate graph→graph / graph→PostgreSQL with `GraphEngine.migrate_graph()` / `ingest()`.
+- **REST API env wiring** — Register `base_url` and `ApiAuth` credentials from environment variables per `conn_proxy` label (`register_all_api_configs_from_env`); see [API connector and pagination](docs/concepts/api_connector.md).
 - **Schema migrations** — Plan and apply guarded schema deltas (`migrate_schema` console script → `graflo.cli.migrate_schema`; library in `graflo.migrate`; see docs).
 - **Typed `properties`** — Optional field types (`INT`, `FLOAT`, `STRING`, `DATETIME`, `BOOL`) on vertices and edges.
 - **Batching & concurrency** — Configurable batch sizes, worker counts, and DB write concurrency on `IngestionParams` / `DBWriter`.

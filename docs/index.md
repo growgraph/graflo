@@ -116,7 +116,7 @@ The `DataSourceRegistry` manages `AbstractDataSource` adapters, each carrying a 
 | `SQL` | `SQLDataSource` | PostgreSQL and other SQL databases via SQLAlchemy |
 | `SPARQL` | `RdfFileDataSource` | Turtle/RDF/N3/JSON-LD files via rdflib |
 | `SPARQL` | `SparqlEndpointDataSource` | Remote SPARQL endpoints (e.g. Apache Fuseki) via SPARQLWrapper |
-| `API` | `APIConnector` / `APIDataSource` | REST APIs via bindings; [offset / page / cursor pagination](concepts/api_connector.md) |
+| `API` | `APIConnector` / `APIDataSource` | REST APIs via bindings; [offset / page / cursor pagination](concepts/api_connector.md), [env wiring](examples/example-14.md) |
 | `IN_MEMORY` | `InMemoryDataSource` | Python objects (lists, DataFrames) |
 
 ### GraphEngine

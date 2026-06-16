@@ -33,11 +33,45 @@ bindings:
       conn_proxy: api_source
 ```
 
-Runtime (Python):
+Runtime (Python) — **from environment variables** (recommended for local dev and CI):
 
 ```python
-import os
+from graflo.hq.connection_provider import InMemoryConnectionProvider
 
+provider = InMemoryConnectionProvider()
+provider.register_all_api_configs_from_env(bindings=bindings)
+```
+
+With `conn_proxy: api_source`, set:
+
+```bash
+export API_SOURCE_BASE_URL=https://api.example.com
+export API_SOURCE_AUTH_TYPE=bearer
+export API_SOURCE_TOKEN=your-token
+```
+
+Each `conn_proxy` label maps to an env prefix: uppercase, `-` → `_`, trailing `_`
+(e.g. `user_service` → `USER_SERVICE_BASE_URL`).
+
+For multi-proxy manifests, `register_all_api_configs_from_env` registers every API
+`conn_proxy` automatically. Override a prefix when needed:
+
+```python
+provider.register_all_api_configs_from_env(
+    bindings=bindings,
+    env_prefix_map={"user_service": "USERS_API_"},
+)
+```
+
+Register a single proxy explicitly:
+
+```python
+provider.register_api_config_from_env(conn_proxy="api_source")
+```
+
+Runtime (Python) — **manual registration**:
+
+```python
 from graflo.hq.connection_provider import (
     ApiAuth,
     ApiGeneralizedConnConfig,
@@ -51,7 +85,7 @@ provider.register_generalized_config(
     config=ApiGeneralizedConnConfig(
         config=RestApiConnConfig(
             base_url="https://api.example.com",
-            auth=ApiAuth(auth_type="bearer", token=os.environ["API_TOKEN"]),
+            auth=ApiAuth(auth_type="bearer", token="..."),
         )
     ),
 )
@@ -71,7 +105,21 @@ Credentials live in **`RestApiConnConfig`**, not in the manifest.
 | **`digest`** | `username`, `password` | `requests` HTTP Digest auth |
 | **`api_key`** | `token`, `header_name` (e.g. `X-Api-Key`) | Header: raw token value |
 
-For local development, **`RestApiConnConfig.from_env(env_prefix="REST_API_")`** reads `REST_API_BASE_URL`, optional `REST_API_TOKEN`, `REST_API_USERNAME`, and `REST_API_PASSWORD`.
+### Environment variables (`RestApiConnConfig.from_env`)
+
+Call **`RestApiConnConfig.from_env(env_prefix)`** or use the provider helpers above.
+`env_prefix` is required (no default). Supported variables:
+
+| Env var (with prefix) | Required | Meaning |
+| --------------------- | -------- | ------- |
+| `BASE_URL` | yes | API base URL |
+| `AUTH_TYPE` | no | `bearer`, `basic`, `digest`, or `api_key` |
+| `TOKEN` | when using bearer/api_key | Token or API key value |
+| `USERNAME` / `PASSWORD` | when using basic/digest | Credentials |
+| `HEADER_NAME` | no | Header for bearer/api_key (default `Authorization`) |
+| `PREFIX` | no | Bearer prefix (default `Bearer`) |
+
+Auth is configured only when **`AUTH_TYPE`** is set; `TOKEN` or `USERNAME` alone are ignored.
 
 Non-secret headers belong on **`APIConnector.headers`** or **`RestApiConnConfig.default_headers`** (connector headers override defaults).
 
@@ -299,6 +347,7 @@ Declare reusable defaults under **`bindings.connector_templates`** and reference
 
 ## Related
 
+- [Example 14 — API env wiring](../examples/example-14.md)
 - [Data source reference — API](../reference/data_source/index.md#api-data-sources)
 - [Runtime connector updates](runtime_connector_updates.md) — patch **`APIConnector`** fields via **`ConnectorUpdate`** (hash recomputes on change)
 - [Quick Start — Using API Data Sources](../getting_started/quickstart.md#using-api-data-sources)

@@ -13,3 +13,4 @@
 11. **[Flat-row dynamic edges with `vertex_router`](example-11.md)** — Each CSV row encodes a complete `(source, target, relation)` tuple. Two `vertex_router` steps accumulate endpoint vertices into named role slots; a dynamic `edge` step resolves types from those slots.
 12. **[Vertex roles and multi-intent edges](example-12.md)** — One flat row, three same-type vertices (self / parent / child), two edge types. Uses `role` on `vertex` steps for named accumulator slots and `links` on the `edge` step to emit multiple relationships in one pipeline step.
 13. **[GraFlo file backend](example-13.md)** — Export or ingest into a chunked on-disk backend (`GraFloBackendConfig`), then replay to ArangoDB or PostgreSQL. Includes `ingest()` targeting disk.
+14. **[API env wiring](example-14.md)** — Register REST API `base_url` and credentials from environment variables via `register_all_api_configs_from_env`, including multi-proxy manifests.

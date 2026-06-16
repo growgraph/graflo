@@ -12,12 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`GraFloBackendConfig`** and **`GraFloBackendConnection`** — file-based graph backend registered as both **source** and **target** in `ConnectionManager` (`DBType.GRAFLO_BACKEND`). Use with existing **`migrate_graph()`** and **`ingest()`** / **`define_and_ingest()`** without API changes.
 - **On-disk layout** — `schema.yaml`, `INDEX.json`, and gzip JSONL chunks under `vertices/` and `edges/` (`graflo.architecture.backend`: **`GraFloIndex`**, **`GraFloLayout`**, **`GraFloBackendWriter`**, **`GraFloBackendReader`**).
 - **`target_flavor_hint`** on `GraFloBackendConfig` — optional pre-sanitization of exported `schema.yaml` for a known downstream `DBType`.
+- **API env wiring** — **`InMemoryConnectionProvider.register_api_config_from_env`** and **`register_all_api_configs_from_env`** load **`RestApiConnConfig`** from environment variables using proxy-scoped prefixes (`user_service` → `USER_SERVICE_BASE_URL`, …). **`RestApiConnConfig.from_env`** supports all **`ApiAuth`** types via **`AUTH_TYPE`**.
+- **[Example 14](docs/examples/example-14.md)** — multi-proxy API env wiring walkthrough (`examples/14-api-env-wiring/`).
 - **`GraphEngine._resolve_target_schema()`** — skips sanitization when migrating to a file backend unless `target_flavor_hint` is set.
 
 ### Changed
 
 - **[Example 13](docs/examples/example-13.md)** — reworked around file backend: `export-backend`, `ingest-backend`, and replay via `--from-backend`; bundled CSV manifest for ingest-to-disk demo.
 - **Documentation** — [Graph export and migration](docs/concepts/graph_export_migration.md), README, quickstart, and docs index updated for file-backend workflows (1.8.7).
+- **API env wiring docs** — [API connector and pagination](docs/concepts/api_connector.md), quickstart, data-source reference, and [Example 14](docs/examples/example-14.md) document **`register_all_api_configs_from_env`** and proxy-scoped env prefixes.
 
 ## [1.8.6]
 

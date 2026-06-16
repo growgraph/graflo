@@ -294,31 +294,17 @@ bindings:
 ```
 
 ```python
-import os
 from graflo.hq import GraphEngine
 from graflo.hq.caster import IngestionParams
-from graflo.hq.connection_provider import (
-    ApiAuth,
-    ApiGeneralizedConnConfig,
-    InMemoryConnectionProvider,
-    RestApiConnConfig,
-)
+from graflo.hq.connection_provider import InMemoryConnectionProvider
 
 manifest = GraphManifest.from_config(FileHandle.load("manifest.yaml"))
 manifest.finish_init()
 bindings = manifest.require_bindings()
 
+# Reads API_SOURCE_BASE_URL, API_SOURCE_AUTH_TYPE, API_SOURCE_TOKEN, etc.
 provider = InMemoryConnectionProvider()
-provider.register_generalized_config(
-    conn_proxy="api_source",
-    config=ApiGeneralizedConnConfig(
-        config=RestApiConnConfig(
-            base_url="https://api.example.com",
-            auth=ApiAuth(auth_type="bearer", token=os.environ["API_TOKEN"]),
-        )
-    ),
-)
-provider.bind_from_bindings(bindings=bindings)
+provider.register_all_api_configs_from_env(bindings=bindings)
 
 engine = GraphEngine()
 engine.define_and_ingest(
@@ -328,6 +314,18 @@ engine.define_and_ingest(
     ingestion_params=IngestionParams(),
 )
 ```
+
+Set env vars before running (with `conn_proxy: api_source`):
+
+```bash
+export API_SOURCE_BASE_URL=https://api.example.com
+export API_SOURCE_AUTH_TYPE=bearer
+export API_SOURCE_TOKEN=your-token
+```
+
+For manual credential registration or multi-proxy `env_prefix_map` overrides, see
+**[API connector and pagination](../concepts/api_connector.md)** and
+**[Example 14 — API env wiring](../examples/example-14.md)**.
 
 ## Using Configuration Files
 

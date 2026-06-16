@@ -97,6 +97,8 @@ See **[API connector and pagination](../../concepts/api_connector.md)** for loop
 
 Runtime **`base_url`** and credentials (`bearer`, `basic`, `digest`, `api_key`) in **`graflo.hq.connection_provider`**, registered on a **`ConnectionProvider`**.
 
+**Env wiring** — map each `conn_proxy` to env vars (`user_service` → `USER_SERVICE_BASE_URL`, `USER_SERVICE_AUTH_TYPE`, …) and call **`register_all_api_configs_from_env(bindings)`** or **`register_api_config_from_env(conn_proxy)`**. See **[API connector and pagination](../../concepts/api_connector.md)** and **[Example 14](../../examples/example-14.md)**.
+
 ## SQL Data Sources
 
 ### SQLDataSource
@@ -143,13 +145,7 @@ source = DataSourceFactory.create_file_data_source(
 
 ```python
 from graflo.architecture.contract.bindings import APIConnector, Bindings, PaginationConfig
-from graflo.hq.connection_provider import (
-    ApiAuth,
-    ApiGeneralizedConnConfig,
-    InMemoryConnectionProvider,
-    RestApiConnConfig,
-)
-from graflo.hq.registry_builder import RegistryBuilder
+from graflo.hq.connection_provider import InMemoryConnectionProvider
 
 connector = APIConnector(
     name="users_api",
@@ -161,21 +157,13 @@ bindings = Bindings(
     resource_connector=[{"resource": "users", "connector": "users_api"}],
     connector_connection=[{"connector": "users_api", "conn_proxy": "api_source"}],
 )
+
+# export API_SOURCE_BASE_URL, API_SOURCE_AUTH_TYPE=bearer, API_SOURCE_TOKEN=...
 provider = InMemoryConnectionProvider()
-provider.register_generalized_config(
-    conn_proxy="api_source",
-    config=ApiGeneralizedConnConfig(
-        config=RestApiConnConfig(
-            base_url="https://api.example.com",
-            auth=ApiAuth(auth_type="bearer", token="..."),
-        )
-    ),
-)
-provider.bind_from_bindings(bindings=bindings)
-# registry = RegistryBuilder(schema, ingestion_model).build(
-#     bindings=bindings, ingestion_params=..., connection_provider=provider,
-# )
+provider.register_all_api_configs_from_env(bindings=bindings)
 ```
+
+Manual registration remains available via **`register_generalized_config`** + **`RestApiConnConfig`** / **`ApiAuth`** — see [API connector and pagination](../../concepts/api_connector.md).
 
 ### SQL Data Source
 
