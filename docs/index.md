@@ -116,7 +116,7 @@ The `DataSourceRegistry` manages `AbstractDataSource` adapters, each carrying a 
 | `SQL` | `SQLDataSource` | PostgreSQL and other SQL databases via SQLAlchemy |
 | `SPARQL` | `RdfFileDataSource` | Turtle/RDF/N3/JSON-LD files via rdflib |
 | `SPARQL` | `SparqlEndpointDataSource` | Remote SPARQL endpoints (e.g. Apache Fuseki) via SPARQLWrapper |
-| `API` | `APIConnector` / `APIDataSource` | REST APIs via bindings; [offset / page / cursor pagination](concepts/api_connector.md) |
+| `API` | `APIConnector` / `APIDataSource` | REST APIs via bindings; [offset / page / cursor pagination](concepts/api_connector.md), [env wiring](examples/example-14.md) |
 | `IN_MEMORY` | `InMemoryDataSource` | Python objects (lists, DataFrames) |
 
 ### GraphEngine
@@ -136,6 +136,7 @@ Graph-source workflows (`infer_schema_from_graph`, `migrate_graph`) introspect N
 - **Schema migrations** — Plan and apply guarded schema deltas (`migrate_schema` console script → `graflo.cli.migrate_schema`; library in `graflo.migrate`). Compare `from` / `to` schemas before execution to preview deltas and blocked high-risk operations. See [Concepts — Schema Migration](concepts/features_and_practices.md#schema-migration-v1).
 - **Typed `properties`** — Optional field types (`INT`, `FLOAT`, `STRING`, `DATETIME`, `BOOL`) on vertices and edges.
 - **Batching & concurrency** — Configurable batch sizes (`IngestionParams.batch_size`), bounded prefetch of upcoming batches (`IngestionParams.batch_prefetch`), worker counts (`IngestionParams.n_cores`), and DB write concurrency (`IngestionParams.max_concurrent_db_ops` / `DBWriter`).
+- **Ingestion scope filters** — Optional subsets via `IngestionParams.resources`, `IngestionParams.connectors` (connector name or hash), and `IngestionParams.vertices`. `resources` and `connectors` intersect when both are set.
 - **Advanced filtering** — Server-side filtering (e.g. TigerGraph REST++ API), client-side filter expressions, and **SelectSpec** for declarative SQL view/filter control before data reaches Resources.
 - **Blank vertices** — Intermediate nodes for complex relationship modelling.
 

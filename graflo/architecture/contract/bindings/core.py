@@ -551,6 +551,10 @@ class BindingsConfig(ConfigBaseModel):
         """Return the mapped runtime proxy name for a given connector."""
         return self._connector_to_conn_proxy.get(connector.hash)
 
+    def resolve_connector_refs_to_hashes(self, connector_refs: list[str]) -> set[str]:
+        """Resolve connector names or hashes to canonical connector hashes."""
+        return {self._resolve_connector_ref_to_hash(ref) for ref in connector_refs}
+
     def get_connectors_for_resource(self, resource_name: str) -> list[AnyConnector]:
         """Return connectors bound to *resource_name*, in binding order (unique by hash)."""
         result: list[AnyConnector] = []

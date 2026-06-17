@@ -263,3 +263,201 @@ def test_api_connector_conn_proxy_resolution() -> None:
     cfg = provider.get_generalized_conn_config(connector)
     assert isinstance(cfg, ApiGeneralizedConnConfig)
     assert cfg.config.base_url == "https://api.example.com"
+
+
+def test_register_api_config_from_env_bearer(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("USER_SERVICE_BASE_URL", "https://users.example.com")
+    monkeypatch.setenv("USER_SERVICE_AUTH_TYPE", "bearer")
+    monkeypatch.setenv("USER_SERVICE_TOKEN", "secret-token")
+
+    provider = InMemoryConnectionProvider()
+    provider.register_api_config_from_env(conn_proxy="user_service")
+
+    cfg = provider.get_generalized_config_by_proxy("user_service")
+    assert isinstance(cfg, ApiGeneralizedConnConfig)
+    assert cfg.config.base_url == "https://users.example.com"
+    assert cfg.config.auth is not None
+    assert cfg.config.auth.auth_type == "bearer"
+    assert cfg.config.auth.token == "secret-token"
+
+
+def test_register_api_config_from_env_basic(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("USER_SERVICE_BASE_URL", "https://users.example.com")
+    monkeypatch.setenv("USER_SERVICE_AUTH_TYPE", "basic")
+    monkeypatch.setenv("USER_SERVICE_USERNAME", "alice")
+    monkeypatch.setenv("USER_SERVICE_PASSWORD", "s3cret")
+
+    provider = InMemoryConnectionProvider()
+    provider.register_api_config_from_env(conn_proxy="user_service")
+
+    cfg = provider.get_generalized_config_by_proxy("user_service")
+    assert isinstance(cfg, ApiGeneralizedConnConfig)
+    assert cfg.config.auth is not None
+    assert cfg.config.auth.auth_type == "basic"
+    assert cfg.config.auth.username == "alice"
+    assert cfg.config.auth.password == "s3cret"
+
+
+def test_register_api_config_from_env_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ORDER_SERVICE_BASE_URL", "https://orders.example.com")
+    monkeypatch.setenv("ORDER_SERVICE_AUTH_TYPE", "api_key")
+    monkeypatch.setenv("ORDER_SERVICE_TOKEN", "key-123")
+    monkeypatch.setenv("ORDER_SERVICE_HEADER_NAME", "X-Api-Key")
+
+    provider = InMemoryConnectionProvider()
+    provider.register_api_config_from_env(conn_proxy="order_service")
+
+    cfg = provider.get_generalized_config_by_proxy("order_service")
+    assert isinstance(cfg, ApiGeneralizedConnConfig)
+    assert cfg.config.auth is not None
+    assert cfg.config.auth.auth_type == "api_key"
+    assert cfg.config.auth.token == "key-123"
+    assert cfg.config.auth.header_name == "X-Api-Key"
+
+
+def test_register_api_config_from_env_custom_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REST_API_BASE_URL", "https://api.example.com")
+    monkeypatch.setenv("REST_API_AUTH_TYPE", "bearer")
+    monkeypatch.setenv("REST_API_TOKEN", "override-token")
+
+    provider = InMemoryConnectionProvider()
+    provider.register_api_config_from_env(
+        conn_proxy="user_service",
+        env_prefix="REST_API_",
+    )
+
+    cfg = provider.get_generalized_config_by_proxy("user_service")
+    assert isinstance(cfg, ApiGeneralizedConnConfig)
+    assert cfg.config.base_url == "https://api.example.com"
+    assert cfg.config.auth is not None
+    assert cfg.config.auth.token == "override-token"
+
+
+def test_register_api_config_from_env_token_defaults_to_bearer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("USER_SERVICE_BASE_URL", "https://users.example.com")
+    monkeypatch.setenv("USER_SERVICE_TOKEN", "secret-token")
+
+    provider = InMemoryConnectionProvider()
+    provider.register_api_config_from_env(conn_proxy="user_service")
+
+    cfg = provider.get_generalized_config_by_proxy("user_service")
+    assert isinstance(cfg, ApiGeneralizedConnConfig)
+    assert cfg.config.auth is not None
+    assert cfg.config.auth.auth_type == "bearer"
+    assert cfg.config.auth.token == "secret-token"
+
+
+def test_register_api_config_from_env_missing_base_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("USER_SERVICE_BASE_URL", raising=False)
+
+    provider = InMemoryConnectionProvider()
+    with pytest.raises(ValueError, match="USER_SERVICE_BASE_URL"):
+        provider.register_api_config_from_env(conn_proxy="user_service")
+
+
+def test_register_all_api_configs_from_env_multi_proxy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("USER_SERVICE_BASE_URL", "https://users.example.com")
+    monkeypatch.setenv("USER_SERVICE_AUTH_TYPE", "bearer")
+    monkeypatch.setenv("USER_SERVICE_TOKEN", "user-token")
+    monkeypatch.setenv("ORDER_SERVICE_BASE_URL", "https://orders.example.com")
+    monkeypatch.setenv("ORDER_SERVICE_AUTH_TYPE", "bearer")
+    monkeypatch.setenv("ORDER_SERVICE_TOKEN", "order-token")
+
+    users_connector = APIConnector(name="users_api", path="/api/users")
+    orders_connector = APIConnector(name="orders_api", path="/api/orders")
+    bindings = Bindings(
+        connectors=[users_connector, orders_connector],
+        connector_connection=[
+            {"connector": "users_api", "conn_proxy": "user_service"},
+            {"connector": "orders_api", "conn_proxy": "order_service"},
+        ],
+    )
+
+    provider = InMemoryConnectionProvider()
+    provider.register_all_api_configs_from_env(bindings=bindings)
+
+    users_cfg = provider.get_generalized_conn_config(users_connector)
+    orders_cfg = provider.get_generalized_conn_config(orders_connector)
+    assert isinstance(users_cfg, ApiGeneralizedConnConfig)
+    assert isinstance(orders_cfg, ApiGeneralizedConnConfig)
+    assert users_cfg.config.base_url == "https://users.example.com"
+    assert users_cfg.config.auth is not None
+    assert users_cfg.config.auth.token == "user-token"
+    assert orders_cfg.config.base_url == "https://orders.example.com"
+    assert orders_cfg.config.auth is not None
+    assert orders_cfg.config.auth.token == "order-token"
+
+
+def test_register_all_api_configs_from_env_prefix_map(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("USERS_API_BASE_URL", "https://users.example.com")
+    monkeypatch.setenv("USERS_API_AUTH_TYPE", "bearer")
+    monkeypatch.setenv("USERS_API_TOKEN", "mapped-token")
+    monkeypatch.setenv("ORDER_SERVICE_BASE_URL", "https://orders.example.com")
+
+    users_connector = APIConnector(name="users_api", path="/api/users")
+    orders_connector = APIConnector(name="orders_api", path="/api/orders")
+    bindings = Bindings(
+        connectors=[users_connector, orders_connector],
+        connector_connection=[
+            {"connector": "users_api", "conn_proxy": "user_service"},
+            {"connector": "orders_api", "conn_proxy": "order_service"},
+        ],
+    )
+
+    provider = InMemoryConnectionProvider()
+    provider.register_all_api_configs_from_env(
+        bindings=bindings,
+        env_prefix_map={"user_service": "USERS_API_"},
+    )
+
+    users_cfg = provider.get_generalized_conn_config(users_connector)
+    orders_cfg = provider.get_generalized_conn_config(orders_connector)
+    assert isinstance(users_cfg, ApiGeneralizedConnConfig)
+    assert isinstance(orders_cfg, ApiGeneralizedConnConfig)
+    assert users_cfg.config.base_url == "https://users.example.com"
+    assert users_cfg.config.auth is not None
+    assert users_cfg.config.auth.token == "mapped-token"
+    assert orders_cfg.config.base_url == "https://orders.example.com"
+    assert orders_cfg.config.auth is not None
+    assert orders_cfg.config.auth.auth_type == "bearer"
+    assert orders_cfg.config.auth.token is None
+
+
+def test_register_all_api_configs_from_env_skips_non_api_connectors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("API_SOURCE_BASE_URL", "https://api.example.com")
+
+    api_connector = APIConnector(name="users_api", path="/api/users")
+    table_connector = TableConnector(
+        table_name="users",
+        schema_name="public",
+        name="users_table",
+    )
+    bindings = Bindings(
+        connectors=[api_connector, table_connector],
+        connector_connection=[
+            {"connector": "users_api", "conn_proxy": "api_source"},
+            {"connector": "users_table", "conn_proxy": "postgres_source"},
+        ],
+    )
+
+    provider = InMemoryConnectionProvider()
+    provider.register_all_api_configs_from_env(bindings=bindings)
+
+    api_cfg = provider.get_generalized_conn_config(api_connector)
+    table_cfg = provider.get_generalized_conn_config(table_connector)
+    assert isinstance(api_cfg, ApiGeneralizedConnConfig)
+    assert api_cfg.config.base_url == "https://api.example.com"
+    assert table_cfg is None
+    assert provider.get_generalized_config_by_proxy("postgres_source") is None

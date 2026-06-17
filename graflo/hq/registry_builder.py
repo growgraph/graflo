@@ -74,6 +74,12 @@ class RegistryBuilder:
         if ingestion_params.resources is not None:
             resources_filter = set(ingestion_params.resources)
 
+        connectors_filter: set[str] | None = None
+        if ingestion_params.connectors is not None:
+            connectors_filter = bindings.resolve_connector_refs_to_hashes(
+                ingestion_params.connectors
+            )
+
         for resource in self.ingestion_model.resources:
             resource_name = resource.name
             if resources_filter is not None and resource_name not in resources_filter:
@@ -86,6 +92,11 @@ class RegistryBuilder:
                 continue
 
             for connector in connectors:
+                if (
+                    connectors_filter is not None
+                    and connector.hash not in connectors_filter
+                ):
+                    continue
                 cref = connector.name or connector.hash
                 kind = connector.bound_source_kind()
 

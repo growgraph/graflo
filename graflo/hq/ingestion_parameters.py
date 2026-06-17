@@ -109,6 +109,15 @@ class IngestionParams(BaseModel):
     init_only: bool = False
     limit_files: int | None = None
     resources: list[str] | None = None
+    connectors: list[str] | None = Field(
+        default=None,
+        description=(
+            "Optional subset of connectors to ingest, by connector name or hash "
+            "(same refs as bindings.resource_connector.connector). When set, only "
+            "matching connectors are registered as data sources. Intersects with "
+            "resources when both are set."
+        ),
+    )
     vertices: list[str] | None = None
     max_concurrent_db_ops: int | None = None
     datetime_after: str | None = None

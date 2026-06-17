@@ -11,6 +11,7 @@ from typing import Protocol
 from pydantic import BaseModel, Field
 
 from graflo.architecture.contract.bindings import (
+    APIConnector,
     Bindings,
     ResourceConnector,
     SparqlConnector,
@@ -41,6 +42,11 @@ __all__ = [
     "SparqlAuth",
     "SparqlGeneralizedConnConfig",
 ]
+
+
+def _proxy_to_env_prefix(conn_proxy: str) -> str:
+    """Map a ``conn_proxy`` label to an environment-variable prefix."""
+    return conn_proxy.upper().replace("-", "_") + "_"
 
 
 class ConnectionProvider(Protocol):
@@ -170,6 +176,64 @@ class InMemoryConnectionProvider(BaseModel):
             )
 
         self.register_generalized_config(conn_proxy=conn_proxy, config=config)
+        self.bind_from_bindings(bindings=bindings)
+
+    def register_api_config_from_env(
+        self,
+        *,
+        conn_proxy: str,
+        env_prefix: str | None = None,
+    ) -> None:
+        """Register REST API runtime config for *conn_proxy* from environment variables.
+
+        *env_prefix* defaults to a proxy-derived prefix (e.g. ``user_service`` →
+        ``USER_SERVICE_``), reading ``{prefix}BASE_URL`` and optional auth vars.
+        """
+        prefix = (
+            env_prefix if env_prefix is not None else _proxy_to_env_prefix(conn_proxy)
+        )
+        runtime = RestApiConnConfig.from_env(env_prefix=prefix)
+        self.register_generalized_config(
+            conn_proxy=conn_proxy,
+            config=ApiGeneralizedConnConfig(config=runtime),
+        )
+
+    def register_all_api_configs_from_env(
+        self,
+        *,
+        bindings: Bindings,
+        env_prefix_map: dict[str, str] | None = None,
+    ) -> None:
+        """Register env-backed API configs for all API ``conn_proxy`` labels in *bindings*.
+
+        Discovers unique ``conn_proxy`` values attached to :class:`APIConnector`
+        instances, loads each via :meth:`register_api_config_from_env`, then binds
+        all connectors from *bindings*.
+
+        Args:
+            bindings: Manifest bindings with ``connector_connection`` rows.
+            env_prefix_map: Optional per-proxy env prefix overrides.
+        """
+        prefix_map = env_prefix_map or {}
+        api_proxies: set[str] = set()
+        for connector in bindings.connectors:
+            if not isinstance(connector, APIConnector):
+                continue
+            proxy = bindings.get_conn_proxy_for_connector(connector)
+            if proxy is not None:
+                api_proxies.add(proxy)
+
+        if not api_proxies:
+            raise ValueError(
+                "No API connector_connection mappings found in bindings; "
+                "expected at least one APIConnector with a conn_proxy."
+            )
+
+        for conn_proxy in sorted(api_proxies):
+            self.register_api_config_from_env(
+                conn_proxy=conn_proxy,
+                env_prefix=prefix_map.get(conn_proxy),
+            )
         self.bind_from_bindings(bindings=bindings)
 
     def get_generalized_conn_config(
