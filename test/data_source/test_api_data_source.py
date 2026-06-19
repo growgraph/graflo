@@ -9,8 +9,10 @@ import pytest
 from test.conftest import fetch_manifest_obj
 from graflo.architecture.contract.bindings import (
     APIConnector,
+    ApiResponseStructure,
     Bindings,
     PaginationConfig,
+    PaginationRequestConfig,
 )
 from graflo.db import PostgresConfig
 from graflo.data_source import APIDataSource, DataSourceFactory
@@ -40,12 +42,16 @@ def _users_connector(page_size: int = 2) -> APIConnector:
         name="users_api",
         path="/api/users",
         pagination=PaginationConfig(
-            strategy="offset",
-            offset_param="offset",
-            limit_param="limit",
-            page_size=page_size,
-            has_more_path="has_more",
-            data_path="data",
+            request=PaginationRequestConfig(
+                strategy="offset",
+                offset_param="offset",
+                limit_param="limit",
+                page_size=page_size,
+            ),
+            response=ApiResponseStructure(
+                records_path="data",
+                has_more_path="has_more",
+            ),
         ),
     )
 
@@ -167,7 +173,7 @@ def test_api_data_source_iter_batches_respects_total_limit(mock_api_server):
 
 def test_pagination_config_rejects_unknown_strategy():
     with pytest.raises(ValueError):
-        PaginationConfig(strategy="unknown")  # type: ignore[arg-type]
+        PaginationRequestConfig(strategy="unknown")  # type: ignore[arg-type]
 
 
 def test_row_annotations_merged_as_defaults() -> None:
@@ -221,6 +227,115 @@ def test_row_annotations_doc_wins_on_collision() -> None:
         rows = [row for batch in source.iter_batches() for row in batch]
 
     assert rows == [{"_src_type": "Override", "id": 1}]
+
+
+def _envelope_connector(page_size: int = 2) -> APIConnector:
+    return APIConnector(
+        name="items_api",
+        path="/api/items",
+        pagination=PaginationConfig(
+            request=PaginationRequestConfig(
+                strategy="offset",
+                offset_param="offset",
+                limit_param="limit",
+                page_size=page_size,
+            ),
+            response=ApiResponseStructure(
+                records_path="results",
+                total_count_path="count",
+                offset_path="offset",
+                next_offset_path="next_offset",
+                batch_metadata_paths={"_batch_id": "result_id"},
+            ),
+        ),
+    )
+
+
+def _build_envelope_registry(
+    mock_envelope_api_server,
+    *,
+    page_size: int = 2,
+) -> APIDataSource:
+    _, port = mock_envelope_api_server
+    connector = _envelope_connector(page_size=page_size)
+    provider = InMemoryConnectionProvider()
+    provider.register_generalized_config(
+        conn_proxy="api_source",
+        config=ApiGeneralizedConnConfig(
+            config=RestApiConnConfig(base_url=f"http://localhost:{port}")
+        ),
+    )
+    provider.bind_connector_to_conn_proxy(connector=connector, conn_proxy="api_source")
+    config = connector.build_api_config(
+        base_url=f"http://localhost:{port}",
+        page_size_override=page_size,
+    )
+    return APIDataSource(config=config)
+
+
+def test_api_data_source_envelope_next_offset(mock_envelope_api_server) -> None:
+    _, port = mock_envelope_api_server
+    api_source = _build_envelope_registry(mock_envelope_api_server, page_size=2)
+    all_items: list[dict] = []
+    request_urls: list[str] = []
+
+    session = api_source._create_session()
+    original_request = session.request
+
+    def track_request(*args, **kwargs):
+        request_urls.append(kwargs.get("url", args[1] if len(args) > 1 else ""))
+        return original_request(*args, **kwargs)
+
+    with patch.object(api_source, "_create_session") as create_session:
+        create_session.return_value = session
+        session.request = track_request  # type: ignore[method-assign]
+        for batch in api_source.iter_batches(batch_size=10, limit=None):
+            all_items.extend(batch)
+
+    assert len(all_items) == 3
+    assert all(item["_batch_id"].startswith("batch-") for item in all_items)
+    assert request_urls == [
+        f"http://localhost:{port}/api/items",
+        f"http://localhost:{port}/api/items",
+    ]
+
+
+def test_api_data_source_envelope_auto_detect(mock_envelope_api_server) -> None:
+    connector = APIConnector(
+        name="items_api",
+        path="/api/items",
+        pagination=PaginationConfig(
+            request=PaginationRequestConfig(strategy="offset", page_size=2),
+            response=ApiResponseStructure(
+                auto_detect=True,
+                next_offset_path="next_offset",
+            ),
+        ),
+    )
+    _, port = mock_envelope_api_server
+    config = connector.build_api_config(base_url=f"http://localhost:{port}")
+    api_source = APIDataSource(config=config)
+    all_items = [row for batch in api_source.iter_batches() for row in batch]
+    assert len(all_items) == 3
+    assert all_items[0]["id"] == 1
+
+
+def test_api_data_source_envelope_without_records_path_raises(
+    mock_envelope_api_server,
+) -> None:
+    connector = APIConnector(
+        name="items_api",
+        path="/api/items",
+        pagination=PaginationConfig(
+            request=PaginationRequestConfig(strategy="offset", page_size=2),
+            response=ApiResponseStructure(),
+        ),
+    )
+    _, port = mock_envelope_api_server
+    config = connector.build_api_config(base_url=f"http://localhost:{port}")
+    api_source = APIDataSource(config=config)
+    with pytest.raises(ValueError, match="records_path"):
+        list(api_source.iter_batches())
 
 
 def test_api_connector_build_api_config_passes_row_annotations() -> None:

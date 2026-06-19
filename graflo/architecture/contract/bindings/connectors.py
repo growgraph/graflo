@@ -618,11 +618,53 @@ class SparqlConnector(ResourceConnector):
         )
 
 
-class PaginationConfig(ConfigBaseModel):
-    """Configuration for API pagination (contract-level, secret-free).
+class ApiResponseStructure(ConfigBaseModel):
+    """Maps JSON response envelope fields to extraction and pagination signals."""
 
-    Supports offset, cursor, and page-based strategies.
-    """
+    records_path: str | None = Field(
+        default=None,
+        description="Dot path to the record list (e.g. ``results``).",
+    )
+    total_count_path: str | None = Field(
+        default=None,
+        description="Dot path to total item count across all pages (e.g. ``count``).",
+    )
+    offset_path: str | None = Field(
+        default=None,
+        description="Dot path to echoed page start index (e.g. ``offset``).",
+    )
+    next_offset_path: str | None = Field(
+        default=None,
+        description=(
+            "Dot path to server-provided next offset for the following request "
+            "(e.g. ``next_offset``)."
+        ),
+    )
+    has_more_path: str | None = Field(
+        default=None,
+        description="Dot path to a boolean more-pages flag (e.g. ``has_more``).",
+    )
+    cursor_path: str | None = Field(
+        default=None,
+        description="Dot path to the next opaque cursor token.",
+    )
+    batch_metadata_paths: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Map row annotation keys to response dot paths "
+            "(e.g. ``_batch_id: result_id``)."
+        ),
+    )
+    auto_detect: bool = Field(
+        default=False,
+        description=(
+            "When true, infer unset response paths from the first response body."
+        ),
+    )
+
+
+class PaginationRequestConfig(ConfigBaseModel):
+    """Configuration for building paginated HTTP requests."""
 
     strategy: Literal["offset", "page", "cursor"] = "offset"
     offset_param: str = "offset"
@@ -652,9 +694,17 @@ class PaginationConfig(ConfigBaseModel):
             "``limit_param`` (offset) or ``per_page_param`` (page)."
         ),
     )
-    cursor_path: str | None = None
-    has_more_path: str | None = None
-    data_path: str | None = None
+
+
+class PaginationConfig(ConfigBaseModel):
+    """Configuration for API pagination (contract-level, secret-free).
+
+    Combines request construction (``request``) with response envelope parsing
+    (``response``).
+    """
+
+    request: PaginationRequestConfig = Field(default_factory=PaginationRequestConfig)
+    response: ApiResponseStructure = Field(default_factory=ApiResponseStructure)
 
 
 class APIConnector(ResourceConnector):
@@ -723,7 +773,13 @@ class APIConnector(ResourceConnector):
 
         pagination = self.pagination
         if pagination is not None and page_size_override is not None:
-            pagination = pagination.model_copy(update={"page_size": page_size_override})
+            pagination = pagination.model_copy(
+                update={
+                    "request": pagination.request.model_copy(
+                        update={"page_size": page_size_override}
+                    )
+                }
+            )
 
         return APIConfig(
             url=self._join_url(base_url, self.path),

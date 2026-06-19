@@ -75,7 +75,12 @@ Runtime HTTP executor. Built by **`RegistryBuilder`** from **`APIConnector`** + 
 
 ### PaginationConfig
 
-Contract-level pagination on **`APIConnector`**. Three strategies:
+Contract-level pagination on **`APIConnector`**. Two sub-blocks:
+
+- **`request`** (`PaginationRequestConfig`) — how to build paginated HTTP requests
+- **`response`** (`ApiResponseStructure`) — how to parse JSON response envelopes
+
+Three request strategies:
 
 | Strategy | Query params (defaults) | When to use |
 | -------- | ----------------------- | ----------- |
@@ -83,13 +88,14 @@ Contract-level pagination on **`APIConnector`**. Three strategies:
 | **`page`** | `page`, `per_page` | Page-index APIs (`?page=1&per_page=25`) |
 | **`cursor`** | `cursor` | Opaque next-token APIs |
 
-Shared fields:
+Key fields:
 
-- **`page_size`** — records per HTTP request (overridden by **`IngestionParams.batch_size`** when set)
-- **`data_path`** — dot path to the JSON array of records (e.g. `data`, `results.items`)
-- **`has_more_path`** — boolean path for offset/page stop condition (e.g. `has_more`)
-- **`cursor_path`** — next cursor token for cursor strategy (e.g. `pagination.next_cursor`)
-- **`initial_offset`**, **`initial_page`**, **`initial_cursor`** — starting pagination state
+- **`request.page_size`** — records per HTTP request (overridden by **`IngestionParams.batch_size`** when set)
+- **`response.records_path`** — dot path to the JSON record list (e.g. `results`, `data`)
+- **`response.next_offset_path`** — server-provided next offset (e.g. `next_offset`)
+- **`response.has_more_path`** — boolean stop signal (e.g. `has_more`)
+- **`response.cursor_path`** — next cursor token for cursor strategy
+- **`response.auto_detect`** — infer unset response paths from the first response body
 
 See **[API connector and pagination](../../concepts/api_connector.md)** for loop behaviour, examples per strategy, and field reference.
 
@@ -144,13 +150,22 @@ source = DataSourceFactory.create_file_data_source(
 ### API Data Source (via bindings)
 
 ```python
-from graflo.architecture.contract.bindings import APIConnector, Bindings, PaginationConfig
+from graflo.architecture.contract.bindings import (
+    APIConnector,
+    ApiResponseStructure,
+    Bindings,
+    PaginationConfig,
+    PaginationRequestConfig,
+)
 from graflo.hq.connection_provider import InMemoryConnectionProvider
 
 connector = APIConnector(
     name="users_api",
     path="/api/users",
-    pagination=PaginationConfig(strategy="offset", page_size=100, data_path="data"),
+    pagination=PaginationConfig(
+        request=PaginationRequestConfig(strategy="offset", page_size=100),
+        response=ApiResponseStructure(records_path="data"),
+    ),
 )
 bindings = Bindings(
     connectors=[connector],
