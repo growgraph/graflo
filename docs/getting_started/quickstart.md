@@ -276,7 +276,7 @@ REST API ingestion uses bindings + `conn_proxy`, like SQL and SPARQL. The manife
 | **`page`** | `page`, `per_page` | `?page=1&per_page=25` |
 | **`cursor`** | `cursor` | opaque next-token in response JSON |
 
-All parameter names, JSON paths (`data_path`, `has_more_path`, `cursor_path`), and loop behaviour are documented in **[API connector and pagination](../concepts/api_connector.md)**.
+All parameter names, response paths (`records_path`, `next_offset_path`, `has_more_path`, …), and loop behaviour are documented in **[API connector and pagination](../concepts/api_connector.md)**.
 
 ```yaml
 # manifest.yaml (bindings excerpt)
@@ -285,12 +285,14 @@ bindings:
     - name: users_api
       path: /api/users
       pagination:
-        strategy: offset
-        offset_param: offset
-        limit_param: limit
-        page_size: 100
-        data_path: data
-        has_more_path: has_more
+        request:
+          strategy: offset
+          offset_param: offset
+          limit_param: limit
+          page_size: 100
+        response:
+          records_path: data
+          has_more_path: has_more
   resource_connector:
     - resource: users
       connector: users_api

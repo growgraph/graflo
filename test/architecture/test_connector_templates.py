@@ -6,6 +6,7 @@ from graflo.architecture.contract.bindings import (
     APIConnector,
     Bindings,
     PaginationConfig,
+    PaginationRequestConfig,
 )
 
 
@@ -98,8 +99,10 @@ def test_template_base_pagination_replaced() -> None:
                     "name": "api_base",
                     "path": "/api/query",
                     "pagination": {
-                        "strategy": "offset",
-                        "page_size": 100,
+                        "request": {
+                            "strategy": "offset",
+                            "page_size": 100,
+                        },
                     },
                 }
             ],
@@ -108,8 +111,10 @@ def test_template_base_pagination_replaced() -> None:
                     "name": "small_pages",
                     "base": "api_base",
                     "pagination": {
-                        "strategy": "offset",
-                        "page_size": 25,
+                        "request": {
+                            "strategy": "offset",
+                            "page_size": 25,
+                        },
                     },
                 }
             ],
@@ -118,8 +123,8 @@ def test_template_base_pagination_replaced() -> None:
     connector = bindings.connectors[0]
     assert isinstance(connector, APIConnector)
     assert connector.pagination is not None
-    assert connector.pagination.page_size == 25
-    assert connector.pagination.strategy == "offset"
+    assert connector.pagination.request.page_size == 25
+    assert connector.pagination.request.strategy == "offset"
 
 
 def test_template_conn_proxy_auto_generates_connector_connection() -> None:
@@ -238,10 +243,16 @@ def test_bindings_default_conn_proxy_does_not_override_explicit_mapping() -> Non
 
 
 def test_no_connector_templates_noop() -> None:
+    from graflo.architecture.contract.bindings import (
+        APIConnector,
+    )
+
     connector = APIConnector(
         name="users",
         path="/api/users",
-        pagination=PaginationConfig(page_size=50),
+        pagination=PaginationConfig(
+            request=PaginationRequestConfig(page_size=50),
+        ),
     )
     bindings = Bindings(connectors=[connector])
     assert bindings.connectors == [connector]

@@ -19,6 +19,14 @@ from pydantic import Field
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.contract.bindings import PaginationConfig
+from graflo.data_source.api_response import (
+    ResolvedApiResponse,
+    extract_records,
+    get_batch_metadata,
+    has_more_pages,
+    next_cursor_value,
+    next_offset_value,
+)
 from graflo.data_source.base import AbstractDataSource, DataSourceType
 from graflo.connection_models import ApiAuth
 
@@ -88,69 +96,19 @@ class APIDataSource(AbstractDataSource):
         session.headers.update(self.config.headers)
         return session
 
-    def _extract_data(self, response: dict | list) -> list[dict]:
-        if self.config.pagination and self.config.pagination.data_path:
-            parts = self.config.pagination.data_path.split(".")
-            data: object = response
-            for part in parts:
-                if isinstance(data, dict):
-                    data = data.get(part)
-                elif isinstance(data, list):
-                    data = data[int(part)]
-                else:
-                    return []
-            if isinstance(data, list):
-                return data
-            if isinstance(data, dict):
-                return [data]
-            return []
-
-        if isinstance(response, list):
-            return response
-        if isinstance(response, dict):
-            return [response]
-        return []
-
-    def _has_more(self, response: dict) -> bool:
-        if not self.config.pagination:
-            return False
-
-        if self.config.pagination.has_more_path:
-            parts = self.config.pagination.has_more_path.split(".")
-            value: object = response
-            for part in parts:
-                if isinstance(value, dict):
-                    value = value.get(part)
-                else:
-                    return False
-            return bool(value)
-
-        return len(self._extract_data(response)) > 0
-
-    def _get_next_cursor(self, response: dict) -> str | None:
-        if not self.config.pagination or not self.config.pagination.cursor_path:
-            return None
-
-        parts = self.config.pagination.cursor_path.split(".")
-        value: object = response
-        for part in parts:
-            if isinstance(value, dict):
-                value = value.get(part)
-            else:
-                return None
-        return str(value) if value is not None else None
-
     def iter_batches(
         self, batch_size: int = 1000, limit: int | None = None
     ) -> Iterator[list[dict]]:
         session = self._create_session()
         total_items = 0
+        resolved_response: ResolvedApiResponse | None = None
 
         try:
             pagination = self.config.pagination
-            offset = pagination.initial_offset if pagination else 0
-            page = pagination.initial_page if pagination else 1
-            cursor: str | None = pagination.initial_cursor if pagination else None
+            request = pagination.request if pagination else None
+            offset = request.initial_offset if request else 0
+            page = request.initial_page if request else 1
+            cursor: str | None = request.initial_cursor if request else None
 
             while True:
                 if limit is not None and total_items >= limit:
@@ -158,19 +116,19 @@ class APIDataSource(AbstractDataSource):
 
                 params = dict(self.config.params)
 
-                page_limit = pagination.page_size if pagination else 0
-                if pagination is not None and limit is not None:
+                page_limit = request.page_size if request else 0
+                if request is not None and limit is not None:
                     page_limit = min(page_limit, limit - total_items)
 
-                if pagination:
-                    if pagination.strategy == "offset":
-                        params[pagination.offset_param] = offset
-                        params[pagination.limit_param] = page_limit
-                    elif pagination.strategy == "page":
-                        params[pagination.page_param] = page
-                        params[pagination.per_page_param] = page_limit
-                    elif pagination.strategy == "cursor" and cursor is not None:
-                        params[pagination.cursor_param] = cursor
+                if request is not None:
+                    if request.strategy == "offset":
+                        params[request.offset_param] = offset
+                        params[request.limit_param] = page_limit
+                    elif request.strategy == "page":
+                        params[request.page_param] = page
+                        params[request.per_page_param] = page_limit
+                    elif request.strategy == "cursor" and cursor is not None:
+                        params[request.cursor_param] = cursor
 
                 try:
                     response = session.request(
@@ -186,13 +144,27 @@ class APIDataSource(AbstractDataSource):
                     logger.error(f"API request failed: {e}")
                     break
 
-                items = self._extract_data(data)
+                if pagination is not None and resolved_response is None:
+                    resolved_response = ResolvedApiResponse.resolve(
+                        pagination.response,
+                        data,
+                    )
+
+                response_shape = (
+                    resolved_response
+                    if resolved_response is not None
+                    else ResolvedApiResponse()
+                )
+                items = extract_records(data, response_shape)
+                batch_metadata = get_batch_metadata(data, response_shape)
 
                 batch: list[dict] = []
                 for item in items:
                     if limit is not None and total_items >= limit:
                         break
-                    batch.append({**self.config.row_annotations, **item})
+                    batch.append(
+                        {**self.config.row_annotations, **batch_metadata, **item}
+                    )
                     total_items += 1
 
                     if len(batch) >= batch_size:
@@ -205,21 +177,29 @@ class APIDataSource(AbstractDataSource):
                 if limit is not None and total_items >= limit:
                     break
 
-                if pagination:
-                    if pagination.strategy == "offset":
-                        if not self._has_more(data):
-                            break
-                        offset += page_limit
-                    elif pagination.strategy == "page":
-                        if not self._has_more(data):
-                            break
-                        page += 1
-                    elif pagination.strategy == "cursor":
-                        cursor = self._get_next_cursor(data)
-                        if not cursor:
-                            break
-                else:
+                if request is None:
                     break
+
+                if not has_more_pages(
+                    data,
+                    response_shape,
+                    items,
+                    strategy=request.strategy,
+                ):
+                    break
+
+                if request.strategy == "offset":
+                    server_offset = next_offset_value(data, response_shape)
+                    if server_offset is not None:
+                        offset = server_offset
+                    else:
+                        offset += page_limit
+                elif request.strategy == "page":
+                    page += 1
+                elif request.strategy == "cursor":
+                    cursor = next_cursor_value(data, response_shape)
+                    if not cursor:
+                        break
 
         finally:
             session.close()

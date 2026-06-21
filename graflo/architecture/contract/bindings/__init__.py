@@ -11,11 +11,13 @@ from .core import (
 from .column_time_filter import ColumnTimeFilter
 from .connectors import (
     APIConnector,
+    ApiResponseStructure,
     BoundSourceKind,
     ConnectorUpdate,
     FileConnector,
     JoinClause,
     PaginationConfig,
+    PaginationRequestConfig,
     ResourceConnector,
     SparqlConnector,
     TableConnector,
@@ -23,6 +25,7 @@ from .connectors import (
 
 __all__ = [
     "APIConnector",
+    "ApiResponseStructure",
     "Bindings",
     "BindingsConfig",
     "BindingsRegistry",
@@ -35,6 +38,7 @@ __all__ = [
     "FileConnector",
     "JoinClause",
     "PaginationConfig",
+    "PaginationRequestConfig",
     "ResourceConnector",
     "SparqlConnector",
     "TableConnector",

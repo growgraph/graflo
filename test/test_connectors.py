@@ -593,12 +593,18 @@ def test_column_time_filter_invalid_interval() -> None:
 
 
 def test_api_connector_basic() -> None:
-    from graflo.architecture.contract.bindings import APIConnector, PaginationConfig
+    from graflo.architecture.contract.bindings import (
+        APIConnector,
+        PaginationConfig,
+        PaginationRequestConfig,
+    )
 
     connector = APIConnector(
         name="users_api",
         path="/api/users",
-        pagination=PaginationConfig(page_size=50),
+        pagination=PaginationConfig(
+            request=PaginationRequestConfig(page_size=50),
+        ),
     )
     assert connector.bound_source_kind() == BoundSourceKind.API
     assert connector.matches("users_api")

@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.9]
+
+### Added
+
+- **`ApiResponseStructure`** — declarative mapping of JSON response envelopes on **`PaginationConfig.response`**: `records_path`, `total_count_path`, `offset_path`, `next_offset_path`, `has_more_path`, `cursor_path`, `batch_metadata_paths`, and optional **`auto_detect`** (first-response heuristics for unset paths).
+- **`PaginationRequestConfig`** — request-side pagination on **`PaginationConfig.request`** (strategy, query param names, page size, initial offset/page/cursor).
+- **`graflo.data_source.api_response`** — path resolution, stop/advance logic, batch metadata extraction, and auto-detection helpers used by **`APIDataSource`**.
+
+### Changed
+
+- **Breaking:** **`PaginationConfig`** is split into **`request`** + **`response`** sub-blocks. Top-level **`data_path`**, **`has_more_path`**, and **`cursor_path`** are removed — migrate manifests to **`response.records_path`**, **`response.has_more_path`**, and **`response.cursor_path`** (under **`pagination.response`** in YAML).
+- **`APIDataSource`** — parses paginated JSON via **`pagination.response`**; advances offset from **`next_offset_path`** when configured (URL always built from connector **`base_url` + `path`**); merges batch metadata into each row.
+- **Documentation** — [API connector and pagination](docs/concepts/api_connector.md), quickstart, and data-source reference updated for the request/response model, stop/advance rules, and **`auto_detect`**.
+
 ## [1.8.7]
 
 ### Added

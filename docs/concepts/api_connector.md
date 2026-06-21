@@ -19,12 +19,14 @@ bindings:
       params:
         active: true
       pagination:
-        strategy: offset
-        offset_param: offset
-        limit_param: limit
-        page_size: 100
-        data_path: data
-        has_more_path: has_more
+        request:
+          strategy: offset
+          offset_param: offset
+          limit_param: limit
+          page_size: 100
+        response:
+          records_path: data
+          has_more_path: has_more
   resource_connector:
     - resource: users
       connector: users_api
@@ -127,26 +129,42 @@ Non-secret headers belong on **`APIConnector.headers`** or **`RestApiConnConfig.
 
 Pagination is declared on **`APIConnector.pagination`** as a **`PaginationConfig`** object. When **`pagination`** is omitted, GraFlo performs a **single HTTP request** and yields whatever JSON records **`APIDataSource`** extracts from the response.
 
-When pagination is set, GraFlo loops: each iteration adds strategy-specific query parameters, parses the JSON body, yields records in **`iter_batches`**, then decides whether to fetch the next page.
+When pagination is set, GraFlo loops: each iteration builds the request URL from **`base_url + path`**, merges static and pagination query parameters, parses the JSON body using **`pagination.response`**, yields records in **`iter_batches`**, then decides whether to fetch the next page.
 
 ```mermaid
 flowchart TD
   start[Start iter_batches]
-  build[Merge static params + pagination params]
+  build["Build request: config.url + static params + request pagination params"]
   req[HTTP request]
-  extract[Extract rows via data_path]
+  parse[Parse JSON]
+  detect{response.auto_detect?}
+  resolve[Resolve unset response paths from first body]
+  extract["Extract records at records_path"]
   yield[Yield batches]
   more{More pages?}
-  start --> build --> req --> extract --> yield --> more
-  more -->|yes| build
+  start --> build --> req --> parse --> detect
+  detect -->|yes, first page| resolve --> extract
+  detect -->|no| extract
+  extract --> yield --> more
+  more -->|yes| advance["Advance offset/cursor from response or client increment"]
+  advance --> build
   more -->|no| done[Done]
 ```
 
-**`IngestionParams.batch_size`** overrides **`pagination.page_size`** when the connector defines pagination (same idea as SPARQL endpoint page size). That controls how many rows each *API page* requests, not the internal **`iter_batches`** chunk size (which still splits a page into smaller yield batches if needed).
+**`IngestionParams.batch_size`** overrides **`pagination.request.page_size`** when the connector defines pagination (same idea as SPARQL endpoint page size). That controls how many rows each *API page* requests, not the internal **`iter_batches`** chunk size (which still splits a page into smaller yield batches if needed).
 
 **`iter_batches(..., limit=N)`** caps the **total number of records** read across all pages, not the number of HTTP calls.
 
-## `PaginationConfig` fields
+## `PaginationConfig` structure
+
+`PaginationConfig` has two parts:
+
+- **`request`** — how to **build** paginated HTTP requests (`PaginationRequestConfig`)
+- **`response`** — how to **parse** JSON response envelopes (`ApiResponseStructure`)
+
+Next-page URLs are always constructed from the connector's **`base_url`** and **`path`**. The response may supply the next offset value or cursor token, but GraFlo does not follow response link fields such as **`next`** by default.
+
+### `PaginationRequestConfig` (`pagination.request`)
 
 | Field | Default | Used by | Meaning |
 | ----- | ------- | ------- | ------- |
@@ -159,12 +177,55 @@ flowchart TD
 | **`initial_offset`** | `0` | offset | First request offset |
 | **`initial_page`** | `1` | page | First request page number |
 | **`initial_cursor`** | `null` | cursor | Send cursor on the **first** request when the API requires it |
-| **`page_size`** | `100` | all | Records requested per HTTP call (sent as the value of **`limit_param`** or **`per_page_param`**) |
-| **`data_path`** | `null` (root) | all | Dot path to the array of records in the JSON response |
-| **`has_more_path`** | `null` | offset, page | Dot path to a boolean “more pages” flag |
-| **`cursor_path`** | `null` | cursor | Dot path to the **next** cursor in the response body |
+| **`page_size`** | `100` | all | Records requested per HTTP call |
 
-Dot paths use `.` segments (e.g. `meta.next_cursor`). When **`data_path`** is unset, a top-level JSON **array** is used as-is; a top-level **object** is treated as a single record.
+### `ApiResponseStructure` (`pagination.response`)
+
+| Field | Default | Meaning |
+| ----- | ------- | ------- |
+| **`records_path`** | `null` | Dot path to the record list (e.g. `results`). Required for object envelopes unless **`auto_detect`** is enabled. |
+| **`total_count_path`** | `null` | Total items across all pages (e.g. `count`) |
+| **`offset_path`** | `null` | Echoed page start index (e.g. `offset`) |
+| **`next_offset_path`** | `null` | Server-provided next offset for the following request (e.g. `next_offset`) |
+| **`has_more_path`** | `null` | Boolean “more pages exist” flag (e.g. `has_more`) |
+| **`cursor_path`** | `null` | Next opaque cursor token |
+| **`batch_metadata_paths`** | `{}` | Map row annotation keys to response dot paths (e.g. `_batch_id: result_id`) |
+| **`auto_detect`** | `false` | Infer **unset** response paths from the first response body |
+
+Dot paths use `.` segments (e.g. `meta.next_cursor`). When **`pagination`** is omitted, a top-level JSON **array** is accepted as-is. A top-level **object** without **`records_path`** (and without **`auto_detect`**) raises an error.
+
+### Stop conditions (evaluated in order)
+
+| Priority | Configuration | Stop when |
+| -------- | --------------- | --------- |
+| 1 | **`has_more_path`** set | Boolean at path is falsy |
+| 2 | **`next_offset_path`** set | Value is absent or null after current page |
+| 3 | **`total_count_path`** + **`offset_path`** set | `offset + len(records) >= count` |
+| 4 | **`cursor_path`** set (cursor strategy) | Value is absent or empty |
+| 5 | Fallback | Extracted records list is empty |
+
+### Advance rules (URL always `base_url + path`)
+
+| Strategy | Advance rule |
+| -------- | ------------- |
+| **offset** | If **`next_offset_path`** is set and present in response → use that value for **`offset_param`**. Else → `offset += page_size`. |
+| **page** | `page += 1` |
+| **cursor** | Set **`cursor_param`** from value at **`cursor_path`** |
+
+### First-response heuristics (`auto_detect: true`)
+
+When **`response.auto_detect`** is `true`, GraFlo inspects the **first** response body and fills any **unset** response paths. Detected paths are logged at INFO.
+
+| Field | Candidate keys (priority order) |
+| ----- | ------------------------------- |
+| **`records_path`** | `results`, `data`, `items`, `records`, `entries`, `rows`; or sole top-level list-of-dicts key |
+| **`next_offset_path`** | `next_offset`, `nextOffset` |
+| **`total_count_path`** | `count`, `total`, `total_count` |
+| **`offset_path`** | `offset`, `skip` |
+| **`has_more_path`** | `has_more`, `hasMore` |
+| **`cursor_path`** | `next_cursor`, `cursor`, `next_page_token` |
+
+Link fields such as **`next`** are **not** inferred or followed.
 
 ## Strategy: offset (default)
 
@@ -173,9 +234,9 @@ Best for APIs that accept **`offset` + `limit`** (or similarly named) query para
 **Request loop:**
 
 1. Set `offset_param=initial_offset` and `limit_param=page_size` (names configurable).
-2. Parse rows from **`data_path`**.
-3. Stop when **`has_more_path`** is falsy, or when the extracted row list is empty if **`has_more_path`** is unset.
-4. Increment offset by **`page_size`** and repeat.
+2. Parse rows from **`response.records_path`**.
+3. Stop using the [stop conditions](#stop-conditions-evaluated-in-order) above.
+4. Advance offset from **`response.next_offset_path`** when configured, else increment by **`page_size`**.
 
 **Example API response:**
 
@@ -190,16 +251,48 @@ Best for APIs that accept **`offset` + `limit`** (or similarly named) query para
 
 ```yaml
 pagination:
-  strategy: offset
-  offset_param: skip      # API uses ?skip=… instead of ?offset=…
-  limit_param: take
-  page_size: 50
-  data_path: data
-  has_more_path: has_more
-  initial_offset: 0
+  request:
+    strategy: offset
+    offset_param: skip      # API uses ?skip=… instead of ?offset=…
+    limit_param: take
+    page_size: 50
+    initial_offset: 0
+  response:
+    records_path: data
+    has_more_path: has_more
 ```
 
 Equivalent query progression: `?skip=0&take=50`, then `?skip=50&take=50`, …
+
+### Envelope with server-provided next offset
+
+```json
+{
+  "count": 12345,
+  "offset": 0,
+  "results": [{"id": 1}, {"id": 2}],
+  "next_offset": 100,
+  "result_id": "batch-abc"
+}
+```
+
+```yaml
+pagination:
+  request:
+    strategy: offset
+    offset_param: offset
+    limit_param: limit
+    page_size: 100
+  response:
+    records_path: results
+    total_count_path: count
+    offset_path: offset
+    next_offset_path: next_offset
+    batch_metadata_paths:
+      _batch_id: result_id
+```
+
+Request URLs stay `base_url + path`; only query params change (`offset=0`, then `offset=100`, …). Response fields such as **`next`** (URL links) are ignored.
 
 ## Strategy: page
 
@@ -208,21 +301,23 @@ Best for APIs that use **`page` + `per_page`** (or `page` + `limit`) semantics w
 **Request loop:**
 
 1. Set `page_param=initial_page` and `per_page_param=page_size`.
-2. Parse rows from **`data_path`**.
-3. Stop using the same **`has_more_path`** / non-empty-data rules as offset.
+2. Parse rows from **`response.records_path`**.
+3. Stop using the [stop conditions](#stop-conditions-evaluated-in-order).
 4. Increment page by 1.
 
 **Example:**
 
 ```yaml
 pagination:
-  strategy: page
-  page_param: page
-  per_page_param: page_size
-  page_size: 25
-  data_path: results.items
-  has_more_path: results.has_next_page
-  initial_page: 1
+  request:
+    strategy: page
+    page_param: page
+    per_page_param: page_size
+    page_size: 25
+    initial_page: 1
+  response:
+    records_path: results.items
+    has_more_path: results.has_next_page
 ```
 
 ## Strategy: cursor
@@ -232,8 +327,8 @@ Best for APIs that return an opaque **`next_cursor`** (or link token) instead of
 **Request loop:**
 
 1. **First request:** omit **`cursor_param`** unless **`initial_cursor`** is set.
-2. Parse rows from **`data_path`**.
-3. Read the next token from **`cursor_path`** in the response.
+2. Parse rows from **`response.records_path`**.
+3. Read the next token from **`response.cursor_path`**.
 4. Subsequent requests set **`cursor_param`** to that token.
 5. Stop when **`cursor_path`** is missing or empty after a page.
 
@@ -250,25 +345,17 @@ Best for APIs that return an opaque **`next_cursor`** (or link token) instead of
 
 ```yaml
 pagination:
-  strategy: cursor
-  cursor_param: cursor
-  page_size: 100
-  data_path: items
-  cursor_path: pagination.next_cursor
-  initial_cursor: null   # omit on first call; set when API requires a seed token
+  request:
+    strategy: cursor
+    cursor_param: cursor
+    page_size: 100
+    initial_cursor: null
+  response:
+    records_path: items
+    cursor_path: pagination.next_cursor
 ```
 
 If the first call must include a cursor (some APIs use `cursor=`*empty* or a fixed start token), set **`initial_cursor`** accordingly.
-
-## Choosing `has_more_path` vs implicit continuation
-
-| Configuration | Stop condition |
-| ------------- | -------------- |
-| **`has_more_path` set** | Stop when the boolean at that path is falsy |
-| **`has_more_path` unset** (offset/page) | Stop when **`data_path`** resolves to an **empty** list |
-| **cursor** | Stop when **`cursor_path`** is missing or empty |
-
-Prefer an explicit **`has_more_path`** when the API returns a full final page *and* a reliable boolean (avoids an extra empty request).
 
 ## Static query parameters
 
@@ -288,8 +375,9 @@ bindings:
       resource_name: polymorphic_edges
       conn_proxy: api_source
       pagination:
-        strategy: offset
-        page_size: 100
+        request:
+          strategy: offset
+          page_size: 100
 
   conn_proxy: api_source   # optional default for connectors without connector_connection
 

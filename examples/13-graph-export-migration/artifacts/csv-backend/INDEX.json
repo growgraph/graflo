@@ -1,0 +1,28 @@
+{
+    "created_at": "2026-06-19T18:30:25.133235+00:00",
+    "edges": {
+        "person____department": {
+            "chunks": [
+                "edges/person____department.000.jsonl.gz"
+            ],
+            "record_count": 3
+        }
+    },
+    "graflo_version": "1.8.9",
+    "schema_hash": "0bf16c2b61003ea014f4e71f41260086e98a12d81c93910ecad0d6eefa195388",
+    "vertices": {
+        "department": {
+            "chunks": [
+                "vertices/department.000.jsonl.gz"
+            ],
+            "record_count": 3
+        },
+        "person": {
+            "chunks": [
+                "vertices/person.000.jsonl.gz",
+                "vertices/person.001.jsonl.gz"
+            ],
+            "record_count": 6
+        }
+    }
+}

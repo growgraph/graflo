@@ -147,24 +147,25 @@ engine = GraphEngine(target_db_flavor=DBType.POSTGRES)
 engine.migrate_graph(backend, postgres, recreate_schema=True)
 ```
 
-## Runnable script
+## Runnable scripts
+
+Run from the example directory (file connectors use `sub_path: data` relative to it):
 
 ```bash
-# Neo4j → file backend
-uv run python examples/13-graph-export-migration/export_migrate.py export-backend \
-  --output-dir artifacts/neo4j-backend
+cd examples/13-graph-export-migration
 
-# CSV manifest → file backend (ingest)
-uv run python examples/13-graph-export-migration/export_migrate.py ingest-backend \
-  --output-dir artifacts/csv-backend
+# CSV manifest → file backend (no live DB required)
+uv run python ingest.py --output-dir artifacts/csv-backend
+uv run python inspect_backend.py --backend-dir artifacts/csv-backend
+
+# Neo4j → file backend
+uv run python export.py --output-dir artifacts/neo4j-backend
 
 # File backend → ArangoDB
-uv run python examples/13-graph-export-migration/export_migrate.py migrate-arango \
-  --from-backend artifacts/neo4j-backend --recreate-schema
+uv run python migrate.py arango --from-backend artifacts/csv-backend --recreate-schema
 
 # File backend → PostgreSQL
-uv run python examples/13-graph-export-migration/export_migrate.py migrate-postgres \
-  --from-backend artifacts/neo4j-backend --recreate-schema
+uv run python migrate.py postgres --from-backend artifacts/neo4j-backend --recreate-schema
 ```
 
 ## Related docs

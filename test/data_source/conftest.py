@@ -50,16 +50,61 @@ class MockAPIHandler(BaseHTTPRequestHandler):
         pass
 
 
+class MockEnvelopeAPIHandler(BaseHTTPRequestHandler):
+    """Mock API server using results/count/next_offset envelope."""
+
+    records = [
+        {"id": 1, "name": "Alice", "age": 30},
+        {"id": 2, "name": "Bob", "age": 25},
+        {"id": 3, "name": "Charlie", "age": 35},
+    ]
+
+    def do_GET(self):
+        parsed_path = urlparse(self.path)
+        query_params = parse_qs(parsed_path.query)
+
+        offset = int(query_params.get("offset", [0])[0])
+        limit = int(query_params.get("limit", [100])[0])
+        paginated = self.records[offset : offset + limit]
+        next_offset = (
+            offset + len(paginated)
+            if offset + len(paginated) < len(self.records)
+            else None
+        )
+
+        response = {
+            "count": len(self.records),
+            "offset": offset,
+            "results": paginated,
+            "next_offset": next_offset,
+            "result_id": f"batch-{offset}",
+            "next": f"https://ignored.example/items?offset={next_offset}"
+            if next_offset is not None
+            else None,
+        }
+
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps(response).encode("utf-8"))
+
+    def log_message(self, format: str, *args: Any) -> None:
+        pass
+
+
 class MockAPIServer:
     """Mock API server for testing."""
 
-    def __init__(self, port: int = 0):
+    def __init__(
+        self, port: int = 0, handler: type[BaseHTTPRequestHandler] = MockAPIHandler
+    ):
         """Initialize the mock server.
 
         Args:
             port: Port to bind to (0 for auto-assign)
         """
         self.port = port
+        self.handler = handler
         self.server: HTTPServer | None = None
         self.thread: threading.Thread | None = None
 
@@ -69,7 +114,7 @@ class MockAPIServer:
         Returns:
             The port the server is running on
         """
-        self.server = HTTPServer(("localhost", self.port), MockAPIHandler)
+        self.server = HTTPServer(("localhost", self.port), self.handler)
         self.port = self.server.server_address[1]
         self.thread = threading.Thread(target=self.server.serve_forever)
         self.thread.daemon = True
@@ -89,6 +134,15 @@ class MockAPIServer:
 def mock_api_server():
     """Fixture providing a mock API server."""
     server = MockAPIServer()
+    port = server.start()
+    yield server, port
+    server.stop()
+
+
+@pytest.fixture(scope="function")
+def mock_envelope_api_server():
+    """Fixture providing a mock API server with results/count/next_offset envelope."""
+    server = MockAPIServer(handler=MockEnvelopeAPIHandler)
     port = server.start()
     yield server, port
     server.stop()

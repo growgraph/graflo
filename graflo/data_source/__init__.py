@@ -23,12 +23,18 @@ from .file import (
 from .memory import InMemoryDataSource
 from .registry import DataSourceRegistry
 from .sql import SQLConfig, SQLDataSource
-from graflo.architecture.contract.bindings import APIConnector, PaginationConfig
+from graflo.architecture.contract.bindings import (
+    APIConnector,
+    ApiResponseStructure,
+    PaginationConfig,
+    PaginationRequestConfig,
+)
 
 __all__ = [
     "AbstractDataSource",
     "APIConfig",
     "APIConnector",
+    "ApiResponseStructure",
     "APIDataSource",
     "DataSourceFactory",
     "DataSourceRegistry",
@@ -38,6 +44,7 @@ __all__ = [
     "JsonFileDataSource",
     "JsonlFileDataSource",
     "PaginationConfig",
+    "PaginationRequestConfig",
     "SQLConfig",
     "SQLDataSource",
     "TableFileDataSource",

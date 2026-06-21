@@ -1,0 +1,36 @@
+metadata:
+    name: hr
+core_schema:
+    vertex_config:
+        vertices:
+        -   name: person
+            properties:
+            -   name: id
+            -   name: name
+            -   name: age
+            identity:
+            -   id
+            filters: []
+            blank: false
+        -   name: department
+            properties:
+            -   name: name
+            identity:
+            -   name
+            filters: []
+            blank: false
+        force_types: {}
+        identity_from_all_properties: true
+    edge_config:
+        edges:
+        -   source: person
+            target: department
+            directed: true
+            identities: []
+            properties: []
+            type: direct
+db_profile:
+    db_flavor: graflo_backend
+    vertex_storage_names: {}
+    vertex_indexes: {}
+    edge_specs: []
