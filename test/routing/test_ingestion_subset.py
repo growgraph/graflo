@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import asyncio
+
+from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.contract.ingestion.resource import Resource
 from graflo.architecture.contract.runtime import build_resource_runtime
+from graflo.architecture.contract.runtime.resource import resolve_effective_vertex_names
+from graflo.architecture.graph_types import GraphContainer
+from graflo.architecture.schema.core import CoreSchema
 from graflo.architecture.schema.edge import EdgeConfig
 from graflo.architecture.schema.vertex import VertexConfig
-from graflo.architecture.graph_types import GraphContainer
 from graflo.hq.document_caster import (
+    DocumentCaster,
     filter_graph_container_by_vertices_inplace,
     filter_graph_container_drop_empty_identity_inplace,
 )
@@ -90,6 +96,31 @@ def test_filter_graph_container_drops_empty_identity_vertices_and_edges() -> Non
     ]
 
 
+def test_resolve_effective_vertex_names_returns_none_for_dynamic_resource_without_subset() -> (
+    None
+):
+    assert resolve_effective_vertex_names(set(), allowed_vertex_names=None) is None
+
+
+def test_resolve_effective_vertex_names_uses_allowed_when_resource_names_empty() -> (
+    None
+):
+    assert resolve_effective_vertex_names(set(), allowed_vertex_names={"A", "B"}) == {
+        "A",
+        "B",
+    }
+
+
+def test_resolve_effective_vertex_names_intersects_static_resource_names() -> None:
+    assert resolve_effective_vertex_names({"A", "B"}, allowed_vertex_names={"A"}) == {
+        "A"
+    }
+    assert resolve_effective_vertex_names({"A", "B"}, allowed_vertex_names=None) == {
+        "A",
+        "B",
+    }
+
+
 def test_filter_graph_container_by_vertices_empty_ingests_nothing() -> None:
     gc = GraphContainer(
         vertices={
@@ -159,6 +190,69 @@ def test_vertex_actor_early_exit_skips_disallowed_vertices() -> None:
     extraction_ctx = resource._executor.extract({"a_id": "a1", "b_id": "b1"})
     assert "A" in extraction_ctx.acc_vertex
     assert "B" not in extraction_ctx.acc_vertex
+
+
+def _vertex_router_only_type_field_resource() -> dict:
+    return {
+        "name": "r",
+        "pipeline": [
+            {
+                "vertex_router": {
+                    "type_field": "vtype",
+                    "from": {"id": "id"},
+                }
+            }
+        ],
+    }
+
+
+def test_document_caster_preserves_vertex_router_without_static_names() -> None:
+    """Post-cast filtering must not drop dynamically routed vertices."""
+    vc = _vertex_config_a_b_c()
+    ec = EdgeConfig.from_dict({"edges": []})
+    core = CoreSchema(vertex_config=vc, edge_config=ec)
+    ingestion_model = IngestionModel.model_validate(
+        {"resources": [_vertex_router_only_type_field_resource()]}
+    )
+    ingestion_model.finish_init(core)
+
+    caster = DocumentCaster(ingestion_model)
+    result = asyncio.run(
+        caster.cast_batch(
+            [{"vtype": "A", "id": "a1"}, {"vtype": "B", "id": "b1"}],
+            "r",
+            params=IngestionParams(),
+        )
+    )
+
+    assert set(result.graph.vertices.keys()) == {"A", "B"}
+    assert result.graph.vertices["A"] == [{"id": "a1"}]
+    assert result.graph.vertices["B"] == [{"id": "b1"}]
+
+
+def test_document_caster_vertex_router_respects_allowed_vertices_without_static_names() -> (
+    None
+):
+    vc = _vertex_config_a_b_c()
+    ec = EdgeConfig.from_dict({"edges": []})
+    core = CoreSchema(vertex_config=vc, edge_config=ec)
+    ingestion_model = IngestionModel.model_validate(
+        {"resources": [_vertex_router_only_type_field_resource()]}
+    )
+    ingestion_model.finish_init(core, allowed_vertex_names={"A"})
+
+    caster = DocumentCaster(ingestion_model)
+    result = asyncio.run(
+        caster.cast_batch(
+            [{"vtype": "A", "id": "a1"}, {"vtype": "B", "id": "b1"}],
+            "r",
+            params=IngestionParams(),
+            allowed_vertex_names={"A"},
+        )
+    )
+
+    assert set(result.graph.vertices.keys()) == {"A"}
+    assert result.graph.vertices["A"] == [{"id": "a1"}]
 
 
 def test_vertex_router_early_exit_skips_disallowed_types() -> None:

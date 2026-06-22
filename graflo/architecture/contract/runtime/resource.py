@@ -30,6 +30,22 @@ def strip_trivial_top_level_fields(doc: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in doc.items() if v is not None and v != ""}
 
 
+def resolve_effective_vertex_names(
+    resource_vertex_names: set[str],
+    *,
+    allowed_vertex_names: set[str] | None,
+) -> set[str] | None:
+    """Vertex names for resource-scoped filtering (runtime config and post-cast)."""
+    if resource_vertex_names:
+        effective = set(resource_vertex_names)
+        if allowed_vertex_names is not None:
+            effective &= allowed_vertex_names
+        return effective
+    if allowed_vertex_names is not None:
+        return set(allowed_vertex_names)
+    return None
+
+
 def filter_vertex_config_for_resource(
     vertex_config: VertexConfig,
     *,
@@ -37,13 +53,11 @@ def filter_vertex_config_for_resource(
     allowed_vertex_names: set[str] | None,
 ) -> VertexConfig:
     """Derive a filtered VertexConfig for runtime actor execution."""
-    if resource_vertex_names:
-        effective = set(resource_vertex_names)
-        if allowed_vertex_names is not None:
-            effective &= allowed_vertex_names
-    elif allowed_vertex_names is not None:
-        effective = set(allowed_vertex_names)
-    else:
+    effective = resolve_effective_vertex_names(
+        resource_vertex_names,
+        allowed_vertex_names=allowed_vertex_names,
+    )
+    if effective is None:
         return vertex_config
     filtered_vertices = [v for v in vertex_config.vertices if v.name in effective]
     filtered_force_types = {

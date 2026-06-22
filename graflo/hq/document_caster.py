@@ -10,6 +10,7 @@ from typing import Any, Literal
 
 from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.contract.runtime import ResourceRuntime
+from graflo.architecture.contract.runtime.resource import resolve_effective_vertex_names
 from graflo.architecture.graph_types import (
     GraphContainer,
     ResourceCastResult,
@@ -23,17 +24,6 @@ from graflo.hq.ingestion_parameters import (
 )
 
 _DOC_CAST_ERROR_TRACEBACK_MAX_CHARS = 16_384
-
-
-def cast_vertex_filter(
-    resource_vertex_names: set[str],
-    *,
-    allowed_vertex_names: set[str] | None,
-) -> set[str]:
-    """Vertex names to retain after casting for a single resource."""
-    if allowed_vertex_names is None:
-        return resource_vertex_names
-    return resource_vertex_names & allowed_vertex_names
 
 
 def filter_graph_container_by_vertices_inplace(
@@ -214,7 +204,7 @@ class DocumentCaster:
     ) -> CastBatchResult:
         runtime = self.ingestion_model.fetch_resource(resource_name)
         resolved_name = runtime.name
-        vertex_filter = cast_vertex_filter(
+        vertex_filter = resolve_effective_vertex_names(
             runtime.collect_vertex_names(),
             allowed_vertex_names=allowed_vertex_names,
         )
