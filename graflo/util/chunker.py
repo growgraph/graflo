@@ -32,10 +32,9 @@ import json
 import logging
 import pathlib
 import re
-from contextlib import nullcontext
 from pathlib import Path
 from shutil import copyfileobj
-from typing import Any, Callable, TextIO, TypeVar
+from typing import IO, Any, Callable, TextIO, TypeVar, cast
 from xml.etree import ElementTree as et
 
 import ijson
@@ -206,10 +205,13 @@ class FileChunker(AbstractChunker):
                 encoding=self.encoding,
             )
         else:
-            self.file_obj = open(  # type: ignore[assignment]
-                self.filename.absolute().as_posix(),
-                f"r{self.mode}",
-                encoding=self.encoding,
+            self.file_obj = cast(
+                TextIO,
+                open(
+                    self.filename.absolute().as_posix(),
+                    f"r{self.mode}",
+                    encoding=self.encoding,
+                ),
             )
 
     def __next__(self):
@@ -264,8 +266,10 @@ class TableChunker(FileChunker):
         # After super()._prepare_iteration(), file_obj is guaranteed to be open
         if self.file_obj is None:
             raise RuntimeError("File should be opened by parent _prepare_iteration()")
-        header = next(self.file_obj)
-        self.header = header.rstrip("\n").split(self.sep)
+        header_line = next(self.file_obj)
+        if isinstance(header_line, bytes):
+            header_line = header_line.decode(self.encoding or "utf-8")
+        self.header = header_line.rstrip("\n").split(self.sep)
 
     def __next__(self):
         """Get the next batch of rows as dictionaries.
@@ -521,7 +525,7 @@ class ChunkerFactory:
         chunker_type = kwargs.pop("type", None)
 
         if isinstance(resource, list):
-            return TrivialChunker(array=resource, **kwargs)
+            return TrivialChunker(array=cast(list[dict], resource), **kwargs)
         elif isinstance(resource, pd.DataFrame):
             return ChunkerDataFrame(df=resource, **kwargs)
         elif isinstance(resource, Path):
@@ -773,17 +777,10 @@ def convert(
     else:
         raise ValueError("Unknown file type")
     # pylint: disable-next=assignment
-    fp: gzip.GzipFile | FPSmart | None
-
-    with (
-        open_foo(source, "rb")
-        if isinstance(source, pathlib.Path)
-        else nullcontext() as fp  # type: ignore[assignment]
-    ):
+    with open_foo(source, "rb") as fp_raw:
+        fp: gzip.GzipFile | FPSmart | IO[bytes] = fp_raw
         if pattern is not None:
             fp = FPSmart(fp, pattern)
-        else:
-            fp = fp
         parse_simple(fp, good_cf, force_list, root_tag)
 
         good_cf.flush_chunk()

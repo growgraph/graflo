@@ -293,8 +293,10 @@ class TigerGraphRestClient:
             return response.json()
 
         except requests_exceptions.HTTPError as errh:
+            err_response = errh.response
             if (
-                errh.response.status_code == 401
+                err_response is not None
+                and err_response.status_code == 401
                 and self._conn.api_token
                 and self._conn._token_cache_key
             ):
@@ -302,7 +304,8 @@ class TigerGraphRestClient:
 
             # For TigerGraph 4.2.1, if token auth fails with 401/REST-10018, try Basic Auth fallback
             if (
-                errh.response.status_code == 401
+                err_response is not None
+                and err_response.status_code == 401
                 and self._conn.api_token
                 and self._conn.config.username
                 and self._conn.config.password

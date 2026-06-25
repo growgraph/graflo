@@ -224,7 +224,7 @@ class Caster:
         **kwargs,
     ):
         if isinstance(resource_instance, dict):
-            config = resource_instance.copy()
+            config: dict[str, Any] = dict(resource_instance)
             config.update(kwargs)
             data_source = DataSourceFactory.create_data_source_from_config(config)
         elif isinstance(resource_instance, (Path, str)):

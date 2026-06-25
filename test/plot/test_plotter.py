@@ -1,5 +1,5 @@
 from types import MethodType, SimpleNamespace
-from typing import cast
+from typing import Any, cast
 
 import networkx as nx
 import pytest
@@ -158,8 +158,9 @@ def test_plot_vc2vc_preserves_labels_and_partition_grouping(monkeypatch):
         configured_edges={},
         vertex_set={"a", "b", "c"},
     )
-    plotter.ingestion_model = SimpleNamespace(
-        resources=[SimpleNamespace(name="r1", pipeline=[])]
+    plotter.ingestion_model = cast(
+        Any,
+        SimpleNamespace(resources=[SimpleNamespace(name="r1", pipeline=[])]),
     )
 
     def _discover_edges(

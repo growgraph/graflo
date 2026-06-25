@@ -478,10 +478,8 @@ class TigerGraphConnection(Connection):
     def define_schema(self, schema: Schema):
         return self._admin.define_schema(schema)
 
-    def define_vertex_classes(  # type: ignore[override]
-        self, vertex_config: VertexConfig
-    ) -> None:
-        return self._admin.define_vertex_classes(vertex_config)
+    def define_vertex_classes(self, schema: Schema) -> None:
+        return self._admin.define_vertex_classes(schema.core_schema.vertex_config)
 
     def define_edge_classes(self, edges: list[Edge]):
         return self._admin.define_edge_classes(edges)

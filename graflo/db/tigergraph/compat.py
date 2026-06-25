@@ -7,7 +7,7 @@ def _add_note_shim(self: Exception, note: str) -> None:
     """Add a note to the exception (compatibility shim for exceptions without add_note())."""
     notes: list[str] = getattr(self, "_notes", [])
     notes.append(note)
-    self._notes = notes  # type: ignore[attr-defined]
+    setattr(self, "_notes", notes)
 
 
 def _patch_exception_class(cls: type[Exception]) -> None:

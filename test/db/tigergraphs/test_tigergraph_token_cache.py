@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -119,8 +119,8 @@ def test_reset_clears_cache() -> None:
     return_value=("cached-token", None),
 )
 def test_connection_init_uses_token_cache(
-    mock_get_token: object,
-    mock_get_version: object,
+    mock_get_token: MagicMock,
+    mock_get_version: MagicMock,
 ) -> None:
     config = TigergraphConfig(
         uri="http://localhost:14240",
@@ -132,7 +132,7 @@ def test_connection_init_uses_token_cache(
     TigerGraphConnection(config)
     TigerGraphConnection(config)
 
-    assert mock_get_token.call_count == 1  # type: ignore[attr-defined]
+    assert mock_get_token.call_count == 1
 
 
 @patch.object(TigerGraphConnection, "_get_version", return_value=None)
@@ -142,8 +142,8 @@ def test_connection_init_uses_token_cache(
     return_value=("cached-token", None),
 )
 def test_call_restpp_api_401_invalidates_cache(
-    mock_get_token: object,
-    mock_get_version: object,
+    mock_get_token: MagicMock,
+    mock_get_version: MagicMock,
 ) -> None:
     config = TigergraphConfig(
         uri="http://localhost:14240",
@@ -154,7 +154,7 @@ def test_call_restpp_api_401_invalidates_cache(
     )
     conn = TigerGraphConnection(config)
     assert conn._token_cache_key is not None
-    assert mock_get_token.call_count == 1  # type: ignore[attr-defined]
+    assert mock_get_token.call_count == 1
 
     cache = _TigerGraphTokenCache.instance()
     assert cache._get_valid_unlocked(conn._token_cache_key) == "cached-token"
@@ -173,4 +173,4 @@ def test_call_restpp_api_401_invalidates_cache(
     assert cache._get_valid_unlocked(conn._token_cache_key) is None
 
     TigerGraphConnection(config)
-    assert mock_get_token.call_count == 2  # type: ignore[attr-defined]
+    assert mock_get_token.call_count == 2

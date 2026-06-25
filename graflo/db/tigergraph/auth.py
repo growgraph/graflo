@@ -227,21 +227,22 @@ class TigerGraphAuth:
                     raise ValueError(f"No token in response: {result}")
 
             except requests.exceptions.HTTPError as e:
+                response = e.response
+                status_code = response.status_code if response is not None else None
                 # Track if this was a 404 error
-                if e.response.status_code != 404:
+                if status_code != 404:
                     all_404_errors = False
 
                 # If 404 and we have more endpoints to try, continue
-                if e.response.status_code == 404 and len(endpoints_to_try) > 1:
+                if status_code == 404 and len(endpoints_to_try) > 1:
                     logger.debug(
                         f"Endpoint {url} returned 404, trying next endpoint..."
                     )
                     last_error = e
                     continue
                 # For other HTTP errors, log and try next endpoint if available
-                logger.debug(
-                    f"HTTP error {e.response.status_code} on {url}: {e.response.text}"
-                )
+                response_text = response.text if response is not None else ""
+                logger.debug(f"HTTP error {status_code} on {url}: {response_text}")
                 last_error = e
                 continue
             except Exception as e:

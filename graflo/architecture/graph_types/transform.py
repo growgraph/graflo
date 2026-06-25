@@ -16,7 +16,7 @@ class VertexRep(ConfigBaseModel):
         vertex: doc representing a vertex
     """
 
-    model_config = ConfigDict(kw_only=True)  # type: ignore[assignment]
+    model_config = ConfigDict(kw_only=True)  # ty: ignore[invalid-key]
 
     vertex: dict[str, Any]
 

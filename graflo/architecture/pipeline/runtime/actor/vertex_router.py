@@ -92,11 +92,14 @@ class VertexRouterActor(VertexProducingActor):
             per_type_from = self.vertex_from_map[vertex_type]
         else:
             per_type_from = self.from_doc
-        config = VertexActorConfig(
-            vertex=vertex_type,
-            from_doc=per_type_from,
-            keep_fields=list(self.keep_fields) if self.keep_fields else None,
-            extraction_scope=self.extraction_scope,
+        config = VertexActorConfig.model_validate(
+            {
+                "type": "vertex",
+                "vertex": vertex_type,
+                "from": per_type_from,
+                "keep_fields": list(self.keep_fields) if self.keep_fields else None,
+                "extraction_scope": self.extraction_scope,
+            }
         )
         wrapper = ActorWrapper.from_config(config)
         wrapper.finish_init(self._init_ctx)

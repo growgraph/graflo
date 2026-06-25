@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.database_features import DatabaseProfile
@@ -85,7 +85,7 @@ def _load_graph(
         query += "}"
 
         sparql.setQuery(query)
-        raw: bytes = sparql.query().convert()  # type: ignore[assignment]
+        raw = cast(bytes, sparql.query().convert())
         g.parse(data=raw, format="n3")
     else:
         g.parse(str(source))

@@ -81,7 +81,7 @@ import math
 from typing import Any
 from urllib.parse import urlparse
 
-import mgclient  # type: ignore[import-untyped]
+import mgclient  # ty: ignore[unresolved-import]
 
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.graph_types import Index
@@ -1026,7 +1026,7 @@ class MemgraphConnection(Connection):
         q += f" {rel_pattern} {target_match}"
 
         # Build WHERE clauses
-        where_clauses = []
+        where_clauses: list[str] = []
         if to_id:
             where_clauses.append("t.id = $to_id")
 
@@ -1034,7 +1034,7 @@ class MemgraphConnection(Connection):
         if filters is not None:
             ff = FilterExpression.from_dict(filters)
             filter_str = ff(doc_name="r", kind=self.expression_flavor())
-            where_clauses.append(filter_str)
+            where_clauses.append(str(filter_str))
 
         if where_clauses:
             q += f" WHERE {' AND '.join(where_clauses)}"
