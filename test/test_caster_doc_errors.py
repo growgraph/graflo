@@ -285,7 +285,7 @@ def test_process_data_source_prefetch_overlaps_fetch_and_processing(
             raise AssertionError("next batch was not prefetched while processing")
         await asyncio.sleep(0.01)
 
-    caster.process_batch = _fake_process_batch  # type: ignore[method-assign]
+    caster.process_batch = _fake_process_batch  # ty: ignore[invalid-assignment]
     asyncio.run(caster.process_data_source(data_source=data_source))
 
 
@@ -314,7 +314,7 @@ def test_process_data_source_propagates_fetch_errors(
         del args, kwargs
         await asyncio.sleep(0.01)
 
-    caster.process_batch = _fake_process_batch  # type: ignore[method-assign]
+    caster.process_batch = _fake_process_batch  # ty: ignore[invalid-assignment]
     with pytest.raises(RuntimeError, match="fetch exploded"):
         asyncio.run(caster.process_data_source(data_source=data_source))
 
@@ -331,6 +331,6 @@ def test_process_data_source_propagates_processing_errors(
         del args, kwargs
         raise ConnectionError("db write failed")
 
-    caster.process_batch = _fake_process_batch  # type: ignore[method-assign]
+    caster.process_batch = _fake_process_batch  # ty: ignore[invalid-assignment]
     with pytest.raises(ConnectionError, match="db write failed"):
         asyncio.run(caster.process_data_source(data_source=data_source))

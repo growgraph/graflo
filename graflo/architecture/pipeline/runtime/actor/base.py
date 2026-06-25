@@ -79,7 +79,7 @@ class Actor(ABC):
     def _stringify_items(self, items: dict[str, object]) -> dict[str, str]:
         """Convert items to string representation."""
         return {
-            k: ", ".join(list(v)) if isinstance(v, (tuple, list)) else str(v)
+            k: ", ".join(str(x) for x in v) if isinstance(v, (tuple, list)) else str(v)
             for k, v in items.items()
         }
 

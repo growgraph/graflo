@@ -721,7 +721,7 @@ class Neo4jConnection(Connection):
             target_match = "(target)"
 
         # Add target ID filter if provided
-        where_clauses = []
+        where_clauses: list[str] = []
         if to_id:
             where_clauses.append(f"target.id = '{to_id}'")
 
@@ -729,7 +729,7 @@ class Neo4jConnection(Connection):
         if filters is not None:
             ff = FilterExpression.from_dict(filters)
             filter_clause = ff(doc_name="r", kind=self.expression_flavor())
-            where_clauses.append(filter_clause)
+            where_clauses.append(str(filter_clause))
 
         where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 

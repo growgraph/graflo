@@ -44,7 +44,7 @@ class APIConfig(ConfigBaseModel):
     method: str = "GET"
     headers: dict[str, str] = Field(default_factory=dict)
     auth: ApiAuth | None = None
-    params: dict[str, object] = Field(default_factory=dict)
+    params: dict[str, Any] = Field(default_factory=dict)
     timeout: float | None = None
     retries: int = 0
     retry_backoff_factor: float = 0.1

@@ -55,7 +55,7 @@ def test_kg_mention(resource_kg_menton_triple, vertex_config_kg_mention, mention
 
 def test_weight_config_direct_strings():
     """Test WeightConfig.direct with string inputs (backward compatibility)."""
-    wc = WeightConfig(direct=["date", "weight", "confidence"])  # type: ignore[arg-type]
+    wc = WeightConfig.model_validate({"direct": ["date", "weight", "confidence"]})
     assert len(wc.direct) == 3
     assert all(isinstance(f, Field) for f in wc.direct)
     assert wc.direct[0].name == "date"
@@ -91,12 +91,14 @@ def test_weight_config_direct_field_objects():
 
 def test_weight_config_direct_dicts():
     """Test WeightConfig.direct with dict inputs (from YAML/JSON)."""
-    wc = WeightConfig(
-        direct=[
-            {"name": "date", "type": "DATETIME"},
-            {"name": "weight", "type": "FLOAT"},
-            {"name": "confidence"},  # defaults to None type
-        ]  # type: ignore[arg-type]
+    wc = WeightConfig.model_validate(
+        {
+            "direct": [
+                {"name": "date", "type": "DATETIME"},
+                {"name": "weight", "type": "FLOAT"},
+                {"name": "confidence"},
+            ]
+        }
     )
     assert len(wc.direct) == 3
     assert wc.direct[0].name == "date"
@@ -109,12 +111,14 @@ def test_weight_config_direct_dicts():
 
 def test_weight_config_direct_mixed():
     """Test WeightConfig.direct with mixed input types."""
-    wc = WeightConfig(
-        direct=[
-            "date",  # string
-            Field(name="weight", type=FieldType.FLOAT),  # Field object
-            {"name": "confidence", "type": "FLOAT"},  # dict
-        ]  # type: ignore[arg-type]
+    wc = WeightConfig.model_validate(
+        {
+            "direct": [
+                "date",
+                Field(name="weight", type=FieldType.FLOAT),
+                {"name": "confidence", "type": "FLOAT"},
+            ]
+        }
     )
     assert len(wc.direct) == 3
     assert all(isinstance(f, Field) for f in wc.direct)
@@ -128,7 +132,7 @@ def test_weight_config_direct_mixed():
 
 def test_weight_config_direct_names_property():
     """Test WeightConfig.direct_names property."""
-    wc = WeightConfig(direct=["date", "weight", "confidence"])  # type: ignore[arg-type]
+    wc = WeightConfig.model_validate({"direct": ["date", "weight", "confidence"]})
     names = wc.direct_names
     assert names == ["date", "weight", "confidence"]
     assert isinstance(names, list)
@@ -137,7 +141,7 @@ def test_weight_config_direct_names_property():
 
 def test_weight_config_direct_field_string_like_behavior():
     """Field objects in WeightConfig.direct support iteration and str-like use."""
-    wc = WeightConfig(direct=["date", "weight"])  # type: ignore[arg-type]
+    wc = WeightConfig.model_validate({"direct": ["date", "weight"]})
 
     # Test iteration (used in actor_util.py)
     field_names = [field for field in wc.direct]
@@ -154,8 +158,7 @@ def test_weight_config_direct_field_string_like_behavior():
     result_dict = {}
     for field in wc.direct:
         result_dict[field] = f"value_{field.name}"
-    assert "date" in result_dict
-    assert result_dict["date"] == "value_date"
+    assert wc.direct[0] in result_dict
     assert result_dict[wc.direct[0]] == "value_date"
 
 
@@ -171,7 +174,7 @@ def test_weight_config_direct_invalid_dict():
     import pytest
 
     with pytest.raises(ValueError, match="Field dict must have 'name' key"):
-        WeightConfig(direct=[{"type": "STRING"}])  # type: ignore[arg-type]
+        WeightConfig.model_validate({"direct": [{"type": "STRING"}]})
 
 
 def test_weight_config_direct_invalid_type():

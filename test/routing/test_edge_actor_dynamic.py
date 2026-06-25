@@ -157,9 +157,8 @@ def test_vra_stores_at_role_slot_when_role_set() -> None:
 def test_vra_from_doc_used_when_vertex_from_map_missing_type() -> None:
     """Router-level from_doc applies when resolved type has no vertex_from_map entry."""
     vc = _vc("server")
-    cfg = VertexRouterActorConfig(
-        type_field="vtype",
-        from_doc={"id": "row_id"},
+    cfg = VertexRouterActorConfig.model_validate(
+        {"type_field": "vtype", "from": {"id": "row_id"}}
     )
     vra = VertexRouterActor(cfg)
     vra.finish_init(_init(vc))
@@ -175,11 +174,13 @@ def test_vra_from_doc_used_when_vertex_from_map_missing_type() -> None:
 def test_vra_vertex_from_map_overrides_from_doc() -> None:
     """Per-type vertex_from_map replaces router from_doc for that type."""
     vc = _vc("server", "database")
-    cfg = VertexRouterActorConfig(
-        type_field="vtype",
-        from_doc={"id": "fallback_id"},
-        vertex_from_map={"server": {"id": "sid"}},
-        type_map={"s": "server", "d": "database"},
+    cfg = VertexRouterActorConfig.model_validate(
+        {
+            "type_field": "vtype",
+            "from": {"id": "fallback_id"},
+            "vertex_from_map": {"server": {"id": "sid"}},
+            "type_map": {"s": "server", "d": "database"},
+        }
     )
     vra = VertexRouterActor(cfg)
     vra.finish_init(_init(vc))

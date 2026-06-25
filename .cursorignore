@@ -38,6 +38,6 @@
 !*.md
 !.pre-commit-config.yaml
 !run-tests.sh
-
+!precommit.log
 
 

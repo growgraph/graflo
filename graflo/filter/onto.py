@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import logging
 from types import MappingProxyType
-from typing import Any, Literal, Self
+from typing import Any, Literal, Self, cast
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.onto import BaseEnum, ExpressionFlavor
@@ -228,37 +228,37 @@ class FilterExpression(ConfigBaseModel):
         )
 
     @classmethod
-    def from_dict(cls, current: dict[str, Any] | list[Any]) -> Self:  # type: ignore[override]
+    def from_dict(cls, data: dict[str, Any] | list[Any]) -> Self:
         """Create a filter expression from a dictionary or list.
 
         Returns FilterExpression (leaf or composite). LSP-compliant: return type is Self.
         """
-        if isinstance(current, list):
-            if current[0] in ComparisonOperator:
-                return cls.from_list(current)  # type: ignore[return-value]
-            elif current[0] in LogicalOperator:
-                return cls(kind="composite", operator=current[0], deps=current[1])
-        elif isinstance(current, dict):
-            k = list(current.keys())[0]
+        if isinstance(data, list):
+            if data[0] in ComparisonOperator:
+                return cast(Self, cls.from_list(data))
+            elif data[0] in LogicalOperator:
+                return cls(kind="composite", operator=data[0], deps=data[1])
+        elif isinstance(data, dict):
+            k = list(data.keys())[0]
             norm_k = k.upper() if isinstance(k, str) else k
             if norm_k in LogicalOperator:
-                deps = [cls.from_dict(v) for v in current[k]]
+                deps: list[FilterExpression] = [cls.from_dict(v) for v in data[k]]
                 return cls(
                     kind="composite", operator=LogicalOperator(norm_k), deps=deps
                 )
             else:
-                unary_op = current.get("operator") or current.get("foo")
-                cmp_operator = current.get("cmp_operator")
+                unary_op = data.get("operator") or data.get("foo")
+                cmp_operator = data.get("cmp_operator")
                 if cmp_operator is None and unary_op is not None:
                     cmp_operator = DUNDER_TO_CMP.get(unary_op)
                 return cls(
                     kind="leaf",
                     cmp_operator=cmp_operator,
-                    value=current.get("value", []),
-                    field=current.get("field"),
+                    value=data.get("value", []),
+                    field=data.get("field"),
                     unary_op=unary_op,
                 )
-        raise ValueError(f"expected dict or list, got {type(current)}")
+        raise ValueError(f"expected dict or list, got {type(data)}")
 
     def __call__(
         self,

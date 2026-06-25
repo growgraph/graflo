@@ -1356,10 +1356,12 @@ def test_vertex_from_doc_does_not_steal_other_vertex_buffer_payloads() -> None:
         transforms={},
     )
     identifier = VertexActor.from_config(
-        VertexActorConfig(
-            type="vertex",
-            vertex="Identifier",
-            from_doc={"type": "itype", "value": "ivalue"},
+        VertexActorConfig.model_validate(
+            {
+                "type": "vertex",
+                "vertex": "Identifier",
+                "from": {"type": "itype", "value": "ivalue"},
+            }
         )
     )
     metric = VertexActor.from_config(

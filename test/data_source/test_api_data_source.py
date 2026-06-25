@@ -173,7 +173,7 @@ def test_api_data_source_iter_batches_respects_total_limit(mock_api_server):
 
 def test_pagination_config_rejects_unknown_strategy():
     with pytest.raises(ValueError):
-        PaginationRequestConfig(strategy="unknown")  # type: ignore[arg-type]
+        PaginationRequestConfig(strategy="unknown")  # ty: ignore[invalid-argument-type]
 
 
 def test_row_annotations_merged_as_defaults() -> None:
@@ -288,7 +288,7 @@ def test_api_data_source_envelope_next_offset(mock_envelope_api_server) -> None:
 
     with patch.object(api_source, "_create_session") as create_session:
         create_session.return_value = session
-        session.request = track_request  # type: ignore[method-assign]
+        session.request = track_request  # ty: ignore[invalid-assignment]
         for batch in api_source.iter_batches(batch_size=10, limit=None):
             all_items.extend(batch)
 

@@ -83,7 +83,9 @@ def test_field_dict_membership():
 
 def test_vertex_with_string_fields_backward_compatible():
     """Test Vertex creation with list of strings (backward compatible)."""
-    vertex = Vertex(name="user", properties=["id", "name", "email"])  # type: ignore[arg-type]
+    vertex = Vertex.model_validate(
+        {"name": "user", "properties": ["id", "name", "email"]}
+    )
 
     assert len(vertex.properties) == 3
     assert all(isinstance(f, Field) for f in vertex.properties)
@@ -101,7 +103,7 @@ def test_vertex_with_string_fields_backward_compatible():
 
 def test_vertex_with_string_fields_dict_compatibility():
     """Test that property_names works for dict lookups."""
-    vertex = Vertex(name="user", properties=["id", "name"])  # type: ignore[arg-type]
+    vertex = Vertex.model_validate({"name": "user", "properties": ["id", "name"]})
     test_dict = {"id": 1, "name": "John", "other": "ignored"}
 
     result = {f: test_dict[f] for f in vertex.property_names if f in test_dict}
@@ -132,7 +134,7 @@ def test_vertex_with_dict_fields():
         {"name": "name", "type": "STRING"},
         {"name": "email"},  # No type specified, defaults to None
     ]
-    vertex = Vertex(name="user", properties=fields)  # type: ignore[arg-type]
+    vertex = Vertex.model_validate({"name": "user", "properties": fields})
 
     assert len(vertex.properties) == 3
     assert vertex.properties[0].name == "id"
@@ -149,7 +151,7 @@ def test_vertex_mixed_field_inputs():
         Field(name="name", type=FieldType.STRING),  # Field object
         {"name": "email", "type": "STRING"},  # dict
     ]
-    vertex = Vertex(name="user", properties=fields)  # type: ignore[arg-type]
+    vertex = Vertex.model_validate({"name": "user", "properties": fields})
 
     assert len(vertex.properties) == 3
     assert all(isinstance(f, Field) for f in vertex.properties)
@@ -163,7 +165,9 @@ def test_vertex_mixed_field_inputs():
 
 def test_vertex_config_property_names():
     """Test VertexConfig.property_names() returns string names."""
-    vertex = Vertex(name="user", properties=["id", "name", "email"])  # type: ignore[arg-type]
+    vertex = Vertex.model_validate(
+        {"name": "user", "properties": ["id", "name", "email"]}
+    )
     config = VertexConfig(vertices=[vertex], identity_from_all_properties=True)
 
     names = config.property_names("user")
@@ -242,10 +246,12 @@ def test_vertex_identity_defaults_to_fields():
 
 def test_vertex_with_explicit_identity():
     """Test vertex with explicit identity fields."""
-    vertex = Vertex(
-        name="user",
-        properties=["id", "name", "email"],  # type: ignore[arg-type]
-        identity=["id", "email"],
+    vertex = Vertex.model_validate(
+        {
+            "name": "user",
+            "properties": ["id", "name", "email"],
+            "identity": ["id", "email"],
+        }
     )
 
     assert vertex.identity == ["id", "email"]
@@ -265,9 +271,11 @@ def test_field_all_types():
 def test_invalid_field_type_in_dict():
     """Test that invalid field types in dict raise error."""
     with pytest.raises(ValueError, match="not allowed"):
-        Vertex(
-            name="user",
-            properties=[{"name": "test", "type": "INVALID"}],  # type: ignore[arg-type]
+        Vertex.model_validate(
+            {
+                "name": "user",
+                "properties": [{"name": "test", "type": "INVALID"}],
+            }
         )
 
 
@@ -284,14 +292,16 @@ def test_init(vertex_pub):
 def test_get_properties_with_defaults_tigergraph():
     """DB-aware vertex properties default None types to STRING for TigerGraph."""
     # Create vertex with some fields that have None type
-    vertex = Vertex(
-        name="user",
-        properties=[  # type: ignore[arg-type]
-            Field(name="id", type=FieldType.INT),  # Already has type
-            Field(name="name"),  # None type
-            Field(name="email", type=FieldType.STRING),  # Already has type
-            "address",  # String field (will be Field with None type)
-        ],
+    vertex = Vertex.model_validate(
+        {
+            "name": "user",
+            "properties": [
+                Field(name="id", type=FieldType.INT),
+                Field(name="name"),
+                Field(name="email", type=FieldType.STRING),
+                "address",
+            ],
+        }
     )
 
     config = VertexConfig(vertices=[vertex], identity_from_all_properties=True)
@@ -400,7 +410,7 @@ def test_vertex_config_remove_vertices():
 
 def test_vertex_config_identity_fallback_when_flag_enabled():
     """Compatibility flag enables identity fallback to all property names."""
-    vertex = Vertex(name="user", properties=["id", "name"])  # type: ignore[arg-type]
+    vertex = Vertex.model_validate({"name": "user", "properties": ["id", "name"]})
     config = VertexConfig(vertices=[vertex], identity_from_all_properties=True)
     assert config.identity_fields("user") == ["id", "name"]
 
@@ -415,15 +425,17 @@ def test_blank_vertex_defaults_to_id_identity():
 
 def test_vertex_properties_merge_duplicate_typed_and_untyped():
     """Duplicate fields merge by name and keep typed variant."""
-    vertex = Vertex(
-        name="user",
-        properties=[
-            {"name": "id"},
-            {"name": "id", "type": "INT"},
-            {"name": "name"},
-            {"name": "name"},
-        ],  # type: ignore[arg-type]
-        identity=["id", "id"],
+    vertex = Vertex.model_validate(
+        {
+            "name": "user",
+            "properties": [
+                {"name": "id"},
+                {"name": "id", "type": "INT"},
+                {"name": "name"},
+                {"name": "name"},
+            ],
+            "identity": ["id", "id"],
+        }
     )
     assert vertex.property_names == ["id", "name"]
     assert vertex.identity == ["id"]
@@ -433,13 +445,15 @@ def test_vertex_properties_merge_duplicate_typed_and_untyped():
 def test_vertex_properties_conflicting_duplicate_types_raise():
     """Duplicate field names with different non-null types must fail."""
     with pytest.raises(ValueError, match="Conflicting field types"):
-        Vertex(
-            name="user",
-            properties=[  # type: ignore[arg-type]
-                {"name": "id", "type": "INT"},
-                {"name": "id", "type": "STRING"},
-            ],
-            identity=["id"],
+        Vertex.model_validate(
+            {
+                "name": "user",
+                "properties": [
+                    {"name": "id", "type": "INT"},
+                    {"name": "id", "type": "STRING"},
+                ],
+                "identity": ["id"],
+            }
         )
 
 
@@ -451,7 +465,9 @@ def test_resource_runtime_vertex_config_excludes_unreferenced_blank_vertices():
 
     schema_vc = VertexConfig(
         vertices=[
-            Vertex(name="ticker", properties=["cusip"], identity=["cusip"]),  # type: ignore[arg-type]
+            Vertex.model_validate(
+                {"name": "ticker", "properties": ["cusip"], "identity": ["cusip"]}
+            ),
             Vertex(name="publication", properties=[], blank=True),
         ]
     )

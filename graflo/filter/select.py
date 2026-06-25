@@ -26,6 +26,10 @@ _SIMPLE_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\Z")
 ALL_BASE_COLUMNS = "all_base"
 
 
+def _default_select_columns() -> list[str | dict[str, Any]]:
+    return [ALL_BASE_COLUMNS]
+
+
 def _collect_join_aliases(joins: list[JoinClause | dict[str, Any]]) -> set[str]:
     aliases: set[str] = set()
     for j in joins:
@@ -142,7 +146,7 @@ class SelectSpec(ConfigBaseModel):
     from_: str | None = Field(default=None, validation_alias="from")
     joins: list[JoinClause | dict[str, Any]] = Field(default_factory=list)
     select: list[str | dict[str, Any]] = Field(
-        default_factory=lambda: [ALL_BASE_COLUMNS],
+        default_factory=_default_select_columns,
         description=(
             "Default all_base expands to base.* when joins exist, else SELECT *."
         ),

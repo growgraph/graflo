@@ -81,10 +81,12 @@ def test_vertex_router_transform_overrides_doc_for_type_field() -> None:
 
 
 def test_vertex_router_from_reads_keys_from_transform_buffer() -> None:
-    cfg = VertexRouterActorConfig(
-        type="vertex_router",
-        type_field="t",
-        from_doc={"id": "external_id"},
+    cfg = VertexRouterActorConfig.model_validate(
+        {
+            "type": "vertex_router",
+            "type_field": "t",
+            "from": {"id": "external_id"},
+        }
     )
     actor = VertexRouterActor.from_config(cfg)
     init = ActorInitContext(
@@ -106,10 +108,12 @@ def test_vertex_router_from_reads_keys_from_transform_buffer() -> None:
 
 
 def test_vertex_router_type_field_uses_prefixed_column_from_transform_buffer() -> None:
-    cfg = VertexRouterActorConfig(
-        type="vertex_router",
-        type_field="p_kind",
-        from_doc={"id": "p_id"},
+    cfg = VertexRouterActorConfig.model_validate(
+        {
+            "type": "vertex_router",
+            "type_field": "p_kind",
+            "from": {"id": "p_id"},
+        }
     )
     actor = VertexRouterActor.from_config(cfg)
     init = ActorInitContext(
@@ -173,11 +177,13 @@ def test_vertex_router_skips_non_dict_observation() -> None:
 
 
 def test_vertex_router_mapped_only_limits_to_from_fields() -> None:
-    cfg = VertexRouterActorConfig(
-        type="vertex_router",
-        type_field="kind",
-        from_doc={"id": "external_id"},
-        extraction_scope="mapped_only",
+    cfg = VertexRouterActorConfig.model_validate(
+        {
+            "type": "vertex_router",
+            "type_field": "kind",
+            "from": {"id": "external_id"},
+            "extraction_scope": "mapped_only",
+        }
     )
     actor = VertexRouterActor.from_config(cfg)
     init = ActorInitContext(
@@ -214,21 +220,25 @@ def test_vertex_actor_and_router_overlap_extract_same_fields() -> None:
     )
 
     va = VertexActor.from_config(
-        VertexActorConfig(
-            type="vertex",
-            vertex="Widget",
-            from_doc={"id": "external_id"},
-            extraction_scope="mapped_only",
+        VertexActorConfig.model_validate(
+            {
+                "type": "vertex",
+                "vertex": "Widget",
+                "from": {"id": "external_id"},
+                "extraction_scope": "mapped_only",
+            }
         )
     )
     va.finish_init(init)
 
     vra = VertexRouterActor.from_config(
-        VertexRouterActorConfig(
-            type="vertex_router",
-            type_field="kind",
-            from_doc={"id": "external_id"},
-            extraction_scope="mapped_only",
+        VertexRouterActorConfig.model_validate(
+            {
+                "type": "vertex_router",
+                "type_field": "kind",
+                "from": {"id": "external_id"},
+                "extraction_scope": "mapped_only",
+            }
         )
     )
     vra.finish_init(init)
