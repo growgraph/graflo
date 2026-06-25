@@ -183,7 +183,7 @@ Next-page URLs are always constructed from the connector's **`base_url`** and **
 
 | Field | Default | Meaning |
 | ----- | ------- | ------- |
-| **`records_path`** | `null` | Dot path to the record list (e.g. `results`). Required for object envelopes unless **`auto_detect`** is enabled. |
+| **`records_path`** | `null` | Dot path to the record list (e.g. `results`, `0.results` for `[{"results": [...]}]`). Required for object envelopes unless **`auto_detect`** is enabled. |
 | **`total_count_path`** | `null` | Total items across all pages (e.g. `count`) |
 | **`offset_path`** | `null` | Echoed page start index (e.g. `offset`) |
 | **`next_offset_path`** | `null` | Server-provided next offset for the following request (e.g. `next_offset`) |
@@ -192,7 +192,56 @@ Next-page URLs are always constructed from the connector's **`base_url`** and **
 | **`batch_metadata_paths`** | `{}` | Map row annotation keys to response dot paths (e.g. `_batch_id: result_id`) |
 | **`auto_detect`** | `false` | Infer **unset** response paths from the first response body |
 
-Dot paths use `.` segments (e.g. `meta.next_cursor`). When **`pagination`** is omitted, a top-level JSON **array** is accepted as-is. A top-level **object** without **`records_path`** (and without **`auto_detect`**) raises an error.
+Dot paths use `.` segments. Each segment is either a **dict key** or a **numeric list index** (e.g. `meta.next_cursor`, `0.results`). See [Dot paths and response shapes](#dot-paths-and-response-shapes) for top-level arrays and array-wrapped envelopes.
+
+When **`pagination`** is omitted, a top-level JSON **array of record objects** is accepted as-is. A top-level **object** without **`records_path`** (and without **`auto_detect`**) raises an error.
+
+### Dot paths and response shapes
+
+GraFlo parses the JSON response body and walks dot paths with `get_at_path`: dict segments use key lookup; numeric segments index into lists (`0` → first element).
+
+Three common shapes:
+
+| Shape | Example | Configuration |
+| ----- | ------- | ------------- |
+| **Object envelope** | `{"results": [{"id": 1}], "count": 100}` | `records_path: results` (or **`auto_detect: true`**) |
+| **Array of records** | `[{"id": 1}, {"id": 2}]` | Omit **`pagination`**, or leave **`records_path`** unset — each array element is a row |
+| **Array-wrapped envelope** | `[{"results": [{"id": 1}], "count": 100}]` | Prefix every path with the envelope index, e.g. `records_path: 0.results` |
+
+#### Array-wrapped envelope
+
+Some APIs return pagination metadata inside a **single-element array** instead of a plain object:
+
+```json
+[
+  {
+    "results": [{"id": 1}, {"id": 2}],
+    "count": 12345,
+    "offset": 0,
+    "next_offset": 100
+  }
+]
+```
+
+Set explicit paths with a leading `0.` segment (index into the wrapper array):
+
+```yaml
+pagination:
+  request:
+    strategy: offset
+    page_size: 100
+  response:
+    records_path: 0.results
+    total_count_path: 0.count
+    offset_path: 0.offset
+    next_offset_path: 0.next_offset
+```
+
+Nested paths combine freely: `0.meta.next_cursor` reaches `next_cursor` inside `body[0]["meta"]`.
+
+**`auto_detect` does not apply** to array-wrapped envelopes. Detection runs only when the parsed body is a **top-level object**; a list body skips heuristics entirely. Configure `0.*` paths manually.
+
+**Pagination metadata on list bodies:** record extraction via `0.*` paths works, but stop/advance helpers (`has_more_path`, `next_offset_path`, `cursor_path`, `batch_metadata_paths`) currently require a top-level **object** body. With an array-wrapped envelope, pagination falls back to “keep going while the extracted record list is non-empty” and offset advances by **`page_size`** rather than a server-provided **`next_offset`**. Prefer a plain object envelope from the API when possible; otherwise verify paging behaviour against your endpoint.
 
 ### Stop conditions (evaluated in order)
 
@@ -214,7 +263,7 @@ Dot paths use `.` segments (e.g. `meta.next_cursor`). When **`pagination`** is o
 
 ### First-response heuristics (`auto_detect: true`)
 
-When **`response.auto_detect`** is `true`, GraFlo inspects the **first** response body and fills any **unset** response paths. Detected paths are logged at INFO.
+When **`response.auto_detect`** is `true`, GraFlo inspects the **first** response body and fills any **unset** response paths. Detected paths are logged at INFO. Auto-detection applies only to **top-level object** envelopes — not to [array-wrapped envelopes](#array-wrapped-envelope) (`[{...}]`).
 
 | Field | Candidate keys (priority order) |
 | ----- | ------------------------------- |

@@ -91,11 +91,13 @@ Three request strategies:
 Key fields:
 
 - **`request.page_size`** — records per HTTP request (overridden by **`IngestionParams.batch_size`** when set)
-- **`response.records_path`** — dot path to the JSON record list (e.g. `results`, `data`)
+- **`response.records_path`** — dot path to the JSON record list (e.g. `results`, `data`, or `0.results` for an array-wrapped envelope)
 - **`response.next_offset_path`** — server-provided next offset (e.g. `next_offset`)
 - **`response.has_more_path`** — boolean stop signal (e.g. `has_more`)
 - **`response.cursor_path`** — next cursor token for cursor strategy
-- **`response.auto_detect`** — infer unset response paths from the first response body
+- **`response.auto_detect`** — infer unset response paths from the first **object** response body (not array-wrapped `[{...}]` envelopes)
+
+Dot paths support numeric segments for list indexing (e.g. `0.results` when the API returns `[{"results": [...]}]`). See **[Dot paths and response shapes](../../concepts/api_connector.md#dot-paths-and-response-shapes)** in the API connector guide.
 
 See **[API connector and pagination](../../concepts/api_connector.md)** for loop behaviour, examples per strategy, and field reference.
 
