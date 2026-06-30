@@ -10,8 +10,10 @@ from rdflib import Graph, Literal, URIRef
 from rdflib.namespace import OWL, RDF, RDFS, SKOS
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-BUILD_SCRIPT = REPO_ROOT / "docs" / "scripts" / "build_ontology_viz.py"
-EXTRACT_SCRIPT = REPO_ROOT / "docs" / "scripts" / "ontology_viz" / "extract.py"
+BUILD_SCRIPT = REPO_ROOT / "docs" / "_build" / "scripts" / "build_ontology_viz.py"
+EXTRACT_SCRIPT = (
+    REPO_ROOT / "docs" / "_build" / "scripts" / "ontology_viz" / "extract.py"
+)
 OUTPUT_DIR = REPO_ROOT / "docs" / "assets" / "graflo-ontology-viz"
 INDEX_HTML = OUTPUT_DIR / "index.html"
 EMBED_HTML = OUTPUT_DIR / "embed.html"
@@ -29,7 +31,7 @@ def _load_module(path: Path, name: str):
 
 def test_committed_ontology_viz_assets_exist() -> None:
     assert INDEX_HTML.is_file(), (
-        "Run docs/scripts/build_ontology_viz.py and commit assets"
+        "Run docs/_build/scripts/build_ontology_viz.py and commit assets"
     )
     assert EMBED_HTML.is_file()
     assert GRAPH_JSON.is_file()

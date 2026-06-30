@@ -29,4 +29,4 @@ export ORDER_SERVICE_TOKEN=your-order-token
 uv run python examples/14-api-env-wiring/api_env_wiring.py
 ```
 
-See also [Example 14](../../docs/examples/example-14.md) and [API connector and pagination](../../docs/concepts/api_connector.md).
+See also [Example 14](../../docs/examples/example-14.md) and [API connector and pagination](../../docs/concepts/connectors/api_connector.md).

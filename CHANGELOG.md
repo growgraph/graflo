@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.10]
+
+### Added
+
+- **`graflo.db.identity_inference`** — `IdentityInferencer`, `IdentityInferenceConfig`, `infer_identities_from_snapshot`, and `apply_identity_inference_to_vertices` for algorithmic vertex identity discovery from record samples (bootstrap validation, natural composite keys, hash fallback, `no_viable_identity`).
+- **`Vertex.hash_identity_properties`** — deterministic SHA256 identity from explicit source fields (distinct from `blank` random UUIDs).
+- **`Vertex.identity_mode`** — derived runtime mode: `natural`, `hash`, or `blank`. Unary and composite natural keys share the `natural` mode (same upsert path).
+- **`VertexConfig.hash_identity_vertices`**, **`VertexConfig.vertices_by_identity_mode()`** — derived vertex lists for introspection and `db_writer` branching.
+- **`db_writer._assign_hash_identity_ids`** — hash-mode pre-write hook before vertex upserts.
+- **[Example 15](docs/examples/example-15.md)** — CSV identity inference → manifest → GraFlo file backend ingest (`examples/15-identity-inference/`).
+
+### Documentation
+
+- [Vertex identity modes](docs/concepts/schema/vertex_identity.md); updates to [core components](docs/concepts/architecture/core_components.md), [backend indexes](docs/concepts/schema/backend_indexes.md), [creating a manifest](docs/getting_started/creating_manifest.md), and [examples index](docs/examples/index.md).
+
 ## [1.8.9]
 
 ### Added
@@ -17,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Breaking:** **`PaginationConfig`** is split into **`request`** + **`response`** sub-blocks. Top-level **`data_path`**, **`has_more_path`**, and **`cursor_path`** are removed — migrate manifests to **`response.records_path`**, **`response.has_more_path`**, and **`response.cursor_path`** (under **`pagination.response`** in YAML).
 - **`APIDataSource`** — parses paginated JSON via **`pagination.response`**; advances offset from **`next_offset_path`** when configured (URL always built from connector **`base_url` + `path`**); merges batch metadata into each row.
-- **Documentation** — [API connector and pagination](docs/concepts/api_connector.md), quickstart, and data-source reference updated for the request/response model, stop/advance rules, and **`auto_detect`**.
+- **Documentation** — [API connector and pagination](docs/concepts/connectors/api_connector.md), quickstart, and data-source reference updated for the request/response model, stop/advance rules, and **`auto_detect`**.
 
 ## [1.8.7]
 
@@ -35,9 +50,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **[Example 13](docs/examples/example-13.md)** — reworked around file backend: `export-backend`, `ingest-backend`, and replay via `--from-backend`; bundled CSV manifest for ingest-to-disk demo.
-- **Documentation** — [Graph export and migration](docs/concepts/graph_export_migration.md), README, quickstart, and docs index updated for file-backend workflows (1.8.7).
-- **API env wiring docs** — [API connector and pagination](docs/concepts/api_connector.md), quickstart, data-source reference, and [Example 14](docs/examples/example-14.md) document **`register_all_api_configs_from_env`** and proxy-scoped env prefixes.
-- **Ingestion scope docs** — `IngestionParams.connectors` documented in README, quickstart, [features and practices](docs/concepts/features_and_practices.md), architecture diagrams, and data-source reference.
+- **Documentation** — [Graph export and migration](docs/concepts/operations/graph_export_migration.md), README, quickstart, and docs index updated for file-backend workflows (1.8.7).
+- **API env wiring docs** — [API connector and pagination](docs/concepts/connectors/api_connector.md), quickstart, data-source reference, and [Example 14](docs/examples/example-14.md) document **`register_all_api_configs_from_env`** and proxy-scoped env prefixes.
+- **Ingestion scope docs** — `IngestionParams.connectors` documented in README, quickstart, [features and practices](docs/concepts/operations/migration_and_practices.md), architecture diagrams, and data-source reference.
 
 ## [1.8.6]
 
@@ -55,7 +70,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
-- **[Graph export and migration](docs/concepts/graph_export_migration.md)** — quick-start sketch, `GraFloOutput`, graph-source introspection, `export_graph` / `migrate_graph`, and PostgreSQL as a relational graph target.
+- **[Graph export and migration](docs/concepts/operations/graph_export_migration.md)** — quick-start sketch, `GraFloOutput`, graph-source introspection, `export_graph` / `migrate_graph`, and PostgreSQL as a relational graph target.
 - **[Example 13](docs/examples/example-13.md)** — step-by-step walkthrough and `examples/13-graph-export-migration/export_migrate.py` CLI.
 - **README**, **quickstart**, and **docs index** — PostgreSQL target, bi-directional graph workflows, and links to the new pages.
 
@@ -78,14 +93,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`ProjectManifestOp`** — manifest evolution op (`project_manifest`) that projects a `GraphManifest` to a requested vertex/edge subgraph. Keeps vertices and/or edge triples `(source, target, relation)` with `connectivity: induced_prune` (drops isolated vertex types from `keep_vertices`). Cascades consistently to schema, `db_profile`, ingestion (pipeline steps, `infer_edge_only` / `infer_edge_except`, `extra_weights`), and bindings. Optional `keep_resources` filters ingestion resources. Fails if projection would leave zero ingestion resources (same policy as `RemoveVerticesOp`). **`EdgeSelector`** models edge triple selectors; **`apply_remove_edge_ids`** / **`rewrite_remove_edge_ids_in_pipeline`** provide edge-id-aware removal (finer-grained than relation-only **`RemoveEdgesOp`**).
 - **Tests** — `test/architecture/test_manifest_projection.py` for **`ProjectManifestOp`**; `test_document_utils.py` for document helpers and `keep_absent_documents`; surviving-graph regression coverage in `test_db_creation.py`.
 - **Docs** — API reference pages for each TigerGraph submodule under `docs/reference/db/tigergraph/`.
-- **[Manifest evolution](docs/concepts/manifest_evolution.md)** — **`ProjectManifestOp`** subgraph projection recipe and operations table entry.
+- **[Manifest evolution](docs/concepts/schema/manifest_evolution.md)** — **`ProjectManifestOp`** subgraph projection recipe and operations table entry.
 
 ## [1.8.2]
 
 ### Added
 
 - **`APIConnector`** — REST API bindings contract with `path`, HTTP options, and `PaginationConfig` (offset/limit, cursor, page-based).
-- **Docs:** [API connector and pagination](docs/concepts/api_connector.md) — pagination strategies, field reference, and examples.
+- **Docs:** [API connector and pagination](docs/concepts/connectors/api_connector.md) — pagination strategies, field reference, and examples.
 - **`ApiGeneralizedConnConfig` / `RestApiConnConfig` / `ApiAuth`** — runtime base URL and bearer/basic/digest/api_key credentials via `conn_proxy`.
 - **`RegistryBuilder`** — builds `APIDataSource` instances from `APIConnector` + connection provider.
 
@@ -108,9 +123,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
-- **[Manifest evolution](docs/concepts/manifest_evolution.md)** — documents **`AddInverseEdgesOp`** (inverse schema edges and ingestion mirrors).
-- **[GraFlo ontology](docs/model/graflo_ontology.md)** — meta-model vs user-domain RDF (`RdfInferenceManager`), versioning, URI layout, CLI, and round-trip semantics.
-- **Interactive ontology visualization** — custom hierarchical class graph (rectangular nodes, subClassOf and optional property edges, pan/zoom) embedded on the GraFlo ontology page; built via `docs/scripts/build_ontology_viz.py` with committed assets under `docs/assets/graflo-ontology-viz/`.
+- **[Manifest evolution](docs/concepts/schema/manifest_evolution.md)** — documents **`AddInverseEdgesOp`** (inverse schema edges and ingestion mirrors).
+- **[GraFlo ontology](docs/concepts/schema/ontology.md)** — meta-model vs user-domain RDF (`RdfInferenceManager`), versioning, URI layout, CLI, and round-trip semantics.
+- **Interactive ontology visualization** — custom hierarchical class graph (rectangular nodes, subClassOf and optional property edges, pan/zoom) embedded on the GraFlo ontology page; built via `docs/_build/scripts/build_ontology_viz.py` with committed assets under `docs/assets/graflo-ontology-viz/`.
 - **README** and **docs index** — feature overview and quick links for manifest ↔ RDF workflows.
 
 ## [1.7.33]
@@ -158,7 +173,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
-- **[Features and practices](docs/concepts/features_and_practices.md)** — TigerGraph token caching under Performance Optimization.
+- **[Features and practices](docs/concepts/operations/migration_and_practices.md)** — TigerGraph token caching under Performance Optimization.
 
 ## [1.7.30]
 
@@ -180,9 +195,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
-- **[Document cast errors](docs/concepts/ingestion_doc_errors.md)** — **`tolerate_transform_errors`** and transform failure records.
-- **[Core components](docs/concepts/core_components.md)** — **`ResourceConfig`** / **`ResourceRuntime`**, per-vertex **`blank`**, **`from_doc`** with dressed transforms, identity defaults.
-- **[Architecture diagrams](docs/concepts/architecture_diagrams.md)** — contract and blank-vertex model aligned with 1.7.30.
+- **[Document cast errors](docs/concepts/ingestion/doc_errors.md)** — **`tolerate_transform_errors`** and transform failure records.
+- **[Core components](docs/concepts/architecture/core_components.md)** — **`ResourceConfig`** / **`ResourceRuntime`**, per-vertex **`blank`**, **`from_doc`** with dressed transforms, identity defaults.
+- **[Architecture diagrams](docs/concepts/architecture/diagrams.md)** — contract and blank-vertex model aligned with 1.7.30.
 - **[Creating a manifest](docs/getting_started/creating_manifest.md)** — **`tolerate_transform_errors`** and blank vertex YAML.
 
 ## [1.7.29]
@@ -205,9 +220,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
-- **[Runtime connector updates](docs/concepts/runtime_connector_updates.md)** — `time_filter` / **`ColumnTimeFilter`** (YAML + Python), patch examples, and registry timing.
+- **[Runtime connector updates](docs/concepts/connectors/runtime_updates.md)** — `time_filter` / **`ColumnTimeFilter`** (YAML + Python), patch examples, and registry timing.
 - **[Concepts overview](docs/concepts/index.md)** — bindings bullet and focused-topic link for runtime patches and SQL time filters.
-- **[Table connector views](docs/concepts/table_connector_views.md)** — cross-link to time filters vs `view` / `joins`.
+- **[Table connector views](docs/concepts/connectors/table_views.md)** — cross-link to time filters vs `view` / `joins`.
 - **[Example 5 – PostgreSQL](docs/examples/example-5.md)** — `datetime_columns` now documented as setting **`time_filter.column`** on connectors; ingestion date-range comment aligned.
 - **`creating_manifest.md`** — `connectors` may include optional **`time_filter`** on file/table connectors.
 
@@ -270,7 +285,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
-- [Manifest evolution](docs/concepts/manifest_evolution.md) now includes a tutorial section with
+- [Manifest evolution](docs/concepts/schema/manifest_evolution.md) now includes a tutorial section with
   relation/property evolution recipes and guidance on `RenameRelationsOp` vs `MergeEdgesOp`.
 
 ## [1.7.24] - 2026-05-07
@@ -311,8 +326,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
-- [Manifest evolution](docs/concepts/manifest_evolution.md), [Core components](docs/concepts/core_components.md),
-  [Architecture diagrams](docs/concepts/architecture_diagrams.md), and the [documentation home](docs/index.md)
+- [Manifest evolution](docs/concepts/schema/manifest_evolution.md), [Core components](docs/concepts/architecture/core_components.md),
+  [Architecture diagrams](docs/concepts/architecture/diagrams.md), and the [documentation home](docs/index.md)
   updated for evolution-backed **`SanitizeOp`**, the **`SQLInferenceManager`** vs **`GraphEngine.infer_manifest`**
   sanitization split, and **`SparqlEndpointConfig`** dataset URL behavior.
 
@@ -349,10 +364,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
-- [Manifest evolution](docs/concepts/manifest_evolution.md) concept page; [Creating a Manifest](docs/getting_started/creating_manifest.md) “Evolving a manifest” section.
+- [Manifest evolution](docs/concepts/schema/manifest_evolution.md) concept page; [Creating a Manifest](docs/getting_started/creating_manifest.md) “Evolving a manifest” section.
 - **Concepts split**: [Concepts overview](docs/concepts/index.md) is a short landing page; long-form content moved to
-  [Architecture diagrams](docs/concepts/architecture_diagrams.md), [Core components](docs/concepts/core_components.md),
-  and [Features, migration, and practices](docs/concepts/features_and_practices.md). Site nav and cross-links updated
+  [Architecture diagrams](docs/concepts/architecture/diagrams.md), [Core components](docs/concepts/architecture/core_components.md),
+  and [Features, migration, and practices](docs/concepts/operations/migration_and_practices.md). Site nav and cross-links updated
   (e.g. schema migration anchors on the home page and Quick Start).
 
 ## [1.7.21] - 2026-04-21
@@ -362,7 +377,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`graflo.object_storage`**: S3-compatible helpers — `MinioConfig` / `S3EndpointConfig`, boto3 client factories,
   `ensure_bucket_exists` / `ensure_staging_bucket_for_config`, and `upload_staged_csvs`
   (TigerGraph bulk staging imports `upload_staged_csvs` from here).
-- **Documentation**: [Object storage (S3 staging)](docs/concepts/object_storage.md) concept page;
+- **Documentation**: [Object storage (S3 staging)](docs/concepts/operations/object_storage.md) concept page;
   Concepts overview links staging to that page.
 
 ### Breaking
@@ -497,7 +512,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Example 11.
 - **`docs/concepts/index.md`**: actor class diagram and scenario matrix updated;
   deprecated `EdgeRouterActor` entry removed.
-- **`docs/concepts/table_connector_views.md`**: YAML pipeline sketch updated from
+- **`docs/concepts/connectors/table_views.md`**: YAML pipeline sketch updated from
   `edge_router` to `vertex_router` + `edge`.
 
 ## [1.7.17] - 2026-04-13
@@ -520,7 +535,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
-- **`docs/concepts/table_connector_views.md`**: base table defaults, structured
+- **`docs/concepts/connectors/table_views.md`**: base table defaults, structured
   select, **`all_base`** / **`base_alias`**, **`concat_select_parts`** sketch, YAML
   anchor note.
 
@@ -540,7 +555,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
-- Concepts: router actors + transform buffer merge; **`docs/concepts/table_connector_views.md`** (table connector views).
+- Concepts: router actors + transform buffer merge; **`docs/concepts/connectors/table_views.md`** (table connector views).
 
 ## [1.7.15] - 2026-04-08
 
@@ -683,7 +698,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Packaging**: `[project.optional-dependencies]` is limited to tooling extras (`dev`, `docs`, `plot`). RDF/SPARQL libraries (`rdflib`, `SPARQLWrapper`) stay in the core dependency set. User-facing install docs, README, CI (`uv sync --extra dev`), and runtime error hints were updated to match.
 
 ### Documentation
-- Concepts: [Transforms](docs/concepts/transforms.md) — grouped calls, YAML shorthands, strategy rules, and config reference tidying.
+- Concepts: [Transforms](docs/concepts/ingestion/transforms.md) — grouped calls, YAML shorthands, strategy rules, and config reference tidying.
 
 ## [1.7.3]
 
@@ -820,7 +835,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Schemas that still define `edge.indexes` under `edge_config.edges[*]` now fail validation.
 - Migrate by moving physical edge specs/indexes to `database_features.edge_specs` and logical uniqueness keys to `edge.identities`.
 - `database_features.edge_variants` was renamed to `database_features.edge_specs`.
-- **Backend index documentation**: New `docs/concepts/backend_indexes.md` describing which backends have implicit vs explicit identity indexes and how `vertex_indexes` relates to identity.
+- **Backend index documentation**: New `docs/concepts/schema/backend_indexes.md` describing which backends have implicit vs explicit identity indexes and how `vertex_indexes` relates to identity.
 
 
 ### Breaking (vertex projection)

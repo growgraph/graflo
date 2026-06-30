@@ -1,3 +1,0 @@
-# `graflo.cli`
-
-::: graflo.cli

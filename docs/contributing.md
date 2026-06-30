@@ -65,10 +65,10 @@ uv run mkdocs serve
 If you edit the GraFlo meta-ontology (`graflo/rdf/ontology/graflo.ttl`), regenerate the interactive visualization and commit the updated assets:
 
 ```bash
-uv run python docs/scripts/build_ontology_viz.py
+uv run python docs/_build/scripts/build_ontology_viz.py
 ```
 
-Visual tweaks and the graph viewer live in repo-owned files under `docs/scripts/ontology_viz/` and are copied into `docs/assets/graflo-ontology-viz/` at build time. **Do not edit packages inside `.venv`.**
+Visual tweaks and the graph viewer live in repo-owned files under `docs/_build/scripts/ontology_viz/` and are copied into `docs/assets/graflo-ontology-viz/` at build time. **Do not edit packages inside `.venv`.**
 
 CI runs the same script and fails if `docs/assets/graflo-ontology-viz/` is out of date with the committed ontology.
 

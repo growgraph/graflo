@@ -1,0 +1,36 @@
+metadata:
+    name: catalog
+core_schema:
+    vertex_config:
+        vertices:
+        -   name: product
+            properties:
+            -   name: org
+            -   name: product_code
+            -   name: name
+            -   name: category
+            -   name: updated_at
+            identity:
+            -   name
+            filters: []
+            blank: false
+            hash_identity_properties: []
+        -   name: supplier
+            properties:
+            -   name: supplier_code
+            -   name: name
+            -   name: country
+            identity:
+            -   supplier_code
+            filters: []
+            blank: false
+            hash_identity_properties: []
+        force_types: {}
+        identity_from_all_properties: false
+    edge_config:
+        edges: []
+db_profile:
+    db_flavor: graflo_backend
+    vertex_storage_names: {}
+    vertex_indexes: {}
+    edge_specs: []

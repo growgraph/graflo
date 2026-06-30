@@ -1,0 +1,82 @@
+schema:
+    metadata:
+        name: catalog
+    core_schema:
+        vertex_config:
+            vertices:
+            -   name: product
+                properties:
+                -   name: org
+                -   name: product_code
+                -   name: name
+                -   name: category
+                -   name: updated_at
+                identity:
+                -   product_code
+                -   org
+                filters: []
+                blank: false
+                hash_identity_properties: []
+            -   name: supplier
+                properties:
+                -   name: supplier_code
+                -   name: name
+                -   name: country
+                identity:
+                -   supplier_code
+                filters: []
+                blank: false
+                hash_identity_properties: []
+            force_types: {}
+            identity_from_all_properties: false
+        edge_config:
+            edges: []
+    db_profile:
+        db_flavor: arango
+        vertex_storage_names: {}
+        vertex_indexes: {}
+        edge_specs: []
+ingestion_model:
+    edges_on_duplicate: ignore
+    resources:
+    -   name: products
+        pipeline:
+        -   vertex: product
+        encoding: utf-8
+        merge_collections: []
+        extra_weights: []
+        types: {}
+        infer_edges: true
+        infer_edge_only: []
+        infer_edge_except: []
+        drop_trivial_input_fields: false
+        fail_fast: false
+        tolerate_transform_errors: true
+    -   name: suppliers
+        pipeline:
+        -   vertex: supplier
+        encoding: utf-8
+        merge_collections: []
+        extra_weights: []
+        types: {}
+        infer_edges: true
+        infer_edge_only: []
+        infer_edge_except: []
+        drop_trivial_input_fields: false
+        fail_fast: false
+        tolerate_transform_errors: true
+    transforms: []
+bindings:
+    connector_templates: []
+    connectors:
+    -   resource_name: products
+        row_annotations: {}
+        regex: ^products\.csv$
+        sub_path: data
+    -   resource_name: suppliers
+        row_annotations: {}
+        regex: ^suppliers\.csv$
+        sub_path: data
+    resource_connector: []
+    connector_connection: []
+    staging_proxy: []

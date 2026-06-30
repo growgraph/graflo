@@ -6,14 +6,14 @@ This section provides detailed API documentation for all graflo components and m
 
 Core architectural components that define the graflo framework:
 
-- **[Schema](architecture/schema/__init__.md)**: Graph schema definition and management
+- **[Schema](architecture/schema.md)**: Graph schema definition and management
 - **[GraphManifest](architecture/contract/manifest.md)**: Canonical top-level config contract
 - **[Vertex](architecture/schema/vertex.md)**: Vertex configuration and properties
 - **[Edge](architecture/schema/edge.md)**: Edge configuration and relationship management
-- **[Resource](architecture/contract/declarations/resource.md)**: Data source mapping and transformation
-- **[Actor](architecture/pipeline/runtime/actor/__init__.md)**: Document processing pipeline (runtime)
-- **[Transform](architecture/contract/declarations/transform.md)**: Transform definitions (`Transform`, `ProtoTransform`)
-- **[Pipeline runtime](architecture/pipeline/runtime/__init__.md)**: Executor and assembly
+- **[Resource](architecture/contract/ingestion/resource.md)**: Data source mapping and transformation
+- **[Actor](architecture/pipeline/runtime/actor.md)**: Document processing pipeline (runtime)
+- **[Transform](architecture/contract/ingestion/transform.md)**: Transform definitions (`Transform`, `ProtoTransform`)
+- **[Pipeline runtime](architecture/pipeline/runtime.md)**: Executor and assembly
 - **[Graph types](architecture/graph_types.md)**: Runtime graph structures (contexts, containers, indexes)
 - **[Utilities](architecture/util.md)**: Common utility functions
 
@@ -22,23 +22,23 @@ Core architectural components that define the graflo framework:
 Database connection and management components:
 
 - **[Connection Manager](db/manager.md)**: Database connection lifecycle management
-- **[ArangoDB](db/arango/__init__.md)**:
+- **[ArangoDB](db/arango.md)**:
   - [Connection](db/arango/conn.md): ArangoDB-specific connection implementation
   - [Query](db/arango/query.md): AQL query execution and utilities
   - [Utilities](db/arango/util.md): ArangoDB-specific utility functions
-- **[Neo4j](db/neo4j/__init__.md)**:
+- **[Neo4j](db/neo4j.md)**:
   - [Connection](db/neo4j/conn.md): Neo4j-specific connection implementation
-- **[Cypher helpers](db/cypher/__init__.md)** — Shared Cypher utilities ([escape](db/cypher/escape.md), [relationship MERGE](db/cypher/rel_merge.md))
-- **[FalkorDB](db/falkordb/__init__.md)**:
+- **[Cypher helpers](db/cypher.md)** — Shared Cypher utilities ([escape](db/cypher/escape.md), [relationship MERGE](db/cypher/rel_merge.md))
+- **[FalkorDB](db/falkordb.md)**:
   - [Connection](db/falkordb/conn.md): FalkorDB-specific connection implementation
-- **[TigerGraph](db/tigergraph/__init__.md)**:
+- **[TigerGraph](db/tigergraph.md)**:
   - [Connection](db/tigergraph/conn.md): TigerGraph-specific connection implementation with REST++ API and GSQL support
-- **[NebulaGraph](db/nebula/__init__.md)**:
+- **[NebulaGraph](db/nebula.md)**:
   - [Connection](db/nebula/conn.md): NebulaGraph connection implementation with dual v3.x/v5.x support
   - [Adapter](db/nebula/adapter.md): Version-agnostic client adapter layer (v3 Thrift, v5 gRPC)
   - [Query](db/nebula/query.md): nGQL and GQL query builders
   - [Utilities](db/nebula/util.md): Type mapping, value serialization, VID generation, filter rendering
-- **[PostgreSQL](db/postgres/__init__.md)**:
+- **[PostgreSQL](db/postgres.md)**:
   - [Connection](db/postgres/conn.md): PostgreSQL connection, SQL schema introspection (3NF source), and **graph target** writes (vertex + junction edge tables)
   - [Schema Inference](db/postgres/schema_inference.md): Automatic schema generation from PostgreSQL 3NF databases
   - [Resource Mapping](db/postgres/resource_mapping.md): Mapping PostgreSQL tables to graflo Resources
@@ -86,7 +86,7 @@ Graph visualization and plotting:
 CLI tools for graflo operations:
 
 - **[Ingest](cli/ingest.md)**: Data ingestion commands
-- **Manifest ↔ RDF**: `manifest-to-rdf`, `rdf-to-manifest` (see [GraFlo ontology](../model/graflo_ontology.md#cli))
+- **Manifest ↔ RDF**: `manifest-to-rdf`, `rdf-to-manifest` (see [GraFlo ontology](../concepts/schema/ontology.md#cli))
 - **[Database Management](cli/manage_dbs.md)**: Database administration commands
 - **[Schema Visualization](cli/plot_manifest.md)**: Schema visualization commands
 - **[XML to JSON](cli/xml2json.md)**: XML data conversion utilities

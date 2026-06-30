@@ -191,7 +191,7 @@ ensure_staging_bucket_for_config(config)
 # config.endpoint_url, config.access_key, config.secret_key, config.bucket, …
 ```
 
-Implementation helpers (`upload_staged_csvs`, boto3 client factories, bucket ensure) live in **`graflo.object_storage`**. See **docs/concepts/object_storage.md** in the repo for staging vs ingestion connectors.
+Implementation helpers (`upload_staged_csvs`, boto3 client factories, bucket ensure) live in **`graflo.object_storage`**. See **docs/concepts/operations/object_storage.md** in the repo for staging vs ingestion connectors.
 
 ## Memgraph
 

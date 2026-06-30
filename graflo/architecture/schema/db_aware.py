@@ -89,6 +89,10 @@ class VertexConfigDBAware:
         return self.logical.blank_vertices
 
     @property
+    def hash_identity_vertices(self):
+        return self.logical.hash_identity_vertices
+
+    @property
     def vertices(self):
         return self.logical.vertices
 

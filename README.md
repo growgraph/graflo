@@ -21,13 +21,13 @@ identities, and DB profile — then infer, validate, migrate, and load into any 
 - **Schema as the contract** — `GraphManifest` is the single source of truth: vertex/edge definitions,
   typed properties, identity fields, and DB profile are validated at `finish_init` time, not at
   write time. Schema migrations are first-class (`graflo migrate_schema`).
-- **Manifest as linked data** — The [GraFlo ontology](https://growgraph.github.io/graflo/model/graflo_ontology/) (`gf:` at `ontology.growgraph.dev`) lets you export manifests to RDF and round-trip them for tooling, provenance, and SPARQL-facing catalogs.
+- **Manifest as linked data** — The [GraFlo ontology](https://growgraph.github.io/graflo/concepts/schema/ontology/) (`gf:` at `ontology.growgraph.dev`) lets you export manifests to RDF and round-trip them for tooling, provenance, and SPARQL-facing catalogs.
 
 ### What’s in the manifest
 
 - **`schema`** — `Schema`: metadata, **`core_schema`** (vertices, edges, typed **`properties`**, identities), and **`db_profile`** (`DatabaseProfile`: target flavor, storage names, secondary indexes, TigerGraph `default_property_values`, …).
 - **`ingestion_model`** — `IngestionModel`: named **`resources`** (actor sequences: *descend*, *transform*, *vertex*, *edge*, …) and a registry of reusable **`transforms`**.
-- **`bindings`** — Connectors (e.g. `FileConnector`, `TableConnector`, `SparqlConnector`, **`APIConnector`**) plus **`resource_connector`** wiring. Optional **`connector_connection`** maps connectors to **`conn_proxy`** labels so YAML stays secret-free; a runtime **`ConnectionProvider`** supplies credentials. See [API connector and pagination](docs/concepts/api_connector.md) for REST pagination strategies.
+- **`bindings`** — Connectors (e.g. `FileConnector`, `TableConnector`, `SparqlConnector`, **`APIConnector`**) plus **`resource_connector`** wiring. Optional **`connector_connection`** maps connectors to **`conn_proxy`** labels so YAML stays secret-free; a runtime **`ConnectionProvider`** supplies credentials. See [API connector and pagination](docs/concepts/connectors/api_connector.md) for REST pagination strategies.
 
 ### Runtime path
 
@@ -61,15 +61,15 @@ identities, and DB profile — then infer, validate, migrate, and load into any 
 
 The engines listed in **What you get** are the supported **output** `DBType` values in `graflo.onto` (including **PostgreSQL** as a relational graph store). Each backend uses its own `Connection` implementation under the shared `ConnectionManager` / `DBWriter` / `GraphEngine` flow.
 
-**Graph sources** (introspection and bulk export) are supported on **Neo4j**, **ArangoDB**, and the **GraFlo file backend** via `GraphEngine.migrate_graph()`. See [Graph export and migration](docs/concepts/graph_export_migration.md).
+**Graph sources** (introspection and bulk export) are supported on **Neo4j**, **ArangoDB**, and the **GraFlo file backend** via `GraphEngine.migrate_graph()`. See [Graph export and migration](docs/concepts/operations/graph_export_migration.md).
 
 ## More capabilities
 
-- **GraFlo ontology (manifest RDF)** — Serialize any `GraphManifest` to RDF (Turtle, JSON-LD) using the published vocabulary at [`https://ontology.growgraph.dev/graflo`](https://ontology.growgraph.dev/graflo) (`owl:versionInfo` **1.0.0**). Covers schema, ingestion (resources, transforms, pipeline actors), and bindings. Round-trip via `graflo.rdf` or the `manifest-to-rdf` / `rdf-to-manifest` CLI. This is the **meta-model** of GraFlo itself — distinct from importing a **domain** OWL ontology into an LPG schema (`RdfInferenceManager`). Details: [docs — GraFlo ontology](https://growgraph.github.io/graflo/model/graflo_ontology/).
+- **GraFlo ontology (manifest RDF)** — Serialize any `GraphManifest` to RDF (Turtle, JSON-LD) using the published vocabulary at [`https://ontology.growgraph.dev/graflo`](https://ontology.growgraph.dev/graflo) (`owl:versionInfo` **1.0.0**). Covers schema, ingestion (resources, transforms, pipeline actors), and bindings. Round-trip via `graflo.rdf` or the `manifest-to-rdf` / `rdf-to-manifest` CLI. This is the **meta-model** of GraFlo itself — distinct from importing a **domain** OWL ontology into an LPG schema (`RdfInferenceManager`). Details: [docs — GraFlo ontology](https://growgraph.github.io/graflo/concepts/schema/ontology/).
 - **SPARQL & RDF** — Endpoints and RDF files (`.ttl`, `.rdf`, `.n3`, …); optional OWL/RDFS **domain** schema inference (`rdflib`, `SPARQLWrapper` in the default install).
 - **Schema inference** — From PostgreSQL-style 3NF layouts (PK/FK heuristics) or from OWL/RDFS (`owl:Class` → vertices, `owl:ObjectProperty` → edges, `owl:DatatypeProperty` → vertex fields).
 - **Graph export & migration** — Introspect Neo4j or ArangoDB, export to a **chunked file backend** (`GraFloBackendConfig`), ingest manifest resources to disk, or migrate graph→graph / graph→PostgreSQL with `GraphEngine.migrate_graph()` / `ingest()`.
-- **REST API env wiring** — Register `base_url` and `ApiAuth` credentials from environment variables per `conn_proxy` label (`register_all_api_configs_from_env`); see [API connector and pagination](docs/concepts/api_connector.md).
+- **REST API env wiring** — Register `base_url` and `ApiAuth` credentials from environment variables per `conn_proxy` label (`register_all_api_configs_from_env`); see [API connector and pagination](docs/concepts/connectors/api_connector.md).
 - **Schema migrations** — Plan and apply guarded schema deltas (`migrate_schema` console script → `graflo.cli.migrate_schema`; library in `graflo.migrate`; see docs).
 - **Typed `properties`** — Optional field types (`INT`, `FLOAT`, `STRING`, `DATETIME`, `BOOL`) on vertices and edges.
 - **Batching & concurrency** — Configurable batch sizes, worker counts, and DB write concurrency on `IngestionParams` / `DBWriter`.
@@ -253,7 +253,7 @@ pg_engine = GraphEngine(target_db_flavor=DBType.POSTGRES)
 pg_engine.migrate_graph(backend, postgres, recreate_schema=True)
 ```
 
-See [Graph export and migration](docs/concepts/graph_export_migration.md) and [Example 13](docs/examples/example-13.md).
+See [Graph export and migration](docs/concepts/operations/graph_export_migration.md) and [Example 13](docs/examples/example-13.md).
 
 ### Manifest ↔ RDF (GraFlo ontology)
 
@@ -281,7 +281,7 @@ ttl = ManifestRdfSerializer().to_turtle(manifest, base)
 restored = ManifestRdfDeserializer().from_turtle(ttl, base.rstrip("/"))
 ```
 
-Ontology source: `graflo/rdf/ontology/graflo.ttl`. See [GraFlo ontology](https://growgraph.github.io/graflo/model/graflo_ontology/).
+Ontology source: `graflo/rdf/ontology/graflo.ttl`. See [GraFlo ontology](https://growgraph.github.io/graflo/concepts/schema/ontology/).
 
 ### RDF / SPARQL Ingestion (domain ontology → LPG)
 

@@ -16,7 +16,7 @@ uv run python ingest.py
 
 Ensure TigerGraph env matches `docker/tigergraph/.env` (or override `TIGERGRAPH_*`).
 
-Staging uploads use **`MinioConfig.from_docker_env()`**, which reads `docker/minio/.env` the same way examples like [Neo4j ingest](../4-ingest-neo4j/ingest.py) use `Neo4jConfig.from_docker_env()` — no need to export `MINIO_*` in the shell unless you want to override. Bucket ensure and upload helpers live in **`graflo.object_storage`**; see [Object storage (S3 staging)](../../docs/concepts/object_storage.md).
+Staging uploads use **`MinioConfig.from_docker_env()`**, which reads `docker/minio/.env` the same way examples like [Neo4j ingest](../4-ingest-neo4j/ingest.py) use `Neo4jConfig.from_docker_env()` — no need to export `MINIO_*` in the shell unless you want to override. Bucket ensure and upload helpers live in **`graflo.object_storage`**; see [Object storage (S3 staging)](../../docs/concepts/operations/object_storage.md).
 
 ## Emulate S3 with MinIO
 
