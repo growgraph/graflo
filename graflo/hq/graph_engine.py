@@ -88,7 +88,7 @@ class GraphEngine:
     The typical workflow is:
     1. infer_schema() - Infer schema from source database (if possible)
     2. create_bindings() - Create bindings mapping resources to data sources (if possible)
-    3. define_schema() - Define schema in target database (if possible and necessary)
+    3. create_target_namespace() / define_schema() - Ensure namespace (optional) and define schema
     4. ingest() - Ingest data into the target database
 
     Attributes:
@@ -279,44 +279,72 @@ class GraphEngine:
         self.connection_provider = provider
         return bindings
 
+    def _prepare_target_schema(
+        self,
+        manifest: GraphManifest,
+        target_db_config: DBConfig,
+        graph_target_namespace: str | None,
+    ) -> Schema:
+        schema = manifest.require_schema()
+        _ensure_graph_target_namespace(schema, target_db_config, graph_target_namespace)
+        schema.db_profile.db_flavor = target_db_config.connection_type
+        schema.finish_init()
+        return schema
+
+    def create_target_namespace(
+        self,
+        manifest: GraphManifest,
+        target_db_config: DBConfig,
+        graph_target_namespace: str | None = None,
+    ) -> None:
+        """Create the target graph/database/space namespace if absent (op 1 only).
+
+        Args:
+            manifest: GraphManifest with schema block (used for namespace resolution).
+            target_db_config: Target database connection configuration.
+            graph_target_namespace: Optional override for the namespace name.
+        """
+        schema = self._prepare_target_schema(
+            manifest, target_db_config, graph_target_namespace
+        )
+        with ConnectionManager(connection_config=target_db_config) as db_client:
+            db_client.ensure_target_namespace(schema, create=True)
+
     def define_schema(
         self,
         manifest: GraphManifest,
         target_db_config: DBConfig,
+        *,
         recreate_schema: bool = False,
+        create_namespace: bool = True,
         graph_target_namespace: str | None = None,
     ) -> None:
-        """Define schema in the target database.
+        """Ensure namespace (optional) and define schema in the target database.
 
-        This method handles database/schema creation and initialization.
-        Some databases don't require explicit schema definition (e.g., Neo4j),
-        but this method ensures the database is properly initialized.
-
-        If the schema/graph already exists and recreate_schema is False (default),
-        init_db raises SchemaExistsError and the script halts.
+        By default GraFlo creates the graph/database/space if missing, then applies
+        vertex/edge DDL and indexes. Set ``create_namespace=False`` when the
+        namespace was pre-provisioned by an administrator.
 
         Args:
             manifest: GraphManifest with schema block.
             target_db_config: Target database connection configuration
-            recreate_schema: If True, drop existing schema and define new one.
-                If False and schema/graph already exists, raises SchemaExistsError.
-            graph_target_namespace: Optional target graph/database/space name (e.g. temp
-                schema). Overrides ``schema.db_profile.target_namespace`` and defaults
-                ahead of ``schema.metadata.name`` when the config omits the namespace.
+            recreate_schema: If True, drop existing schema artifacts and define anew.
+                If False and schema artifacts already exist, raises SchemaExistsError.
+            create_namespace: If True (default), create the namespace when missing.
+                If False, require an existing namespace or raise NamespaceNotFoundError.
+            graph_target_namespace: Optional target graph/database/space name.
         """
-        schema = manifest.require_schema()
+        schema = self._prepare_target_schema(
+            manifest, target_db_config, graph_target_namespace
+        )
 
-        _ensure_graph_target_namespace(schema, target_db_config, graph_target_namespace)
-
-        # Ensure schema reflects target DB so finish_init applies DB-specific defaults.
-        schema.db_profile.db_flavor = target_db_config.connection_type
-        schema.finish_init()
-
-        # Initialize database with schema definition
-        # init_db() handles database/schema creation automatically
-        # It checks if the database exists and creates it if needed
         with ConnectionManager(connection_config=target_db_config) as db_client:
-            db_client.init_db(schema, recreate_schema)
+            db_client.ensure_target_namespace(schema, create=create_namespace)
+            db_client.apply_target_schema(
+                schema,
+                recreate=recreate_schema,
+                create_namespace=create_namespace,
+            )
 
     def define_and_ingest(
         self,
@@ -326,6 +354,7 @@ class GraphEngine:
         connection_provider: ConnectionProvider | None = None,
         recreate_schema: bool | None = None,
         clear_data: bool | None = None,
+        create_namespace: bool = True,
         graph_target_namespace: str | None = None,
     ) -> None:
         """Define schema and ingest data into the graph database in one operation.
@@ -343,6 +372,7 @@ class GraphEngine:
                 define_schema raises SchemaExistsError and the script halts.
             clear_data: If True, remove existing data before ingestion (schema unchanged).
                 If None, uses ingestion_params.clear_data.
+            create_namespace: Passed to ``define_schema`` (default True).
             graph_target_namespace: Optional target graph/database/space name; passed
                 to both ``define_schema`` and ``ingest`` for consistent resolution.
         """
@@ -357,6 +387,7 @@ class GraphEngine:
             manifest=manifest,
             target_db_config=target_db_config,
             recreate_schema=recreate_schema,
+            create_namespace=create_namespace,
             graph_target_namespace=graph_target_namespace,
         )
 
@@ -604,6 +635,7 @@ class GraphEngine:
         target_config: DBConfig,
         *,
         recreate_schema: bool = True,
+        create_namespace: bool = True,
         graph_target_namespace: str | None = None,
         sample_limit: int = 100,
         data_limit: int | None = None,
@@ -626,6 +658,7 @@ class GraphEngine:
             manifest=manifest,
             target_db_config=target_config,
             recreate_schema=recreate_schema,
+            create_namespace=create_namespace,
             graph_target_namespace=graph_target_namespace,
         )
 

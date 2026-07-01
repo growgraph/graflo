@@ -11,6 +11,7 @@ Task-oriented walkthroughs for common GraFlo workflows. Each guide links to the 
 | Wire REST API credentials from environment variables | [API env wiring](api_env_wiring.md) | [Example 14](../examples/example-14.md) | [API connector](../concepts/connectors/api_connector.md) |
 | Infer vertex identities from CSV samples | [Identity inference](identity_inference.md) | [Example 15](../examples/example-15.md) | [Vertex identity](../concepts/schema/vertex_identity.md) |
 | Bulk-load TigerGraph via CSV and S3 staging | [TigerGraph bulk load](tigergraph_bulk_load.md) | [Example 10](../examples/example-10.md) | [Object storage](../concepts/operations/object_storage.md) |
+| Use a pre-provisioned graph namespace (least privilege) | [Graph namespace and schema](graph_namespace_and_schema.md) | — | [Capabilities](../concepts/architecture/capabilities.md) |
 | Migrate between schema versions | — | — | [Migration and practices](../concepts/operations/migration_and_practices.md) |
 | Infer a manifest from PostgreSQL | — | [Example 5](../examples/example-5.md) | [Capabilities](../concepts/architecture/capabilities.md) |
 | Ingest RDF with an OWL ontology | — | [Example 6](../examples/example-6.md) | [Capabilities](../concepts/architecture/capabilities.md) |

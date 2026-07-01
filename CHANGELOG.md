@@ -5,9 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.8.10]
+## [1.8.11]
 
 ### Added
+
+- **Namespace vs schema separation** — `Connection.ensure_target_namespace()` and `Connection.apply_target_schema()` as canonical op 1 / op 2; `GraphEngine.create_target_namespace()`; `create_namespace` flag on `define_schema`, `define_and_ingest`, and `migrate_graph` (default `True`).
+- **`NamespaceNotFoundError`** — raised when `create_namespace=False` and the target graph/database/space is missing.
+- **TigerGraph** — pre-created empty graphs work with `create_namespace=False`; `SchemaExistsError` is raised only when vertex/edge types exist, not when the graph shell is empty.
+- **Server / CLI** — `create_namespace` on ingest/define API bodies; `--no-create-namespace` on the ingest CLI.
+- Guide: [Graph namespace and schema](docs/guides/graph_namespace_and_schema.md).
 
 - **`graflo.db.identity_inference`** — `IdentityInferencer`, `IdentityInferenceConfig`, `infer_identities_from_snapshot`, and `apply_identity_inference_to_vertices` for algorithmic vertex identity discovery from record samples (bootstrap validation, natural composite keys, hash fallback, `no_viable_identity`).
 - **`Vertex.hash_identity_properties`** — deterministic SHA256 identity from explicit source fields (distinct from `blank` random UUIDs).

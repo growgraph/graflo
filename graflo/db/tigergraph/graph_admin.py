@@ -11,7 +11,7 @@ from graflo.architecture.schema import Schema
 from graflo.architecture.schema.db_aware import VertexConfigDBAware
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig
-from graflo.db.conn import SchemaExistsError
+from graflo.db.conn import NamespaceNotFoundError, SchemaExistsError
 from graflo.db.tigergraph.gsql_parsers import (
     gsql_result_has_error,
     is_not_found_error,
@@ -219,45 +219,58 @@ class GraphAdmin:
         logger.info(f"Successfully dropped graph '{name}'")
         return result
 
-    def init_db(self, schema: Schema, recreate_schema: bool = False) -> None:
-        """
-        Initialize database with schema definition.
-
-        If the graph already exists and recreate_schema is False, raises
-        SchemaExistsError and the script halts.
-
-        Follows the same pattern as ArangoDB:
-        1. Halt if graph exists and recreate_schema is False
-        2. Clean (drop graph) if recreate_schema
-        3. Create graph if not exists
-        4. Define schema locally within the graph
-        5. Define indexes
-
-        If any step fails, the graph will be cleaned up gracefully.
-        """
-        # Use schema.metadata.name for graph creation
-        graph_created = False
-
-        # Determine graph name from config; fallback to schema.metadata.name.
+    def _resolve_graph_name(self, schema: Schema) -> str:
         graph_name = self._conn._configured_graph_name()
         if not graph_name:
             graph_name = schema.metadata.name
-            # Update config for subsequent operations
             self._conn.config.database = graph_name
             self._conn.config.schema_name = graph_name
-            logger.info(f"Using schema name '{graph_name}' from schema.metadata.name")
-
-        # Validate graph name
+            logger.info("Using schema name '%s' from schema.metadata.name", graph_name)
         validate_tigergraph_schema_name(graph_name, "graph")
+        return graph_name
+
+    def schema_has_artifacts(self, graph_name: str) -> bool:
+        """Return True if the graph has any vertex or edge types defined."""
+        vertex_names, edge_names = self._conn._get_graph_type_names(graph_name)
+        return bool(vertex_names or edge_names)
+
+    def ensure_target_namespace(self, schema: Schema, *, create: bool) -> None:
+        """Ensure the TigerGraph graph (namespace) exists."""
+        graph_name = self._resolve_graph_name(schema)
+        if self._conn.graph_exists(graph_name):
+            logger.debug("Graph '%s' already exists", graph_name)
+            return
+        if not create:
+            raise NamespaceNotFoundError(
+                f"TigerGraph graph '{graph_name}' does not exist. "
+                "Create it manually or call with create_namespace=True."
+            )
+        logger.debug("Creating empty graph '%s'", graph_name)
+        try:
+            self._conn.create_database(graph_name)
+            logger.info("Successfully created empty graph '%s'", graph_name)
+        except Exception as create_error:
+            logger.error(
+                "Failed to create graph '%s': %s",
+                graph_name,
+                create_error,
+                exc_info=True,
+            )
+            raise
+
+    def apply_target_schema(
+        self,
+        schema: Schema,
+        *,
+        recreate: bool,
+        create_namespace: bool = True,
+    ) -> None:
+        """Define local vertex/edge types and indexes for the current graph."""
+        graph_name = self._resolve_graph_name(schema)
+        graph_created = False
 
         try:
-            if self._conn.graph_exists(graph_name) and not recreate_schema:
-                raise SchemaExistsError(
-                    f"Schema/graph already exists: graph '{graph_name}'. "
-                    "Set recreate_schema=True to replace, or use clear_data=True before ingestion."
-                )
-
-            if recreate_schema:
+            if recreate:
                 pre_query_snapshot = self._conn._snapshot_all_queries()
                 logger.info(
                     "Pre-recreate installed-query snapshot for graph '%s': %s",
@@ -265,13 +278,8 @@ class GraphAdmin:
                     pre_query_snapshot,
                 )
                 try:
-                    if self._conn.graph_exists(graph_name):
-                        # Drop the graph (queries and jobs are dropped first inside delete_database).
+                    if create_namespace and self._conn.graph_exists(graph_name):
                         self._conn.delete_database(graph_name)
-                        # TigerGraph stores vertex/edge types globally. Dropping the graph
-                        # does NOT remove those types; they linger as orphans and cause
-                        # "used by another object" failures when we try to re-create them.
-                        # Clean them up explicitly before re-creating the schema.
                         surviving_graphs = self._conn._get_all_graph_names()
                         normalized = graph_name.strip().lower()
                         surviving_graphs = [
@@ -280,15 +288,27 @@ class GraphAdmin:
                             if g.strip().lower() != normalized
                         ]
                         logger.debug(
-                            f"Dropping global schema types for graph '{graph_name}' "
-                            f"(surviving graphs for orphan check: {surviving_graphs})"
+                            "Dropping global schema types for graph '%s' "
+                            "(surviving graphs for orphan check: %s)",
+                            graph_name,
+                            surviving_graphs,
                         )
                         self._conn._drop_global_schema_types(schema, surviving_graphs)
-                        logger.debug(f"Cleaned up graph '{graph_name}' for fresh start")
+                        logger.debug(
+                            "Cleaned up graph '%s' for fresh start", graph_name
+                        )
+                    elif self._conn.graph_exists(graph_name):
+                        surviving_graphs = self._conn._get_all_graph_names()
+                        normalized = graph_name.strip().lower()
+                        surviving_graphs = [
+                            g
+                            for g in surviving_graphs
+                            if g.strip().lower() != normalized
+                        ]
+                        self._conn._drop_global_schema_types(schema, surviving_graphs)
                 except Exception as clean_error:
                     error_msg = (
-                        f"Error during recreate_schema for graph '{graph_name}': "
-                        f"{clean_error}"
+                        f"Error during recreate for graph '{graph_name}': {clean_error}"
                     )
                     logger.error(error_msg, exc_info=True)
                     raise RuntimeError(error_msg) from clean_error
@@ -308,59 +328,79 @@ class GraphAdmin:
                             sorted(lost),
                         )
 
-            # Step 1: Create graph first if it doesn't exist
-            if not self._conn.graph_exists(graph_name):
-                logger.debug(f"Creating empty graph '{graph_name}'")
-                try:
-                    # Create empty graph
-                    self._conn.create_database(graph_name)
-                    graph_created = True
-                    logger.info(f"Successfully created empty graph '{graph_name}'")
-                except Exception as create_error:
-                    logger.error(
-                        f"Failed to create graph '{graph_name}': {create_error}",
-                        exc_info=True,
-                    )
-                    raise
-            else:
-                logger.debug(f"Graph '{graph_name}' already exists in init_db")
+            if (
+                not recreate
+                and self._conn.graph_exists(graph_name)
+                and self.schema_has_artifacts(graph_name)
+            ):
+                raise SchemaExistsError(
+                    f"Schema already exists in graph '{graph_name}'. "
+                    "Set recreate_schema=True to replace, or use clear_data=True "
+                    "before ingestion."
+                )
 
-            # Step 2: Define schema locally for the graph
-            # This uses a SCHEMA_CHANGE job which is the standard way to define local types
-            logger.info(f"Defining local schema for graph '{graph_name}'")
+            if not self._conn.graph_exists(graph_name):
+                if not create_namespace:
+                    raise NamespaceNotFoundError(
+                        f"TigerGraph graph '{graph_name}' does not exist. "
+                        "Create it manually or call with create_namespace=True."
+                    )
+                logger.debug("Recreating graph shell '%s' after recreate", graph_name)
+                self._conn.create_database(graph_name)
+                graph_created = True
+                logger.info("Successfully created empty graph '%s'", graph_name)
+
+            logger.info("Defining local schema for graph '%s'", graph_name)
             try:
                 self._conn._define_schema_local(schema)
             except Exception as schema_error:
                 logger.error(
-                    f"Failed to define local schema for graph '{graph_name}': {schema_error}",
+                    "Failed to define local schema for graph '%s': %s",
+                    graph_name,
+                    schema_error,
                     exc_info=True,
                 )
                 raise
 
-            # Step 3: Define indexes
             try:
                 self.define_indexes(schema)
-                logger.info(f"Index definition completed for graph '{graph_name}'")
+                logger.info("Index definition completed for graph '%s'", graph_name)
             except Exception as index_error:
                 logger.error(
-                    f"Failed to define indexes for graph '{graph_name}': {index_error}",
+                    "Failed to define indexes for graph '%s': %s",
+                    graph_name,
+                    index_error,
                     exc_info=True,
                 )
                 raise
-        except Exception as e:
-            logger.error(f"Error initializing database: {e}")
-            # Graceful teardown: if graph was created in this session, clean it up
+        except Exception:
             if graph_created:
                 try:
                     logger.info(
-                        f"Cleaning up graph '{graph_name}' after initialization failure"
+                        "Cleaning up graph '%s' after schema application failure",
+                        graph_name,
                     )
                     self._conn.delete_database(graph_name)
                 except Exception as cleanup_error:
                     logger.warning(
-                        f"Failed to clean up graph '{graph_name}': {cleanup_error}"
+                        "Failed to clean up graph '%s': %s",
+                        graph_name,
+                        cleanup_error,
                     )
             raise
+
+    def init_db(
+        self,
+        schema: Schema,
+        recreate_schema: bool = False,
+        *,
+        create_namespace: bool = True,
+    ) -> None:
+        """Convenience wrapper: ensure graph namespace then apply schema."""
+        self.ensure_target_namespace(schema, create=create_namespace)
+        self.apply_target_schema(
+            schema, recreate=recreate_schema, create_namespace=create_namespace
+        )
 
     def define_schema(self, schema: Schema):
         """

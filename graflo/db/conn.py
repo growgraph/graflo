@@ -126,11 +126,18 @@ def consume_insert_edges_kwargs(kwargs: dict[str, Any]) -> InsertEdgesKwArgs:
 
 
 class SchemaExistsError(RuntimeError):
-    """Raised when schema/graph already exists and recreate_schema is False.
+    """Raised when schema artifacts already exist and recreate is False.
 
-    Set recreate_schema=True to replace the existing schema, or use clear_data=True
-    before ingestion to only clear data without touching the schema.
+    Set recreate=True in apply_target_schema (or recreate_schema=True in init_db)
+    to replace the existing schema, or use clear_data=True before ingestion to
+    only clear data without touching the schema.
     """
+
+
+class NamespaceNotFoundError(RuntimeError):
+    """Raised when create=False and the target graph/database/space does not exist."""
+
+    pass
 
 
 class Connection(abc.ABC):
@@ -243,18 +250,51 @@ class Connection(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def init_db(self, schema: Schema, recreate_schema: bool) -> None:
-        """Initialize the database with the given schema.
-
-        If the schema/graph already exists and recreate_schema is False, raises
-        SchemaExistsError and the script halts.
+    def ensure_target_namespace(self, schema: Schema, *, create: bool) -> None:
+        """Ensure the target graph/database/space namespace exists (op 1).
 
         Args:
-            schema: Schema to initialize the database with
-            recreate_schema: If True, drop existing schema and define new one.
-                If False and schema/graph already exists, raises SchemaExistsError.
+            schema: Schema whose metadata/config resolves the namespace name.
+            create: If True, create the namespace when missing (idempotent where
+                supported). If False, require an existing namespace or raise
+                NamespaceNotFoundError.
         """
         pass
+
+    @abc.abstractmethod
+    def apply_target_schema(
+        self,
+        schema: Schema,
+        *,
+        recreate: bool,
+        create_namespace: bool = True,
+    ) -> None:
+        """Define vertex/edge schema artifacts and indexes (op 2).
+
+        Args:
+            schema: Schema to apply.
+            recreate: If True, drop existing schema artifacts before defining.
+                If False and artifacts already exist, raises SchemaExistsError.
+            create_namespace: Whether namespace creation is allowed. Backends use
+                this during recreate to decide if the graph/db shell may be dropped.
+        """
+        pass
+
+    def init_db(
+        self,
+        schema: Schema,
+        recreate_schema: bool = False,
+        *,
+        create_namespace: bool = True,
+    ) -> None:
+        """Convenience wrapper: ensure namespace then apply schema.
+
+        Prefer calling ensure_target_namespace and apply_target_schema directly.
+        """
+        self.ensure_target_namespace(schema, create=create_namespace)
+        self.apply_target_schema(
+            schema, recreate=recreate_schema, create_namespace=create_namespace
+        )
 
     @abc.abstractmethod
     def clear_data(self, schema: Schema) -> None:

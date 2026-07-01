@@ -39,7 +39,12 @@ from graflo.architecture.schema import Schema
 from graflo.architecture.schema.vertex import VertexConfig
 from graflo.db.arango.query import fetch_fields_query
 from graflo.db.arango.util import render_filters
-from graflo.db.conn import Connection, SchemaExistsError, consume_insert_edges_kwargs
+from graflo.db.conn import (
+    Connection,
+    NamespaceNotFoundError,
+    SchemaExistsError,
+    consume_insert_edges_kwargs,
+)
 from graflo.db.graph_introspection import (
     GraphEdgeIntrospection,
     GraphIntrospectionResult,
@@ -261,127 +266,119 @@ class ArangoConnection(Connection):
         # self.conn.close()
         pass
 
-    def init_db(self, schema: Schema, recreate_schema: bool) -> None:
-        """Initialize ArangoDB with the given schema.
-
-        Checks if the database exists and creates it if it doesn't.
-        Uses schema.metadata.name if database is not set in config.
-
-        If the schema/graph already exists and recreate_schema is False, raises
-        SchemaExistsError and the script halts.
-
-        Args:
-            schema: Schema containing graph structure definitions
-            recreate_schema: If True, drop existing vertex/edge classes and define new ones.
-                If False and any collections or graphs exist, raises SchemaExistsError.
-        """
-        # Determine database name: use config.database if set, otherwise use schema.metadata.name
+    def _resolve_db_name(self, schema: Schema) -> str:
         db_name = self.config.database
         if not db_name:
             db_name = schema.metadata.name
-            # Update config for subsequent operations
             self.config.database = db_name
+        return db_name
 
-        # Check if database exists and create it if it doesn't
-        # Use context manager pattern for system database operations
+    def _connect_to_database(self, db_name: str) -> None:
+        if (
+            self.config.database != db_name
+            or not hasattr(self, "_db_connected")
+            or self._db_connected != db_name
+        ):
+            self.conn = self.client.db(
+                db_name, username=self._username, password=self._password
+            )
+            self._db_connected = db_name
+            logger.debug("Connected to database '%s'", db_name)
+
+    def _database_exists(self, db_name: str) -> bool:
+        system_db = self.client.db(
+            "_system", username=self._username, password=self._password
+        )
+        return bool(system_db.has_database(db_name))
+
+    def ensure_target_namespace(self, schema: Schema, *, create: bool) -> None:
+        """Ensure the ArangoDB database exists and connect to it."""
+        db_name = self._resolve_db_name(schema)
         try:
-            system_db = self.client.db(
-                "_system", username=self._username, password=self._password
-            )
-            if not system_db.has_database(db_name):
-                logger.info(f"Database '{db_name}' does not exist, creating it...")
-                try:
-                    system_db.create_database(db_name)
-                    logger.info(f"Successfully created database '{db_name}'")
-                except Exception as create_error:
-                    logger.error(
-                        f"Failed to create database '{db_name}': {create_error}",
-                        exc_info=True,
+            if not self._database_exists(db_name):
+                if not create:
+                    raise NamespaceNotFoundError(
+                        f"ArangoDB database '{db_name}' does not exist. "
+                        "Create it manually or call with create_namespace=True."
                     )
-                    raise
-
-            # Reconnect to the target database (newly created or existing)
-            if (
-                self.config.database != db_name
-                or not hasattr(self, "_db_connected")
-                or self._db_connected != db_name
-            ):
-                try:
-                    self.conn = self.client.db(
-                        db_name, username=self._username, password=self._password
-                    )
-                    self._db_connected = db_name
-                    logger.debug(f"Connected to database '{db_name}'")
-                except Exception as conn_error:
-                    logger.error(
-                        f"Failed to connect to database '{db_name}': {conn_error}",
-                        exc_info=True,
-                    )
-                    raise
+                logger.info("Database '%s' does not exist, creating it...", db_name)
+                system_db = self.client.db(
+                    "_system", username=self._username, password=self._password
+                )
+                system_db.create_database(db_name)
+                logger.info("Successfully created database '%s'", db_name)
+            self._connect_to_database(db_name)
+        except NamespaceNotFoundError:
+            raise
         except Exception as e:
-            logger.error(
-                f"Error during database initialization for '{db_name}': {e}",
-                exc_info=True,
-            )
+            logger.error("Error ensuring database '%s': %s", db_name, e, exc_info=True)
             raise
 
-        try:
-            # Check if schema/graph already exists (any non-system collection or graph)
-            graphs_result = self.conn.graphs()
-            collections_result = self.conn.collections()
-            has_graphs = isinstance(graphs_result, list) and len(graphs_result) > 0
-            non_system = []
-            if isinstance(collections_result, list):
-                for c in collections_result:
-                    if isinstance(c, dict):
-                        name_value = cast(dict[str, Any], c).get("name")
-                        if isinstance(name_value, str) and name_value[0] != "_":
-                            non_system.append(name_value)
-            has_collections = len(non_system) > 0
-            if (has_graphs or has_collections) and not recreate_schema:
-                raise SchemaExistsError(
-                    f"Schema/graph already exists in database '{db_name}'. "
-                    "Set recreate_schema=True to replace, or use clear_data=True before ingestion."
-                )
+    def _schema_has_artifacts(self) -> bool:
+        graphs_result = self.conn.graphs()
+        collections_result = self.conn.collections()
+        has_graphs = isinstance(graphs_result, list) and len(graphs_result) > 0
+        non_system: list[str] = []
+        if isinstance(collections_result, list):
+            for c in collections_result:
+                if isinstance(c, dict):
+                    name_value = cast(dict[str, Any], c).get("name")
+                    if isinstance(name_value, str) and name_value[0] != "_":
+                        non_system.append(name_value)
+        return has_graphs or len(non_system) > 0
 
-            if recreate_schema:
+    def apply_target_schema(
+        self,
+        schema: Schema,
+        *,
+        recreate: bool,
+        create_namespace: bool = True,
+    ) -> None:
+        """Define collections, graphs, and indexes in the connected database."""
+        db_name = self._resolve_db_name(schema)
+        try:
+            if self._schema_has_artifacts() and not recreate:
+                raise SchemaExistsError(
+                    f"Schema already exists in database '{db_name}'. "
+                    "Set recreate_schema=True to replace, or use clear_data=True "
+                    "before ingestion."
+                )
+            if recreate:
                 try:
                     self.delete_graph_structure((), (), delete_all=True)
-                    logger.debug(f"Cleaned database '{db_name}' for fresh start")
+                    logger.debug("Cleaned database '%s' for fresh start", db_name)
                 except Exception as clean_error:
                     logger.warning(
-                        f"Error during recreate_schema for database '{db_name}': {clean_error}",
+                        "Error during recreate for database '%s': %s",
+                        db_name,
+                        clean_error,
                         exc_info=True,
                     )
-                    # Continue - may be first run or already clean
-
-            try:
-                self.define_schema(schema)
-                logger.debug(f"Defined schema for database '{db_name}'")
-            except Exception as schema_error:
-                logger.error(
-                    f"Failed to define schema for database '{db_name}': {schema_error}",
-                    exc_info=True,
-                )
-                raise
-
-            try:
-                self.define_indexes(schema)
-                logger.debug(f"Defined indexes for database '{db_name}'")
-            except Exception as index_error:
-                logger.error(
-                    f"Failed to define indexes for database '{db_name}': {index_error}",
-                    exc_info=True,
-                )
-                raise
+            self.define_schema(schema)
+            self.define_indexes(schema)
         except SchemaExistsError:
             raise
         except Exception as e:
             logger.error(
-                f"Error during database schema initialization for '{db_name}': {e}",
+                "Error applying schema to database '%s': %s",
+                db_name,
+                e,
                 exc_info=True,
             )
             raise
+
+    def init_db(
+        self,
+        schema: Schema,
+        recreate_schema: bool = False,
+        *,
+        create_namespace: bool = True,
+    ) -> None:
+        """Convenience wrapper: ensure database then apply schema."""
+        self.ensure_target_namespace(schema, create=create_namespace)
+        self.apply_target_schema(
+            schema, recreate=recreate_schema, create_namespace=create_namespace
+        )
 
     def clear_data(self, schema: Schema) -> None:
         """Remove all data from collections without dropping the schema.

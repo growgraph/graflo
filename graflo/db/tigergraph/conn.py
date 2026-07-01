@@ -472,8 +472,30 @@ class TigerGraphConnection(Connection):
             connection_provider=connection_provider,
         )
 
-    def init_db(self, schema: Schema, recreate_schema: bool = False) -> None:
-        return self._admin.init_db(schema, recreate_schema)
+    def init_db(
+        self,
+        schema: Schema,
+        recreate_schema: bool = False,
+        *,
+        create_namespace: bool = True,
+    ) -> None:
+        return self._admin.init_db(
+            schema, recreate_schema, create_namespace=create_namespace
+        )
+
+    def ensure_target_namespace(self, schema: Schema, *, create: bool) -> None:
+        return self._admin.ensure_target_namespace(schema, create=create)
+
+    def apply_target_schema(
+        self,
+        schema: Schema,
+        *,
+        recreate: bool,
+        create_namespace: bool = True,
+    ) -> None:
+        return self._admin.apply_target_schema(
+            schema, recreate=recreate, create_namespace=create_namespace
+        )
 
     def define_schema(self, schema: Schema):
         return self._admin.define_schema(schema)

@@ -11,7 +11,7 @@ from psycopg2.extras import execute_values
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig
-from graflo.db.conn import SchemaExistsError
+from graflo.db.conn import NamespaceNotFoundError, SchemaExistsError
 from graflo.onto import AggregationType, DBType
 
 if TYPE_CHECKING:
@@ -154,7 +154,33 @@ class PostgresTargetWriteMixin:
                 cursor.execute(q)
         self.conn.commit()
 
-    def init_db(self, schema: Schema, recreate_schema: bool) -> None:
+    def _pg_schema_exists(self, schema_name: str) -> bool:
+        rows = self.read(
+            "SELECT schema_name FROM information_schema.schemata WHERE schema_name = %s",
+            (schema_name,),
+        )
+        return bool(rows)
+
+    def ensure_target_namespace(self, schema: Schema, *, create: bool) -> None:
+        """Ensure the PostgreSQL schema namespace exists."""
+        pg_schema = _pg_schema_name(self.config)
+        if self._pg_schema_exists(pg_schema):
+            return
+        if not create:
+            raise NamespaceNotFoundError(
+                f"PostgreSQL schema '{pg_schema}' does not exist. "
+                "Create it manually or call with create_namespace=True."
+            )
+        self.create_database(pg_schema)
+
+    def apply_target_schema(
+        self,
+        schema: Schema,
+        *,
+        recreate: bool,
+        create_namespace: bool = True,
+    ) -> None:
+        """Create vertex/edge tables for the schema."""
         pg_schema = _pg_schema_name(self.config)
         existing = {row["table_name"] for row in self.get_tables(schema_name=pg_schema)}
         expected_vertices = {
@@ -166,15 +192,29 @@ class PostgresTargetWriteMixin:
         }
         expected = expected_vertices | expected_edges
         overlap = existing & expected
-        if overlap and not recreate_schema:
+        if overlap and not recreate:
             raise SchemaExistsError(
                 f"PostgreSQL tables already exist in schema '{pg_schema}': "
                 f"{sorted(overlap)}"
             )
-        if recreate_schema and overlap:
+        if recreate and overlap:
             self.delete_graph_structure(vertex_types=tuple(expected), delete_all=False)
-        self.create_database(pg_schema)
+        if create_namespace and not self._pg_schema_exists(pg_schema):
+            self.create_database(pg_schema)
         self.define_schema(schema)
+
+    def init_db(
+        self,
+        schema: Schema,
+        recreate_schema: bool = False,
+        *,
+        create_namespace: bool = True,
+    ) -> None:
+        """Convenience wrapper: ensure schema namespace then apply tables."""
+        self.ensure_target_namespace(schema, create=create_namespace)
+        self.apply_target_schema(
+            schema, recreate=recreate_schema, create_namespace=create_namespace
+        )
 
     def clear_data(self, schema: Schema) -> None:
         pg_schema = _pg_schema_name(self.config)
