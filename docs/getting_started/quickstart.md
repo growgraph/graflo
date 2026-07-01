@@ -129,7 +129,7 @@ engine.define_and_ingest(
 # )
 ```
 
-Here `schema` defines the logical graph, while `ingestion_model` defines resources/transforms and `bindings` maps resources to physical data sources. See [Creating a Manifest](creating_manifest.md) and [Concepts — Schema](../concepts/core_components.md#schema) for details.
+Here `schema` defines the logical graph, while `ingestion_model` defines resources/transforms and `bindings` maps resources to physical data sources. See [Creating a Manifest](creating_manifest.md) and [Concepts — Schema](../concepts/architecture/core_components.md#schema) for details.
 
 `Bindings` maps resource names (from `IngestionModel`) to one or more physical data sources (the same resource may list several connectors):
 - **FileConnector**: For file-based resources with `regex` for matching filenames and `sub_path` for the directory to search
@@ -262,7 +262,7 @@ pg_engine = GraphEngine(target_db_flavor=DBType.POSTGRES)
 pg_engine.migrate_graph(backend, postgres, recreate_schema=True)
 ```
 
-Full walkthrough (including **`ingest()`** to a file backend): [Example 13](../examples/example-13.md) · [Graph export and migration](../concepts/graph_export_migration.md)
+Full walkthrough (including **`ingest()`** to a file backend): [Example 13](../examples/example-13.md) · [Graph export and migration](../concepts/operations/graph_export_migration.md)
 
 ## Using API Data Sources
 
@@ -276,7 +276,7 @@ REST API ingestion uses bindings + `conn_proxy`, like SQL and SPARQL. The manife
 | **`page`** | `page`, `per_page` | `?page=1&per_page=25` |
 | **`cursor`** | `cursor` | opaque next-token in response JSON |
 
-All parameter names, response paths (`records_path`, `next_offset_path`, `has_more_path`, …), and loop behaviour are documented in **[API connector and pagination](../concepts/api_connector.md)**.
+All parameter names, response paths (`records_path`, `next_offset_path`, `has_more_path`, …), and loop behaviour are documented in **[API connector and pagination](../concepts/connectors/api_connector.md)**.
 
 ```yaml
 # manifest.yaml (bindings excerpt)
@@ -332,7 +332,7 @@ export API_SOURCE_TOKEN=your-token
 ```
 
 For manual credential registration or multi-proxy `env_prefix_map` overrides, see
-**[API connector and pagination](../concepts/api_connector.md)** and
+**[API connector and pagination](../concepts/connectors/api_connector.md)** and
 **[Example 14 — API env wiring](../examples/example-14.md)**.
 
 ## Using Configuration Files
@@ -369,7 +369,7 @@ uv run ingest \
     --doc-error-sink ./artifacts/doc_cast_failures.jsonl.gz
 ```
 
-Inspect the file with **`zcat ./artifacts/doc_cast_failures.jsonl.gz | head`**. The same option exists on **`IngestionParams.doc_error_sink_path`** when you drive **`Caster`** or **`GraphEngine`** from Python. Full behavior (budget limits, document preview bounds, logging when no path is set) is described under [Document cast errors and doc error sink](../concepts/ingestion_doc_errors.md).
+Inspect the file with **`zcat ./artifacts/doc_cast_failures.jsonl.gz | head`**. The same option exists on **`IngestionParams.doc_error_sink_path`** when you drive **`Caster`** or **`GraphEngine`** from Python. Full behavior (budget limits, document preview bounds, logging when no path is set) is described under [Document cast errors and doc error sink](../concepts/ingestion/doc_errors.md).
 
 ## Database Configuration Options
 

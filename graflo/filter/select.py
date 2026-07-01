@@ -381,7 +381,7 @@ class SelectSpec(ConfigBaseModel):
         ``TableConnector.table_name`` as the base when ``from_`` is unset.
 
         This is the structured equivalent of listing two join/select blocks in
-        one YAML ``view``; see ``docs/concepts/table_connector_views.md`` for
+        one YAML ``view``; see ``docs/concepts/connectors/table_views.md`` for
         YAML anchor patterns.
         """
         if head.kind != "select":

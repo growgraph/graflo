@@ -170,5 +170,5 @@ uv run python migrate.py postgres --from-backend artifacts/neo4j-backend --recre
 
 ## Related docs
 
-- [Graph export and migration](../concepts/graph_export_migration.md) — API reference and capability notes
+- [Graph export and migration](../concepts/operations/graph_export_migration.md) — API reference and capability notes
 - [Example 1](example-1.md) — manifest-based CSV ingestion into a live graph DB

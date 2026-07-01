@@ -1,3 +1,0 @@
-# `graflo.plot`
-
-::: graflo.plot

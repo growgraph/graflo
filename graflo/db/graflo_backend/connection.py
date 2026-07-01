@@ -12,7 +12,7 @@ from graflo.architecture.graph_types import GraphContainer
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.document import Schema
 from graflo.architecture.schema.vertex import VertexConfig
-from graflo.db.conn import Connection, SchemaExistsError
+from graflo.db.conn import Connection, NamespaceNotFoundError, SchemaExistsError
 from graflo.db.graflo_backend.config import GraFloBackendConfig
 from graflo.onto import AggregationType, DBType
 
@@ -67,17 +67,47 @@ class GraFloBackendConnection(Connection):
         if delete_all:
             self._writer.reset_data()
 
-    def init_db(self, schema: Schema, recreate_schema: bool) -> None:
+    def ensure_target_namespace(self, schema: Schema, *, create: bool) -> None:
+        if self.config.output_dir.exists():
+            return
+        if not create:
+            raise NamespaceNotFoundError(
+                f"GraFlo backend output directory {self.config.output_dir} "
+                "does not exist. Create it manually or call with create_namespace=True."
+            )
+        self.config.output_dir.mkdir(parents=True, exist_ok=True)
+
+    def apply_target_schema(
+        self,
+        schema: Schema,
+        *,
+        recreate: bool,
+        create_namespace: bool = True,
+    ) -> None:
         layout = GraFloLayout(self.config.output_dir)
-        if layout.schema_path.exists() and not recreate_schema:
+        if layout.schema_path.exists() and not recreate:
             raise SchemaExistsError(
                 f"GraFlo backend already exists at {self.config.output_dir}"
             )
-        if recreate_schema and self.config.output_dir.exists():
+        if recreate and self.config.output_dir.exists():
             self._writer.reset_data()
-        self.config.output_dir.mkdir(parents=True, exist_ok=True)
+        if create_namespace:
+            self.config.output_dir.mkdir(parents=True, exist_ok=True)
         self._writer.write_schema(schema)
         self._schema_written = True
+
+    def init_db(
+        self,
+        schema: Schema,
+        recreate_schema: bool = False,
+        *,
+        create_namespace: bool = True,
+    ) -> None:
+        """Convenience wrapper: ensure output dir then write schema."""
+        self.ensure_target_namespace(schema, create=create_namespace)
+        self.apply_target_schema(
+            schema, recreate=recreate_schema, create_namespace=create_namespace
+        )
 
     def clear_data(self, schema: Schema) -> None:
         self._writer.reset_data()

@@ -152,7 +152,7 @@ caster.ingest(
 
 ```
 
-To capture **per-document cast failures** (bad CSV rows while others succeed) as gzip JSONL, set **`doc_error_sink_path`** on **`IngestionParams`** or use **`uv run ingest ... --doc-error-sink ./doc_cast_failures.jsonl.gz`**. See [Document cast errors and doc error sink](../concepts/ingestion_doc_errors.md). The runnable **`examples/1-ingest-csv/ingest.py`** includes commented placeholders for this option.
+To capture **per-document cast failures** (bad CSV rows while others succeed) as gzip JSONL, set **`doc_error_sink_path`** on **`IngestionParams`** or use **`uv run ingest ... --doc-error-sink ./doc_cast_failures.jsonl.gz`**. See [Document cast errors and doc error sink](../concepts/ingestion/doc_errors.md). The runnable **`examples/1-ingest-csv/ingest.py`** includes commented placeholders for this option.
 
 Please refer to [examples](https://github.com/growgraph/graflo/tree/main/examples/1-ingest-csv)
 

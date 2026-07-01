@@ -39,8 +39,7 @@ class BaseEmitter(ABC):
 
     def _ensure_schema(self, conn: Connection, schema: Schema) -> None:
         """Ensure target schema artifacts exist (idempotent where supported)."""
-        conn.define_schema(schema)
-        conn.define_indexes(schema)
+        conn.apply_target_schema(schema, recreate=False)
 
     @staticmethod
     def _is_additive_operation(operation: MigrationOperation) -> bool:

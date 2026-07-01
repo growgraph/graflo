@@ -33,7 +33,12 @@ from graflo.architecture.schema.edge import Edge
 from graflo.architecture.graph_types import Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.vertex import VertexConfig
-from graflo.db.conn import Connection, SchemaExistsError, consume_insert_edges_kwargs
+from graflo.db.conn import (
+    Connection,
+    NamespaceNotFoundError,
+    SchemaExistsError,
+    consume_insert_edges_kwargs,
+)
 from graflo.db.cypher import rel_merge_props_map_from_row_index
 from graflo.db.graph_introspection import (
     GraphEdgeIntrospection,
@@ -379,128 +384,113 @@ class Neo4jConnection(Connection):
 
         logger.debug("No vertex_types provided and delete_all=False; no data deleted")
 
-    def init_db(self, schema: Schema, recreate_schema: bool) -> None:
-        """Initialize Neo4j with the given schema.
-
-        Checks if the database exists and creates it if it doesn't.
-        Uses schema.metadata.name if database is not set in config.
-        Note: Database creation is only supported in Neo4j Enterprise Edition.
-
-        If the database already has nodes and recreate_schema is False, raises
-        SchemaExistsError and the script halts.
-
-        Args:
-            schema: Schema containing graph structure definitions
-            recreate_schema: If True, delete all existing data before initialization.
-                If False and database has nodes, raises SchemaExistsError.
-        """
-        # Determine database name: use config.database if set, otherwise use schema.metadata.name
+    def _resolve_db_name(self, schema: Schema) -> str:
         db_name = self.config.database
         if not db_name:
             db_name = schema.metadata.name
-            # Update config for subsequent operations
             self.config.database = db_name
+        return db_name
 
-        # Check if database exists and create it if it doesn't
-        # Note: This only works in Neo4j Enterprise Edition
-        # For Community Edition, create_database will handle it gracefully
-        # Community Edition only allows one database per instance
+    def _list_databases(self) -> list[str] | None:
         try:
-            # Try to check if database exists (Enterprise feature)
-            try:
-                result = self.execute("SHOW DATABASES")
-                # Neo4j result is a cursor-like object, iterate to get records
-                databases = []
-                for record in result:
-                    # Record structure may vary, try common field names
-                    if hasattr(record, "get"):
-                        db_name_field = (
-                            record.get("name")
-                            or record.get("database")
-                            or record.get("db")
-                        )
-                    else:
-                        # If record is a dict-like object, try direct access
-                        db_name_field = getattr(record, "name", None) or getattr(
-                            record, "database", None
-                        )
-                    if db_name_field:
-                        databases.append(db_name_field)
-
-                if db_name not in databases:
-                    logger.info(
-                        f"Database '{db_name}' does not exist, attempting to create it..."
+            result = self.execute("SHOW DATABASES")
+            databases: list[str] = []
+            for record in result:
+                if hasattr(record, "get"):
+                    db_name_field = (
+                        record.get("name") or record.get("database") or record.get("db")
                     )
-                    # create_database handles Community Edition errors gracefully
-                    self.create_database(db_name)
-            except Exception as show_error:
-                # If SHOW DATABASES fails (Community Edition or older versions), try to create anyway
-                logger.debug(
-                    f"Could not check database existence (may be Community Edition): {show_error}"
+                else:
+                    db_name_field = getattr(record, "name", None) or getattr(
+                        record, "database", None
+                    )
+                if db_name_field:
+                    databases.append(str(db_name_field))
+            return databases
+        except Exception:
+            return None
+
+    def ensure_target_namespace(self, schema: Schema, *, create: bool) -> None:
+        """Ensure the Neo4j database exists."""
+        db_name = self._resolve_db_name(schema)
+        databases = self._list_databases()
+        if databases is not None:
+            if db_name not in databases:
+                if not create:
+                    raise NamespaceNotFoundError(
+                        f"Neo4j database '{db_name}' does not exist. "
+                        "Create it manually or call with create_namespace=True."
+                    )
+                logger.info(
+                    "Database '%s' does not exist, attempting to create it...",
+                    db_name,
                 )
-                # create_database handles Community Edition errors gracefully
                 self.create_database(db_name)
-        except Exception as e:
-            # Only log unexpected errors (create_database handles Community Edition gracefully)
-            logger.error(
-                f"Unexpected error during database initialization for '{db_name}': {e}",
-                exc_info=True,
+            return
+        if not create:
+            logger.debug(
+                "Cannot verify Neo4j database existence (Community Edition); "
+                "assuming default database"
             )
-            # Don't raise - allow operation to continue with default database
-            logger.warning(
-                "Continuing with default database due to initialization error"
+            return
+        self.create_database(db_name)
+
+    def _node_count(self) -> int:
+        result = self.execute("MATCH (n) RETURN count(n) AS c")
+        count = 0
+        if hasattr(result, "data"):
+            data = result.data()
+            if data:
+                count = data[0].get("c", 0) or 0
+        if count == 0 and hasattr(result, "__iter__"):
+            for record in result:
+                if hasattr(record, "get"):
+                    count = record.get("c", 0) or 0
+                else:
+                    count = getattr(record, "c", 0) or 0
+                break
+        return int(count)
+
+    def apply_target_schema(
+        self,
+        schema: Schema,
+        *,
+        recreate: bool,
+        create_namespace: bool = True,
+    ) -> None:
+        """Define indexes for the schema (labels/relationships are implicit)."""
+        db_name = self._resolve_db_name(schema)
+        if self._node_count() > 0 and not recreate:
+            raise SchemaExistsError(
+                f"Schema/data already exists in database '{db_name}'. "
+                "Set recreate_schema=True to replace, or use clear_data=True "
+                "before ingestion."
             )
-
-        try:
-            # Check if database already has nodes (schema/graph exists)
-            result = self.execute("MATCH (n) RETURN count(n) AS c")
-            count = 0
-            if hasattr(result, "data"):
-                data = result.data()
-                if data:
-                    first = data[0]
-                    count = first.get("c", 0) or 0
-            if count == 0 and hasattr(result, "__iter__"):
-                for record in result:
-                    if hasattr(record, "get"):
-                        count = record.get("c", 0) or 0
-                    else:
-                        count = getattr(record, "c", 0) or 0
-                    break
-            if count > 0 and not recreate_schema:
-                raise SchemaExistsError(
-                    f"Schema/graph already exists in database '{db_name}' ({count} nodes). "
-                    "Set recreate_schema=True to replace, or use clear_data=True before ingestion."
-                )
-
-            if recreate_schema:
-                try:
-                    self.delete_database("")
-                    logger.debug(f"Cleaned database '{db_name}' for fresh start")
-                except Exception as clean_error:
-                    logger.warning(
-                        f"Error during recreate_schema for database '{db_name}': {clean_error}",
-                        exc_info=True,
-                    )
-                    # Continue - may be first run or already clean
-
+        if recreate:
             try:
-                self.define_indexes(schema)
-                logger.debug(f"Defined indexes for database '{db_name}'")
-            except Exception as index_error:
-                logger.error(
-                    f"Failed to define indexes for database '{db_name}': {index_error}",
+                self.delete_database("")
+                logger.debug("Cleaned database '%s' for fresh start", db_name)
+            except Exception as clean_error:
+                logger.warning(
+                    "Error during recreate for database '%s': %s",
+                    db_name,
+                    clean_error,
                     exc_info=True,
                 )
-                raise
-        except SchemaExistsError:
-            raise
-        except Exception as e:
-            logger.error(
-                f"Error during database schema initialization for '{db_name}': {e}",
-                exc_info=True,
-            )
-            raise
+        self.define_indexes(schema)
+
+    def init_db(
+        self,
+        schema: Schema,
+        recreate_schema: bool = False,
+        *,
+        create_namespace: bool = True,
+    ) -> None:
+        """Convenience wrapper: ensure database then apply schema."""
+        self.ensure_target_namespace(schema, create=create_namespace)
+        self.apply_target_schema(
+            schema, recreate=recreate_schema, create_namespace=create_namespace
+        )
 
     def clear_data(self, schema: Schema) -> None:
         """Remove all data from the graph without dropping the schema.

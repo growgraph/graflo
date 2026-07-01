@@ -89,6 +89,12 @@ logger = logging.getLogger(__name__)
     help="skip ingestion; only init the db",
 )
 @click.option(
+    "--no-create-namespace",
+    default=False,
+    is_flag=True,
+    help="Do not create graph/database/space; require pre-provisioned namespace",
+)
+@click.option(
     "--on-doc-error",
     type=click.Choice(["skip", "fail"]),
     default="skip",
@@ -114,6 +120,7 @@ def ingest(
     data_source_config_path,
     on_doc_error,
     doc_error_sink,
+    no_create_namespace,
 ):
     """Ingest data into a graph database.
 
@@ -194,12 +201,15 @@ def ingest(
     )
 
     # Define schema first (if recreate_schema is requested)
-    if fresh_start:
+    if fresh_start or init_only:
         engine.define_schema(
             manifest=manifest,
             target_db_config=conn_conf,
-            recreate_schema=True,
+            recreate_schema=bool(fresh_start),
+            create_namespace=not no_create_namespace,
         )
+        if init_only:
+            return
 
     # Validate that either source_path or data_source_config_path is provided
     if data_source_config_path is None and source_path is None:

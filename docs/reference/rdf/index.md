@@ -1,6 +1,6 @@
 # `graflo.rdf` — manifest ↔ RDF bridge
 
-Bidirectional conversion between **`GraphManifest`** and RDF using the [GraFlo meta-ontology](../../model/graflo_ontology.md).
+Bidirectional conversion between **`GraphManifest`** and RDF using the [GraFlo meta-ontology](../../concepts/schema/ontology.md).
 
 ## Modules
 

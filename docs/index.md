@@ -11,165 +11,25 @@
 Write a `GraphManifest` (YAML or Python) once — it defines vertices, edges, typed properties,
 identities, and DB profile — then infer, validate, migrate, and load into any supported graph engine.
 
-It is a **Python package** and **Graph Schema & Transformation Language (GSTL)**. **`GraphEngine`** covers schema inference, migrations, DDL, and ingest; **`Caster`** focuses on batching records into a **`GraphContainer`** and **`DBWriter`**.
+## Start here
 
-### What you get
+| Section | What you'll find |
+|---------|------------------|
+| [Getting Started](getting_started/installation.md) | Install, quickstart, and your first manifest |
+| [Concepts](concepts/index.md) | Architecture, schema, ingestion pipeline, connectors |
+| [Guides](guides/index.md) | Task-oriented walkthroughs (export, API wiring, identity inference, …) |
+| [Examples](examples/index.md) | Fifteen runnable examples with sample data |
+| [API Reference](reference/index.md) | Auto-generated Python API docs |
 
-- One pipeline, several graph databases — The same manifest targets ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph, **PostgreSQL** (relational vertex + junction edge tables), or a **GraFlo file backend** on disk; `DatabaseProfile` and DB-aware types absorb naming, defaults, and indexing differences.
-- **Explicit identities** — Vertex identity fields and indexes back upserts so reloads merge on keys instead of blindly duplicating nodes.
-- **Reusable ingestion** — `ResourceConfig` actor pipelines (including **vertex** / **vertex_router** / **edge** steps) bind to files, SQL, SPARQL/RDF, APIs, or in-memory batches via `Bindings` and the `DataSourceRegistry`. A single flat row can populate multiple same-type vertices in distinct named slots (`role`) and emit multiple edges in one `edge: links` step. Per-resource **`tolerate_transform_errors`** (default on) keeps ingestion moving when an individual transform step fails.
-- **Schema as the contract** — `GraphManifest` is the single source of truth: vertex/edge definitions,
-  typed properties, identity fields, and DB profile are validated at `finish_init` time, not at
-  write time. Schema migrations are first-class (`graflo migrate_schema`).
-- **Manifest as linked data** — Export and restore manifests as RDF via the [GraFlo ontology](model/graflo_ontology.md) (`manifest-to-rdf` / `rdf-to-manifest` CLI, `graflo.rdf` API).
-- **Manifest-first sanitization** — `Sanitizer` (backed by `graflo.architecture.evolution` **`SanitizeOp`**) normalizes schema identifiers (reserved words, TigerGraph relation/index constraints) and synchronizes related ingestion mappings via `sanitize_manifest(GraphManifest)`. `GraphEngine.infer_manifest(...)` applies it automatically; lower-level `SQLInferenceManager` does not—sanitize the manifest yourself when assembling contracts outside the engine.
+## Highlights
 
-### What’s in the manifest
-
-- **`schema`** — `Schema`: metadata, **`core_schema`** (vertices, edges, typed **`properties`**, identities), and **`db_profile`** (`DatabaseProfile`: target flavor, storage names, secondary indexes, TigerGraph `default_property_values`, …).
-- **`ingestion_model`** — `IngestionModel`: named **`resources`** (actor sequences: *descend*, *transform*, *vertex*, *edge*, …) and a registry of reusable **`transforms`**.
-- **`bindings`** — Connectors (`FileConnector`, `TableConnector`, `SparqlConnector`, **`APIConnector`**) plus **`resource_connector`** wiring. Optional **`connector_connection`** maps connectors to **`conn_proxy`** labels so YAML stays secret-free; a runtime **`ConnectionProvider`** supplies credentials. REST APIs declare pagination on **`APIConnector`** — see [API connector and pagination](concepts/api_connector.md).
-
-### Runtime path
-
-1. **Source instance** — Batches from a `DataSourceType` adapter (`FileDataSource`, `SQLDataSource`, `SparqlEndpointDataSource`, `APIDataSource`, …).
-2. **Resource (actors)** — Maps records to graph elements against the logical schema (validated during `IngestionModel.finish_init` / pipeline execution).
-3. **`GraphContainer`** — Intermediate, database-agnostic vertex/edge batches.
-4. **DB-aware projection** — `Schema.resolve_db_aware()` plus `VertexConfigDBAware` / `EdgeConfigDBAware` for the active `DBType`.
-5. **Graph DB** — `DBWriter` + `ConnectionManager` and the backend-specific `Connection` implementation.
-
-| Piece | Role | Code |
-|-------|------|------|
-| **Logical graph schema** | Manifest `schema`: vertex/edge definitions, identities, typed **properties**, DB profile. Constrains pipeline output and projection; not a separate queue between steps. | `Schema`, `VertexConfig`, `EdgeConfig` (under `core_schema`). |
-| **Source instance** | Concrete input: file, SQL table, SPARQL endpoint, API payload, in-memory rows. | `AbstractDataSource` + `DataSourceType`. |
-| **Resource** | Ordered actors; resources are looked up by name when sources are registered. | `ResourceConfig` in `IngestionModel`; `ResourceRuntime` at cast time. |
-| **Covariant graph** (`GraphContainer`) | Batches of vertices/edges before load. | `GraphContainer`. |
-| **DB-aware projection** | Physical names, defaults, indexes for the target. | `Schema.resolve_db_aware()`, `VertexConfigDBAware`, `EdgeConfigDBAware`. |
-| **Graph DB** | Target LPG; each `DBType` has its own connector, orchestrated the same way. | `ConnectionManager`, `DBWriter`, per-backend `Connection`. |
-
-### Supported source types (`DataSourceType`)
-
-| DataSourceType | Adapter | DataSource | Schema inference |
-|---|---|---|---|
-| `FILE` — CSV / JSON / JSONL / Parquet | `FileConnector` | `FileDataSource` | manual |
-| `SQL` — relational tables (docs focus on PostgreSQL; other engines via SQLAlchemy where supported) | `TableConnector` | `SQLDataSource` | automatic for PostgreSQL-style 3NF (PK/FK heuristics) |
-| `SPARQL` — RDF files (`.ttl`, `.rdf`, `.n3`) | `SparqlConnector` | `RdfFileDataSource` | automatic (OWL/RDFS ontology) |
-| `SPARQL` — SPARQL endpoints (Fuseki, …) | `SparqlConnector` | `SparqlEndpointDataSource` | automatic (OWL/RDFS ontology) |
-| `API` — REST APIs | `APIConnector` | `APIDataSource` | manual |
-| `IN_MEMORY` — list / DataFrame | — | `InMemoryDataSource` | manual |
-
-### Supported targets
-
-The engines listed in **What you get** are the supported **output** `DBType` values in `graflo.onto` (including **PostgreSQL** as a relational graph store). Each backend uses its own `Connection` implementation under the shared `ConnectionManager` / `DBWriter` / `GraphEngine` flow.
-
-**Graph sources** (introspection and bulk export) are supported on **Neo4j**, **ArangoDB**, and the **GraFlo file backend** via `GraphEngine.migrate_graph()` and `ConnectionManager.graph_export_flavors()`. See [Graph export and migration](concepts/graph_export_migration.md).
-
-<!-- [![pytest](https://github.com/growgraph/graflo/actions/workflows/pytest.yml/badge.svg)](https://github.com/growgraph/graflo/actions/workflows/pytest.yml) -->
-
-## Core Concepts
-
-### Labeled Property Graphs
-
-GraFlo targets the LPG model:
-
-- **Vertices** — nodes with typed **properties** (manifest key: `properties`) and logical **identity** keys for upserts.
-  - Duplicate vertex property definitions are merged by name; conflicting typed duplicates are rejected.
-  - Identity fallback from all properties is opt-in via `VertexConfig.identity_from_all_properties` and is disabled by default.
-- **Edges** — relationships between vertices ( **`directed: true`** by default); set **`directed: false`** for logically undirected kinds. Relationship attributes are declared as **`properties`** on the logical edge (same list-of-names-or-`Field` shape as vertices). TigerGraph can project undirected edges to `UNDIRECTED EDGE` DDL or pair directed edges via **`db_profile.edge_specs[*].reverse_edge`** (`WITH REVERSE_EDGE`).
-
-### Schema
-
-The `Schema` is the single source of truth for **graph structure** (not for ingestion transforms):
-
-- **Vertex definitions** — vertex types, **`properties`** (optionally typed: `INT`, `FLOAT`, `STRING`, `DATETIME`, `BOOL`), identity, and filters. **Secondary indexes** and physical naming live under **`schema.db_profile`** (`DatabaseProfile`: e.g. `vertex_indexes`, `edge_specs`; see [Backend indexes](concepts/backend_indexes.md)).
-- **Edge definitions** — source/target (and optional `relation`), optional **`directed`** (default `true`), **`properties`** for relationship payload, and optional **`identities`** for parallel-edge / MERGE semantics.
-- **Schema inference** — generate schemas from PostgreSQL 3NF databases (PK/FK heuristics) or from OWL/RDFS ontologies.
-
-Resources and transforms are part of `IngestionModel`, not `Schema`.
-
-### IngestionModel
-
-`IngestionModel` defines how source records are transformed into graph entities:
-
-- **Resources** — reusable actor pipelines that map raw records to vertices and edges.
-- **Transforms** — reusable named transforms referenced by resource steps.
-
-### Resource
-
-A `Resource` is the central abstraction that bridges data sources and the graph schema. Each Resource defines a reusable pipeline of actors (descend, transform, vertex, edge) that maps raw records to graph elements. Data sources bind to Resources by name via the `DataSourceRegistry`, so the same transformation logic applies regardless of whether data arrives from a file, an API, or a SPARQL endpoint.
-
-- **`vertex` step `role`**: assign a named accumulator slot to a static-type vertex step so multiple vertices of the same type in one flat row occupy distinct slots (e.g. `role: self`, `role: parent`, `role: child` all as `person`). Use `extraction_scope: mapped_only` to extract only explicit `from` mappings, or keep the default `extraction_scope: full` and use `keep_fields` to restrict passthrough.
-- **`edge` step `links`**: declare multiple edge intents in one step — each list item emits one edge per row with its own `source_role`/`target_role` (or `source_type_field`/`target_type_field`) and `relation`.
-- **`source_role` / `target_role`** on `edge` steps: role-first aliases for `source_type_field` / `target_type_field` when the slot was populated by a `vertex+role` or `vertex_router+role` step.
-
-For wide rows with many empty or null columns, **`drop_trivial_input_fields`** (default `false`) removes only **top-level** keys whose value is `null` or `""` before the pipeline runs. The filter is **shallow**: nested dicts and lists are not walked, and empty `{}` / `[]` values are kept because they are not `null` or `""`. **`0`** and **`false`** are kept.
-
-For **TigerGraph**, optional attribute defaults belong in the covariant physical layer: **`schema.db_profile.default_property_values`** maps logical vertex/edge properties to YAML literals that GraFlo turns into GSQL **`DEFAULT`** clauses when defining the graph schema (same idea as `CREATE VERTEX Sensor (id STRING PRIMARY KEY, reading FLOAT DEFAULT -1.0)` in the [TigerGraph schema reference](https://docs.tigergraph.com/gsql-ref/4.2/ddl-and-loading/defining-a-graph-schema)).
-
-### DataSourceRegistry
-
-The `DataSourceRegistry` manages `AbstractDataSource` adapters, each carrying a `DataSourceType`:
-
-| `DataSourceType` | Adapter | Sources |
-|---|---|---|
-| `FILE` | `FileDataSource` | CSV, JSON, JSONL, Parquet files |
-| `SQL` | `SQLDataSource` | PostgreSQL and other SQL databases via SQLAlchemy |
-| `SPARQL` | `RdfFileDataSource` | Turtle/RDF/N3/JSON-LD files via rdflib |
-| `SPARQL` | `SparqlEndpointDataSource` | Remote SPARQL endpoints (e.g. Apache Fuseki) via SPARQLWrapper |
-| `API` | `APIConnector` / `APIDataSource` | REST APIs via bindings; [offset / page / cursor pagination](concepts/api_connector.md), [env wiring](examples/example-14.md) |
-| `IN_MEMORY` | `InMemoryDataSource` | Python objects (lists, DataFrames) |
-
-### GraphEngine
-
-`GraphEngine` orchestrates end-to-end operations: schema/manifest inference, schema definition in the target database, connector creation from data sources, and data ingestion.
-For PostgreSQL workflows, `infer_manifest(...)` returns a full manifest contract
-(`schema` + `ingestion_model` + `bindings`) and runs target-`DBType` **`Sanitizer`** on that manifest before returning.
-
-Graph-source workflows (`infer_schema_from_graph`, `migrate_graph`) introspect Neo4j, ArangoDB, or a file backend and load into any supported target — including PostgreSQL as a relational graph store. See [Graph export and migration](concepts/graph_export_migration.md).
-
-## More capabilities
-
-- **GraFlo ontology (manifest RDF)** — Publish and query manifests as linked data: OWL vocabulary at `https://ontology.growgraph.dev/graflo` (v1.0.0), plus `manifest-to-rdf` / `rdf-to-manifest` CLI and `graflo.rdf` serializers. See [GraFlo ontology](model/graflo_ontology.md).
-- **SPARQL & RDF** — Endpoints and RDF files; optional OWL/RDFS **domain** schema inference (`rdflib`, `SPARQLWrapper` in the default install).
-- **Schema inference** — From PostgreSQL-style 3NF layouts (PK/FK heuristics) or from OWL/RDFS (`owl:Class` → vertices, `owl:ObjectProperty` → edges, `owl:DatatypeProperty` → vertex fields). See [Example 5](examples/example-5.md).
-- **Graph export & migration** — Introspect Neo4j or ArangoDB, export to a **chunked file backend** (`GraFloBackendConfig`), ingest manifest resources to disk, or migrate graph→graph / graph→PostgreSQL. See [Graph export and migration](concepts/graph_export_migration.md) and [Example 13](examples/example-13.md).
-- **Schema migrations** — Plan and apply guarded schema deltas (`migrate_schema` console script → `graflo.cli.migrate_schema`; library in `graflo.migrate`). Compare `from` / `to` schemas before execution to preview deltas and blocked high-risk operations. See [Concepts — Schema Migration](concepts/features_and_practices.md#schema-migration-v1).
-- **Typed `properties`** — Optional field types (`INT`, `FLOAT`, `STRING`, `DATETIME`, `BOOL`) on vertices and edges.
-- **Batching & concurrency** — Configurable batch sizes (`IngestionParams.batch_size`), bounded prefetch of upcoming batches (`IngestionParams.batch_prefetch`), worker counts (`IngestionParams.n_cores`), and DB write concurrency (`IngestionParams.max_concurrent_db_ops` / `DBWriter`).
-- **Ingestion scope filters** — Optional subsets via `IngestionParams.resources`, `IngestionParams.connectors` (connector name or hash), and `IngestionParams.vertices`. `resources` and `connectors` intersect when both are set.
-- **Advanced filtering** — Server-side filtering (e.g. TigerGraph REST++ API), client-side filter expressions, and **SelectSpec** for declarative SQL view/filter control before data reaches Resources.
-- **Blank vertices** — Intermediate nodes for complex relationship modelling.
-
-## Quick Links
-
-- [Installation](getting_started/installation.md)
-- [Quick Start Guide](getting_started/quickstart.md)
-- [Graph export and migration](concepts/graph_export_migration.md)
-- [Concepts (architecture diagrams)](concepts/index.md)
-- [GraFlo ontology — manifest ↔ RDF](model/graflo_ontology.md)
-- [Concepts — Schema Migration](concepts/features_and_practices.md#schema-migration-v1)
-- [Concepts — Comparing Two Schemas](concepts/features_and_practices.md#comparing-two-schemas)
-- [API Reference](reference/index.md)
-- [Examples](examples/index.md)
-
-> Note: Mermaid diagrams are kept in section pages (for example `concepts/`) rather than on this landing page.
-
-## Use Cases
-
-- **Data Migration** — Transform relational data into LPG structures. Infer schemas from PostgreSQL 3NF databases and migrate data directly. Export or migrate between graph databases (Neo4j, ArangoDB) or into PostgreSQL relational graph tables.
-- **RDF-to-LPG** — Read RDF triples from files or SPARQL endpoints, auto-infer schemas from OWL ontologies, and ingest into ArangoDB, Neo4j, etc.
-- **Knowledge Graphs** — Build knowledge representations from heterogeneous sources (SQL, files, APIs, RDF/SPARQL).
-- **Data Integration** — Combine multiple data sources into a unified labeled property graph.
-- **Graph Views** — Create graph views of existing PostgreSQL databases without schema changes.
-
-## Requirements
-
-- Python 3.11 or higher (3.11 and 3.12 officially supported)
-- A graph database (ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, or NebulaGraph) as target, or **PostgreSQL** for relational graph storage
-- Optional: PostgreSQL for SQL data sources and 3NF schema inference
-- Optional extras (see [Installation](getting_started/installation.md)): `dev` (tests and typing), `docs` (MkDocs), `plot` (`plot_manifest` via `pygraphviz`; system Graphviz required)
-- Full dependency list in `pyproject.toml`
+- **One manifest, many backends** — ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph, PostgreSQL, or a GraFlo file backend on disk.
+- **Graph DB migration** — Move Neo4j, ArangoDB, or a file backend to **any** supported target (including PostgreSQL) with `GraphEngine.migrate_graph()` — no manifest required. See [Graph DB migration guide](guides/graph_db_migration.md).
+- **Explicit identities** — upsert on keys instead of blind duplication.
+- **Reusable ingestion** — actor pipelines bind to files, SQL, SPARQL/RDF, APIs, or in-memory batches.
+- **Schema as contract** — validated at `finish_init`; migrations via `migrate_schema`.
+- **Manifest as linked data** — export/restore as RDF via the [GraFlo ontology](concepts/schema/ontology.md).
 
 ## Contributing
 
-We welcome contributions! Please check out our [Contributing Guide](contributing.md) for details on how to get started.
+We welcome contributions! See the [Contributing Guide](contributing.md) for setup and workflow.

@@ -17,6 +17,7 @@ from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.graph_types import GraphContainer
 from graflo.architecture.schema import Schema
 from graflo.db.connection import DBConfig
+from graflo.db.identity_inference import compute_hash_identity
 from graflo.db.manager import ConnectionManager
 from graflo.onto import DBType
 
@@ -112,7 +113,13 @@ class DBWriter:
     # ------------------------------------------------------------------
 
     async def _push_vertices(self, gc: GraphContainer, conn_conf: DBConfig) -> None:
-        """Upsert all vertex collections in *gc*, resolving blank nodes."""
+        """Upsert all vertex collections in *gc*.
+
+        Pre-write hooks depend on :attr:`~graflo.architecture.schema.vertex.Vertex.identity_mode`:
+        ``hash`` vertices get deterministic SHA256 ids;
+        ``blank`` vertices get random UUIDs;
+        ``natural`` vertices upsert directly on ``identity`` fields (one or many).
+        """
         vc = self._db_aware_for(conn_conf).vertex_config
         semaphore = asyncio.Semaphore(self.max_concurrent)
 
@@ -121,7 +128,11 @@ class DBWriter:
 
                 def _sync():
                     with ConnectionManager(connection_config=conn_conf) as db:
-                        if vcol in vc.blank_vertices:
+                        if vcol in vc.hash_identity_vertices:
+                            self._assign_hash_identity_ids(
+                                vcol=vcol, data=data, conn_conf=conn_conf
+                            )
+                        elif vcol in vc.blank_vertices:
                             self._assign_blank_vertex_ids(
                                 vcol=vcol, data=data, conn_conf=conn_conf
                             )
@@ -158,6 +169,25 @@ class DBWriter:
             current_value = doc.get(preferred_field)
             if current_value is None or current_value == "":
                 generated = str(uuid4())
+                doc[preferred_field] = generated
+                if default_field != preferred_field and default_field not in doc:
+                    doc[default_field] = generated
+
+    def _assign_hash_identity_ids(
+        self, vcol: str, data: list[dict], conn_conf: DBConfig
+    ) -> None:
+        """Assign deterministic hash-based IDs from hash_identity_properties."""
+        vc = self._db_aware_for(conn_conf).vertex_config
+        vertex = vc.logical._get_vertex_by_name(vcol)
+        source_fields = vertex.hash_identity_properties
+        identity_fields = vc.identity_fields(vcol)
+        default_field = "_key" if conn_conf.connection_type == DBType.ARANGO else "id"
+        preferred_field = identity_fields[0] if identity_fields else default_field
+
+        for doc in data:
+            current_value = doc.get(preferred_field)
+            if current_value is None or current_value == "":
+                generated = compute_hash_identity(doc, source_fields)
                 doc[preferred_field] = generated
                 if default_field != preferred_field and default_field not in doc:
                     doc[default_field] = generated

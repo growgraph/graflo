@@ -39,7 +39,7 @@ jobs:
 
         -   name: Generate ontology visualization
             run: |
-                uv run python docs/scripts/build_ontology_viz.py 
+                uv run python docs/_build/scripts/build_ontology_viz.py 
                 uv run pre-commit run --files docs/assets/graflo-ontology-viz/*.json || true
 
         -   name: Verify committed viz assets are fresh

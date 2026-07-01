@@ -59,7 +59,7 @@ For CSV/TSV files with configurable separator.
 
 ## API Data Sources
 
-REST API ingestion uses **`APIConnector`** in manifest **`bindings`** plus runtime credentials via **`conn_proxy`**. Full guide: **[API connector and pagination](../../concepts/api_connector.md)**.
+REST API ingestion uses **`APIConnector`** in manifest **`bindings`** plus runtime credentials via **`conn_proxy`**. Full guide: **[API connector and pagination](../../concepts/connectors/api_connector.md)**.
 
 ### APIConnector
 
@@ -97,15 +97,15 @@ Key fields:
 - **`response.cursor_path`** — next cursor token for cursor strategy
 - **`response.auto_detect`** — infer unset response paths from the first **object** response body (not array-wrapped `[{...}]` envelopes)
 
-Dot paths support numeric segments for list indexing (e.g. `0.results` when the API returns `[{"results": [...]}]`). See **[Dot paths and response shapes](../../concepts/api_connector.md#dot-paths-and-response-shapes)** in the API connector guide.
+Dot paths support numeric segments for list indexing (e.g. `0.results` when the API returns `[{"results": [...]}]`). See **[Dot paths and response shapes](../../concepts/connectors/api_connector.md#dot-paths-and-response-shapes)** in the API connector guide.
 
-See **[API connector and pagination](../../concepts/api_connector.md)** for loop behaviour, examples per strategy, and field reference.
+See **[API connector and pagination](../../concepts/connectors/api_connector.md)** for loop behaviour, examples per strategy, and field reference.
 
 ### ApiAuth / RestApiConnConfig
 
 Runtime **`base_url`** and credentials (`bearer`, `basic`, `digest`, `api_key`) in **`graflo.hq.connection_provider`**, registered on a **`ConnectionProvider`**.
 
-**Env wiring** — map each `conn_proxy` to env vars (`user_service` → `USER_SERVICE_BASE_URL`, `USER_SERVICE_AUTH_TYPE`, …) and call **`register_all_api_configs_from_env(bindings)`** or **`register_api_config_from_env(conn_proxy)`**. See **[API connector and pagination](../../concepts/api_connector.md)** and **[Example 14](../../examples/example-14.md)**.
+**Env wiring** — map each `conn_proxy` to env vars (`user_service` → `USER_SERVICE_BASE_URL`, `USER_SERVICE_AUTH_TYPE`, …) and call **`register_all_api_configs_from_env(bindings)`** or **`register_api_config_from_env(conn_proxy)`**. See **[API connector and pagination](../../concepts/connectors/api_connector.md)** and **[Example 14](../../examples/example-14.md)**.
 
 ## SQL Data Sources
 
@@ -180,7 +180,7 @@ provider = InMemoryConnectionProvider()
 provider.register_all_api_configs_from_env(bindings=bindings)
 ```
 
-Manual registration remains available via **`register_generalized_config`** + **`RestApiConnConfig`** / **`ApiAuth`** — see [API connector and pagination](../../concepts/api_connector.md).
+Manual registration remains available via **`register_generalized_config`** + **`RestApiConnConfig`** / **`ApiAuth`** — see [API connector and pagination](../../concepts/connectors/api_connector.md).
 
 ### SQL Data Source
 
@@ -198,7 +198,7 @@ source = DataSourceFactory.create_sql_data_source(config)
 
 ### Using with GraphEngine (API via bindings)
 
-API sources are registered automatically when you call **`GraphEngine.define_and_ingest`** with **`bindings`** that include **`APIConnector`** rows and a **`ConnectionProvider`**. See [Quick Start — Using API Data Sources](../../getting_started/quickstart.md#using-api-data-sources) and [API connector and pagination](../../concepts/api_connector.md).
+API sources are registered automatically when you call **`GraphEngine.define_and_ingest`** with **`bindings`** that include **`APIConnector`** rows and a **`ConnectionProvider`**. See [Quick Start — Using API Data Sources](../../getting_started/quickstart.md#using-api-data-sources) and [API connector and pagination](../../concepts/connectors/api_connector.md).
 
 For file/SQL sidecar configs and manual **`DataSourceRegistry`** wiring (non-API sources):
 

@@ -35,7 +35,12 @@ from graflo.architecture.schema.edge import Edge
 from graflo.architecture.graph_types import Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.vertex import VertexConfig
-from graflo.db.conn import Connection, SchemaExistsError, consume_insert_edges_kwargs
+from graflo.db.conn import (
+    Connection,
+    NamespaceNotFoundError,
+    SchemaExistsError,
+    consume_insert_edges_kwargs,
+)
 from graflo.db.cypher import rel_merge_props_map_from_row_index
 from graflo.db.util import serialize_value
 from graflo.filter.onto import FilterExpression
@@ -472,33 +477,37 @@ class FalkordbConnection(Connection):
             except Exception as e:
                 logger.warning(f"Failed to delete graph '{graph_name}': {e}")
 
-    def init_db(self, schema: Schema, recreate_schema: bool) -> None:
-        """Initialize FalkorDB with the given schema.
-
-        Uses schema.metadata.name if database is not set in config.
-
-        If the graph already has nodes and recreate_schema is False, raises
-        SchemaExistsError and the script halts.
-
-        Args:
-            schema: Schema containing graph structure definitions
-            recreate_schema: If True, delete all existing data before initialization.
-                If False and graph has nodes, raises SchemaExistsError.
-        """
-        # Determine graph name: use config.database if set, otherwise use schema.metadata.name
+    def _resolve_graph_name(self, schema: Schema) -> str:
         graph_name = self.config.database
         if not graph_name:
             graph_name = schema.metadata.name
             self.config.database = graph_name
+        return graph_name
 
-        # Select/create the graph
+    def _select_graph(self, graph_name: str) -> None:
         if self.client is None:
             raise RuntimeError("Connection is closed")
         self.graph = self.client.select_graph(graph_name)
         self._graph_name = graph_name
-        logger.info(f"Initialized FalkorDB graph '{graph_name}'")
 
-        # Check if graph already has nodes (schema/graph exists)
+    def ensure_target_namespace(self, schema: Schema, *, create: bool) -> None:
+        """Ensure the FalkorDB graph namespace is selected."""
+        graph_name = self._resolve_graph_name(schema)
+        if self.client is None:
+            raise RuntimeError("Connection is closed")
+        if not create:
+            try:
+                self._select_graph(graph_name)
+                return
+            except Exception as exc:
+                raise NamespaceNotFoundError(
+                    f"FalkorDB graph '{graph_name}' does not exist. "
+                    "Create it manually or call with create_namespace=True."
+                ) from exc
+        self._select_graph(graph_name)
+        logger.info("Selected FalkorDB graph '%s'", graph_name)
+
+    def _node_count(self) -> int:
         try:
             result = self.execute("MATCH (n) RETURN count(n) AS c")
             count = 0
@@ -512,32 +521,46 @@ class FalkordbConnection(Connection):
                         else getattr(record, "c", 0)
                     ) or 0
                     break
-            if count > 0 and not recreate_schema:
-                raise SchemaExistsError(
-                    f"Schema/graph already exists in graph '{graph_name}' ({count} nodes). "
-                    "Set recreate_schema=True to replace, or use clear_data=True before ingestion."
-                )
-        except SchemaExistsError:
-            raise
+            return int(count)
         except Exception as e:
-            logger.debug(f"Could not check graph node count: {e}")
+            logger.debug("Could not check graph node count: %s", e)
+            return 0
 
-        if recreate_schema:
+    def apply_target_schema(
+        self,
+        schema: Schema,
+        *,
+        recreate: bool,
+        create_namespace: bool = True,
+    ) -> None:
+        """Define property indexes for the FalkorDB graph."""
+        graph_name = self._resolve_graph_name(schema)
+        if self._node_count() > 0 and not recreate:
+            raise SchemaExistsError(
+                f"Schema/data already exists in graph '{graph_name}'. "
+                "Set recreate_schema=True to replace, or use clear_data=True "
+                "before ingestion."
+            )
+        if recreate:
             try:
                 self.delete_graph_structure(delete_all=True)
-                logger.debug(f"Cleaned graph '{graph_name}' for fresh start")
+                logger.debug("Cleaned graph '%s' for fresh start", graph_name)
             except Exception as e:
-                logger.debug(f"Recreate schema note for graph '{graph_name}': {e}")
+                logger.debug("Recreate note for graph '%s': %s", graph_name, e)
+        self.define_indexes(schema)
 
-        try:
-            self.define_indexes(schema)
-            logger.debug(f"Defined indexes for graph '{graph_name}'")
-        except Exception as e:
-            logger.error(
-                f"Failed to define indexes for graph '{graph_name}': {e}",
-                exc_info=True,
-            )
-            raise
+    def init_db(
+        self,
+        schema: Schema,
+        recreate_schema: bool = False,
+        *,
+        create_namespace: bool = True,
+    ) -> None:
+        """Convenience wrapper: ensure graph then apply schema."""
+        self.ensure_target_namespace(schema, create=create_namespace)
+        self.apply_target_schema(
+            schema, recreate=recreate_schema, create_namespace=create_namespace
+        )
 
     def clear_data(self, schema: Schema) -> None:
         """Remove all data from the graph without dropping the schema.

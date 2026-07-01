@@ -1,0 +1,20 @@
+{
+    "created_at": "2026-06-30T10:12:19.761752+00:00",
+    "edges": {},
+    "graflo_version": "1.8.10",
+    "schema_hash": "845657d27e883d8323ff7677561e74d7c10a62e4def643514c7f3f5f5db52753",
+    "vertices": {
+        "product": {
+            "chunks": [
+                "vertices/product.000.jsonl.gz"
+            ],
+            "record_count": 150
+        },
+        "supplier": {
+            "chunks": [
+                "vertices/supplier.000.jsonl.gz"
+            ],
+            "record_count": 120
+        }
+    }
+}

@@ -28,7 +28,7 @@ plugins:
 -   glightbox
 -   gen-files:
         scripts:
-        -   docs/gen_pages.py
+        -   docs/_build/gen_pages.py
 -   literate-nav
 -   table-reader: []
 -   mkdocstrings:
@@ -55,23 +55,34 @@ nav:
     -   Quick Start: getting_started/quickstart.md
     -   Creating a Manifest: getting_started/creating_manifest.md
 -   Concepts:
-    -   Concepts Overview: concepts/index.md
-    -   Architecture diagrams: concepts/architecture_diagrams.md
-    -   Core components: concepts/core_components.md
-    -   Features, migration, and practices: concepts/features_and_practices.md
-    -   Manifest evolution: concepts/manifest_evolution.md
-    -   Object storage (S3 staging): concepts/object_storage.md
-    -   Transforms: concepts/transforms.md
-    -   Table connector views and SelectSpec: concepts/table_connector_views.md
-    -   API connector and pagination: concepts/api_connector.md
-    -   Graph export and migration: concepts/graph_export_migration.md
-    -   Runtime connector updates: concepts/runtime_connector_updates.md
-    -   Backend Index Behavior: concepts/backend_indexes.md
-    -   Document cast errors and doc error sink: concepts/ingestion_doc_errors.md
--   Model:
-    -   GraFlo ontology (manifest RDF): model/graflo_ontology.md
+    -   Overview: concepts/index.md
+    -   Architecture:
+        -   Diagrams: concepts/architecture/diagrams.md
+        -   Core components: concepts/architecture/core_components.md
+        -   Capabilities: concepts/architecture/capabilities.md
+    -   Schema and manifest:
+        -   Vertex identity: concepts/schema/vertex_identity.md
+        -   Backend indexes: concepts/schema/backend_indexes.md
+        -   Manifest evolution: concepts/schema/manifest_evolution.md
+        -   GraFlo ontology: concepts/schema/ontology.md
+    -   Ingestion:
+        -   Transforms: concepts/ingestion/transforms.md
+        -   Document cast errors: concepts/ingestion/doc_errors.md
+    -   Connectors:
+        -   Table views and SelectSpec: concepts/connectors/table_views.md
+        -   API connector: concepts/connectors/api_connector.md
+        -   Runtime connector updates: concepts/connectors/runtime_updates.md
+    -   Operations:
+        -   Graph export and migration: concepts/operations/graph_export_migration.md
+        -   Object storage: concepts/operations/object_storage.md
+        -   Migration and practices: concepts/operations/migration_and_practices.md
 -   Guides:
-    -   TigerGraph bulk load (CSV + LOADING JOB): guides/tigergraph_bulk_load.md
+    -   Guides index: guides/index.md
+    -   Graph DB migration: guides/graph_db_migration.md
+    -   Graph export and replay: guides/graph_export_and_replay.md
+    -   API env wiring: guides/api_env_wiring.md
+    -   Identity inference: guides/identity_inference.md
+    -   TigerGraph bulk load: guides/tigergraph_bulk_load.md
 -   Examples:
     -   Examples Index: examples/index.md
     -   1 - Ingest Multiple Tabular Sources (CSV, ArangoDB): examples/example-1.md
@@ -87,6 +98,8 @@ nav:
     -   11 - Flat-row dynamic edges with vertex_router: examples/example-11.md
     -   12 - Vertex Roles and Multi-intent Edges: examples/example-12.md
     -   13 - Graph Export and Migration: examples/example-13.md
+    -   14 - API env wiring: examples/example-14.md
+    -   15 - Identity inference from CSV: examples/example-15.md
 -   API Reference: reference/
 -   Contributing: contributing.md
 markdown_extensions:

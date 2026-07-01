@@ -62,7 +62,7 @@ bindings: {}
 Defines the graph contract.
 
 - `metadata`: human-facing identity (`name`, optional `version`)
-- `graph.vertex_config`: vertex types, **`properties`**, identity keys; optional **`blank: true`** for placeholder vertices (auto **`id`** identity)
+- `graph.vertex_config`: vertex types, **`properties`**, identity keys; optional **`blank: true`** for placeholder vertices (auto **`id`** identity); optional **`hash_identity_properties`** for hash-derived synthetic ids (see [Vertex identity modes](../concepts/schema/vertex_identity.md))
 - `graph.edge_config`: source/target relationships, optional `relation`, optional **`directed`** (default `true`), edge **`properties`**, `identities`
 - `db_profile`: DB-specific physical behavior (indexes, naming, **`default_property_values`** for TigerGraph GSQL `DEFAULT` on vertex/edge attributes, backend details)
 
@@ -77,7 +77,7 @@ Defines ingestion behavior.
 - Optional per-resource flags include:
   - **`drop_trivial_input_fields`** (default `false`): when `true`, top-level keys whose value is `null` or `""` are removed **before** the actor pipeline runs. Only the top-level dict is filtered (nested structures are not recursed); numeric zero and boolean false are kept. Useful for sparse wide tables (CSV/SQL) without custom transforms.
   - **`fail_fast`** (default `false`): when `true`, transform steps fail if required input keys are missing (rename: every source key must be present; call: every `input` key). When `false`, rename applies only to keys present in the row and functional transforms skip the step when inputs are missing.
-  - **`tolerate_transform_errors`** (default `true`): when `true`, a failing transform nulls its declared outputs and the pipeline continues; when `false`, transform exceptions fail the document (subject to caster **`on_doc_error`**). See [Document cast errors](../concepts/ingestion_doc_errors.md).
+  - **`tolerate_transform_errors`** (default `true`): when `true`, a failing transform nulls its declared outputs and the pipeline continues; when `false`, transform exceptions fail the document (subject to caster **`on_doc_error`**). See [Document cast errors](../concepts/ingestion/doc_errors.md).
 
 **TigerGraph attribute defaults (schema / `db_profile`, not ingestion):** under `schema.db_profile`, optional **`default_property_values`** declares GSQL `DEFAULT` literals per logical vertex property and per logical edge type, for example:
 
@@ -98,7 +98,7 @@ db_profile:
 
 This corresponds to overriding TigerGraph’s built-in defaults (e.g. `reading FLOAT DEFAULT -1.0`); see the [TigerGraph “Defining a Graph Schema”](https://docs.tigergraph.com/gsql-ref/4.2/ddl-and-loading/defining-a-graph-schema) documentation.
 
-**TigerGraph edge direction (schema / `db_profile`):** logical **`directed: false`** on an edge becomes `UNDIRECTED EDGE` in GSQL. For bidirectional *directed* pairs on TigerGraph only, declare one forward logical edge and set **`reverse_edge`** on the matching `edge_specs` entry (GSQL `WITH REVERSE_EDGE`) instead of authoring a second logical edge — or use [manifest evolution `AddInverseEdgesOp`](../concepts/manifest_evolution.md#5-add-inverse-edge-relations-bidirectional-modeling) for a portable second edge. See [Core components — Edge](../concepts/core_components.md#edge).
+**TigerGraph edge direction (schema / `db_profile`):** logical **`directed: false`** on an edge becomes `UNDIRECTED EDGE` in GSQL. For bidirectional *directed* pairs on TigerGraph only, declare one forward logical edge and set **`reverse_edge`** on the matching `edge_specs` entry (GSQL `WITH REVERSE_EDGE`) instead of authoring a second logical edge — or use [manifest evolution `AddInverseEdgesOp`](../concepts/schema/manifest_evolution.md#5-add-inverse-edge-relations-bidirectional-modeling) for a portable second edge. See [Core components — Edge](../concepts/architecture/core_components.md#edge).
 
 Use `ingestion_model` for **how source records become vertices/edges**.
 
@@ -106,7 +106,7 @@ Use `ingestion_model` for **how source records become vertices/edges**.
 
 Defines source wiring (`Bindings`).
 
-- **`connectors`**: list of `FileConnector`, `TableConnector`, `SparqlConnector`, or `APIConnector` entries (paths, tables, RDF/SPARQL sources, or REST API paths). For **`TableConnector`**, optional **`filters`** push down SQL `WHERE` clauses using the same **`FilterExpression`** shorthand as vertex **`filters`** in the schema (`AND`, `OR`, `NOT`, `IF_THEN` as YAML keys). Optional nested **`time_filter`** (**`ColumnTimeFilter`**) restricts rows by a date/time column. **`APIConnector`** declares the endpoint **`path`**, HTTP method, static **`params`**, and optional **`pagination`** (`offset`, `page`, or `cursor` strategy — see [API connector and pagination](../concepts/api_connector.md)). Register **`base_url`** and credentials at runtime via **`connector_connection`** → **`conn_proxy`** (manually or with **`register_all_api_configs_from_env`** — see [Example 14](../examples/example-14.md)). See also [Runtime connector updates](../concepts/runtime_connector_updates.md) and [Table connector views](../concepts/table_connector_views.md#bindings-filter-cookbook-tableconnectorfilters).
+- **`connectors`**: list of `FileConnector`, `TableConnector`, `SparqlConnector`, or `APIConnector` entries (paths, tables, RDF/SPARQL sources, or REST API paths). For **`TableConnector`**, optional **`filters`** push down SQL `WHERE` clauses using the same **`FilterExpression`** shorthand as vertex **`filters`** in the schema (`AND`, `OR`, `NOT`, `IF_THEN` as YAML keys). Optional nested **`time_filter`** (**`ColumnTimeFilter`**) restricts rows by a date/time column. **`APIConnector`** declares the endpoint **`path`**, HTTP method, static **`params`**, and optional **`pagination`** (`offset`, `page`, or `cursor` strategy — see [API connector and pagination](../concepts/connectors/api_connector.md)). Register **`base_url`** and credentials at runtime via **`connector_connection`** → **`conn_proxy`** (manually or with **`register_all_api_configs_from_env`** — see [Example 14](../examples/example-14.md)). See also [Runtime connector updates](../concepts/connectors/runtime_updates.md) and [Table connector views](../concepts/connectors/table_views.md#bindings-filter-cookbook-tableconnectorfilters).
 - **`resource_connector`**: list of `{"resource": "<ingestion resource name>", "connector": "<connector name or hash>"}` rows linking `IngestionModel.resources[*].name` to a connector. The same `resource` may appear on **multiple rows** with different `connector` values (several physical sources for one pipeline).
 - **`connector_connection`** (optional): list of `{"connector": "<connector name or hash>", "conn_proxy": "<label>"}` rows. This keeps manifests **non-secret**: only proxy *names* appear in YAML; runtime code registers each `conn_proxy` on a `ConnectionProvider` with the real `GeneralizedConnConfig` (PostgreSQL, SPARQL, **REST API**, etc.).
 
@@ -165,7 +165,7 @@ ingestion_model = manifest.require_ingestion_model()
 
 ## Evolving a manifest
 
-To apply structured changes to an existing manifest (remove vertex types, merge types into one name, and update resources and `db_profile` in sync), use **`graflo.architecture.evolution`**. That layer operates on the manifest contract only; it does not migrate data already stored in a graph database—plan to **reingest** after deploying the new manifest. See [Manifest evolution](../concepts/manifest_evolution.md) for operations, `manifest_hash`, and examples.
+To apply structured changes to an existing manifest (remove vertex types, merge types into one name, and update resources and `db_profile` in sync), use **`graflo.architecture.evolution`**. That layer operates on the manifest contract only; it does not migrate data already stored in a graph database—plan to **reingest** after deploying the new manifest. See [Manifest evolution](../concepts/schema/manifest_evolution.md) for operations, `manifest_hash`, and examples.
 
 ## Minimal run path
 
@@ -184,8 +184,8 @@ engine.define_and_ingest(
 
 ## See also
 
-- [API connector and pagination](../concepts/api_connector.md)
-- [Manifest evolution](../concepts/manifest_evolution.md)
+- [API connector and pagination](../concepts/connectors/api_connector.md)
+- [Manifest evolution](../concepts/schema/manifest_evolution.md)
 - [Quick Start](quickstart.md)
 - [Concepts](../concepts/index.md)
 - [Examples](../examples/index.md)

@@ -39,4 +39,4 @@ uv run python migrate.py postgres --from-backend artifacts/neo4j-backend --recre
 | `migrate.py` | GraFlo file backend (or Neo4j) → ArangoDB / PostgreSQL. |
 | `_common.py` | Shared config helpers and click options. |
 
-Documentation: [Example 13](../../docs/examples/example-13.md) · [Graph export and migration](../../docs/concepts/graph_export_migration.md)
+Documentation: [Example 13](../../docs/examples/example-13.md) · [Graph export and migration](../../docs/concepts/operations/graph_export_migration.md)

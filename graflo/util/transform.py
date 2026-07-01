@@ -333,11 +333,9 @@ def parse_multi_item(s, mapper: dict, direct: list):
         defaultdict: Parsed items with lists as values.
 
     Example:
-        >>> s = '[name: John, age: 30] [name: Jane, age: 25]'
-        >>> mapper = {"name": "full_name"}
-        >>> direct = ["age"]
-        >>> parse_multi_item(s, mapper, direct)
-        defaultdict(list, {'full_name': ['John', 'Jane'], 'age': ['30', '25']})
+        Parsing ``'[name: John, age: 30] [name: Jane, age: 25]'`` with
+        ``mapper={"name": "full_name"}`` and ``direct=["age"]`` produces grouped
+        lists under each mapped key.
     """
     if "'" in s:
         items_str = re.findall(r"\"(.*?)\"", s) + re.findall(r"\'(.*?)\'", s)

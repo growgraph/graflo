@@ -1,3 +1,0 @@
-# `graflo.util`
-
-::: graflo.util

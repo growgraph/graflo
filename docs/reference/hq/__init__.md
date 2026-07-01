@@ -1,3 +1,0 @@
-# `graflo.hq`
-
-::: graflo.hq

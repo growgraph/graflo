@@ -1,3 +1,0 @@
-# `graflo.migrate`
-
-::: graflo.migrate

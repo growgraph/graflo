@@ -87,7 +87,11 @@ from graflo.architecture.schema.edge import Edge
 from graflo.architecture.graph_types import Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.vertex import VertexConfig
-from graflo.db.conn import Connection, SchemaExistsError, consume_insert_edges_kwargs
+from graflo.db.conn import (
+    Connection,
+    SchemaExistsError,
+    consume_insert_edges_kwargs,
+)
 from graflo.db.cypher import rel_merge_props_map_from_row_props
 from graflo.filter.onto import FilterExpression
 from graflo.onto import AggregationType
@@ -581,49 +585,59 @@ class MemgraphConnection(Connection):
                 except Exception as e:
                     logger.warning(f"Failed to delete nodes with label '{label}': {e}")
 
-    def init_db(self, schema: Schema, recreate_schema: bool) -> None:
-        """Initialize Memgraph with the given schema.
+    def ensure_target_namespace(self, schema: Schema, *, create: bool) -> None:
+        """Memgraph uses a single database per instance; record schema name only."""
+        self._database_name = schema.metadata.name
+        logger.info("Using Memgraph with schema '%s'", self._database_name)
 
-        If the database already has nodes and recreate_schema is False, raises
-        SchemaExistsError and the script halts.
-
-        Parameters
-        ----------
-        schema : Schema
-            Schema containing graph structure definitions
-        recreate_schema : bool
-            If True, delete all existing data before initialization.
-            If False and database has nodes, raises SchemaExistsError.
-        """
+    def _node_count(self) -> int:
         if self.conn is None:
             raise RuntimeError("Connection is closed")
-
-        self._database_name = schema.metadata.name
-        logger.info(f"Initialized Memgraph with schema '{self._database_name}'")
-
-        # Check if database already has nodes (schema/graph exists)
         cursor = self.conn.cursor()
         cursor.execute("MATCH (n) RETURN count(n) AS c")
         row = cursor.fetchone()
         cursor.close()
-        count = 0
-        if row is not None:
-            count = (
-                row[0]
-                if isinstance(row, (list, tuple))
-                else getattr(row, "c", row.get("c", 0) if hasattr(row, "get") else 0)
-            )
-        if count > 0 and not recreate_schema:
-            raise SchemaExistsError(
-                f"Schema/graph already exists ({count} nodes). "
-                "Set recreate_schema=True to replace, or use clear_data=True before ingestion."
-            )
+        if row is None:
+            return 0
+        count = (
+            row[0]
+            if isinstance(row, (list, tuple))
+            else getattr(row, "c", row.get("c", 0) if hasattr(row, "get") else 0)
+        )
+        return int(count)
 
-        if recreate_schema:
+    def apply_target_schema(
+        self,
+        schema: Schema,
+        *,
+        recreate: bool,
+        create_namespace: bool = True,
+    ) -> None:
+        """Validate graph state; Memgraph schema is implicit (labels on write)."""
+        if self._node_count() > 0 and not recreate:
+            raise SchemaExistsError(
+                "Schema/data already exists in Memgraph. "
+                "Set recreate_schema=True to replace, or use clear_data=True "
+                "before ingestion."
+            )
+        if recreate:
             try:
                 self.delete_graph_structure(delete_all=True)
             except Exception as e:
-                logger.warning(f"Error clearing data on recreate_schema: {e}")
+                logger.warning("Error clearing data on recreate: %s", e)
+
+    def init_db(
+        self,
+        schema: Schema,
+        recreate_schema: bool = False,
+        *,
+        create_namespace: bool = True,
+    ) -> None:
+        """Convenience wrapper: ensure namespace then apply schema."""
+        self.ensure_target_namespace(schema, create=create_namespace)
+        self.apply_target_schema(
+            schema, recreate=recreate_schema, create_namespace=create_namespace
+        )
 
     def clear_data(self, schema: Schema) -> None:
         """Remove all data from the graph without dropping the schema.

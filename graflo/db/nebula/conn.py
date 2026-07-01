@@ -13,7 +13,12 @@ from graflo.architecture.schema.edge import Edge
 from graflo.architecture.graph_types import Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.vertex import FieldType, VertexConfig
-from graflo.db.conn import Connection, SchemaExistsError, consume_insert_edges_kwargs
+from graflo.db.conn import (
+    Connection,
+    NamespaceNotFoundError,
+    SchemaExistsError,
+    consume_insert_edges_kwargs,
+)
 from graflo.db.nebula.adapter import (
     NebulaClientAdapter,
     NebulaResultSet,
@@ -400,47 +405,96 @@ class NebulaConnection(Connection):
     # init_db
     # ------------------------------------------------------------------
 
-    def init_db(self, schema: Schema, recreate_schema: bool) -> None:
+    def _resolve_space_name(self, schema: Schema) -> str:
         space_name = self.config.schema_name
         if not space_name:
             space_name = schema.metadata.name
             self.config.schema_name = space_name
+        return space_name
 
-        if recreate_schema:
+    def _space_exists(self, space_name: str) -> bool:
+        try:
+            rs = self._adapter.execute("SHOW SPACES")
+            names = {row.get("Name", row.get("name", "")) for row in rs.rows_as_dicts()}
+            return space_name in names
+        except Exception:
             try:
-                self.delete_database(space_name)
+                self._adapter.use_space(space_name)
+                return True
             except Exception:
-                pass
-            self.create_database(space_name)
-        else:
-            try:
+                return False
+
+    def ensure_target_namespace(self, schema: Schema, *, create: bool) -> None:
+        """Ensure the NebulaGraph space exists."""
+        space_name = self._resolve_space_name(schema)
+        if self._space_exists(space_name):
+            wait_for_space_ready(
+                self._adapter,
+                space_name,
+                max_retries=_SCHEMA_WAIT_RETRIES,
+                interval=_SCHEMA_WAIT_INTERVAL,
+            )
+            self._use_space(space_name)
+            return
+        if not create:
+            raise NamespaceNotFoundError(
+                f"NebulaGraph space '{space_name}' does not exist. "
+                "Create it manually or call with create_namespace=True."
+            )
+        self.create_database(space_name)
+
+    def _schema_has_artifacts(self) -> bool:
+        try:
+            rs = self._execute("SHOW TAGS")
+            return bool(rs.rows_as_dicts())
+        except Exception:
+            return False
+
+    def apply_target_schema(
+        self,
+        schema: Schema,
+        *,
+        recreate: bool,
+        create_namespace: bool = True,
+    ) -> None:
+        """Define tags, edge types, and indexes in the current space."""
+        space_name = self._resolve_space_name(schema)
+        if recreate:
+            if create_namespace:
+                try:
+                    self.delete_database(space_name)
+                except Exception:
+                    pass
                 self.create_database(space_name)
-            except Exception:
-                # Space may already exist
-                wait_for_space_ready(
-                    self._adapter,
-                    space_name,
-                    max_retries=_SCHEMA_WAIT_RETRIES,
-                    interval=_SCHEMA_WAIT_INTERVAL,
-                )
-                self._use_space(space_name)
-
-            # Check if tags already exist
-            try:
-                rs = self._execute("SHOW TAGS")
-                rows = rs.rows_as_dicts()
-                if rows:
-                    raise SchemaExistsError(
-                        f"Schema already exists in space '{space_name}' "
-                        f"({len(rows)} tags). Set recreate_schema=True to replace."
-                    )
-            except SchemaExistsError:
-                raise
-            except Exception:
-                pass
-
+            else:
+                try:
+                    rs = self._execute("SHOW TAGS")
+                    for row in rs.rows_as_dicts():
+                        tag = row.get("Name", row.get("name", ""))
+                        if tag:
+                            self._execute(f"DROP TAG IF EXISTS `{tag}`")
+                except Exception as e:
+                    logger.warning("Failed to drop tags during recreate: %s", e)
+        elif self._schema_has_artifacts():
+            raise SchemaExistsError(
+                f"Schema already exists in space '{space_name}'. "
+                "Set recreate_schema=True to replace."
+            )
         self.define_schema(schema)
         self.define_indexes(schema)
+
+    def init_db(
+        self,
+        schema: Schema,
+        recreate_schema: bool = False,
+        *,
+        create_namespace: bool = True,
+    ) -> None:
+        """Convenience wrapper: ensure space then apply schema."""
+        self.ensure_target_namespace(schema, create=create_namespace)
+        self.apply_target_schema(
+            schema, recreate=recreate_schema, create_namespace=create_namespace
+        )
 
     # ------------------------------------------------------------------
     # Data clearing

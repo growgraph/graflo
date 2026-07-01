@@ -28,6 +28,8 @@ from .conn import (
     Connection,
     ConnectionType,
     InsertEdgesKwArgs,
+    NamespaceNotFoundError,
+    SchemaExistsError,
     consume_insert_edges_kwargs,
 )
 from .cypher import (
@@ -64,6 +66,8 @@ __all__ = [
     "Connection",
     "ConnectionType",
     "InsertEdgesKwArgs",
+    "NamespaceNotFoundError",
+    "SchemaExistsError",
     "consume_insert_edges_kwargs",
     "cypher_map_key",
     "cypher_string_literal",

@@ -80,4 +80,4 @@ provider.register_api_config_from_env(conn_proxy="user_service")
 - `examples/14-api-env-wiring/api_env_wiring.py`
 - `examples/14-api-env-wiring/README.md`
 
-See [API connector and pagination](../concepts/api_connector.md) for auth types, pagination, and manual registration.
+See [API connector and pagination](../concepts/connectors/api_connector.md) for auth types, pagination, and manual registration.

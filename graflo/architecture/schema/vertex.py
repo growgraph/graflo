@@ -20,7 +20,7 @@ from __future__ import annotations
 import ast
 import json
 import logging
-from typing import Any, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 from pydantic import (
     ConfigDict,
@@ -39,6 +39,7 @@ logger = logging.getLogger(__name__)
 # Type accepted for vertex properties before normalization (for use by Edge/WeightConfig)
 PropertiesInputType = list[str] | list["Field"] | list[dict[str, Any]]
 VertexName: TypeAlias = str
+IdentityMode: TypeAlias = Literal["natural", "hash", "blank"]
 
 
 class FieldType(BaseEnum):
@@ -310,6 +311,14 @@ class Vertex(ConfigBaseModel):
             "True when this vertex has no natural identity and gets an auto-generated ID."
         ),
     )
+    hash_identity_properties: list[str] = PydanticField(
+        default_factory=list,
+        description=(
+            "Source field names whose combined values are SHA256-hashed to produce "
+            "a deterministic synthetic 'id'. Non-empty only when no natural key is "
+            "narrow enough to store directly. Distinct from blank (random UUID)."
+        ),
+    )
 
     @field_validator("properties", mode="before")
     @classmethod
@@ -348,17 +357,30 @@ class Vertex(ConfigBaseModel):
             return v
         raise ValueError("identity must be a list[str]")
 
+    @field_validator("hash_identity_properties", mode="before")
+    @classmethod
+    def convert_hash_identity_properties(cls, v: Any) -> Any:
+        if v is None:
+            return []
+        if isinstance(v, tuple):
+            return list(v)
+        if isinstance(v, list):
+            return v
+        raise ValueError("hash_identity_properties must be a list[str]")
+
     @model_validator(mode="after")
     def set_identity(self) -> "Vertex":
         merged_properties = _merge_duplicate_fields(self.name, list(self.properties))
         identity_names = _dedupe_ordered(list(self.identity))
+        hash_identity_names = _dedupe_ordered(list(self.hash_identity_properties))
         seen_names = {f.name for f in merged_properties}
         augmented = list(merged_properties)
-        for name in identity_names:
+        for name in identity_names + hash_identity_names:
             if name not in seen_names:
                 augmented.append(Field(name=name, type=None))
                 seen_names.add(name)
         object.__setattr__(self, "identity", identity_names)
+        object.__setattr__(self, "hash_identity_properties", hash_identity_names)
         object.__setattr__(self, "properties", augmented)
         return self
 
@@ -366,6 +388,15 @@ class Vertex(ConfigBaseModel):
     def property_names(self) -> list[str]:
         """Property names as strings (Field.name for each entry)."""
         return [field.name for field in self.properties]
+
+    @property
+    def identity_mode(self) -> IdentityMode:
+        """Runtime identity mode: natural upsert, hash-derived id, or blank uuid."""
+        if self.blank:
+            return "blank"
+        if self.hash_identity_properties:
+            return "hash"
+        return "natural"
 
     def get_properties(self) -> list[Field]:
         return self.properties
@@ -425,13 +456,24 @@ class VertexConfig(ConfigBaseModel):
         """Vertex names marked blank (no natural identity; auto-generated ID)."""
         return [v.name for v in self.vertices if v.blank]
 
+    @property
+    def hash_identity_vertices(self) -> list[str]:
+        """Vertex names using hash-derived synthetic identity fields."""
+        return [v.name for v in self.vertices if v.hash_identity_properties]
+
+    def vertices_by_identity_mode(self, mode: IdentityMode) -> list[str]:
+        """Vertex names whose resolved identity mode matches *mode*."""
+        return [v.name for v in self.vertices if v.identity_mode == mode]
+
     def _normalize_vertex_identities(
         self,
     ) -> None:
         blank_id_field = "id"
         for vertex in self.vertices:
             if not vertex.identity:
-                if vertex.blank:
+                if vertex.hash_identity_properties:
+                    vertex.identity = [blank_id_field]
+                elif vertex.blank:
                     vertex.identity = [blank_id_field]
                 elif self.identity_from_all_properties:
                     vertex.identity = list(vertex.property_names)
@@ -440,7 +482,14 @@ class VertexConfig(ConfigBaseModel):
                         f"Vertex '{vertex.name}' must define identity fields"
                     )
             vertex.identity = _dedupe_ordered(list(vertex.identity))
-            missing = [f for f in vertex.identity if f not in vertex.property_names]
+            vertex.hash_identity_properties = _dedupe_ordered(
+                list(vertex.hash_identity_properties)
+            )
+            missing = [
+                field_name
+                for field_name in vertex.identity + vertex.hash_identity_properties
+                if field_name not in vertex.property_names
+            ]
             for field_name in missing:
                 vertex.properties.append(Field(name=field_name, type=None))
 

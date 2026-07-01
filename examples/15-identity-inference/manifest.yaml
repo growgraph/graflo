@@ -1,0 +1,38 @@
+schema:
+    metadata:
+        name: catalog
+    graph:
+        vertex_config:
+            identity_from_all_properties: true
+            vertices:
+            -   name: product
+                properties:
+                -   org
+                -   product_code
+                -   name
+                -   category
+                -   updated_at
+            -   name: supplier
+                properties:
+                -   supplier_code
+                -   name
+                -   country
+        edge_config:
+            edges: []
+    db_profile: {}
+ingestion_model:
+    resources:
+    -   name: products
+        pipeline:
+        -   vertex: product
+    -   name: suppliers
+        pipeline:
+        -   vertex: supplier
+bindings:
+    connectors:
+    -   regex: "^products\\.csv$"
+        sub_path: data
+        resource_name: products
+    -   regex: "^suppliers\\.csv$"
+        sub_path: data
+        resource_name: suppliers
