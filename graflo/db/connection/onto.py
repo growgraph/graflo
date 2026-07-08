@@ -142,6 +142,17 @@ class DBConfig(BaseSettings, abc.ABC):
     request_timeout: float = Field(
         default=60.0, description="Request timeout in seconds"
     )
+    proxy_name: str | None = Field(
+        default=None,
+        description=(
+            "Non-secret runtime handle. Matches conn_proxy in manifest bindings. "
+            "Must be unique per registry instance."
+        ),
+    )
+    alias: str | None = Field(
+        default=None,
+        description="Human-friendly display label for studio and registry views.",
+    )
 
     @abc.abstractmethod
     def _get_default_port(self) -> int:
