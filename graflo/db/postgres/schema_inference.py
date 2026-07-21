@@ -71,9 +71,22 @@ class PostgresSchemaInferencer:
             fields = []
             for col in columns:
                 field_name = col.name
-                raw_type = self.type_mapper.map_type(col.type)
-                field_type = FieldType(raw_type) if raw_type else None
-                fields.append(Field(name=field_name, type=field_type))
+                raw_type, item_type = self.type_mapper.map_field(col.type)
+                if raw_type == FieldType.LIST.value:
+                    if item_type is None:
+                        # Avoid inventing a wrong scalar; leave untyped rather than LIST without item
+                        fields.append(Field(name=field_name, type=None))
+                    else:
+                        fields.append(
+                            Field(
+                                name=field_name,
+                                type=FieldType.LIST,
+                                item_type=FieldType(item_type),
+                            )
+                        )
+                else:
+                    field_type = FieldType(raw_type) if raw_type else None
+                    fields.append(Field(name=field_name, type=field_type))
 
             # Create vertex
             vertex = Vertex(
@@ -109,6 +122,9 @@ class PostgresSchemaInferencer:
         """
         # First try PostgreSQL type mapping
         mapped_type = self.type_mapper.map_type(pg_type)
+        if mapped_type == FieldType.LIST.value:
+            # Sampling does not refine LIST; caller should use map_field for item_type
+            return mapped_type
 
         # If we have a connection, sample data to refine the type
         if self.conn is None:
@@ -248,15 +264,28 @@ class PostgresSchemaInferencer:
         # Create Field objects with types for each weight column
         direct_weights = []
         for col in weight_columns:
-            # Infer type: use PostgreSQL type first, then sample if needed
-            raw_type = self._infer_type_from_samples(
+            raw_type, item_type = self.type_mapper.map_field(col.type)
+            if raw_type == FieldType.LIST.value:
+                if item_type is None:
+                    direct_weights.append(Field(name=col.name, type=None))
+                else:
+                    direct_weights.append(
+                        Field(
+                            name=col.name,
+                            type=FieldType.LIST,
+                            item_type=FieldType(item_type),
+                        )
+                    )
+                continue
+            # Refine non-list types from samples when useful
+            refined = self._infer_type_from_samples(
                 edge_table_info.name,
                 edge_table_info.schema_name,
                 col.name,
                 col.type,
             )
             direct_weights.append(
-                Field(name=col.name, type=FieldType(raw_type) if raw_type else None)
+                Field(name=col.name, type=FieldType(refined) if refined else None)
             )
 
         logger.debug(

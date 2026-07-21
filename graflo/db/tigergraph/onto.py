@@ -8,7 +8,7 @@ Universal types (FieldType enum) are defined in graflo.architecture.vertex.
 This module provides TigerGraph-specific mappings and aliases.
 """
 
-from graflo.architecture.schema.vertex import FieldType
+from graflo.architecture.schema.vertex import SCALAR_FIELD_TYPE_VALUES, FieldType
 
 # Type aliases for TigerGraph
 # Maps common type name variants to standard FieldType values
@@ -21,6 +21,5 @@ TIGERGRAPH_TYPE_ALIASES: dict[str, str] = {
     "TIME": FieldType.DATETIME.value,
 }
 
-# Set of valid TigerGraph type strings (FieldType enum values)
-# FieldType enum values are already in TigerGraph format
-VALID_TIGERGRAPH_TYPES: set[str] = {ft.value for ft in FieldType}
+# Bare scalar TigerGraph types (LIST is compositional: LIST<item>, not a bare type)
+VALID_TIGERGRAPH_TYPES: set[str] = set(SCALAR_FIELD_TYPE_VALUES)

@@ -10,8 +10,15 @@ from psycopg2.extras import execute_values
 
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.edge import Edge
-from graflo.architecture.schema.vertex import VertexConfig
+from graflo.architecture.schema.vertex import (
+    Field,
+    FieldType,
+    VertexConfig,
+    field_type_value,
+    is_list_field_type,
+)
 from graflo.db.conn import NamespaceNotFoundError, SchemaExistsError
+from graflo.db.field_type_support import assert_field_type_supported
 from graflo.onto import AggregationType, DBType
 
 if TYPE_CHECKING:
@@ -35,6 +42,30 @@ class _PostgresTargetHost(Protocol):
 logger = logging.getLogger(__name__)
 
 _PG_TEXT = "TEXT"
+
+_LIST_ITEM_TO_PG_ARRAY: dict[str, str] = {
+    FieldType.INT.value: "INTEGER[]",
+    FieldType.UINT.value: "INTEGER[]",
+    FieldType.FLOAT.value: "DOUBLE PRECISION[]",
+    FieldType.DOUBLE.value: "DOUBLE PRECISION[]",
+    FieldType.BOOL.value: "BOOLEAN[]",
+    FieldType.STRING.value: "TEXT[]",
+    FieldType.DATETIME.value: "TEXT[]",
+}
+
+
+def _pg_column_type_for_field(field: Field) -> str:
+    """Map a Field to a PostgreSQL column type (arrays for LIST; TEXT otherwise)."""
+    assert_field_type_supported(DBType.POSTGRES, field)
+    if is_list_field_type(field.type):
+        item_val = field_type_value(field.item_type)
+        if item_val is None or item_val not in _LIST_ITEM_TO_PG_ARRAY:
+            raise ValueError(
+                f"Field '{field.name}': cannot emit PostgreSQL array type for "
+                f"LIST item_type '{item_val}'"
+            )
+        return _LIST_ITEM_TO_PG_ARRAY[item_val]
+    return _PG_TEXT
 
 
 def _pg_schema_name(config) -> str:
@@ -121,6 +152,9 @@ class PostgresTargetWriteMixin:
 
     def define_schema(self, schema: Schema) -> None:
         self._target_schema = schema
+        from graflo.db.field_type_support import assert_schema_field_types_supported
+
+        assert_schema_field_types_supported(DBType.POSTGRES, schema)
         self._define_postgres_tables(schema)
 
     def define_vertex_classes(self, schema: Schema) -> None:
@@ -244,7 +278,7 @@ class PostgresTargetWriteMixin:
     def _define_vertex_tables(self, schema: Schema) -> None:
         pg_schema = _pg_schema_name(self.config)
         for vertex in schema.core_schema.vertex_config.vertices:
-            columns = {f.name: _PG_TEXT for f in vertex.properties}
+            columns = {f.name: _pg_column_type_for_field(f) for f in vertex.properties}
             for ident in vertex.identity:
                 columns.setdefault(ident, _PG_TEXT)
             if not columns:
@@ -285,7 +319,7 @@ class PostgresTargetWriteMixin:
             if tgt_fields:
                 tgt_pk = tgt_fields[0]
 
-        weight_cols = [f.name for f in edge.properties] if edge.properties else []
+        weight_cols = list(edge.properties) if edge.properties else []
         col_defs: list[sql.Composable] = [
             sql.SQL("{} BIGSERIAL PRIMARY KEY").format(sql.Identifier("id")),
             sql.SQL("{} {} NOT NULL").format(
@@ -295,9 +329,12 @@ class PostgresTargetWriteMixin:
                 sql.Identifier("target_id"), sql.SQL(_PG_TEXT)
             ),
         ]
-        for col in weight_cols:
+        for field in weight_cols:
             col_defs.append(
-                sql.SQL("{} {}").format(sql.Identifier(col), sql.SQL(_PG_TEXT))
+                sql.SQL("{} {}").format(
+                    sql.Identifier(field.name),
+                    sql.SQL(_pg_column_type_for_field(field)),
+                )
             )
         fk_clauses: list[sql.Composable] = []
         fk_source = sql.SQL("FOREIGN KEY (source_id) REFERENCES {}.{} ({})").format(

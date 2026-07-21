@@ -12,7 +12,7 @@ from graflo.architecture.schema.vertex import Field
 from graflo.db.nebula.util import (
     escape_nebula_string,
     make_vid,
-    nebula_type,
+    nebula_type_for_field,
     serialize_nebula_value,
 )
 
@@ -41,7 +41,7 @@ def drop_space_ngql(space_name: str) -> str:
 def create_tag_ngql(tag_name: str, fields: list[Field]) -> str:
     """``CREATE TAG IF NOT EXISTS Tag(prop type, ...)``."""
     if fields:
-        cols = ", ".join(f"`{f.name}` {nebula_type(f.type)}" for f in fields)
+        cols = ", ".join(f"`{f.name}` {nebula_type_for_field(f)}" for f in fields)
         return f"CREATE TAG IF NOT EXISTS `{tag_name}` ({cols})"
     return f"CREATE TAG IF NOT EXISTS `{tag_name}` ()"
 
@@ -49,7 +49,7 @@ def create_tag_ngql(tag_name: str, fields: list[Field]) -> str:
 def create_edge_type_ngql(edge_type: str, fields: list[Field] | None = None) -> str:
     """``CREATE EDGE IF NOT EXISTS EdgeType(prop type, ...)``."""
     if fields:
-        cols = ", ".join(f"`{f.name}` {nebula_type(f.type)}" for f in fields)
+        cols = ", ".join(f"`{f.name}` {nebula_type_for_field(f)}" for f in fields)
         return f"CREATE EDGE IF NOT EXISTS `{edge_type}` ({cols})"
     return f"CREATE EDGE IF NOT EXISTS `{edge_type}` ()"
 

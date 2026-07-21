@@ -12,10 +12,14 @@ from datetime import date, datetime, time as dt_time
 from decimal import Decimal
 from typing import Any
 
-from graflo.architecture.schema.vertex import FieldType
+from graflo.architecture.schema.vertex import Field, FieldType, is_list_field_type
+from graflo.db.field_type_support import (
+    UnsupportedFieldTypeError,
+    assert_field_type_supported,
+)
 from graflo.db.nebula.adapter import NebulaClientAdapter
 from graflo.filter.onto import FilterExpression
-from graflo.onto import ExpressionFlavor
+from graflo.onto import DBType, ExpressionFlavor
 
 logger = logging.getLogger(__name__)
 
@@ -37,10 +41,24 @@ DEFAULT_NEBULA_TYPE = "string"
 
 
 def nebula_type(ft: FieldType | None) -> str:
-    """Map a graflo ``FieldType`` to the corresponding NebulaGraph type name."""
+    """Map a scalar graflo ``FieldType`` to the corresponding NebulaGraph type name.
+
+    ``LIST`` is not storable as a Nebula property — use :func:`nebula_type_for_field`.
+    """
     if ft is None:
         return DEFAULT_NEBULA_TYPE
+    if is_list_field_type(ft):
+        raise UnsupportedFieldTypeError(
+            "LIST cannot be stored as a NebulaGraph vertex/edge property "
+            "(composite types are query-only). No soft conversion to string/JSON."
+        )
     return FIELD_TYPE_TO_NEBULA.get(ft, DEFAULT_NEBULA_TYPE)
+
+
+def nebula_type_for_field(field: Field) -> str:
+    """Map a ``Field`` to a NebulaGraph DDL type, raising for unsupported types."""
+    assert_field_type_supported(DBType.NEBULA, field)
+    return nebula_type(field.type)
 
 
 # ---------------------------------------------------------------------------

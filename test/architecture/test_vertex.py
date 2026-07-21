@@ -20,8 +20,13 @@ def test_field_with_none_type():
 
 
 def test_field_with_explicit_type():
-    """Test Field creation with explicit types."""
+    """Test Field creation with explicit scalar types."""
     for field_type in FieldType:
+        if field_type == FieldType.LIST:
+            field = Field(name="test", type=field_type, item_type=FieldType.STRING)
+            assert field.type == field_type.value
+            assert field.item_type == FieldType.STRING.value
+            continue
         field = Field(name="test", type=field_type)
         assert field.name == "test"
         assert field.type == field_type.value
@@ -264,8 +269,75 @@ def test_vertex_with_explicit_identity():
 def test_field_all_types():
     """Test all allowed field types."""
     for field_type in FieldType:
+        if field_type == FieldType.LIST:
+            field = Field(
+                name=f"field_{field_type.value.lower()}",
+                type=field_type,
+                item_type=FieldType.INT,
+            )
+            assert field.type == field_type.value
+            assert field.item_type == FieldType.INT.value
+            continue
         field = Field(name=f"field_{field_type.value.lower()}", type=field_type)
         assert field.type == field_type.value
+
+
+def test_list_field_requires_item_type():
+    with pytest.raises(ValueError, match="requires item_type"):
+        Field(name="tags", type=FieldType.LIST)
+
+
+def test_list_field_rejects_non_scalar_item_type():
+    with pytest.raises(ValueError, match="must be a scalar"):
+        Field(name="tags", type=FieldType.LIST, item_type=FieldType.LIST)
+
+
+def test_item_type_forbidden_on_non_list():
+    with pytest.raises(ValueError, match="only allowed when type is LIST"):
+        Field(name="name", type=FieldType.STRING, item_type=FieldType.STRING)
+
+
+def test_list_field_round_trip():
+    field = Field(name="tags", type=FieldType.LIST, item_type=FieldType.STRING)
+    dumped = field.to_dict()
+    assert dumped == {"name": "tags", "type": "LIST", "item_type": "STRING"}
+    restored = Field.model_validate(dumped)
+    assert restored.type == "LIST"
+    assert restored.item_type == "STRING"
+
+
+def test_vertex_list_property_round_trip():
+    vertex = Vertex.model_validate(
+        {
+            "name": "user",
+            "properties": [
+                {"name": "id", "type": "STRING"},
+                {"name": "tags", "type": "LIST", "item_type": "STRING"},
+            ],
+            "identity": ["id"],
+        }
+    )
+    tags = next(f for f in vertex.properties if f.name == "tags")
+    assert tags.type == "LIST"
+    assert tags.item_type == "STRING"
+    dumped = vertex.to_dict()
+    restored = Vertex.model_validate(dumped)
+    tags2 = next(f for f in restored.properties if f.name == "tags")
+    assert tags2.type == "LIST"
+    assert tags2.item_type == "STRING"
+
+
+def test_list_field_cannot_be_identity():
+    with pytest.raises(ValueError, match="cannot be used as identity"):
+        Vertex.model_validate(
+            {
+                "name": "user",
+                "properties": [
+                    {"name": "tags", "type": "LIST", "item_type": "STRING"},
+                ],
+                "identity": ["tags"],
+            }
+        )
 
 
 def test_invalid_field_type_in_dict():

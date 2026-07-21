@@ -93,6 +93,7 @@ from graflo.db.conn import (
     consume_insert_edges_kwargs,
 )
 from graflo.db.cypher import rel_merge_props_map_from_row_props
+from graflo.db.field_type_support import assert_schema_field_types_supported
 from graflo.filter.onto import FilterExpression
 from graflo.onto import AggregationType
 from graflo.onto import DBType
@@ -614,6 +615,7 @@ class MemgraphConnection(Connection):
         create_namespace: bool = True,
     ) -> None:
         """Validate graph state; Memgraph schema is implicit (labels on write)."""
+        assert_schema_field_types_supported(self.flavor, schema)
         if self._node_count() > 0 and not recreate:
             raise SchemaExistsError(
                 "Schema/data already exists in Memgraph. "
@@ -1228,15 +1230,15 @@ class MemgraphConnection(Connection):
     def define_schema(self, schema: Schema):
         """Define collections based on schema.
 
-        Note: This is a no-op in Memgraph as collections are implicit.
-        Labels and relationship types are created when data is inserted.
+        Note: Labels/relationship types are implicit in Memgraph.
+        Field types are still validated (LIST is storable; unsupported types raise).
 
         Parameters
         ----------
         schema : Schema
             Schema containing collection definitions
         """
-        pass
+        assert_schema_field_types_supported(self.flavor, schema)
 
     def insert_return_batch(
         self, docs: list[dict[str, Any]], class_name: str

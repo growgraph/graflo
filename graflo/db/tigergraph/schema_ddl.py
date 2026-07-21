@@ -13,6 +13,7 @@ from graflo.architecture.schema import Schema
 from graflo.architecture.schema.db_aware import EdgeConfigDBAware
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import FieldType, Vertex
+from graflo.db.field_type_support import tigergraph_type_for_field
 from graflo.db.tigergraph.ddl_utils import (
     edge_identity_discriminator_fields,
     tigergraph_ddl_edge_projection,
@@ -97,25 +98,12 @@ class SchemaDdlBuilder:
         # Get field type for primary key field(s) - convert FieldType enum to string
         field_type_map = {}
         for f in vertex.properties:
-            if f.type:
-                field_type_map[f.name] = (
-                    f.type.value if hasattr(f.type, "value") else str(f.type)
-                )
-            else:
-                field_type_map[f.name] = FieldType.STRING.value
+            field_type_map[f.name] = tigergraph_type_for_field(f)
 
         # Format all fields
         all_fields = []
         for field in vertex.properties:
-            if field.type:
-                field_type = (
-                    field.type.value
-                    if hasattr(field.type, "value")
-                    else str(field.type)
-                )
-            else:
-                field_type = FieldType.STRING.value
-            all_fields.append((field.name, field_type))
+            all_fields.append((field.name, tigergraph_type_for_field(field)))
 
         if len(index_fields) == 1:
             # Single field: PRIMARY_ID when no DEFAULT on the id; otherwise PRIMARY KEY
@@ -243,7 +231,7 @@ class SchemaDdlBuilder:
         for field in edge.properties:
             field_name = field.name
             if field_name not in exclude_fields:
-                field_type = self._get_tigergraph_type(field.type)
+                field_type = tigergraph_type_for_field(field)
                 segment = f"{field_name} {field_type}"
                 if db_profile is not None and db_profile.has_edge_property_default(
                     eid, field_name
@@ -339,7 +327,7 @@ class SchemaDdlBuilder:
         field_types = {}
         if edge.properties:
             for field in edge.properties:
-                field_types[field.name] = self._get_tigergraph_type(field.type)
+                field_types[field.name] = tigergraph_type_for_field(field)
 
         # Use sanitized dbname for schema names when available
         relation_db = relation_name
@@ -446,7 +434,7 @@ class SchemaDdlBuilder:
         field_types = {}
         if first_edge.properties:
             for field in first_edge.properties:
-                field_types[field.name] = self._get_tigergraph_type(field.type)
+                field_types[field.name] = tigergraph_type_for_field(field)
 
         # Build FROM/TO pairs for all edges, separated by |
         from_to_lines = []
@@ -585,6 +573,9 @@ class SchemaDdlBuilder:
         Args:
             schema: Schema definition
         """
+        from graflo.db.field_type_support import assert_schema_field_types_supported
+
+        assert_schema_field_types_supported(DBType.TIGERGRAPH, schema)
         graph_name = self._conn._require_configured_graph_name()
 
         # Validate graph name
@@ -865,10 +856,8 @@ class SchemaDdlBuilder:
 
         field_list = []
         for field in fields:
-            # Field type should already be set (STRING if was None)
-            field_type = field.type or FieldType.STRING.value
             # Format as: field_name TYPE (DEFAULT clauses live in schema.db_profile.default_property_values)
-            field_list.append(f"{field.name} {field_type}")
+            field_list.append(f"{field.name} {tigergraph_type_for_field(field)}")
 
         return ",\n    ".join(field_list)
 
@@ -883,51 +872,38 @@ class SchemaDdlBuilder:
 
         if edge.properties:
             for field in edge.properties:
-                # Field objects have name and type attributes
                 field_name = field.name
-                # Get TigerGraph type - FieldType enum values are already in TigerGraph format
-                tg_type = self._get_tigergraph_type(field.type)
+                tg_type = tigergraph_type_for_field(field)
                 attrs.append(f"{field_name} {tg_type}")
 
         return ",\n    " + ",\n    ".join(attrs) if attrs else ""
 
     def _get_tigergraph_type(self, field_type: FieldType | str | None) -> str:
         """
-        Convert field type to TigerGraph type string.
+        Convert a scalar field type to TigerGraph type string.
 
-        FieldType enum values are already in TigerGraph format (e.g., "INT", "STRING", "DATETIME").
-        This method normalizes various input formats to the correct TigerGraph type.
-
-        Args:
-            field_type: FieldType enum, string, or None
-
-        Returns:
-            str: TigerGraph type string (e.g., "INT", "STRING", "DATETIME")
+        Prefer :func:`tigergraph_type_for_field` when a full ``Field`` is available
+        (required for ``LIST<item>`` composition).
         """
         if field_type is None:
             return FieldType.STRING.value
 
-        # If it's a FieldType enum, use its value directly (already in TigerGraph format)
         if isinstance(field_type, FieldType):
+            if field_type == FieldType.LIST:
+                raise ValueError(
+                    "Bare LIST is not a TigerGraph type; use tigergraph_type_for_field "
+                    "with item_type to emit LIST<item>"
+                )
             return field_type.value
 
-        # If it's an enum-like object with a value attribute
         if hasattr(field_type, "value"):
-            enum_value = field_type.value
-            # Convert to string and normalize
-            enum_value_str = str(enum_value).upper()
-            # Check if the value matches a FieldType enum value
+            enum_value_str = str(field_type.value).upper()
             if enum_value_str in VALID_TIGERGRAPH_TYPES:
                 return enum_value_str
-            # Return as string (normalized to uppercase)
             return enum_value_str
 
-        # If it's a string, normalize and check against FieldType values
         field_type_str = str(field_type).upper()
-
-        # Check if it matches a FieldType enum value directly
         if field_type_str in VALID_TIGERGRAPH_TYPES:
             return field_type_str
 
-        # Handle TigerGraph-specific type aliases
         return TIGERGRAPH_TYPE_ALIASES.get(field_type_str, FieldType.STRING.value)

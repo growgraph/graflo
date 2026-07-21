@@ -19,6 +19,7 @@ from graflo.db.conn import (
     SchemaExistsError,
     consume_insert_edges_kwargs,
 )
+from graflo.db.field_type_support import assert_schema_field_types_supported
 from graflo.db.nebula.adapter import (
     NebulaClientAdapter,
     NebulaResultSet,
@@ -263,6 +264,7 @@ class NebulaConnection(Connection):
     # ------------------------------------------------------------------
 
     def define_schema(self, schema: Schema) -> None:
+        assert_schema_field_types_supported(self.flavor, schema)
         self.define_vertex_classes(schema)
         edges = list(schema.core_schema.edge_config.values())
         self.define_edge_classes(edges)

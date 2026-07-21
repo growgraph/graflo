@@ -66,6 +66,18 @@ Defines the graph contract.
 - `graph.edge_config`: source/target relationships, optional `relation`, optional **`directed`** (default `true`), edge **`properties`**, `identities`
 - `db_profile`: DB-specific physical behavior (indexes, naming, **`default_property_values`** for TigerGraph GSQL `DEFAULT` on vertex/edge attributes, backend details)
 
+**Typed properties:** use mappings with `type` (and `item_type` for lists), not only bare name strings:
+
+```yaml
+- name: article
+  identity: [doi]
+  properties:
+    - { name: doi, type: STRING }
+    - { name: tags, type: LIST, item_type: STRING }   # homogeneous list only
+```
+
+`LIST` requires a scalar `item_type`; list fields cannot be identity keys. Full matrix and invalid cases: [Core components — field types](../concepts/architecture/core_components.md#supported-field-types).
+
 Use `schema` for **what graph exists**.
 
 ### `ingestion_model`

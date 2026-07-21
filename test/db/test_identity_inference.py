@@ -57,6 +57,8 @@ def test_infer_column_type_cost_handles_common_types() -> None:
     assert infer_column_type_cost([datetime(2024, 1, 1)]) == 0.5
     assert infer_column_type_cost([1.5, 2.5]) == 1.0
     assert infer_column_type_cost(["2024-01-01T10:00:00Z"]) == 0.5
+    assert infer_column_type_cost([["a", "b"], ["c"]]) is None
+    assert infer_column_type_cost([{"a": 1}]) is None
 
 
 def test_infer_column_type_cost_rejects_majority_none_and_long_text() -> None:

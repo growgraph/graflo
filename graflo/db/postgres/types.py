@@ -69,37 +69,76 @@ class PostgresTypeMapper:
     def map_type(cls, postgres_type: str) -> str:
         """Map PostgreSQL type to graflo Field type.
 
+        Array types (``integer[]``, ``text[]``, …) map to ``LIST``; use
+        :meth:`map_field` when ``item_type`` is needed.
+
         Args:
             postgres_type: PostgreSQL type name (e.g., 'int4', 'varchar', 'timestamp')
 
         Returns:
-            str: graflo Field type (INT, FLOAT, BOOL, or STRING)
+            str: graflo Field type (INT, FLOAT, BOOL, STRING, LIST, …)
         """
-        # Normalize type name: lowercase and remove length specifications
+        field_type, _item_type = cls.map_field(postgres_type)
+        return field_type
+
+    @classmethod
+    def map_field(cls, postgres_type: str) -> tuple[str, str | None]:
+        """Map PostgreSQL type to ``(FieldType, item_type|None)``.
+
+        Homogeneous SQL arrays become ``("LIST", <scalar>)`` when the element
+        type is known; otherwise ``("LIST", None)`` is avoided — unknown element
+        types fall through to STRING rather than inventing a wrong item_type.
+        """
         normalized = postgres_type.lower().strip()
 
-        # Remove length specifications like (255) or (10,2)
         if "(" in normalized:
             normalized = normalized.split("(")[0].strip()
 
-        # Check direct mapping
+        is_array = False
+        if normalized.endswith("[]"):
+            is_array = True
+            normalized = normalized[:-2].strip()
+        elif normalized.startswith("_") and normalized[1:] in cls.TYPE_MAPPING:
+            # pg catalog array aliases like _int4, _text
+            is_array = True
+            normalized = normalized[1:]
+
+        mapped: str | None = None
         if normalized in cls.TYPE_MAPPING:
-            return cls.TYPE_MAPPING[normalized]
+            mapped = cls.TYPE_MAPPING[normalized]
+        else:
+            for pg_type, graflo_type in cls.TYPE_MAPPING.items():
+                if pg_type in normalized or normalized in pg_type:
+                    logger.debug(
+                        f"Mapped PostgreSQL type '{postgres_type}' to graflo type "
+                        f"'{graflo_type}' (partial match with '{pg_type}')"
+                    )
+                    mapped = graflo_type
+                    break
 
-        # Check for partial matches (e.g., "character varying" might be stored as "varying")
-        for pg_type, graflo_type in cls.TYPE_MAPPING.items():
-            if pg_type in normalized or normalized in pg_type:
-                logger.debug(
-                    f"Mapped PostgreSQL type '{postgres_type}' to graflo type '{graflo_type}' "
-                    f"(partial match with '{pg_type}')"
-                )
-                return graflo_type
+        if mapped is None:
+            logger.warning(
+                f"Unknown PostgreSQL type '{postgres_type}', defaulting to STRING"
+            )
+            mapped = "STRING"
 
-        # Default to STRING for unknown types
-        logger.warning(
-            f"Unknown PostgreSQL type '{postgres_type}', defaulting to STRING"
-        )
-        return "STRING"
+        if is_array:
+            if mapped in {
+                "INT",
+                "FLOAT",
+                "BOOL",
+                "STRING",
+                "DATETIME",
+            }:
+                return "LIST", mapped
+            # Do not invent a wrong scalar item_type
+            logger.debug(
+                "PostgreSQL array type '%s' mapped without reliable item_type",
+                postgres_type,
+            )
+            return "LIST", None
+
+        return mapped, None
 
     @classmethod
     def is_datetime_type(cls, postgres_type: str) -> bool:

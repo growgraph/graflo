@@ -1,6 +1,9 @@
 """Unit tests for NebulaGraph nGQL query builders (no Docker required)."""
 
+import pytest
+
 from graflo.architecture.schema.vertex import Field, FieldType
+from graflo.db.field_type_support import UnsupportedFieldTypeError
 from graflo.db.nebula.query import (
     aggregate_ngql,
     aggregate_gql,
@@ -52,6 +55,14 @@ def test_create_tag():
     assert "CREATE TAG IF NOT EXISTS `Person`" in q
     assert "`name` string" in q
     assert "`age` int64" in q
+
+
+def test_create_tag_list_raises():
+    fields = [
+        Field(name="tags", type=FieldType.LIST, item_type=FieldType.STRING),
+    ]
+    with pytest.raises(UnsupportedFieldTypeError, match="tags"):
+        create_tag_ngql("Person", fields)
 
 
 def test_create_tag_no_fields():
