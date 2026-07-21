@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`proxy_name` and `alias` on `DBConfig`** (`graflo/db/connection/onto.py`) — survives validation round-trips; bridges manifest `conn_proxy` to registry credentials.
 
+### Fixed
+
+- **TigerGraph schema batching** — `SCHEMA_CHANGE` jobs now batch `ADD VERTEX` and `ADD EDGE` statements in separate phases with order-preserving splits, so edges are never applied before their endpoint vertex types exist.
+
 ## [1.8.11]
 
 ### Added

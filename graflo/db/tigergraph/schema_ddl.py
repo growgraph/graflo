@@ -497,8 +497,9 @@ class SchemaDdlBuilder:
     ) -> list[list[str]]:
         """Batch schema change statements into groups that fit within max_job_size.
 
-        Intelligently merges small statements together while ensuring no batch
-        exceeds the maximum job size limit.
+        Preserves input order: statements are packed sequentially into batches
+        without reordering. Callers must pass vertices before edges when both are
+        required (see ``_define_schema_local``).
 
         Args:
             schema_change_stmts: List of schema change statements to batch
@@ -547,42 +548,29 @@ class SchemaDdlBuilder:
             )
             return [schema_change_stmts]
 
-        # Need to split into multiple batches
-        # Strategy: Use a greedy bin-packing approach that merges small statements
-        # Start by creating batches, trying to pack as many statements as possible
-        # into each batch without exceeding max_job_size
-
+        # Need to split into multiple batches while preserving statement order.
         batches: list[list[str]] = []
+        current_batch: list[str] = []
 
-        # Sort statements by size (smallest first) to help pack efficiently
-        # We'll process them in order and try to add to existing batches
-        stmt_with_size = [(stmt, len(stmt)) for stmt in schema_change_stmts]
-        stmt_with_size.sort(key=lambda x: x[1])  # Sort by statement size
+        for stmt in schema_change_stmts:
+            candidate = current_batch + [stmt]
+            if estimate_batch_size(candidate) <= max_job_size:
+                current_batch.append(stmt)
+                continue
 
-        for stmt, stmt_size in stmt_with_size:
-            # Calculate overhead for adding this statement: 5 chars (indent + semicolon)
-            stmt_overhead = 5
+            if current_batch:
+                batches.append(current_batch)
 
-            # Try to add to an existing batch
-            added = False
-            for batch in batches:
-                current_batch_size = estimate_batch_size(batch)
-                # Check if adding this statement would exceed the limit
-                if current_batch_size + stmt_size + stmt_overhead <= max_job_size:
-                    batch.append(stmt)
-                    added = True
-                    break
+            single_stmt_size = estimate_batch_size([stmt])
+            if single_stmt_size > max_job_size:
+                logger.warning(
+                    f"Statement exceeds max_job_size ({single_stmt_size} > {max_job_size}). "
+                    f"Will attempt to execute anyway, but may fail."
+                )
+            current_batch = [stmt]
 
-            # If couldn't add to existing batch, create a new one
-            if not added:
-                # Check if statement itself is too large
-                single_stmt_size = estimate_batch_size([stmt])
-                if single_stmt_size > max_job_size:
-                    logger.warning(
-                        f"Statement exceeds max_job_size ({single_stmt_size} > {max_job_size}). "
-                        f"Will attempt to execute anyway, but may fail."
-                    )
-                batches.append([stmt])
+        if current_batch:
+            batches.append(current_batch)
 
         logger.info(
             f"Large schema detected (estimated size: {estimated_size} chars). "
@@ -676,18 +664,19 @@ class SchemaDdlBuilder:
             logger.debug(f"No schema changes to apply for graph '{graph_name}'")
             return
 
-        # Estimate the size of the GSQL command to determine if we need to split it
+        # Estimate the size of the GSQL command to determine if we need to split it.
         # Large SCHEMA_CHANGE JOBs (>30k chars) can cause parser failures with misleading errors
-        # like "Missing return statement" (which is actually a parser size limit issue)
-        # We'll split into batches based on configurable max_job_size.
-        # Batch all statements together to minimize GSQL jobs.
-        batches = (
-            self._batch_schema_statements(
-                vertex_stmts + edge_stmts, graph_name, self._conn.config.max_job_size
-            )
-            if (vertex_stmts or edge_stmts)
-            else []
+        # like "Missing return statement" (which is actually a parser size limit issue).
+        # Vertices and edges are batched separately so every vertex type exists before
+        # any ADD EDGE statement runs.
+        max_job_size = self._conn.config.max_job_size
+        vertex_batches = self._batch_schema_statements(
+            vertex_stmts, graph_name, max_job_size
         )
+        edge_batches = self._batch_schema_statements(
+            edge_stmts, graph_name, max_job_size
+        )
+        batches = vertex_batches + edge_batches
 
         # Execute batches sequentially
         for batch_idx, batch_stmts in enumerate(batches):
