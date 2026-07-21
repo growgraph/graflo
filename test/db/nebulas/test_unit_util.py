@@ -1,10 +1,14 @@
 """Unit tests for NebulaGraph utility functions (no Docker required)."""
 
-from graflo.architecture.schema.vertex import FieldType
+import pytest
+
+from graflo.architecture.schema.vertex import Field, FieldType
+from graflo.db.field_type_support import UnsupportedFieldTypeError
 from graflo.db.nebula.util import (
     escape_nebula_string,
     make_vid,
     nebula_type,
+    nebula_type_for_field,
     render_filters_cypher,
     render_filters_ngql,
     serialize_nebula_value,
@@ -42,6 +46,17 @@ def test_nebula_type_float():
 
 def test_nebula_type_datetime():
     assert nebula_type(FieldType.DATETIME) == "string"
+
+
+def test_nebula_type_list_raises():
+    with pytest.raises(UnsupportedFieldTypeError, match="LIST"):
+        nebula_type(FieldType.LIST)
+
+
+def test_nebula_type_for_field_list_raises():
+    field = Field(name="tags", type=FieldType.LIST, item_type=FieldType.STRING)
+    with pytest.raises(UnsupportedFieldTypeError, match="tags"):
+        nebula_type_for_field(field)
 
 
 # ── Value serialisation ──────────────────────────────────────────────────

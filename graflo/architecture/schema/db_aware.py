@@ -117,7 +117,12 @@ class VertexConfigDBAware:
             return props
         # TigerGraph needs explicit scalar defaults for schema definition.
         return [
-            Field(name=f.name, type=FieldType.STRING if f.type is None else f.type)
+            Field(
+                name=f.name,
+                type=FieldType.STRING if f.type is None else f.type,
+                item_type=f.item_type,
+                description=f.description,
+            )
             for f in props
         ]
 

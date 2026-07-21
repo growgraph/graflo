@@ -83,16 +83,123 @@ A `Vertex` describes vertices and their logical identity. It supports:
 - Single or compound identity fields (e.g., `["first_name", "last_name"]` instead of `"full_name"`)
 - Property definitions with optional type information
   - Fields can be specified as strings (backward compatible) or typed `Field` objects
-  - Supported types: `INT`, `FLOAT`, `BOOL`, `STRING`, `DATETIME`
-  - Type information enables better validation and database-specific optimizations
-- Duplicate property declarations are normalized by field name
+  - Untyped fields (`type: null`) remain valid for schema-agnostic backends
+  - Duplicate property declarations are normalized by field name
   - Same type duplicates merge into one field
   - If one duplicate is typed and the other is untyped, the typed definition wins
   - Conflicting non-null types for the same field name are rejected
+  - **LIST-typed properties cannot be identity / hash-identity sources**
 - Filtering conditions
 - **`blank: true`** — placeholder vertex with no natural key; identity defaults to **`id`** when omitted
 - **`hash_identity_properties`** — when non-empty, SHA256 hash of these source fields produces a deterministic synthetic **`id`** (see [Vertex identity modes](../schema/vertex_identity.md))
 - **`Vertex.identity_mode`** — derived runtime mode: **`natural`** (upsert on `identity`), **`hash`**, or **`blank`**
+
+#### Supported field types
+
+| `FieldType` | Shape | Notes |
+|-------------|-------|-------|
+| `INT` `UINT` `FLOAT` `DOUBLE` `BOOL` `STRING` `DATETIME` | scalar | Existing scalar types |
+| `LIST` | + required `item_type` (scalar above) | Homogeneous, **one level** only — no `LIST[LIST[…]]`, no object schemas |
+
+Declare types on each property as a mapping (`name` / `type` / optional `item_type`).
+String shorthand (`properties: [id, name]`) still works and leaves types unset.
+
+**Example — article vertex with scalar + list properties:**
+
+```yaml
+schema:
+  metadata:
+    name: demo
+    version: "1.0.0"
+  graph:
+    vertex_config:
+      vertices:
+        - name: article
+          # Identity must be a scalar (or untyped) field — never LIST
+          identity: [doi]
+          properties:
+            - name: doi
+              type: STRING
+            - name: title
+              type: STRING
+            - name: year
+              type: INT
+            # Homogeneous list of strings → TigerGraph LIST<STRING>, Neo4j list, PG TEXT[]
+            - name: tags
+              type: LIST
+              item_type: STRING
+            # Homogeneous list of floats
+            - name: topic_scores
+              type: LIST
+              item_type: FLOAT
+    edge_config:
+      edges:
+        - source: article
+          target: article
+          relation: cites
+          properties:
+            - name: contexts
+              type: LIST
+              item_type: STRING
+  db_profile: {}
+```
+
+Equivalent compact forms (same semantics):
+
+```yaml
+# Inline dicts in a list
+properties:
+  - { name: doi, type: STRING }
+  - { name: tags, type: LIST, item_type: STRING }
+
+# Untyped (schema-agnostic backends); still fine when you do not need DDL typing
+properties: [doi, title, tags]
+```
+
+**Invalid (rejected at model validation):**
+
+```yaml
+# LIST without item_type
+- { name: tags, type: LIST }
+
+# Nested / non-scalar item_type
+- { name: matrix, type: LIST, item_type: LIST }
+
+# item_type on a non-LIST field
+- { name: title, type: STRING, item_type: STRING }
+
+# LIST used as identity
+- name: article
+  identity: [tags]
+  properties:
+    - { name: tags, type: LIST, item_type: STRING }
+```
+
+For mixed or nested payloads that are not a homogeneous scalar list, author an
+explicit `STRING` field and store JSON yourself — that is never an automatic
+fallback from `type: LIST`.
+
+#### Backend support (LIST)
+
+Policy: **native storage or raise** — no soft conversion to `STRING`/JSON.
+
+| Backend | LIST as storable property | Behavior |
+|---------|---------------------------|----------|
+| TigerGraph | Yes — `LIST<T>` attribute | DDL emits `LIST<STRING>`, `LIST<INT>`, … |
+| Neo4j / Memgraph / FalkorDB | Yes — homogeneous list of primitives | Validated at define; lists serialize as properties |
+| ArangoDB | Yes — document array | Validated at define; pass through |
+| Postgres | Yes — SQL arrays | Emitter uses `T[]` for typed LIST columns |
+| NebulaGraph | **No** — composites are query-only | Define/DDL **raises** `UnsupportedFieldTypeError` |
+
+#### Planned field types
+
+Not in `FieldType` yet — do not author these in manifests:
+
+| Type | Status | Sketch |
+|------|--------|--------|
+| `UUID` | PR2 | Logical scalar; TigerGraph/Nebula still store as `STRING` |
+| `MAP` | follow-up | `key_type` + `value_type` (scalar); native TG/Arango; Cypher targets raise (maps are not storable node/rel properties) |
+| `SET` | follow-up (low) | TigerGraph-oriented; prefer `LIST` elsewhere |
 
 Identity defaults at schema level (`VertexConfig`):
 

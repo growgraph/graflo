@@ -40,6 +40,7 @@ from graflo.db.conn import (
     consume_insert_edges_kwargs,
 )
 from graflo.db.cypher import rel_merge_props_map_from_row_index
+from graflo.db.field_type_support import assert_schema_field_types_supported
 from graflo.db.graph_introspection import (
     GraphEdgeIntrospection,
     GraphIntrospectionResult,
@@ -326,11 +327,12 @@ class Neo4jConnection(Connection):
         """Define vertex and edge classes based on schema.
 
         Note: This is a no-op in Neo4j as vertex/edge classes (labels/relationship types) are implicit.
+        Field types are still validated (LIST is storable; unsupported types raise).
 
         Args:
             schema: Schema containing vertex and edge class definitions
         """
-        pass
+        assert_schema_field_types_supported(self.flavor, schema)
 
     def define_vertex_classes(self, schema: Schema):
         """Define vertex classes based on schema.
@@ -459,6 +461,7 @@ class Neo4jConnection(Connection):
         create_namespace: bool = True,
     ) -> None:
         """Define indexes for the schema (labels/relationships are implicit)."""
+        assert_schema_field_types_supported(self.flavor, schema)
         db_name = self._resolve_db_name(schema)
         if self._node_count() > 0 and not recreate:
             raise SchemaExistsError(

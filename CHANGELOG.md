@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.13]
+
+### Added
+
+- **`FieldType.LIST`** with required scalar **`item_type`** — homogeneous one-level list properties on `Field` (manifest round-trip preserves `type` + `item_type`). LIST fields cannot be identity / hash-identity sources.
+- **Backend type support policy** (`graflo.db.field_type_support`) — native list storage or **raise** (`UnsupportedFieldTypeError`); no silent JSON/`STRING` downgrade. TigerGraph DDL emits `LIST<T>`; Postgres emitter uses `T[]`; Nebula define/DDL raises; Cypher/Arango validate at define.
+- Docs: supported vs planned field-type matrix and per-backend LIST table in [core components](docs/concepts/architecture/core_components.md).
+
 ## [1.8.12]
 
 ### Added

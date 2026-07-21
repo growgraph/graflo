@@ -45,6 +45,7 @@ from graflo.db.conn import (
     SchemaExistsError,
     consume_insert_edges_kwargs,
 )
+from graflo.db.field_type_support import assert_schema_field_types_supported
 from graflo.db.graph_introspection import (
     GraphEdgeIntrospection,
     GraphIntrospectionResult,
@@ -406,6 +407,7 @@ class ArangoConnection(Connection):
         Args:
             schema: Schema containing collection definitions
         """
+        assert_schema_field_types_supported(self.flavor, schema)
         self.define_vertex_classes(schema)
         self.define_edge_classes(
             list(schema.core_schema.edge_config.values()), schema=schema

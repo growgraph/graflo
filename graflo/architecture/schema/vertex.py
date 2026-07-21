@@ -56,6 +56,7 @@ class FieldType(BaseEnum):
         BOOL: Boolean type
         STRING: String type
         DATETIME: DateTime type
+        LIST: Homogeneous list of scalars (requires ``Field.item_type``)
     """
 
     INT = "INT"
@@ -65,6 +66,69 @@ class FieldType(BaseEnum):
     BOOL = "BOOL"
     STRING = "STRING"
     DATETIME = "DATETIME"
+    LIST = "LIST"
+
+
+# Scalar types allowed as ``LIST.item_type`` (and as bare field types).
+SCALAR_FIELD_TYPES: frozenset[FieldType] = frozenset(
+    {
+        FieldType.INT,
+        FieldType.UINT,
+        FieldType.FLOAT,
+        FieldType.DOUBLE,
+        FieldType.BOOL,
+        FieldType.STRING,
+        FieldType.DATETIME,
+    }
+)
+SCALAR_FIELD_TYPE_VALUES: frozenset[str] = frozenset(
+    ft.value for ft in SCALAR_FIELD_TYPES
+)
+
+
+def field_type_value(ft: FieldType | str | None) -> str | None:
+    """Normalize a FieldType / string / None to an uppercase type string."""
+    if ft is None:
+        return None
+    if isinstance(ft, FieldType):
+        return ft.value
+    return str(ft).upper()
+
+
+def is_list_field_type(ft: FieldType | str | None) -> bool:
+    return field_type_value(ft) == FieldType.LIST.value
+
+
+def format_field_type_label(field: Field) -> str:
+    """Human-readable type label, e.g. ``LIST<STRING>`` or ``INT``."""
+    type_val = field_type_value(field.type)
+    if type_val is None:
+        return "None"
+    if type_val == FieldType.LIST.value:
+        item_val = field_type_value(field.item_type) or "?"
+        return f"LIST<{item_val}>"
+    return type_val
+
+
+def _normalize_field_type_input(v: Any, *, label: str) -> FieldType | None:
+    if v is None:
+        return None
+    if isinstance(v, FieldType):
+        return v
+    if isinstance(v, str):
+        type_upper = v.upper()
+        if type_upper not in FieldType:
+            allowed_types = sorted(ft.value for ft in FieldType)
+            raise ValueError(
+                f"Field {label} '{v}' is not allowed. "
+                f"Allowed types are: {', '.join(allowed_types)}"
+            )
+        return FieldType(type_upper)
+    allowed_types = sorted(ft.value for ft in FieldType)
+    raise ValueError(
+        f"Field {label} must be FieldType enum, str, or None, got {type(v)}. "
+        f"Allowed types are: {', '.join(allowed_types)}"
+    )
 
 
 class Field(ConfigBaseModel):
@@ -80,6 +144,7 @@ class Field(ConfigBaseModel):
               Strings are converted to FieldType enum by the validator.
               None is allowed (most databases like ArangoDB don't require types).
               Defaults to None.
+        item_type: Required when ``type`` is ``LIST``; must be a scalar FieldType.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -92,6 +157,13 @@ class Field(ConfigBaseModel):
         default=None,
         description="Optional field type for databases that require it (e.g. TigerGraph: INT, STRING). None for schema-agnostic backends.",
     )
+    item_type: FieldType | None = PydanticField(
+        default=None,
+        description=(
+            "Element type when ``type`` is LIST. Must be a scalar "
+            "(INT, UINT, FLOAT, DOUBLE, BOOL, STRING, DATETIME)."
+        ),
+    )
     description: str | None = PydanticField(
         default=None,
         description="Optional semantic description of the field for schema inference and downstream reasoning.",
@@ -100,24 +172,36 @@ class Field(ConfigBaseModel):
     @field_validator("type", mode="before")
     @classmethod
     def normalize_type(cls, v: Any) -> FieldType | None:
-        if v is None:
-            return None
-        if isinstance(v, FieldType):
-            return v
-        if isinstance(v, str):
-            type_upper = v.upper()
-            if type_upper not in FieldType:
-                allowed_types = sorted(ft.value for ft in FieldType)
+        return _normalize_field_type_input(v, label="type")
+
+    @field_validator("item_type", mode="before")
+    @classmethod
+    def normalize_item_type(cls, v: Any) -> FieldType | None:
+        return _normalize_field_type_input(v, label="item_type")
+
+    @model_validator(mode="after")
+    def validate_list_item_type(self) -> Field:
+        type_val = field_type_value(self.type)
+        item_val = field_type_value(self.item_type)
+
+        if type_val == FieldType.LIST.value:
+            if item_val is None:
                 raise ValueError(
-                    f"Field type '{v}' is not allowed. "
-                    f"Allowed types are: {', '.join(allowed_types)}"
+                    f"Field '{self.name}': type LIST requires item_type "
+                    f"(one of {', '.join(sorted(SCALAR_FIELD_TYPE_VALUES))})"
                 )
-            return FieldType(type_upper)
-        allowed_types = sorted(ft.value for ft in FieldType)
-        raise ValueError(
-            f"Field type must be FieldType enum, str, or None, got {type(v)}. "
-            f"Allowed types are: {', '.join(allowed_types)}"
-        )
+            if item_val not in SCALAR_FIELD_TYPE_VALUES:
+                raise ValueError(
+                    f"Field '{self.name}': LIST item_type must be a scalar "
+                    f"({', '.join(sorted(SCALAR_FIELD_TYPE_VALUES))}), "
+                    f"got '{item_val}'"
+                )
+        elif item_val is not None:
+            raise ValueError(
+                f"Field '{self.name}': item_type is only allowed when type is LIST, "
+                f"got type '{type_val}'"
+            )
+        return self
 
     def __str__(self) -> str:
         """Return field name as string for backward compatibility."""
@@ -125,6 +209,11 @@ class Field(ConfigBaseModel):
 
     def __repr__(self) -> str:
         """Return representation including type information."""
+        if is_list_field_type(self.type):
+            return (
+                f"Field(name='{self.name}', type='LIST', "
+                f"item_type='{field_type_value(self.item_type)}')"
+            )
         if self.type:
             return f"Field(name='{self.name}', type='{self.type}')"
         return f"Field(name='{self.name}')"
@@ -168,6 +257,7 @@ def _dict_to_field(field_dict: dict[str, Any]) -> Field:
     return Field(
         name=name,
         type=field_dict.get("type"),
+        item_type=field_dict.get("item_type"),
         description=field_dict.get("description"),
     )
 
@@ -190,9 +280,9 @@ def _merge_duplicate_fields(vertex_name: str, fields: list[Field]) -> list[Field
     """Merge duplicate fields by name while preserving stable order.
 
     Merge rules:
-    - Same non-null type: keep one field.
+    - Same non-null type (and item_type for LIST): keep one field.
     - One type is None and the other is typed: keep typed field.
-    - Different non-null types: raise.
+    - Different non-null types or conflicting LIST item_types: raise.
     """
     merged_by_name: dict[str, Field] = {}
     ordered_names: list[str] = []
@@ -214,10 +304,25 @@ def _merge_duplicate_fields(vertex_name: str, fields: list[Field]) -> list[Field
                     f"'{vertex_name}', property '{field.name}': "
                     f"'{existing_type}' vs '{incoming_type}'"
                 )
-            if existing.description is None and field.description is not None:
-                merged_by_name[field.name] = existing.model_copy(
-                    update={"description": field.description}
+            existing_item = existing.item_type
+            incoming_item = field.item_type
+            if (
+                existing_item is not None
+                and incoming_item is not None
+                and existing_item != incoming_item
+            ):
+                raise ValueError(
+                    "Conflicting LIST item_type for vertex "
+                    f"'{vertex_name}', property '{field.name}': "
+                    f"'{existing_item}' vs '{incoming_item}'"
                 )
+            updates: dict[str, Any] = {}
+            if existing.description is None and field.description is not None:
+                updates["description"] = field.description
+            if existing_item is None and incoming_item is not None:
+                updates["item_type"] = incoming_item
+            if updates:
+                merged_by_name[field.name] = existing.model_copy(update=updates)
             continue
 
         if existing_type is None and incoming_type is not None:
@@ -373,6 +478,21 @@ class Vertex(ConfigBaseModel):
         merged_properties = _merge_duplicate_fields(self.name, list(self.properties))
         identity_names = _dedupe_ordered(list(self.identity))
         hash_identity_names = _dedupe_ordered(list(self.hash_identity_properties))
+        list_prop_names = {
+            f.name for f in merged_properties if is_list_field_type(f.type)
+        }
+        for name in identity_names:
+            if name in list_prop_names:
+                raise ValueError(
+                    f"Vertex '{self.name}': LIST-typed property '{name}' "
+                    "cannot be used as identity"
+                )
+        for name in hash_identity_names:
+            if name in list_prop_names:
+                raise ValueError(
+                    f"Vertex '{self.name}': LIST-typed property '{name}' "
+                    "cannot be used in hash_identity_properties"
+                )
         seen_names = {f.name for f in merged_properties}
         augmented = list(merged_properties)
         for name in identity_names + hash_identity_names:
