@@ -15,6 +15,7 @@ TOTAL_COUNT_CANDIDATES = ("count", "total", "total_count")
 OFFSET_CANDIDATES = ("offset", "skip")
 HAS_MORE_CANDIDATES = ("has_more", "hasMore")
 CURSOR_CANDIDATES = ("next_cursor", "cursor", "next_page_token")
+CARRY_TOKEN_CANDIDATES = ("results_id", "scroll_id", "pit_id", "search_id")
 
 
 class ResolvedApiResponse(ApiResponseStructure):
@@ -90,6 +91,41 @@ def detect_response_shape(body: dict[str, Any]) -> dict[str, str]:
     return detected
 
 
+def detect_carry_params(body: dict[str, Any] | list[Any]) -> dict[str, str]:
+    """Infer session-token carry map from known response field names.
+
+    Returns a query-param-name -> response-path map. Looks at top-level object
+    keys first, then at ``0.<key>`` when the body is a non-empty list of
+    objects (e.g. BMC Discovery kind envelopes). Does not treat singular
+    ``result_id`` as a carry token.
+    """
+    detected: dict[str, str] = {}
+    for prefix, envelope in _carry_search_envelopes(body):
+        for key in CARRY_TOKEN_CANDIDATES:
+            if key in detected:
+                continue
+            if key in envelope and _is_carry_value(envelope[key]):
+                detected[key] = f"{prefix}{key}"
+    return detected
+
+
+def update_carried_params(
+    body: dict[str, Any] | list[Any],
+    carry_params: dict[str, str],
+    carried: dict[str, Any],
+) -> dict[str, Any]:
+    """Refresh carried query params from the latest response body."""
+    if not carry_params:
+        return dict(carried)
+
+    updated = dict(carried)
+    for param, path in carry_params.items():
+        value = get_at_path(body, path)
+        if _is_carry_value(value):
+            updated[param] = value
+    return updated
+
+
 def extract_records(
     body: dict[str, Any] | list[Any],
     resolved: ResolvedApiResponse,
@@ -118,7 +154,7 @@ def get_batch_metadata(
     resolved: ResolvedApiResponse,
 ) -> dict[str, Any]:
     """Read batch-level metadata from the response envelope."""
-    if not isinstance(body, dict) or not resolved.batch_metadata_paths:
+    if not resolved.batch_metadata_paths:
         return {}
 
     metadata: dict[str, Any] = {}
@@ -137,9 +173,6 @@ def has_more_pages(
     strategy: str,
 ) -> bool:
     """Return whether another HTTP page should be fetched."""
-    if not isinstance(body, dict):
-        return len(items) > 0
-
     if resolved.has_more_path is not None:
         return bool(get_at_path(body, resolved.has_more_path))
 
@@ -164,7 +197,7 @@ def next_offset_value(
     resolved: ResolvedApiResponse,
 ) -> int | None:
     """Read the next offset from the response when configured."""
-    if not isinstance(body, dict) or resolved.next_offset_path is None:
+    if resolved.next_offset_path is None:
         return None
 
     value = get_at_path(body, resolved.next_offset_path)
@@ -178,7 +211,7 @@ def next_cursor_value(
     resolved: ResolvedApiResponse,
 ) -> str | None:
     """Read the next cursor token from the response when configured."""
-    if not isinstance(body, dict) or resolved.cursor_path is None:
+    if resolved.cursor_path is None:
         return None
 
     value = get_at_path(body, resolved.cursor_path)
@@ -186,6 +219,28 @@ def next_cursor_value(
         return None
     token = str(value)
     return token if token else None
+
+
+def _carry_search_envelopes(
+    body: dict[str, Any] | list[Any],
+) -> list[tuple[str, dict[str, Any]]]:
+    if isinstance(body, dict):
+        return [("", body)]
+    if isinstance(body, list) and body and isinstance(body[0], dict):
+        return [("0.", cast(dict[str, Any], body[0]))]
+    return []
+
+
+def _is_carry_value(value: object) -> bool:
+    if value is None or isinstance(value, (dict, list)):
+        return False
+    if isinstance(value, str):
+        return value != ""
+    if isinstance(value, bool):
+        return True
+    if isinstance(value, (int, float)):
+        return True
+    return str(value) != ""
 
 
 def _detect_records_path(body: dict[str, Any]) -> str | None:

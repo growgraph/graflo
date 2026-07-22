@@ -21,11 +21,13 @@ from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.contract.bindings import PaginationConfig
 from graflo.data_source.api_response import (
     ResolvedApiResponse,
+    detect_carry_params,
     extract_records,
     get_batch_metadata,
     has_more_pages,
     next_cursor_value,
     next_offset_value,
+    update_carried_params,
 )
 from graflo.data_source.base import AbstractDataSource, DataSourceType
 from graflo.connection_models import ApiAuth
@@ -109,12 +111,15 @@ class APIDataSource(AbstractDataSource):
             offset = request.initial_offset if request else 0
             page = request.initial_page if request else 1
             cursor: str | None = request.initial_cursor if request else None
+            carried: dict[str, Any] = {}
+            carry_map = dict(request.carry_params) if request else {}
 
             while True:
                 if limit is not None and total_items >= limit:
                     break
 
                 params = dict(self.config.params)
+                params.update(carried)
 
                 page_limit = request.page_size if request else 0
                 if request is not None and limit is not None:
@@ -123,7 +128,8 @@ class APIDataSource(AbstractDataSource):
                 if request is not None:
                     if request.strategy == "offset":
                         params[request.offset_param] = offset
-                        params[request.limit_param] = page_limit
+                        if request.limit_param is not None:
+                            params[request.limit_param] = page_limit
                     elif request.strategy == "page":
                         params[request.page_param] = page
                         params[request.per_page_param] = page_limit
@@ -173,6 +179,16 @@ class APIDataSource(AbstractDataSource):
 
                 if batch:
                     yield batch
+
+                if request is not None:
+                    if not carry_map:
+                        carry_map = detect_carry_params(data)
+                        if carry_map:
+                            logger.info(
+                                "Auto-detected pagination carry_params: %s",
+                                carry_map,
+                            )
+                    carried = update_carried_params(data, carry_map, carried)
 
                 if limit is not None and total_items >= limit:
                     break

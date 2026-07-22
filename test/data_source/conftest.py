@@ -92,6 +92,86 @@ class MockEnvelopeAPIHandler(BaseHTTPRequestHandler):
         pass
 
 
+class MockSessionTokenAPIHandler(BaseHTTPRequestHandler):
+    """BMC-like list envelope requiring results_id on pages after the first."""
+
+    records = [
+        {"id": 1, "name": "Alice", "age": 30},
+        {"id": 2, "name": "Bob", "age": 25},
+        {"id": 3, "name": "Charlie", "age": 35},
+    ]
+    session_token = "SG9zdABuco8EWAIAB9oAAAV84w=="
+    page_size = 2
+
+    def do_GET(self):
+        parsed_path = urlparse(self.path)
+        query_params = parse_qs(parsed_path.query)
+
+        offset = int(query_params.get("offset", [0])[0])
+        results_id = query_params.get("results_id", [None])[0]
+
+        if offset > 0 and results_id != self.session_token:
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(
+                json.dumps(
+                    {
+                        "code": 400,
+                        "message": "results_id required for subsequent pages",
+                        "transient": False,
+                    }
+                ).encode("utf-8")
+            )
+            return
+
+        if "limit" in query_params:
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(
+                json.dumps(
+                    {
+                        "code": 400,
+                        "message": "limit query parameter is not accepted",
+                        "transient": False,
+                    }
+                ).encode("utf-8")
+            )
+            return
+
+        paginated = self.records[offset : offset + self.page_size]
+        next_offset = (
+            offset + len(paginated)
+            if offset + len(paginated) < len(self.records)
+            else None
+        )
+        response = [
+            {
+                "kind": "Host",
+                "count": len(self.records),
+                "offset": offset,
+                "results": paginated,
+                "next_offset": next_offset,
+                "results_id": self.session_token,
+                "next": (
+                    f"https://ignored.example/search?results_id={self.session_token}"
+                    f"&offset={next_offset}"
+                    if next_offset is not None
+                    else None
+                ),
+            }
+        ]
+
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps(response).encode("utf-8"))
+
+    def log_message(self, format: str, *args: Any) -> None:
+        pass
+
+
 class MockAPIServer:
     """Mock API server for testing."""
 
@@ -143,6 +223,15 @@ def mock_api_server():
 def mock_envelope_api_server():
     """Fixture providing a mock API server with results/count/next_offset envelope."""
     server = MockAPIServer(handler=MockEnvelopeAPIHandler)
+    port = server.start()
+    yield server, port
+    server.stop()
+
+
+@pytest.fixture(scope="function")
+def mock_session_token_api_server():
+    """Fixture for BMC-like list envelope with results_id carry token."""
+    server = MockAPIServer(handler=MockSessionTokenAPIHandler)
     port = server.start()
     yield server, port
     server.stop()

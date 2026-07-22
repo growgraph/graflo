@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.14]
+
+### Added
+
+- **`PaginationRequestConfig.carry_params`** — map query param names to response dot paths so opaque session tokens (e.g. BMC Discovery ``results_id``) are echoed on subsequent pages. When unset, known tokens (`results_id`, `scroll_id`, `pit_id`, `search_id`) are auto-detected from the first response (including list envelopes at ``0.<key>``).
+- **`PaginationRequestConfig.limit_param`** may be ``None`` to omit the page-size query parameter.
+
+### Changed
+
+- **`APIDataSource`** pagination helpers accept list envelopes via dotted paths (e.g. ``0.next_offset``); batch metadata and next-offset/cursor reads no longer require a top-level object.
+
 ## [1.8.13]
 
 ### Added
