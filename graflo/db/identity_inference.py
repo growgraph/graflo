@@ -17,15 +17,13 @@ from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.schema.graflo_output import GraFloOutput
 from graflo.architecture.schema.vertex import Vertex, VertexConfig
 from graflo.db.graph_introspection import strip_internal_properties
+from graflo.db.identity_uuid import UUID_PATTERN
 
 logger = logging.getLogger(__name__)
 
 _SYNTHETIC_ID_FIELD = "id"
 _SEMANTIC_PATTERN = re.compile(r"(?i)(id|uuid|key|code|pk)$")
-_UUID_PATTERN = re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-    re.IGNORECASE,
-)
+_UUID_PATTERN = UUID_PATTERN
 _ISO_DATETIME_PATTERN = re.compile(
     r"^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)?$"
 )

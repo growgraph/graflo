@@ -51,6 +51,7 @@ _LIST_ITEM_TO_PG_ARRAY: dict[str, str] = {
     FieldType.BOOL.value: "BOOLEAN[]",
     FieldType.STRING.value: "TEXT[]",
     FieldType.DATETIME.value: "TEXT[]",
+    FieldType.UUID.value: "TEXT[]",
 }
 
 

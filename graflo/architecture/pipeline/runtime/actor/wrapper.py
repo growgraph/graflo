@@ -138,6 +138,10 @@ class ActorWrapper:
             assembly_ctx = ctx
         else:
             assembly_ctx = AssemblyContext.from_extraction(ctx)
+        # Lazy import: graflo.db pulls architecture via ConnectionManager.
+        from graflo.db.identity_uuid import ensure_assigned_uuids_in_acc_vertex
+
+        ensure_assigned_uuids_in_acc_vertex(assembly_ctx.acc_vertex, self.vertex_config)
         assemble_edges(
             ctx=assembly_ctx,
             vertex_config=self.vertex_config,

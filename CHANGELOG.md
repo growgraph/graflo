@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.15]
+
+### Added
+
+- **`FieldType.UUID`** — logical scalar (incl. `LIST` `item_type`); TigerGraph / Nebula / Postgres DDL store as `STRING` / `TEXT`.
+- **`Vertex.assigned`** / **`identity_mode == "assigned"`** — intentional UUID primary key, distinct from `blank`. Empty identity is minted with `uuid4()` at assemble time (before edge projection); writer keeps an idempotent safety net. Assigned vertices do **not** participate in blank-edge resolution.
+- **`VertexConfig.assigned_vertices`**; helpers in **`graflo.db.identity_uuid`** (`ensure_assigned_uuid`, `validate_uuid_value`, …).
+- Docs: four identity modes and blank vs assigned in [vertex identity](docs/concepts/schema/vertex_identity.md); UUID moved to supported field types.
+
 ## [1.8.14]
 
 ### Added

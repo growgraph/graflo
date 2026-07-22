@@ -91,15 +91,17 @@ A `Vertex` describes vertices and their logical identity. It supports:
   - **LIST-typed properties cannot be identity / hash-identity sources**
 - Filtering conditions
 - **`blank: true`** — placeholder vertex with no natural key; identity defaults to **`id`** when omitted
+- **`assigned: true`** — intentional UUID primary key; identity defaults to **`id`**; mint at assemble (not blank-edge resolution)
 - **`hash_identity_properties`** — when non-empty, SHA256 hash of these source fields produces a deterministic synthetic **`id`** (see [Vertex identity modes](../schema/vertex_identity.md))
-- **`Vertex.identity_mode`** — derived runtime mode: **`natural`** (upsert on `identity`), **`hash`**, or **`blank`**
+- **`Vertex.identity_mode`** — derived runtime mode: **`natural`**, **`hash`**, **`blank`**, or **`assigned`**
 
 #### Supported field types
 
 | `FieldType` | Shape | Notes |
 |-------------|-------|-------|
 | `INT` `UINT` `FLOAT` `DOUBLE` `BOOL` `STRING` `DATETIME` | scalar | Existing scalar types |
-| `LIST` | + required `item_type` (scalar above) | Homogeneous, **one level** only — no `LIST[LIST[…]]`, no object schemas |
+| `UUID` | scalar | Logical UUID; TigerGraph / Nebula / Postgres DDL store as `STRING` / `TEXT` |
+| `LIST` | + required `item_type` (scalar above, including `UUID`) | Homogeneous, **one level** only — no `LIST[LIST[…]]`, no object schemas |
 
 Declare types on each property as a mapping (`name` / `type` / optional `item_type`).
 String shorthand (`properties: [id, name]`) still works and leaves types unset.
@@ -197,16 +199,15 @@ Not in `FieldType` yet — do not author these in manifests:
 
 | Type | Status | Sketch |
 |------|--------|--------|
-| `UUID` | PR2 | Logical scalar; TigerGraph/Nebula still store as `STRING` |
 | `MAP` | follow-up | `key_type` + `value_type` (scalar); native TG/Arango; Cypher targets raise (maps are not storable node/rel properties) |
 | `SET` | follow-up (low) | TigerGraph-oriented; prefer `LIST` elsewhere |
 
 Identity defaults at schema level (`VertexConfig`):
 
 - **`identity_from_all_properties: true`** (default) — vertices without explicit **`identity`** use all **`properties`** names as the logical key.
-- **`identity_from_all_properties: false`** — each non-blank vertex must declare **`identity`** explicitly; blank vertices still default to **`id`**.
+- **`identity_from_all_properties: false`** — each non-blank / non-assigned vertex must declare **`identity`** explicitly; blank and assigned vertices still default to **`id`**.
 
-**Blank vertices:** set **`blank: true`** on the vertex entry under **`schema.graph.vertex_config.vertices`**. **`VertexConfig.blank_vertices`** is a derived list of names (not a separate YAML field). **`VertexConfig.hash_identity_vertices`** lists vertices with hash-derived identity. At runtime, **`ResourceRuntime`** keeps only vertex types referenced by that resource’s pipeline (and edge-inference selectors); blank types that are declared in the schema but not used by the resource are not injected automatically—include a **`vertex`** (or edge) step when the placeholder must be populated.
+**Blank vertices:** set **`blank: true`** on the vertex entry under **`schema.graph.vertex_config.vertices`**. **`VertexConfig.blank_vertices`** is a derived list of names (not a separate YAML field). **`VertexConfig.hash_identity_vertices`** lists vertices with hash-derived identity; **`VertexConfig.assigned_vertices`** lists intentional UUID-PK vertices. At runtime, **`ResourceRuntime`** keeps only vertex types referenced by that resource’s pipeline (and edge-inference selectors); blank types that are declared in the schema but not used by the resource are not injected automatically—include a **`vertex`** (or edge) step when the placeholder must be populated.
 
 Algorithmic identity inference from record samples: **`graflo.db.identity_inference`** (`IdentityInferencer`, `apply_identity_inference_to_vertices`). See [Vertex identity modes](../schema/vertex_identity.md) and [Example 15](../../examples/example-15.md).
 
