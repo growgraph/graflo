@@ -668,11 +668,12 @@ class PaginationRequestConfig(ConfigBaseModel):
 
     strategy: Literal["offset", "page", "cursor"] = "offset"
     offset_param: str = "offset"
-    limit_param: str = Field(
+    limit_param: str | None = Field(
         default="limit",
         description=(
             "Query parameter name for page size (offset strategy only). "
-            "The value sent is ``page_size``, not a total item cap."
+            "The value sent is ``page_size``, not a total item cap. "
+            "When ``None``, no page-size query parameter is sent."
         ),
     )
     cursor_param: str = "cursor"
@@ -691,7 +692,17 @@ class PaginationRequestConfig(ConfigBaseModel):
         default=100,
         description=(
             "Records requested per HTTP page. Sent as the value of "
-            "``limit_param`` (offset) or ``per_page_param`` (page)."
+            "``limit_param`` (offset) or ``per_page_param`` (page) when those "
+            "param names are set."
+        ),
+    )
+    carry_params: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Query param name -> response dot path. After each page, values are "
+            "read and sent on later requests (e.g. ``results_id: '0.results_id'``). "
+            "When empty, known session-token fields are auto-detected from the "
+            "first response."
         ),
     )
 

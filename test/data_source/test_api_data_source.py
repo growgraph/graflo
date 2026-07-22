@@ -338,6 +338,117 @@ def test_api_data_source_envelope_without_records_path_raises(
         list(api_source.iter_batches())
 
 
+def _session_token_response() -> ApiResponseStructure:
+    return ApiResponseStructure(
+        records_path="0.results",
+        next_offset_path="0.next_offset",
+        total_count_path="0.count",
+        offset_path="0.offset",
+    )
+
+
+def _build_session_token_source(
+    mock_session_token_api_server,
+    *,
+    carry_params: dict[str, str] | None = None,
+) -> APIDataSource:
+    _, port = mock_session_token_api_server
+    request_kwargs: dict = {
+        "strategy": "offset",
+        "offset_param": "offset",
+        "limit_param": None,
+        "page_size": 2,
+    }
+    if carry_params is not None:
+        request_kwargs["carry_params"] = carry_params
+    connector = APIConnector(
+        name="hosts_api",
+        path="/api/search",
+        pagination=PaginationConfig(
+            request=PaginationRequestConfig(**request_kwargs),
+            response=_session_token_response(),
+        ),
+    )
+    config = connector.build_api_config(base_url=f"http://localhost:{port}")
+    return APIDataSource(config=config)
+
+
+def test_api_data_source_explicit_carry_params(
+    mock_session_token_api_server,
+) -> None:
+    api_source = _build_session_token_source(
+        mock_session_token_api_server,
+        carry_params={"results_id": "0.results_id"},
+    )
+    request_params: list[dict] = []
+
+    session = api_source._create_session()
+    original_request = session.request
+
+    def track_request(*args, **kwargs):
+        request_params.append(dict(kwargs.get("params") or {}))
+        return original_request(*args, **kwargs)
+
+    with patch.object(api_source, "_create_session") as create_session:
+        create_session.return_value = session
+        session.request = track_request  # ty: ignore[invalid-assignment]
+        rows = [row for batch in api_source.iter_batches() for row in batch]
+
+    assert [row["id"] for row in rows] == [1, 2, 3]
+    assert "results_id" not in request_params[0]
+    assert "limit" not in request_params[0]
+    assert request_params[1]["results_id"] == ("SG9zdABuco8EWAIAB9oAAAV84w==")
+    assert "limit" not in request_params[1]
+
+
+def test_api_data_source_auto_detect_carry_params(
+    mock_session_token_api_server,
+) -> None:
+    api_source = _build_session_token_source(mock_session_token_api_server)
+    request_params: list[dict] = []
+
+    session = api_source._create_session()
+    original_request = session.request
+
+    def track_request(*args, **kwargs):
+        request_params.append(dict(kwargs.get("params") or {}))
+        return original_request(*args, **kwargs)
+
+    with patch.object(api_source, "_create_session") as create_session:
+        create_session.return_value = session
+        session.request = track_request  # ty: ignore[invalid-assignment]
+        rows = [row for batch in api_source.iter_batches() for row in batch]
+
+    assert len(rows) == 3
+    assert "results_id" not in request_params[0]
+    assert request_params[1]["results_id"] == ("SG9zdABuco8EWAIAB9oAAAV84w==")
+
+
+def test_api_data_source_result_id_batch_metadata_not_carried(
+    mock_envelope_api_server,
+) -> None:
+    """Singular result_id is batch metadata, not an auto-detected carry token."""
+    api_source = _build_envelope_registry(mock_envelope_api_server, page_size=2)
+    request_params: list[dict] = []
+
+    session = api_source._create_session()
+    original_request = session.request
+
+    def track_request(*args, **kwargs):
+        request_params.append(dict(kwargs.get("params") or {}))
+        return original_request(*args, **kwargs)
+
+    with patch.object(api_source, "_create_session") as create_session:
+        create_session.return_value = session
+        session.request = track_request  # ty: ignore[invalid-assignment]
+        rows = [row for batch in api_source.iter_batches() for row in batch]
+
+    assert len(rows) == 3
+    assert all(item["_batch_id"].startswith("batch-") for item in rows)
+    assert all("results_id" not in params for params in request_params)
+    assert all("result_id" not in params for params in request_params)
+
+
 def test_api_connector_build_api_config_passes_row_annotations() -> None:
     connector = APIConnector(
         path="/api/query",
