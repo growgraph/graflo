@@ -35,6 +35,7 @@ FIELD_TYPE_TO_NEBULA: dict[FieldType, str] = {
     FieldType.BOOL: "bool",
     FieldType.STRING: "string",
     FieldType.DATETIME: "string",
+    FieldType.UUID: "string",
 }
 
 DEFAULT_NEBULA_TYPE = "string"

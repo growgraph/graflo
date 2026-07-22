@@ -106,11 +106,13 @@ def test_vertex_identity_mode_natural_hash_and_blank() -> None:
         hash_identity_properties=["org", "slug"],
     )
     blank_vertex = Vertex(name="d", properties=[], blank=True)
+    assigned_vertex = Vertex(name="e", properties=[], assigned=True)
 
     assert natural_unary.identity_mode == "natural"
     assert natural_composite.identity_mode == "natural"
     assert hash_vertex.identity_mode == "hash"
     assert blank_vertex.identity_mode == "blank"
+    assert assigned_vertex.identity_mode == "assigned"
 
 
 def test_vertex_config_vertices_by_identity_mode() -> None:
@@ -123,11 +125,13 @@ def test_vertex_config_vertices_by_identity_mode() -> None:
                 hash_identity_properties=["a", "b"],
             ),
             Vertex(name="b", properties=[], blank=True),
+            Vertex(name="a", properties=[], assigned=True),
         ]
     )
     assert config.vertices_by_identity_mode("natural") == ["n"]
     assert config.vertices_by_identity_mode("hash") == ["h"]
     assert config.vertices_by_identity_mode("blank") == ["b"]
+    assert config.vertices_by_identity_mode("assigned") == ["a"]
 
 
 def test_apply_identity_inference_to_vertices() -> None:

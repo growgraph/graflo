@@ -61,10 +61,12 @@ def filter_graph_container_drop_empty_identity_inplace(
 ) -> None:
     """Remove vertex docs and edge tuples with no usable schema identity."""
     blank = set(vertex_config.blank_vertices)
+    assigned = set(vertex_config.assigned_vertices)
+    skip_minted = blank | assigned
     vertex_set = vertex_config.vertex_set
 
     for vcol, docs in list(gc.vertices.items()):
-        if vcol in blank or vcol not in vertex_set:
+        if vcol in skip_minted or vcol not in vertex_set:
             continue
         id_fields = vertex_config.identity_fields(vcol)
         gc.vertices[vcol] = [
@@ -75,7 +77,7 @@ def filter_graph_container_drop_empty_identity_inplace(
         vfrom, vto, _rel = edge_id
         if vfrom not in vertex_set or vto not in vertex_set:
             continue
-        if vfrom in blank or vto in blank:
+        if vfrom in skip_minted or vto in skip_minted:
             continue
         src_ids = vertex_config.identity_fields(vfrom)
         tgt_ids = vertex_config.identity_fields(vto)

@@ -69,14 +69,24 @@ def assert_schema_field_types_supported(db_type: DBType, schema: Schema) -> None
 
 
 def tigergraph_type_for_field(field: Field) -> str:
-    """Return a TigerGraph attribute type string (e.g. ``LIST<STRING>``, ``INT``)."""
+    """Return a TigerGraph attribute type string (e.g. ``LIST<STRING>``, ``INT``).
+
+    Logical ``UUID`` is stored as ``STRING`` (TigerGraph has no native UUID type).
+    """
     assert_field_type_supported(DBType.TIGERGRAPH, field)
     if field.type is None:
         return FieldType.STRING.value
     if is_list_field_type(field.type):
         item = field.item_type
         item_val = item.value if isinstance(item, FieldType) else str(item).upper()
+        if item_val == FieldType.UUID.value:
+            item_val = FieldType.STRING.value
         return f"LIST<{item_val}>"
     if isinstance(field.type, FieldType):
+        if field.type == FieldType.UUID:
+            return FieldType.STRING.value
         return field.type.value
-    return str(field.type).upper()
+    type_upper = str(field.type).upper()
+    if type_upper == FieldType.UUID.value:
+        return FieldType.STRING.value
+    return type_upper

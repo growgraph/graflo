@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 # Type accepted for vertex properties before normalization (for use by Edge/WeightConfig)
 PropertiesInputType = list[str] | list["Field"] | list[dict[str, Any]]
 VertexName: TypeAlias = str
-IdentityMode: TypeAlias = Literal["natural", "hash", "blank"]
+IdentityMode: TypeAlias = Literal["natural", "hash", "blank", "assigned"]
 
 
 class FieldType(BaseEnum):
@@ -56,6 +56,7 @@ class FieldType(BaseEnum):
         BOOL: Boolean type
         STRING: String type
         DATETIME: DateTime type
+        UUID: Logical UUID scalar (backends store as STRING/TEXT)
         LIST: Homogeneous list of scalars (requires ``Field.item_type``)
     """
 
@@ -66,6 +67,7 @@ class FieldType(BaseEnum):
     BOOL = "BOOL"
     STRING = "STRING"
     DATETIME = "DATETIME"
+    UUID = "UUID"
     LIST = "LIST"
 
 
@@ -79,6 +81,7 @@ SCALAR_FIELD_TYPES: frozenset[FieldType] = frozenset(
         FieldType.BOOL,
         FieldType.STRING,
         FieldType.DATETIME,
+        FieldType.UUID,
     }
 )
 SCALAR_FIELD_TYPE_VALUES: frozenset[str] = frozenset(
@@ -161,7 +164,7 @@ class Field(ConfigBaseModel):
         default=None,
         description=(
             "Element type when ``type`` is LIST. Must be a scalar "
-            "(INT, UINT, FLOAT, DOUBLE, BOOL, STRING, DATETIME)."
+            "(INT, UINT, FLOAT, DOUBLE, BOOL, STRING, DATETIME, UUID)."
         ),
     )
     description: str | None = PydanticField(
@@ -416,6 +419,13 @@ class Vertex(ConfigBaseModel):
             "True when this vertex has no natural identity and gets an auto-generated ID."
         ),
     )
+    assigned: bool = PydanticField(
+        default=False,
+        description=(
+            "True when this vertex uses an intentional UUID primary key: empty identity "
+            "is filled with uuid4 at assemble time; not a blank-node placeholder."
+        ),
+    )
     hash_identity_properties: list[str] = PydanticField(
         default_factory=list,
         description=(
@@ -475,6 +485,15 @@ class Vertex(ConfigBaseModel):
 
     @model_validator(mode="after")
     def set_identity(self) -> "Vertex":
+        if self.blank and self.assigned:
+            raise ValueError(
+                f"Vertex '{self.name}': blank and assigned are mutually exclusive"
+            )
+        if self.assigned and self.hash_identity_properties:
+            raise ValueError(
+                f"Vertex '{self.name}': assigned and hash_identity_properties "
+                "are mutually exclusive"
+            )
         merged_properties = _merge_duplicate_fields(self.name, list(self.properties))
         identity_names = _dedupe_ordered(list(self.identity))
         hash_identity_names = _dedupe_ordered(list(self.hash_identity_properties))
@@ -497,7 +516,8 @@ class Vertex(ConfigBaseModel):
         augmented = list(merged_properties)
         for name in identity_names + hash_identity_names:
             if name not in seen_names:
-                augmented.append(Field(name=name, type=None))
+                synth_type = FieldType.UUID if self.assigned and name == "id" else None
+                augmented.append(Field(name=name, type=synth_type))
                 seen_names.add(name)
         object.__setattr__(self, "identity", identity_names)
         object.__setattr__(self, "hash_identity_properties", hash_identity_names)
@@ -511,9 +531,11 @@ class Vertex(ConfigBaseModel):
 
     @property
     def identity_mode(self) -> IdentityMode:
-        """Runtime identity mode: natural upsert, hash-derived id, or blank uuid."""
+        """Runtime identity mode: natural, hash, blank, or assigned UUID PK."""
         if self.blank:
             return "blank"
+        if self.assigned:
+            return "assigned"
         if self.hash_identity_properties:
             return "hash"
         return "natural"
@@ -552,7 +574,7 @@ class VertexConfig(ConfigBaseModel):
         default=True,
         description=(
             "When true, vertices without explicit identity fall back to all property names. "
-            "When false, explicit identity is required except for blank vertices."
+            "When false, explicit identity is required except for blank or assigned vertices."
         ),
     )
     _vertices_map: dict[VertexName, Vertex] | None = PrivateAttr(default=None)
@@ -577,6 +599,11 @@ class VertexConfig(ConfigBaseModel):
         return [v.name for v in self.vertices if v.blank]
 
     @property
+    def assigned_vertices(self) -> list[str]:
+        """Vertex names with intentional UUID primary keys (``assigned: true``)."""
+        return [v.name for v in self.vertices if v.assigned]
+
+    @property
     def hash_identity_vertices(self) -> list[str]:
         """Vertex names using hash-derived synthetic identity fields."""
         return [v.name for v in self.vertices if v.hash_identity_properties]
@@ -593,7 +620,7 @@ class VertexConfig(ConfigBaseModel):
             if not vertex.identity:
                 if vertex.hash_identity_properties:
                     vertex.identity = [blank_id_field]
-                elif vertex.blank:
+                elif vertex.blank or vertex.assigned:
                     vertex.identity = [blank_id_field]
                 elif self.identity_from_all_properties:
                     vertex.identity = list(vertex.property_names)
@@ -611,7 +638,12 @@ class VertexConfig(ConfigBaseModel):
                 if field_name not in vertex.property_names
             ]
             for field_name in missing:
-                vertex.properties.append(Field(name=field_name, type=None))
+                synth_type = (
+                    FieldType.UUID
+                    if vertex.assigned and field_name == blank_id_field
+                    else None
+                )
+                vertex.properties.append(Field(name=field_name, type=synth_type))
 
     def _get_vertices_map(self) -> dict[VertexName, Vertex]:
         """Return the vertices map (set by model validator)."""

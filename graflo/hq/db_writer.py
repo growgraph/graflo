@@ -18,6 +18,10 @@ from graflo.architecture.graph_types import GraphContainer
 from graflo.architecture.schema import Schema
 from graflo.db.connection import DBConfig
 from graflo.db.identity_inference import compute_hash_identity
+from graflo.db.identity_uuid import (
+    ensure_assigned_uuids_on_docs,
+    validate_uuid_typed_identity_fields,
+)
 from graflo.db.manager import ConnectionManager
 from graflo.onto import DBType
 
@@ -117,8 +121,10 @@ class DBWriter:
 
         Pre-write hooks depend on :attr:`~graflo.architecture.schema.vertex.Vertex.identity_mode`:
         ``hash`` vertices get deterministic SHA256 ids;
+        ``assigned`` vertices get idempotent uuid4 fill (usually already minted at assemble);
         ``blank`` vertices get random UUIDs;
         ``natural`` vertices upsert directly on ``identity`` fields (one or many).
+        UUID-typed natural identity fields are validated when present.
         """
         vc = self._db_aware_for(conn_conf).vertex_config
         semaphore = asyncio.Semaphore(self.max_concurrent)
@@ -132,8 +138,16 @@ class DBWriter:
                             self._assign_hash_identity_ids(
                                 vcol=vcol, data=data, conn_conf=conn_conf
                             )
+                        elif vcol in vc.assigned_vertices:
+                            self._assign_assigned_vertex_ids(
+                                vcol=vcol, data=data, conn_conf=conn_conf
+                            )
                         elif vcol in vc.blank_vertices:
                             self._assign_blank_vertex_ids(
+                                vcol=vcol, data=data, conn_conf=conn_conf
+                            )
+                        else:
+                            self._validate_uuid_natural_identity(
                                 vcol=vcol, data=data, conn_conf=conn_conf
                             )
                         db.upsert_docs_batch(
@@ -172,6 +186,35 @@ class DBWriter:
                 doc[preferred_field] = generated
                 if default_field != preferred_field and default_field not in doc:
                     doc[default_field] = generated
+
+    def _assign_assigned_vertex_ids(
+        self, vcol: str, data: list[dict], conn_conf: DBConfig
+    ) -> None:
+        """Idempotent uuid4 fill for assigned vertices (assemble-time mint is primary)."""
+        vc = self._db_aware_for(conn_conf).vertex_config
+        identity_fields = vc.identity_fields(vcol)
+        default_field = "_key" if conn_conf.connection_type == DBType.ARANGO else "id"
+        preferred_field = identity_fields[0] if identity_fields else default_field
+        ensure_assigned_uuids_on_docs(
+            data,
+            preferred_field=preferred_field,
+            arango_key_mirror=(
+                conn_conf.connection_type == DBType.ARANGO and preferred_field != "_key"
+            ),
+        )
+        if default_field != preferred_field:
+            for doc in data:
+                if default_field not in doc:
+                    doc[default_field] = doc[preferred_field]
+
+    def _validate_uuid_natural_identity(
+        self, vcol: str, data: list[dict], conn_conf: DBConfig
+    ) -> None:
+        """Validate UUID-typed natural identity fields; do not invent values."""
+        vc = self._db_aware_for(conn_conf).vertex_config
+        vertex = vc.logical._get_vertex_by_name(vcol)
+        for doc in data:
+            validate_uuid_typed_identity_fields(doc, vertex)
 
     def _assign_hash_identity_ids(
         self, vcol: str, data: list[dict], conn_conf: DBConfig
