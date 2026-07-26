@@ -182,7 +182,7 @@ def test_weight_config_direct_invalid_type():
     import pytest
 
     with pytest.raises(TypeError, match="Field must be str, Field, or dict"):
-        WeightConfig(direct=[123])  # type: ignore
+        WeightConfig(direct=[123])
 
 
 def test_weight_config_from_dict():

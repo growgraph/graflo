@@ -15,6 +15,7 @@ dependencies = [
   "SPARQLWrapper>=2.0.0",
   "boto3>=1.35.0,<2",
   "click>=8.2.0,<9",
+  "confluent-kafka>=2.6.0",
   "falkordb>=1.0.9",
   "ijson>=3.2.3,<4",
   "nebula3-python>=3.8.3",
@@ -57,9 +58,6 @@ docs = [
   "mkdocs-table-reader-plugin>=3.1.0",
   "mkdocs>=1.6.1",
   "mkdocstrings[python]>=0.29.1"
-]
-kafka = [
-  "confluent-kafka>=2.6.0"
 ]
 plot = [
   "pygraphviz>=1.14"

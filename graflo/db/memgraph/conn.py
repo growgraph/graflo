@@ -81,7 +81,7 @@ import math
 from typing import Any
 from urllib.parse import urlparse
 
-import mgclient  # ty: ignore[unresolved-import]
+import mgclient
 
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.graph_types import Index
@@ -182,8 +182,9 @@ class MemgraphConnection(Connection):
 
     flavor = DBType.MEMGRAPH
 
-    # Type annotations for instance attributes
-    conn: mgclient.Connection | None
+    # Type annotations for instance attributes.
+    # Connection is exported from the C extension via star-import; ty cannot see it.
+    conn: Any
     _database_name: str
 
     def __init__(self, config: MemgraphConfig):

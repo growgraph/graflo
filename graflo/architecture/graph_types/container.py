@@ -23,7 +23,7 @@ from graflo.architecture.graph_types.identifiers import (
 def _pick_unique_dict(docs: list) -> list:
     """Deduplicate dicts by structure; preserves original objects (local copy of merge logic)."""
 
-    def make_hashable(obj: object) -> object:
+    def make_hashable(obj: object) -> Any:
         if isinstance(obj, dict):
             return tuple(sorted((k, make_hashable(v)) for k, v in obj.items()))
         if isinstance(obj, (list, tuple)):
@@ -36,7 +36,7 @@ def _pick_unique_dict(docs: list) -> list:
             return tuple(sorted(make_hashable(item) for item in obj))
         return obj
 
-    seen: dict[object, object] = {}
+    seen: dict[Any, object] = {}
     for doc in docs:
         key = make_hashable(doc)
         if key not in seen:
