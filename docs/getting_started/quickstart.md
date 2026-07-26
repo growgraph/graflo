@@ -335,9 +335,44 @@ For manual credential registration or multi-proxy `env_prefix_map` overrides, se
 **[API connector and pagination](../concepts/connectors/api_connector.md)** and
 **[Example 14 — API env wiring](../examples/example-14.md)**.
 
+## Using Kafka Data Sources
+
+Kafka topic ingestion uses bindings + `conn_proxy`, like SQL and API. The manifest declares **`topics`** and **`group_id`**; runtime code registers bootstrap servers (and optional SASL/SSL).
+
+Consume is **finite-batch**: polling stops on idle, max wait, or record `limit` — not a never-ending daemon. Full field reference: **[Kafka connector](../concepts/connectors/kafka_connector.md)**.
+
+```yaml
+# manifest.yaml (bindings excerpt)
+bindings:
+  connectors:
+    - name: events_kafka
+      topics: [graflo.events]
+      group_id: graflo-ingest
+      auto_offset_reset: earliest
+      idle_ms: 2000
+  resource_connector:
+    - resource: events
+      connector: events_kafka
+  connector_connection:
+    - connector: events_kafka
+      conn_proxy: kafka_local
+```
+
+```python
+provider = InMemoryConnectionProvider()
+provider.register_all_kafka_configs_from_env(bindings=bindings)
+```
+
+```bash
+export KAFKA_LOCAL_BOOTSTRAP_SERVERS=localhost:9092
+```
+
+Local broker: `docker/kafka` (also via `docker/start-all.sh`), bootstrap `localhost:9092`. Live tests: `uv run pytest test -m kafka --run-kafka`.
+
 ## Using Configuration Files
 
-File and SQL data sources can still be defined in a sidecar config for the CLI. **API sources must use manifest bindings** (`APIConnector`); `--data-source-config-path` rejects `source_type: api`.
+
+File and SQL data sources can still be defined in a sidecar config for the CLI. **API and Kafka sources must use manifest bindings** (`APIConnector` / `KafkaConnector`) with a `ConnectionProvider`; `--data-source-config-path` rejects `source_type: api` and does not build Kafka consumers.
 
 ```yaml
 # data_sources.yaml

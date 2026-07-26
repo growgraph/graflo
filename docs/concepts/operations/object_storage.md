@@ -39,7 +39,7 @@ The **`graflo.object_storage`** package exposes bucket helpers (`ensure_staging_
 
 ## Not a `ResourceConnector`
 
-`FileConnector` and other **resource connectors** describe **ingestion inputs** (local paths, tables, SPARQL). **Staging** does not add a new `BoundSourceKind`: it is an **output path** for bulk CSV upload, not a row source.
+`FileConnector` and other **resource connectors** describe **ingestion inputs** (local paths, tables, SPARQL, API, Kafka). **Staging** does not add a new `BoundSourceKind`: it is an **output path** for bulk CSV upload, not a row source.
 
 Future **“ingest from S3”** (read objects as a source) would be a **new connector type** and data source implementation, not an overload of `FileConnector`.
 

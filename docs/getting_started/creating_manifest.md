@@ -118,15 +118,15 @@ Use `ingestion_model` for **how source records become vertices/edges**.
 
 Defines source wiring (`Bindings`).
 
-- **`connectors`**: list of `FileConnector`, `TableConnector`, `SparqlConnector`, or `APIConnector` entries (paths, tables, RDF/SPARQL sources, or REST API paths). For **`TableConnector`**, optional **`filters`** push down SQL `WHERE` clauses using the same **`FilterExpression`** shorthand as vertex **`filters`** in the schema (`AND`, `OR`, `NOT`, `IF_THEN` as YAML keys). Optional nested **`time_filter`** (**`ColumnTimeFilter`**) restricts rows by a date/time column. **`APIConnector`** declares the endpoint **`path`**, HTTP method, static **`params`**, and optional **`pagination`** (`offset`, `page`, or `cursor` strategy — see [API connector and pagination](../concepts/connectors/api_connector.md)). Register **`base_url`** and credentials at runtime via **`connector_connection`** → **`conn_proxy`** (manually or with **`register_all_api_configs_from_env`** — see [Example 14](../examples/example-14.md)). See also [Runtime connector updates](../concepts/connectors/runtime_updates.md) and [Table connector views](../concepts/connectors/table_views.md#bindings-filter-cookbook-tableconnectorfilters).
+- **`connectors`**: list of `FileConnector`, `TableConnector`, `SparqlConnector`, `APIConnector`, or `KafkaConnector` entries (paths, tables, RDF/SPARQL sources, REST API paths, or Kafka topics). For **`TableConnector`**, optional **`filters`** push down SQL `WHERE` clauses using the same **`FilterExpression`** shorthand as vertex **`filters`** in the schema (`AND`, `OR`, `NOT`, `IF_THEN` as YAML keys). Optional nested **`time_filter`** (**`ColumnTimeFilter`**) restricts rows by a date/time column. **`APIConnector`** declares the endpoint **`path`**, HTTP method, static **`params`**, and optional **`pagination`** (`offset`, `page`, or `cursor` strategy; optional **`carry_params`** / nullable **`limit_param`** — see [API connector and pagination](../concepts/connectors/api_connector.md)). **`KafkaConnector`** declares **`topics`** / **`group_id`** for finite-batch JSON consume — see [Kafka connector](../concepts/connectors/kafka_connector.md). Register runtime credentials via **`connector_connection`** → **`conn_proxy`** (manually or with **`register_all_api_configs_from_env`** / **`register_all_kafka_configs_from_env`** — see [Example 14](../examples/example-14.md)). See also [Runtime connector updates](../concepts/connectors/runtime_updates.md) and [Table connector views](../concepts/connectors/table_views.md#bindings-filter-cookbook-tableconnectorfilters).
 - **`resource_connector`**: list of `{"resource": "<ingestion resource name>", "connector": "<connector name or hash>"}` rows linking `IngestionModel.resources[*].name` to a connector. The same `resource` may appear on **multiple rows** with different `connector` values (several physical sources for one pipeline).
-- **`connector_connection`** (optional): list of `{"connector": "<connector name or hash>", "conn_proxy": "<label>"}` rows. This keeps manifests **non-secret**: only proxy *names* appear in YAML; runtime code registers each `conn_proxy` on a `ConnectionProvider` with the real `GeneralizedConnConfig` (PostgreSQL, SPARQL, **REST API**, etc.).
+- **`connector_connection`** (optional): list of `{"connector": "<connector name or hash>", "conn_proxy": "<label>"}` rows. This keeps manifests **non-secret**: only proxy *names* appear in YAML; runtime code registers each `conn_proxy` on a `ConnectionProvider` with the real `GeneralizedConnConfig` (PostgreSQL, SPARQL, **REST API**, **Kafka**, etc.).
 
 Connector references in `resource_connector` / `connector_connection` must match a connector’s declared **`name`** or canonical **`hash`**. Ingestion **resource names** are not connector references (they can map 1→*n*). Duplicate connector `name` values and conflicting `conn_proxy` mappings for the same connector hash are rejected at validation time.
 
 The block can be left empty in-file (`bindings: {}`) and supplied at runtime for env-specific deployments.
 
-Use `bindings` for **where data comes from** (and optionally **which proxy label** supplies runtime credentials for each SQL/SPARQL/**API** connector).
+Use `bindings` for **where data comes from** (and optionally **which proxy label** supplies runtime credentials for each SQL/SPARQL/**API**/Kafka connector).
 
 ### Runtime proxy wiring (example)
 
@@ -197,6 +197,7 @@ engine.define_and_ingest(
 ## See also
 
 - [API connector and pagination](../concepts/connectors/api_connector.md)
+- [Kafka connector](../concepts/connectors/kafka_connector.md)
 - [Manifest evolution](../concepts/schema/manifest_evolution.md)
 - [Quick Start](quickstart.md)
 - [Concepts](../concepts/index.md)

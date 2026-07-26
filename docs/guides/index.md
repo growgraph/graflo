@@ -9,6 +9,7 @@ Task-oriented walkthroughs for common GraFlo workflows. Each guide links to the 
 | Migrate a graph database to another backend | [Graph DB migration](graph_db_migration.md) | [Quick start](../getting_started/quickstart.md#graph-export-and-migration) | [Graph export and migration](../concepts/operations/graph_export_migration.md) |
 | Export a graph to disk and replay it | [Graph export and replay](graph_export_and_replay.md) | [Example 13](../examples/example-13.md) | [Graph export and migration](../concepts/operations/graph_export_migration.md) |
 | Wire REST API credentials from environment variables | [API env wiring](api_env_wiring.md) | [Example 14](../examples/example-14.md) | [API connector](../concepts/connectors/api_connector.md) |
+| Ingest JSON messages from Kafka topics | — | — | [Kafka connector](../concepts/connectors/kafka_connector.md) |
 | Infer vertex identities from CSV samples | [Identity inference](identity_inference.md) | [Example 15](../examples/example-15.md) | [Vertex identity](../concepts/schema/vertex_identity.md) |
 | Bulk-load TigerGraph via CSV and S3 staging | [TigerGraph bulk load](tigergraph_bulk_load.md) | [Example 10](../examples/example-10.md) | [Object storage](../concepts/operations/object_storage.md) |
 | Use a pre-provisioned graph namespace (least privilege) | [Graph namespace and schema](graph_namespace_and_schema.md) | — | [Capabilities](../concepts/architecture/capabilities.md) |

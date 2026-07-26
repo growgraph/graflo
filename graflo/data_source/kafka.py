@@ -4,7 +4,7 @@ Runtime consumer for Kafka connectors. Configuration is built by
 :class:`~graflo.architecture.contract.bindings.KafkaConnector.build_kafka_config`
 from contract fields plus runtime credentials from a connection provider.
 
-Requires the optional ``kafka`` extra (``confluent-kafka``).
+Requires ``confluent-kafka`` (default package dependency).
 """
 
 from __future__ import annotations
@@ -71,8 +71,8 @@ def _import_confluent_kafka():  # noqa: ANN202
         from confluent_kafka import Consumer, KafkaError, KafkaException
     except ImportError as e:
         raise ImportError(
-            "Kafka support requires the optional 'kafka' extra. "
-            "Install with: uv sync --extra kafka"
+            "Kafka support requires confluent-kafka. "
+            "Install package dependencies (e.g. uv sync) so confluent-kafka is available."
         ) from e
     return Consumer, KafkaError, KafkaException
 

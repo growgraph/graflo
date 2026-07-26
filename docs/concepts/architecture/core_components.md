@@ -330,6 +330,7 @@ An `AbstractDataSource` subclass defines where data comes from and how it is ret
 | `SPARQL` | `RdfFileDataSource` | Turtle (`.ttl`), RDF/XML (`.rdf`), N3 (`.n3`), JSON-LD files — parsed via `rdflib` |
 | `SPARQL` | `SparqlEndpointDataSource` | Remote SPARQL endpoints (e.g. Apache Fuseki) queried via `SPARQLWrapper` |
 | `API` | `APIConnector` / `APIDataSource` | REST API endpoints via bindings + `conn_proxy`; [pagination strategies](../connectors/api_connector.md) |
+| `KAFKA` | `KafkaConnector` / `KafkaDataSource` | Finite-batch JSON topic consume via bindings + `conn_proxy`; [Kafka connector](../connectors/kafka_connector.md) |
 | `SQL` | `SQLDataSource` | SQL databases via SQLAlchemy with parameterised queries |
 | `IN_MEMORY` | `InMemoryDataSource` | Python objects (lists, DataFrames) already in memory |
 
@@ -342,7 +343,7 @@ Ingestion resources split into two layers:
 - **`ResourceConfig`** — declarative contract in **`ingestion_model.resources`** (YAML/Python): pipeline steps, encoding, type casters, edge-inference flags, **`tolerate_transform_errors`**, and related options. Serialized in manifests; validated by **`IngestionModel`**.
 - **`ResourceRuntime`** — schema-bound executor built via **`build_resource_runtime`**: filtered **`VertexConfig`**, bound transforms, and **`ActorExecutor`** for document casting.
 
-The name **`Resource`** in manifests and docs usually means **`ResourceConfig`**. Data sources bind to resources by name, so the same pipeline applies whether data arrives from a file, API, SQL table, or SPARQL endpoint.
+The name **`Resource`** in manifests and docs usually means **`ResourceConfig`**. Data sources bind to resources by name, so the same pipeline applies whether data arrives from a file, API, Kafka topic, SQL table, or SPARQL endpoint.
 
 Resource-level controls:
 - **`infer_edges`**: Global toggle for inferred edge emission during assembly (default: `true`).

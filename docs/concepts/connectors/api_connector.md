@@ -170,7 +170,7 @@ Next-page URLs are always constructed from the connector's **`base_url`** and **
 | ----- | ------- | ------- | ------- |
 | **`strategy`** | `"offset"` | all | `"offset"`, `"page"`, or `"cursor"` |
 | **`offset_param`** | `"offset"` | offset | Query param for skip/offset |
-| **`limit_param`** | `"limit"` | offset | Query param **name** for page size; value comes from **`page_size`** |
+| **`limit_param`** | `"limit"` | offset | Query param **name** for page size; value comes from **`page_size`**. Set to **`null`** to omit the page-size query parameter |
 | **`page_param`** | `"page"` | page | Query param for 1-based page index |
 | **`per_page_param`** | `"per_page"` | page | Query param **name** for page size; value comes from **`page_size`** |
 | **`cursor_param`** | `"cursor"` | cursor | Query param for opaque cursor token |
@@ -178,6 +178,7 @@ Next-page URLs are always constructed from the connector's **`base_url`** and **
 | **`initial_page`** | `1` | page | First request page number |
 | **`initial_cursor`** | `null` | cursor | Send cursor on the **first** request when the API requires it |
 | **`page_size`** | `100` | all | Records requested per HTTP call |
+| **`carry_params`** | `{}` | all | Query param name → response dot path. After each page, values are read and echoed on later requests (session tokens). When empty, known tokens are auto-detected from the first response |
 
 ### `ApiResponseStructure` (`pagination.response`)
 
@@ -282,7 +283,7 @@ Best for APIs that accept **`offset` + `limit`** (or similarly named) query para
 
 **Request loop:**
 
-1. Set `offset_param=initial_offset` and `limit_param=page_size` (names configurable).
+1. Set `offset_param=initial_offset` and, when **`limit_param`** is not **`null`**, `limit_param=page_size` (names configurable).
 2. Parse rows from **`response.records_path`**.
 3. Stop using the [stop conditions](#stop-conditions-evaluated-in-order) above.
 4. Advance offset from **`response.next_offset_path`** when configured, else increment by **`page_size`**.
@@ -406,7 +407,36 @@ pagination:
 
 If the first call must include a cursor (some APIs use `cursor=`*empty* or a fixed start token), set **`initial_cursor`** accordingly.
 
+## Session tokens (`carry_params`)
+
+Some APIs return an opaque session token on the first page that must be echoed as a query parameter on later pages (for example BMC Discovery `results_id`, Elasticsearch-style `scroll_id` / `pit_id`, or `search_id`).
+
+**`pagination.request.carry_params`** maps **query param name → response dot path**:
+
+```yaml
+pagination:
+  request:
+    strategy: offset
+    offset_param: offset
+    limit_param: null          # omit page-size param when the API rejects it
+    page_size: 100
+    carry_params:
+      results_id: 0.results_id  # list envelope: [{"results_id": "…", "results": […]}]
+  response:
+    records_path: 0.results
+    next_offset_path: 0.next_offset
+```
+
+Behaviour:
+
+1. After each page, GraFlo reads the configured paths and merges those values into the next request’s query string (alongside offset/page/cursor params).
+2. When **`carry_params`** is **empty** / unset, the first response is scanned for known token fields: **`results_id`**, **`scroll_id`**, **`pit_id`**, **`search_id`**. Detection checks top-level object keys, then **`0.<key>`** for a non-empty list-of-objects envelope. Singular **`result_id`** is **not** treated as a carry token.
+3. Carried values refresh from every subsequent page so rotating tokens stay current.
+
+Use an explicit map when the token field name differs from the query param, or when auto-detection would miss a custom path.
+
 ## Static query parameters
+
 
 Use **`APIConnector.params`** for filters that do not change between pages (tenant id, `active=true`, API version flags). Pagination params are merged on top each iteration; static params are preserved.
 
@@ -459,7 +489,7 @@ resources:
         relation_field: _rel
 ```
 
-`row_annotations` is only implemented for API connectors today; other connector types reject non-empty values.
+`row_annotations` is implemented for **`APIConnector`** and **`KafkaConnector`**; file, SQL, and SPARQL connectors reject non-empty values.
 
 ## Connector templates
 

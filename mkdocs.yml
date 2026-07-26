@@ -71,6 +71,7 @@ nav:
     -   Connectors:
         -   Table views and SelectSpec: concepts/connectors/table_views.md
         -   API connector: concepts/connectors/api_connector.md
+        -   Kafka connector: concepts/connectors/kafka_connector.md
         -   Runtime connector updates: concepts/connectors/runtime_updates.md
     -   Operations:
         -   Graph export and migration: concepts/operations/graph_export_migration.md

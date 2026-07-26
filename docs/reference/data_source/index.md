@@ -6,9 +6,10 @@ This section documents the data source abstraction layer in graflo. Data sources
 
 Data sources handle data retrieval from various sources:
 
-- **File Data Sources**: JSON, JSONL, CSV/TSV files
+- **File Data Sources**: JSON, JSONL, CSV/TSV, Parquet files
 - **API Data Sources**: REST API endpoints
 - **SQL Data Sources**: SQL databases
+- **Kafka Data Sources**: finite-batch JSON topic consumption
 - **In-Memory Data Sources**: Python objects (lists, DataFrames)
 
 Many data sources can map to the same Resource, allowing flexible data ingestion.
@@ -91,6 +92,8 @@ Three request strategies:
 Key fields:
 
 - **`request.page_size`** — records per HTTP request (overridden by **`IngestionParams.batch_size`** when set)
+- **`request.limit_param`** — page-size query param name for offset strategy; set to **`null`** to omit it
+- **`request.carry_params`** — query param → response path map for opaque session tokens; when empty, auto-detects `results_id` / `scroll_id` / `pit_id` / `search_id` (including `0.<key>` list envelopes)
 - **`response.records_path`** — dot path to the JSON record list (e.g. `results`, `data`, or `0.results` for an array-wrapped envelope)
 - **`response.next_offset_path`** — server-provided next offset (e.g. `next_offset`)
 - **`response.has_more_path`** — boolean stop signal (e.g. `has_more`)
@@ -107,7 +110,33 @@ Runtime **`base_url`** and credentials (`bearer`, `basic`, `digest`, `api_key`) 
 
 **Env wiring** — map each `conn_proxy` to env vars (`user_service` → `USER_SERVICE_BASE_URL`, `USER_SERVICE_AUTH_TYPE`, …) and call **`register_all_api_configs_from_env(bindings)`** or **`register_api_config_from_env(conn_proxy)`**. See **[API connector and pagination](../../concepts/connectors/api_connector.md)** and **[Example 14](../../examples/example-14.md)**.
 
+## Kafka Data Sources
+
+Kafka topic ingestion uses **`KafkaConnector`** in manifest **`bindings`** plus runtime bootstrap/auth via **`conn_proxy`**. Full guide: **[Kafka connector](../../concepts/connectors/kafka_connector.md)**.
+
+### KafkaConnector
+
+Manifest contract for finite-batch topic consumption:
+
+- **`topics`**, **`group_id`**, **`auto_offset_reset`** (`earliest` | `latest`)
+- **`value_encoding`** — `json` only (JSON **object** payloads)
+- **`idle_ms`** / **`max_wait_ms`** / **`poll_timeout_ms`** — stop conditions for one consume run
+- Optional **`include_headers`**, **`row_annotations`**
+
+### KafkaDataSource
+
+Runtime consumer (`confluent-kafka`). Built by **`RegistryBuilder`** from **`KafkaConnector`** + **`KafkaConnConfig`**; not constructed from sidecar CLI configs.
+
+### KafkaConnConfig / KafkaGeneralizedConnConfig
+
+Runtime **`bootstrap_servers`** and optional SASL/SSL settings in **`graflo.connection_models`**, registered on a **`ConnectionProvider`**.
+
+**Env wiring** — map each `conn_proxy` to env vars (`kafka_local` → `KAFKA_LOCAL_BOOTSTRAP_SERVERS`, …) and call **`register_all_kafka_configs_from_env(bindings)`** or **`register_kafka_config_from_env(conn_proxy)`**.
+
+Local broker fixture: **`docker/kafka`** (`localhost:9092`). Live tests: `uv run pytest test -m kafka --run-kafka`.
+
 ## SQL Data Sources
+
 
 ### SQLDataSource
 

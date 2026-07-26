@@ -13,7 +13,8 @@ After inference, each vertex has a derived **`identity_mode`**:
 
 - **`natural`** — upsert on `identity` (one or more fields; unary and composite use the same path)
 - **`hash`** — `hash_identity_properties` hashed into synthetic `id`
-- **`blank`** — random UUID (not used in this example)
+- **`assigned`** — intentional UUID primary key (not used in this example; not produced by inference)
+- **`blank`** — random UUID placeholder (not used in this example)
 
 See [Vertex identity modes](../concepts/schema/vertex_identity.md) for the full model.
 
