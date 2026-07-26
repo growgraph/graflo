@@ -28,6 +28,10 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "nebula: NebulaGraph integration tests (skipped unless --run-nebula)"
     )
+    config.addinivalue_line(
+        "markers",
+        "kafka: Kafka integration tests (skipped unless --run-kafka)",
+    )
 
 
 def pytest_addoption(parser):
@@ -50,6 +54,12 @@ def pytest_addoption(parser):
         default=False,
         help="Run NebulaGraph integration tests marked @pytest.mark.nebula",
     )
+    parser.addoption(
+        "--run-kafka",
+        action="store_true",
+        default=False,
+        help="Run Kafka integration tests marked @pytest.mark.kafka",
+    )
 
 
 def pytest_collection_modifyitems(config, items):
@@ -57,6 +67,7 @@ def pytest_collection_modifyitems(config, items):
         "bulk_e2e": ("--run-bulk-e2e", "need --run-bulk-e2e option to run"),
         "performance": ("--run-performance", "need --run-performance option to run"),
         "nebula": ("--run-nebula", "need --run-nebula option to run"),
+        "kafka": ("--run-kafka", "need --run-kafka option to run"),
     }
     for marker_name, (option, reason) in _skip_map.items():
         if config.getoption(option):

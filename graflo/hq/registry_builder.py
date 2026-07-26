@@ -20,6 +20,7 @@ from graflo.hq.connection_provider import (
     ApiGeneralizedConnConfig,
     ConnectionProvider,
     EmptyConnectionProvider,
+    KafkaGeneralizedConnConfig,
     PostgresGeneralizedConnConfig,
     SparqlGeneralizedConnConfig,
 )
@@ -27,6 +28,7 @@ from graflo.architecture.contract.bindings import (
     BoundSourceKind,
     APIConnector,
     FileConnector,
+    KafkaConnector,
     SparqlConnector,
     TableConnector,
 )
@@ -196,6 +198,31 @@ class RegistryBuilder:
                     except Exception as e:
                         msg = (
                             f"Failed to register API source for resource "
+                            f"'{resource_name}' (connector '{cref}'): {e}"
+                        )
+                        failures.append(msg)
+                        if strict:
+                            continue
+
+                elif kind == BoundSourceKind.KAFKA:
+                    if not isinstance(connector, KafkaConnector):
+                        msg = (
+                            f"Connector '{cref}' for resource '{resource_name}' "
+                            f"is not a KafkaConnector"
+                        )
+                        logger.warning("%s, skipping", msg)
+                        failures.append(msg)
+                        continue
+                    try:
+                        self._register_kafka_sources(
+                            registry,
+                            resource_name,
+                            connector,
+                            provider,
+                        )
+                    except Exception as e:
+                        msg = (
+                            f"Failed to register Kafka source for resource "
                             f"'{resource_name}' (connector '{cref}'): {e}"
                         )
                         failures.append(msg)
@@ -525,5 +552,38 @@ class RegistryBuilder:
             "Created API data source for path '%s' at '%s' mapped to resource '%s'",
             connector.path,
             api_config.url,
+            resource_name,
+        )
+
+    def _register_kafka_sources(
+        self,
+        registry: DataSourceRegistry,
+        resource_name: str,
+        connector: KafkaConnector,
+        connection_provider: ConnectionProvider,
+    ) -> None:
+        """Register Kafka topic data sources for a resource."""
+        from graflo.data_source.kafka import KafkaDataSource
+
+        generalized = (
+            connection_provider.get_generalized_conn_config(connector)
+            if hasattr(connection_provider, "get_generalized_conn_config")
+            else None
+        )
+        if not isinstance(generalized, KafkaGeneralizedConnConfig):
+            logger.warning(
+                "Kafka connector for resource '%s' has no KafkaConnConfig, skipping",
+                resource_name,
+            )
+            return
+
+        kafka_config = connector.build_kafka_config(conn=generalized.config)
+        kafka_source = KafkaDataSource(config=kafka_config)
+        registry.register(kafka_source, resource_name=resource_name)
+
+        logger.info(
+            "Created Kafka data source for topics %s (group=%s) mapped to resource '%s'",
+            connector.topics,
+            connector.group_id,
             resource_name,
         )

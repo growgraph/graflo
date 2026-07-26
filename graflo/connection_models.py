@@ -1,7 +1,8 @@
 """Pydantic models for runtime source connection configuration.
 
 Leaf module: no imports from ``bindings``, ``data_source``, ``hq``, or ``connection_provider``.
-Used by :mod:`graflo.hq.connection_provider` and :mod:`graflo.data_source.api`.
+Used by :mod:`graflo.hq.connection_provider`, :mod:`graflo.data_source.api`,
+and :mod:`graflo.data_source.kafka`.
 """
 
 from __future__ import annotations
@@ -129,9 +130,86 @@ class ApiGeneralizedConnConfig(BaseModel):
     config: RestApiConnConfig
 
 
+KafkaSecurityProtocol = Literal["PLAINTEXT", "SASL_PLAINTEXT", "SASL_SSL", "SSL"]
+_VALID_KAFKA_SECURITY_PROTOCOLS = frozenset(
+    {"PLAINTEXT", "SASL_PLAINTEXT", "SASL_SSL", "SSL"}
+)
+
+
+class KafkaConnConfig(BaseModel):
+    """Runtime Kafka broker connection settings (bootstrap and auth)."""
+
+    bootstrap_servers: str
+    security_protocol: KafkaSecurityProtocol = "PLAINTEXT"
+    client_id: str | None = None
+    sasl_mechanism: str | None = None
+    sasl_username: str | None = None
+    sasl_password: str | None = None
+
+    @classmethod
+    def from_env(cls, env_prefix: str) -> KafkaConnConfig:
+        """Load Kafka config from environment variables.
+
+        Supported variables (all prefixed with *env_prefix*):
+
+        - ``BOOTSTRAP_SERVERS`` (required)
+        - ``SECURITY_PROTOCOL``: ``PLAINTEXT``, ``SASL_PLAINTEXT``, ``SASL_SSL``,
+          or ``SSL`` (default: ``PLAINTEXT``)
+        - ``CLIENT_ID``
+        - ``SASL_MECHANISM``, ``SASL_USERNAME``, ``SASL_PASSWORD``
+        """
+        bootstrap_servers = os.environ.get(f"{env_prefix}BOOTSTRAP_SERVERS")
+        if not bootstrap_servers:
+            raise ValueError(
+                f"Environment variable {env_prefix}BOOTSTRAP_SERVERS is required "
+                "for KafkaConnConfig"
+            )
+
+        security_raw = os.environ.get(f"{env_prefix}SECURITY_PROTOCOL", "PLAINTEXT")
+        security_upper = security_raw.upper()
+        if security_upper not in _VALID_KAFKA_SECURITY_PROTOCOLS:
+            raise ValueError(
+                f"Invalid {env_prefix}SECURITY_PROTOCOL={security_raw!r}; "
+                "expected PLAINTEXT, SASL_PLAINTEXT, SASL_SSL, or SSL"
+            )
+
+        return cls(
+            bootstrap_servers=cast(str, bootstrap_servers),
+            security_protocol=cast(KafkaSecurityProtocol, security_upper),
+            client_id=os.environ.get(f"{env_prefix}CLIENT_ID"),
+            sasl_mechanism=os.environ.get(f"{env_prefix}SASL_MECHANISM"),
+            sasl_username=os.environ.get(f"{env_prefix}SASL_USERNAME"),
+            sasl_password=os.environ.get(f"{env_prefix}SASL_PASSWORD"),
+        )
+
+    def to_consumer_config(self) -> dict[str, str]:
+        """Build a confluent-kafka consumer config dict from connection settings."""
+        cfg: dict[str, str] = {
+            "bootstrap.servers": self.bootstrap_servers,
+            "security.protocol": self.security_protocol,
+        }
+        if self.client_id:
+            cfg["client.id"] = self.client_id
+        if self.sasl_mechanism:
+            cfg["sasl.mechanism"] = self.sasl_mechanism
+        if self.sasl_username is not None:
+            cfg["sasl.username"] = self.sasl_username
+        if self.sasl_password is not None:
+            cfg["sasl.password"] = self.sasl_password
+        return cfg
+
+
+class KafkaGeneralizedConnConfig(BaseModel):
+    """Generalized runtime config variant for Kafka connections."""
+
+    kind: Literal["kafka"] = "kafka"
+    config: KafkaConnConfig
+
+
 GeneralizedConnConfig = (
     PostgresGeneralizedConnConfig
     | SparqlGeneralizedConnConfig
     | S3GeneralizedConnConfig
     | ApiGeneralizedConnConfig
+    | KafkaGeneralizedConnConfig
 )

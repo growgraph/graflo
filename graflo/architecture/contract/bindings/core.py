@@ -11,12 +11,15 @@ from .connectors import (
     ConnectorUpdate,
     APIConnector,
     FileConnector,
+    KafkaConnector,
     ResourceConnector,
     SparqlConnector,
     TableConnector,
 )
 
-AnyConnector = FileConnector | TableConnector | SparqlConnector | APIConnector
+AnyConnector = (
+    FileConnector | TableConnector | SparqlConnector | APIConnector | KafkaConnector
+)
 
 _TEMPLATE_METADATA_KEYS = frozenset({"name", "conn_proxy"})
 _TEMPLATE_MERGE_DICT_KEYS = frozenset({"params", "row_annotations", "headers"})
@@ -470,6 +473,8 @@ class BindingsConfig(ConfigBaseModel):
             return connector.rdf_class
         if isinstance(connector, APIConnector):
             return connector.path
+        if isinstance(connector, KafkaConnector):
+            return connector.name or ",".join(connector.topics)
         raise TypeError(f"Unsupported connector type: {type(connector)!r}")
 
     @model_validator(mode="after")
@@ -561,7 +566,14 @@ class BindingsConfig(ConfigBaseModel):
         for h in self._resource_to_connector_hashes.get(resource_name, []):
             c = self._connectors_index.get(h)
             if isinstance(
-                c, (TableConnector, FileConnector, SparqlConnector, APIConnector)
+                c,
+                (
+                    TableConnector,
+                    FileConnector,
+                    SparqlConnector,
+                    APIConnector,
+                    KafkaConnector,
+                ),
             ):
                 result.append(c)
         return result
