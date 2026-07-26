@@ -15,6 +15,7 @@ dependencies = [
   "SPARQLWrapper>=2.0.0",
   "boto3>=1.35.0,<2",
   "click>=8.2.0,<9",
+  "confluent-kafka>=2.6.0",
   "falkordb>=1.0.9",
   "ijson>=3.2.3,<4",
   "nebula3-python>=3.8.3",
@@ -36,11 +37,11 @@ dependencies = [
   "urllib3>=2.0.0",
   "xmltodict>=0.14.2,<0.15"
 ]
-description = "Manifest-driven Graph Schema & Transformation Language (GSTL): define labeled property graph schemas, ingest from CSV/JSON/Parquet/SQL/RDF/SPARQL/API sources, infer schemas from PostgreSQL 3NF or OWL/RDFS ontologies, apply schema migrations, and project to ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, or NebulaGraph."
+description = "Manifest-driven Graph Schema & Transformation Language (GSTL): define labeled property graph schemas, ingest from CSV/JSON/Parquet/SQL/RDF/SPARQL/API/Kafka sources, infer schemas from PostgreSQL 3NF or OWL/RDFS ontologies, apply schema migrations, and project to ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, or NebulaGraph."
 name = "graflo"
 readme = "README.md"
 requires-python = ">=3.11"
-version = "1.8.14"
+version = "1.8.16"
 
 [project.optional-dependencies]
 dev = [
@@ -85,6 +86,7 @@ include = ["graflo"]
 [tool.pytest.ini_options]
 markers = [
   "bulk_e2e: marks TigerGraph native bulk end-to-end tests (skipped unless --run-bulk-e2e is passed)",
+  "kafka: marks Kafka integration tests (skipped unless --run-kafka is passed)",
   "nebula: marks NebulaGraph integration tests (skipped unless --run-nebula is passed)",
   "performance: marks performance / stress tests (skipped unless --run-performance is passed)"
 ]

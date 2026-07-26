@@ -20,6 +20,7 @@ from .file import (
     JsonlFileDataSource,
     TableFileDataSource,
 )
+from .kafka import KafkaConfig, KafkaDataSource
 from .memory import InMemoryDataSource
 from .registry import DataSourceRegistry
 from .sql import SQLConfig, SQLDataSource
@@ -43,6 +44,8 @@ __all__ = [
     "InMemoryDataSource",
     "JsonFileDataSource",
     "JsonlFileDataSource",
+    "KafkaConfig",
+    "KafkaDataSource",
     "PaginationConfig",
     "PaginationRequestConfig",
     "SQLConfig",

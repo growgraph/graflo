@@ -22,6 +22,7 @@ class DataSourceType(BaseEnum):
     SQL: SQL database data sources
     IN_MEMORY: In-memory data sources (lists, DataFrames)
     SPARQL: RDF data sources (local files via rdflib, remote endpoints via SPARQLWrapper)
+    KAFKA: Kafka topic consumers (JSON object payloads)
     """
 
     FILE = "file"
@@ -29,6 +30,7 @@ class DataSourceType(BaseEnum):
     SQL = "sql"
     IN_MEMORY = "in_memory"
     SPARQL = "sparql"
+    KAFKA = "kafka"
 
 
 class AbstractDataSource(ConfigBaseModel, abc.ABC):

@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.16]
+
+### Fixed
+
+- Pre-commit / `ty`: NebulaGraph 5 client uses `addresses` / `user_name`; Memgraph `conn` typed as `Any` (C-extension star-import); `GraphContainer` hashable helper return type; drop unused type ignores.
+
+### Added
+
+- **Kafka ingest datasource**: `BoundSourceKind.KAFKA` / `KafkaConnector` / `KafkaDataSource` / `KafkaConnConfig` (+ `KafkaGeneralizedConnConfig`) for finite-batch JSON topic consumption via `conn_proxy`, wired through `RegistryBuilder` like API/SQL. Optional extra `[kafka]` (`confluent-kafka`). Pytest marker `kafka` / `--run-kafka` for live broker tests against `docker/kafka` (`localhost:9092`).
+- **`docker/kafka`**: Apache Kafka ([`apache/kafka:4.3.1`](https://hub.docker.com/r/apache/kafka)) KRaft single-broker compose fixture for local streaming/ingest tests; wired into `start-all.sh` / `stop-all.sh` / `cleanup-all.sh`. Bootstrap `localhost:9092`.
+
 ## [1.8.15]
 
 ### Added

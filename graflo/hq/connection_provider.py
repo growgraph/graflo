@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from graflo.architecture.contract.bindings import (
     APIConnector,
     Bindings,
+    KafkaConnector,
     ResourceConnector,
     SparqlConnector,
     TableConnector,
@@ -22,6 +23,8 @@ from graflo.connection_models import (
     ApiAuth,
     ApiGeneralizedConnConfig,
     GeneralizedConnConfig,
+    KafkaConnConfig,
+    KafkaGeneralizedConnConfig,
     PostgresGeneralizedConnConfig,
     RestApiConnConfig,
     S3GeneralizedConnConfig,
@@ -36,6 +39,8 @@ __all__ = [
     "EmptyConnectionProvider",
     "GeneralizedConnConfig",
     "InMemoryConnectionProvider",
+    "KafkaConnConfig",
+    "KafkaGeneralizedConnConfig",
     "PostgresGeneralizedConnConfig",
     "RestApiConnConfig",
     "S3GeneralizedConnConfig",
@@ -231,6 +236,60 @@ class InMemoryConnectionProvider(BaseModel):
 
         for conn_proxy in sorted(api_proxies):
             self.register_api_config_from_env(
+                conn_proxy=conn_proxy,
+                env_prefix=prefix_map.get(conn_proxy),
+            )
+        self.bind_from_bindings(bindings=bindings)
+
+    def register_kafka_config_from_env(
+        self,
+        *,
+        conn_proxy: str,
+        env_prefix: str | None = None,
+    ) -> None:
+        """Register Kafka runtime config for *conn_proxy* from environment variables.
+
+        *env_prefix* defaults to a proxy-derived prefix (e.g. ``kafka_local`` →
+        ``KAFKA_LOCAL_``), reading ``{prefix}BOOTSTRAP_SERVERS`` and optional auth vars.
+        """
+        prefix = (
+            env_prefix if env_prefix is not None else _proxy_to_env_prefix(conn_proxy)
+        )
+        runtime = KafkaConnConfig.from_env(env_prefix=prefix)
+        self.register_generalized_config(
+            conn_proxy=conn_proxy,
+            config=KafkaGeneralizedConnConfig(config=runtime),
+        )
+
+    def register_all_kafka_configs_from_env(
+        self,
+        *,
+        bindings: Bindings,
+        env_prefix_map: dict[str, str] | None = None,
+    ) -> None:
+        """Register env-backed Kafka configs for all Kafka ``conn_proxy`` labels.
+
+        Discovers unique ``conn_proxy`` values attached to :class:`KafkaConnector`
+        instances, loads each via :meth:`register_kafka_config_from_env`, then binds
+        all connectors from *bindings*.
+        """
+        prefix_map = env_prefix_map or {}
+        kafka_proxies: set[str] = set()
+        for connector in bindings.connectors:
+            if not isinstance(connector, KafkaConnector):
+                continue
+            proxy = bindings.get_conn_proxy_for_connector(connector)
+            if proxy is not None:
+                kafka_proxies.add(proxy)
+
+        if not kafka_proxies:
+            raise ValueError(
+                "No Kafka connector_connection mappings found in bindings; "
+                "expected at least one KafkaConnector with a conn_proxy."
+            )
+
+        for conn_proxy in sorted(kafka_proxies):
+            self.register_kafka_config_from_env(
                 conn_proxy=conn_proxy,
                 env_prefix=prefix_map.get(conn_proxy),
             )

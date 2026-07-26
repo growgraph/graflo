@@ -18,6 +18,7 @@ This will start all available graph database services:
 - NebulaGraph (port 9669)
 - PostgreSQL (port 5432)
 - MinIO (API port 9000, console 9001)
+- Kafka (bootstrap port 9092)
 
 **Stop all services:**
 ```shell
@@ -192,6 +193,28 @@ ensure_staging_bucket_for_config(config)
 ```
 
 Implementation helpers (`upload_staged_csvs`, boto3 client factories, bucket ensure) live in **`graflo.object_storage`**. See **docs/concepts/operations/object_storage.md** in the repo for staging vs ingestion connectors.
+
+
+## Kafka
+
+Apache Kafka in KRaft combined mode ([Docker Hub image](https://hub.docker.com/r/apache/kafka)). Single-broker fixture for local ingest / streaming tests.
+
+**Run:**
+```shell
+cd kafka
+docker compose --env-file .env --profile graflo.kafka up -d
+```
+
+**Connection Details:**
+- Bootstrap servers: `localhost:9092` (host port via `KAFKA_PORT` in `.env`)
+- Plaintext listener only (no auth) — local testing
+- Create a topic from the container:
+  ```shell
+  docker exec --workdir /opt/kafka/bin/ -it graflo.kafka \
+    ./kafka-topics.sh --bootstrap-server localhost:9092 --create --topic test-topic
+  ```
+
+**Port conflicts:** If `9092` is already allocated, set `KAFKA_PORT` (and matching `KAFKA_BOOTSTRAP_SERVERS` / advertised host port) in `docker/kafka/.env`, then recreate the container.
 
 ## Memgraph
 

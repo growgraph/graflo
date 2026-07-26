@@ -136,8 +136,8 @@ class NebulaV5Adapter(NebulaClientAdapter):
         password = config.password or "nebula"
 
         self._client = NebulaClient(
-            hosts=[f"{hostname}:{port}"],
-            username=username,
+            addresses=f"{hostname}:{port}",
+            user_name=username,
             password=password,
         )
         logger.info("Connected to NebulaGraph 5.x at %s:%s", hostname, port)

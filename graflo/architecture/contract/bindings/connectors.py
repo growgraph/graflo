@@ -1,4 +1,4 @@
-"""Resource connector types (file, SQL table, SPARQL)."""
+"""Resource connector types (file, SQL table, SPARQL, API, Kafka)."""
 
 from __future__ import annotations
 
@@ -29,7 +29,8 @@ _BASE_TABLE_ALIAS_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\Z")
 if TYPE_CHECKING:
     from graflo.db import PostgresConfig
     from graflo.data_source.api import APIConfig
-    from graflo.connection_models import ApiAuth
+    from graflo.data_source.kafka import KafkaConfig
+    from graflo.connection_models import ApiAuth, KafkaConnConfig
     from graflo.filter.onto import FilterExpression
 else:
     try:
@@ -50,12 +51,14 @@ class BoundSourceKind(BaseEnum):
         SQL_TABLE: SQL table / database-backed connector.
         SPARQL: SPARQL / RDF connector (endpoint or local RDF via rdflib).
         API: REST API connector (path + pagination on a runtime base URL).
+        KAFKA: Kafka topic consumer (topics + group_id on a runtime bootstrap).
     """
 
     FILE = "file"
     SQL_TABLE = "sql_table"
     SPARQL = "sparql"
     API = "api"
+    KAFKA = "kafka"
 
 
 class ConnectorUpdate(ConfigBaseModel):
@@ -111,8 +114,8 @@ class ResourceConnector(ConfigBaseModel, abc.ABC):
         default_factory=dict,
         description=(
             "Constant fields merged into every fetched row as defaults (response "
-            "fields take priority). Only implemented for :class:`APIConnector`; "
-            "other connector types reject non-empty values."
+            "fields take priority). Implemented for :class:`APIConnector` and "
+            ":class:`KafkaConnector`; other connector types reject non-empty values."
         ),
     )
 
@@ -804,5 +807,92 @@ class APIConnector(ResourceConnector):
             retry_status_forcelist=list(self.retry_status_forcelist),
             verify=self.verify,
             pagination=pagination,
+            row_annotations=dict(self.row_annotations),
+        )
+
+
+class KafkaConnector(ResourceConnector):
+    """Connector for Kafka topic consumption.
+
+    Declares the non-secret access pattern (topics, consumer group, decode
+    options). Runtime bootstrap servers and credentials are supplied via
+    ``connector_connection`` -> ``conn_proxy`` ->
+    :class:`~graflo.hq.connection_provider.KafkaGeneralizedConnConfig`.
+
+    Attributes:
+        topics: Topic names to subscribe to.
+        group_id: Kafka consumer group id.
+        auto_offset_reset: Where to start when no committed offset exists.
+        value_encoding: Payload decode mode (``json`` only in v1).
+        include_headers: When True, attach decoded headers under ``_kafka_headers``.
+        idle_ms: Stop after this many milliseconds with no messages.
+        max_wait_ms: Hard wall-clock cap for a single ``iter_batches`` run.
+        poll_timeout_ms: Per-poll timeout passed to the Kafka client.
+        row_annotations: Constant fields merged into every decoded row (doc wins).
+    """
+
+    topics: list[str] = Field(..., min_length=1, description="Kafka topics to consume")
+    group_id: str = Field(..., description="Consumer group id")
+    auto_offset_reset: Literal["earliest", "latest"] = "earliest"
+    value_encoding: Literal["json"] = "json"
+    include_headers: bool = False
+    idle_ms: int = Field(
+        default=2000,
+        ge=0,
+        description="Stop after this many ms with no messages (0 disables idle stop).",
+    )
+    max_wait_ms: int | None = Field(
+        default=None,
+        ge=0,
+        description="Optional wall-clock cap for one consume run.",
+    )
+    poll_timeout_ms: int = Field(
+        default=500,
+        ge=1,
+        description="Timeout for each consumer poll call.",
+    )
+
+    @field_validator("topics")
+    @classmethod
+    def _non_empty_topic_names(cls, v: list[str]) -> list[str]:
+        cleaned = [t.strip() for t in v if t and t.strip()]
+        if not cleaned:
+            raise ValueError("topics must contain at least one non-empty topic name")
+        return cleaned
+
+    def matches(self, resource_identifier: str) -> bool:
+        """Match resource name, connector name, or a subscribed topic."""
+        if self.name is not None and resource_identifier == self.name:
+            return True
+        if self.resource_name is not None and resource_identifier == self.resource_name:
+            return True
+        return resource_identifier in self.topics
+
+    def bound_source_kind(self) -> BoundSourceKind:
+        return BoundSourceKind.KAFKA
+
+    def build_kafka_config(
+        self,
+        *,
+        conn: "KafkaConnConfig",
+    ) -> "KafkaConfig":
+        """Merge contract fields with runtime connection config into ``KafkaConfig``."""
+        from graflo.data_source.kafka import KafkaConfig
+
+        return KafkaConfig(
+            bootstrap_servers=conn.bootstrap_servers,
+            security_protocol=conn.security_protocol,
+            client_id=conn.client_id,
+            sasl_mechanism=conn.sasl_mechanism,
+            sasl_username=conn.sasl_username,
+            sasl_password=conn.sasl_password,
+            topics=list(self.topics),
+            group_id=self.group_id,
+            auto_offset_reset=self.auto_offset_reset,
+            value_encoding=self.value_encoding,
+            include_headers=self.include_headers,
+            idle_ms=self.idle_ms,
+            max_wait_ms=self.max_wait_ms,
+            poll_timeout_ms=self.poll_timeout_ms,
             row_annotations=dict(self.row_annotations),
         )
