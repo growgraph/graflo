@@ -91,7 +91,7 @@ print(graflo.__version__)
 
 ## Spinning up databases
 
-Instructions on how to spin up ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph, and Apache Fuseki as Docker containers using `docker compose` are provided here: [github.com/growgraph/graflo/docker](https://github.com/growgraph/graflo/tree/main/docker)
+Instructions on how to spin up ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph, Apache Fuseki, MinIO, PostgreSQL, and Kafka as Docker containers using `docker compose` are provided here: [github.com/growgraph/graflo/docker](https://github.com/growgraph/graflo/tree/main/docker)
 
 ## Configuration
 

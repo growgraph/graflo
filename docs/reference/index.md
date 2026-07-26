@@ -57,7 +57,7 @@ Main graflo functionality:
 
 - **[Caster](hq/caster.md)**: Main data ingestion and transformation engine
 - **[Ingestion parameters](hq/ingestion_parameters.md)**: `IngestionParams`, row-error policy types, and batch cast results (`CastBatchResult`, …)
-- **[Data Sources](data_source/index.md)**: Data source abstraction layer (files, APIs, SQL, in-memory)
+- **[Data Sources](data_source/index.md)**: Data source abstraction layer (files, APIs, SQL, Kafka, in-memory)
 - **[Ontology](onto.md)**: Core data types and enums
 
 ## Utilities
