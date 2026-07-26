@@ -286,6 +286,114 @@ class SanitizeOp(ConfigBaseModel):
     )
 
 
+class PropertyEquivalence(ConfigBaseModel):
+    """Align a property from the left and/or right vertex onto a canonical name.
+
+    At least one of ``left`` / ``right`` must be set. When both are set, both fields
+    rename to ``into`` before the vertices are merged.
+    """
+
+    left: str | None = PydanticField(
+        default=None,
+        description="Field name on the left vertex (omit to keep right-only).",
+    )
+    right: str | None = PydanticField(
+        default=None,
+        description="Field name on the right vertex (omit to keep left-only).",
+    )
+    into: str = PydanticField(
+        ...,
+        description="Canonical property name on the composed vertex.",
+    )
+    identity: bool = PydanticField(
+        default=False,
+        description=(
+            "When True and ``VertexEquivalence.identity`` is unset, include ``into`` "
+            "in the derived identity list after merge."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _require_side(self) -> PropertyEquivalence:
+        if self.left is None and self.right is None:
+            raise ValueError(
+                "PropertyEquivalence requires at least one of left or right"
+            )
+        return self
+
+
+class VertexEquivalence(ConfigBaseModel):
+    """Collapse a left vertex and a right vertex into one composed type.
+
+    GraFlo applies this map deterministically; it does not infer semantic matches.
+    """
+
+    left: str = PydanticField(..., description="Vertex type name in the left manifest.")
+    right: str = PydanticField(
+        ..., description="Vertex type name in the right manifest."
+    )
+    into: str = PydanticField(
+        ...,
+        description=(
+            "Canonical vertex type name after compose "
+            "(may equal ``left``, ``right``, or a new name)."
+        ),
+    )
+    properties: list[PropertyEquivalence] = PydanticField(
+        default_factory=list,
+        description="Property alignment map applied before the vertex merge.",
+    )
+    identity: list[str] | None = PydanticField(
+        default=None,
+        description=(
+            "Optional explicit natural-key identity on ``into`` (property names after "
+            "alignment). When unset, identity is the merged union of both sides, "
+            "with any ``PropertyEquivalence.identity`` flags appended."
+        ),
+    )
+
+
+class RelationEquivalence(ConfigBaseModel):
+    """Collapse a left relation and a right relation onto one canonical name."""
+
+    left: str = PydanticField(..., description="Relation name in the left manifest.")
+    right: str = PydanticField(..., description="Relation name in the right manifest.")
+    into: str = PydanticField(..., description="Canonical relation name after compose.")
+
+
+class ComposeManifestsOp(ConfigBaseModel):
+    """Union two full ``GraphManifest``s using explicit equivalence maps.
+
+    Binary only — apply via :func:`~graflo.architecture.evolution.compose.compose_manifests`.
+    Unary :func:`~graflo.architecture.evolution.apply.apply_evolution` rejects this op.
+
+    Empty ``vertices`` / ``relations`` yields a disjoint union (schema + resources +
+    bindings), subject to ``name_conflict`` / ``resource_renames``.
+    """
+
+    op: Literal["compose_manifests"] = "compose_manifests"
+    vertices: list[VertexEquivalence] = PydanticField(
+        default_factory=list,
+        description="Explicit vertex equivalences across the two input manifests.",
+    )
+    relations: list[RelationEquivalence] = PydanticField(
+        default_factory=list,
+        description="Optional relation equivalences across the two input manifests.",
+    )
+    resource_renames: dict[str, str] = PydanticField(
+        default_factory=dict,
+        description="Rename map applied to *right* resource names before union.",
+    )
+    name_conflict: Literal["error", "prefix_right"] = PydanticField(
+        default="error",
+        description=(
+            "How to handle non-equivalent name collisions on the right side "
+            "(vertices, relations, resources, connectors). "
+            "``prefix_right`` prefixes colliding names with ``r_``."
+        ),
+    )
+
+
 ManifestOp = Annotated[
     RemoveVerticesOp
     | MergeVerticesOp
@@ -302,6 +410,7 @@ ManifestOp = Annotated[
     | AddEdgePropertiesOp
     | AddInverseEdgesOp
     | ProjectManifestOp
-    | SanitizeOp,
+    | SanitizeOp
+    | ComposeManifestsOp,
     PydanticField(discriminator="op"),
 ]

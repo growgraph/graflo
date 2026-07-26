@@ -27,12 +27,54 @@ GraFlo provides **contract-level** operations that transform a validated `GraphM
 | **Add inverse edges** | For each **directed** forward relation `R -> R_inv`, appends inverse schema edges and mirrors ingestion (`pipeline` EdgeActor steps including dynamic endpoints, `relation_field`, redefined `relation_map`, nested `descend`), `infer_edge_only` / `infer_edge_except`, `extra_weights`, and `db_profile`. Skips `directed: false`, TigerGraph `edge_specs[*].reverse_edge`, and existing inverse triples. |
 | **Project manifest** | Keeps a logical subgraph by vertex names and/or edge triples `(source, target, relation)`. Prunes isolated vertex types from `keep_vertices` when they have no surviving edges (`connectivity: induced_prune`). Cascades to schema, `db_profile`, ingestion (pipeline steps, infer selectors, `extra_weights`), and bindings. Optional `keep_resources` filters ingestion resources. Inverse edges are not auto-kept. Fails if ingestion would be left empty. |
 | **Sanitize** | Target-`DBType` policy: reserved-word-safe names on `DatabaseProfile`, reserved vertex field renames, and (for TigerGraph) consistent identity tuples per edge relation. This is the same work **`graflo.hq.sanitizer.Sanitizer`** applies by building a single **`SanitizeOp`**. |
+| **Compose manifests** | Binary union of two full `GraphManifest`s (schema **and** resources/bindings) via `ComposeManifestsOp` + `compose_manifests(left, right, op)`. Consumes **explicit** equivalence maps only (no semantic inference): vertex→vertex, property alignment, optional derived identity, relation equivalences, resource renames / `name_conflict`. Distinct from unary `MergeVerticesOp`. Rejected by unary `apply_evolution`. |
+
+## Compose two manifests
+
+GraFlo stays deterministic: ScheWea (or a human) may *propose* equivalences; core only *applies* them.
+
+```python
+from graflo.architecture.evolution import (
+    ComposeManifestsOp,
+    PropertyEquivalence,
+    RelationEquivalence,
+    VertexEquivalence,
+    compose_manifests,
+)
+
+composed = compose_manifests(
+    left,
+    right,
+    ComposeManifestsOp(
+        vertices=[
+            VertexEquivalence(
+                left="Client",
+                right="Customer",
+                into="Person",
+                properties=[
+                    PropertyEquivalence(left="client_id", right="customer_id", into="id"),
+                    PropertyEquivalence(
+                        left="email", right="email_addr", into="email", identity=True
+                    ),
+                ],
+                identity=["email"],  # optional explicit natural key; else merge + flags
+            )
+        ],
+        relations=[RelationEquivalence(left="places", right="billed", into="activity")],
+        resource_renames={},  # right resource name -> composed name
+        name_conflict="error",  # or "prefix_right"
+    ),
+)
+```
+
+Empty `vertices` / `relations` yields a **disjoint union** (both resource sets and bindings retained), subject to collision policy.
 
 ## API
 
 ```python
 from graflo.architecture.evolution import (
     AddInverseEdgesOp,
+    ComposeManifestsOp,
     EdgeSelector,
     MergeEdgesOp,
     MergeVerticesOp,
@@ -42,6 +84,7 @@ from graflo.architecture.evolution import (
     SanitizeOp,
     apply_evolution,
     apply_sanitize,
+    compose_manifests,
 )
 from graflo.migrate.io import manifest_hash
 from graflo.onto import DBType
@@ -68,7 +111,7 @@ apply_sanitize(manifest, SanitizeOp(db_flavor=DBType.TIGERGRAPH))
 ```
 
 - **`bump_version`**: when `True` or `"minor"` (default), increments the numeric `MAJOR.MINOR.PATCH` prefix of `schema.metadata.version` if present (prerelease suffix preserved). Pass `bump_version=False` to leave the version string unchanged.
-- **Imports**: `graflo.architecture.evolution` re-exports the ops and apply helpers; lower-level functions such as `apply_remove_vertices`, `apply_merge_vertices`, `apply_rename_relations`, `apply_add_inverse_edges`, `apply_rename_vertex_properties`, and `apply_sanitize` mutate a manifest in place (used mainly internally and by `Sanitizer`).
+- **Imports**: `graflo.architecture.evolution` re-exports the ops and apply helpers; lower-level functions such as `apply_remove_vertices`, `apply_merge_vertices`, `apply_rename_relations`, `apply_add_inverse_edges`, `apply_rename_vertex_properties`, and `apply_sanitize` mutate a manifest in place (used mainly internally and by `Sanitizer`). Cross-manifest compose uses `compose_manifests` (not unary `apply_evolution`).
 
 ## Tutorial: relation and property evolution
 

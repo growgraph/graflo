@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+
+- **`ComposeManifestsOp`** / **`compose_manifests(left, right, op)`**: binary union of two full `GraphManifest`s (schema + resources + bindings) driven by explicit `VertexEquivalence` / `PropertyEquivalence` / `RelationEquivalence` maps and optional derived identity. Deterministic only — no semantic inference. Unary `apply_evolution` rejects the op. Resource/connector collisions via `resource_renames` or `name_conflict` (`error` | `prefix_right`).
 - **Kafka ingest datasource**: `BoundSourceKind.KAFKA` / `KafkaConnector` / `KafkaDataSource` / `KafkaConnConfig` (+ `KafkaGeneralizedConnConfig`) for finite-batch JSON topic consumption via `conn_proxy`, wired through `RegistryBuilder` like API/SQL. Optional extra `[kafka]` (`confluent-kafka`). Pytest marker `kafka` / `--run-kafka` for live broker tests against `docker/kafka` (`localhost:9092`).
 - **`docker/kafka`**: Apache Kafka ([`apache/kafka:4.3.1`](https://hub.docker.com/r/apache/kafka)) KRaft single-broker compose fixture for local streaming/ingest tests; wired into `start-all.sh` / `stop-all.sh` / `cleanup-all.sh`. Bootstrap `localhost:9092`.
 

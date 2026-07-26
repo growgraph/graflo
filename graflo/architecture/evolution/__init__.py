@@ -11,11 +11,14 @@ from .ops import (
     AddInverseEdgesOp,
     AddEdgePropertiesOp,
     AddVertexPropertiesOp,
+    ComposeManifestsOp,
     EdgeSelector,
     ManifestOp,
     MergeEdgesOp,
     MergeVerticesOp,
     ProjectManifestOp,
+    PropertyEquivalence,
+    RelationEquivalence,
     RemoveEdgePropertiesOp,
     RemoveEdgesOp,
     RemoveVertexPropertiesOp,
@@ -26,6 +29,7 @@ from .ops import (
     RenameVertexPropertiesOp,
     RenameVerticesOp,
     SanitizeOp,
+    VertexEquivalence,
 )
 
 _APPLY_EXPORTS = frozenset(
@@ -51,15 +55,20 @@ _APPLY_EXPORTS = frozenset(
     }
 )
 
+_COMPOSE_EXPORTS = frozenset({"compose_manifests"})
+
 __all__ = [
     "AddEdgePropertiesOp",
     "AddInverseEdgesOp",
     "AddVertexPropertiesOp",
+    "ComposeManifestsOp",
     "EdgeSelector",
     "ManifestOp",
     "MergeEdgesOp",
     "MergeVerticesOp",
     "ProjectManifestOp",
+    "PropertyEquivalence",
+    "RelationEquivalence",
     "RemoveEdgePropertiesOp",
     "RemoveEdgesOp",
     "RemoveVertexPropertiesOp",
@@ -70,6 +79,7 @@ __all__ = [
     "RenameVertexPropertiesOp",
     "RenameVerticesOp",
     "SanitizeOp",
+    "VertexEquivalence",
     "apply_evolution",
     "apply_add_edge_properties",
     "apply_add_inverse_edges",
@@ -88,6 +98,7 @@ __all__ = [
     "apply_rename_vertex_properties",
     "apply_rename_vertices",
     "apply_sanitize",
+    "compose_manifests",
 ]
 
 
@@ -96,6 +107,10 @@ def __getattr__(name: str) -> Any:
         from . import apply as apply_mod
 
         return getattr(apply_mod, name)
+    if name in _COMPOSE_EXPORTS:
+        from . import compose as compose_mod
+
+        return getattr(compose_mod, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

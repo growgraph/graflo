@@ -46,6 +46,8 @@ from .ops import (
     AddEdgePropertiesOp,
     AddInverseEdgesOp,
     AddVertexPropertiesOp,
+    ComposeManifestsOp,
+    ManifestOp,
     MergeEdgesOp,
     MergeVerticesOp,
     ProjectManifestOp,
@@ -1139,6 +1141,11 @@ def apply_sanitize(manifest: GraphManifest, op: SanitizeOp) -> None:
 
 def _dispatch_op(manifest: GraphManifest, op: Any) -> None:
     """Dispatch a single evolution op to its in-place apply function."""
+    if isinstance(op, ComposeManifestsOp):
+        raise ValueError(
+            "compose_manifests is binary; use "
+            "graflo.architecture.evolution.compose_manifests(left, right, op)"
+        )
     if isinstance(op, RemoveVerticesOp):
         apply_remove_vertices(manifest, op)
     elif isinstance(op, MergeVerticesOp):
@@ -1177,29 +1184,15 @@ def _dispatch_op(manifest: GraphManifest, op: Any) -> None:
 
 def apply_manifest_ops_inplace(
     manifest: GraphManifest,
-    ops: Sequence[
-        RemoveVerticesOp
-        | MergeVerticesOp
-        | RenameVertexPropertiesOp
-        | RemoveVertexPropertiesOp
-        | AddVertexPropertiesOp
-        | RenameVerticesOp
-        | RenameRelationsOp
-        | RenameResourcesOp
-        | RemoveEdgesOp
-        | MergeEdgesOp
-        | RenameEdgePropertiesOp
-        | RemoveEdgePropertiesOp
-        | AddEdgePropertiesOp
-        | AddInverseEdgesOp
-        | ProjectManifestOp
-        | SanitizeOp
-    ],
+    ops: Sequence[ManifestOp],
 ) -> None:
     """Apply each evolution op to *manifest* in place.
 
     Does not copy the manifest, bump schema version, or call :meth:`GraphManifest.finish_init`.
     Callers that need re-validation after mutation should invoke ``finish_init`` themselves.
+
+    ``ComposeManifestsOp`` is rejected at dispatch — use
+    :func:`~graflo.architecture.evolution.compose.compose_manifests` instead.
     """
     for op in ops:
         _dispatch_op(manifest, op)
@@ -1207,24 +1200,7 @@ def apply_manifest_ops_inplace(
 
 def apply_evolution(
     manifest: GraphManifest,
-    ops: Sequence[
-        RemoveVerticesOp
-        | MergeVerticesOp
-        | RenameVertexPropertiesOp
-        | RemoveVertexPropertiesOp
-        | AddVertexPropertiesOp
-        | RenameVerticesOp
-        | RenameRelationsOp
-        | RenameResourcesOp
-        | RemoveEdgesOp
-        | MergeEdgesOp
-        | RenameEdgePropertiesOp
-        | RemoveEdgePropertiesOp
-        | AddEdgePropertiesOp
-        | AddInverseEdgesOp
-        | ProjectManifestOp
-        | SanitizeOp
-    ],
+    ops: Sequence[ManifestOp],
     *,
     bump_version: bool | Literal["minor"] = "minor",
     finish_init: bool = True,
@@ -1235,6 +1211,9 @@ def apply_evolution(
 
     Compare before/after contract identity with :func:`graflo.migrate.io.manifest_hash`
     (stable hash over schema, ingestion_model, and bindings blocks).
+
+    ``ComposeManifestsOp`` is rejected at dispatch — use
+    :func:`~graflo.architecture.evolution.compose.compose_manifests` instead.
     """
     out = manifest.model_copy(deep=True)
 
