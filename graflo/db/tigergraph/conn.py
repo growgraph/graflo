@@ -253,6 +253,9 @@ class TigerGraphConnection(Connection):
     def _execute_gsql(self, gsql_command: str) -> str:
         return self._gsql._execute_gsql(gsql_command)
 
+    def _run_interpreted_query(self, gsql_query: str) -> list[dict[str, Any]]:
+        return self._gsql._run_interpreted_query(gsql_query)
+
     def _get_vertex_types(self, graph_name: str | None = None) -> list[str]:
         return self._gsql._get_vertex_types(graph_name)
 
@@ -543,6 +546,9 @@ class TigerGraphConnection(Connection):
 
     def fetch_present_documents(self, *args, **kwargs):
         return self._data.fetch_present_documents(*args, **kwargs)
+
+    def resolve_vertices(self, *args, **kwargs):
+        return self._data.resolve_vertices(*args, **kwargs)
 
     def aggregate(self, *args, **kwargs):
         return self._data.aggregate(*args, **kwargs)

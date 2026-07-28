@@ -11,6 +11,14 @@ import requests
 from requests import exceptions as requests_exceptions
 
 from graflo.db.conn import consume_insert_edges_kwargs
+from graflo.db.resolve import (
+    DEFAULT_RESOLVE_CHUNK_SIZE,
+    build_match_filter,
+    chunked,
+    distinct_keys,
+    index_matches_by_doc,
+    key_tuple,
+)
 from graflo.db.tigergraph.document_utils import (
     clean_document,
     extract_id,
@@ -19,7 +27,7 @@ from graflo.db.tigergraph.document_utils import (
 from graflo.db.tigergraph.gsql_parsers import parse_restpp_response
 from graflo.architecture.schema.vertex import FieldType
 from graflo.filter.onto import FilterExpression
-from graflo.onto import AggregationType
+from graflo.onto import AggregationType, ExpressionFlavor
 from graflo.util.transform import pick_unique_dict
 
 if TYPE_CHECKING:
@@ -930,6 +938,63 @@ class TigerGraphDataOps:
         except Exception as e:
             logger.error(f"Error fetching edges via REST API: {e}")
             raise
+
+    def resolve_vertices(
+        self,
+        class_name: str,
+        key_docs: list[dict[str, Any]],
+        match_keys: tuple[str, ...],
+        return_keys: tuple[str, ...],
+        *,
+        chunk_size: int = DEFAULT_RESOLVE_CHUNK_SIZE,
+    ) -> dict[int, list[dict[str, Any]]]:
+        """Resolve vertices by an arbitrary field-set using an interpreted query.
+
+        The REST++ ``filter`` parameter is conjunction-only, so the generic
+        ``fetch_docs`` path cannot express a batched ``OR`` over many keys.
+        An interpreted GSQL query can, keeping the lookup to one call per chunk
+        instead of one per key.
+        """
+        if not key_docs or not match_keys:
+            return {}
+
+        keys = distinct_keys(key_docs, match_keys)
+        if not keys:
+            return {}
+
+        graph_name = self._conn._require_configured_graph_name()
+        buckets: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
+
+        for chunk in chunked(keys, chunk_size):
+            match_filter = build_match_filter(match_keys, chunk)
+            if match_filter is None:
+                continue
+            predicate = FilterExpression.from_dict(match_filter)
+            where_clause = predicate(doc_name="s", kind=ExpressionFlavor.GSQL)
+            gsql_query = (
+                f"INTERPRET QUERY () FOR GRAPH {graph_name} {{\n"
+                f"  SEED = {{{class_name}.*}};\n"
+                f"  MATCHED = SELECT s FROM SEED:s WHERE {where_clause};\n"
+                f"  PRINT MATCHED;\n"
+                f"}}"
+            )
+            for entry in self._conn._run_interpreted_query(gsql_query):
+                for item in entry.get("MATCHED", []) or []:
+                    doc = self._vertex_payload_to_doc(item)
+                    key = key_tuple(doc, match_keys)
+                    if key is not None:
+                        buckets.setdefault(key, []).append(doc)
+
+        return index_matches_by_doc(key_docs, match_keys, buckets)
+
+    @staticmethod
+    def _vertex_payload_to_doc(item: dict[str, Any]) -> dict[str, Any]:
+        """Flatten a REST++/GSQL vertex payload into a plain attribute dict."""
+        doc = dict(item.get("attributes", {}) or {})
+        vertex_id = item.get("v_id")
+        if vertex_id is not None:
+            doc.setdefault("id", vertex_id)
+        return doc
 
     def fetch_present_documents(
         self,

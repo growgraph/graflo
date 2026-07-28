@@ -100,6 +100,54 @@ class TigerGraphGsqlClient:
                 pass
             raise RuntimeError(f"GSQL execution failed: {error_msg}") from e
 
+    def _run_interpreted_query(self, gsql_query: str) -> list[dict[str, Any]]:
+        """Run an ad-hoc GSQL query without installing it.
+
+        Interpreted queries are the only way to express predicates the REST++
+        ``filter`` parameter cannot — notably disjunctions — so a batched lookup
+        over many keys needs exactly one call instead of one call per key.
+
+        Args:
+            gsql_query: Full ``INTERPRET QUERY () FOR GRAPH ... { ... }`` body
+
+        Returns:
+            list: The ``results`` array of the response (one entry per PRINT).
+        """
+        url = f"{self._conn.gsql_url}/gsql/v1/queries/interpret"
+        headers = {
+            "Content-Type": "text/plain",
+            **self._conn._get_auth_headers(use_basic_auth=True),
+        }
+        try:
+            response = requests.post(
+                url,
+                headers=headers,
+                data=gsql_query,
+                timeout=120,
+                verify=self._conn.ssl_verify,
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except requests_exceptions.HTTPError as e:
+            error_msg = str(e)
+            try:
+                error_details = e.response.json() if e.response else {}
+                error_msg = error_details.get("message", error_msg)
+            except Exception:
+                pass
+            raise RuntimeError(f"Interpreted query failed: {error_msg}") from e
+        except ValueError as e:
+            raise RuntimeError("Interpreted query returned a non-JSON response") from e
+
+        if isinstance(payload, dict) and payload.get("error"):
+            raise RuntimeError(
+                f"Interpreted query failed: {payload.get('message', 'unknown error')}"
+            )
+        results = payload.get("results") if isinstance(payload, dict) else None
+        if not isinstance(results, list):
+            return []
+        return [entry for entry in results if isinstance(entry, dict)]
+
     def _get_vertex_types(self, graph_name: str | None = None) -> list[str]:
         """
         Get list of vertex types using GSQL.

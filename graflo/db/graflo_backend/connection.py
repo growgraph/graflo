@@ -14,7 +14,8 @@ from graflo.architecture.schema.document import Schema
 from graflo.architecture.schema.vertex import VertexConfig
 from graflo.db.conn import Connection, NamespaceNotFoundError, SchemaExistsError
 from graflo.db.graflo_backend.config import GraFloBackendConfig
-from graflo.onto import AggregationType, DBType
+from graflo.filter.onto import parse_filter_expression
+from graflo.onto import AggregationType, DBType, ExpressionFlavor
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +147,20 @@ class GraFloBackendConnection(Connection):
         self.upsert_docs_batch(docs, class_name, match_keys=[])
         return docs
 
+    def _sync_for_read(self) -> None:
+        """Persist buffered writes so reads observe them.
+
+        Chunk writers buffer records in memory and the index is only written on
+        flush, so a read issued mid-ingest would otherwise miss data — or find
+        no ``INDEX.json`` at all. Every other backend is read-your-writes;
+        flushing here gives the file backend the same contract.
+        """
+        try:
+            self._writer.flush_index()
+        except ValueError:
+            # No schema written yet, so nothing has been ingested to observe.
+            pass
+
     def fetch_docs(
         self,
         class_name: str,
@@ -155,9 +170,29 @@ class GraFloBackendConnection(Connection):
         unset_keys: list[str] | None = None,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
+        self._sync_for_read()
+        predicate = parse_filter_expression(filters) if filters is not None else None
+
+        def _keep(doc: dict[str, Any]) -> bool:
+            if predicate is None:
+                return True
+            try:
+                return bool(predicate(kind=ExpressionFlavor.PYTHON, **doc))
+            except Exception:
+                # A document missing a filtered field simply does not match.
+                return False
+
+        def _project(doc: dict[str, Any]) -> dict[str, Any]:
+            if return_keys:
+                doc = {k: doc.get(k) for k in return_keys}
+            if unset_keys:
+                doc = {k: v for k, v in doc.items() if k not in unset_keys}
+            return doc
+
         docs: list[dict[str, Any]] = []
-        for batch in self._reader.iter_vertex_batches(class_name, limit=limit):
-            docs.extend(batch)
+        # `limit` bounds the *result* size, so filtering happens before slicing.
+        for batch in self._reader.iter_vertex_batches(class_name):
+            docs.extend(_project(doc) for doc in batch if _keep(doc))
             if limit is not None and len(docs) >= limit:
                 return docs[:limit]
         return docs

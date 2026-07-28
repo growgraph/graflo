@@ -61,6 +61,14 @@ from graflo.architecture.schema import Schema
 from graflo.architecture.schema.vertex import VertexConfig
 from graflo.db.bulk_exc import UnsupportedBulkLoad
 from graflo.db.connection import TigergraphBulkLoadConfig
+from graflo.db.resolve import (
+    DEFAULT_RESOLVE_CHUNK_SIZE,
+    bucket_by_key,
+    build_match_filter,
+    chunked,
+    distinct_keys,
+    index_matches_by_doc,
+)
 from graflo.onto import (
     AggregationType,
     DB_TYPE_TO_EXPRESSION_FLAVOR,
@@ -462,6 +470,62 @@ class Connection(abc.ABC):
                 flatten=True, otherwise returns a dict mapping batch indices to documents.
         """
         pass
+
+    def resolve_vertices(
+        self,
+        class_name: str,
+        key_docs: list[dict[str, Any]],
+        match_keys: tuple[str, ...],
+        return_keys: tuple[str, ...],
+        *,
+        chunk_size: int = DEFAULT_RESOLVE_CHUNK_SIZE,
+    ) -> dict[int, list[dict[str, Any]]]:
+        """Locate vertices by an arbitrary field-set, preserving multiplicity.
+
+        Used to attach edge endpoints declared by a *secondary identity*: the
+        caller passes documents carrying the secondary fields and gets back the
+        matching vertices projected onto *return_keys* (the primary identity),
+        so the edge write itself stays a plain primary-key operation.
+
+        Unlike :meth:`fetch_present_documents`, every match is returned rather
+        than the first, because the caller's ambiguity policy needs the count.
+
+        This default implementation issues one filtered
+        :meth:`fetch_docs` per chunk of distinct keys and works on any backend
+        whose ``fetch_docs`` honours ``filters``. Backends override it where a
+        cheaper or more expressive lookup exists.
+
+        Args:
+            class_name: Storage name of the vertex type to search
+            key_docs: Documents carrying values for *match_keys*
+            match_keys: Field-set to match on (the secondary identity)
+            return_keys: Fields to project onto the matched vertices
+            chunk_size: Distinct keys per lookup query
+
+        Returns:
+            dict: Position in *key_docs* -> every vertex it matched. Positions
+                with an unresolvable (partial) key or no match are absent.
+        """
+        if not key_docs or not match_keys:
+            return {}
+
+        keys = distinct_keys(key_docs, match_keys)
+        if not keys:
+            return {}
+
+        fetch_keys = list(dict.fromkeys([*match_keys, *return_keys]))
+        buckets: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
+        for chunk in chunked(keys, chunk_size):
+            filters = build_match_filter(match_keys, chunk)
+            docs = self.fetch_docs(
+                class_name,
+                filters=filters,
+                return_keys=fetch_keys,
+            )
+            for key, matched in bucket_by_key(list(docs or []), match_keys).items():
+                buckets.setdefault(key, []).extend(matched)
+
+        return index_matches_by_doc(key_docs, match_keys, buckets)
 
     @abc.abstractmethod
     def aggregate(

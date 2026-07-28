@@ -19,7 +19,8 @@ from graflo.architecture.schema.vertex import (
 )
 from graflo.db.conn import NamespaceNotFoundError, SchemaExistsError
 from graflo.db.field_type_support import assert_field_type_supported
-from graflo.onto import AggregationType, DBType
+from graflo.filter.onto import parse_filter_expression
+from graflo.onto import AggregationType, DBType, ExpressionFlavor
 
 if TYPE_CHECKING:
     pass
@@ -519,8 +520,26 @@ class PostgresTargetWriteMixin:
     ) -> list[dict[str, Any]]:
         pg_schema = _pg_schema_name(self.config)
         table = vertex_table_name(class_name)
+
+        if return_keys:
+            keep = [k for k in return_keys if not unset_keys or k not in unset_keys]
+            select_clause = ", ".join(_quote_ident(k) for k in keep) if keep else "*"
+        else:
+            select_clause = "*"
+
+        where_clause = ""
+        if filters is not None:
+            expr = parse_filter_expression(filters)
+            rendered = str(expr(kind=ExpressionFlavor.SQL))
+            if rendered:
+                where_clause = f" WHERE {rendered}"
+
         limit_clause = f" LIMIT {int(limit)}" if limit is not None else ""
-        q = f"SELECT * FROM {_quote_ident(pg_schema)}.{_quote_ident(table)}{limit_clause}"
+        q = (
+            f"SELECT {select_clause} FROM "
+            f"{_quote_ident(pg_schema)}.{_quote_ident(table)}"
+            f"{where_clause}{limit_clause}"
+        )
         return self.read(q)
 
     def fetch_edges(
