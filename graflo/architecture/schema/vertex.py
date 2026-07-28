@@ -41,6 +41,11 @@ PropertiesInputType = list[str] | list["Field"] | list[dict[str, Any]]
 VertexName: TypeAlias = str
 IdentityMode: TypeAlias = Literal["natural", "hash", "blank", "assigned"]
 
+#: Selector shorthand for "the one declared secondary identity".
+SECONDARY_IDENTITY_SUGAR = "secondary"
+#: Selector for the primary identity; the default for every edge endpoint.
+PRIMARY_IDENTITY_SELECTOR = "identity"
+
 
 class FieldType(BaseEnum):
     """Supported field types for graph databases.
@@ -279,6 +284,55 @@ def _normalize_fields_item(item: str | Field | dict[str, Any]) -> Field:
     raise TypeError(f"Field must be str, Field, or dict, got {type(item)}")
 
 
+class SecondaryIdentity(ConfigBaseModel):
+    """An alternate field-set that identifies a vertex without upserting it.
+
+    Vertices upsert on their primary ``identity``. Edge-only sources often
+    reference endpoints by another field-set — a business key, an ISIN, a
+    source-local code — which is what a secondary identity names.
+
+    Uniqueness is *soft*: it is not enforced by a database constraint, so a
+    lookup may match several vertices and the ingestion-level ambiguity policy
+    decides what happens.
+
+    Examples:
+        >>> SecondaryIdentity(name="by_isin", fields=["isin"])
+        >>> SecondaryIdentity.model_validate(["org", "local_code"])  # auto-named
+    """
+
+    name: str | None = PydanticField(
+        default=None,
+        description=(
+            "Optional handle used by an edge step to select this field-set "
+            "(e.g. source_match: by_isin)."
+        ),
+    )
+    fields: list[str] = PydanticField(
+        ...,
+        min_length=1,
+        description="Property names forming this alternate key.",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_authored_shape(cls, data: Any) -> Any:
+        """Accept a bare ``[field, ...]`` list alongside the mapping form."""
+        if isinstance(data, (list, tuple)):
+            return {"fields": list(data)}
+        if isinstance(data, str):
+            return {"fields": [data]}
+        return data
+
+    @field_validator("fields", mode="after")
+    @classmethod
+    def dedupe_fields(cls, v: list[str]) -> list[str]:
+        return _dedupe_ordered(v)
+
+    @property
+    def field_set(self) -> frozenset[str]:
+        return frozenset(self.fields)
+
+
 def _merge_duplicate_fields(vertex_name: str, fields: list[Field]) -> list[Field]:
     """Merge duplicate fields by name while preserving stable order.
 
@@ -434,6 +488,14 @@ class Vertex(ConfigBaseModel):
             "narrow enough to store directly. Distinct from blank (random UUID)."
         ),
     )
+    secondary_identities: list[SecondaryIdentity] = PydanticField(
+        default_factory=list,
+        description=(
+            "Alternate field-sets that identify this vertex for lookup only. Edge "
+            "endpoints may be matched on one of these instead of the primary "
+            "identity; upserts always use identity. Soft uniqueness."
+        ),
+    )
 
     @field_validator("properties", mode="before")
     @classmethod
@@ -519,10 +581,100 @@ class Vertex(ConfigBaseModel):
                 synth_type = FieldType.UUID if self.assigned and name == "id" else None
                 augmented.append(Field(name=name, type=synth_type))
                 seen_names.add(name)
+
+        secondary = self._validated_secondary_identities(
+            identity_names=identity_names,
+            list_prop_names=list_prop_names,
+        )
+        for entry in secondary:
+            for name in entry.fields:
+                if name not in seen_names:
+                    augmented.append(Field(name=name, type=None))
+                    seen_names.add(name)
+
         object.__setattr__(self, "identity", identity_names)
         object.__setattr__(self, "hash_identity_properties", hash_identity_names)
+        object.__setattr__(self, "secondary_identities", secondary)
         object.__setattr__(self, "properties", augmented)
         return self
+
+    def _validated_secondary_identities(
+        self, *, identity_names: list[str], list_prop_names: set[str]
+    ) -> list[SecondaryIdentity]:
+        """Validate secondary identities and assign default names.
+
+        A secondary identity must be usable as a lookup key: LIST-typed fields
+        cannot be matched, a blank vertex has no source-visible key to match on,
+        and repeating the primary identity would be a no-op.
+        """
+        if not self.secondary_identities:
+            return []
+        if self.blank:
+            raise ValueError(
+                f"Vertex '{self.name}': blank vertices cannot declare "
+                "secondary_identities — their identity is generated, not sourced"
+            )
+
+        primary = frozenset(identity_names)
+        seen_names: set[str] = set()
+        seen_field_sets: set[frozenset[str]] = set()
+        validated: list[SecondaryIdentity] = []
+
+        for position, entry in enumerate(self.secondary_identities):
+            for field_name in entry.fields:
+                if field_name in list_prop_names:
+                    raise ValueError(
+                        f"Vertex '{self.name}': LIST-typed property '{field_name}' "
+                        "cannot be used in a secondary identity"
+                    )
+            if entry.field_set == primary:
+                raise ValueError(
+                    f"Vertex '{self.name}': secondary identity {entry.fields} "
+                    "duplicates the primary identity"
+                )
+            if entry.field_set in seen_field_sets:
+                raise ValueError(
+                    f"Vertex '{self.name}': duplicate secondary identity {entry.fields}"
+                )
+            seen_field_sets.add(entry.field_set)
+
+            name = entry.name or f"secondary_{position}"
+            if name in seen_names:
+                raise ValueError(
+                    f"Vertex '{self.name}': duplicate secondary identity name '{name}'"
+                )
+            seen_names.add(name)
+            validated.append(entry.model_copy(update={"name": name}))
+
+        return validated
+
+    @property
+    def secondary_identity_names(self) -> list[str]:
+        """Names of declared secondary identities, in declaration order."""
+        return [entry.name for entry in self.secondary_identities if entry.name]
+
+    def secondary_identity(self, selector: str | list[str]) -> SecondaryIdentity | None:
+        """Resolve *selector* to a declared secondary identity.
+
+        Accepts a declared name, an explicit field list equal to a declared
+        field-set, or the literal ``"secondary"`` when exactly one is declared.
+        """
+        if not self.secondary_identities:
+            return None
+        if isinstance(selector, str):
+            if selector == SECONDARY_IDENTITY_SUGAR:
+                if len(self.secondary_identities) == 1:
+                    return self.secondary_identities[0]
+                return None
+            for entry in self.secondary_identities:
+                if entry.name == selector:
+                    return entry
+            return None
+        wanted = frozenset(selector)
+        for entry in self.secondary_identities:
+            if entry.field_set == wanted:
+                return entry
+        return None
 
     @property
     def property_names(self) -> list[str]:
@@ -683,6 +835,43 @@ class VertexConfig(ConfigBaseModel):
     def identity_fields(self, vertex_name: VertexName) -> list[str]:
         """Get identity fields for a vertex."""
         return list(self._get_vertices_map()[vertex_name].identity)
+
+    def secondary_identities(self, vertex_name: VertexName) -> list[SecondaryIdentity]:
+        """Declared secondary identities for a vertex."""
+        return list(self._get_vertex_by_name(vertex_name).secondary_identities)
+
+    def secondary_identity_fields(
+        self, vertex_name: VertexName, selector: str | list[str]
+    ) -> list[str] | None:
+        """Resolve an edge-step selector to a secondary identity field-set.
+
+        Returns ``None`` when *selector* names no declared secondary identity,
+        letting callers raise with their own context.
+        """
+        entry = self._get_vertex_by_name(vertex_name).secondary_identity(selector)
+        return list(entry.fields) if entry is not None else None
+
+    def match_fields(
+        self, vertex_name: VertexName, selector: str | list[str] | None
+    ) -> list[str]:
+        """Fields an edge endpoint is matched on for *selector*.
+
+        ``None`` or ``"identity"`` selects the primary identity, which keeps
+        every existing edge step on exactly the path it uses today.
+
+        Raises:
+            ValueError: if *selector* names no declared secondary identity.
+        """
+        if selector is None or selector == PRIMARY_IDENTITY_SELECTOR:
+            return self.identity_fields(vertex_name)
+        fields = self.secondary_identity_fields(vertex_name, selector)
+        if fields is None:
+            declared = self._get_vertex_by_name(vertex_name).secondary_identity_names
+            raise ValueError(
+                f"Vertex '{vertex_name}': no secondary identity matches selector "
+                f"{selector!r}. Declared: {declared or '(none)'}"
+            )
+        return fields
 
     def properties(self, vertex_name: VertexName) -> list[Field]:
         """Vertex properties as Field objects."""

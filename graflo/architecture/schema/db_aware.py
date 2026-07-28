@@ -22,7 +22,13 @@ from .edge import (
     EdgeConfig,
     _normalize_direct_item,
 )
-from .vertex import Field, FieldType, VertexConfig
+from .vertex import (
+    PRIMARY_IDENTITY_SELECTOR,
+    Field,
+    FieldType,
+    SecondaryIdentity,
+    VertexConfig,
+)
 from ..base import ConfigBaseModel
 
 
@@ -114,6 +120,17 @@ class VertexConfigDBAware:
         if vertex_name in self.logical.blank_vertices:
             return ["_key"] if self.db_profile.db_flavor == DBType.ARANGO else ["id"]
         return identity
+
+    def secondary_identities(self, vertex_name: str) -> list[SecondaryIdentity]:
+        return self.logical.secondary_identities(vertex_name)
+
+    def match_fields(
+        self, vertex_name: str, selector: str | list[str] | None
+    ) -> list[str]:
+        """Fields an edge endpoint is matched on, with DB-aware identity fallback."""
+        if selector is None or selector == PRIMARY_IDENTITY_SELECTOR:
+            return self.identity_fields(vertex_name)
+        return self.logical.match_fields(vertex_name, selector)
 
     def properties(self, vertex_name: str) -> list[Field]:
         props = self.logical.properties(vertex_name)
