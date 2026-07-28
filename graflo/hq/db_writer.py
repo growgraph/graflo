@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Any
 from uuid import uuid4
 
 from graflo.architecture.schema.edge import Edge
@@ -23,6 +24,7 @@ from graflo.db.identity_uuid import (
     validate_uuid_typed_identity_fields,
 )
 from graflo.db.manager import ConnectionManager
+from graflo.hq.endpoint_resolve import resolve_edge_endpoints
 from graflo.onto import DBType
 
 logger = logging.getLogger(__name__)
@@ -100,7 +102,7 @@ class DBWriter:
         await self._push_vertices(gc, conn_conf)
         self._resolve_blank_edges(gc, conn_conf)
         await self._enrich_extra_weights(gc, conn_conf, resource)
-        await self._push_edges(gc, conn_conf)
+        await self._push_edges(gc, conn_conf, resource)
 
     def _validate_bulk_resource(self, resource_name: str | None) -> None:
         if resource_name is None:
@@ -355,7 +357,12 @@ class DBWriter:
     # Edges
     # ------------------------------------------------------------------
 
-    async def _push_edges(self, gc: GraphContainer, conn_conf: DBConfig) -> None:
+    async def _push_edges(
+        self,
+        gc: GraphContainer,
+        conn_conf: DBConfig,
+        resource: Any | None = None,
+    ) -> None:
         """Insert all edges in *gc*.
 
         Each key in ``gc.edges`` is a concrete ``(source, target, relation)``
@@ -363,6 +370,10 @@ class DBWriter:
         schema :class:`Edge` for each key (trying an exact match first, then a
         ``relation=None`` schema entry for dynamic-relation edges) and fire one
         async task per key — one DB write per concrete relation, no inner loop.
+
+        Endpoints declared by a secondary identity are resolved to their primary
+        identity first, so the write itself stays a plain primary-key operation
+        on every backend.
         """
         schema_db = self._db_aware_for(conn_conf)
         vc = schema_db.vertex_config
@@ -380,6 +391,8 @@ class DBWriter:
                 return core_ec.edge_for(null_id)
             return None
 
+        endpoint_match_for = self._endpoint_match_lookup(resource)
+
         async def _push_one(edge_id: tuple, docs: list) -> None:
             edge = _schema_edge_for(edge_id)
             if edge is None:
@@ -390,13 +403,28 @@ class DBWriter:
                     _, _, relation = edge_id
                     with ConnectionManager(connection_config=conn_conf) as db:
                         runtime = ec.runtime(edge)
+                        endpoint_match = endpoint_match_for(edge_id)
+                        source_keys = tuple(vc.identity_fields(edge.source))
+                        target_keys = tuple(vc.identity_fields(edge.target))
+                        edge_docs = docs
+                        if endpoint_match is not None:
+                            edge_docs = self._resolve_endpoints(
+                                db=db,
+                                docs=docs,
+                                edge=edge,
+                                edge_id=edge_id,
+                                match=endpoint_match,
+                                vertex_config=vc,
+                            )
+                            if not edge_docs:
+                                return
                         merge_props: tuple[str, ...] | None = None
                         mp = ec.relationship_merge_property_names(edge)
                         if mp:
                             merge_props = tuple(mp)
                         if not self.dry:
                             data, relation_name = self._project_edge_docs_for_db(
-                                docs=docs,
+                                docs=edge_docs,
                                 relation=relation,
                                 runtime=runtime,
                                 conn_type=conn_conf.connection_type,
@@ -427,12 +455,8 @@ class DBWriter:
                                 source_class=vc.vertex_dbname(edge.source),
                                 target_class=vc.vertex_dbname(edge.target),
                                 relation_name=relation_name,
-                                match_keys_source=tuple(
-                                    vc.identity_fields(edge.source)
-                                ),
-                                match_keys_target=tuple(
-                                    vc.identity_fields(edge.target)
-                                ),
+                                match_keys_source=source_keys,
+                                match_keys_target=target_keys,
                                 **edge_kw,
                             )
 
@@ -441,6 +465,60 @@ class DBWriter:
         await asyncio.gather(
             *[_push_one(edge_id, docs) for edge_id, docs in gc.edges.items()]
         )
+
+    def _endpoint_match_lookup(self, resource: Any | None) -> Any:
+        """Return a lookup for a resource's endpoint identity selections.
+
+        Only edges that select a secondary identity have an entry, so edges
+        matched on the primary identity never touch the resolution path.
+        """
+        registry = getattr(resource, "edge_derivation", None) if resource else None
+        if registry is None:
+            return lambda edge_id: None
+        return registry.endpoint_match_for
+
+    def _resolve_endpoints(
+        self,
+        *,
+        db: Any,
+        docs: list,
+        edge: Edge,
+        edge_id: tuple,
+        match: Any,
+        vertex_config: Any,
+    ) -> list:
+        """Map secondary-identity endpoints to primary identities before writing."""
+        source_fields = vertex_config.match_fields(edge.source, match.source)
+        target_fields = vertex_config.match_fields(edge.target, match.target)
+        source_identity = vertex_config.identity_fields(edge.source)
+        target_identity = vertex_config.identity_fields(edge.target)
+        policy = match.on_ambiguous or self.ingestion_model.endpoints_on_ambiguous
+
+        resolved, stats = resolve_edge_endpoints(
+            db,
+            docs,
+            source_class=vertex_config.vertex_dbname(edge.source),
+            target_class=vertex_config.vertex_dbname(edge.target),
+            source_match_fields=source_fields,
+            target_match_fields=target_fields,
+            source_identity_fields=source_identity,
+            target_identity_fields=target_identity,
+            resolve_source=list(source_fields) != list(source_identity),
+            resolve_target=list(target_fields) != list(target_identity),
+            policy=policy,
+        )
+        if stats.has_findings():
+            logger.warning(
+                "Edge %s endpoint resolution (policy=%s): %s",
+                edge_id,
+                policy,
+                stats.summary(),
+            )
+        else:
+            logger.debug(
+                "Edge %s endpoint resolution: %s", edge_id, stats.summary()
+            )
+        return resolved
 
     def _db_aware_for(self, conn_conf: DBConfig) -> SchemaDBAware:
         """Return a cached :class:`SchemaDBAware` for *conn_conf*'s DB flavor."""

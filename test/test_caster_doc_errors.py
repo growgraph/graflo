@@ -21,6 +21,7 @@ from graflo.hq.caster import (
     DocErrorBudgetExceeded,
     IngestionParams,
 )
+from graflo.architecture.contract.runtime.edge_derivation import EdgeDerivationRegistry
 from graflo.architecture.graph_types import ResourceCastResult
 from graflo.architecture.schema.vertex import Field, Vertex, VertexConfig
 
@@ -58,6 +59,10 @@ class _FakeResource:
                 )
             ]
         )
+
+    @property
+    def edge_derivation(self) -> EdgeDerivationRegistry:
+        return EdgeDerivationRegistry()
 
     def collect_vertex_names(self) -> set[str]:
         return {"v_test"}

@@ -13,6 +13,16 @@ In manifests, physical index and naming configuration lives under **`schema.db_p
 
 The `vertex_indexes` on **`db_profile`** are for **secondary** indexes only. Identity is handled by the backend during `define_vertex_indexes` or at collection/vertex-type creation.
 
+### Indexes from `secondary_identities`
+
+Declaring [`secondary_identities`](vertex_identity.md#secondary-identities-edge-endpoint-lookup) on a vertex automatically registers one **non-unique** index per field-set into `db_profile.vertex_indexes`. This happens in `Schema.finish_init`, so it applies whether or not a DB-aware view is resolved, and it is idempotent.
+
+The index is not merely an optimization: endpoint resolution filters on those fields, and on **NebulaGraph** a tag index is required for the property lookup to run at all.
+
+Indexes are non-unique by design. Secondary identities are *softly* unique, and a unique constraint would reject exactly the duplicate data the [ambiguity policy](vertex_identity.md#soft-uniqueness-and-ambiguity) exists to handle.
+
+**TigerGraph** supports single-field attribute indexes only; a composite secondary identity logs a warning and is skipped. Resolution there uses an interpreted GSQL query and does not depend on the index.
+
 ## Backend Summary
 
 | Backend | Identity index | How |
@@ -22,7 +32,8 @@ The `vertex_indexes` on **`db_profile`** are for **secondary** indexes only. Ide
 | **FalkorDB** | Explicit | Same as Neo4j. |
 | **Nebula** | Explicit | `define_vertex_indexes` always creates identity index first (required for LOOKUP/MATCH). |
 | **ArangoDB** | At collection creation | `create_collection` receives `vertex_config.index(u)` and adds it. `_key` is auto-indexed and skipped. |
-| **TigerGraph** | Implicit | Primary keys are auto-indexed at vertex type creation. |
+| **TigerGraph** | Implicit | Primary keys are auto-indexed at vertex type creation. Secondary indexes are single-field only. |
+| **PostgreSQL** | At table creation | Vertex table `PRIMARY KEY`. `define_vertex_indexes` issues `CREATE INDEX` for `vertex_indexes`. |
 
 ## Implications
 

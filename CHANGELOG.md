@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`Vertex.secondary_identities`** — alternate field-sets that identify a vertex for **lookup only**; upserts still use `identity`. Lets an edge-only source reference endpoints by a business key. Authored as a mapping with an explicit `name`, or as a bare list of field names (auto-named); composite sets supported. Rejected for `blank` vertices, LIST-typed fields, duplicate sets, and restatements of the primary identity. Allowed for `assigned` and `hash` vertices — a synthetic PK plus a business key is the motivating case.
+- **Edge-step endpoint selection** — `source_match` / `target_match` on an edge step (single-intent and `links`) choose which identity each endpoint is matched on: a declared secondary identity name, an explicit field list, `secondary` when exactly one is declared, or omitted/`identity` for the primary identity. Selection is **per endpoint**, so source and target may differ. Unknown selectors fail at manifest load, listing the declared alternatives.
+- **`ingestion_model.endpoints_on_ambiguous`** (`all` | `first` | `skip` | `error`) — how resolution reacts when a secondary identity matches several vertices, defaulting to **`all`** (attach to every match; never discards data). Secondary identities are only *softly* unique, so ambiguity is a data property rather than an error. `first` is deterministic by primary identity. Per-step override via `on_ambiguous`. Endpoints matched by primary identity are unaffected.
+- **`lookup_only`** on a vertex step — observations that locate an existing vertex for edge endpoints and are never written. Required for edge-only resources, whose rows carry no primary key.
+- **`Connection.resolve_vertices`** — locate vertices by an arbitrary field-set, preserving match multiplicity. Generic implementation over `fetch_docs` + `FilterExpression` covers every backend; TigerGraph overrides it with a batched interpreted GSQL query, since REST++ filters are conjunction-only and cannot express a disjunction.
+- Secondary identities automatically register a **non-unique** vertex index per field-set (`Schema.finish_init`), which endpoint resolution relies on and NebulaGraph requires outright.
+- PostgreSQL: `define_vertex_indexes` now creates secondary indexes (previously a no-op), and `apply_target_schema` defines indexes. Memgraph likewise defines indexes during schema apply.
+
+### Fixed
+
+- `FilterExpression` did not parenthesize nested composites for **AQL / nGQL / GSQL**, so `AND[OR[a, b], c]` rendered as `a OR (b AND c)` — silently matching the wrong rows. Cypher and SQL were already correct.
+- `FilterExpression` **Python** evaluation only handled leaves authored with a dunder `operator`, so a list-form filter (`["==", value, field]`) evaluated to `False` while rendering correctly in every other flavor. This affected vertex-step filters.
+- PostgreSQL `fetch_docs` ignored `filters` and `return_keys`, returning the entire table for any query.
+- PostgreSQL edge tables with properties were unusable: the unique-index DDL passed `Field` objects to `sql.Identifier`, and the insert's `ON CONFLICT (source_id, target_id)` never matched the index actually created.
+- GraFlo file backend `fetch_docs` ignored `filters` and could not read back buffered writes (no `INDEX.json`), so it was not read-your-writes.
+- `merge_doc_basis` rebuilt `VertexRep` objects field-by-field, dropping observation-level flags.
+
 ## [1.8.16]
 
 ### Fixed

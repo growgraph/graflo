@@ -137,6 +137,14 @@ class ResourceRuntime:
         return self._edge_config
 
     @property
+    def edge_derivation(self) -> EdgeDerivationRegistry:
+        """Ingestion-time edge behaviour resolved for this resource.
+
+        The write stage reads endpoint identity selection from here.
+        """
+        return self._edge_derivation_registry
+
+    @property
     def root(self) -> ActorWrapper:
         return self._root
 

@@ -379,9 +379,14 @@ class PostgresTargetWriteMixin:
                 )
                 cursor.execute(create_q_no_fk)
             if weight_cols:
+                # weight_cols holds Field objects; the index needs column names.
                 unique_cols = sql.SQL(", ").join(
                     sql.Identifier(column)
-                    for column in ("source_id", "target_id", *weight_cols)
+                    for column in (
+                        "source_id",
+                        "target_id",
+                        *(field.name for field in weight_cols),
+                    )
                 )
                 idx_q = sql.SQL(
                     "CREATE UNIQUE INDEX IF NOT EXISTS {} ON {}.{} ({})"
@@ -486,8 +491,12 @@ class PostgresTargetWriteMixin:
 
         columns = ["source_id", "target_id", *sorted(weight_keys)]
         col_idents = sql.SQL(", ").join(sql.Identifier(c) for c in columns)
+        # No conflict target: the edge table's unique index covers
+        # (source_id, target_id) plus any weight columns, so naming a fixed pair
+        # fails with "no unique or exclusion constraint matching" as soon as the
+        # edge carries properties. A bare DO NOTHING matches whichever index exists.
         upsert_q = sql.SQL(
-            "INSERT INTO {}.{} ({}) VALUES %s ON CONFLICT (source_id, target_id) DO NOTHING"
+            "INSERT INTO {}.{} ({}) VALUES %s ON CONFLICT DO NOTHING"
         ).format(
             sql.Identifier(pg_schema),
             sql.Identifier(table),
