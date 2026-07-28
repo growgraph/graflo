@@ -155,9 +155,14 @@ class ActorWrapper:
 
         for vertex_name, dd in assembly_ctx.acc_vertex.items():
             for lindex, vertex_list in dd.items():
-                vertex_list = [x.vertex for x in vertex_list]
+                # Lookup-only observations locate existing vertices for edge
+                # endpoints; they must not become writes. They stay in
+                # acc_vertex, which edge rendering reads, and are dropped here.
+                writable = [x.vertex for x in vertex_list if not x.lookup_only]
+                if not writable:
+                    continue
                 vertex_list_updated = merge_doc_basis(
-                    vertex_list,
+                    writable,
                     tuple(self.vertex_config.identity_fields(vertex_name)),
                 )
                 vertex_list_updated = pick_unique_dict(vertex_list_updated)

@@ -215,7 +215,7 @@ class VertexActor(VertexProducingActor):
         )
 
         for m in merged:
-            vertex_rep = VertexRep(vertex=m)
+            vertex_rep = VertexRep(vertex=m, lookup_only=self.lookup_only)
             ctx.acc_vertex[self.name][effective_lindex].append(vertex_rep)
             ctx.record_vertex_observation(
                 vertex_name=self.name,

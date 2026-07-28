@@ -150,8 +150,11 @@ class DBWriter:
                             self._validate_uuid_natural_identity(
                                 vcol=vcol, data=data, conn_conf=conn_conf
                             )
+                        writable = self._drop_unkeyed_docs(
+                            vcol=vcol, data=data, conn_conf=conn_conf
+                        )
                         db.upsert_docs_batch(
-                            data,
+                            writable,
                             vc.vertex_dbname(vcol),
                             vc.identity_fields(vcol),
                             update_keys="doc",
@@ -169,6 +172,40 @@ class DBWriter:
         for vcol, result in results:
             if result is not None:
                 gc.vertices[vcol] = result
+
+    def _drop_unkeyed_docs(
+        self, vcol: str, data: list[dict], conn_conf: DBConfig
+    ) -> list[dict]:
+        """Drop documents that carry none of their vertex's identity fields.
+
+        Such a document cannot be upserted: with no key at all, every backend
+        either invents one or folds the whole batch onto a single keyless
+        vertex. It normally means the resource references the vertex rather than
+        owning it — declare ``lookup_only`` on that step to say so explicitly.
+
+        Runs after the blank/assigned/hash hooks, so generated identities count.
+        """
+        vc = self._db_aware_for(conn_conf).vertex_config
+        identity_fields = vc.identity_fields(vcol)
+        if not identity_fields:
+            return data
+
+        writable = [
+            doc
+            for doc in data
+            if any(doc.get(field) is not None for field in identity_fields)
+        ]
+        dropped = len(data) - len(writable)
+        if dropped:
+            logger.warning(
+                "Skipped %s '%s' document(s) with no identity value for %s; "
+                "they cannot be upserted. Mark the step lookup_only if the "
+                "resource only references this vertex.",
+                dropped,
+                vcol,
+                identity_fields,
+            )
+        return writable
 
     def _assign_blank_vertex_ids(
         self, vcol: str, data: list[dict], conn_conf: DBConfig

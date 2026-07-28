@@ -251,6 +251,8 @@ def render_edge(
     *,
     relation_input_field: str | None = None,
     derivation: EdgeDerivation | None = None,
+    source_match_fields: list[str] | None = None,
+    target_match_fields: list[str] | None = None,
 ) -> defaultdict[str | None, list]:
     """Create edges between source and target vertices.
 
@@ -258,6 +260,10 @@ def render_edge(
         relation_input_field: Document/ctx field for per-row relationship labels when
             ``edge.relation`` is unset (e.g. TigerGraph default column).
         derivation: Ingestion-only location / field wiring (edge pipeline step).
+        source_match_fields: Fields the source endpoint is matched on. Defaults to
+            the vertex's primary identity; a secondary identity is passed when the
+            edge step selects one.
+        target_match_fields: Same, for the target endpoint.
     """
     acc_vertex = ctx.acc_vertex
     transform_buffer = ctx.transform_buffer
@@ -265,8 +271,16 @@ def render_edge(
     source = edge.source
     target = edge.target
 
-    source_identity = vertex_config.identity_fields(source)
-    target_identity = vertex_config.identity_fields(target)
+    source_identity = (
+        source_match_fields
+        if source_match_fields is not None
+        else vertex_config.identity_fields(source)
+    )
+    target_identity = (
+        target_match_fields
+        if target_match_fields is not None
+        else vertex_config.identity_fields(target)
+    )
 
     source_by_loc = acc_vertex[source]
     target_by_loc = acc_vertex[target]

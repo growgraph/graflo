@@ -19,6 +19,13 @@ class VertexRep(ConfigBaseModel):
     model_config = ConfigDict(kw_only=True)  # ty: ignore[invalid-key]
 
     vertex: dict[str, Any]
+    lookup_only: bool = False
+    """True when this observation exists only to locate an existing vertex.
+
+    Such documents take part in edge rendering but are never upserted. Tagging
+    the observation rather than the vertex type keeps it correct when one
+    resource both writes and merely references the same vertex type.
+    """
 
 
 class TransformPayload(ConfigBaseModel):
