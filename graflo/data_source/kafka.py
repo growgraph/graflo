@@ -12,7 +12,8 @@ from __future__ import annotations
 import json
 import logging
 import time
-from typing import Any, Iterator, Literal
+from collections.abc import Iterator
+from typing import Any, Literal
 
 from pydantic import Field
 
@@ -66,7 +67,7 @@ class KafkaConfig(ConfigBaseModel):
         return cfg
 
 
-def _import_confluent_kafka():  # noqa: ANN202
+def _import_confluent_kafka():
     try:
         from confluent_kafka import Consumer, KafkaError, KafkaException
     except ImportError as e:
@@ -208,7 +209,7 @@ class KafkaDataSource(AbstractDataSource):
 
                 err = msg.error()
                 if err is not None:
-                    if err.code() == KafkaError._PARTITION_EOF:  # noqa: SLF001
+                    if err.code() == KafkaError._PARTITION_EOF:
                         continue
                     raise KafkaException(err)
 

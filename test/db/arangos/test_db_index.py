@@ -1,8 +1,7 @@
-from test.conftest import verify
-
 import pytest
 
 from graflo.db import ConnectionManager
+from test.conftest import verify
 
 
 @pytest.fixture(scope="function")
@@ -19,7 +18,7 @@ def init_db(m, conn_conf, schema, current_path, reset):
         ixs = db_client.fetch_indexes()
 
     ixs = {k: v for k, v in ixs.items() if not k.startswith("_")}
-    for k, batch in ixs.items():
+    for batch in ixs.values():
         for ix in batch:
             del ix["id"]
             del ix["name"]

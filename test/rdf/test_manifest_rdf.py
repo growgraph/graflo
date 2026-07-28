@@ -16,7 +16,6 @@ from graflo.rdf.deserializer import ManifestRdfDeserializer
 from graflo.rdf.serializer import ManifestRdfSerializer
 from graflo.rdf.utils import load_ontology_graph, ontology_path
 
-
 EXAMPLES_DIR = pathlib.Path(__file__).resolve().parents[2] / "examples"
 BASE_URI = "https://growgraph.dev/manifests/test/"
 

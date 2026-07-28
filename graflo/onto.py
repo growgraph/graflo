@@ -19,6 +19,7 @@ Example:
 
 from enum import EnumMeta
 from typing import Literal, TypeAlias
+
 from strenum import StrEnum
 
 

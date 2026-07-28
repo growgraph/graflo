@@ -30,12 +30,12 @@ from typing import Any, cast
 from arango import ArangoClient
 from arango.graph import Graph
 
-from graflo.architecture.schema.edge import Edge
 from graflo.architecture.graph_types import (
     Index,
     IndexType,
 )
 from graflo.architecture.schema import Schema
+from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig
 from graflo.db.arango.query import fetch_fields_query
 from graflo.db.arango.util import render_filters
@@ -56,10 +56,8 @@ from graflo.db.graph_introspection import (
 )
 from graflo.db.util import get_data_from_cursor, json_serializer
 from graflo.filter.onto import FilterExpression
-from graflo.onto import AggregationType
+from graflo.onto import AggregationType, DBType
 from graflo.util.transform import pick_unique_dict
-from graflo.onto import DBType
-
 
 from ..connection.onto import ArangoConfig
 
@@ -265,7 +263,6 @@ class ArangoConnection(Connection):
     def close(self) -> None:
         """Close the ArangoDB connection."""
         # self.conn.close()
-        pass
 
     def _resolve_db_name(self, schema: Schema) -> str:
         db_name = self.config.database
@@ -534,9 +531,7 @@ class ArangoConnection(Connection):
         """
         data = index.db_form(DBType.ARANGO)
         ih: Any | None = None
-        if index.type == IndexType.PERSISTENT:
-            ih = general_collection.add_index(data)
-        elif index.type == IndexType.HASH:
+        if index.type == IndexType.PERSISTENT or index.type == IndexType.HASH:
             ih = general_collection.add_index(data)
         elif index.type == IndexType.SKIPLIST:
             ih = general_collection.add_skiplist_index(
@@ -729,7 +724,7 @@ class ArangoConnection(Connection):
         # Delete graphs first. Retry because graph metadata can be stale after deletes.
         for _ in range(3):
             deleted_any = False
-            for gn in list(gnames):
+            for gn in gnames:
                 if self.conn.has_graph(gn):
                     self.conn.delete_graph(gn)
                     deleted_any = True
@@ -1246,7 +1241,7 @@ class ArangoConnection(Connection):
         if not isinstance(present_docs_keys, dict):
             raise TypeError(f"expected dict, got {type(present_docs_keys).__name__}")
 
-        if any([len(v) > 1 for v in present_docs_keys.values()]):
+        if any(len(v) > 1 for v in present_docs_keys.values()):
             logger.warning(
                 "fetch_present_documents returned multiple docs per filtering condition"
             )

@@ -41,7 +41,10 @@ class TestAuthoredShape:
 
     def test_mixed_forms_coexist(self) -> None:
         vertex = _vertex(
-            secondary_identities=[{"name": "by_isin", "fields": ["isin"]}, ["org", "code"]]
+            secondary_identities=[
+                {"name": "by_isin", "fields": ["isin"]},
+                ["org", "code"],
+            ]
         )
         assert vertex.secondary_identity_names == ["by_isin", "secondary_1"]
 
@@ -80,8 +83,12 @@ class TestValidation:
         """A blank vertex has no source-visible key to match on."""
         with pytest.raises(ValueError, match="blank"):
             Vertex.model_validate(
-                {"name": "B", "properties": ["x"], "blank": True,
-                 "secondary_identities": [["x"]]}
+                {
+                    "name": "B",
+                    "properties": ["x"],
+                    "blank": True,
+                    "secondary_identities": [["x"]],
+                }
             )
 
     def test_duplicate_of_primary_identity_is_rejected(self) -> None:
@@ -125,12 +132,16 @@ class TestValidation:
 class TestSelectorResolution:
     def test_resolve_by_name(self) -> None:
         config = VertexConfig(
-            vertices=[_vertex(secondary_identities=[{"name": "by_isin", "fields": ["isin"]}])]
+            vertices=[
+                _vertex(secondary_identities=[{"name": "by_isin", "fields": ["isin"]}])
+            ]
         )
         assert config.match_fields("VertexA", "by_isin") == ["isin"]
 
     def test_resolve_by_explicit_field_list_any_order(self) -> None:
-        config = VertexConfig(vertices=[_vertex(secondary_identities=[["org", "code"]])])
+        config = VertexConfig(
+            vertices=[_vertex(secondary_identities=[["org", "code"]])]
+        )
         assert config.match_fields("VertexA", ["code", "org"]) == ["org", "code"]
 
     def test_sugar_resolves_when_exactly_one_declared(self) -> None:
@@ -146,7 +157,9 @@ class TestSelectorResolution:
 
     def test_unknown_selector_lists_what_is_declared(self) -> None:
         config = VertexConfig(
-            vertices=[_vertex(secondary_identities=[{"name": "by_isin", "fields": ["isin"]}])]
+            vertices=[
+                _vertex(secondary_identities=[{"name": "by_isin", "fields": ["isin"]}])
+            ]
         )
         with pytest.raises(ValueError, match="by_isin"):
             config.match_fields("VertexA", "nope")
@@ -159,7 +172,9 @@ class TestSelectorResolution:
 
     def test_db_aware_wrapper_resolves_the_same(self) -> None:
         config = VertexConfig(
-            vertices=[_vertex(secondary_identities=[{"name": "by_isin", "fields": ["isin"]}])]
+            vertices=[
+                _vertex(secondary_identities=[{"name": "by_isin", "fields": ["isin"]}])
+            ]
         )
         db_aware = VertexConfigDBAware(config, DatabaseProfile(db_flavor=DBType.NEO4J))
         assert db_aware.match_fields("VertexA", "by_isin") == ["isin"]
@@ -170,7 +185,10 @@ class TestSelectorResolution:
 class TestRoundTrip:
     def test_survives_model_dump_and_reload(self) -> None:
         vertex = _vertex(
-            secondary_identities=[{"name": "by_isin", "fields": ["isin"]}, ["org", "code"]]
+            secondary_identities=[
+                {"name": "by_isin", "fields": ["isin"]},
+                ["org", "code"],
+            ]
         )
         reloaded = Vertex.model_validate(vertex.model_dump())
         assert [e.fields for e in reloaded.secondary_identities] == [

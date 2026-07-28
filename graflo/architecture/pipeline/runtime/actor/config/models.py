@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal, cast
 
-from pydantic import Field as PydanticField, TypeAdapter, model_validator
+from pydantic import Field as PydanticField
+from pydantic import TypeAdapter, model_validator
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.contract.ingestion.transform import DressConfig
@@ -126,7 +127,7 @@ class TransformActorConfig(ConfigBaseModel):
         return normalized
 
     @model_validator(mode="after")
-    def validate_mode(self) -> "TransformActorConfig":
+    def validate_mode(self) -> TransformActorConfig:
         enabled = sum([self.rename is not None, self.call is not None])
         if enabled != 1:
             raise ValueError(
@@ -155,7 +156,7 @@ class TransformCallConfig(ConfigBaseModel):
         )
 
         @model_validator(mode="after")
-        def validate_mode_names(self) -> "TransformCallConfig.KeySelectionConfig":
+        def validate_mode_names(self) -> TransformCallConfig.KeySelectionConfig:
             if self.mode == "all" and self.names:
                 raise ValueError(
                     "call.keys.names must be empty when call.keys.mode='all'."
@@ -263,7 +264,7 @@ class TransformCallConfig(ConfigBaseModel):
         return data
 
     @model_validator(mode="after")
-    def validate_target(self) -> "TransformCallConfig":
+    def validate_target(self) -> TransformCallConfig:
         if self.use is not None and (self.module is not None or self.foo is not None):
             raise ValueError("call.use cannot be combined with call.module/call.foo.")
         if self.use is None:
@@ -467,7 +468,7 @@ class EdgeLinkConfig(EdgeEndpointMatchOptionsConfig):
         return role if role is not None else legacy_type_field
 
     @model_validator(mode="after")
-    def resolve_and_validate(self) -> "EdgeLinkConfig":
+    def resolve_and_validate(self) -> EdgeLinkConfig:
         # Canonicalize to role-first slot names while preserving legacy key input.
         # Use object.__setattr__ to bypass validate_assignment re-triggering this validator.
         source_role = self._canonicalize_slot_key(
@@ -653,7 +654,7 @@ class EdgeActorConfig(EdgeEndpointMatchOptionsConfig):
         return role if role is not None else legacy_type_field
 
     @model_validator(mode="after")
-    def validate_type_sources(self) -> "EdgeActorConfig":
+    def validate_type_sources(self) -> EdgeActorConfig:
         if self.links is not None:
             # Multi-link mode: top-level source/target fields must all be absent.
             has_single = any(
@@ -743,7 +744,7 @@ class DescendActorConfig(ConfigBaseModel):
     )
     key: str | None = PydanticField(default=None, description="Key to descend into")
     any_key: bool = PydanticField(default=False, description="Process all keys")
-    pipeline: list["ActorConfig"] = PydanticField(
+    pipeline: list[ActorConfig] = PydanticField(
         default_factory=list,
         alias="apply",
         description="Pipeline of actors to apply to nested data",
@@ -801,7 +802,7 @@ class VertexRouterActorConfig(VertexExtractionOptionsConfig):
         return data
 
     @model_validator(mode="after")
-    def normalize_role(self) -> "VertexRouterActorConfig":
+    def normalize_role(self) -> VertexRouterActorConfig:
         if self.role is None:
             object.__setattr__(self, "role", self.type_field)
         return self

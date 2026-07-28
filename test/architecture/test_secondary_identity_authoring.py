@@ -48,7 +48,9 @@ def vertex_config() -> VertexConfig:
     )
 
 
-def _init(step: dict, vertex_config: VertexConfig) -> tuple[ActorWrapper, ActorInitContext]:
+def _init(
+    step: dict, vertex_config: VertexConfig
+) -> tuple[ActorWrapper, ActorInitContext]:
     wrapper = ActorWrapper(**step)
     ctx = ActorInitContext(
         vertex_config=vertex_config,
@@ -63,12 +65,15 @@ def _init(step: dict, vertex_config: VertexConfig) -> tuple[ActorWrapper, ActorI
 class TestEdgeStepSelectors:
     def test_default_records_nothing(self, vertex_config: VertexConfig) -> None:
         """An edge step without selectors leaves the write path untouched."""
-        _, ctx = _init(
-            {"edge": {"from": "instrument", "to": "issuer"}}, vertex_config
+        _, ctx = _init({"edge": {"from": "instrument", "to": "issuer"}}, vertex_config)
+        assert (
+            ctx.edge_derivation.endpoint_match_for(("instrument", "issuer", None))
+            is None
         )
-        assert ctx.edge_derivation.endpoint_match_for(("instrument", "issuer", None)) is None
 
-    def test_asymmetric_selection_is_recorded(self, vertex_config: VertexConfig) -> None:
+    def test_asymmetric_selection_is_recorded(
+        self, vertex_config: VertexConfig
+    ) -> None:
         """Source and target may pick different identities independently."""
         _, ctx = _init(
             {
@@ -150,7 +155,11 @@ class TestEdgeStepSelectors:
                             "source_match": "by_isin",
                             "on_ambiguous": "first",
                         },
-                        {"from": "instrument", "to": "issuer", "relation": "guaranteed_by"},
+                        {
+                            "from": "instrument",
+                            "to": "issuer",
+                            "relation": "guaranteed_by",
+                        },
                     ]
                 }
             },
@@ -226,7 +235,5 @@ class TestLookupOnlyStep:
         assert wrapper.actor.lookup_only is False
 
     def test_can_be_declared(self, vertex_config: VertexConfig) -> None:
-        wrapper, _ = _init(
-            {"vertex": "instrument", "lookup_only": True}, vertex_config
-        )
+        wrapper, _ = _init({"vertex": "instrument", "lookup_only": True}, vertex_config)
         assert wrapper.actor.lookup_only is True

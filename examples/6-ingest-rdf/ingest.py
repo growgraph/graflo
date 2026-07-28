@@ -18,15 +18,15 @@ Prerequisites:
 import logging
 from pathlib import Path
 
-from graflo.db import ArangoConfig
-from graflo.hq import GraphEngine, IngestionParams
+from suthing import FileHandle
+
 from graflo.architecture.contract.bindings import (
     Bindings,
     SparqlConnector,
 )
 from graflo.architecture.contract.manifest import GraphManifest
-from suthing import FileHandle
-
+from graflo.db import ArangoConfig
+from graflo.hq import GraphEngine, IngestionParams
 
 logger = logging.getLogger(__name__)
 

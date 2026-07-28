@@ -7,9 +7,10 @@ from typing import Any, Self, cast
 from pydantic import ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
 from graflo.architecture.base import ConfigBaseModel
+
 from .connectors import (
-    ConnectorUpdate,
     APIConnector,
+    ConnectorUpdate,
     FileConnector,
     KafkaConnector,
     ResourceConnector,
@@ -294,7 +295,7 @@ class BindingsConfig(ConfigBaseModel):
             if isinstance(item, dict):
                 try:
                     coerced.append(ConnectorTemplate.model_validate(item))
-                except Exception as e:  # noqa: BLE001
+                except Exception as e:
                     raise ValueError(
                         f"Invalid connector_templates entry at index {i}: {item!r}."
                     ) from e
@@ -406,7 +407,7 @@ class BindingsConfig(ConfigBaseModel):
 
                 try:
                     coerced.append(ResourceConnectorBinding.model_validate(item))
-                except Exception as e:  # noqa: BLE001
+                except Exception as e:
                     # Keep the message concise and contextual; nested pydantic
                     # errors can be noisy for config authors.
                     raise ValueError(
@@ -448,7 +449,7 @@ class BindingsConfig(ConfigBaseModel):
                     )
                 try:
                     coerced.append(ConnectorConnectionBinding.model_validate(item))
-                except Exception as e:  # noqa: BLE001
+                except Exception as e:
                     raise ValueError(
                         f"Invalid connector_connection entry at index {i}: {item!r}."
                     ) from e

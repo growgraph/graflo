@@ -10,19 +10,22 @@ Tests use SQLite file-based (via SQLAlchemy) to exercise:
 
 from __future__ import annotations
 
-import tempfile
 import os
+import tempfile
 
 from sqlalchemy import create_engine, text
 
+from graflo.architecture.contract.bindings import (
+    Bindings,
+    ResourceConnectorBinding,
+    TableConnector,
+)
 from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.schema import Schema
 from graflo.data_source.sql import SQLConfig, SQLDataSource
 from graflo.filter.onto import ComparisonOperator, FilterExpression
-from graflo.architecture.contract.bindings import TableConnector
 from graflo.filter.select import SelectSpec
 from graflo.hq.auto_join import enrich_edge_connector_with_joins
-from graflo.architecture.contract.bindings import Bindings, ResourceConnectorBinding
 
 _INGESTION_BY_SCHEMA_ID: dict[int, IngestionModel] = {}
 
@@ -388,8 +391,8 @@ class TestEdgeResourceAutoJoin:
 
     def test_auto_join_query_executes_on_sqlite(self):
         """Run the generated JOIN query against a real SQLite DB."""
-        from graflo.hq.auto_join import enrich_edge_connector_with_joins
         from graflo.architecture.contract.bindings import Bindings
+        from graflo.hq.auto_join import enrich_edge_connector_with_joins
 
         conn_str = _setup_db()
         schema = self._build_schema()

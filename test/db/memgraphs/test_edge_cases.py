@@ -1,3 +1,5 @@
+from typing import Any, cast
+
 """Edge case and robustness tests for Memgraph connector.
 
 This module provides a comprehensive adversarial test suite for the Memgraph
@@ -69,7 +71,6 @@ import pytest
 
 from graflo.db import ConnectionManager
 from graflo.onto import AggregationType
-
 
 # =============================================================================
 # CYPHER INJECTION ATTACKS
@@ -1034,9 +1035,11 @@ class TestErrorHandling:
     def test_invalid_query_syntax(self, conn_conf, test_graph_name, clean_db):
         """Test handling of invalid query syntax."""
         _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            with pytest.raises(Exception):
-                db.execute("INVALID QUERY SYNTAX HERE")
+        with (
+            ConnectionManager(connection_config=conn_conf) as db,
+            pytest.raises(Exception),
+        ):
+            db.execute("INVALID QUERY SYNTAX HERE")
 
     def test_missing_match_key(self, conn_conf, test_graph_name, clean_db):
         """Test upserting document without required match key."""
@@ -1374,7 +1377,7 @@ class TestStateCorruption:
 
         # These should fail gracefully
         with pytest.raises(Exception):
-            fetch_docs = getattr(db, "fetch_docs")
+            fetch_docs = cast(Any, db).fetch_docs
             fetch_docs("SomeLabel")
 
     def test_double_close(self, conn_conf, test_graph_name):

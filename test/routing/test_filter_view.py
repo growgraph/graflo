@@ -5,9 +5,9 @@ from __future__ import annotations
 import os
 import tempfile
 from collections import Counter
+from unittest.mock import MagicMock
 
 import pytest
-from unittest.mock import MagicMock
 
 from graflo.architecture.contract.bindings import TableConnector
 from graflo.architecture.graph_types import ExtractionContext, LocationIndex
@@ -17,10 +17,10 @@ from graflo.architecture.schema.edge import EdgeConfig
 from graflo.architecture.schema.vertex import Field as VertexField
 from graflo.architecture.schema.vertex import Vertex, VertexConfig
 from graflo.data_source.sql import SQLConfig, SQLDataSource
+from graflo.db import PostgresConfig
 from graflo.filter.onto import ComparisonOperator, FilterExpression
 from graflo.filter.select import ALL_BASE_COLUMNS, SelectSpec
 from graflo.hq.resource_mapper import ResourceMapper
-from graflo.db import PostgresConfig
 
 
 def _setup_test_db() -> str:

@@ -20,10 +20,10 @@ __all__ = [
     "DescendActorConfig",
     "EdgeActorConfig",
     "EdgeLinkConfig",
-    "normalize_actor_step",
-    "parse_root_config",
     "TransformActorConfig",
-    "validate_actor_step",
     "VertexActorConfig",
     "VertexRouterActorConfig",
+    "normalize_actor_step",
+    "parse_root_config",
+    "validate_actor_step",
 ]

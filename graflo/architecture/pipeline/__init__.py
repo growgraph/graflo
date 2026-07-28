@@ -3,8 +3,8 @@
 from graflo.architecture.pipeline.runtime import (
     Actor,
     ActorConstants,
-    ActorInitContext,
     ActorExecutor,
+    ActorInitContext,
     ActorWrapper,
     DescendActor,
     EdgeActor,
@@ -16,8 +16,8 @@ from graflo.architecture.pipeline.runtime import (
 __all__ = [
     "Actor",
     "ActorConstants",
-    "ActorInitContext",
     "ActorExecutor",
+    "ActorInitContext",
     "ActorWrapper",
     "DescendActor",
     "EdgeActor",

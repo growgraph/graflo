@@ -7,7 +7,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic import AliasChoices, Field as PydanticField, model_validator
+from pydantic import AliasChoices, model_validator
+from pydantic import Field as PydanticField
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.graph_types import EdgeId, EdgePhysicalKey, Index
@@ -135,7 +136,7 @@ class DatabaseProfile(ConfigBaseModel):
     )
 
     @model_validator(mode="after")
-    def _normalize_edge_specs(self) -> "DatabaseProfile":
+    def _normalize_edge_specs(self) -> DatabaseProfile:
         def _variant_key(
             spec: EdgePhysicalSpec,
         ) -> EdgePhysicalKey:
@@ -191,7 +192,7 @@ class DatabaseProfile(ConfigBaseModel):
         object.__setattr__(self, "edge_specs", list(merged.values()))
         return self
 
-    def validate_against_schema(self, edge_config: "EdgeConfig") -> None:
+    def validate_against_schema(self, edge_config: EdgeConfig) -> None:
         """Assert all edge specs reference declared logical edges."""
         for spec in self.edge_specs:
             if spec.edge_id not in edge_config:

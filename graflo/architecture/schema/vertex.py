@@ -24,10 +24,12 @@ from typing import Any, Literal, TypeAlias
 
 from pydantic import (
     ConfigDict,
-    Field as PydanticField,
     PrivateAttr,
     field_validator,
     model_validator,
+)
+from pydantic import (
+    Field as PydanticField,
 )
 
 from graflo.architecture.base import ConfigBaseModel
@@ -546,7 +548,7 @@ class Vertex(ConfigBaseModel):
         raise ValueError("hash_identity_properties must be a list[str]")
 
     @model_validator(mode="after")
-    def set_identity(self) -> "Vertex":
+    def set_identity(self) -> Vertex:
         if self.blank and self.assigned:
             raise ValueError(
                 f"Vertex '{self.name}': blank and assigned are mutually exclusive"
@@ -697,7 +699,7 @@ class Vertex(ConfigBaseModel):
 
     def finish_init(self):
         """Complete logical initialization for vertex."""
-        return None
+        return
 
 
 class VertexConfig(ConfigBaseModel):
@@ -735,7 +737,7 @@ class VertexConfig(ConfigBaseModel):
     )
 
     @model_validator(mode="after")
-    def build_vertices_map(self) -> "VertexConfig":
+    def build_vertices_map(self) -> VertexConfig:
         object.__setattr__(
             self,
             "_vertices_map",
@@ -770,9 +772,7 @@ class VertexConfig(ConfigBaseModel):
         blank_id_field = "id"
         for vertex in self.vertices:
             if not vertex.identity:
-                if vertex.hash_identity_properties:
-                    vertex.identity = [blank_id_field]
-                elif vertex.blank or vertex.assigned:
+                if vertex.hash_identity_properties or vertex.blank or vertex.assigned:
                     vertex.identity = [blank_id_field]
                 elif self.identity_from_all_properties:
                     vertex.identity = list(vertex.property_names)

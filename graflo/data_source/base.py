@@ -6,7 +6,7 @@ and provide a unified interface for batch iteration.
 """
 
 import abc
-from typing import Iterator
+from collections.abc import Iterator
 
 from pydantic import PrivateAttr
 
@@ -98,5 +98,4 @@ class AbstractDataSource(ConfigBaseModel, abc.ABC):
             dict: Individual documents
         """
         for batch in self.iter_batches(batch_size=1, limit=None):
-            for item in batch:
-                yield item
+            yield from batch

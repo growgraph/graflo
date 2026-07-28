@@ -11,7 +11,8 @@ module never leaves artifacts behind for other suites to trip over.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Iterator
+from collections.abc import Callable, Iterator
+from typing import Any
 
 import pytest
 

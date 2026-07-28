@@ -18,10 +18,13 @@ Example:
 
 from __future__ import annotations
 
-from typing import Any, Iterator, cast
+from collections.abc import Iterator
+from typing import Any, cast
 
 from pydantic import (
     Field as PydanticField,
+)
+from pydantic import (
     PrivateAttr,
     field_validator,
     model_validator,
@@ -33,7 +36,6 @@ from graflo.architecture.graph_types import (
     EdgeType,
 )
 from graflo.architecture.schema.vertex import Field, VertexConfig, VertexName
-
 
 # Default relation name for TigerGraph edges when relation is not specified
 DEFAULT_TIGERGRAPH_RELATION = "relates"
@@ -151,7 +153,7 @@ class Edge(ConfigBaseModel):
         raise ValueError("edge identities must be list[list[str]]")
 
     @model_validator(mode="after")
-    def normalize_identity_keys(self) -> "Edge":
+    def normalize_identity_keys(self) -> Edge:
         deduped_keys: list[list[str]] = []
         seen_keys: set[tuple[str, ...]] = set()
         for key in self.identities:
@@ -269,7 +271,7 @@ class EdgeConfig(ConfigBaseModel):
         """Iterate over ``(edge_id, edge)`` pairs."""
         return iter(self._edges_map.items())
 
-    def __contains__(self, item: EdgeId | EdgeId | Edge):
+    def __contains__(self, item: EdgeId | Edge):
         """Check if edge exists in configuration.
 
         Args:

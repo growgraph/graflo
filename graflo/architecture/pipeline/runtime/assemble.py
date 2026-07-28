@@ -4,20 +4,21 @@ from __future__ import annotations
 
 from typing import Any
 
-from .actor.edge_render import render_edge, render_weights
 from graflo.architecture.contract.runtime.edge_derivation import (
     EdgeDerivationRegistry,
 )
+from graflo.architecture.edge_derivation import EdgeDerivation
+from graflo.architecture.graph_types import AssemblyContext, EdgeId, LocationIndex
 from graflo.architecture.schema.edge import (
     DEFAULT_TIGERGRAPH_RELATION_WEIGHTNAME,
     Edge,
     EdgeConfig,
 )
-from graflo.architecture.edge_derivation import EdgeDerivation
-from graflo.architecture.graph_types import AssemblyContext, EdgeId, LocationIndex
 from graflo.architecture.schema.vertex import VertexConfig
 from graflo.onto import DBType
 from graflo.util.merge import merge_doc_basis
+
+from .actor.edge_render import render_edge, render_weights
 
 
 def _resolved_relation_input_field(
@@ -130,11 +131,10 @@ def _is_inference_allowed(
         _matches_selector(selector, edge_id) for selector in infer_edge_only
     ):
         return False
-    if infer_edge_except and any(
-        _matches_selector(selector, edge_id) for selector in infer_edge_except
-    ):
-        return False
-    return True
+    return not (
+        infer_edge_except
+        and any(_matches_selector(selector, edge_id) for selector in infer_edge_except)
+    )
 
 
 def assemble_edges(

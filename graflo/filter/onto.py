@@ -25,9 +25,10 @@ import logging
 from types import MappingProxyType
 from typing import Any, Literal, Self, cast
 
+from pydantic import Field, field_validator, model_validator
+
 from graflo.architecture.base import ConfigBaseModel
 from graflo.onto import BaseEnum, ExpressionFlavor
-from pydantic import Field, field_validator, model_validator
 
 logger = logging.getLogger(__name__)
 
@@ -246,7 +247,7 @@ class FilterExpression(ConfigBaseModel):
             elif data[0] in LogicalOperator:
                 return cls(kind="composite", operator=data[0], deps=data[1])
         elif isinstance(data, dict):
-            k = list(data.keys())[0]
+            k = next(iter(data.keys()))
             norm_k = k.upper() if isinstance(k, str) else k
             if norm_k in LogicalOperator:
                 deps: list[FilterExpression] = [cls.from_dict(v) for v in data[k]]

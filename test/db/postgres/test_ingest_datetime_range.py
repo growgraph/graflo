@@ -5,11 +5,11 @@ and asserts that datetime_after/datetime_before and per-resource date_field
 filter rows correctly.
 """
 
+from graflo.architecture.contract.bindings import ColumnTimeFilter, TableConnector
 from graflo.filter.sql import datetime_range_where_sql
 from graflo.hq.caster import IngestionParams
 from graflo.hq.graph_engine import GraphEngine
 from graflo.onto import DBType
-from graflo.architecture.contract.bindings import ColumnTimeFilter, TableConnector
 
 
 def _set_purchase_dates(postgres_conn):

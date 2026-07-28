@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import Field as PydanticField, model_validator
+from pydantic import Field as PydanticField
+from pydantic import model_validator
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.onto import DBType

@@ -72,13 +72,12 @@ import concurrent.futures
 import math
 import threading
 import uuid
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from graflo.db import ConnectionManager
 from graflo.onto import AggregationType
-
 
 # =============================================================================
 # CYPHER INJECTION ATTACKS
@@ -925,8 +924,7 @@ class TestStateCorruption:
 
         # These should fail gracefully
         with pytest.raises(Exception):
-            # Use getattr to call dynamically proxied method
-            fetch_docs = getattr(db, "fetch_docs")
+            fetch_docs = cast(Any, db).fetch_docs
             fetch_docs("SomeLabel")
 
     def test_double_close(self, conn_conf, test_graph_name):

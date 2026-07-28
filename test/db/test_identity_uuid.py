@@ -35,7 +35,6 @@ from graflo.hq.db_writer import DBWriter
 from graflo.hq.document_caster import filter_graph_container_drop_empty_identity_inplace
 from graflo.onto import DBType
 
-
 _UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
     re.IGNORECASE,
@@ -167,9 +166,9 @@ def test_ensure_assigned_uuids_in_acc_vertex_before_edges() -> None:
 
 
 def test_actor_wrapper_assemble_mints_assigned() -> None:
+    from graflo.architecture.graph_types import EdgeIntent
     from graflo.architecture.pipeline.runtime.actor.base import ActorInitContext
     from graflo.architecture.pipeline.runtime.actor.config import VertexActorConfig
-    from graflo.architecture.graph_types import EdgeIntent
 
     vc = VertexConfig(
         vertices=[

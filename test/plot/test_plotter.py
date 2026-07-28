@@ -4,13 +4,13 @@ from typing import Any, cast
 import networkx as nx
 import pytest
 
+from graflo.architecture.graph_types import EdgeId
 from graflo.architecture.pipeline.runtime.actor import (
     EdgeActor,
     VertexRouterActor,
 )
-from graflo.architecture.pipeline.runtime.actor.wrapper import ActorWrapper
 from graflo.architecture.pipeline.runtime.actor.config import EdgeActorConfig
-from graflo.architecture.graph_types import EdgeId
+from graflo.architecture.pipeline.runtime.actor.wrapper import ActorWrapper
 from graflo.architecture.schema.edge import Edge
 from graflo.plot.plotter import ManifestPlotter, assemble_tree, fillcolor_palette
 
@@ -88,7 +88,7 @@ def _build_plotter(
     plotter.fig_path = "."
     plotter.name = "test_schema"
     plotter.prefix = "test_schema"
-    plotter.schema = SimpleNamespace(
+    cast(Any, plotter).schema = SimpleNamespace(
         metadata=SimpleNamespace(name="test_schema"),
         core_schema=SimpleNamespace(
             edge_config=_EdgeConfigStub(configured_edges),
@@ -99,7 +99,7 @@ def _build_plotter(
             ),
         ),
     )
-    plotter.ingestion_model = SimpleNamespace(resources=[])
+    cast(Any, plotter).ingestion_model = SimpleNamespace(resources=[])
     return plotter
 
 

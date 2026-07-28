@@ -11,9 +11,9 @@ from graflo.db.connection import TigergraphConfig
 from graflo.db.tigergraph.conn import (
     TigerGraphConnection,
     _CachedToken,
-    _TigerGraphTokenCache,
     _make_token_cache_key,
     _parse_tg_expiration,
+    _TigerGraphTokenCache,
     reset_tigergraph_token_cache,
 )
 

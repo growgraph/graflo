@@ -9,8 +9,8 @@ from typing import Any
 from graflo.architecture.backend import GraFloBackendReader, GraFloBackendWriter
 from graflo.architecture.backend.layout import GraFloLayout
 from graflo.architecture.graph_types import GraphContainer
-from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.document import Schema
+from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig
 from graflo.db.conn import Connection, NamespaceNotFoundError, SchemaExistsError
 from graflo.db.graflo_backend.config import GraFloBackendConfig

@@ -7,21 +7,16 @@ This module provides functionality to infer graflo Schema objects from PostgreSQ
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
 
-
-from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.database_features import DatabaseProfile
+from graflo.architecture.onto_sql import EdgeTableInfo, SchemaIntrospectionResult
 from graflo.architecture.schema import CoreSchema, GraphMetadata, Schema
+from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.schema.vertex import Field, FieldType, Vertex, VertexConfig
 from graflo.onto import DBType
 
-from graflo.architecture.onto_sql import EdgeTableInfo, SchemaIntrospectionResult
 from .conn import PostgresConnection
 from .types import PostgresTypeMapper
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 
@@ -200,7 +195,7 @@ class PostgresSchemaInferencer:
                 for v in values:
                     try:
                         # Try ISO format (with or without timezone)
-                        datetime.fromisoformat(v.replace("Z", "+00:00"))
+                        datetime.fromisoformat(v)
                         iso_datetime_count += 1
                     except (ValueError, AttributeError):
                         # Try other common formats

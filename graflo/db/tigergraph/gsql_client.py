@@ -303,7 +303,7 @@ class TigerGraphGsqlClient:
         self._conn._installed_clear_data_queries.pop(graph_name, None)
 
     def _drop_global_schema_types(
-        self, schema: "Schema", surviving_graphs: list[str]
+        self, schema: Schema, surviving_graphs: list[str]
     ) -> None:
         """Drop global vertex and edge types that belong to *schema*.
 

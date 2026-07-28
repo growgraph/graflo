@@ -28,15 +28,14 @@ from psycopg2.extras import RealDictCursor
 
 from graflo.architecture.onto_sql import (
     ColumnInfo,
-    ForeignKeyInfo,
-    VertexTableInfo,
     EdgeTableInfo,
+    ForeignKeyInfo,
     RawTableInfo,
     SchemaIntrospectionResult,
+    VertexTableInfo,
 )
-from graflo.db.connection import PostgresConfig
-
 from graflo.db.conn import Connection
+from graflo.db.connection import PostgresConfig
 from graflo.db.postgres.target_write import PostgresTargetWriteMixin
 
 from .inference_utils import (
@@ -734,10 +733,7 @@ class PostgresConnection(PostgresTargetWriteMixin, Connection):
         fk_column_names = {fk["column"] for fk in fk_columns}
         pk_set = set(pk_columns)
         # If all PK columns are FK columns and we have at least 2 FKs, it's likely an edge table
-        if pk_set.issubset(fk_column_names) and len(fk_columns) >= 2:
-            return True
-
-        return False
+        return bool(pk_set.issubset(fk_column_names) and len(fk_columns) >= 2)
 
     def detect_vertex_tables(
         self, schema_name: str | None = None

@@ -6,9 +6,9 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from graflo.architecture.graph_types.identifiers import EdgeId
+from graflo.architecture.graph_types.index_config import Weight
 from graflo.architecture.schema.vertex import PRIMARY_IDENTITY_SELECTOR
-
-from graflo.architecture.graph_types import EdgeId, Weight
 from graflo.onto import EndpointAmbiguityPolicy
 
 

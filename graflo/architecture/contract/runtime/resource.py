@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
-from graflo.architecture.graph_types import EdgeId, GraphEntity, ResourceCastResult
+from graflo.architecture.graph_types.context import ResourceCastResult
+from graflo.architecture.graph_types.identifiers import EdgeId, GraphEntity
 from graflo.architecture.pipeline.runtime.actor import (
     ActorInitContext,
     ActorWrapper,

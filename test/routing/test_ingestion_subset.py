@@ -338,7 +338,7 @@ def test_dynamic_edge_early_exit_skips_disallowed_endpoints() -> None:
     assert extraction_ctx.edge_intents
 
     result = resource._executor.assemble_result(extraction_ctx).entities
-    for k in result.keys():
+    for k in result:
         if not isinstance(k, tuple):
             continue
         s, t, _rel = k
@@ -372,13 +372,11 @@ def test_edge_inference_skips_edges_with_disallowed_vertices() -> None:
     assert "C" not in extraction_ctx.acc_vertex
 
     result = resource._executor.assemble_result(extraction_ctx).entities
-    for k in result.keys():
+    for k in result:
         if not isinstance(k, tuple):
             continue
         s, t, _rel = k
         assert "C" not in (s, t)
 
     # Edge A->B should still exist (inferred).
-    assert any(
-        isinstance(k, tuple) and k[0] == "A" and k[1] == "B" for k in result.keys()
-    )
+    assert any(isinstance(k, tuple) and k[0] == "A" and k[1] == "B" for k in result)

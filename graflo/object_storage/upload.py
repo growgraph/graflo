@@ -17,7 +17,7 @@ def upload_staged_csvs(
     bucket: str,
     key_prefix: str,
     session_id: str,
-    s3_cfg: "S3GeneralizedConnConfig",
+    s3_cfg: S3GeneralizedConnConfig,
 ) -> dict[str, str]:
     """Upload files and return manifest key -> ``s3://bucket/key`` for GSQL."""
     client = boto3_s3_client_from_generalized(s3_cfg)

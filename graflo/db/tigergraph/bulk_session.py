@@ -20,11 +20,11 @@ from graflo.object_storage import upload_staged_csvs
 from graflo.onto import DBType
 
 if TYPE_CHECKING:
+    from graflo.db.tigergraph.conn import TigerGraphConnection
     from graflo.hq.connection_provider import (
         ConnectionProvider,
         S3GeneralizedConnConfig,
     )
-    from graflo.db.tigergraph.conn import TigerGraphConnection
 
 _tiger_bulk_sessions_lock = threading.Lock()
 _tiger_bulk_sessions: dict[
@@ -78,7 +78,7 @@ def bulk_load_append(
         appender.append_graph_container(gc, schema)
 
 
-def bulk_load_finalize(  # noqa: PLR0912
+def bulk_load_finalize(
     conn: TigerGraphConnection,
     session_id: str,
     schema: Schema,

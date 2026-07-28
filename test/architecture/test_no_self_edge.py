@@ -11,7 +11,6 @@ from suthing import FileHandle
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.graph_types import GraphContainer
 
-
 DOC_0XFFFF = {
     "name": "0xffff",
     "version": "0.9-1",

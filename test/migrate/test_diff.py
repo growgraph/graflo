@@ -119,4 +119,4 @@ def test_schema_diff_risk_assessment_is_populated():
     diff.compare()
     risk_map = diff.risk_assessment()
     assert risk_map
-    assert all(":" in key for key in risk_map.keys())
+    assert all(":" in key for key in risk_map)

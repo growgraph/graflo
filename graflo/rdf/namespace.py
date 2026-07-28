@@ -7,7 +7,11 @@ from rdflib.term import URIRef
 
 from graflo.architecture.contract.bindings.connectors import (
     FileConnector as FileConnectorModel,
+)
+from graflo.architecture.contract.bindings.connectors import (
     SparqlConnector as SparqlConnectorModel,
+)
+from graflo.architecture.contract.bindings.connectors import (
     TableConnector as TableConnectorModel,
 )
 

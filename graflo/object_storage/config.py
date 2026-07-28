@@ -58,7 +58,7 @@ class MinioConfig(BaseModel):
         ),
     )
 
-    def to_s3_generalized_conn_config(self) -> "S3GeneralizedConnConfig":
+    def to_s3_generalized_conn_config(self) -> S3GeneralizedConnConfig:
         """Map to runtime provider config for :class:`~graflo.hq.connection_provider.S3GeneralizedConnConfig`."""
         from graflo.hq.connection_provider import S3GeneralizedConnConfig
 

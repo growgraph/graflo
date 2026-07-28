@@ -15,8 +15,10 @@ from graflo.architecture.evolution.rewrite import pipeline_mentions_any_vertex
     [
         "from graflo.architecture.evolution.rewrite import pipeline_mentions_any_vertex",
         "from graflo.hq.sanitizer import Sanitizer",
-        "from graflo import EdgeConfig; "
-        "from graflo.architecture.evolution.rewrite import pipeline_mentions_any_vertex",
+        (
+            "from graflo import EdgeConfig; "
+            "from graflo.architecture.evolution.rewrite import pipeline_mentions_any_vertex"
+        ),
     ],
 )
 def test_critical_imports_in_clean_subprocess(snippet: str) -> None:

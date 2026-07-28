@@ -12,7 +12,8 @@ of keys, and bucketing returned documents back by key.
 
 from __future__ import annotations
 
-from typing import Any, Iterator, Sequence
+from collections.abc import Iterator, Sequence
+from typing import Any
 
 #: Distinct key tuples per lookup query. Keeps generated predicates well below
 #: query-size limits on every backend while still amortizing the round trip.

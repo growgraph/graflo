@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from urllib.parse import quote
 
 import requests
 from requests import exceptions as requests_exceptions
 
+from graflo.architecture.schema.vertex import FieldType
 from graflo.db.conn import consume_insert_edges_kwargs
 from graflo.db.resolve import (
     DEFAULT_RESOLVE_CHUNK_SIZE,
@@ -22,16 +23,14 @@ from graflo.db.resolve import (
 from graflo.db.tigergraph.document_utils import (
     clean_document,
     extract_id,
+)
+from graflo.db.tigergraph.document_utils import (
     json_serializer_alias as _json_serializer,
 )
 from graflo.db.tigergraph.gsql_parsers import parse_restpp_response
-from graflo.architecture.schema.vertex import FieldType
 from graflo.filter.onto import FilterExpression
 from graflo.onto import AggregationType, ExpressionFlavor
 from graflo.util.transform import pick_unique_dict
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 
@@ -347,7 +346,7 @@ class TigerGraphDataOps:
                 if weight_idx >= len(weights_list):
                     continue
 
-                source_id, target_id, edge_type_key = uvr_key
+                source_id, target_id, _edge_type_key = uvr_key
                 weight_attrs = weights_list[weight_idx]
                 original_edge = uvr_edges_map[uvr_key][weight_idx]
 
@@ -736,7 +735,7 @@ class TigerGraphDataOps:
 
             # Check for errors
             if isinstance(response, dict) and response.get("error"):
-                raise Exception(
+                raise RuntimeError(
                     f"REST++ API error: {response.get('message', response)}"
                 )
 

@@ -364,7 +364,7 @@ class TestRelationIdentification:
         # This should stop early and not match incorrectly
         # Example: "product_user_something" - if we match product first (left),
         # then user (right), we should stop if they're too far apart
-        source, target, relation = infer_edge_vertices_from_table_name(
+        source, target, _relation = infer_edge_vertices_from_table_name(
             "product_something_else_user",
             pk_columns,
             fk_columns,

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from pydantic import Field as PydanticField, model_validator
+from pydantic import Field as PydanticField
+from pydantic import model_validator
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.schema.edge import EdgeConfig

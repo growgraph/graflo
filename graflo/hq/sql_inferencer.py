@@ -13,8 +13,8 @@ from graflo.architecture import Resource
 from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.onto_sql import SchemaIntrospectionResult
 from graflo.architecture.schema import Schema
-from graflo.db.postgres.conn import PostgresConnection
 from graflo.db.postgres import PostgresResourceMapper, PostgresSchemaInferencer
+from graflo.db.postgres.conn import PostgresConnection
 from graflo.onto import DBType
 
 logger = logging.getLogger(__name__)

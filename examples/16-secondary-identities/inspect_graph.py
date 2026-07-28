@@ -13,10 +13,9 @@ from pathlib import Path
 from typing import Any
 
 import click
+from _common import DEFAULT_CSV_BACKEND_DIR
 
 from graflo.architecture.backend import GraFloBackendReader
-
-from _common import DEFAULT_CSV_BACKEND_DIR
 
 
 def _all_vertices(

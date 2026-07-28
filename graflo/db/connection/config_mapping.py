@@ -1,5 +1,6 @@
-from typing import Dict, Type
+from graflo.db.graflo_backend.config import GraFloBackendConfig
 
+from ... import DBType
 from .onto import (
     ArangoConfig,
     DBConfig,
@@ -11,11 +12,9 @@ from .onto import (
     SparqlEndpointConfig,
     TigergraphConfig,
 )
-from graflo.db.graflo_backend.config import GraFloBackendConfig
-from ... import DBType
 
 # Define this mapping in a separate file to avoid circular imports
-DB_TYPE_MAPPING: Dict[DBType, Type[DBConfig]] = {
+DB_TYPE_MAPPING: dict[DBType, type[DBConfig]] = {
     DBType.ARANGO: ArangoConfig,
     DBType.NEO4J: Neo4jConfig,
     DBType.TIGERGRAPH: TigergraphConfig,
@@ -28,7 +27,7 @@ DB_TYPE_MAPPING: Dict[DBType, Type[DBConfig]] = {
 }
 
 
-def get_config_class(db_type: DBType) -> Type[DBConfig]:
+def get_config_class(db_type: DBType) -> type[DBConfig]:
     """Get the appropriate config class for a database type.
 
     This factory function breaks the circular dependency by moving the

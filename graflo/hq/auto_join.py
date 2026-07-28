@@ -12,15 +12,15 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from graflo.architecture.contract.ingestion.resource import ResourceConfig
-from graflo.architecture.pipeline.runtime.actor import ActorWrapper, EdgeActor
-from graflo.architecture.contract.runtime import ResourceRuntime
-from graflo.filter.onto import ComparisonOperator, FilterExpression
 from graflo.architecture.contract.bindings import JoinClause, TableConnector
+from graflo.architecture.contract.ingestion.resource import ResourceConfig
+from graflo.architecture.contract.runtime import ResourceRuntime
+from graflo.architecture.pipeline.runtime.actor import ActorWrapper, EdgeActor
+from graflo.filter.onto import ComparisonOperator, FilterExpression
 
 if TYPE_CHECKING:
-    from graflo.architecture.schema.vertex import VertexConfig
     from graflo.architecture.contract.bindings import Bindings
+    from graflo.architecture.schema.vertex import VertexConfig
 
 logger = logging.getLogger(__name__)
 

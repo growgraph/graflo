@@ -11,6 +11,13 @@ Key Components:
     - DataSourceRegistry: Maps DataSources to Resource names
 """
 
+from graflo.architecture.contract.bindings import (
+    APIConnector,
+    ApiResponseStructure,
+    PaginationConfig,
+    PaginationRequestConfig,
+)
+
 from .api import APIConfig, APIDataSource
 from .base import AbstractDataSource, DataSourceType
 from .factory import DataSourceFactory
@@ -24,19 +31,13 @@ from .kafka import KafkaConfig, KafkaDataSource
 from .memory import InMemoryDataSource
 from .registry import DataSourceRegistry
 from .sql import SQLConfig, SQLDataSource
-from graflo.architecture.contract.bindings import (
-    APIConnector,
-    ApiResponseStructure,
-    PaginationConfig,
-    PaginationRequestConfig,
-)
 
 __all__ = [
-    "AbstractDataSource",
     "APIConfig",
     "APIConnector",
-    "ApiResponseStructure",
     "APIDataSource",
+    "AbstractDataSource",
+    "ApiResponseStructure",
     "DataSourceFactory",
     "DataSourceRegistry",
     "DataSourceType",
@@ -55,7 +56,7 @@ __all__ = [
 
 # RDF / SPARQL data sources (rdflib, SPARQLWrapper — core deps; optional import if missing)
 try:
-    from .rdf import (  # noqa: F401
+    from .rdf import (
         RdfDataSource,
         RdfFileDataSource,
         SparqlDataSource,

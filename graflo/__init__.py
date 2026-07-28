@@ -60,37 +60,37 @@ def __dir__() -> list[str]:
 
 
 # --- Architecture ----------------------------------------------------------
-from .architecture import (  # noqa: E402
+from .architecture import (
     APIConnector,
     Bindings,
-    FileConnector,
-    GraphMetadata,
-    GraphManifest,
-    JoinClause,
-    KafkaConnector,
+    BoundSourceKind,
+    CoreSchema,
     DatabaseProfile,
     Edge,
     EdgeConfig,
     FieldType,
-    CoreSchema,
+    FileConnector,
+    GraphManifest,
+    GraphMetadata,
     GraphModel,
     Index,
     IngestionModel,
-    BoundSourceKind,
-    ResourceConnector,
+    JoinClause,
+    KafkaConnector,
     Resource,
-    SparqlConnector,
+    ResourceConnector,
     Schema,
+    SparqlConnector,
     TableConnector,
     Vertex,
     VertexConfig,
 )
 
 # --- Data sources ----------------------------------------------------------
-from .data_source import (  # noqa: E402
+from .data_source import (
+    AbstractDataSource,
     APIConfig,
     APIDataSource,
-    AbstractDataSource,
     DataSourceFactory,
     DataSourceRegistry,
     DataSourceType,
@@ -107,70 +107,69 @@ from .data_source import (  # noqa: E402
 )
 
 # --- Database (lazy via __getattr__; see _DB_EXPORTS) -------------------------
-
 # --- Filters ---------------------------------------------------------------
-from .filter import ComparisonOperator, FilterExpression, LogicalOperator  # noqa: E402
+from .filter import ComparisonOperator, FilterExpression, LogicalOperator
 
 # --- Enums & utilities -----------------------------------------------------
-from .onto import AggregationType, DBType  # noqa: E402
+from .onto import AggregationType, DBType
 
 __all__ = [
-    # Orchestration
-    "GraphEngine",
-    "Caster",
-    "CastBatchResult",
-    "IngestionParams",
-    "DocCastFailure",
-    "DocErrorBudgetExceeded",
-    # Architecture
-    "Schema",
-    "GraphMetadata",
-    "CoreSchema",
-    "GraphModel",
-    "DatabaseProfile",
-    "IngestionModel",
-    "GraphManifest",
-    "Resource",
-    "Vertex",
-    "VertexConfig",
-    "Edge",
-    "EdgeConfig",
-    "FieldType",
-    "Index",
+    "APIConfig",
+    "APIConnector",
+    "APIDataSource",
     # Data sources
     "AbstractDataSource",
-    "APIConfig",
-    "APIDataSource",
+    # Enums & utilities
+    "AggregationType",
+    "Bindings",
+    "BoundSourceKind",
+    "CastBatchResult",
+    "Caster",
+    # Filters
+    "ComparisonOperator",
+    # Database
+    "ConnectionManager",
+    "ConnectionType",
+    "CoreSchema",
+    "DBType",
     "DataSourceFactory",
     "DataSourceRegistry",
     "DataSourceType",
+    "DatabaseProfile",
+    "DocCastFailure",
+    "DocErrorBudgetExceeded",
+    "Edge",
+    "EdgeConfig",
+    "FieldType",
+    "FileConnector",
     "FileDataSource",
+    "FilterExpression",
+    # Orchestration
+    "GraphEngine",
+    "GraphManifest",
+    "GraphMetadata",
+    "GraphModel",
     "InMemoryDataSource",
+    "Index",
+    "IngestionModel",
+    "IngestionParams",
+    "JoinClause",
     "JsonFileDataSource",
     "JsonlFileDataSource",
     "KafkaConfig",
     "KafkaConnector",
     "KafkaDataSource",
+    "LogicalOperator",
     "PaginationConfig",
+    "Resource",
+    "ResourceConnector",
     "SQLConfig",
     "SQLDataSource",
-    "TableFileDataSource",
-    # Database
-    "ConnectionManager",
-    "ConnectionType",
-    # Filters
-    "ComparisonOperator",
-    "FilterExpression",
-    "LogicalOperator",
-    # Enums & utilities
-    "AggregationType",
-    "DBType",
-    "APIConnector",
-    "FileConnector",
-    "Bindings",
-    "JoinClause",
-    "BoundSourceKind",
-    "ResourceConnector",
+    # Architecture
+    "Schema",
     "SparqlConnector",
     "TableConnector",
+    "TableFileDataSource",
+    "Vertex",
+    "VertexConfig",
 ]

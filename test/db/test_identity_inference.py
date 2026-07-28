@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import random
 from datetime import datetime
 from pathlib import Path
-
-import random
 
 import pytest
 
@@ -17,6 +16,7 @@ from graflo.architecture.schema import CoreSchema, GraphMetadata, Schema
 from graflo.architecture.schema.edge import EdgeConfig
 from graflo.architecture.schema.graflo_output import GraFloOutput
 from graflo.architecture.schema.vertex import Field, Vertex, VertexConfig
+from graflo.db.connection import ArangoConfig
 from graflo.db.identity_inference import (
     DEFAULT_MIN_SAMPLE_SIZE,
     IdentityInferenceConfig,
@@ -30,7 +30,6 @@ from graflo.db.identity_inference import (
     score_candidate,
     uniqueness_ratio,
 )
-from graflo.db.connection import ArangoConfig
 from graflo.hq.db_writer import DBWriter
 from graflo.onto import DBType
 

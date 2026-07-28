@@ -13,8 +13,9 @@ NebulaGraph VIDs, TigerGraph ``PRIMARY_ID``).
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Sequence
+from typing import Any
 
 from graflo.db.resolve import key_tuple
 from graflo.onto import EndpointAmbiguityPolicy

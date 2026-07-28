@@ -13,10 +13,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import click
+from _common import DEFAULT_CSV_BACKEND_DIR
 
 from graflo.architecture.backend import GraFloBackendReader
-
-from _common import DEFAULT_CSV_BACKEND_DIR
 
 
 @click.command()

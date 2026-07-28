@@ -7,13 +7,13 @@ for the property lookup to run at all.
 
 from __future__ import annotations
 
-from typing import Any, Iterator
+from collections.abc import Iterator
+from typing import Any
 
 import pytest
 
 from graflo.architecture.schema import Schema
 from graflo.db import ConnectionManager
-
 from test.db.test_resolve_vertices import (
     BACKENDS,
     PROBE_VERTEX,

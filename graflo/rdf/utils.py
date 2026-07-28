@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-from rdflib import BNode, Graph, Literal, RDF, URIRef
+from rdflib import RDF, BNode, Graph, Literal, URIRef
 from rdflib.namespace import XSD
 
 from graflo.architecture.pipeline.runtime.actor.config.normalize import (

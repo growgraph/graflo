@@ -90,3 +90,26 @@ markers = [
   "nebula: marks NebulaGraph integration tests (skipped unless --run-nebula is passed)",
   "performance: marks performance / stress tests (skipped unless --run-performance is passed)"
 ]
+
+[tool.ruff.lint]
+# Ruff 0.16 expanded defaults (~413 rules). Keep the new set, but silence
+# categories that conflict with intentional patterns in this codebase:
+# B017 pytest.raises(Exception); BLE001/S110/S112 broad except cleanup;
+# DTZ* naive graph datetimes; E722 bare except; G201 logger.error+exc_info;
+# LOG015 CLI root logger; RUF012 class mutable defaults; TRY004 ValueError
+# validation API; TRY203 mixin re-raise wrappers.
+ignore = [
+  "B017",
+  "BLE001",
+  "DTZ001",
+  "DTZ007",
+  "DTZ011",
+  "E722",
+  "G201",
+  "LOG015",
+  "RUF012",
+  "S110",
+  "S112",
+  "TRY004",
+  "TRY203"
+]

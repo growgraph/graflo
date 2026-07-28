@@ -1,5 +1,3 @@
-from typing import Dict
-
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -18,7 +16,7 @@ class WSGIConfig(BaseSettings):
 
     uri: str | None = Field(default=None, description="WSGI URI")
     path: str = Field(default="/", description="WSGI path")
-    paths: Dict[str, str] = Field(
+    paths: dict[str, str] = Field(
         default_factory=dict, description="WSGI paths mapping"
     )
     listen_addr: str = Field(default="0.0.0.0", description="Listen address")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from decimal import Decimal
 from typing import Any
 
@@ -14,7 +15,7 @@ def gsql_default_literal(value: Any) -> str:
     if isinstance(value, int):
         return str(value)
     if isinstance(value, float):
-        if value != value:  # NaN
+        if math.isnan(value):
             raise ValueError("NaN is not a valid GSQL default literal")
         return json.dumps(value)
     if isinstance(value, Decimal):

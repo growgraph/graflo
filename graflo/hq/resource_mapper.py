@@ -6,14 +6,14 @@ This module provides functionality to create Bindings from various data sources
 
 import logging
 
-from graflo.architecture.onto_sql import SchemaIntrospectionResult
-from graflo.db.postgres.conn import PostgresConnection
-from graflo.filter.select import SelectSpec
 from graflo.architecture.contract.bindings import (
     Bindings,
     ColumnTimeFilter,
     TableConnector,
 )
+from graflo.architecture.onto_sql import SchemaIntrospectionResult
+from graflo.db.postgres.conn import PostgresConnection
+from graflo.filter.select import SelectSpec
 from graflo.hq.connection_provider import (
     InMemoryConnectionProvider,
     PostgresGeneralizedConnConfig,

@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
+from collections.abc import Callable, Iterable, Iterator
 from functools import partial
 from itertools import combinations, product, zip_longest
-from typing import Any, Callable, Iterable, Iterator
+from typing import Any
 
 from graflo.architecture.edge_derivation import EdgeDerivation
-from graflo.architecture.schema.edge import Edge
 from graflo.architecture.graph_types import (
     ActionContext,
     AssemblyContext,
@@ -19,8 +19,9 @@ from graflo.architecture.graph_types import (
     Weight,
     context_dict_from_transform_buffer_item,
 )
-from graflo.architecture.util import project_dict
+from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig
+from graflo.architecture.util import project_dict
 
 logger = logging.getLogger(__name__)
 
@@ -440,7 +441,7 @@ def render_weights(
             vertex_sample = [
                 doc
                 for doc in vertex_sample
-                if all([doc[q] == v in doc for q, v in w.filter.items()])
+                if all(doc[q] == v in doc for q, v in w.filter.items())
             ]
         if vertex_sample:
             for doc in vertex_sample:

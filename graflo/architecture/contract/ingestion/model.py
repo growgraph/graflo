@@ -5,7 +5,8 @@ from __future__ import annotations
 from collections import Counter
 from typing import TYPE_CHECKING, Literal
 
-from pydantic import Field as PydanticField, PrivateAttr, model_validator
+from pydantic import Field as PydanticField
+from pydantic import PrivateAttr, model_validator
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.pipeline.runtime.actor import ActorWrapper

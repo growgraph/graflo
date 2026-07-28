@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-from rdflib import BNode, Graph, RDF, URIRef
+from rdflib import RDF, BNode, Graph, URIRef
 from rdflib.namespace import XSD
 
 from graflo.architecture.contract.bindings.connectors import (
@@ -12,21 +12,21 @@ from graflo.architecture.contract.bindings.connectors import (
     SparqlConnector,
     TableConnector,
 )
-from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.contract.ingestion.transform import (
     DressConfig,
     KeySelectionConfig,
     ProtoTransform,
 )
+from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.graph_types import EdgeId
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import Field, Vertex
 from graflo.rdf import namespace as ns
 from graflo.rdf.utils import (
-    add_enum_individual,
-    add_literal,
     actor_step_class,
     actor_step_type,
+    add_enum_individual,
+    add_literal,
     join_uri,
     json_literal,
     load_ontology_graph,

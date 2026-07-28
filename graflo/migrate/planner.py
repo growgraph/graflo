@@ -10,7 +10,6 @@ from graflo.migrate.models import (
 )
 from graflo.migrate.risk import is_low_risk
 
-
 OP_ORDER = {
     OperationType.ADD_VERTEX: 10,
     OperationType.ADD_EDGE: 20,

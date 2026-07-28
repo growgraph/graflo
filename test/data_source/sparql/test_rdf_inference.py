@@ -95,7 +95,7 @@ class TestRdfInferenceManager:
     def test_infer_schema_resources(self, sample_ontology_path: Path):
         """One Resource per class should be created."""
         mgr = RdfInferenceManager()
-        schema, ingestion_model = mgr.infer_schema(
+        _schema, ingestion_model = mgr.infer_schema(
             sample_ontology_path, schema_name="test_rdf"
         )
 

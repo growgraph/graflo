@@ -18,6 +18,6 @@ Example:
 from .transform import parse_date_standard, standardize
 
 __all__ = [
-    "standardize",
     "parse_date_standard",
+    "standardize",
 ]

@@ -27,17 +27,17 @@ class FakeConnection:
 
 
 def _resolve(db: FakeConnection, docs: list, policy: str, **overrides):
-    kwargs: dict[str, Any] = dict(
-        source_class="instrument",
-        target_class="issuer",
-        source_match_fields=["isin"],
-        target_match_fields=["iid"],
-        source_identity_fields=["sid"],
-        target_identity_fields=["iid"],
-        resolve_source=True,
-        resolve_target=False,
-        policy=policy,
-    )
+    kwargs: dict[str, Any] = {
+        "source_class": "instrument",
+        "target_class": "issuer",
+        "source_match_fields": ["isin"],
+        "target_match_fields": ["iid"],
+        "source_identity_fields": ["sid"],
+        "target_identity_fields": ["iid"],
+        "resolve_source": True,
+        "resolve_target": False,
+        "policy": policy,
+    }
     kwargs.update(overrides)
     return resolve_edge_endpoints(db, docs, **kwargs)
 
@@ -71,9 +71,7 @@ class TestResolution:
     def test_partial_key_is_never_partially_matched(self) -> None:
         db = FakeConnection(ONE_MATCH)
         docs = [({"org": "acme"}, {"iid": "I1"}, {})]
-        resolved, stats = _resolve(
-            db, docs, "all", source_match_fields=["org", "code"]
-        )
+        resolved, stats = _resolve(db, docs, "all", source_match_fields=["org", "code"])
         assert resolved == []
         assert stats.unresolvable == 1 and stats.dropped == 1
 

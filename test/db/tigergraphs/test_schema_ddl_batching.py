@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any, cast
 
 from graflo.db.tigergraph.conn import TigerGraphConnection
 from graflo.db.tigergraph.schema_ddl import SchemaDdlBuilder
@@ -8,7 +9,7 @@ from graflo.db.tigergraph.schema_ddl import SchemaDdlBuilder
 
 def _ddl_builder() -> SchemaDdlBuilder:
     conn = TigerGraphConnection.__new__(TigerGraphConnection)
-    conn.config = SimpleNamespace(max_job_size=15000)
+    cast(Any, conn).config = SimpleNamespace(max_job_size=15000)
     return SchemaDdlBuilder(conn)
 
 

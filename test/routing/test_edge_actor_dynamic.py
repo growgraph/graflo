@@ -30,7 +30,6 @@ from graflo.architecture.pipeline.runtime.actor.vertex_router import VertexRoute
 from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.schema.vertex import VertexConfig
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

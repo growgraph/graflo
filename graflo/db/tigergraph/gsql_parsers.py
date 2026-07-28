@@ -222,7 +222,7 @@ def parse_installed_queries_from_rest_endpoints(
 
     queries: list[str] = []
     query_prefix = f"/query/{graph_name}/"
-    for endpoint_path in result.keys():
+    for endpoint_path in result:
         if query_prefix not in endpoint_path:
             continue
         idx = endpoint_path.find(query_prefix)

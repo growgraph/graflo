@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import Any, Protocol
 
 from psycopg2 import sql
 from psycopg2.extras import execute_values
@@ -22,24 +22,12 @@ from graflo.db.field_type_support import assert_field_type_supported
 from graflo.filter.onto import parse_filter_expression
 from graflo.onto import AggregationType, DBType, ExpressionFlavor
 
-if TYPE_CHECKING:
-    pass
-
 
 class _Psycopg2Conn(Protocol):
     def cursor(self, *args: Any, **kwargs: Any) -> Any: ...
     def commit(self) -> None: ...
     def rollback(self) -> None: ...
     def close(self) -> None: ...
-
-
-class _PostgresTargetHost(Protocol):
-    config: Any
-    conn: _Psycopg2Conn
-
-    def read(self, query: str, params: tuple | None = None) -> list[dict[str, Any]]: ...
-    def get_tables(self, schema_name: str | None = None) -> list[dict[str, Any]]: ...
-    def define_indexes(self, schema: Schema) -> None: ...
 
 
 logger = logging.getLogger(__name__)

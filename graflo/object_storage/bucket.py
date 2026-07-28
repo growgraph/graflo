@@ -45,7 +45,7 @@ def ensure_bucket_exists(client: Any, bucket: str) -> str:
     return bucket
 
 
-def ensure_staging_bucket_for_config(cfg: "MinioConfig | None" = None) -> str:
+def ensure_staging_bucket_for_config(cfg: MinioConfig | None = None) -> str:
     """Ensure :attr:`~graflo.object_storage.config.MinioConfig.bucket` exists.
 
     If *cfg* is ``None``, loads :meth:`~graflo.object_storage.config.MinioConfig.from_docker_env`.

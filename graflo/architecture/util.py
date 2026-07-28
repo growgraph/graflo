@@ -18,7 +18,8 @@ Example:
 
 from __future__ import annotations
 
-from typing import Any, Collection, Literal
+from collections.abc import Collection
+from typing import Any, Literal
 
 from graflo.architecture.graph_types import GraphEntity
 

@@ -7,8 +7,9 @@ keys (ISIN, LEI) that appear nowhere as a primary identity.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 import pytest
 

@@ -13,8 +13,8 @@ def test_create_vertex_index(conn_conf, schema_obj):
         cursor = db_client.execute(q)
         data = cursor.data()
     # Storage names from review schema: author->Author, researchField->ResearchField
-    assert any([item["name"] == "ResearchField_id" for item in data]) and any(
-        [item["name"] == "Author_id_full_name" for item in data]
+    assert any(item["name"] == "ResearchField_id" for item in data) and any(
+        item["name"] == "Author_id_full_name" for item in data
     )
 
 

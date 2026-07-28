@@ -5,11 +5,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from .base import Actor, ActorInitContext
-from .config import EdgeActorConfig, EdgeLinkConfig
-from graflo.architecture.edge_derivation import EdgeDerivation
-from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.contract.runtime.edge_derivation import EndpointMatch
+from graflo.architecture.edge_derivation import EdgeDerivation
 from graflo.architecture.graph_types import (
     EdgeId,
     ExtractionContext,
@@ -17,7 +14,11 @@ from graflo.architecture.graph_types import (
     Weight,
     merge_observation_with_transform_buffer,
 )
+from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.schema.vertex import VertexConfig, VertexName
+
+from .base import Actor, ActorInitContext
+from .config import EdgeActorConfig, EdgeLinkConfig
 
 logger = logging.getLogger(__name__)
 
@@ -150,7 +151,7 @@ class EdgeActor(Actor):
         return self.derivation.relation_field
 
     @classmethod
-    def from_config(cls, config: EdgeActorConfig) -> "EdgeActor":
+    def from_config(cls, config: EdgeActorConfig) -> EdgeActor:
         return cls(config)
 
     def fetch_important_items(self) -> dict[str, Any]:
@@ -243,16 +244,19 @@ class EdgeActor(Actor):
         key = (source, target, relation)
         if key in self._edge_cache:
             return self._edge_cache[key]
-        if self._strict_edge_types:
-            # Skip if this (source, target, relation) was not pre-declared.
-            if self.edge_config is not None and key not in self.edge_config:
-                logger.debug(
-                    "EdgeActor: strict_edge_types=True, skipping undeclared (%s, %s, %s)",
-                    source,
-                    target,
-                    relation,
-                )
-                return None
+        # Skip if this (source, target, relation) was not pre-declared.
+        if (
+            self._strict_edge_types
+            and self.edge_config is not None
+            and key not in self.edge_config
+        ):
+            logger.debug(
+                "EdgeActor: strict_edge_types=True, skipping undeclared (%s, %s, %s)",
+                source,
+                target,
+                relation,
+            )
+            return None
         edge = Edge(source=source, target=target, relation=relation)
         if self.vertex_config is not None:
             edge.finish_init(vertex_config=self.vertex_config)
@@ -269,7 +273,7 @@ class EdgeActor(Actor):
     ) -> str | None:
         """Scan acc_vertex to find which vertex type has data at *slot_lindex*."""
         for vtype, by_loc in ctx.acc_vertex.items():
-            if slot_lindex in by_loc and by_loc[slot_lindex]:
+            if by_loc.get(slot_lindex):
                 return vtype
         return None
 

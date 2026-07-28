@@ -7,7 +7,8 @@ import re
 from typing import TYPE_CHECKING
 
 import yaml
-from pydantic import AliasChoices, Field as PydanticField, model_validator
+from pydantic import AliasChoices, model_validator
+from pydantic import Field as PydanticField
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.database_features import DatabaseProfile

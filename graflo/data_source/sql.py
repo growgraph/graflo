@@ -6,8 +6,9 @@ memory using server-side cursor semantics where the driver supports them.
 """
 
 import logging
+from collections.abc import Iterator
 from decimal import Decimal
-from typing import Any, Iterator
+from typing import Any
 
 from pydantic import Field, PrivateAttr
 from sqlalchemy import create_engine, text

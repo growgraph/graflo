@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from .base import ActorConstants, ActorInitContext, VertexProducingActor
-from .config import VertexActorConfig
 from graflo.architecture.graph_types import (
     ExtractionContext,
     LocationIndex,
@@ -16,6 +14,9 @@ from graflo.architecture.graph_types import (
 from graflo.architecture.schema.vertex import VertexConfig, VertexName
 from graflo.onto import ExpressionFlavor
 from graflo.util.merge import merge_doc_basis
+
+from .base import ActorConstants, ActorInitContext, VertexProducingActor
+from .config import VertexActorConfig
 
 
 class VertexActor(VertexProducingActor):
@@ -39,7 +40,14 @@ class VertexActor(VertexProducingActor):
 
     def fetch_important_items(self) -> dict[str, Any]:
         return self._fetch_items_from_dict(
-            ("name", "from_doc", "keep_fields", "extraction_scope", "role", "lookup_only")
+            (
+                "name",
+                "from_doc",
+                "keep_fields",
+                "extraction_scope",
+                "role",
+                "lookup_only",
+            )
         )
 
     def finish_init(self, init_ctx: ActorInitContext) -> None:

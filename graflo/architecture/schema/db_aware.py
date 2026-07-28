@@ -6,15 +6,18 @@ These wrappers materialize database-specific naming/defaults from logical
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Iterator, Protocol, runtime_checkable, Any
+from typing import Any, Protocol, runtime_checkable
 
-from pydantic import Field as PydanticField, field_validator
+from pydantic import Field as PydanticField
+from pydantic import field_validator
 
 from graflo.architecture.database_features import DatabaseProfile
 from graflo.architecture.graph_types import EdgeId, Index, Weight
 from graflo.onto import DBType
 
+from ..base import ConfigBaseModel
 from .edge import (
     DEFAULT_TIGERGRAPH_RELATION,
     DEFAULT_TIGERGRAPH_RELATION_WEIGHTNAME,
@@ -29,7 +32,6 @@ from .vertex import (
     SecondaryIdentity,
     VertexConfig,
 )
-from ..base import ConfigBaseModel
 
 
 def compile_secondary_identity_indexes(

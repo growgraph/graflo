@@ -91,8 +91,6 @@ def _normalize_keys_in_dict(data: dict[str, Any]) -> None:
 class TransformException(Exception):
     """Base exception for transform-related errors."""
 
-    pass
-
 
 class DressConfig(ConfigBaseModel):
     """Output dressing specification for pivoted transforms.
@@ -306,9 +304,7 @@ class ProtoTransform(ConfigBaseModel):
         """
         if not isinstance(other, ProtoTransform):
             return NotImplemented
-        if self._foo is None and other._foo is not None:
-            return True
-        return False
+        return bool(self._foo is None and other._foo is not None)
 
 
 class Transform(ProtoTransform):
@@ -465,9 +461,8 @@ class Transform(ProtoTransform):
         # (from input/output defaults) is valid for functional transforms.
         if explicit_map and self.rename and self._foo is not None:
             raise ValueError("map and functional transform cannot be used together.")
-        if self.dress is not None:
-            if len(self.input) != 1:
-                raise ValueError("dress requires exactly one input field.")
+        if self.dress is not None and len(self.input) != 1:
+            raise ValueError("dress requires exactly one input field.")
         if self.strategy != "single" and self._foo is None:
             raise ValueError("strategy applies only to functional transforms.")
         if self.input_groups:
@@ -499,11 +494,15 @@ class Transform(ProtoTransform):
                 )
         elif self.output_groups:
             raise ValueError("output_groups requires input_groups.")
-        if self._foo is not None and not self.input:
-            if self.strategy != "all" and not self.input_groups:
-                raise ValueError(
-                    "Functional transforms require `input` (string or list of field names)."
-                )
+        if (
+            self._foo is not None
+            and not self.input
+            and self.strategy != "all"
+            and not self.input_groups
+        ):
+            raise ValueError(
+                "Functional transforms require `input` (string or list of field names)."
+            )
         if self.strategy == "all":
             if self.input or self.fields:
                 raise ValueError("strategy='all' does not accept input/fields.")

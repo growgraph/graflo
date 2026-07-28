@@ -32,7 +32,6 @@ from graflo.architecture.pipeline.runtime.actor.vertex import VertexActor
 from graflo.architecture.schema.edge import EdgeConfig
 from graflo.architecture.schema.vertex import VertexConfig
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

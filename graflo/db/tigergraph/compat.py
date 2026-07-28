@@ -7,13 +7,13 @@ def _add_note_shim(self: Exception, note: str) -> None:
     """Add a note to the exception (compatibility shim for exceptions without add_note())."""
     notes: list[str] = getattr(self, "_notes", [])
     notes.append(note)
-    setattr(self, "_notes", notes)
+    setattr(self, "_notes", notes)  # noqa: B010
 
 
 def _patch_exception_class(cls: type[Exception]) -> None:
     """Patch an exception class to add add_note() if it doesn't exist."""
     if not hasattr(cls, "add_note"):
-        cls.add_note = _add_note_shim
+        setattr(cls, "add_note", _add_note_shim)  # noqa: B010
 
 
 def patch_requests_exceptions() -> None:

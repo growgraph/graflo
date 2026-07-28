@@ -1,7 +1,6 @@
+from graflo import ConnectionManager
 from test.conftest import ingest_atomic
 from test.db.arangos.conftest import verify_from_db
-
-from graflo import ConnectionManager
 
 
 def test_ingest(
@@ -29,4 +28,4 @@ def test_ingest(
     with ConnectionManager(connection_config=conn_conf) as db_client:
         r = db_client.fetch_docs("institutions_institutions_edges")
         assert len(r) == 3
-        assert all([item["relation"] == "child" for item in r])
+        assert all(item["relation"] == "child" for item in r)

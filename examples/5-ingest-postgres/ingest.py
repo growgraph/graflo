@@ -13,11 +13,12 @@ Prerequisites:
 
 import logging
 from pathlib import Path
+
 from suthing import FileHandle
 
-from graflo.hq import GraphEngine, IngestionParams
-from graflo.db.postgres.util import load_schema_from_sql_file
 from graflo.db import PostgresConfig, TigergraphConfig
+from graflo.db.postgres.util import load_schema_from_sql_file
+from graflo.hq import GraphEngine, IngestionParams
 
 logger = logging.getLogger(__name__)
 

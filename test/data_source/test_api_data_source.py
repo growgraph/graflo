@@ -6,7 +6,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from test.conftest import fetch_manifest_obj
 from graflo.architecture.contract.bindings import (
     APIConnector,
     ApiResponseStructure,
@@ -14,9 +13,9 @@ from graflo.architecture.contract.bindings import (
     PaginationConfig,
     PaginationRequestConfig,
 )
-from graflo.db import PostgresConfig
 from graflo.data_source import APIDataSource, DataSourceFactory
 from graflo.data_source.sql import SQLConfig, SQLDataSource
+from graflo.db import PostgresConfig
 from graflo.hq.caster import Caster
 from graflo.hq.connection_provider import (
     ApiGeneralizedConnConfig,
@@ -25,6 +24,7 @@ from graflo.hq.connection_provider import (
 )
 from graflo.hq.ingestion_parameters import IngestionParams
 from graflo.hq.registry_builder import RegistryBuilder
+from test.conftest import fetch_manifest_obj
 
 
 @pytest.fixture()

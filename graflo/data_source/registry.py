@@ -7,9 +7,10 @@ ingestion from multiple sources.
 
 from __future__ import annotations
 
+from pydantic import Field
+
 from graflo.architecture.base import ConfigBaseModel
 from graflo.data_source.base import AbstractDataSource
-from pydantic import Field
 
 
 class DataSourceRegistry(ConfigBaseModel):

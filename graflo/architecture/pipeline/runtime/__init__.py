@@ -16,8 +16,8 @@ from .executor import ActorExecutor
 __all__ = [
     "Actor",
     "ActorConstants",
-    "ActorInitContext",
     "ActorExecutor",
+    "ActorInitContext",
     "ActorWrapper",
     "DescendActor",
     "EdgeActor",

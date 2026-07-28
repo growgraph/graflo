@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
 
 from graflo.architecture.database_features import DatabaseProfile
 from graflo.architecture.graph_types import Index
@@ -21,9 +20,6 @@ from graflo.db.tigergraph.gsql_parsers import (
 )
 from graflo.db.tigergraph.name_validation import validate_tigergraph_schema_name
 from graflo.onto import DBType
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 
@@ -750,9 +746,7 @@ class GraphAdmin:
                             )
                         else:
                             logger.warning(f"Failed to drop graph '{graph_name}': {e}")
-                            logger.warning(
-                                f"Error details: {type(e).__name__}: {str(e)}"
-                            )
+                            logger.warning(f"Error details: {type(e).__name__}: {e!s}")
 
                 dropped_set = {g.strip().lower() for g in graphs_to_drop}
                 surviving_graphs = [
@@ -804,11 +798,11 @@ class GraphAdmin:
                                     f"Failed to drop edge type '{e_type}': {e}"
                                 )
                                 logger.warning(
-                                    f"Error details: {type(e).__name__}: {str(e)}"
+                                    f"Error details: {type(e).__name__}: {e!s}"
                                 )
                 except Exception as e:
                     logger.warning(f"Could not list or drop edge types: {e}")
-                    logger.warning(f"Error details: {type(e).__name__}: {str(e)}")
+                    logger.warning(f"Error details: {type(e).__name__}: {e!s}")
 
                 # Step 3: Drop global vertex types not still referenced by surviving graphs.
                 try:
@@ -857,11 +851,11 @@ class GraphAdmin:
                                     f"Failed to drop vertex type '{v_type}': {e}"
                                 )
                                 logger.warning(
-                                    f"Error details: {type(e).__name__}: {str(e)}"
+                                    f"Error details: {type(e).__name__}: {e!s}"
                                 )
                 except Exception as e:
                     logger.warning(f"Could not list or drop vertex types: {e}")
-                    logger.warning(f"Error details: {type(e).__name__}: {str(e)}")
+                    logger.warning(f"Error details: {type(e).__name__}: {e!s}")
 
             elif gnames:
                 # Drop specific graphs

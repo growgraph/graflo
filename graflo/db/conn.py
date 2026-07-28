@@ -56,8 +56,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeVar
 
 from graflo.architecture.graph_types import GraphContainer
-from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema import Schema
+from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig
 from graflo.db.bulk_exc import UnsupportedBulkLoad
 from graflo.db.connection import TigergraphBulkLoadConfig
@@ -70,8 +70,8 @@ from graflo.db.resolve import (
     index_matches_by_doc,
 )
 from graflo.onto import (
-    AggregationType,
     DB_TYPE_TO_EXPRESSION_FLAVOR,
+    AggregationType,
     DBType,
     ExpressionFlavor,
 )
@@ -145,8 +145,6 @@ class SchemaExistsError(RuntimeError):
 class NamespaceNotFoundError(RuntimeError):
     """Raised when create=False and the target graph/database/space does not exist."""
 
-    pass
-
 
 class Connection(abc.ABC):
     """Abstract base class for database connections.
@@ -166,7 +164,6 @@ class Connection(abc.ABC):
 
     def __init__(self):
         """Initialize the connection."""
-        pass
 
     @classmethod
     def expression_flavor(cls) -> ExpressionFlavor:
@@ -184,7 +181,6 @@ class Connection(abc.ABC):
         Args:
             name: Name of the database to create
         """
-        pass
 
     @abc.abstractmethod
     def delete_database(self, name: str):
@@ -193,7 +189,6 @@ class Connection(abc.ABC):
         Args:
             name: Name of the database to delete
         """
-        pass
 
     @abc.abstractmethod
     def execute(self, query: str | Any, **kwargs: Any) -> Any:
@@ -206,12 +201,10 @@ class Connection(abc.ABC):
         Returns:
             Query result (database-specific)
         """
-        pass
 
     @abc.abstractmethod
     def close(self):
         """Close the database connection."""
-        pass
 
     def define_indexes(self, schema: Schema):
         """Define indexes for vertices and edges in the schema.
@@ -231,7 +224,6 @@ class Connection(abc.ABC):
         Args:
             schema: Schema containing vertex and edge class definitions
         """
-        pass
 
     @abc.abstractmethod
     def delete_graph_structure(
@@ -255,7 +247,6 @@ class Connection(abc.ABC):
             delete_all: If True, delete all targeted graph structures.
                 This is destructive and should only be used with explicit intent.
         """
-        pass
 
     @abc.abstractmethod
     def ensure_target_namespace(self, schema: Schema, *, create: bool) -> None:
@@ -267,7 +258,6 @@ class Connection(abc.ABC):
                 supported). If False, require an existing namespace or raise
                 NamespaceNotFoundError.
         """
-        pass
 
     @abc.abstractmethod
     def apply_target_schema(
@@ -286,7 +276,6 @@ class Connection(abc.ABC):
             create_namespace: Whether namespace creation is allowed. Backends use
                 this during recreate to decide if the graph/db shell may be dropped.
         """
-        pass
 
     def init_db(
         self,
@@ -311,7 +300,6 @@ class Connection(abc.ABC):
         Args:
             schema: Schema describing the graph (used to identify collections/labels).
         """
-        pass
 
     @abc.abstractmethod
     def upsert_docs_batch(
@@ -329,7 +317,6 @@ class Connection(abc.ABC):
             match_keys: Keys to match for upsert
             **kwargs: Additional upsert parameters
         """
-        pass
 
     @abc.abstractmethod
     def insert_edges_batch(
@@ -367,7 +354,6 @@ class Connection(abc.ABC):
                 - relationship_merge_properties: Property names for Cypher MERGE
                   (Neo4j, FalkorDB, Memgraph) so parallel edges differ by weights
         """
-        pass
 
     @abc.abstractmethod
     def insert_return_batch(
@@ -384,7 +370,6 @@ class Connection(abc.ABC):
                 Most implementations return a list of inserted documents. ArangoDB returns
                 an AQL query string for deferred execution.
         """
-        pass
 
     @abc.abstractmethod
     def fetch_docs(
@@ -409,7 +394,6 @@ class Connection(abc.ABC):
         Returns:
             list: Fetched documents
         """
-        pass
 
     @abc.abstractmethod
     def fetch_edges(
@@ -442,7 +426,6 @@ class Connection(abc.ABC):
         Returns:
             list: List of fetched edges
         """
-        pass
 
     @abc.abstractmethod
     def fetch_present_documents(
@@ -469,7 +452,6 @@ class Connection(abc.ABC):
             list | dict: Documents that exist in the database. Returns a list if
                 flatten=True, otherwise returns a dict mapping batch indices to documents.
         """
-        pass
 
     def resolve_vertices(
         self,
@@ -548,7 +530,6 @@ class Connection(abc.ABC):
         Returns:
             Aggregation results (type depends on aggregation function)
         """
-        pass
 
     @abc.abstractmethod
     def keep_absent_documents(
@@ -571,7 +552,6 @@ class Connection(abc.ABC):
         Returns:
             list: Documents that don't exist in the database
         """
-        pass
 
     @abc.abstractmethod
     def define_vertex_indexes(
@@ -582,7 +562,6 @@ class Connection(abc.ABC):
         Args:
             vertex_config: Vertex configuration containing index definitions
         """
-        pass
 
     @abc.abstractmethod
     def define_edge_indexes(self, edges: list[Edge], schema: Schema | None = None):
@@ -591,7 +570,6 @@ class Connection(abc.ABC):
         Args:
             edges: List of edge configurations containing index definitions
         """
-        pass
 
     def define_vertex_classes(self, schema: Schema) -> None:
         """Define vertex classes based on schema.
@@ -605,7 +583,6 @@ class Connection(abc.ABC):
         Args:
             schema: Schema containing vertex definitions
         """
-        pass
 
     def define_edge_classes(self, edges: list[Edge]) -> None:
         """Define edge classes based on edge configurations.
@@ -617,7 +594,6 @@ class Connection(abc.ABC):
         Args:
             edges: List of edge configurations to create
         """
-        pass
 
     def bulk_load_begin(
         self, schema: Schema, bulk_cfg: TigergraphBulkLoadConfig

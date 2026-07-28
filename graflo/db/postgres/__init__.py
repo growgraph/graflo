@@ -23,6 +23,6 @@ from .schema_inference import PostgresSchemaInferencer
 
 __all__ = [
     "PostgresConnection",
-    "PostgresSchemaInferencer",
     "PostgresResourceMapper",
+    "PostgresSchemaInferencer",
 ]

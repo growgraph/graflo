@@ -118,15 +118,13 @@ class TestRenderProjection:
             source_match_fields=["isin"],
             target_match_fields=["lei"],
         )
-        (source_proj, target_proj, _), = rendered[None]
+        ((source_proj, target_proj, _),) = rendered[None]
         assert source_proj == {"isin": "US001"}
         assert target_proj == {"lei": "L1"}
 
     def test_asymmetric_projection(self, vertex_config: VertexConfig) -> None:
         """Source on the primary identity, target on a secondary one."""
-        ctx = _context(
-            vertex_config, [{"sid": "S1", "isin": "US001"}], [{"lei": "L1"}]
-        )
+        ctx = _context(vertex_config, [{"sid": "S1", "isin": "US001"}], [{"lei": "L1"}])
         edge = Edge.from_dict({"source": "instrument", "target": "issuer"})
         rendered = render_edge(
             edge=edge,
@@ -135,18 +133,16 @@ class TestRenderProjection:
             source_match_fields=["sid"],
             target_match_fields=["lei"],
         )
-        (source_proj, target_proj, _), = rendered[None]
+        ((source_proj, target_proj, _),) = rendered[None]
         assert source_proj == {"sid": "S1"}
         assert target_proj == {"lei": "L1"}
 
     def test_defaults_to_primary_identity(self, vertex_config: VertexConfig) -> None:
         """Omitting the field-sets keeps the historical behaviour exactly."""
-        ctx = _context(
-            vertex_config, [{"sid": "S1", "isin": "US001"}], [{"iid": "I1"}]
-        )
+        ctx = _context(vertex_config, [{"sid": "S1", "isin": "US001"}], [{"iid": "I1"}])
         edge = Edge.from_dict({"source": "instrument", "target": "issuer"})
         rendered = render_edge(edge=edge, vertex_config=vertex_config, ctx=ctx)
-        (source_proj, target_proj, _), = rendered[None]
+        ((source_proj, target_proj, _),) = rendered[None]
         assert source_proj == {"sid": "S1"}
         assert target_proj == {"iid": "I1"}
 

@@ -38,6 +38,9 @@ from graflo.architecture.graph_types.context import (
     TransformObservation,
     VertexObservation,
 )
+
+# Leaf modules first so mid-import consumers can resolve EdgeId/Weight/etc.
+# even if context (which pulls edge_derivation → schema → filter) is still loading.
 from graflo.architecture.graph_types.enums import (
     EdgeCastingType,
     EdgeMapping,

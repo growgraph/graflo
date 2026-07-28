@@ -12,11 +12,10 @@ import logging
 from typing import Any
 from uuid import uuid4
 
-from graflo.architecture.schema.edge import Edge
-from graflo.architecture.schema import EdgeRuntime, SchemaDBAware
 from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.graph_types import GraphContainer
-from graflo.architecture.schema import Schema
+from graflo.architecture.schema import EdgeRuntime, Schema, SchemaDBAware
+from graflo.architecture.schema.edge import Edge
 from graflo.db.connection import DBConfig
 from graflo.db.identity_inference import compute_hash_identity
 from graflo.db.identity_uuid import (
@@ -282,7 +281,7 @@ class DBWriter:
         """Extend edge lists for blank vertices after their keys are resolved."""
         vc = self._db_aware_for(conn_conf).vertex_config
         for vcol in vc.blank_vertices:
-            for edge_id, _edge in self.schema.core_schema.edge_config.items():
+            for edge_id, _ in self.schema.core_schema.edge_config.items():  # noqa: PERF102
                 vfrom, vto, _relation = edge_id
                 if vcol == vfrom or vcol == vto:
                     if vfrom not in gc.vertices or vto not in gc.vertices:
@@ -443,13 +442,13 @@ class DBWriter:
                                     edge_kw["relationship_merge_properties"] = (
                                         merge_props
                                     )
-                            elif conn_conf.connection_type == DBType.ARANGO:
-                                if self.ingestion_model.edges_on_duplicate == "upsert":
-                                    edge_kw["on_duplicate"] = "upsert"
-                                    if merge_props is not None:
-                                        edge_kw["uniq_weight_fields"] = list(
-                                            merge_props
-                                        )
+                            elif (
+                                conn_conf.connection_type == DBType.ARANGO
+                                and self.ingestion_model.edges_on_duplicate == "upsert"
+                            ):
+                                edge_kw["on_duplicate"] = "upsert"
+                                if merge_props is not None:
+                                    edge_kw["uniq_weight_fields"] = list(merge_props)
                             db.insert_edges_batch(
                                 docs_edges=data,
                                 source_class=vc.vertex_dbname(edge.source),
@@ -515,9 +514,7 @@ class DBWriter:
                 stats.summary(),
             )
         else:
-            logger.debug(
-                "Edge %s endpoint resolution: %s", edge_id, stats.summary()
-            )
+            logger.debug("Edge %s endpoint resolution: %s", edge_id, stats.summary())
         return resolved
 
     def _db_aware_for(self, conn_conf: DBConfig) -> SchemaDBAware:

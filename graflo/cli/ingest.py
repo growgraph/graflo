@@ -20,17 +20,17 @@ Example:
         --n-cores 4
 """
 
+import asyncio
 import logging.config
 import pathlib
-import asyncio
 from os.path import dirname, join, realpath
 
 import click
 from suthing import FileHandle
 
 from graflo import Bindings, DataSourceRegistry, DBType, GraphManifest
-from graflo.db import DBConfig
 from graflo.data_source import DataSourceFactory
+from graflo.db import DBConfig
 from graflo.hq import GraphEngine
 from graflo.hq.connection_provider import EmptyConnectionProvider
 

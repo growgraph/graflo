@@ -10,11 +10,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import click
+from _common import DEFAULT_INFERRED_MANIFEST
 from suthing import FileHandle
 
 from graflo import GraphManifest
-
-from _common import DEFAULT_INFERRED_MANIFEST
 
 
 @click.command()

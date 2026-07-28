@@ -16,10 +16,10 @@ import pathlib
 from suthing import FileHandle
 
 from graflo import Bindings, GraphManifest
+from graflo.architecture.contract.bindings import FileConnector
 from graflo.db import ArangoConfig
 from graflo.hq import GraphEngine
 from graflo.hq.caster import IngestionParams
-from graflo.architecture.contract.bindings import FileConnector
 
 manifest = GraphManifest.from_config(FileHandle.load("manifest.yaml"))
 manifest.finish_init()

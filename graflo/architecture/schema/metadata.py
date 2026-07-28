@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import re
 
-from pydantic import Field as PydanticField, field_validator
+from pydantic import Field as PydanticField
+from pydantic import field_validator
 
 from graflo.architecture.base import ConfigBaseModel
 

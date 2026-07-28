@@ -47,7 +47,6 @@ class MockAPIHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format: str, *args: Any) -> None:
         """Suppress log messages."""
-        pass
 
 
 class MockEnvelopeAPIHandler(BaseHTTPRequestHandler):

@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Literal, Sequence
+from collections.abc import Sequence
+from typing import Any, Literal
 
 from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.contract.manifest import GraphManifest
+from graflo.architecture.database_features import DatabaseProfile
 from graflo.architecture.graph_types import EdgeId
 from graflo.architecture.pipeline.runtime.actor import ActorWrapper
-from graflo.architecture.database_features import DatabaseProfile
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.core import CoreSchema
 from graflo.architecture.schema.edge import EdgeConfig
@@ -20,13 +21,13 @@ from .db_profile import (
     apply_edge_property_removal_to_db_profile,
     apply_edge_property_rename_to_db_profile,
     apply_field_rename_to_db_profile,
+    apply_inverse_edges_to_db_profile,
     apply_relation_removal_to_db_profile,
     apply_relation_rename_to_db_profile,
     apply_storage_name_sanitization_to_db_profile,
     apply_vertex_merge_to_db_profile,
     apply_vertex_removal_to_db_profile,
     apply_vertex_rename_to_db_profile,
-    apply_inverse_edges_to_db_profile,
     merge_relation_entries_in_db_profile,
 )
 from .inverse_edges import (
@@ -39,8 +40,8 @@ from .inverse_edges import (
 from .merge_core import (
     edge_config_from_edges,
     merge_vertex_models,
-    remap_relation_and_merge_edges,
     redirect_and_merge_edges,
+    remap_relation_and_merge_edges,
 )
 from .ops import (
     AddEdgePropertiesOp,
@@ -62,19 +63,19 @@ from .ops import (
     RenameVerticesOp,
     SanitizeOp,
 )
+from .project import compute_projection
 from .rewrite import (
     pipeline_mentions_any_vertex,
     rewrite_edge_properties_in_pipeline,
     rewrite_entity_names_in_pipeline,
     rewrite_extra_weights_vertex_field_names,
-    rewrite_remove_relations_in_pipeline,
     rewrite_remove_edge_ids_in_pipeline,
+    rewrite_remove_relations_in_pipeline,
     rewrite_remove_vertex_properties_in_pipeline,
     rewrite_vertex_field_names_in_pipeline,
     rewrite_vertex_names_in_pipeline,
     rewrite_vertex_names_in_value,
 )
-from .project import compute_projection
 from .sanitize import (
     compute_vertex_field_renames,
     normalize_relation_identity,

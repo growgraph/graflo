@@ -8,7 +8,7 @@ import shutil
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from types import TracebackType
-from typing import Any
+from typing import Any, Self
 
 from graflo.architecture.backend.index import (
     CollectionEntry,
@@ -92,7 +92,7 @@ class _CollectionWriter:
                 self._edge_key, self._chunk_index
             )
         path.parent.mkdir(parents=True, exist_ok=True)
-        self._file_obj = gzip.open(path, "wb")
+        self._file_obj = gzip.open(path, "wb")  # noqa: SIM115
         self._chunks.append(relative)
         self._chunk_index += 1
 
@@ -124,7 +124,7 @@ class GraFloBackendWriter:
                 payload = json.load(fin)
             self._index = GraFloIndex.model_validate(payload)
 
-    def __enter__(self) -> GraFloBackendWriter:
+    def __enter__(self) -> Self:
         self._layout.ensure_dirs()
         return self
 
