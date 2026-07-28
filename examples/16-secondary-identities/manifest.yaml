@@ -1,0 +1,68 @@
+schema:
+    metadata:
+        name: secondary-identities-demo
+        version: "1.0.0"
+    graph:
+        vertex_config:
+            vertices:
+            -   name: instrument
+                properties:
+                -   {name: sid, type: STRING}
+                -   {name: isin, type: STRING}
+                -   {name: name, type: STRING}
+                identity: [sid]
+                secondary_identities:
+                -   name: by_isin
+                    fields: [isin]
+            -   name: issuer
+                properties:
+                -   {name: iid, type: STRING}
+                -   {name: lei, type: STRING}
+                -   {name: name, type: STRING}
+                identity: [iid]
+                secondary_identities:
+                -   name: by_lei
+                    fields: [lei]
+        edge_config:
+            edges:
+            -   source: instrument
+                target: issuer
+                relation: issued_by
+                properties:
+                -   {name: share, type: FLOAT}
+    db_profile: {}
+ingestion_model:
+    # Soft uniqueness: when a secondary key hits several vertices, attach to every
+    # match (default). Alternatives: first | skip | error. Per-step override via
+    # on_ambiguous on the edge step.
+    endpoints_on_ambiguous: all
+    resources:
+    -   name: instruments
+        pipeline:
+        -   vertex: instrument
+    -   name: issuers
+        pipeline:
+        -   vertex: issuer
+    -   name: links
+        # Edge-only source: rows carry ISIN / LEI, never sid / iid.
+        pipeline:
+        -   vertex: instrument
+            lookup_only: true
+        -   vertex: issuer
+            lookup_only: true
+        -   from: instrument
+            to: issuer
+            relation: issued_by
+            source_match: by_isin
+            target_match: by_lei
+bindings:
+    connectors:
+    -   regex: "^instruments\\.csv$"
+        sub_path: data
+        resource_name: instruments
+    -   regex: "^issuers\\.csv$"
+        sub_path: data
+        resource_name: issuers
+    -   regex: "^links\\.csv$"
+        sub_path: data
+        resource_name: links

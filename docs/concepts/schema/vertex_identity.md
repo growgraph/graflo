@@ -1,6 +1,6 @@
 # Vertex identity modes
 
-GraFlo vertices declare how records are matched during upserts through fields on the logical **`Vertex`** model in `schema.graph.vertex_config`. Identity semantics are **not** configured in `DatabaseProfile` or `IngestionModel`.
+GraFlo vertices declare how records are matched during upserts through fields on the logical **`Vertex`** model in `schema.graph.vertex_config`. Upsert identity modes and **`secondary_identities`** live on the vertex; physical indexes live under `DatabaseProfile`. Soft-uniqueness *policy* for secondary lookups (`endpoints_on_ambiguous`) lives on `IngestionModel` — the key is schema, the reaction to colliding matches is ingestion.
 
 ## Four runtime modes
 
@@ -137,6 +137,8 @@ Two consequences worth knowing:
 
 Not supported in this form: hash- or funnel-derived secondary identities, and upserting a vertex *by* its secondary identity. Both are reserved.
 
+Runnable walkthrough: [Example 16](../../examples/example-16.md) (`examples/16-secondary-identities/`) — instruments and issuers upserted on primary keys, then an edge-only CSV linked by ISIN / LEI.
+
 !!! note "Distinct from the SQL connector's `type_lookup`"
     `SqlConnector`'s `type_lookup` also has `source_identity` / `target_identity` fields. Those name **join columns in a lookup table** and are unrelated to schema identities.
 
@@ -160,11 +162,12 @@ Not supported in this form: hash- or funnel-derived secondary identities, and up
 
 See [Example 15](../../examples/example-15.md) for a CSV → manifest → ingest walkthrough.
 
-## Where configuration does *not* live
+## Where configuration lives
 
-| Layer | Why not |
-|---|---|
-| **`DatabaseProfile`** | Physical indexes and storage names only |
-| **`IngestionModel`** | Pipeline and connectors only; no identity semantics |
+| Layer | Holds | Does *not* hold |
+|---|---|---|
+| **`Vertex`** | Upsert `identity` / mode fields; **`secondary_identities`** (lookup field-sets) | Write-time ambiguity policy |
+| **`DatabaseProfile`** | Physical indexes and storage names (auto-indexes from secondary identities land here) | Logical identity semantics |
+| **`IngestionModel`** | Pipeline steps (`lookup_only`, `source_match` / `target_match`); **`endpoints_on_ambiguous`** | Vertex key definitions |
 
 `VertexConfig.hash_identity_vertices`, `VertexConfig.blank_vertices`, `VertexConfig.assigned_vertices`, and `VertexConfig.vertices_by_identity_mode()` are derived lists for runtime introspection and `db_writer` / assemble branching.

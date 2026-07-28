@@ -62,7 +62,7 @@ bindings: {}
 Defines the graph contract.
 
 - `metadata`: human-facing identity (`name`, optional `version`)
-- `graph.vertex_config`: vertex types, **`properties`**, identity keys; optional **`blank: true`** for placeholder vertices (auto **`id`** identity); optional **`hash_identity_properties`** for hash-derived synthetic ids (see [Vertex identity modes](../concepts/schema/vertex_identity.md))
+- `graph.vertex_config`: vertex types, **`properties`**, identity keys; optional **`blank: true`** for placeholder vertices (auto **`id`** identity); optional **`hash_identity_properties`** for hash-derived synthetic ids; optional **`secondary_identities`** for edge-endpoint lookup field-sets (see [Vertex identity modes](../concepts/schema/vertex_identity.md))
 - `graph.edge_config`: source/target relationships, optional `relation`, optional **`directed`** (default `true`), edge **`properties`**, `identities`
 - `db_profile`: DB-specific physical behavior (indexes, naming, **`default_property_values`** for TigerGraph GSQL `DEFAULT` on vertex/edge attributes, backend details)
 
@@ -84,8 +84,9 @@ Use `schema` for **what graph exists**.
 
 Defines ingestion behavior.
 
-- `resources`: named pipelines (`name`) with ordered actor steps
+- `resources`: named pipelines (`name`) with ordered actor steps (vertex steps may set **`lookup_only`**; edge steps may set **`source_match`** / **`target_match`** / **`on_ambiguous`** for secondary-identity endpoint selection — see [Example 16](../examples/example-16.md))
 - `transforms`: reusable named transforms as a **list** (each entry must define `name`) and referenced from resources via `transform.call.use`
+- Optional model-level **`endpoints_on_ambiguous`** (`all` | `first` | `skip` | `error`, default `all`): how secondary-identity lookups behave when several vertices match
 - Optional per-resource flags include:
   - **`drop_trivial_input_fields`** (default `false`): when `true`, top-level keys whose value is `null` or `""` are removed **before** the actor pipeline runs. Only the top-level dict is filtered (nested structures are not recursed); numeric zero and boolean false are kept. Useful for sparse wide tables (CSV/SQL) without custom transforms.
   - **`fail_fast`** (default `false`): when `true`, transform steps fail if required input keys are missing (rename: every source key must be present; call: every `input` key). When `false`, rename applies only to keys present in the row and functional transforms skip the step when inputs are missing.

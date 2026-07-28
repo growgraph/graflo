@@ -24,6 +24,7 @@ The `IngestionModel` is the source of truth for ingestion runtime behavior. It e
 
 - Resource mappings and actor pipelines
 - Reusable named transforms
+- Write-time tolerance policies such as **`endpoints_on_ambiguous`** (how secondary-identity endpoint resolution reacts when several vertices match — see [Secondary identities](../schema/vertex_identity.md#secondary-identities-edge-endpoint-lookup))
 - Runtime initialization against the core schema (`finish_init(schema.core_schema)`)
 
 ### Manifest-level sanitization
@@ -88,12 +89,13 @@ A `Vertex` describes vertices and their logical identity. It supports:
   - Same type duplicates merge into one field
   - If one duplicate is typed and the other is untyped, the typed definition wins
   - Conflicting non-null types for the same field name are rejected
-  - **LIST-typed properties cannot be identity / hash-identity sources**
+  - **LIST-typed properties cannot be identity / hash-identity / secondary-identity sources**
 - Filtering conditions
 - **`blank: true`** — placeholder vertex with no natural key; identity defaults to **`id`** when omitted
 - **`assigned: true`** — intentional UUID primary key; identity defaults to **`id`**; mint at assemble (not blank-edge resolution)
 - **`hash_identity_properties`** — when non-empty, SHA256 hash of these source fields produces a deterministic synthetic **`id`** (see [Vertex identity modes](../schema/vertex_identity.md))
 - **`Vertex.identity_mode`** — derived runtime mode: **`natural`**, **`hash`**, **`blank`**, or **`assigned`**
+- **`secondary_identities`** — alternate field-sets for **edge endpoint lookup only** (upserts still use `identity`); paired with pipeline `lookup_only` and edge-step `source_match` / `target_match` (see [Secondary identities](../schema/vertex_identity.md#secondary-identities-edge-endpoint-lookup), [Example 16](../../examples/example-16.md))
 
 #### Supported field types
 
@@ -209,7 +211,7 @@ Identity defaults at schema level (`VertexConfig`):
 
 **Blank vertices:** set **`blank: true`** on the vertex entry under **`schema.graph.vertex_config.vertices`**. **`VertexConfig.blank_vertices`** is a derived list of names (not a separate YAML field). **`VertexConfig.hash_identity_vertices`** lists vertices with hash-derived identity; **`VertexConfig.assigned_vertices`** lists intentional UUID-PK vertices. At runtime, **`ResourceRuntime`** keeps only vertex types referenced by that resource’s pipeline (and edge-inference selectors); blank types that are declared in the schema but not used by the resource are not injected automatically—include a **`vertex`** (or edge) step when the placeholder must be populated.
 
-Algorithmic identity inference from record samples: **`graflo.db.identity_inference`** (`IdentityInferencer`, `apply_identity_inference_to_vertices`). See [Vertex identity modes](../schema/vertex_identity.md) and [Example 15](../../examples/example-15.md).
+Algorithmic identity inference from record samples: **`graflo.db.identity_inference`** (`IdentityInferencer`, `apply_identity_inference_to_vertices`). See [Vertex identity modes](../schema/vertex_identity.md), [Example 15](../../examples/example-15.md), and [Example 16](../../examples/example-16.md) for secondary-identity edge lookup.
 
 ### Edge
 An `Edge` describes edges and their logical identities. It allows:

@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.9.0]
 
 ### Added
 
@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`Connection.resolve_vertices`** — locate vertices by an arbitrary field-set, preserving match multiplicity. Generic implementation over `fetch_docs` + `FilterExpression` covers every backend; TigerGraph overrides it with a batched interpreted GSQL query, since REST++ filters are conjunction-only and cannot express a disjunction.
 - Secondary identities automatically register a **non-unique** vertex index per field-set (`Schema.finish_init`), which endpoint resolution relies on and NebulaGraph requires outright.
 - PostgreSQL: `define_vertex_indexes` now creates secondary indexes (previously a no-op), and `apply_target_schema` defines indexes. Memgraph likewise defines indexes during schema apply.
+- **Example 16** (`examples/16-secondary-identities/`) — runnable ISIN/LEI edge-only ingest against the GraFlo file backend; docs under `docs/examples/example-16.md`.
 
 ### Fixed
 

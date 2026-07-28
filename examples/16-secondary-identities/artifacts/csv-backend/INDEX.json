@@ -1,0 +1,27 @@
+{
+    "created_at": "2026-07-28T23:12:24.773937+00:00",
+    "edges": {
+        "instrument__issued_by__issuer": {
+            "chunks": [
+                "edges/instrument__issued_by__issuer.000.jsonl.gz"
+            ],
+            "record_count": 3
+        }
+    },
+    "graflo_version": "1.9.0",
+    "schema_hash": "61b8d99deb7c7e314e9149ad52ebba186095a79a17fc2a3a18e5d410bcf0e274",
+    "vertices": {
+        "instrument": {
+            "chunks": [
+                "vertices/instrument.000.jsonl.gz"
+            ],
+            "record_count": 3
+        },
+        "issuer": {
+            "chunks": [
+                "vertices/issuer.000.jsonl.gz"
+            ],
+            "record_count": 3
+        }
+    }
+}
