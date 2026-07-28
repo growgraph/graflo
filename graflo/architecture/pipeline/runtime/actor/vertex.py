@@ -29,6 +29,7 @@ class VertexActor(VertexProducingActor):
         )
         self.extraction_scope: Literal["full", "mapped_only"] = config.extraction_scope
         self.role: str | None = config.role
+        self.lookup_only: bool = config.lookup_only
         self.vertex_config: VertexConfig
         self.allowed_vertex_names: set[VertexName] | None = None
 
@@ -38,7 +39,7 @@ class VertexActor(VertexProducingActor):
 
     def fetch_important_items(self) -> dict[str, Any]:
         return self._fetch_items_from_dict(
-            ("name", "from_doc", "keep_fields", "extraction_scope", "role")
+            ("name", "from_doc", "keep_fields", "extraction_scope", "role", "lookup_only")
         )
 
     def finish_init(self, init_ctx: ActorInitContext) -> None:

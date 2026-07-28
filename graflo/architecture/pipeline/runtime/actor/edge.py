@@ -9,7 +9,9 @@ from .base import Actor, ActorInitContext
 from .config import EdgeActorConfig, EdgeLinkConfig
 from graflo.architecture.edge_derivation import EdgeDerivation
 from graflo.architecture.schema.edge import Edge, EdgeConfig
+from graflo.architecture.contract.runtime.edge_derivation import EndpointMatch
 from graflo.architecture.graph_types import (
+    EdgeId,
     ExtractionContext,
     LocationIndex,
     Weight,
@@ -40,6 +42,12 @@ def _link_to_edge_actor_config(link: EdgeLinkConfig) -> EdgeActorConfig:
         data["match_source"] = link.match_source
     if link.match_target is not None:
         data["match_target"] = link.match_target
+    if link.source_match is not None:
+        data["source_match"] = link.source_match
+    if link.target_match is not None:
+        data["target_match"] = link.target_match
+    if link.on_ambiguous is not None:
+        data["on_ambiguous"] = link.on_ambiguous
     return EdgeActorConfig.model_validate(data)
 
 
@@ -191,10 +199,39 @@ class EdgeActor(Actor):
                 init_ctx.edge_derivation.merge_vertex_weights(
                     edge_id, self._pending_vertex_weights
                 )
+            self._register_endpoint_match(init_ctx, edge_id)
             self.edge = init_ctx.edge_config.edge_for(edge_id)
         else:
             # Dynamic mode: cache will be populated per-row.
             self._edge_cache.clear()
+
+    def _register_endpoint_match(
+        self, init_ctx: ActorInitContext, edge_id: EdgeId
+    ) -> None:
+        """Validate endpoint identity selectors and record them for the writer.
+
+        Resolving here fails fast at manifest load with the vertex name and the
+        declared alternatives, rather than mid-ingest on the first batch.
+        """
+        derivation = self.derivation
+        if not derivation.uses_secondary_identity() and derivation.on_ambiguous is None:
+            return
+
+        source_type, target_type, _ = edge_id
+        vertex_config = self.vertex_config
+        if vertex_config is not None:
+            # Raises with the declared alternatives when a selector is unknown.
+            vertex_config.match_fields(source_type, derivation.source_match)
+            vertex_config.match_fields(target_type, derivation.target_match)
+
+        init_ctx.edge_derivation.set_endpoint_match(
+            edge_id,
+            EndpointMatch(
+                source=derivation.source_match,
+                target=derivation.target_match,
+                on_ambiguous=derivation.on_ambiguous,
+            ),
+        )
 
     # ------------------------------------------------------------------
     # Dynamic-mode helpers

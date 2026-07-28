@@ -16,6 +16,8 @@ from __future__ import annotations
 from pydantic import Field
 
 from graflo.architecture.base import ConfigBaseModel
+from graflo.architecture.schema.vertex import PRIMARY_IDENTITY_SELECTOR
+from graflo.onto import EndpointAmbiguityPolicy
 
 
 class EdgeDerivation(ConfigBaseModel):
@@ -49,6 +51,31 @@ class EdgeDerivation(ConfigBaseModel):
         default=False,
         description="If True, derive the per-row relation label from the location key during assembly.",
     )
+    source_match: str | list[str] | None = Field(
+        default=None,
+        description=(
+            "Identity selector for the source endpoint: None/'identity' for the "
+            "primary identity, or a secondary identity name / field list."
+        ),
+    )
+    target_match: str | list[str] | None = Field(
+        default=None,
+        description="Identity selector for the target endpoint; see source_match.",
+    )
+    on_ambiguous: EndpointAmbiguityPolicy | None = Field(
+        default=None,
+        description=(
+            "Per-step override of ingestion_model.endpoints_on_ambiguous when a "
+            "secondary identity matches several vertices."
+        ),
+    )
+
+    def uses_secondary_identity(self) -> bool:
+        """True when either endpoint is matched on something other than the primary identity."""
+        return any(
+            selector not in (None, PRIMARY_IDENTITY_SELECTOR)
+            for selector in (self.source_match, self.target_match)
+        )
 
     def is_empty(self) -> bool:
         if self.relation_from_key:
@@ -62,5 +89,8 @@ class EdgeDerivation(ConfigBaseModel):
                 "exclude_target",
                 "match",
                 "relation_field",
+                "source_match",
+                "target_match",
+                "on_ambiguous",
             )
         )

@@ -10,6 +10,7 @@ from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.contract.ingestion.transform import DressConfig
 from graflo.architecture.edge_derivation import EdgeDerivation
 from graflo.architecture.schema.vertex import VertexName
+from graflo.onto import EndpointAmbiguityPolicy
 
 from .normalize import normalize_actor_step
 
@@ -52,6 +53,16 @@ class VertexActorConfig(VertexExtractionOptionsConfig):
     )
     vertex: VertexName = PydanticField(
         ..., description="Name of the vertex type to create"
+    )
+    lookup_only: bool = PydanticField(
+        default=False,
+        description=(
+            "When true the extracted documents are used to locate existing vertices "
+            "for edge endpoints but are never written. Set this on edge-only "
+            "resources, which reference a vertex without owning it — their rows "
+            "typically carry a secondary identity and no primary key, so upserting "
+            "them would create keyless duplicates."
+        ),
     )
 
     @model_validator(mode="before")
@@ -332,7 +343,39 @@ class TransformCallConfig(ConfigBaseModel):
         return self
 
 
-class EdgeLinkConfig(ConfigBaseModel):
+class EdgeEndpointMatchOptionsConfig(ConfigBaseModel):
+    """How an edge step locates its endpoint vertices.
+
+    By default both endpoints are matched on the vertex's primary ``identity``,
+    which is what every edge step has always done. Selecting a secondary
+    identity instead lets an edge-only source reference endpoints by a business
+    key. The choice is per endpoint, so source and target may differ.
+    """
+
+    source_match: str | list[str] | None = PydanticField(
+        default=None,
+        description=(
+            "Which identity to match the source endpoint on: omitted or 'identity' "
+            "for the primary identity (default), a declared secondary identity name, "
+            "an explicit field list equal to a declared secondary identity, or "
+            "'secondary' when the vertex declares exactly one."
+        ),
+    )
+    target_match: str | list[str] | None = PydanticField(
+        default=None,
+        description="Same as source_match, for the target endpoint.",
+    )
+    on_ambiguous: EndpointAmbiguityPolicy | None = PydanticField(
+        default=None,
+        description=(
+            "Override for this step when a secondary identity matches several "
+            "vertices. Inherits ingestion_model.endpoints_on_ambiguous when unset. "
+            "Has no effect on endpoints matched by primary identity."
+        ),
+    )
+
+
+class EdgeLinkConfig(EdgeEndpointMatchOptionsConfig):
     """One intent in a multi-link edge step.
 
     Each item in an ``EdgeActorConfig.links`` list describes one source→target→relation
@@ -466,7 +509,7 @@ class EdgeLinkConfig(ConfigBaseModel):
         return self
 
 
-class EdgeActorConfig(ConfigBaseModel):
+class EdgeActorConfig(EdgeEndpointMatchOptionsConfig):
     """Configuration for an EdgeActor (logical edge + ingestion derivation; flat YAML).
 
     **Single-intent mode** (default): declare source/target via ``from``/``to`` (static
@@ -678,6 +721,9 @@ class EdgeActorConfig(ConfigBaseModel):
             match=self.match,
             relation_field=self.relation_field,
             relation_from_key=self.relation_from_key,
+            source_match=self.source_match,
+            target_match=self.target_match,
+            on_ambiguous=self.on_ambiguous,
         )
 
     @model_validator(mode="before")

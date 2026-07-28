@@ -427,10 +427,14 @@ def _union_ingestion(
 
     resources = list(left.resources) + list(right.resources)
     transforms = _union_transforms(left, right)
+    # Model-level write policies follow the left manifest, as composition treats
+    # it as the base being extended.
     edges_on_duplicate = left.edges_on_duplicate
+    endpoints_on_ambiguous = left.endpoints_on_ambiguous
     return IngestionModel.model_validate(
         {
             "edges_on_duplicate": edges_on_duplicate,
+            "endpoints_on_ambiguous": endpoints_on_ambiguous,
             "resources": [r.to_dict(skip_defaults=False) for r in resources],
             "transforms": [t.to_dict(skip_defaults=False) for t in transforms],
         }

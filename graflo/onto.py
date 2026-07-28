@@ -18,6 +18,7 @@ Example:
 """
 
 from enum import EnumMeta
+from typing import Literal, TypeAlias
 from strenum import StrEnum
 
 
@@ -169,3 +170,18 @@ DB_TYPE_TO_EXPRESSION_FLAVOR: dict[DBType, ExpressionFlavor] = {
     DBType.TIGERGRAPH: ExpressionFlavor.GSQL,
     DBType.GRAFLO_BACKEND: ExpressionFlavor.AQL,
 }
+
+
+#: How endpoint resolution reacts when a secondary identity matches more than
+#: one vertex. Secondary identities are only *softly* unique — no database
+#: constraint enforces them — so ambiguity is a data property, not an error, and
+#: the ingestion model decides what it means.
+#:
+#: * ``all``   — attach the edge to every match (default; never discards data)
+#: * ``first`` — attach to one match only
+#: * ``skip``  — write no edge for that row and count it
+#: * ``error`` — raise, aborting the batch
+EndpointAmbiguityPolicy: TypeAlias = Literal["all", "first", "skip", "error"]
+
+#: Applied when an edge step leaves ``on_ambiguous`` unset.
+DEFAULT_ENDPOINT_AMBIGUITY: EndpointAmbiguityPolicy = "all"
