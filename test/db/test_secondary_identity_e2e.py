@@ -113,12 +113,29 @@ def _manifest(root: Path) -> GraphManifest:
 BACKENDS = [
     pytest.param("neo4j", id="neo4j"),
     pytest.param("arango", id="arango"),
+    pytest.param("memgraph", id="memgraph"),
+    pytest.param("falkordb", id="falkordb"),
+    # Endpoints addressed by key rather than matched by property — the case
+    # that a write-time MATCH could not have covered.
     pytest.param("postgres", id="postgres"),
+    pytest.param("nebula", id="nebula", marks=pytest.mark.nebula),
+    pytest.param("tigergraph", id="tigergraph", marks=pytest.mark.slow),
+    pytest.param("graflo_backend", id="graflo_backend"),
 ]
 
+SPACE = "gf_secondary_e2e"
 
-def _config(flavor: str):
-    from graflo.db import ArangoConfig, Neo4jConfig, PostgresConfig
+
+def _config(flavor: str, output_dir: Path):
+    from graflo.db import (
+        ArangoConfig,
+        FalkordbConfig,
+        MemgraphConfig,
+        NebulaConfig,
+        Neo4jConfig,
+        PostgresConfig,
+        TigergraphConfig,
+    )
 
     if flavor == "neo4j":
         config = Neo4jConfig.from_docker_env()
@@ -126,11 +143,30 @@ def _config(flavor: str):
         return config
     if flavor == "arango":
         config = ArangoConfig.from_docker_env()
-        config.database = "gf_secondary_e2e"
+        config.database = SPACE
         return config
+    if flavor == "memgraph":
+        return MemgraphConfig.from_docker_env()
+    if flavor == "falkordb":
+        config = FalkordbConfig.from_docker_env()
+        config.database = SPACE
+        return config
+    if flavor == "nebula":
+        config = NebulaConfig.from_docker_env()
+        config.uri = f"nebula://localhost:{config.port}"
+        config.schema_name = SPACE
+        return config
+    if flavor == "tigergraph":
+        config = TigergraphConfig.from_docker_env()
+        config.database = SPACE
+        return config
+    if flavor == "graflo_backend":
+        from graflo.db.graflo_backend.config import GraFloBackendConfig
+
+        return GraFloBackendConfig(output_dir=output_dir)
     config = PostgresConfig.from_docker_env()
     config.database = config.database or "postgres"
-    config.schema_name = "gf_secondary_e2e"
+    config.schema_name = SPACE
     return config
 
 
@@ -142,23 +178,27 @@ def ingested(request: pytest.FixtureRequest, tmp_path_factory) -> Iterator[Any]:
     _write_sources(root)
 
     try:
-        config = _config(flavor)
+        config = _config(flavor, root / "_backend_out")
     except Exception as error:  # pragma: no cover - environment dependent
         pytest.skip(f"{flavor} config unavailable: {error}")
 
+    try:
+        ConnectionManager(connection_config=config).__enter__().close()
+    except Exception as error:  # pragma: no cover - environment dependent
+        pytest.skip(f"{flavor} unreachable: {error}")
+
+    # Deliberately not guarded: an ingest failure is a real defect, and
+    # swallowing it as a skip is how a broken backend goes unnoticed.
     manifest = _manifest(root)
     engine = GraphEngine(target_db_flavor=config.connection_type)
-    try:
-        engine.define_schema(
-            manifest=manifest, target_db_config=config, recreate_schema=True
-        )
-        engine.ingest(
-            manifest=manifest,
-            target_db_config=config,
-            ingestion_params=IngestionParams(n_cores=1, clear_data=False),
-        )
-    except Exception as error:  # pragma: no cover - environment dependent
-        pytest.skip(f"{flavor} ingest failed: {error}")
+    engine.define_schema(
+        manifest=manifest, target_db_config=config, recreate_schema=True
+    )
+    engine.ingest(
+        manifest=manifest,
+        target_db_config=config,
+        ingestion_params=IngestionParams(n_cores=1, clear_data=False),
+    )
 
     with ConnectionManager(connection_config=config) as db:
         yield flavor, db
@@ -207,14 +247,22 @@ def test_edges_attach_to_the_resolved_primary_keys(ingested) -> None:
     assert sorted(pairs) == [("S1", "I1"), ("S2", "I2"), ("S3", "I1")]
 
 
+CYPHER_PAIRS = (
+    f"MATCH (s:{INSTRUMENT})-[:{RELATION}]->(t:{ISSUER}) "
+    "RETURN s.sid AS sid, t.iid AS iid"
+)
+
+
 def _edge_pairs(flavor: str, db) -> list[tuple[str, str]]:
     """Read back (instrument.sid, issuer.iid) pairs for the ingested relation."""
     if flavor == "neo4j":
-        rows = db.execute(
-            f"MATCH (s:{INSTRUMENT})-[:{RELATION}]->(t:{ISSUER}) "
-            "RETURN s.sid AS sid, t.iid AS iid"
-        ).data()
+        rows = db.execute(CYPHER_PAIRS).data()
         return [(row["sid"], row["iid"]) for row in rows]
+
+    if flavor in ("memgraph", "falkordb"):
+        # Both expose rows positionally via result_set, not a .data() mapping.
+        result = db.execute(CYPHER_PAIRS)
+        return [(row[0], row[1]) for row in result.result_set]
 
     if flavor == "arango":
         collection = f"{INSTRUMENT}_{ISSUER}_edges"
@@ -225,6 +273,29 @@ def _edge_pairs(flavor: str, db) -> list[tuple[str, str]]:
         )
         return [(row["sid"], row["iid"]) for row in rows]
 
+    if flavor == "nebula":
+        result = db._execute(
+            f"MATCH (s:`{INSTRUMENT}`)-[:`{RELATION}`]->(t:`{ISSUER}`) "
+            f"RETURN s.`{INSTRUMENT}`.sid AS sid, t.`{ISSUER}`.iid AS iid"
+        )
+        return [(row["sid"], row["iid"]) for row in result.rows_as_dicts()]
+
+    if flavor == "tigergraph":
+        pairs: list[tuple[str, str]] = []
+        for vertex in db.fetch_docs(INSTRUMENT, return_keys=["sid"]):
+            sid = vertex["sid"]
+            for edge in db.fetch_edges(INSTRUMENT, sid, edge_type=RELATION):
+                target = edge.get("to_id") or edge.get("to") or edge.get("target_id")
+                if target is not None:
+                    pairs.append((sid, str(target)))
+        return pairs
+
+    if flavor == "graflo_backend":
+        return [
+            (triple[0]["sid"], triple[1]["iid"])
+            for triple in db.fetch_all_edges(INSTRUMENT, ISSUER, RELATION)
+        ]
+
     table = f"{INSTRUMENT}_{ISSUER}_{RELATION}_edges"
-    rows = db.read(f'SELECT source_id, target_id FROM "gf_secondary_e2e"."{table}"')
+    rows = db.read(f'SELECT source_id, target_id FROM "{SPACE}"."{table}"')
     return [(row["source_id"], row["target_id"]) for row in rows]
