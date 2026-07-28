@@ -5,11 +5,16 @@ from __future__ import annotations
 from collections import Counter
 from typing import TYPE_CHECKING, Literal
 
-from pydantic import Field as PydanticField, PrivateAttr, model_validator
+from pydantic import Field as PydanticField
+from pydantic import PrivateAttr, model_validator
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.pipeline.runtime.actor import ActorWrapper
-from graflo.onto import DBType
+from graflo.onto import (
+    DEFAULT_ENDPOINT_AMBIGUITY,
+    DBType,
+    EndpointAmbiguityPolicy,
+)
 
 from ..runtime.edge_derivation import EdgeDerivationRegistry
 from ..runtime.resource import ResourceRuntime
@@ -29,6 +34,17 @@ class IngestionModel(ConfigBaseModel):
             "How batch edge writes tolerate an already-matching edge. Passed through to "
             ":meth:`~graflo.db.conn.Connection.insert_edges_batch` where the target backend "
             "supports it."
+        ),
+    )
+    endpoints_on_ambiguous: EndpointAmbiguityPolicy = PydanticField(
+        default=DEFAULT_ENDPOINT_AMBIGUITY,
+        description=(
+            "What endpoint resolution does when a secondary identity matches more "
+            "than one vertex. Secondary identities are only softly unique, so this "
+            "is a data property rather than an error: 'all' (default) attaches the "
+            "edge to every match, 'first' to one, 'skip' writes no edge and counts "
+            "it, 'error' aborts. An edge step may override it via on_ambiguous. "
+            "Endpoints matched by primary identity are unaffected."
         ),
     )
     resources: list[ResourceConfig] = PydanticField(

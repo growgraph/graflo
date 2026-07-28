@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema import Schema
+from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import Field
 from graflo.migrate.models import (
     MigrationOperation,

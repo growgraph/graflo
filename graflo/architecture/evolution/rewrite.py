@@ -37,9 +37,9 @@ def rewrite_vertex_weights_vertex_field_names(
                 for fname in w.fields
             ]
 
-            def _remap_obs_key(obs_key: Any) -> Any:
+            def _remap_obs_key(obs_key: Any, _per: dict = per) -> Any:
                 if isinstance(obs_key, str):
-                    return per.get(obs_key, obs_key)
+                    return _per.get(obs_key, obs_key)
                 return obs_key
 
             new_map = {_remap_obs_key(k): v for k, v in dict(w.map).items()}

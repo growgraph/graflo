@@ -11,6 +11,14 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from graflo.architecture.contract.bindings import (
+    APIConnector,
+    BoundSourceKind,
+    FileConnector,
+    KafkaConnector,
+    SparqlConnector,
+    TableConnector,
+)
 from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.schema import Schema
 from graflo.data_source import DataSourceFactory, DataSourceRegistry
@@ -24,18 +32,10 @@ from graflo.hq.connection_provider import (
     PostgresGeneralizedConnConfig,
     SparqlGeneralizedConnConfig,
 )
-from graflo.architecture.contract.bindings import (
-    BoundSourceKind,
-    APIConnector,
-    FileConnector,
-    KafkaConnector,
-    SparqlConnector,
-    TableConnector,
-)
 
 if TYPE_CHECKING:
-    from graflo.hq.caster import IngestionParams
     from graflo.architecture.contract.bindings import Bindings
+    from graflo.hq.caster import IngestionParams
 
 logger = logging.getLogger(__name__)
 
@@ -421,8 +421,8 @@ class RegistryBuilder:
         registry: DataSourceRegistry,
         resource_name: str,
         connector: SparqlConnector,
-        bindings: "Bindings",
-        ingestion_params: "IngestionParams",
+        bindings: Bindings,
+        ingestion_params: IngestionParams,
         connection_provider: ConnectionProvider,
     ) -> None:
         """Register SPARQL data sources for a resource.
@@ -517,7 +517,7 @@ class RegistryBuilder:
         registry: DataSourceRegistry,
         resource_name: str,
         connector: APIConnector,
-        ingestion_params: "IngestionParams",
+        ingestion_params: IngestionParams,
         connection_provider: ConnectionProvider,
     ) -> None:
         """Register REST API data sources for a resource."""

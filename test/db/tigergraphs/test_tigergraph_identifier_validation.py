@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
 from graflo.architecture.database_features import DatabaseProfile
+from graflo.architecture.schema import Schema
 from graflo.architecture.schema.db_aware import EdgeConfigDBAware, VertexConfigDBAware
 from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.schema.vertex import Field, FieldType, Vertex, VertexConfig
@@ -71,16 +73,18 @@ def test_validate_edge_property_names_helper() -> None:
 
 def test_configured_graph_name_prefers_database_then_schema_name() -> None:
     conn = TigerGraphConnection.__new__(TigerGraphConnection)
-    conn.config = SimpleNamespace(database="db_graph", schema_name="schema_graph")
+    cast(Any, conn).config = SimpleNamespace(
+        database="db_graph", schema_name="schema_graph"
+    )
     assert conn._configured_graph_name() == "db_graph"
 
-    conn.config = SimpleNamespace(database=None, schema_name="schema_graph")
+    cast(Any, conn).config = SimpleNamespace(database=None, schema_name="schema_graph")
     assert conn._configured_graph_name() == "schema_graph"
 
 
 def test_require_configured_graph_name_raises_when_unset() -> None:
     conn = TigerGraphConnection.__new__(TigerGraphConnection)
-    conn.config = SimpleNamespace(database=None, schema_name=None)
+    cast(Any, conn).config = SimpleNamespace(database=None, schema_name=None)
     with pytest.raises(ValueError, match="config.database or config.schema_name"):
         conn._require_configured_graph_name()
 
@@ -89,7 +93,7 @@ def test_clear_data_uses_installed_query_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     conn = TigerGraphConnection.__new__(TigerGraphConnection)
-    conn.config = SimpleNamespace(database="cfg_graph", schema_name=None)
+    cast(Any, conn).config = SimpleNamespace(database="cfg_graph", schema_name=None)
     conn._installed_clear_data_queries = {}
 
     submitted_queries: list[tuple[str, tuple[str, ...]]] = []
@@ -126,6 +130,6 @@ def test_clear_data_uses_installed_query_path(
         def resolve_db_aware(_db_type):
             return _FakeDbAwareSchema()
 
-    conn.clear_data(_FakeSchema())
+    conn.clear_data(cast(Schema, _FakeSchema()))
 
     assert submitted_queries == [("cfg_graph", ("V_a", "V_b", "V_c"))]

@@ -23,13 +23,16 @@ Example:
     ... })
 """
 
+from __future__ import annotations
+
+from typing import Any
+
 from .onto import (
     ComparisonOperator,
     FilterExpression,
     LogicalOperator,
     parse_filter_expression,
 )
-from .select import ALL_BASE_COLUMNS, SelectSpec
 
 __all__ = [
     "ALL_BASE_COLUMNS",
@@ -39,3 +42,14 @@ __all__ = [
     "SelectSpec",
     "parse_filter_expression",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    # Lazy: select → contract.bindings; keep onto importable without that cycle.
+    if name in {"ALL_BASE_COLUMNS", "SelectSpec"}:
+        from .select import ALL_BASE_COLUMNS, SelectSpec
+
+        globals()["ALL_BASE_COLUMNS"] = ALL_BASE_COLUMNS
+        globals()["SelectSpec"] = SelectSpec
+        return globals()[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

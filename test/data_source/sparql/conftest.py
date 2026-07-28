@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-
 DATA_DIR = Path(__file__).parent / "data"
 SAMPLE_ONTOLOGY = DATA_DIR / "sample_ontology.ttl"
 SAMPLE_DATA = DATA_DIR / "sample_data.ttl"

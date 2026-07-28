@@ -6,7 +6,7 @@ Runnable walkthroughs with sample data under `examples/` in the repository.
 
 | Topic | Examples | Related docs |
 |-------|----------|--------------|
-| CSV / files | [1](example-1.md), [3](example-3.md), [8](example-8.md), [11](example-11.md), [12](example-12.md), [15](example-15.md) | [Transforms](../concepts/ingestion/transforms.md), [Identity inference guide](../guides/identity_inference.md) |
+| CSV / files | [1](example-1.md), [3](example-3.md), [8](example-8.md), [11](example-11.md), [12](example-12.md), [15](example-15.md), [16](example-16.md) | [Transforms](../concepts/ingestion/transforms.md), [Identity inference guide](../guides/identity_inference.md), [Vertex identity](../concepts/schema/vertex_identity.md) |
 | JSON / nested | [2](example-2.md), [4](example-4.md), [7](example-7.md) | [Core components](../concepts/architecture/core_components.md) |
 | PostgreSQL | [5](example-5.md) | [Capabilities](../concepts/architecture/capabilities.md) |
 | RDF / SPARQL | [6](example-6.md) | [GraFlo ontology](../concepts/schema/ontology.md) |
@@ -33,3 +33,4 @@ Runnable walkthroughs with sample data under `examples/` in the repository.
 13. **[GraFlo file backend](example-13.md)** — export, ingest to disk, replay to ArangoDB or PostgreSQL.
 14. **[API env wiring](example-14.md)** — `register_all_api_configs_from_env` for multi-proxy manifests.
 15. **[Identity inference from CSV](example-15.md)** — infer vertex identities from flat CSV, ingest to file backend.
+16. **[Secondary identities for edge-only sources](example-16.md)** — relate vertices by ISIN/LEI via `secondary_identities`, `lookup_only`, and `source_match` / `target_match`.

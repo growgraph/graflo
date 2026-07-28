@@ -13,17 +13,16 @@ from __future__ import annotations
 from pathlib import Path
 
 import click
-from suthing import FileHandle
-
-from graflo import DBType, GraphEngine, GraphManifest
-from graflo.hq.caster import IngestionParams
-
 from _common import (
     DEFAULT_CSV_BACKEND_DIR,
     DEFAULT_INFERRED_MANIFEST,
     backend_config,
     example_workdir,
 )
+from suthing import FileHandle
+
+from graflo import DBType, GraphEngine, GraphManifest
+from graflo.hq.caster import IngestionParams
 
 
 @click.command()

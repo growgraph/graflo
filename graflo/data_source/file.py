@@ -5,8 +5,9 @@ including JSON, JSONL, and CSV/TSV files. It integrates with the existing
 chunker logic for efficient batch processing.
 """
 
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from pydantic import field_validator
 
@@ -69,8 +70,7 @@ class FileDataSource(AbstractDataSource):
         chunker = ChunkerFactory.create_chunker(**chunker_kwargs)
 
         # Yield batches
-        for batch in chunker:
-            yield batch
+        yield from chunker
 
 
 class JsonFileDataSource(FileDataSource):

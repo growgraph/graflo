@@ -40,7 +40,7 @@ def _values_placeholders(n: int) -> str:
 _DATA_SOURCE_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
-def _tigergraph_s3_data_source_dict(cfg: "S3GeneralizedConnConfig") -> dict[str, Any]:
+def _tigergraph_s3_data_source_dict(cfg: S3GeneralizedConnConfig) -> dict[str, Any]:
     """JSON object for ``CREATE DATA_SOURCE`` (TigerGraph cloud / S3 loader)."""
     if not cfg.aws_access_key_id or not cfg.aws_secret_access_key:
         raise ValueError(
@@ -75,7 +75,7 @@ def build_create_and_run_loading_job(
     staged_files: dict[str, Path],
     bulk_cfg: TigergraphBulkLoadConfig,
     path_for_gsql: dict[str, str],
-    tigergraph_s3_loader: "S3GeneralizedConnConfig | None" = None,
+    tigergraph_s3_loader: S3GeneralizedConnConfig | None = None,
     tigergraph_s3_data_source_name: str | None = None,
 ) -> str:
     """Build a GSQL script: USE GRAPH, optional DATA_SOURCE, CREATE LOADING JOB, RUN.

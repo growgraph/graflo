@@ -25,21 +25,22 @@ import logging
 from pathlib import Path
 from typing import Any, cast
 
-from graflo.architecture.schema.edge import Edge, EdgeConfig
-from graflo.architecture.database_features import DatabaseProfile
+from graflo.architecture.contract.bindings import (
+    Bindings,
+    SparqlConnector,
+)
 from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.contract.ingestion.resource import Resource
+from graflo.architecture.database_features import DatabaseProfile
 from graflo.architecture.schema import (
     CoreSchema,
     GraphMetadata,
     Schema,
 )
-from graflo.architecture.schema.vertex import Field as VertexField, Vertex, VertexConfig
+from graflo.architecture.schema.edge import Edge, EdgeConfig
+from graflo.architecture.schema.vertex import Field as VertexField
+from graflo.architecture.schema.vertex import Vertex, VertexConfig
 from graflo.onto import DBType
-from graflo.architecture.contract.bindings import (
-    Bindings,
-    SparqlConnector,
-)
 
 logger = logging.getLogger(__name__)
 

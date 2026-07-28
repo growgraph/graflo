@@ -5,12 +5,12 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
+from graflo.architecture.contract.ingestion.transform import ProtoTransform
 from graflo.architecture.contract.runtime.edge_derivation import (
     EdgeDerivationRegistry,
 )
-from graflo.architecture.schema.edge import EdgeConfig
 from graflo.architecture.graph_types import EdgeId, ExtractionContext, LocationIndex
-from graflo.architecture.contract.ingestion.transform import ProtoTransform
+from graflo.architecture.schema.edge import EdgeConfig
 from graflo.architecture.schema.vertex import VertexConfig, VertexName
 from graflo.onto import DBType
 
@@ -50,7 +50,6 @@ class Actor(ABC):
         self, ctx: ExtractionContext, lindex: LocationIndex, *nargs, **kwargs
     ) -> ExtractionContext:
         """Execute the actor's main processing logic."""
-        pass
 
     def fetch_important_items(self) -> dict[str, object]:
         """Get a dictionary of important items for string representation."""
@@ -58,11 +57,9 @@ class Actor(ABC):
 
     def finish_init(self, init_ctx: ActorInitContext) -> None:
         """Complete initialization of the actor."""
-        pass
 
     def init_transforms(self, init_ctx: ActorInitContext) -> None:
         """Initialize transformations for the actor."""
-        pass
 
     def count(self) -> int:
         """Get the count of items processed by this actor."""

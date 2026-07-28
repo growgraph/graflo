@@ -57,9 +57,12 @@ See [Vertex identity modes](../concepts/schema/vertex_identity.md) for the full 
 ## Full runnable example
 
 See [Example 15](../examples/example-15.md) and `examples/15-identity-inference/`.
+For attaching edges by a business key that is not the upsert identity, see
+[Example 16](../examples/example-16.md) (`secondary_identities`).
 
 ## Related documentation
 
 - [Vertex identity modes](../concepts/schema/vertex_identity.md)
+- [Example 16 — Secondary identities](../examples/example-16.md)
 - [Core components — Vertex](../concepts/architecture/core_components.md)
 - [Graph export and replay](graph_export_and_replay.md) — file backend ingest pattern

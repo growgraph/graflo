@@ -5,23 +5,22 @@ import pytest
 from graflo.architecture.schema.vertex import Field, FieldType
 from graflo.db.field_type_support import UnsupportedFieldTypeError
 from graflo.db.nebula.query import (
-    aggregate_ngql,
     aggregate_gql,
+    aggregate_ngql,
     batch_upsert_vertices_ngql,
-    create_edge_type_ngql,
     create_edge_index_ngql,
+    create_edge_type_ngql,
     create_space_ngql,
     create_tag_index_ngql,
     create_tag_ngql,
     drop_space_ngql,
-    fetch_docs_ngql,
     fetch_docs_gql,
+    fetch_docs_ngql,
     fetch_edges_ngql,
     insert_edges_ngql,
     insert_vertices_ngql,
     upsert_vertex_gql,
 )
-
 
 # ── DDL: space management ────────────────────────────────────────────────
 

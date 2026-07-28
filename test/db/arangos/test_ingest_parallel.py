@@ -1,6 +1,6 @@
-from test.db.arangos.conftest import ingest
-
 import pytest
+
+from test.db.arangos.conftest import ingest
 
 
 @pytest.fixture(scope="function")

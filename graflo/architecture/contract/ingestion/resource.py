@@ -5,10 +5,13 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from pydantic import AliasChoices, Field as PydanticField, model_validator
+from pydantic import AliasChoices, model_validator
+from pydantic import Field as PydanticField
 
 from graflo.architecture.base import ConfigBaseModel
-from graflo.architecture.graph_types import EdgeId, EncodingType, Weight
+from graflo.architecture.graph_types.enums import EncodingType
+from graflo.architecture.graph_types.identifiers import EdgeId
+from graflo.architecture.graph_types.index_config import Weight
 from graflo.architecture.pipeline.runtime.actor.config.normalize import (
     normalize_actor_step,
 )

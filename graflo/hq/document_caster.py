@@ -57,9 +57,17 @@ def _vertex_doc_has_empty_identity(
 
 
 def filter_graph_container_drop_empty_identity_inplace(
-    gc: GraphContainer, *, vertex_config: VertexConfig
+    gc: GraphContainer,
+    *,
+    vertex_config: VertexConfig,
+    edge_derivation: Any | None = None,
 ) -> None:
-    """Remove vertex docs and edge tuples with no usable schema identity."""
+    """Remove vertex docs and edge tuples with no usable schema identity.
+
+    An endpoint declared by a secondary identity is judged on *that* field-set:
+    it carries no primary key by construction, so checking the primary identity
+    would discard exactly the edges this resolution path exists to write.
+    """
     blank = set(vertex_config.blank_vertices)
     assigned = set(vertex_config.assigned_vertices)
     skip_minted = blank | assigned
@@ -79,8 +87,17 @@ def filter_graph_container_drop_empty_identity_inplace(
             continue
         if vfrom in skip_minted or vto in skip_minted:
             continue
-        src_ids = vertex_config.identity_fields(vfrom)
-        tgt_ids = vertex_config.identity_fields(vto)
+        match = (
+            edge_derivation.endpoint_match_for(edge_id)
+            if edge_derivation is not None
+            else None
+        )
+        if match is not None:
+            src_ids = vertex_config.match_fields(vfrom, match.source)
+            tgt_ids = vertex_config.match_fields(vto, match.target)
+        else:
+            src_ids = vertex_config.identity_fields(vfrom)
+            tgt_ids = vertex_config.identity_fields(vto)
         kept = [
             t
             for t in docs
@@ -230,6 +247,7 @@ class DocumentCaster:
             filter_graph_container_drop_empty_identity_inplace(
                 graph,
                 vertex_config=runtime.vertex_config,
+                edge_derivation=runtime.edge_derivation,
             )
         return CastBatchResult(graph=graph, failures=failures)
 

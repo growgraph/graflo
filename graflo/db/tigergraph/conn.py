@@ -19,19 +19,23 @@ from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig
 from graflo.db.conn import Connection
 from graflo.db.connection import TigergraphBulkLoadConfig, TigergraphConfig
-from graflo.db.tigergraph import compat  # noqa: F401  # patch requests exceptions on import
+from graflo.db.tigergraph import (
+    compat,  # noqa: F401  # patch requests exceptions on import
+)
 from graflo.db.tigergraph.auth import TigerGraphAuth
-from graflo.db.tigergraph.document_utils import clean_document, extract_id
 from graflo.db.tigergraph.bulk_session import (
     bulk_load_append,
     bulk_load_begin,
     bulk_load_finalize,
 )
 from graflo.db.tigergraph.data_ops import TigerGraphDataOps
+from graflo.db.tigergraph.document_utils import clean_document, extract_id
 from graflo.db.tigergraph.graph_admin import GraphAdmin
 from graflo.db.tigergraph.gsql_client import TigerGraphGsqlClient
 from graflo.db.tigergraph.name_validation import (
     load_tigergraph_name_rules as _load_tigergraph_name_rules,
+)
+from graflo.db.tigergraph.name_validation import (
     validate_tigergraph_schema_name as _validate_tigergraph_schema_name,
 )
 from graflo.db.tigergraph.rest_client import TigerGraphRestClient
@@ -40,9 +44,13 @@ from graflo.db.tigergraph.token_cache import (
     TokenCacheKey,
     _CachedToken,
     _TigerGraphTokenCache,
-    make_token_cache_key as _make_token_cache_key,
-    parse_tg_expiration as _parse_tg_expiration,
     reset_tigergraph_token_cache,
+)
+from graflo.db.tigergraph.token_cache import (
+    make_token_cache_key as _make_token_cache_key,
+)
+from graflo.db.tigergraph.token_cache import (
+    parse_tg_expiration as _parse_tg_expiration,
 )
 from graflo.onto import DBType
 
@@ -252,6 +260,9 @@ class TigerGraphConnection(Connection):
 
     def _execute_gsql(self, gsql_command: str) -> str:
         return self._gsql._execute_gsql(gsql_command)
+
+    def _run_interpreted_query(self, gsql_query: str) -> list[dict[str, Any]]:
+        return self._gsql._run_interpreted_query(gsql_query)
 
     def _get_vertex_types(self, graph_name: str | None = None) -> list[str]:
         return self._gsql._get_vertex_types(graph_name)
@@ -543,6 +554,9 @@ class TigerGraphConnection(Connection):
 
     def fetch_present_documents(self, *args, **kwargs):
         return self._data.fetch_present_documents(*args, **kwargs)
+
+    def resolve_vertices(self, *args, **kwargs):
+        return self._data.resolve_vertices(*args, **kwargs)
 
     def aggregate(self, *args, **kwargs):
         return self._data.aggregate(*args, **kwargs)

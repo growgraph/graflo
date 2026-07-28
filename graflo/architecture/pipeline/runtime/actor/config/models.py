@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal, cast
 
-from pydantic import Field as PydanticField, TypeAdapter, model_validator
+from pydantic import Field as PydanticField
+from pydantic import TypeAdapter, model_validator
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.contract.ingestion.transform import DressConfig
 from graflo.architecture.edge_derivation import EdgeDerivation
 from graflo.architecture.schema.vertex import VertexName
+from graflo.onto import EndpointAmbiguityPolicy
 
 from .normalize import normalize_actor_step
 
@@ -52,6 +54,16 @@ class VertexActorConfig(VertexExtractionOptionsConfig):
     )
     vertex: VertexName = PydanticField(
         ..., description="Name of the vertex type to create"
+    )
+    lookup_only: bool = PydanticField(
+        default=False,
+        description=(
+            "When true the extracted documents are used to locate existing vertices "
+            "for edge endpoints but are never written. Set this on edge-only "
+            "resources, which reference a vertex without owning it — their rows "
+            "typically carry a secondary identity and no primary key, so upserting "
+            "them would create keyless duplicates."
+        ),
     )
 
     @model_validator(mode="before")
@@ -115,7 +127,7 @@ class TransformActorConfig(ConfigBaseModel):
         return normalized
 
     @model_validator(mode="after")
-    def validate_mode(self) -> "TransformActorConfig":
+    def validate_mode(self) -> TransformActorConfig:
         enabled = sum([self.rename is not None, self.call is not None])
         if enabled != 1:
             raise ValueError(
@@ -144,7 +156,7 @@ class TransformCallConfig(ConfigBaseModel):
         )
 
         @model_validator(mode="after")
-        def validate_mode_names(self) -> "TransformCallConfig.KeySelectionConfig":
+        def validate_mode_names(self) -> TransformCallConfig.KeySelectionConfig:
             if self.mode == "all" and self.names:
                 raise ValueError(
                     "call.keys.names must be empty when call.keys.mode='all'."
@@ -252,7 +264,7 @@ class TransformCallConfig(ConfigBaseModel):
         return data
 
     @model_validator(mode="after")
-    def validate_target(self) -> "TransformCallConfig":
+    def validate_target(self) -> TransformCallConfig:
         if self.use is not None and (self.module is not None or self.foo is not None):
             raise ValueError("call.use cannot be combined with call.module/call.foo.")
         if self.use is None:
@@ -332,7 +344,39 @@ class TransformCallConfig(ConfigBaseModel):
         return self
 
 
-class EdgeLinkConfig(ConfigBaseModel):
+class EdgeEndpointMatchOptionsConfig(ConfigBaseModel):
+    """How an edge step locates its endpoint vertices.
+
+    By default both endpoints are matched on the vertex's primary ``identity``,
+    which is what every edge step has always done. Selecting a secondary
+    identity instead lets an edge-only source reference endpoints by a business
+    key. The choice is per endpoint, so source and target may differ.
+    """
+
+    source_match: str | list[str] | None = PydanticField(
+        default=None,
+        description=(
+            "Which identity to match the source endpoint on: omitted or 'identity' "
+            "for the primary identity (default), a declared secondary identity name, "
+            "an explicit field list equal to a declared secondary identity, or "
+            "'secondary' when the vertex declares exactly one."
+        ),
+    )
+    target_match: str | list[str] | None = PydanticField(
+        default=None,
+        description="Same as source_match, for the target endpoint.",
+    )
+    on_ambiguous: EndpointAmbiguityPolicy | None = PydanticField(
+        default=None,
+        description=(
+            "Override for this step when a secondary identity matches several "
+            "vertices. Inherits ingestion_model.endpoints_on_ambiguous when unset. "
+            "Has no effect on endpoints matched by primary identity."
+        ),
+    )
+
+
+class EdgeLinkConfig(EdgeEndpointMatchOptionsConfig):
     """One intent in a multi-link edge step.
 
     Each item in an ``EdgeActorConfig.links`` list describes one source→target→relation
@@ -424,7 +468,7 @@ class EdgeLinkConfig(ConfigBaseModel):
         return role if role is not None else legacy_type_field
 
     @model_validator(mode="after")
-    def resolve_and_validate(self) -> "EdgeLinkConfig":
+    def resolve_and_validate(self) -> EdgeLinkConfig:
         # Canonicalize to role-first slot names while preserving legacy key input.
         # Use object.__setattr__ to bypass validate_assignment re-triggering this validator.
         source_role = self._canonicalize_slot_key(
@@ -466,7 +510,7 @@ class EdgeLinkConfig(ConfigBaseModel):
         return self
 
 
-class EdgeActorConfig(ConfigBaseModel):
+class EdgeActorConfig(EdgeEndpointMatchOptionsConfig):
     """Configuration for an EdgeActor (logical edge + ingestion derivation; flat YAML).
 
     **Single-intent mode** (default): declare source/target via ``from``/``to`` (static
@@ -610,7 +654,7 @@ class EdgeActorConfig(ConfigBaseModel):
         return role if role is not None else legacy_type_field
 
     @model_validator(mode="after")
-    def validate_type_sources(self) -> "EdgeActorConfig":
+    def validate_type_sources(self) -> EdgeActorConfig:
         if self.links is not None:
             # Multi-link mode: top-level source/target fields must all be absent.
             has_single = any(
@@ -678,6 +722,9 @@ class EdgeActorConfig(ConfigBaseModel):
             match=self.match,
             relation_field=self.relation_field,
             relation_from_key=self.relation_from_key,
+            source_match=self.source_match,
+            target_match=self.target_match,
+            on_ambiguous=self.on_ambiguous,
         )
 
     @model_validator(mode="before")
@@ -697,7 +744,7 @@ class DescendActorConfig(ConfigBaseModel):
     )
     key: str | None = PydanticField(default=None, description="Key to descend into")
     any_key: bool = PydanticField(default=False, description="Process all keys")
-    pipeline: list["ActorConfig"] = PydanticField(
+    pipeline: list[ActorConfig] = PydanticField(
         default_factory=list,
         alias="apply",
         description="Pipeline of actors to apply to nested data",
@@ -755,7 +802,7 @@ class VertexRouterActorConfig(VertexExtractionOptionsConfig):
         return data
 
     @model_validator(mode="after")
-    def normalize_role(self) -> "VertexRouterActorConfig":
+    def normalize_role(self) -> VertexRouterActorConfig:
         if self.role is None:
             object.__setattr__(self, "role", self.type_field)
         return self

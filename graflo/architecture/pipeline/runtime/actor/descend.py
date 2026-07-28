@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Type
+from typing import TYPE_CHECKING, Any
 
 from graflo.architecture.graph_types import merge_observation_with_transform_buffer
 
@@ -202,7 +202,7 @@ class DescendActor(Actor):
         return level, type(self), str(self), edges
 
 
-_NodeTypePriority: MappingProxyType[Type[Actor], int] = MappingProxyType(
+_NodeTypePriority: MappingProxyType[type[Actor], int] = MappingProxyType(
     {
         DescendActor: 10,
         TransformActor: 20,

@@ -4,10 +4,10 @@ Internal code should import these classes from ``graflo.architecture.contract.bi
 """
 
 from graflo.architecture.contract.bindings import (
-    Bindings,
-    BoundSourceKind,
     APIConnector,
     ApiResponseStructure,
+    Bindings,
+    BoundSourceKind,
     FileConnector,
     JoinClause,
     PaginationConfig,
@@ -18,10 +18,10 @@ from graflo.architecture.contract.bindings import (
 )
 
 __all__ = [
-    "Bindings",
-    "BoundSourceKind",
     "APIConnector",
     "ApiResponseStructure",
+    "Bindings",
+    "BoundSourceKind",
     "FileConnector",
     "JoinClause",
     "PaginationConfig",

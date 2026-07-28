@@ -1,5 +1,7 @@
 import pathlib
+
 from suthing import FileHandle
+
 from graflo import Bindings, GraphManifest
 from graflo.architecture.contract.bindings import FileConnector
 from graflo.db import Neo4jConfig

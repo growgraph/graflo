@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from .edge_derivation import EdgeDerivationRegistry
-
 __all__ = [
     "EdgeDerivationRegistry",
     "ResourceRuntime",
@@ -16,6 +14,10 @@ __all__ = [
 
 
 def __getattr__(name: str) -> Any:
+    if name == "EdgeDerivationRegistry":
+        from .edge_derivation import EdgeDerivationRegistry
+
+        return EdgeDerivationRegistry
     if name in {
         "ResourceRuntime",
         "build_resource_runtime",

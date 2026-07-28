@@ -7,7 +7,6 @@ from graflo.db import Connection
 from graflo.migrate.emitters.base import BaseEmitter
 from graflo.migrate.models import MigrationOperation, OperationType
 
-
 SUPPORTED_OPS = {
     OperationType.ADD_VERTEX,
     OperationType.ADD_EDGE,

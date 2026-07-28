@@ -1,8 +1,7 @@
-from test.conftest import ingest_atomic, fetch_schema_obj
-
 import pytest
 
 from graflo.db import ConnectionManager
+from test.conftest import fetch_schema_obj, ingest_atomic
 
 
 @pytest.fixture(scope="function")

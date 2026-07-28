@@ -3,18 +3,18 @@ import logging
 import pytest
 from pydantic import ValidationError
 
+from graflo.architecture.contract.runtime.edge_derivation import (
+    EdgeDerivationRegistry,
+)
+from graflo.architecture.database_features import DatabaseProfile
+from graflo.architecture.graph_types import Weight
+from graflo.architecture.schema import EdgeConfigDBAware, VertexConfigDBAware
 from graflo.architecture.schema.edge import (
     DEFAULT_TIGERGRAPH_RELATION_WEIGHTNAME,
     Edge,
     EdgeConfig,
 )
-from graflo.architecture.database_features import DatabaseProfile
-from graflo.architecture.schema import EdgeConfigDBAware, VertexConfigDBAware
-from graflo.architecture.graph_types import Weight
 from graflo.architecture.schema.vertex import VertexConfig
-from graflo.architecture.contract.runtime.edge_derivation import (
-    EdgeDerivationRegistry,
-)
 from graflo.onto import DBType
 
 logger = logging.getLogger(__name__)

@@ -3,13 +3,13 @@ from typing import Any
 
 import pytest
 
-from graflo.architecture.graph_types import ExtractionContext
-from graflo.architecture.schema.edge import EdgeConfig
 from graflo.architecture.contract.ingestion.resource import Resource
 from graflo.architecture.contract.runtime import (
     ResourceRuntime,
     build_resource_runtime,
 )
+from graflo.architecture.graph_types import ExtractionContext
+from graflo.architecture.schema.edge import EdgeConfig
 from graflo.architecture.schema.vertex import VertexConfig
 from graflo.util.casting import resolve_type_caster
 

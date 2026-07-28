@@ -10,24 +10,6 @@ For lighter imports, prefer:
 See ``docs/importing.md`` in the package.
 """
 
-from .contract import (
-    APIConnector,
-    Bindings,
-    FileConnector,
-    GraphManifest,
-    IngestionModel,
-    JoinClause,
-    KafkaConnector,
-    ProtoTransform,
-    Resource,
-    BoundSourceKind,
-    ResourceConnector,
-    SparqlConnector,
-    TableConnector,
-    Transform,
-)
-from .database_features import DatabaseProfile
-from .graph_types import Index
 from graflo.architecture.backend import GraFloIndex
 from graflo.architecture.schema import (
     CoreSchema,
@@ -41,6 +23,25 @@ from graflo.architecture.schema import (
 )
 from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.schema.vertex import FieldType, Vertex, VertexConfig
+
+from .contract import (
+    APIConnector,
+    Bindings,
+    BoundSourceKind,
+    FileConnector,
+    GraphManifest,
+    IngestionModel,
+    JoinClause,
+    KafkaConnector,
+    ProtoTransform,
+    Resource,
+    ResourceConnector,
+    SparqlConnector,
+    TableConnector,
+    Transform,
+)
+from .database_features import DatabaseProfile
+from .graph_types import Index
 
 _LAZY_EXPORTS = {
     "GraFloBackendConfig": ("graflo.db.graflo_backend.config", "GraFloBackendConfig"),
@@ -60,6 +61,7 @@ def __getattr__(name: str):
 __all__ = [
     "APIConnector",
     "Bindings",
+    "BoundSourceKind",
     "CoreSchema",
     "DatabaseProfile",
     "Edge",
@@ -67,9 +69,9 @@ __all__ = [
     "EdgeConfigDBAware",
     "FieldType",
     "FileConnector",
-    "GraFloOutput",
     "GraFloBackendConfig",
     "GraFloIndex",
+    "GraFloOutput",
     "GraphManifest",
     "GraphMetadata",
     "GraphModel",
@@ -79,7 +81,6 @@ __all__ = [
     "KafkaConnector",
     "ProtoTransform",
     "Resource",
-    "BoundSourceKind",
     "ResourceConnector",
     "Schema",
     "SchemaDBAware",

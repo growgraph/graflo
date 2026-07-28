@@ -101,6 +101,7 @@ nav:
     -   13 - Graph Export and Migration: examples/example-13.md
     -   14 - API env wiring: examples/example-14.md
     -   15 - Identity inference from CSV: examples/example-15.md
+    -   16 - Secondary identities for edge-only sources: examples/example-16.md
 -   API Reference: reference/
 -   Contributing: contributing.md
 markdown_extensions:

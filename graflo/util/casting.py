@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import builtins
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 SAFE_TYPE_CASTERS: dict[str, Callable[..., Any]] = {
     "str": str,

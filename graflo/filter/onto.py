@@ -25,9 +25,10 @@ import logging
 from types import MappingProxyType
 from typing import Any, Literal, Self, cast
 
+from pydantic import Field, field_validator, model_validator
+
 from graflo.architecture.base import ConfigBaseModel
 from graflo.onto import BaseEnum, ExpressionFlavor
-from pydantic import Field, field_validator, model_validator
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +110,13 @@ DUNDER_TO_CMP: MappingProxyType[str, ComparisonOperator] = MappingProxyType(
         "__ge__": ComparisonOperator.GE,
         "__le__": ComparisonOperator.LE,
     }
+)
+
+#: Inverse of :data:`DUNDER_TO_CMP`, so expressions authored in list form
+#: (``["==", value, field]``) — which carry no ``unary_op`` — can still be
+#: evaluated in Python, like every other flavor renders them.
+CMP_TO_DUNDER: MappingProxyType[ComparisonOperator, str] = MappingProxyType(
+    {cmp: dunder for dunder, cmp in DUNDER_TO_CMP.items()}
 )
 
 
@@ -239,7 +247,7 @@ class FilterExpression(ConfigBaseModel):
             elif data[0] in LogicalOperator:
                 return cls(kind="composite", operator=data[0], deps=data[1])
         elif isinstance(data, dict):
-            k = list(data.keys())[0]
+            k = next(iter(data.keys()))
             norm_k = k.upper() if isinstance(k, str) else k
             if norm_k in LogicalOperator:
                 deps: list[FilterExpression] = [cls.from_dict(v) for v in data[k]]
@@ -489,24 +497,51 @@ class FilterExpression(ConfigBaseModel):
         return f"{self.field}{op_str}{value_str}"
 
     def _cast_python(self, **kwargs: Any) -> bool:
-        if self.field is not None:
-            field_val = kwargs.pop(self.field, None)
-            if self.cmp_operator == ComparisonOperator.IS_NULL:
-                return field_val is None
-            if self.cmp_operator == ComparisonOperator.IS_NOT_NULL:
-                return field_val is not None
-            if field_val is not None and self.unary_op is not None:
-                foo = getattr(field_val, self.unary_op)
-                return foo(self.value[0])
-        return False
+        if self.field is None:
+            return False
+        field_val = kwargs.pop(self.field, None)
+        if self.cmp_operator == ComparisonOperator.IS_NULL:
+            return field_val is None
+        if self.cmp_operator == ComparisonOperator.IS_NOT_NULL:
+            return field_val is not None
+        if field_val is None:
+            return False
+        if self.cmp_operator == ComparisonOperator.IN:
+            return field_val in self.value
+        # List-form expressions (["==", value, field]) carry no unary_op; fall
+        # back to the dunder implied by cmp_operator so they evaluate the same
+        # way they render.
+        dunder = self.unary_op
+        if dunder is None and self.cmp_operator is not None:
+            dunder = CMP_TO_DUNDER.get(self.cmp_operator)
+        if dunder is None or not self.value:
+            return False
+        comparison = getattr(field_val, dunder, None)
+        if comparison is None:
+            return False
+        result = comparison(self.value[0])
+        return result is True
 
     @staticmethod
     def _wrap_composite_operand(
         dep: FilterExpression, rendered: str, kind: ExpressionFlavor
     ) -> str:
-        """Parenthesize nested composite operands for SQL/Cypher precedence."""
+        """Parenthesize nested composite operands so precedence is explicit.
+
+        Every target language binds AND tighter than OR, so an unparenthesized
+        ``AND[OR[a, b], c]`` silently means ``a OR (b AND c)``. Wrapping nested
+        composites keeps the rendered predicate faithful to the expression tree
+        on all flavors.
+        """
         if (
-            kind in (ExpressionFlavor.SQL, ExpressionFlavor.CYPHER)
+            kind
+            in (
+                ExpressionFlavor.SQL,
+                ExpressionFlavor.CYPHER,
+                ExpressionFlavor.AQL,
+                ExpressionFlavor.NGQL,
+                ExpressionFlavor.GSQL,
+            )
             and dep.kind == "composite"
         ):
             return f"({rendered})"

@@ -32,9 +32,10 @@ import json
 import logging
 import pathlib
 import re
+from collections.abc import Callable
 from pathlib import Path
 from shutil import copyfileobj
-from typing import IO, Any, Callable, TextIO, TypeVar, cast
+from typing import IO, Any, TextIO, TypeVar, cast
 from xml.etree import ElementTree as et
 
 import ijson
@@ -133,7 +134,6 @@ class AbstractChunker(abc.ABC):
         Returns:
             Any: Next item or batch of items
         """
-        pass
 
     def _prepare_iteration(self):
         """Prepare for iteration.
@@ -199,7 +199,7 @@ class FileChunker(AbstractChunker):
         """
         super()._prepare_iteration()
         if ".gz" in self.filename.suffixes:
-            self.file_obj = gzip.open(
+            self.file_obj = gzip.open(  # noqa: SIM115
                 self.filename.absolute().as_posix(),
                 f"r{self.mode}",
                 encoding=self.encoding,
@@ -207,7 +207,7 @@ class FileChunker(AbstractChunker):
         else:
             self.file_obj = cast(
                 TextIO,
-                open(
+                open(  # noqa: SIM115
                     self.filename.absolute().as_posix(),
                     f"r{self.mode}",
                     encoding=self.encoding,
@@ -698,9 +698,8 @@ def gunzip_file(fname_in, fname_out):
         fname_in: Path to input gzipped file
         fname_out: Path to output decompressed file
     """
-    with gzip.open(fname_in, "rb") as f_in:
-        with open(fname_out, "wb") as f_out:
-            copyfileobj(f_in, f_out)
+    with gzip.open(fname_in, "rb") as f_in, open(fname_out, "wb") as f_out:
+        copyfileobj(f_in, f_out)
 
 
 def parse_simple(fp, good_cf, force_list=None, root_tag=None):

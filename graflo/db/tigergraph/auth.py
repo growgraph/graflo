@@ -175,34 +175,33 @@ class TigerGraphAuth:
                     verify=self._conn.ssl_verify,
                 )
 
-                # Check for 404 - might indicate wrong endpoint or port issue
-                if response.status_code == 404:
-                    # Try port fallback (similar to pyTigerGraph's _req method)
-                    # If using wrong port, try GSQL port
-                    if (
-                        "/gsql" in url
-                        and self._conn.config.port is not None
-                        and self._conn.config.gs_port is not None
-                        and self._conn.config.port != self._conn.config.gs_port
-                    ):
-                        logger.debug(f"404 on {url}, trying GSQL port fallback...")
-                        # Replace port in URL with GSQL port
-                        fallback_url = url.replace(
-                            f":{self._conn.config.port}",
-                            f":{self._conn.config.gs_port}",
+                # Check for 404 - might indicate wrong endpoint or port issue.
+                # Try port fallback (similar to pyTigerGraph's _req method).
+                if (
+                    response.status_code == 404
+                    and "/gsql" in url
+                    and self._conn.config.port is not None
+                    and self._conn.config.gs_port is not None
+                    and self._conn.config.port != self._conn.config.gs_port
+                ):
+                    logger.debug(f"404 on {url}, trying GSQL port fallback...")
+                    # Replace port in URL with GSQL port
+                    fallback_url = url.replace(
+                        f":{self._conn.config.port}",
+                        f":{self._conn.config.gs_port}",
+                    )
+                    try:
+                        response = requests.post(
+                            fallback_url,
+                            headers=headers,
+                            json=clean_payload,
+                            timeout=30,
+                            verify=self._conn.ssl_verify,
                         )
-                        try:
-                            response = requests.post(
-                                fallback_url,
-                                headers=headers,
-                                json=clean_payload,
-                                timeout=30,
-                                verify=self._conn.ssl_verify,
-                            )
-                            if response.status_code == 200:
-                                url = fallback_url  # Update URL for logging
-                        except Exception:
-                            pass  # Continue to next endpoint
+                        if response.status_code == 200:
+                            url = fallback_url  # Update URL for logging
+                    except Exception:
+                        pass  # Continue to next endpoint
 
                 response.raise_for_status()
                 result = response.json()

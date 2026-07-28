@@ -14,6 +14,13 @@ from pathlib import Path
 
 import click
 import yaml
+from _common import (
+    DEFAULT_INFERENCE_CONFIG,
+    DEFAULT_INFERRED_MANIFEST,
+    EXAMPLE_DIR,
+    VERTEX_CSV_MAP,
+    load_vertex_samples,
+)
 from suthing import FileHandle
 
 from graflo import GraphManifest
@@ -21,14 +28,6 @@ from graflo.architecture.schema.vertex import VertexConfig
 from graflo.db.identity_inference import (
     IdentityInferenceConfig,
     apply_identity_inference_to_vertices,
-)
-
-from _common import (
-    DEFAULT_INFERRED_MANIFEST,
-    DEFAULT_INFERENCE_CONFIG,
-    EXAMPLE_DIR,
-    VERTEX_CSV_MAP,
-    load_vertex_samples,
 )
 
 

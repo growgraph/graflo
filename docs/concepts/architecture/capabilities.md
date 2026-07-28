@@ -11,7 +11,7 @@ Product features at a glance — schema abstraction, inference, connectors, and 
 
 ## Schema features
 
-- **Flexible identity and indexing** — logical identity plus DB-specific secondary indexes (`schema.db_profile.vertex_indexes`, `edge_specs`, …). See [Vertex identity modes](../schema/vertex_identity.md).
+- **Flexible identity and indexing** — logical upsert identity, optional **`secondary_identities`** for edge-endpoint lookup, plus DB-specific indexes (`schema.db_profile.vertex_indexes`, `edge_specs`, …). See [Vertex identity modes](../schema/vertex_identity.md).
 - **Typed properties** — optional type information on vertex and edge **`properties`** (INT, FLOAT, STRING, DATETIME, BOOL).
 - **Hierarchical edge definition** — define edges at any level of nested documents (via resource **edge** steps and actors).
 - **Relationship payload** — logical edges declare **`properties`**; additional payload from vertices or row shape is wired in **edge actors** (`vertex_weights`, maps, etc.) with optional types.

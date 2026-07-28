@@ -4,20 +4,21 @@ from __future__ import annotations
 
 from typing import Any
 
-from .actor.edge_render import render_edge, render_weights
 from graflo.architecture.contract.runtime.edge_derivation import (
     EdgeDerivationRegistry,
 )
+from graflo.architecture.edge_derivation import EdgeDerivation
+from graflo.architecture.graph_types import AssemblyContext, EdgeId, LocationIndex
 from graflo.architecture.schema.edge import (
     DEFAULT_TIGERGRAPH_RELATION_WEIGHTNAME,
     Edge,
     EdgeConfig,
 )
-from graflo.architecture.edge_derivation import EdgeDerivation
-from graflo.architecture.graph_types import AssemblyContext, EdgeId, LocationIndex
 from graflo.architecture.schema.vertex import VertexConfig
 from graflo.onto import DBType
 from graflo.util.merge import merge_doc_basis
+
+from .actor.edge_render import render_edge, render_weights
 
 
 def _resolved_relation_input_field(
@@ -37,13 +38,33 @@ def _resolved_relation_input_field(
 
 
 def _merge_vertices_for_edge(
-    ctx: AssemblyContext, vertex_config: VertexConfig, source: str, target: str
+    ctx: AssemblyContext,
+    vertex_config: VertexConfig,
+    source: str,
+    target: str,
+    *,
+    source_fields: list[str],
+    target_fields: list[str],
 ) -> None:
-    for vname in (source, target):
+    """Merge endpoint observations on the fields they will be matched on.
+
+    Merging on the primary identity would be wrong for endpoints matched by a
+    secondary identity: those documents carry no primary key, so every one of
+    them would look keyless and collapse into a single document.
+
+    When both endpoints are the same vertex type the bucket is shared, so it is
+    merged once on the union of both field-sets — conservative, and it never
+    produces the keyless collapse.
+    """
+    if source == target:
+        basis = list(dict.fromkeys([*source_fields, *target_fields]))
+        bases: list[tuple[str, list[str]]] = [(source, basis)]
+    else:
+        bases = [(source, source_fields), (target, target_fields)]
+
+    for vname, fields in bases:
         for lindex, vlist in ctx.acc_vertex[vname].items():
-            ctx.acc_vertex[vname][lindex] = merge_doc_basis(
-                vlist, tuple(vertex_config.identity_fields(vname))
-            )
+            ctx.acc_vertex[vname][lindex] = merge_doc_basis(vlist, tuple(fields))
 
 
 def _emit_edge_documents(
@@ -56,7 +77,20 @@ def _emit_edge_documents(
     derivation: EdgeDerivation | None = None,
     edge_derivation: EdgeDerivationRegistry | None = None,
 ) -> bool:
-    _merge_vertices_for_edge(ctx, vertex_config, edge.source, edge.target)
+    source_fields = vertex_config.match_fields(
+        edge.source, derivation.source_match if derivation is not None else None
+    )
+    target_fields = vertex_config.match_fields(
+        edge.target, derivation.target_match if derivation is not None else None
+    )
+    _merge_vertices_for_edge(
+        ctx,
+        vertex_config,
+        edge.source,
+        edge.target,
+        source_fields=source_fields,
+        target_fields=target_fields,
+    )
     edges = render_edge(
         edge=edge,
         vertex_config=vertex_config,
@@ -64,6 +98,8 @@ def _emit_edge_documents(
         lindex=lindex,
         relation_input_field=relation_input_field,
         derivation=derivation,
+        source_match_fields=source_fields,
+        target_match_fields=target_fields,
     )
     vertex_rules: list = []
     if edge_derivation is not None:
@@ -95,11 +131,10 @@ def _is_inference_allowed(
         _matches_selector(selector, edge_id) for selector in infer_edge_only
     ):
         return False
-    if infer_edge_except and any(
-        _matches_selector(selector, edge_id) for selector in infer_edge_except
-    ):
-        return False
-    return True
+    return not (
+        infer_edge_except
+        and any(_matches_selector(selector, edge_id) for selector in infer_edge_except)
+    )
 
 
 def assemble_edges(

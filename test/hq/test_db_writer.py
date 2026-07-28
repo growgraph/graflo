@@ -2,16 +2,16 @@ from __future__ import annotations
 
 import asyncio
 
-from graflo.architecture.schema.edge import Edge, EdgeConfig
-from graflo.architecture.database_features import DatabaseProfile
 from graflo.architecture.contract.ingestion import IngestionModel
+from graflo.architecture.database_features import DatabaseProfile
 from graflo.architecture.graph_types import GraphContainer
 from graflo.architecture.schema import (
     CoreSchema,
     GraphMetadata,
     Schema,
 )
-from graflo.architecture.schema.vertex import Vertex, VertexConfig, Field
+from graflo.architecture.schema.edge import Edge, EdgeConfig
+from graflo.architecture.schema.vertex import Field, Vertex, VertexConfig
 from graflo.db.connection import ArangoConfig, Neo4jConfig
 from graflo.hq.db_writer import DBWriter
 from graflo.onto import DBType

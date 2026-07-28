@@ -541,7 +541,7 @@ def _try_exact_match_with_suffix_removal(
         if vertex_lower in column_lower:
             # Remove common suffixes from column name and check if it matches
             for suffix in common_suffixes:
-                if column_lower.endswith(f"_{suffix}") or column_lower.endswith(suffix):
+                if column_lower.endswith((f"_{suffix}", suffix)):
                     base = (
                         column_lower[: -len(f"_{suffix}")]
                         if column_lower.endswith(f"_{suffix}")

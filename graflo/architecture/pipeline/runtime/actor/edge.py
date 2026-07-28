@@ -5,17 +5,20 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from .base import Actor, ActorInitContext
-from .config import EdgeActorConfig, EdgeLinkConfig
+from graflo.architecture.contract.runtime.edge_derivation import EndpointMatch
 from graflo.architecture.edge_derivation import EdgeDerivation
-from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.graph_types import (
+    EdgeId,
     ExtractionContext,
     LocationIndex,
     Weight,
     merge_observation_with_transform_buffer,
 )
+from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.schema.vertex import VertexConfig, VertexName
+
+from .base import Actor, ActorInitContext
+from .config import EdgeActorConfig, EdgeLinkConfig
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +43,12 @@ def _link_to_edge_actor_config(link: EdgeLinkConfig) -> EdgeActorConfig:
         data["match_source"] = link.match_source
     if link.match_target is not None:
         data["match_target"] = link.match_target
+    if link.source_match is not None:
+        data["source_match"] = link.source_match
+    if link.target_match is not None:
+        data["target_match"] = link.target_match
+    if link.on_ambiguous is not None:
+        data["on_ambiguous"] = link.on_ambiguous
     return EdgeActorConfig.model_validate(data)
 
 
@@ -142,7 +151,7 @@ class EdgeActor(Actor):
         return self.derivation.relation_field
 
     @classmethod
-    def from_config(cls, config: EdgeActorConfig) -> "EdgeActor":
+    def from_config(cls, config: EdgeActorConfig) -> EdgeActor:
         return cls(config)
 
     def fetch_important_items(self) -> dict[str, Any]:
@@ -191,10 +200,39 @@ class EdgeActor(Actor):
                 init_ctx.edge_derivation.merge_vertex_weights(
                     edge_id, self._pending_vertex_weights
                 )
+            self._register_endpoint_match(init_ctx, edge_id)
             self.edge = init_ctx.edge_config.edge_for(edge_id)
         else:
             # Dynamic mode: cache will be populated per-row.
             self._edge_cache.clear()
+
+    def _register_endpoint_match(
+        self, init_ctx: ActorInitContext, edge_id: EdgeId
+    ) -> None:
+        """Validate endpoint identity selectors and record them for the writer.
+
+        Resolving here fails fast at manifest load with the vertex name and the
+        declared alternatives, rather than mid-ingest on the first batch.
+        """
+        derivation = self.derivation
+        if not derivation.uses_secondary_identity() and derivation.on_ambiguous is None:
+            return
+
+        source_type, target_type, _ = edge_id
+        vertex_config = self.vertex_config
+        if vertex_config is not None:
+            # Raises with the declared alternatives when a selector is unknown.
+            vertex_config.match_fields(source_type, derivation.source_match)
+            vertex_config.match_fields(target_type, derivation.target_match)
+
+        init_ctx.edge_derivation.set_endpoint_match(
+            edge_id,
+            EndpointMatch(
+                source=derivation.source_match,
+                target=derivation.target_match,
+                on_ambiguous=derivation.on_ambiguous,
+            ),
+        )
 
     # ------------------------------------------------------------------
     # Dynamic-mode helpers
@@ -206,16 +244,19 @@ class EdgeActor(Actor):
         key = (source, target, relation)
         if key in self._edge_cache:
             return self._edge_cache[key]
-        if self._strict_edge_types:
-            # Skip if this (source, target, relation) was not pre-declared.
-            if self.edge_config is not None and key not in self.edge_config:
-                logger.debug(
-                    "EdgeActor: strict_edge_types=True, skipping undeclared (%s, %s, %s)",
-                    source,
-                    target,
-                    relation,
-                )
-                return None
+        # Skip if this (source, target, relation) was not pre-declared.
+        if (
+            self._strict_edge_types
+            and self.edge_config is not None
+            and key not in self.edge_config
+        ):
+            logger.debug(
+                "EdgeActor: strict_edge_types=True, skipping undeclared (%s, %s, %s)",
+                source,
+                target,
+                relation,
+            )
+            return None
         edge = Edge(source=source, target=target, relation=relation)
         if self.vertex_config is not None:
             edge.finish_init(vertex_config=self.vertex_config)
@@ -232,7 +273,7 @@ class EdgeActor(Actor):
     ) -> str | None:
         """Scan acc_vertex to find which vertex type has data at *slot_lindex*."""
         for vtype, by_loc in ctx.acc_vertex.items():
-            if slot_lindex in by_loc and by_loc[slot_lindex]:
+            if by_loc.get(slot_lindex):
                 return vtype
         return None
 

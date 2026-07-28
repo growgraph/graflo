@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from pydantic import Field
 
@@ -39,7 +39,7 @@ class GraFloIndex(ConfigBaseModel):
         ..., description="GraFlo package version at export time."
     )
     created_at: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat(),
+        default_factory=lambda: datetime.now(UTC).isoformat(),
         description="UTC timestamp when the export was finalized.",
     )
     schema_hash: str = Field(

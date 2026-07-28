@@ -9,11 +9,13 @@ from graflo.architecture.graph_types import (
     VertexRep,
 )
 from graflo.architecture.pipeline.runtime.actor.base import ActorInitContext
+from graflo.architecture.pipeline.runtime.actor.config import (
+    EdgeActorConfig,
+    VertexRouterActorConfig,
+)
 from graflo.architecture.pipeline.runtime.actor.edge import EdgeActor
-from graflo.architecture.pipeline.runtime.actor.config import EdgeActorConfig
 from graflo.architecture.pipeline.runtime.actor.edge_render import render_edge
 from graflo.architecture.pipeline.runtime.actor.vertex_router import VertexRouterActor
-from graflo.architecture.pipeline.runtime.actor.config import VertexRouterActorConfig
 from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.schema.vertex import VertexConfig
 

@@ -68,7 +68,7 @@ def knapsack(weights, ks_size=7):
         >>> knapsack(weights, ks_size=7)
         [[4, 0, 2], [1, 3]]  # Groups with weights [6, 7]
     """
-    pp = sorted(list(zip(range(len(weights)), weights)), key=lambda x: x[1])
+    pp = sorted(zip(range(len(weights)), weights), key=lambda x: x[1])
     print(pp)
     acc = []
     if pp[-1][1] > ks_size:

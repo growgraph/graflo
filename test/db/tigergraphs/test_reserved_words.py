@@ -20,11 +20,10 @@ import logging
 
 import pytest
 
+from graflo.architecture.contract.manifest import GraphManifest
+from graflo.hq.sanitizer import Sanitizer
 from graflo.onto import DBType
 from test.conftest import fetch_manifest_obj
-from graflo.hq.sanitizer import Sanitizer
-from graflo.architecture.contract.manifest import GraphManifest
-
 
 logger = logging.getLogger(__name__)
 

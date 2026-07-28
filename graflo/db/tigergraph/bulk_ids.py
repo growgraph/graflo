@@ -12,7 +12,7 @@ def extract_vertex_id(
     if not doc:
         return None
     keys = tuple(match_keys)
-    if "_key" in doc and doc["_key"]:
+    if doc.get("_key"):
         return str(doc["_key"])
     if len(keys) > 1:
         try:

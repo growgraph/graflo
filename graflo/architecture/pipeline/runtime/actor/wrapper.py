@@ -3,8 +3,23 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
+
+from graflo.architecture.graph_types import (
+    ActionContext,
+    AssemblyContext,
+    EdgeId,
+    ExtractionContext,
+    GraphEntity,
+    LocationIndex,
+)
+from graflo.architecture.schema.edge import EdgeConfig
+from graflo.architecture.schema.vertex import VertexConfig
+from graflo.onto import DBType
+from graflo.util.merge import merge_doc_basis
+from graflo.util.transform import pick_unique_dict
 
 from ..assemble import assemble_edges
 from .base import Actor, ActorInitContext
@@ -15,27 +30,13 @@ from .config import (
     TransformActorConfig,
     VertexActorConfig,
     VertexRouterActorConfig,
-    parse_root_config,
     normalize_actor_step,
+    parse_root_config,
     validate_actor_step,
 )
-from .edge_render import add_blank_collections
-from graflo.architecture.schema.edge import EdgeConfig
-from graflo.architecture.graph_types import (
-    ActionContext,
-    AssemblyContext,
-    EdgeId,
-    ExtractionContext,
-    GraphEntity,
-    LocationIndex,
-)
-from graflo.architecture.schema.vertex import VertexConfig
-from graflo.onto import DBType
-from graflo.util.merge import merge_doc_basis
-from graflo.util.transform import pick_unique_dict
-
 from .descend import DescendActor
 from .edge import EdgeActor
+from .edge_render import add_blank_collections
 from .transform import TransformActor
 from .vertex import VertexActor
 from .vertex_router import VertexRouterActor
@@ -124,10 +125,12 @@ class ActorWrapper:
     def __call__(
         self,
         ctx: ExtractionContext,
-        lindex: LocationIndex = LocationIndex(),
+        lindex: LocationIndex | None = None,
         *nargs: Any,
         **kwargs: Any,
     ) -> ExtractionContext:
+        if lindex is None:
+            lindex = LocationIndex()
         ctx = self.actor(ctx, lindex, *nargs, **kwargs)
         return ctx
 
@@ -154,10 +157,15 @@ class ActorWrapper:
         )
 
         for vertex_name, dd in assembly_ctx.acc_vertex.items():
-            for lindex, vertex_list in dd.items():
-                vertex_list = [x.vertex for x in vertex_list]
+            for vertex_list in dd.values():
+                # Lookup-only observations locate existing vertices for edge
+                # endpoints; they must not become writes. They stay in
+                # acc_vertex, which edge rendering reads, and are dropped here.
+                writable = [x.vertex for x in vertex_list if not x.lookup_only]
+                if not writable:
+                    continue
                 vertex_list_updated = merge_doc_basis(
-                    vertex_list,
+                    writable,
                     tuple(self.vertex_config.identity_fields(vertex_name)),
                 )
                 vertex_list_updated = pick_unique_dict(vertex_list_updated)

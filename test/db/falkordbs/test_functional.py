@@ -57,7 +57,6 @@ import pytest
 from graflo.db import ConnectionManager
 from graflo.onto import AggregationType
 
-
 # =============================================================================
 # DATA COHERENCE TESTS
 # =============================================================================

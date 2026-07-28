@@ -7,7 +7,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 _TOKEN_EXPIRY_BUFFER_SECONDS = 120
 
@@ -83,9 +83,9 @@ def parse_tg_expiration(raw: str | None) -> float | None:
     except (ValueError, TypeError):
         pass
     try:
-        dt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(str(raw))
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+            dt = dt.replace(tzinfo=UTC)
         return dt.timestamp()
     except (ValueError, TypeError):
         return None

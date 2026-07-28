@@ -2,15 +2,11 @@ import logging
 
 import pytest
 
-from graflo.architecture.pipeline.runtime.actor import (
-    ActorInitContext,
-    ActorWrapper,
-    DescendActor,
-    EdgeActor,
-    TransformActor,
-    VertexActor,
+from graflo.architecture.contract.ingestion.transform import (
+    DressConfig,
+    KeySelectionConfig,
+    ProtoTransform,
 )
-from graflo.architecture.schema.edge import EdgeConfig
 from graflo.architecture.graph_types import (
     ActionContext,
     ExtractionContext,
@@ -19,17 +15,21 @@ from graflo.architecture.graph_types import (
     VertexRep,
     merge_observation_with_transform_buffer,
 )
+from graflo.architecture.pipeline.runtime.actor import (
+    ActorInitContext,
+    ActorWrapper,
+    DescendActor,
+    EdgeActor,
+    TransformActor,
+    VertexActor,
+)
 from graflo.architecture.pipeline.runtime.actor.config import (
     TransformActorConfig,
     VertexActorConfig,
     normalize_actor_step,
     validate_actor_step,
 )
-from graflo.architecture.contract.ingestion.transform import (
-    DressConfig,
-    KeySelectionConfig,
-    ProtoTransform,
-)
+from graflo.architecture.schema.edge import EdgeConfig
 from graflo.architecture.schema.vertex import VertexConfig
 
 logger = logging.getLogger(__name__)
@@ -47,7 +47,7 @@ def test_descend(resource_descend, schema_vc_openalex):
     assert isinstance(anw.actor, DescendActor)
     assert len(anw.actor.descendants) == 2
     assert isinstance(anw.actor.descendants[0].actor, DescendActor)
-    level, cname, label, edges = anw.fetch_actors(0, [])
+    _level, _cname, _label, edges = anw.fetch_actors(0, [])
     assert len(edges) == 3
 
 
@@ -152,7 +152,7 @@ def test_relation_from_key(resource_deb, data_deb, schema_vc_deb):
     acc = anw.assemble(ctx)
     relevant_keys = [
         (u, v, r)
-        for u, v, r in (k for k in acc.keys() if isinstance(k, tuple))
+        for u, v, r in (k for k in acc if isinstance(k, tuple))
         if v == "package" and u == "package"
     ]
     assert len(relevant_keys) == 4
@@ -193,7 +193,7 @@ def test_resource_deb_compact(resource_deb_compact, data_deb, schema_vc_deb):
     acc = anw.assemble(ctx)
     relevant_keys = [
         (u, v, r)
-        for u, v, r in (k for k in acc.keys() if isinstance(k, tuple))
+        for u, v, r in (k for k in acc if isinstance(k, tuple))
         if v == "package" and u == "package"
     ]
     assert len(relevant_keys) == 4
@@ -223,7 +223,7 @@ def test_relation_from_key_package_only(
     # Only relation_from_key edges (non-None relation)
     package_package_keys = [
         (u, v, r)
-        for u, v, r in (k for k in acc.keys() if isinstance(k, tuple))
+        for u, v, r in (k for k in acc if isinstance(k, tuple))
         if v == "package" and u == "package" and r is not None
     ]
     assert len(package_package_keys) == 4
@@ -235,7 +235,7 @@ def test_relation_from_key_package_only(
     }
     # No maintainer-package or other edge types
     other_keys = [
-        k for k in acc.keys() if isinstance(k, tuple) and k not in package_package_keys
+        k for k in acc if isinstance(k, tuple) and k not in package_package_keys
     ]
     assert len(other_keys) == 0
 
@@ -1116,9 +1116,7 @@ def test_multi_edges_from_row(resource_ticker, vc_ticker, ec_ticker, sample_tick
     acc = anw.assemble(ctx)
 
     assert len(acc[("ticker", "feature", None)]) == 3
-    assert (
-        len(set(w["feature@name"] for _, _, w in acc[("ticker", "feature", None)])) == 3
-    )
+    assert len({w["feature@name"] for _, _, w in acc[("ticker", "feature", None)]}) == 3
 
 
 def test_multi_edges_from_row_filtered(
@@ -1155,7 +1153,7 @@ def test_infer_edges_are_emitted_only_during_assemble(
     ctx = anw(ctx, doc=sample_ticker[0])
 
     assert isinstance(ctx, ActionContext)
-    assert all(not isinstance(k, tuple) for k in ctx.acc_global.keys())
+    assert all(not isinstance(k, tuple) for k in ctx.acc_global)
 
     acc = anw.assemble(ctx)
     assert len(acc[("ticker", "feature", None)]) == 3

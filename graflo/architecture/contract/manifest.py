@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import AliasChoices, Field as PydanticField, model_validator, ConfigDict
+from pydantic import AliasChoices, ConfigDict, model_validator
+from pydantic import Field as PydanticField
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.schema import Schema
@@ -34,12 +35,12 @@ class GraphManifest(ConfigBaseModel):
     )
 
     @classmethod
-    def from_config(cls, data: dict[str, Any]) -> "GraphManifest":
+    def from_config(cls, data: dict[str, Any]) -> GraphManifest:
         """Build a manifest from a Python mapping payload."""
         return cls.from_dict(data)
 
     @model_validator(mode="after")
-    def _validate_manifest(self) -> "GraphManifest":
+    def _validate_manifest(self) -> GraphManifest:
         if (
             self.graph_schema is None
             and self.ingestion_model is None

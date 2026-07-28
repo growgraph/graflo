@@ -8,10 +8,10 @@ import pytest
 import yaml
 from suthing import FileHandle, equals
 
+from graflo.architecture.contract.bindings import Bindings, FileConnector
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.util import cast_graph_name_to_triple
 from graflo.util.misc import sorted_dicts
-from graflo.architecture.contract.bindings import Bindings, FileConnector
 
 logger = logging.getLogger(__name__)
 
@@ -203,7 +203,7 @@ def verify(sample, current_path, mode, test_type, kind="sizes", reset=False):
                 for k, v in sample_ref.items():
                     if k not in sample_transformed or v != sample_transformed[k]:
                         logger.error(
-                            f"for {k} expected: {v} received: {sample_transformed[k] if k in sample_transformed else None}"
+                            f"for {k} expected: {v} received: {sample_transformed.get(k, None)}"
                         )
 
             elif isinstance(sample_ref, list):

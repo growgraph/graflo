@@ -1,11 +1,11 @@
-from suthing import FileHandle
-from graflo import GraphManifest
-from graflo.hq import GraphEngine
-from graflo.hq.caster import IngestionParams
-from graflo.db import TigergraphConfig
-
 import logging
 
+from suthing import FileHandle
+
+from graflo import GraphManifest
+from graflo.db import TigergraphConfig
+from graflo.hq import GraphEngine
+from graflo.hq.caster import IngestionParams
 
 # Configure logging: INFO level for graflo module, WARNING for others
 logging.basicConfig(level=logging.WARNING, handlers=[logging.StreamHandler()])

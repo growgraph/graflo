@@ -16,7 +16,6 @@ from graflo.db.nebula.util import (
 from graflo.filter.onto import FilterExpression
 from graflo.onto import ExpressionFlavor
 
-
 # ── Type mapping ─────────────────────────────────────────────────────────
 
 

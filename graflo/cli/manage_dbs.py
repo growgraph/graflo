@@ -83,7 +83,7 @@ def act_db(
     else:
         query += "--overwrite true"
 
-    flag = subprocess.run(query, shell=True)
+    flag = subprocess.run(query, shell=True, check=False)
     logger.info(f"returned {flag}")
 
 

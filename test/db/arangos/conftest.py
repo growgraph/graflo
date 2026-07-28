@@ -1,10 +1,7 @@
-from test.conftest import ingest_atomic, verify
-
 import pytest
 
-from graflo.db import ConnectionManager
-from graflo.db import ArangoConfig
-from test.conftest import fetch_schema_obj
+from graflo.db import ArangoConfig, ConnectionManager
+from test.conftest import fetch_schema_obj, ingest_atomic, verify
 
 
 @pytest.fixture(scope="function")

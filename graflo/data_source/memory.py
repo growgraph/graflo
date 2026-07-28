@@ -4,7 +4,7 @@ This module provides data source implementations for in-memory data structures,
 including lists of dictionaries, lists of lists, and Pandas DataFrames.
 """
 
-from typing import Iterator
+from collections.abc import Iterator
 
 import pandas as pd
 
@@ -69,5 +69,4 @@ class InMemoryDataSource(AbstractDataSource):
         chunker = ChunkerFactory.create_chunker(**chunker_kwargs)
 
         # Yield batches
-        for batch in chunker:
-            yield batch
+        yield from chunker

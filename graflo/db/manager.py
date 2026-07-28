@@ -26,8 +26,7 @@ Example:
 from typing import Any, cast
 
 from graflo.db.arango.conn import ArangoConnection
-from graflo.db.connection import DBConfig, TARGET_DATABASES
-from graflo.onto import DBType
+from graflo.db.connection import TARGET_DATABASES, DBConfig
 from graflo.db.falkordb.conn import FalkordbConnection
 from graflo.db.graflo_backend.connection import GraFloBackendConnection
 from graflo.db.memgraph.conn import MemgraphConnection
@@ -35,6 +34,7 @@ from graflo.db.nebula.conn import NebulaConnection
 from graflo.db.neo4j.conn import Neo4jConnection
 from graflo.db.postgres.conn import PostgresConnection
 from graflo.db.tigergraph.conn import TigerGraphConnection
+from graflo.onto import DBType
 
 
 class ConnectionManager:

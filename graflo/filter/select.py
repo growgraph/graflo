@@ -15,9 +15,9 @@ from typing import Any, Literal, Self
 from pydantic import Field, model_validator
 
 from graflo.architecture.base import ConfigBaseModel
+from graflo.architecture.contract.bindings import JoinClause
 from graflo.filter.onto import FilterExpression
 from graflo.onto import ExpressionFlavor
-from graflo.architecture.contract.bindings import JoinClause
 
 # Unquoted SQL identifiers (column / alias) for ergonomic select items.
 _SIMPLE_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\Z")

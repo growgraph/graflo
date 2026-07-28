@@ -79,9 +79,11 @@ def test_ensure_staging_bucket_for_config_wraps_endpoint_connection_error() -> N
         endpoint_url="http://127.0.0.1:9000/graflo-staging",
         error=ConnectionRefusedError(),
     )
-    with patch(
-        "graflo.object_storage.s3_client.boto3_s3_client_from_minio",
-        return_value=mock_client,
+    with (
+        patch(
+            "graflo.object_storage.s3_client.boto3_s3_client_from_minio",
+            return_value=mock_client,
+        ),
+        pytest.raises(RuntimeError, match="Cannot connect to"),
     ):
-        with pytest.raises(RuntimeError, match="Cannot connect to"):
-            ensure_staging_bucket_for_config(cfg)
+        ensure_staging_bucket_for_config(cfg)

@@ -1,13 +1,13 @@
 import pytest
 import yaml
 
+from graflo import VertexConfig
 from graflo.filter.onto import (
     ComparisonOperator,
     FilterExpression,
     LogicalOperator,
 )
 from graflo.onto import ExpressionFlavor
-from graflo import VertexConfig
 
 
 @pytest.fixture()

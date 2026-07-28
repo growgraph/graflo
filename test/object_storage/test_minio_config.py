@@ -12,18 +12,7 @@ from graflo.object_storage import MinioConfig
 def test_from_docker_env_parses_minio_env(tmp_path: Path) -> None:
     env_path = tmp_path / ".env"
     env_path.write_text(
-        "\n".join(
-            [
-                "MINIO_HOSTNAME=127.0.0.1",
-                "MINIO_API_PORT=19000",
-                "MINIO_PROTOCOL=http",
-                "MINIO_ROOT_USER=testkey",
-                "MINIO_ROOT_PASSWORD=testsecret",
-                "MINIO_STAGING_BUCKET=my-bucket",
-                "AWS_REGION=us-west-2",
-                "",
-            ]
-        ),
+        "MINIO_HOSTNAME=127.0.0.1\nMINIO_API_PORT=19000\nMINIO_PROTOCOL=http\nMINIO_ROOT_USER=testkey\nMINIO_ROOT_PASSWORD=testsecret\nMINIO_STAGING_BUCKET=my-bucket\nAWS_REGION=us-west-2\n",
         encoding="utf-8",
     )
 
@@ -39,17 +28,7 @@ def test_from_docker_env_parses_minio_env(tmp_path: Path) -> None:
 def test_from_docker_env_loader_endpoint_for_tigergraph(tmp_path: Path) -> None:
     env_path = tmp_path / ".env"
     env_path.write_text(
-        "\n".join(
-            [
-                "MINIO_HOSTNAME=127.0.0.1",
-                "MINIO_API_PORT=9003",
-                "MINIO_PROTOCOL=http",
-                "MINIO_ROOT_USER=k",
-                "MINIO_ROOT_PASSWORD=s",
-                "MINIO_LOADER_ENDPOINT=http://172.17.0.1:9003",
-                "",
-            ]
-        ),
+        "MINIO_HOSTNAME=127.0.0.1\nMINIO_API_PORT=9003\nMINIO_PROTOCOL=http\nMINIO_ROOT_USER=k\nMINIO_ROOT_PASSWORD=s\nMINIO_LOADER_ENDPOINT=http://172.17.0.1:9003\n",
         encoding="utf-8",
     )
     cfg = MinioConfig.from_docker_env(docker_dir=tmp_path)

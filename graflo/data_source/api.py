@@ -8,17 +8,18 @@ from contract fields plus runtime credentials from a connection provider.
 from __future__ import annotations
 
 import logging
-from typing import Any, Iterator
+from collections.abc import Iterator
+from typing import Any
 
 import requests
+from pydantic import Field
 from requests.adapters import HTTPAdapter
 from requests.auth import HTTPBasicAuth, HTTPDigestAuth
 from urllib3.util.retry import Retry
 
-from pydantic import Field
-
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.contract.bindings import PaginationConfig
+from graflo.connection_models import ApiAuth
 from graflo.data_source.api_response import (
     ResolvedApiResponse,
     detect_carry_params,
@@ -30,7 +31,6 @@ from graflo.data_source.api_response import (
     update_carried_params,
 )
 from graflo.data_source.base import AbstractDataSource, DataSourceType
-from graflo.connection_models import ApiAuth
 
 logger = logging.getLogger(__name__)
 

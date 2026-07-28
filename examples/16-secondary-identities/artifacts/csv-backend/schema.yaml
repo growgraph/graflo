@@ -1,0 +1,76 @@
+metadata:
+    name: secondary-identities-demo
+    version: 1.0.0
+core_schema:
+    vertex_config:
+        vertices:
+        -   name: instrument
+            properties:
+            -   name: sid
+                type: STRING
+            -   name: isin
+                type: STRING
+            -   name: name
+                type: STRING
+            identity:
+            -   sid
+            filters: []
+            blank: false
+            assigned: false
+            hash_identity_properties: []
+            secondary_identities:
+            -   name: by_isin
+                fields:
+                -   isin
+        -   name: issuer
+            properties:
+            -   name: iid
+                type: STRING
+            -   name: lei
+                type: STRING
+            -   name: name
+                type: STRING
+            identity:
+            -   iid
+            filters: []
+            blank: false
+            assigned: false
+            hash_identity_properties: []
+            secondary_identities:
+            -   name: by_lei
+                fields:
+                -   lei
+        force_types: {}
+        identity_from_all_properties: true
+    edge_config:
+        edges:
+        -   source: instrument
+            target: issuer
+            relation: issued_by
+            directed: true
+            identities: []
+            properties:
+            -   name: share
+                type: FLOAT
+            type: direct
+db_profile:
+    db_flavor: graflo_backend
+    vertex_storage_names: {}
+    vertex_indexes:
+        instrument:
+        -   fields:
+            -   isin
+            unique: false
+            type: persistent
+            deduplicate: true
+            sparse: false
+            exclude_edge_endpoints: false
+        issuer:
+        -   fields:
+            -   lei
+            unique: false
+            type: persistent
+            deduplicate: true
+            sparse: false
+            exclude_edge_endpoints: false
+    edge_specs: []

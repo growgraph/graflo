@@ -12,15 +12,14 @@ from __future__ import annotations
 from pathlib import Path
 
 import click
-
-from graflo import DBType, GraphEngine
-
 from _common import (
     DEFAULT_NEO4J_BACKEND_DIR,
     add_migration_limits_options,
     backend_config,
     neo4j_config,
 )
+
+from graflo import DBType, GraphEngine
 
 
 @click.command()

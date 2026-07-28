@@ -183,10 +183,12 @@ def json_serializer(obj):
     serialized = serialize_value(obj)
     # If serialize_value didn't change the object, it's not a type we handle
     # Check if it's a type that json.dumps can't handle by default
-    if serialized is obj and not isinstance(obj, (str, int, float, bool, type(None))):
-        # Check if it's a container type that json can handle
-        if not isinstance(obj, (list, dict)):
-            raise TypeError(f"Type {type(obj)} not serializable")
+    if (
+        serialized is obj
+        and not isinstance(obj, (str, int, float, bool, type(None)))
+        and not isinstance(obj, (list, dict))
+    ):
+        raise TypeError(f"Type {type(obj)} not serializable")
     return serialized
 
 

@@ -58,7 +58,7 @@ def substitute_for_graph_header(content: str, graph_name: str) -> tuple[str, lis
         previous_names.append(previous)
         return f"{match.group(1)} FOR GRAPH {graph_name} {match.group(3)}"
 
-    updated, count = _FOR_GRAPH_HEADER_RE.subn(_replacer, content)
+    updated, _count = _FOR_GRAPH_HEADER_RE.subn(_replacer, content)
     return updated, previous_names
 
 

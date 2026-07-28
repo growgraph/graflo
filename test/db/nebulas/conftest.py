@@ -17,10 +17,8 @@ import uuid
 import pytest
 
 from graflo.architecture.schema import Schema
-from graflo.db import ConnectionManager
+from graflo.db import ConnectionManager, NebulaConfig
 from graflo.db.conn import Connection
-from graflo.db import NebulaConfig
-
 
 MINI_SCHEMA_DICT = {
     "metadata": {"name": "test_graflo", "version": "1.0.0"},

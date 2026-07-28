@@ -8,8 +8,8 @@ from __future__ import annotations
 from typing import Any
 
 from .ops import (
-    AddInverseEdgesOp,
     AddEdgePropertiesOp,
+    AddInverseEdgesOp,
     AddVertexPropertiesOp,
     ComposeManifestsOp,
     EdgeSelector,
@@ -80,16 +80,16 @@ __all__ = [
     "RenameVerticesOp",
     "SanitizeOp",
     "VertexEquivalence",
-    "apply_evolution",
     "apply_add_edge_properties",
     "apply_add_inverse_edges",
     "apply_add_vertex_properties",
+    "apply_evolution",
     "apply_merge_edges",
     "apply_merge_vertices",
     "apply_project_manifest",
+    "apply_remove_edge_ids",
     "apply_remove_edge_properties",
     "apply_remove_edges",
-    "apply_remove_edge_ids",
     "apply_remove_vertex_properties",
     "apply_remove_vertices",
     "apply_rename_edge_properties",

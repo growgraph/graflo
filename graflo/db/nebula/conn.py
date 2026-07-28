@@ -9,9 +9,9 @@ from __future__ import annotations
 import logging
 from typing import Any, ClassVar
 
-from graflo.architecture.schema.edge import Edge
 from graflo.architecture.graph_types import Index
 from graflo.architecture.schema import Schema
+from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import FieldType, VertexConfig
 from graflo.db.conn import (
     Connection,

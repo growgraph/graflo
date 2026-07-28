@@ -1,8 +1,8 @@
+import logging
 from pathlib import Path
 
 from graflo.db import PostgresConnection
 from graflo.db.connection import PostgresConfig
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -65,24 +65,26 @@ def load_schema_from_sql_file(
         return
 
     # Execute statements using a connection context manager
-    with PostgresConnection(config) as conn:
-        with conn.conn.cursor() as cursor:
-            for statement in statements:
-                if statement:
-                    try:
-                        cursor.execute(statement)
-                    except Exception as exec_error:
-                        if continue_on_error:
-                            # Some statements might fail (like DROP TABLE IF EXISTS when tables don't exist)
-                            # or duplicate constraints - log but continue
-                            logger.debug(f"Statement execution note: {exec_error}")
-                        else:
-                            logger.error(
-                                f"Failed to execute statement: {statement[:100]}... Error: {exec_error}"
-                            )
-                            raise
+    with (
+        PostgresConnection(config) as conn,
+        conn.conn.cursor() as cursor,
+    ):
+        for statement in statements:
+            if statement:
+                try:
+                    cursor.execute(statement)
+                except Exception as exec_error:
+                    if continue_on_error:
+                        # Some statements might fail (like DROP TABLE IF EXISTS when tables don't exist)
+                        # or duplicate constraints - log but continue
+                        logger.debug(f"Statement execution note: {exec_error}")
+                    else:
+                        logger.error(
+                            f"Failed to execute statement: {statement[:100]}... Error: {exec_error}"
+                        )
+                        raise
 
-            conn.conn.commit()
+        conn.conn.commit()
 
     logger.info(
         f"Successfully loaded schema from {schema_path} ({len(statements)} statements)"

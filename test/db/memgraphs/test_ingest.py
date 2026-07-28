@@ -6,9 +6,8 @@ including fetch operations, filtering, limiting, projections, and aggregations.
 
 import pytest
 
-from test.conftest import fetch_schema_obj, ingest_atomic
-
 from graflo.db import ConnectionManager
+from test.conftest import fetch_schema_obj, ingest_atomic
 
 
 @pytest.fixture(scope="function")

@@ -11,15 +11,14 @@ from __future__ import annotations
 from pathlib import Path
 
 import click
-
-from graflo import DBType, GraphEngine
-
 from _common import (
     add_migration_limits_options,
     arango_config,
     postgres_config,
     resolve_source_backend,
 )
+
+from graflo import DBType, GraphEngine
 
 
 @click.group()

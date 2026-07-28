@@ -8,11 +8,11 @@ from graflo.architecture.contract.bindings import Bindings
 from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.database_features import DatabaseProfile
+from graflo.architecture.graph_types import EdgeId
 from graflo.architecture.schema.core import CoreSchema
 from graflo.architecture.schema.document import Schema
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import Vertex, VertexConfig
-from graflo.architecture.graph_types import EdgeId
 
 from .apply import (
     _bump_schema_version,
@@ -427,10 +427,14 @@ def _union_ingestion(
 
     resources = list(left.resources) + list(right.resources)
     transforms = _union_transforms(left, right)
+    # Model-level write policies follow the left manifest, as composition treats
+    # it as the base being extended.
     edges_on_duplicate = left.edges_on_duplicate
+    endpoints_on_ambiguous = left.endpoints_on_ambiguous
     return IngestionModel.model_validate(
         {
             "edges_on_duplicate": edges_on_duplicate,
+            "endpoints_on_ambiguous": endpoints_on_ambiguous,
             "resources": [r.to_dict(skip_defaults=False) for r in resources],
             "transforms": [t.to_dict(skip_defaults=False) for t in transforms],
         }

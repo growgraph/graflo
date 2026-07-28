@@ -27,10 +27,10 @@ from .column_time_filter import ColumnTimeFilter
 _BASE_TABLE_ALIAS_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\Z")
 
 if TYPE_CHECKING:
-    from graflo.db import PostgresConfig
+    from graflo.connection_models import ApiAuth, KafkaConnConfig
     from graflo.data_source.api import APIConfig
     from graflo.data_source.kafka import KafkaConfig
-    from graflo.connection_models import ApiAuth, KafkaConnConfig
+    from graflo.db import PostgresConfig
     from graflo.filter.onto import FilterExpression
 else:
     try:
@@ -150,12 +150,10 @@ class ResourceConnector(ConfigBaseModel, abc.ABC):
         Returns:
             bool: True if connector matches
         """
-        pass
 
     @abc.abstractmethod
     def bound_source_kind(self) -> BoundSourceKind:
         """Return the physical source kind for this connector."""
-        pass
 
 
 class FileConnector(ResourceConnector):
@@ -775,10 +773,10 @@ class APIConnector(ResourceConnector):
         self,
         *,
         base_url: str,
-        auth: "ApiAuth | None" = None,
+        auth: ApiAuth | None = None,
         default_headers: dict[str, str] | None = None,
         page_size_override: int | None = None,
-    ) -> "APIConfig":
+    ) -> APIConfig:
         """Merge contract fields with runtime connection config into ``APIConfig``."""
         from graflo.data_source.api import APIConfig
 
@@ -874,8 +872,8 @@ class KafkaConnector(ResourceConnector):
     def build_kafka_config(
         self,
         *,
-        conn: "KafkaConnConfig",
-    ) -> "KafkaConfig":
+        conn: KafkaConnConfig,
+    ) -> KafkaConfig:
         """Merge contract fields with runtime connection config into ``KafkaConfig``."""
         from graflo.data_source.kafka import KafkaConfig
 

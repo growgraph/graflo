@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import Any, cast
 
 import pandas as pd
-
 from suthing import Timer
 
 from graflo.architecture.contract.bindings import Bindings
@@ -87,13 +86,15 @@ class Caster:
                 await sink.write_failures(failures)
 
             self._doc_cast_error_total += len(failures)
-            if params.max_doc_errors is not None:
-                if self._doc_cast_error_total > params.max_doc_errors:
-                    raise DocErrorBudgetExceeded(
-                        total_failures=self._doc_cast_error_total,
-                        limit=params.max_doc_errors,
-                        doc_error_sink_path=params.doc_error_sink_path,
-                    )
+            if (
+                params.max_doc_errors is not None
+                and self._doc_cast_error_total > params.max_doc_errors
+            ):
+                raise DocErrorBudgetExceeded(
+                    total_failures=self._doc_cast_error_total,
+                    limit=params.max_doc_errors,
+                    doc_error_sink_path=params.doc_error_sink_path,
+                )
 
         if not self._failure_sinks:
             for fail in failures:
@@ -320,7 +321,7 @@ class Caster:
         self._connection_provider = connection_provider or EmptyConnectionProvider()
         try:
             tasks: list[AbstractDataSource] = []
-            for resource_name in self.ingestion_model._resources.keys():
+            for resource_name in self.ingestion_model._resources:
                 if (
                     allowed_resource_names is not None
                     and resource_name not in allowed_resource_names

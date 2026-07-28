@@ -13,9 +13,6 @@ import tempfile
 
 import pytest
 
-from graflo.filter.onto import ComparisonOperator, FilterExpression, LogicalOperator
-from graflo.filter.select import SelectSpec
-from graflo.onto import ExpressionFlavor
 from graflo.architecture.contract.bindings import (
     Bindings,
     ColumnTimeFilter,
@@ -23,7 +20,9 @@ from graflo.architecture.contract.bindings import (
     TableConnector,
 )
 from graflo.data_source.sql import SQLConfig, SQLDataSource
-
+from graflo.filter.onto import ComparisonOperator, FilterExpression, LogicalOperator
+from graflo.filter.select import SelectSpec
+from graflo.onto import ExpressionFlavor
 
 # ---------------------------------------------------------------
 # Phase 1: IS_NULL / IS_NOT_NULL operators

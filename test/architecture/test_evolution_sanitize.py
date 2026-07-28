@@ -14,7 +14,7 @@ from graflo.architecture.schema.core import CoreSchema
 from graflo.architecture.schema.document import Schema
 from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.schema.metadata import GraphMetadata
-from graflo.architecture.schema.vertex import Field, Vertex, VertexConfig, FieldType
+from graflo.architecture.schema.vertex import Field, FieldType, Vertex, VertexConfig
 from graflo.hq.sanitizer import Sanitizer
 from graflo.onto import DBType
 

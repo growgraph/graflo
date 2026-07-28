@@ -7,7 +7,8 @@ import re
 from typing import TYPE_CHECKING
 
 import yaml
-from pydantic import AliasChoices, Field as PydanticField, model_validator
+from pydantic import AliasChoices, model_validator
+from pydantic import Field as PydanticField
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.database_features import DatabaseProfile
@@ -45,7 +46,12 @@ class Schema(ConfigBaseModel):
         return self
 
     def finish_init(self) -> None:
+        from .db_aware import compile_secondary_identity_indexes
+
         self.core_schema.finish_init()
+        compile_secondary_identity_indexes(
+            self.core_schema.vertex_config, self.db_profile
+        )
         self.db_profile.validate_against_schema(self.core_schema.edge_config)
 
     def remove_disconnected_vertices(self) -> set[str]:
@@ -66,6 +72,7 @@ class Schema(ConfigBaseModel):
         edge_db = EdgeConfigDBAware(
             self.core_schema.edge_config, vertex_db, self.db_profile
         )
+        vertex_db.compile_secondary_identity_indexes()
         edge_db.compile_identity_indexes()
         return SchemaDBAware(
             vertex_config=vertex_db,

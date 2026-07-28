@@ -5,17 +5,18 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Literal
 
-from .base import ActorInitContext, VertexProducingActor
-from .config import (
-    VertexActorConfig,
-    VertexRouterActorConfig,
-)
 from graflo.architecture.graph_types import (
     ExtractionContext,
     LocationIndex,
     merge_observation_with_transform_buffer,
 )
 from graflo.architecture.schema.vertex import VertexConfig, VertexName
+
+from .base import ActorInitContext, VertexProducingActor
+from .config import (
+    VertexActorConfig,
+    VertexRouterActorConfig,
+)
 
 if TYPE_CHECKING:
     from .wrapper import ActorWrapper
@@ -75,7 +76,7 @@ class VertexRouterActor(VertexProducingActor):
         self._init_ctx = init_ctx
         self._vertex_actors.clear()
 
-    def _get_or_create_wrapper(self, vertex_type: str) -> "ActorWrapper | None":
+    def _get_or_create_wrapper(self, vertex_type: str) -> ActorWrapper | None:
         from .wrapper import ActorWrapper
 
         if vertex_type not in self.vertex_config.vertex_set:

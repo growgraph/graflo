@@ -1,10 +1,10 @@
 import logging
 from pathlib import Path
 
-from graflo.architecture.pipeline.runtime.actor import ActorInitContext, ActorWrapper
-from graflo.architecture.schema.edge import EdgeConfig
-from graflo.architecture.schema.db_aware import WeightConfig
 from graflo.architecture.graph_types import ActionContext
+from graflo.architecture.pipeline.runtime.actor import ActorInitContext, ActorWrapper
+from graflo.architecture.schema.db_aware import WeightConfig
+from graflo.architecture.schema.edge import EdgeConfig
 from graflo.architecture.schema.vertex import Field, FieldType
 
 logger = logging.getLogger(__name__)
@@ -49,7 +49,7 @@ def test_kg_mention(resource_kg_menton_triple, vertex_config_kg_mention, mention
     )
     ctx = anw(ctx, doc=[mention_data])
     acc = anw.assemble(ctx)
-    roles = set(item[-1]["_role"] for item in acc[("mention", "mention", None)])
+    roles = {item[-1]["_role"] for item in acc[("mention", "mention", None)]}
     assert roles == {"relation", "target", "source"}
 
 

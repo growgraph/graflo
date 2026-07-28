@@ -176,13 +176,9 @@ class FuzzyMatcher:
 
         for vertex_lower, vertex_name in self._vertex_lower_map.items():
             # Check prefix match
-            if fragment_lower.startswith(vertex_lower):
-                score = len(vertex_lower) / len(fragment_lower)
-                if score > best_score:
-                    best_score = score
-                    best_match = vertex_name
-            # Check suffix match
-            elif fragment_lower.endswith(vertex_lower):
+            if fragment_lower.startswith(vertex_lower) or fragment_lower.endswith(
+                vertex_lower
+            ):
                 score = len(vertex_lower) / len(fragment_lower)
                 if score > best_score:
                     best_score = score

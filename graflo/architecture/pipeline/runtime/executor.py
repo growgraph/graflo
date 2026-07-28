@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from .actor import ActorWrapper
 from graflo.architecture.graph_types import (
     AssemblyContext,
     ExtractionContext,
     GraphAssemblyResult,
     GraphEntity,
 )
+
+from .actor import ActorWrapper
 
 
 class ActorExecutor:

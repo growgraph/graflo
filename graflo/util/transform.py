@@ -345,7 +345,7 @@ def parse_multi_item(s, mapper: dict, direct: list):
     r: defaultdict[str, list] = defaultdict(list)
     for item in items_str:
         doc0 = [ss.strip().split(":") for ss in item.split(",")]
-        if all([len(x) == 2 for x in doc0]):
+        if all(len(x) == 2 for x in doc0):
             doc0_dict = dict(doc0)
             for n_init, n_final in mapper.items():
                 try:

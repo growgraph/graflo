@@ -15,9 +15,12 @@ SPARQLWrapper = pytest.importorskip(
     "SPARQLWrapper", reason="SPARQLWrapper not installed"
 )
 
-import requests  # noqa: E402
+import requests
 
-from graflo.data_source.rdf import SparqlEndpointDataSource, SparqlSourceConfig  # noqa: E402
+from graflo.data_source.rdf import (
+    SparqlEndpointDataSource,
+    SparqlSourceConfig,
+)
 
 DATA_DIR = Path(__file__).parent / "data"
 SAMPLE_DATA = DATA_DIR / "sample_data.ttl"

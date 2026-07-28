@@ -64,7 +64,7 @@ def ensure_assigned_uuids_in_acc_vertex(
             continue
         identity_fields = vertex_config.identity_fields(vname)
         preferred = identity_fields[0] if identity_fields else "id"
-        for _lindex, reps in by_loc.items():
+        for reps in by_loc.values():
             for rep in reps:
                 doc = rep.vertex if hasattr(rep, "vertex") else rep
                 if isinstance(doc, dict):

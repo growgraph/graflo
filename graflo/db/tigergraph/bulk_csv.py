@@ -126,7 +126,7 @@ class BulkCsvAppender:
             path.parent.mkdir(parents=True, exist_ok=True)
             self._manifest.setdefault(key, path)
             write_header = not path.exists() or path.stat().st_size == 0
-            fh = open(path, "a", encoding="utf-8", newline="")
+            fh = open(path, "a", encoding="utf-8", newline="")  # noqa: SIM115
             self._open_files[key] = fh
             writer = csv.writer(fh, **self._csv_params())
             self._writers[key] = writer

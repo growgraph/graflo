@@ -16,7 +16,6 @@ from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.schema.metadata import GraphMetadata
 from graflo.architecture.schema.vertex import Field, Vertex, VertexConfig
 from graflo.migrate.io import manifest_hash
-
 from test.architecture.test_manifest_rename import _sample_manifest_payload
 
 

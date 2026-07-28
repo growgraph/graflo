@@ -1,8 +1,8 @@
 """Tests for ingestion datetime range params and SQL WHERE building."""
 
+from graflo.architecture.contract.bindings import ColumnTimeFilter, TableConnector
 from graflo.filter.sql import datetime_range_where_sql
 from graflo.hq.caster import IngestionParams
-from graflo.architecture.contract.bindings import ColumnTimeFilter, TableConnector
 
 
 def test_ingestion_params_datetime_defaults():

@@ -95,9 +95,7 @@ def infer_column_type_cost(values: list[Any]) -> float | None:
             costs.append(1.0)
         elif isinstance(value, datetime):
             costs.append(0.5)
-        elif isinstance(value, bytes):
-            return None
-        elif isinstance(value, list):
+        elif isinstance(value, (bytes, list)):
             return None
         elif isinstance(value, str):
             if _UUID_PATTERN.match(value):

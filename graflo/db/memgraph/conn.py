@@ -83,9 +83,9 @@ from urllib.parse import urlparse
 
 import mgclient
 
-from graflo.architecture.schema.edge import Edge
 from graflo.architecture.graph_types import Index
 from graflo.architecture.schema import Schema
+from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig
 from graflo.db.conn import (
     Connection,
@@ -95,9 +95,7 @@ from graflo.db.conn import (
 from graflo.db.cypher import rel_merge_props_map_from_row_props
 from graflo.db.field_type_support import assert_schema_field_types_supported
 from graflo.filter.onto import FilterExpression
-from graflo.onto import AggregationType
-from graflo.onto import DBType
-
+from graflo.onto import AggregationType, DBType
 
 from ..connection.onto import MemgraphConfig
 
@@ -346,13 +344,9 @@ class MemgraphConnection(Connection):
         bool
             True if value is valid for storage
         """
-        if isinstance(value, float):
-            if math.isnan(value) or math.isinf(value):
-                return False
-        if isinstance(value, str):
-            if "\x00" in value:
-                return False
-        return True
+        if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+            return False
+        return not (isinstance(value, str) and "\x00" in value)
 
     @staticmethod
     def _is_valid_property_key(key: Any) -> bool:
@@ -628,6 +622,9 @@ class MemgraphConnection(Connection):
                 self.delete_graph_structure(delete_all=True)
             except Exception as e:
                 logger.warning("Error clearing data on recreate: %s", e)
+        # Labels are implicit, but indexes are not: identity and secondary
+        # identity lookups need them declared, as on the other Cypher backends.
+        self.define_indexes(schema)
 
     def init_db(
         self,
@@ -1062,11 +1059,11 @@ class MemgraphConnection(Connection):
             # If return_keys specified, try to return those fields
             return_fields = []
             for key in return_keys:
-                if key.startswith("from_") or key.startswith("source_"):
+                if key.startswith(("from_", "source_")):
                     return_fields.append(
                         f"s.{key.replace('from_', '').replace('source_', '')} AS {key}"
                     )
-                elif key.startswith("to_") or key.startswith("target_"):
+                elif key.startswith(("to_", "target_")):
                     return_fields.append(
                         f"t.{key.replace('to_', '').replace('target_', '')} AS {key}"
                     )

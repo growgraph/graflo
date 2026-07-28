@@ -32,7 +32,7 @@ def extract_id(
     if not doc:
         return None
 
-    if "_key" in doc and doc["_key"]:
+    if doc.get("_key"):
         return str(doc["_key"])
 
     if len(match_keys) > 1:

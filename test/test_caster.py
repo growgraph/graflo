@@ -3,7 +3,6 @@ import logging
 import os
 import pathlib
 from os.path import dirname, realpath
-from test.conftest import fetch_manifest_obj, verify
 
 import pytest
 from suthing import FileHandle
@@ -11,6 +10,7 @@ from suthing import FileHandle
 from graflo.architecture.pipeline.runtime.actor import ActorWrapper
 from graflo.hq.caster import Caster
 from graflo.hq.ingestion_parameters import IngestionParams
+from test.conftest import fetch_manifest_obj, verify
 
 logger = logging.getLogger(__name__)
 

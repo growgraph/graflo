@@ -3,7 +3,7 @@ import logging
 import os
 import warnings
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Literal, Type, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, Self, TypeVar, cast
 from urllib.parse import urlparse
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
@@ -157,7 +157,6 @@ class DBConfig(BaseSettings, abc.ABC):
     @abc.abstractmethod
     def _get_default_port(self) -> int:
         """Get the default port for this db type."""
-        pass
 
     @abc.abstractmethod
     def _get_effective_database(self) -> str | None:
@@ -169,7 +168,6 @@ class DBConfig(BaseSettings, abc.ABC):
         Returns:
             Database name or None
         """
-        pass
 
     @abc.abstractmethod
     def _get_effective_schema(self) -> str | None:
@@ -181,7 +179,6 @@ class DBConfig(BaseSettings, abc.ABC):
         Returns:
             Schema/graph name or None
         """
-        pass
 
     @property
     def effective_database(self) -> str | None:
@@ -425,7 +422,7 @@ class DBConfig(BaseSettings, abc.ABC):
         return self.connection_type in TARGET_DATABASES
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "DBConfig":
+    def from_dict(cls, data: dict[str, Any]) -> "DBConfig":
         """Create a connection config from a dictionary."""
         if not isinstance(data, dict):
             raise TypeError(f"Expected dict, got {type(data)}")
@@ -494,12 +491,12 @@ class DBConfig(BaseSettings, abc.ABC):
 
     @classmethod
     def from_env(
-        cls: Type[T],
+        cls,
         *,
         prefix: str | None = None,
         profile: str | None = None,
         suffix: str | None = None,
-    ) -> T:
+    ) -> Self:
         """Load config from environment variables using Pydantic BaseSettings.
 
         Supports qualifiers for multiple configs from the same env:
@@ -543,7 +540,7 @@ class DBConfig(BaseSettings, abc.ABC):
 
         if suffix:
             # Pydantic doesn't support env_suffix; read suffixed vars manually.
-            data: Dict[str, Any] = {}
+            data: dict[str, Any] = {}
             suf = suffix if case_sensitive else suffix.upper()
             for name in cls.model_fields:
                 env_name = f"{base_prefix}{name.upper()}_{suf}"
@@ -570,7 +567,7 @@ class DBConfig(BaseSettings, abc.ABC):
         temp_class = type(
             f"{cls.__name__}WithPrefix", (cls,), {"model_config": model_config}
         )
-        return cast(T, temp_class())
+        return cast(Self, temp_class())
 
 
 class ArangoConfig(DBConfig):
@@ -623,7 +620,7 @@ class ArangoConfig(DBConfig):
             raise FileNotFoundError(f"Environment file not found: {env_file}")
 
         # Load .env file manually with simple variable expansion
-        env_vars: Dict[str, str] = {}
+        env_vars: dict[str, str] = {}
         with open(env_file, "r") as f:
             for line in f:
                 line = line.strip()
@@ -647,7 +644,7 @@ class ArangoConfig(DBConfig):
                     env_vars[key] = value.replace(var_ref, var_value)
 
         # Map environment variables to config
-        config_data: Dict[str, Any] = {}
+        config_data: dict[str, Any] = {}
 
         # URI construction
         if "ARANGO_URI" in env_vars:
@@ -662,10 +659,7 @@ class ArangoConfig(DBConfig):
             config_data["uri"] = "http://localhost:8529"
 
         # Username (defaults to root for ArangoDB)
-        if "ARANGO_USERNAME" in env_vars:
-            config_data["username"] = env_vars["ARANGO_USERNAME"]
-        else:
-            config_data["username"] = "root"
+        config_data["username"] = env_vars.get("ARANGO_USERNAME", "root")
 
         # Password: ARANGO_ROOT_PASSWORD (docker standard) > ARANGO_PASSWORD (fallback)
         if "ARANGO_ROOT_PASSWORD" in env_vars:
@@ -726,7 +720,7 @@ class Neo4jConfig(DBConfig):
             raise FileNotFoundError(f"Environment file not found: {env_file}")
 
         # Load .env file manually
-        env_vars: Dict[str, str] = {}
+        env_vars: dict[str, str] = {}
         with open(env_file, "r") as f:
             for line in f:
                 line = line.strip()
@@ -735,7 +729,7 @@ class Neo4jConfig(DBConfig):
                     env_vars[key.strip()] = value.strip().strip('"').strip("'")
 
         # Map environment variables to config
-        config_data: Dict[str, Any] = {}
+        config_data: dict[str, Any] = {}
         # Neo4j typically uses bolt protocol
         if "NEO4J_BOLT_PORT" in env_vars:
             port = env_vars["NEO4J_BOLT_PORT"]
@@ -893,7 +887,7 @@ class TigergraphConfig(DBConfig):
             raise FileNotFoundError(f"Environment file not found: {env_file}")
 
         # Load .env file manually
-        env_vars: Dict[str, str] = {}
+        env_vars: dict[str, str] = {}
         with open(env_file, "r") as f:
             for line in f:
                 line = line.strip()
@@ -902,7 +896,7 @@ class TigergraphConfig(DBConfig):
                     env_vars[key.strip()] = value.strip().strip('"').strip("'")
 
         # Map environment variables to config
-        config_data: Dict[str, Any] = {}
+        config_data: dict[str, Any] = {}
 
         # For TigerGraph 4+, use GSQL port (TG_WEB) for both REST++ and GSQL
         # TG_REST (port 9000) is internal-only in TG 4.1+
@@ -930,10 +924,7 @@ class TigergraphConfig(DBConfig):
         config_data["uri"] = f"{protocol}://{hostname}:{port}"
 
         # Set default username if not provided
-        if "TIGERGRAPH_USERNAME" in env_vars:
-            config_data["username"] = env_vars["TIGERGRAPH_USERNAME"]
-        else:
-            config_data["username"] = "tigergraph"  # Default username
+        config_data["username"] = env_vars.get("TIGERGRAPH_USERNAME", "tigergraph")
 
         # Set password from env vars or use default
         if "TIGERGRAPH_PASSWORD" in env_vars or "GSQL_PASSWORD" in env_vars:
@@ -1008,7 +999,7 @@ class FalkordbConfig(DBConfig):
             raise FileNotFoundError(f"Environment file not found: {env_file}")
 
         # Load .env file manually
-        env_vars: Dict[str, str] = {}
+        env_vars: dict[str, str] = {}
         with open(env_file, "r") as f:
             for line in f:
                 line = line.strip()
@@ -1017,7 +1008,7 @@ class FalkordbConfig(DBConfig):
                     env_vars[key.strip()] = value.strip().strip('"').strip("'")
 
         # Map environment variables to config
-        config_data: Dict[str, Any] = {}
+        config_data: dict[str, Any] = {}
 
         # URI construction (FalkorDB uses redis:// protocol)
         if "FALKORDB_URI" in env_vars:
@@ -1028,7 +1019,7 @@ class FalkordbConfig(DBConfig):
             config_data["uri"] = f"redis://{hostname}:{port}"
 
         # Password (Redis AUTH)
-        if "FALKORDB_PASSWORD" in env_vars and env_vars["FALKORDB_PASSWORD"]:
+        if env_vars.get("FALKORDB_PASSWORD"):
             config_data["password"] = env_vars["FALKORDB_PASSWORD"]
 
         # Graph name (database in unified model)
@@ -1088,7 +1079,7 @@ class MemgraphConfig(DBConfig):
             raise FileNotFoundError(f"Environment file not found: {env_file}")
 
         # Load .env file manually
-        env_vars: Dict[str, str] = {}
+        env_vars: dict[str, str] = {}
         with open(env_file, "r") as f:
             for line in f:
                 line = line.strip()
@@ -1097,7 +1088,7 @@ class MemgraphConfig(DBConfig):
                     env_vars[key.strip()] = value.strip().strip('"').strip("'")
 
         # Map environment variables to config
-        config_data: Dict[str, Any] = {}
+        config_data: dict[str, Any] = {}
 
         # URI construction (Memgraph uses bolt:// protocol)
         if "MEMGRAPH_URI" in env_vars:
@@ -1108,9 +1099,9 @@ class MemgraphConfig(DBConfig):
             config_data["uri"] = f"bolt://{hostname}:{port}"
 
         # Authentication
-        if "MEMGRAPH_USER" in env_vars and env_vars["MEMGRAPH_USER"]:
+        if env_vars.get("MEMGRAPH_USER"):
             config_data["username"] = env_vars["MEMGRAPH_USER"]
-        if "MEMGRAPH_PASSWORD" in env_vars and env_vars["MEMGRAPH_PASSWORD"]:
+        if env_vars.get("MEMGRAPH_PASSWORD"):
             config_data["password"] = env_vars["MEMGRAPH_PASSWORD"]
 
         # Database name
@@ -1191,7 +1182,7 @@ class NebulaConfig(DBConfig):
         if not env_file.exists():
             raise FileNotFoundError(f"Environment file not found: {env_file}")
 
-        env_vars: Dict[str, str] = {}
+        env_vars: dict[str, str] = {}
         with open(env_file, "r") as f:
             for line in f:
                 line = line.strip()
@@ -1199,7 +1190,7 @@ class NebulaConfig(DBConfig):
                     key, value = line.split("=", 1)
                     env_vars[key.strip()] = value.strip().strip('"').strip("'")
 
-        config_data: Dict[str, Any] = {}
+        config_data: dict[str, Any] = {}
         if "NEBULA_URI" in env_vars:
             config_data["uri"] = env_vars["NEBULA_URI"]
         elif "NEBULA_PORT" in env_vars:
@@ -1306,7 +1297,7 @@ class PostgresConfig(DBConfig):
             raise FileNotFoundError(f"Environment file not found: {env_file}")
 
         # Load .env file manually
-        env_vars: Dict[str, str] = {}
+        env_vars: dict[str, str] = {}
         with open(env_file, "r") as f:
             for line in f:
                 line = line.strip()
@@ -1315,7 +1306,7 @@ class PostgresConfig(DBConfig):
                     env_vars[key.strip()] = value.strip().strip('"').strip("'")
 
         # Map environment variables to config
-        config_data: Dict[str, Any] = {}
+        config_data: dict[str, Any] = {}
         if "POSTGRES_URI" in env_vars:
             config_data["uri"] = env_vars["POSTGRES_URI"]
         elif "POSTGRES_PORT" in env_vars:
@@ -1436,7 +1427,7 @@ class SparqlEndpointConfig(DBConfig):
         if not env_file.exists():
             raise FileNotFoundError(f"Environment file not found: {env_file}")
 
-        env_vars: Dict[str, str] = {}
+        env_vars: dict[str, str] = {}
         with open(env_file, "r") as f:
             for line in f:
                 line = line.strip()
@@ -1444,7 +1435,7 @@ class SparqlEndpointConfig(DBConfig):
                     key, value = line.split("=", 1)
                     env_vars[key.strip()] = value.strip().strip('"').strip("'")
 
-        config_data: Dict[str, Any] = {}
+        config_data: dict[str, Any] = {}
 
         port = env_vars.get("TS_PORT", "3030")
         hostname = env_vars.get("TS_HOSTNAME", "localhost")

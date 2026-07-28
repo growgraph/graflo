@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from graflo.migrate.models import MigrationOperation, OperationType, RiskLevel
 
-
 LOW_RISK_OPS = {
     OperationType.ADD_VERTEX,
     OperationType.ADD_EDGE,

@@ -89,7 +89,7 @@ def _wait_for_kafka(bootstrap: str, timeout_s: float = 30.0) -> None:
             meta = admin.list_topics(timeout=2.0)
             if meta.brokers:
                 return
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             last_err = e
             time.sleep(0.5)
     raise RuntimeError(f"Kafka not reachable at {bootstrap}: {last_err}")
@@ -105,7 +105,7 @@ def _ensure_topic(topic: str, *, bootstrap: str) -> None:
     for fut in futures.values():
         try:
             fut.result(timeout=10)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             # Topic already exists is fine.
             if (
                 "TOPIC_ALREADY_EXISTS" not in str(e)

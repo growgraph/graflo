@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
@@ -93,6 +93,4 @@ class MigrationRecord(BaseModel):
     backend: str
     operations: list[str] = Field(default_factory=list)
     reversible: bool = True
-    applied_at: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
+    applied_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())

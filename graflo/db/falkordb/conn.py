@@ -31,9 +31,9 @@ from urllib.parse import urlparse
 from falkordb import FalkorDB
 from falkordb.graph import Graph
 
-from graflo.architecture.schema.edge import Edge
 from graflo.architecture.graph_types import Index
 from graflo.architecture.schema import Schema
+from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig
 from graflo.db.conn import (
     Connection,
@@ -45,9 +45,7 @@ from graflo.db.cypher import rel_merge_props_map_from_row_index
 from graflo.db.field_type_support import assert_schema_field_types_supported
 from graflo.db.util import serialize_value
 from graflo.filter.onto import FilterExpression
-from graflo.onto import AggregationType
-from graflo.onto import DBType
-
+from graflo.onto import AggregationType, DBType
 
 from ..connection.onto import FalkordbConfig
 
@@ -151,10 +149,9 @@ class FalkordbConnection(Connection):
         """
         import math
 
-        if isinstance(value, float):
-            if math.isnan(value) or math.isinf(value):
-                return False
-        return True
+        return not (
+            isinstance(value, float) and (math.isnan(value) or math.isinf(value))
+        )
 
     @staticmethod
     def _sanitize_string_value(value: str) -> str:
@@ -428,7 +425,6 @@ class FalkordbConnection(Connection):
         Args:
             schema: Schema containing vertex definitions
         """
-        pass
 
     def define_edge_classes(self, edges: list[Edge]):
         """Define edge classes based on schema.
@@ -438,7 +434,6 @@ class FalkordbConnection(Connection):
         Args:
             edges: List of edge configurations
         """
-        pass
 
     def delete_graph_structure(
         self,

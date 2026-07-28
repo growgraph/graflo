@@ -6,19 +6,20 @@ import logging
 import traceback
 from typing import Any
 
-from .base import Actor, ActorInitContext
-from .config import TransformActorConfig
-from graflo.architecture.graph_types import (
-    ExtractionContext,
-    LocationIndex,
-    TransformPayload,
-)
 from graflo.architecture.contract.ingestion.transform import (
     KeySelectionConfig,
     ProtoTransform,
     Transform,
     TransformException,
 )
+from graflo.architecture.graph_types import (
+    ExtractionContext,
+    LocationIndex,
+    TransformPayload,
+)
+
+from .base import Actor, ActorInitContext
+from .config import TransformActorConfig
 
 logger = logging.getLogger(__name__)
 
@@ -77,11 +78,10 @@ class TransformActor(Actor):
         }
         if inline_target is not None:
             transform_kwargs["target"] = inline_target
-        if call.use is None:
-            if call.keys is not None:
-                transform_kwargs["keys"] = KeySelectionConfig.model_validate(
-                    call.keys.model_dump()
-                )
+        if call.use is None and call.keys is not None:
+            transform_kwargs["keys"] = KeySelectionConfig.model_validate(
+                call.keys.model_dump()
+            )
         # When call.use references ingestion_model.transforms, defer strict
         # transform validation until finish_init can hydrate module/foo.
         if call.use is not None and call.module is None and call.foo is None:
@@ -119,7 +119,7 @@ class TransformActor(Actor):
     @staticmethod
     def _observation_keys(observation: Any) -> frozenset[str]:
         if isinstance(observation, dict):
-            return frozenset(str(k) for k in observation.keys())
+            return frozenset(str(k) for k in observation)
         return frozenset()
 
     def _missing_declared_keys(self, observation: Any) -> frozenset[str]:

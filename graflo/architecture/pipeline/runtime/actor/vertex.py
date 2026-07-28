@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from .base import ActorConstants, ActorInitContext, VertexProducingActor
-from .config import VertexActorConfig
 from graflo.architecture.graph_types import (
     ExtractionContext,
     LocationIndex,
@@ -16,6 +14,9 @@ from graflo.architecture.graph_types import (
 from graflo.architecture.schema.vertex import VertexConfig, VertexName
 from graflo.onto import ExpressionFlavor
 from graflo.util.merge import merge_doc_basis
+
+from .base import ActorConstants, ActorInitContext, VertexProducingActor
+from .config import VertexActorConfig
 
 
 class VertexActor(VertexProducingActor):
@@ -29,6 +30,7 @@ class VertexActor(VertexProducingActor):
         )
         self.extraction_scope: Literal["full", "mapped_only"] = config.extraction_scope
         self.role: str | None = config.role
+        self.lookup_only: bool = config.lookup_only
         self.vertex_config: VertexConfig
         self.allowed_vertex_names: set[VertexName] | None = None
 
@@ -38,7 +40,14 @@ class VertexActor(VertexProducingActor):
 
     def fetch_important_items(self) -> dict[str, Any]:
         return self._fetch_items_from_dict(
-            ("name", "from_doc", "keep_fields", "extraction_scope", "role")
+            (
+                "name",
+                "from_doc",
+                "keep_fields",
+                "extraction_scope",
+                "role",
+                "lookup_only",
+            )
         )
 
     def finish_init(self, init_ctx: ActorInitContext) -> None:
@@ -214,7 +223,7 @@ class VertexActor(VertexProducingActor):
         )
 
         for m in merged:
-            vertex_rep = VertexRep(vertex=m)
+            vertex_rep = VertexRep(vertex=m, lookup_only=self.lookup_only)
             ctx.acc_vertex[self.name][effective_lindex].append(vertex_rep)
             ctx.record_vertex_observation(
                 vertex_name=self.name,

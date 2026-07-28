@@ -29,9 +29,9 @@ from typing import Any
 from neo4j import GraphDatabase
 from neo4j.exceptions import ClientError
 
-from graflo.architecture.schema.edge import Edge
 from graflo.architecture.graph_types import Index
 from graflo.architecture.schema import Schema
+from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig
 from graflo.db.conn import (
     Connection,
@@ -50,9 +50,7 @@ from graflo.db.graph_introspection import (
     strip_internal_properties,
 )
 from graflo.filter.onto import FilterExpression
-from graflo.onto import AggregationType
-from graflo.onto import DBType
-
+from graflo.onto import AggregationType, DBType
 
 from ..connection.onto import Neo4jConfig
 
@@ -160,7 +158,7 @@ class Neo4jConnection(Connection):
                 # Don't raise - allow operation to continue with default database
                 return
             # For other errors, raise them
-            raise e
+            raise
 
     def delete_database(self, name: str):
         """Delete a Neo4j database.
@@ -342,7 +340,6 @@ class Neo4jConnection(Connection):
         Args:
             schema: Schema containing vertex definitions
         """
-        pass
 
     def define_edge_classes(self, edges: list[Edge]):
         """Define edge classes based on schema.
@@ -352,7 +349,6 @@ class Neo4jConnection(Connection):
         Args:
             edges: List of edge configurations
         """
-        pass
 
     def delete_graph_structure(
         self,

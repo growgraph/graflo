@@ -102,7 +102,9 @@ def merge_doc_basis(
         if is_vertexrep:
             if not isinstance(doc, VertexRep):
                 raise TypeError(f"expected VertexRep, got {type(doc).__name__}")
-            return VertexRep(vertex=doc.vertex.copy())
+            # Copy via the model so observation-level flags (lookup_only) are
+            # carried over rather than silently reset to their defaults.
+            return doc.model_copy(update={"vertex": doc.vertex.copy()})
         else:
             if not isinstance(doc, dict):
                 raise TypeError(f"expected dict, got {type(doc).__name__}")

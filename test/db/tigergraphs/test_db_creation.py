@@ -1,3 +1,5 @@
+from typing import Any, cast
+
 """Tests for TigerGraph database (graph) creation and deletion functionality."""
 
 import logging
@@ -165,8 +167,10 @@ def test_delete_database_scopes_query_cleanup_to_target_graph() -> None:
         executed_gsql.append(gsql)
         return {"accepted": True}
 
-    conn._drop_installed_queries_for_graph = _fake_drop_installed_queries_for_graph
-    conn._execute_gsql = _fake_execute_gsql
+    cast(
+        Any, conn
+    )._drop_installed_queries_for_graph = _fake_drop_installed_queries_for_graph
+    cast(Any, conn)._execute_gsql = _fake_execute_gsql
 
     graph_name = f"g_query_scope_a_{uuid.uuid4().hex[:8]}"
     conn.delete_database(graph_name)
@@ -224,8 +228,8 @@ def test_drop_global_schema_types_skips_types_in_surviving_graph() -> None:
     def fake_get_graph_types(_graph: str) -> tuple[set[str], set[str]]:
         return ({"SharedV"}, {"shared_edge"})
 
-    conn._execute_gsql = fake_execute_gsql
-    conn._get_graph_type_names = fake_get_graph_types
+    cast(Any, conn)._execute_gsql = fake_execute_gsql
+    cast(Any, conn)._get_graph_type_names = fake_get_graph_types
 
     conn._drop_global_schema_types(schema, ["other_graph"])
 
@@ -264,11 +268,11 @@ def test_delete_graph_structure_skips_types_in_surviving_graph() -> None:
             return "- VERTEX Vkeep(\n- VERTEX Vdrop("
         return ""
 
-    conn._execute_gsql = fake_gsql
-    conn.delete_database = lambda _name: None
-    conn._get_all_graph_names = lambda: ["SurvivorGraph"]
-    conn._get_graph_type_names = lambda _g: ({"Vkeep"}, {"Ekeep"})
-    conn._delete_vertices = lambda _t: None
+    cast(Any, conn)._execute_gsql = fake_gsql
+    cast(Any, conn).delete_database = lambda _name: None
+    cast(Any, conn)._get_all_graph_names = lambda: ["SurvivorGraph"]
+    cast(Any, conn)._get_graph_type_names = lambda _g: ({"Vkeep"}, {"Ekeep"})
+    cast(Any, conn)._delete_vertices = lambda _t: None
 
     conn.delete_graph_structure(
         graph_names=("drop_target",),
@@ -315,14 +319,14 @@ def test_init_db_recreate_logs_error_on_query_loss(
     schema = MagicMock()
     schema.metadata.name = "tgtest_reinit_main"
 
-    conn.graph_exists = fake_graph_exists
-    conn.delete_database = lambda _n: None
-    conn._get_all_graph_names = lambda: ["survivor_graph"]
-    conn._drop_global_schema_types = lambda _s, _g: None
-    conn._snapshot_all_queries = fake_snapshot
-    conn.create_database = lambda _n: None
-    conn._define_schema_local = lambda _s: None
-    conn.define_indexes = lambda _s: None
+    cast(Any, conn).graph_exists = fake_graph_exists
+    cast(Any, conn).delete_database = lambda _n: None
+    cast(Any, conn)._get_all_graph_names = lambda: ["survivor_graph"]
+    cast(Any, conn)._drop_global_schema_types = lambda _s, _g: None
+    cast(Any, conn)._snapshot_all_queries = fake_snapshot
+    cast(Any, conn).create_database = lambda _n: None
+    cast(Any, conn)._define_schema_local = lambda _s: None
+    cast(Any, conn).define_indexes = lambda _s: None
 
     with caplog.at_level(logging.ERROR, logger="graflo.db.tigergraph.conn"):
         conn.init_db(schema, recreate_schema=True)

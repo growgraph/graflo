@@ -27,7 +27,6 @@ from suthing import FileHandle
 
 from graflo.architecture import GraphManifest
 from graflo.architecture.graph_types import EdgeId
-from graflo.architecture.schema.edge import Edge
 from graflo.architecture.pipeline.runtime.actor import (
     ActorWrapper,
     DescendActor,
@@ -36,6 +35,7 @@ from graflo.architecture.pipeline.runtime.actor import (
     VertexActor,
     VertexRouterActor,
 )
+from graflo.architecture.schema.edge import Edge
 from graflo.onto import BaseEnum
 
 logger = logging.getLogger(__name__)
@@ -199,7 +199,7 @@ def shortest_unique_prefix_map(strings):
     """
     strings = list(set(strings))
     d = {"": strings}
-    while any([len(v) > 1 for v in d.values()]):
+    while any(len(v) > 1 for v in d.values()):
         keys = list(d.keys())
         for k in keys:
             item = d.pop(k)
@@ -468,14 +468,16 @@ class ManifestPlotter:
             if force_labels and "label" in props:
                 updates["forcelabel"] = True
 
-            if partition_by_vertex and partition_color_map:
-                if isinstance(node_id, str) and node_id.startswith(
-                    f"{AuxNodeType.VERTEX}:"
-                ):
-                    vertex_name = node_id.split(":", maxsplit=1)[1]
-                    group = partition_by_vertex.get(vertex_name)
-                    if group is not None and group in partition_color_map:
-                        updates["fillcolor"] = partition_color_map[group]
+            if (
+                partition_by_vertex
+                and partition_color_map
+                and isinstance(node_id, str)
+                and node_id.startswith(f"{AuxNodeType.VERTEX}:")
+            ):
+                vertex_name = node_id.split(":", maxsplit=1)[1]
+                group = partition_by_vertex.get(vertex_name)
+                if group is not None and group in partition_color_map:
+                    updates["fillcolor"] = partition_color_map[group]
 
             for key, value in updates.items():
                 graph.nodes[node_id][key] = value
@@ -899,9 +901,9 @@ class ManifestPlotter:
             out_deg = g.out_degree()
             in_deg = g.in_degree()
 
-            nodes_to_remove = set([k for k, v in out_deg if v == 0]) & set(
-                [k for k, v in in_deg if v < 2]
-            )
+            nodes_to_remove = {k for k, v in out_deg if v == 0} & {
+                k for k, v in in_deg if v < 2
+            }
             g.remove_nodes_from(nodes_to_remove)
 
         partition_color_map = (

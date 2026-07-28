@@ -18,7 +18,6 @@ from graflo.architecture.contract.bindings import (
     SparqlConnector,
     TableConnector,
 )
-from graflo.db.connection import PostgresConfig, SparqlEndpointConfig
 from graflo.connection_models import (
     ApiAuth,
     ApiGeneralizedConnConfig,
@@ -31,6 +30,7 @@ from graflo.connection_models import (
     SparqlAuth,
     SparqlGeneralizedConnConfig,
 )
+from graflo.db.connection import PostgresConfig, SparqlEndpointConfig
 
 __all__ = [
     "ApiAuth",

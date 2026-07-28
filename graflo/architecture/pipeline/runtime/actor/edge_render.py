@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
+from collections.abc import Callable, Iterable, Iterator
 from functools import partial
 from itertools import combinations, product, zip_longest
-from typing import Any, Callable, Iterable, Iterator
+from typing import Any
 
 from graflo.architecture.edge_derivation import EdgeDerivation
-from graflo.architecture.schema.edge import Edge
 from graflo.architecture.graph_types import (
     ActionContext,
     AssemblyContext,
@@ -19,8 +19,9 @@ from graflo.architecture.graph_types import (
     Weight,
     context_dict_from_transform_buffer_item,
 )
-from graflo.architecture.util import project_dict
+from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig
+from graflo.architecture.util import project_dict
 
 logger = logging.getLogger(__name__)
 
@@ -251,6 +252,8 @@ def render_edge(
     *,
     relation_input_field: str | None = None,
     derivation: EdgeDerivation | None = None,
+    source_match_fields: list[str] | None = None,
+    target_match_fields: list[str] | None = None,
 ) -> defaultdict[str | None, list]:
     """Create edges between source and target vertices.
 
@@ -258,6 +261,10 @@ def render_edge(
         relation_input_field: Document/ctx field for per-row relationship labels when
             ``edge.relation`` is unset (e.g. TigerGraph default column).
         derivation: Ingestion-only location / field wiring (edge pipeline step).
+        source_match_fields: Fields the source endpoint is matched on. Defaults to
+            the vertex's primary identity; a secondary identity is passed when the
+            edge step selects one.
+        target_match_fields: Same, for the target endpoint.
     """
     acc_vertex = ctx.acc_vertex
     transform_buffer = ctx.transform_buffer
@@ -265,8 +272,16 @@ def render_edge(
     source = edge.source
     target = edge.target
 
-    source_identity = vertex_config.identity_fields(source)
-    target_identity = vertex_config.identity_fields(target)
+    source_identity = (
+        source_match_fields
+        if source_match_fields is not None
+        else vertex_config.identity_fields(source)
+    )
+    target_identity = (
+        target_match_fields
+        if target_match_fields is not None
+        else vertex_config.identity_fields(target)
+    )
 
     source_by_loc = acc_vertex[source]
     target_by_loc = acc_vertex[target]
@@ -426,7 +441,7 @@ def render_weights(
             vertex_sample = [
                 doc
                 for doc in vertex_sample
-                if all([doc[q] == v in doc for q, v in w.filter.items()])
+                if all(doc[q] == v in doc for q, v in w.filter.items())
             ]
         if vertex_sample:
             for doc in vertex_sample:

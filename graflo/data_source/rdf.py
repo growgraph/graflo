@@ -21,8 +21,9 @@ from __future__ import annotations
 
 import abc
 import logging
+from collections.abc import Iterator
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterator
+from typing import TYPE_CHECKING, Any
 
 from pydantic import Field
 

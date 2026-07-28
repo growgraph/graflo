@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from pydantic import AliasChoices, Field as PydanticField
+from pydantic import AliasChoices
+from pydantic import Field as PydanticField
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.graph_types import GraphContainer
