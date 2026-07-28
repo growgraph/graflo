@@ -379,6 +379,17 @@ class DatabaseProfile(ConfigBaseModel):
             spec = self._edge_variant_spec(edge_id=edge_id, purpose=None)
         return spec
 
+    def add_vertex_index(self, vertex_name: VertexName, index: Index) -> None:
+        """Register a secondary index for *vertex_name* if not already present.
+
+        Idempotent on the field-set, so repeated schema resolution does not
+        accumulate duplicates.
+        """
+        indexes = self.vertex_indexes.setdefault(vertex_name, [])
+        existing = {tuple(ix.fields) for ix in indexes}
+        if tuple(index.fields) not in existing:
+            indexes.append(index)
+
     def add_edge_index(
         self,
         edge_id: EdgeId,

@@ -628,6 +628,9 @@ class MemgraphConnection(Connection):
                 self.delete_graph_structure(delete_all=True)
             except Exception as e:
                 logger.warning("Error clearing data on recreate: %s", e)
+        # Labels are implicit, but indexes are not: identity and secondary
+        # identity lookups need them declared, as on the other Cypher backends.
+        self.define_indexes(schema)
 
     def init_db(
         self,

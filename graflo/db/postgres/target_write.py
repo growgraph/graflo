@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 class _Psycopg2Conn(Protocol):
     def cursor(self, *args: Any, **kwargs: Any) -> Any: ...
     def commit(self) -> None: ...
+    def rollback(self) -> None: ...
     def close(self) -> None: ...
 
 
@@ -38,6 +39,7 @@ class _PostgresTargetHost(Protocol):
 
     def read(self, query: str, params: tuple | None = None) -> list[dict[str, Any]]: ...
     def get_tables(self, schema_name: str | None = None) -> list[dict[str, Any]]: ...
+    def define_indexes(self, schema: Schema) -> None: ...
 
 
 logger = logging.getLogger(__name__)
@@ -115,6 +117,9 @@ class PostgresTargetWriteMixin:
     flavor = DBType.POSTGRES
     config: Any
     conn: _Psycopg2Conn
+    # Supplied by Connection, which follows this mixin in the MRO: annotate
+    # rather than stub, so the real implementation is not shadowed.
+    define_indexes: Any
 
     def read(self, query: str, params: tuple | None = None) -> list[dict[str, Any]]:
         raise NotImplementedError
@@ -238,6 +243,7 @@ class PostgresTargetWriteMixin:
         if create_namespace and not self._pg_schema_exists(pg_schema):
             self.create_database(pg_schema)
         self.define_schema(schema)
+        self.define_indexes(schema)
 
     def init_db(
         self,
@@ -595,7 +601,47 @@ class PostgresTargetWriteMixin:
     def define_vertex_indexes(
         self, vertex_config: VertexConfig, schema: Schema | None = None
     ) -> None:
-        pass
+        """Create the secondary indexes declared in the database profile.
+
+        The primary identity is already covered by the table's PRIMARY KEY, so
+        only profile-declared indexes (which include secondary identities) are
+        created here.
+        """
+        if schema is None:
+            logger.warning(
+                "Schema is None: vertex secondary indexes cannot be ensured without schema"
+            )
+            return
+
+        pg_schema = _pg_schema_name(self.config)
+        for vertex_name in vertex_config.vertex_set:
+            table = vertex_table_name(vertex_name)
+            for index in schema.db_profile.vertex_secondary_indexes(vertex_name):
+                fields = [str(f) for f in index.fields]
+                if not fields:
+                    continue
+                index_name = f"ix_{table}_{'_'.join(fields)}"
+                unique_clause = sql.SQL("UNIQUE ") if index.unique else sql.SQL("")
+                q = sql.SQL("CREATE {}INDEX IF NOT EXISTS {} ON {}.{} ({})").format(
+                    unique_clause,
+                    sql.Identifier(index_name),
+                    sql.Identifier(pg_schema),
+                    sql.Identifier(table),
+                    sql.SQL(", ").join(sql.Identifier(f) for f in fields),
+                )
+                try:
+                    with self.conn.cursor() as cursor:
+                        cursor.execute(q)
+                    self.conn.commit()
+                except Exception as error:
+                    self.conn.rollback()
+                    logger.warning(
+                        "Failed to create index %s on %s.%s: %s",
+                        index_name,
+                        pg_schema,
+                        table,
+                        error,
+                    )
 
     def define_edge_indexes(
         self, edges: list[Edge], schema: Schema | None = None

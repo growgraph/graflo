@@ -32,6 +32,32 @@ from .vertex import (
 from ..base import ConfigBaseModel
 
 
+def compile_secondary_identity_indexes(
+    vertex_config: VertexConfig, db_profile: DatabaseProfile
+) -> None:
+    """Register a lookup index for every declared secondary identity.
+
+    Endpoint resolution filters on these fields, so the index is what keeps the
+    lookup from degrading into a scan — and on NebulaGraph a tag index is
+    required outright for the property lookup to run at all.
+
+    Indexes are non-unique: secondary identities are *softly* unique, and asking
+    the database to enforce uniqueness would reject exactly the duplicate data
+    the ambiguity policy exists to handle.
+
+    Called from :meth:`Schema.finish_init` so the profile is populated for every
+    backend, including those whose index definition does not go through
+    :meth:`Schema.resolve_db_aware`.
+    """
+    for vertex in vertex_config.vertices:
+        for entry in vertex.secondary_identities:
+            if not entry.fields:
+                continue
+            db_profile.add_vertex_index(
+                vertex.name, Index(fields=list(entry.fields), unique=False)
+            )
+
+
 @runtime_checkable
 class EdgeIngestionOverlay(Protocol):
     """Ingestion-only signals that affect DB projection (e.g. TigerGraph DDL)."""
@@ -123,6 +149,10 @@ class VertexConfigDBAware:
 
     def secondary_identities(self, vertex_name: str) -> list[SecondaryIdentity]:
         return self.logical.secondary_identities(vertex_name)
+
+    def compile_secondary_identity_indexes(self) -> None:
+        """Register a lookup index for every declared secondary identity."""
+        compile_secondary_identity_indexes(self.logical, self.db_profile)
 
     def match_fields(
         self, vertex_name: str, selector: str | list[str] | None
