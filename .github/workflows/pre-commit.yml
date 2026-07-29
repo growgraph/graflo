@@ -16,5 +16,9 @@ jobs:
                 version: "0.9.28"
         -   name: Install dependencies (including dev)
             run: uv sync --extra dev
+        -   name: Debug
+            run: |
+                uv run ruff --version
+                uv run python --version
         -   name: Run pre-commit
             run: uv run pre-commit run --all-files
