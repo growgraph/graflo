@@ -25,7 +25,7 @@ from graflo.architecture.contract.bindings import (
     SparqlConnector,
 )
 from graflo.architecture.contract.manifest import GraphManifest
-from graflo.db import ArangoConfig
+from graflo.connections import ArangoConfig
 from graflo.hq import GraphEngine, IngestionParams
 
 logger = logging.getLogger(__name__)
@@ -49,7 +49,7 @@ DATA_FILE = DATA_DIR / "data.ttl"
 conn_conf = ArangoConfig.from_docker_env()
 
 # Alternative targets – uncomment the one you need:
-# from graflo.db import Neo4jConfig, TigergraphConfig, FalkordbConfig
+# from graflo.connections import Neo4jConfig, TigergraphConfig, FalkordbConfig
 # conn_conf = Neo4jConfig.from_docker_env()
 # conn_conf = TigergraphConfig.from_docker_env()
 # conn_conf = FalkordbConfig.from_docker_env()

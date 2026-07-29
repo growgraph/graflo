@@ -9,9 +9,13 @@ from pathlib import Path
 from typing import Any
 
 import click
-from graflo.db.graflo_backend.config import GraFloBackendConfig
 
-from graflo.db import ArangoConfig, Neo4jConfig, PostgresConfig
+from graflo.connections import (
+    ArangoConfig,
+    GraFloBackendConfig,
+    Neo4jConfig,
+    PostgresConfig,
+)
 
 EXAMPLE_DIR = Path(__file__).resolve().parent
 DEFAULT_CSV_BACKEND_DIR = EXAMPLE_DIR / "artifacts" / "csv-backend"

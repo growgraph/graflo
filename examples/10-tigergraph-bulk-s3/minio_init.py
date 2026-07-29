@@ -2,7 +2,7 @@
 Ensure the staging bucket exists on MinIO (or any S3-compatible endpoint).
 
 Delegates to :func:`graflo.object_storage.ensure_staging_bucket_for_config`.
-Loads ``docker/minio/.env`` via :class:`~graflo.db.MinioConfig` when no config is passed.
+Loads ``docker/minio/.env`` via :class:`~graflo.object_storage.MinioConfig` when no config is passed.
 """
 
 from __future__ import annotations

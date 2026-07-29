@@ -16,7 +16,7 @@ Load config from docker/<db>/.env, e.g. ArangoConfig.from_docker_env().
 from suthing import FileHandle
 
 from graflo import GraphManifest
-from graflo.db import ArangoConfig
+from graflo.connections import ArangoConfig
 from graflo.hq import GraphEngine
 from graflo.hq.caster import IngestionParams
 

@@ -38,8 +38,7 @@ artifacts/neo4j-backend/
 from pathlib import Path
 
 from graflo import DBType, GraphEngine
-from graflo.db import Neo4jConfig
-from graflo.db.graflo_backend.config import GraFloBackendConfig
+from graflo.connections import GraFloBackendConfig, Neo4jConfig
 
 neo4j = Neo4jConfig.from_docker_env()
 backend = GraFloBackendConfig(output_dir=Path("artifacts/neo4j-backend"))
@@ -62,8 +61,7 @@ The same `migrate_graph()` signature works when the **source** is a file backend
 from pathlib import Path
 
 from graflo import DBType, GraphEngine
-from graflo.db import ArangoConfig
-from graflo.db.graflo_backend.config import GraFloBackendConfig
+from graflo.connections import ArangoConfig, GraFloBackendConfig
 
 backend = GraFloBackendConfig(output_dir=Path("artifacts/neo4j-backend"))
 arango = ArangoConfig.from_docker_env()
@@ -86,7 +84,7 @@ from pathlib import Path
 from suthing import FileHandle
 
 from graflo import DBType, GraphEngine, GraphManifest
-from graflo.db.graflo_backend.config import GraFloBackendConfig
+from graflo.connections import GraFloBackendConfig
 from graflo.hq.caster import IngestionParams
 
 manifest = GraphManifest.from_config(
@@ -137,8 +135,7 @@ engine.migrate_graph(neo4j, backend, recreate_schema=True)
 from pathlib import Path
 
 from graflo import DBType, GraphEngine
-from graflo.db import PostgresConfig
-from graflo.db.graflo_backend.config import GraFloBackendConfig
+from graflo.connections import GraFloBackendConfig, PostgresConfig
 
 backend = GraFloBackendConfig(output_dir=Path("artifacts/neo4j-backend"))
 postgres = PostgresConfig.from_docker_env()
