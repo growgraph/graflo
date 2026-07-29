@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+
+### Added
+
+Extended manifest-evolution vocabulary — the contract ops could remove, merge, rename and project, but could not author an identity change, create a type, or set a property type. Plan: [`docs/PR6.md`](../docs/PR6.md).
+
+- **`ReplaceIdentityOp`** — replace a vertex's identity policy, covering a change of identity *fields* and a change of identity *mode* (`natural` / `hash` / `assigned` / `blank`) in one op, since both cascade the same way. **`retire`** decides what becomes of the old field-set: `demote` (default) turns it into a secondary identity whose lookup index is derived automatically, `keep` leaves it as plain properties, `drop` removes it. **`endpoints`** separately decides whether edge steps follow the new identity (`follow_new`, default) or stay pinned to the demoted one (`pin_to_retired`). Demotion downgrades to `keep` when the old identity was synthetic or unchanged; `mode: blank` cannot demote at all. Retired-identity indexes are dropped from `db_profile`.
+- **`AddSecondaryIdentitiesOp`** / **`RemoveSecondaryIdentitiesOp`** — declare or withdraw alternate lookup keys on existing vertices, previously authoring-time only. Removal is rejected while an edge step still selects the field-set, and drops the derived index (which `finish_init` only ever adds).
+- **`ReplaceEdgeIdentitiesOp`** — replace `Edge.identities` per `(source, target, relation)`, making the differ's `CHANGE_EDGE_IDENTITY` authorable.
+- **`AddVerticesOp`** / **`AddEdgesOp`** — introduce vertex types and edge relations unarily. Previously new types could only arrive through a binary `ComposeManifestsOp`, so a replayable change set could only ever describe a shrinking graph.
+- **`RetargetEdgesOp`** — change which vertex types an edge connects while preserving its properties, `identities`, `directed` flag, and physical spec, all of which a remove-plus-add loses. Rewrites the `EdgeId` in `edge_config`, `db_profile.edge_specs`, and pipeline edge steps, keyed on the full triple.
+- **`ChangeFieldTypesOp`** — set `Field.type` / `item_type` on vertex or edge properties, validated against the profile's `db_flavor` so an unsupported LIST fails at op time instead of at define time.
+- **`AddVertexIndexesOp`** / **`RemoveVertexIndexesOp`** / **`AddEdgeIndexesOp`** / **`RemoveEdgeIndexesOp`** — author `db_profile` secondary indexes. Indexes derived from `secondary_identities` are not removable this way (the next `finish_init` would re-register them); the error points at `RemoveSecondaryIdentitiesOp`.
+- **`SetEdgeDirectedOp`** — set `Edge.directed`, which decides what `AddInverseEdgesOp` may duplicate.
+- **Identity-aware schema diff** — `SchemaDiff` now compares `Vertex.identity_mode` and `secondary_identities`, not just `identity`. A vertex moving from a natural key to a hash previously produced an **empty diff** because `identity` stayed `["id"]` on both sides. `CHANGE_VERTEX_IDENTITY` now carries `{mode, identity, hash_identity_properties}` rather than a bare field list.
+- **`OperationType.REKEY_VERTEX` finally has a producer** — declared, ordered and risk-classified since migrate v1, it was emitted by nothing. It now fires alongside `CHANGE_VERTEX_IDENTITY` when stored keys stop being derivable: a mode change, a hash-source change, or a natural key that is not a superset of the old one. **Widening** a composite key does not emit it. Both stay CRITICAL and blocked by default — the gain is a readable preview, not execution.
+- **`OperationType.CHANGE_SECONDARY_IDENTITY`** — MEDIUM risk, ordered next to the index ops. Secondary identities never key an upsert, so changing one adds or drops a derived index rather than invalidating stored keys.
+
+### Fixed
+
+- **`RenameVertexPropertiesOp` left dangling identity references** — it rewrote `identity` and `properties` but not `hash_identity_properties` or `secondary_identities[].fields`. The manifest still validated, because `Vertex.set_identity` re-added the stale name as an untyped ghost field, so a `hash` vertex silently computed its key over a column that no longer received data and secondary-identity lookups stopped matching.
+- **`MergeVerticesOp` degraded identity mode** — `merge_vertex_models` carried only `blank`, dropping `assigned`, `hash_identity_properties`, and `secondary_identities`, so merging an `assigned` or `hash` vertex silently produced a `natural` one. All four now propagate, with the mutual exclusions (`blank`/`assigned`, `assigned`/hash, blank-with-secondaries) checked at merge time so the error names the merge instead of surfacing from pydantic. A secondary identity that would restate the merged primary is dropped rather than raising.
+- **`assert_field_type_supported` crashed while building its own error message** — `db_type.value` raised `AttributeError` when `db_flavor` arrived as a bare string from a validated config model. Only reachable on the raise path, which is why callers passing a real `DBType` never hit it.
+
 ## [1.9.0]
 
 ### Added

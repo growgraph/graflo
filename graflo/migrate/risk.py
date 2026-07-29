@@ -17,6 +17,9 @@ MEDIUM_RISK_OPS = {
     OperationType.REMOVE_VERTEX_INDEX,
     OperationType.REMOVE_EDGE_INDEX,
     OperationType.CHANGE_INDEX,
+    # Lookup-plane only: secondary identities never key an upsert, so changing one
+    # adds or drops a derived index rather than invalidating stored keys.
+    OperationType.CHANGE_SECONDARY_IDENTITY,
 }
 
 HIGH_RISK_OPS = {

@@ -1,11 +1,11 @@
 ---
-description: "Use `uv run` for running Python code instead of raw python3"
-globs:
-  - "**/*.py"
+description: "Use `uv run` for running Python code — never bare python/python3"
 alwaysApply: true
 ---
 
 # Running Python code
-- **Do not**  use `python3`, use  `uv run python <script>` or `uv run <module>` when executing project scripts.
-- Use the `uv` environment so that dependencies from `uv.lock` are respected.
-- This applies to both interactive code execution and testing.
+
+See repo-root `CLAUDE.md` and `.cursor/rules/global-workflow.mdc`.
+
+- **Never** `python`, `python3`, or bare `pytest`.
+- **Always** `uv run python <script>`, `uv run <console-script>`, or `uv run pytest` from the owning package directory.

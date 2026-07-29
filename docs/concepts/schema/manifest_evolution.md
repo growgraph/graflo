@@ -26,6 +26,14 @@ GraFlo provides **contract-level** operations that transform a validated `GraphM
 | **Add edge fields** | Adds properties to existing relations for edge-schema enrichment. |
 | **Add inverse edges** | For each **directed** forward relation `R -> R_inv`, appends inverse schema edges and mirrors ingestion (`pipeline` EdgeActor steps including dynamic endpoints, `relation_field`, redefined `relation_map`, nested `descend`), `infer_edge_only` / `infer_edge_except`, `extra_weights`, and `db_profile`. Skips `directed: false`, TigerGraph `edge_specs[*].reverse_edge`, and existing inverse triples. |
 | **Project manifest** | Keeps a logical subgraph by vertex names and/or edge triples `(source, target, relation)`. Prunes isolated vertex types from `keep_vertices` when they have no surviving edges (`connectivity: induced_prune`). Cascades to schema, `db_profile`, ingestion (pipeline steps, infer selectors, `extra_weights`), and bindings. Optional `keep_resources` filters ingestion resources. Inverse edges are not auto-kept. Fails if ingestion would be left empty. |
+| **Replace identity** | Per-vertex identity policy swap covering both field-set and **mode** changes (`natural` / `hash` / `assigned` / `blank`). `retire` decides what becomes of the old field-set — `demote` (default) turns it into a secondary identity, `keep` leaves it as plain properties, `drop` removes it. `endpoints` decides whether edge steps follow the new identity (`follow_new`, default) or stay pinned to the demoted one (`pin_to_retired`). Drops `db_profile` indexes that encoded the retired identity. See [Replacing a vertex identity](#replacing-a-vertex-identity). |
+| **Add / remove secondary identities** | Declares or withdraws alternate lookup keys on existing vertices. Each field-set's non-unique index is *derived* by `Schema.finish_init`, so adding one needs no index authoring; removing one drops the derived index explicitly. Removal is rejected while an edge step still selects the field-set. |
+| **Replace edge identities** | Replaces `Edge.identities` (uniqueness keys) per `(source, target, relation)`. No retire policy — edge identities have no lookup plane. Non-endpoint tokens are merged into edge `properties` by `Edge.finish_init`. |
+| **Add vertices / add edges** | Introduces new logical vertex types and edge relations unarily — the counterpart to what `ComposeManifestsOp` could previously only do binarily. Rejects existing names/triples and unknown endpoints. |
+| **Retarget edges** | Changes which vertex types an edge connects, preserving its properties, `identities`, `directed` flag, and `db_profile` physical spec — all of which a remove-plus-add would lose. Rewrites the `EdgeId` in `edge_config`, `edge_specs`, and pipeline edge steps, keyed on the full triple so a different relation between the same types is untouched. |
+| **Change field types** | Sets `Field.type` / `item_type` on vertex or edge properties. Validated against the profile's `db_flavor` via `graflo.db.field_type_support`, so an unsupported LIST target fails at op time rather than at define time. Refuses to make an identity field a LIST. |
+| **Add / remove vertex & edge indexes** | Authors `db_profile.vertex_indexes` and `edge_specs[].indexes` directly. Indexes derived from `secondary_identities` cannot be removed this way — they would be re-registered by the next `finish_init`, so the op points at **remove secondary identities** instead. |
+| **Set edge directed** | Sets `Edge.directed` on selected triples. Load-bearing for replay: `directed` decides what **add inverse edges** may duplicate. |
 | **Sanitize** | Target-`DBType` policy: reserved-word-safe names on `DatabaseProfile`, reserved vertex field renames, and (for TigerGraph) consistent identity tuples per edge relation. This is the same work **`graflo.hq.sanitizer.Sanitizer`** applies by building a single **`SanitizeOp`**. |
 | **Compose manifests** | Binary union of two full `GraphManifest`s (schema **and** resources/bindings) via `ComposeManifestsOp` + `compose_manifests(left, right, op)`. Consumes **explicit** equivalence maps only (no semantic inference): vertex→vertex, property alignment, optional derived identity, relation equivalences, resource renames / `name_conflict`. Distinct from unary `MergeVerticesOp`. Rejected by unary `apply_evolution`. |
 
@@ -285,9 +293,66 @@ With `keep_vertices` only, vertex types listed but not incident to any surviving
 - Use `AddInverseEdgesOp` when forward and reverse relations should coexist with different labels (not a rename of the same edge kind).
 - `RenameRelationsOp` and `MergeEdgesOp` propagate to schema, `DatabaseProfile` (`edge_specs`, defaults/indexes), and ingestion selectors/resources. `AddInverseEdgesOp` also propagates to `db_profile` and does not rename existing relations; it only adds missing inverse edges and ingestion mirrors.
 
+## Replacing a vertex identity
+
+`ReplaceIdentityOp` is the one operation that touches how a vertex is *keyed*, so it
+carries an explicit policy for the identity being retired.
+
+```python
+from graflo.architecture.evolution import ReplaceIdentityOp, apply_evolution
+
+evolved = apply_evolution(
+    manifest,
+    [
+        ReplaceIdentityOp(
+            vertices={
+                "party": {
+                    "to": {"mode": "natural", "identity": ["party_uid"]},
+                    "retire": "demote",          # default
+                    "retire_as": "by_legacy",
+                    "endpoints": "follow_new",   # default
+                }
+            }
+        )
+    ],
+)
+```
+
+After this, `party` upserts on `party_uid`, and the old `legacy_id` key survives as a
+secondary identity named `by_legacy` — usable by any edge step that names it, and
+automatically indexed. Edge steps that were matching on the primary identity now match
+on `party_uid`; pass `endpoints: "pin_to_retired"` to keep them on `by_legacy` instead.
+
+The `to` block reaches every identity mode:
+
+| `to.mode` | Required | Result |
+|---|---|---|
+| `natural` | `identity: [...]` | Named properties are the key |
+| `hash` | `hash_from: [...]` | Deterministic synthetic `id` digested from those fields |
+| `assigned` | — | Intentional UUID primary key |
+| `blank` | — | Auto-generated placeholder ID |
+
+Things worth knowing before you reach for it:
+
+- **Demotion is downgraded to `keep`** when the old identity was synthetic (`hash`,
+  `assigned`, `blank`) or already equals the new one — demoting a generated `id` would
+  create a lookup key no source carries. The op logs a warning when it does this.
+- **`mode: blank` cannot demote at all.** A blank vertex may not declare secondary
+  identities, so the op raises and points at `keep` / `drop`.
+- **New identity fields must already be declared.** `Vertex.set_identity` would happily
+  synthesise them as untyped fields, which makes an empty column the primary key; the op
+  refuses and points at `AddVertexPropertiesOp`.
+- **A no-op replacement does not bump the schema version.**
+
+This is a contract-level change only. To see what it implies for a populated database,
+diff the schemas — a mode change or a non-widening key swap emits `CHANGE_VERTEX_IDENTITY`
+**and** `REKEY_VERTEX`, both CRITICAL and blocked by `MigrationPlanner` unless high risk is
+explicitly allowed.
+
 ## Scope notes
 
 - **Transforms**: bodies of named transforms are not rewritten when vertex *field* names change during a merge; that remains an authoring concern. Use **`RenameVertexPropertiesOp`** / **`SanitizeOp`** when you need coordinated field rewrites at the manifest boundary.
+- **Identity ops are contract-level too**: `ReplaceIdentityOp` rewrites the manifest, it does not re-key stored vertices. Propagating identity changes to a live database is tracked as roadmap item (11).
 - **Bindings**: connector definitions are unchanged; only `resource_connector` rows pointing at dropped resources are removed after a remove operation.
 
 ## See also
