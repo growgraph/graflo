@@ -36,3 +36,8 @@ jobs:
 
         -   name: Run pre-commit
             run: uv run pre-commit run --all-files
+
+        -   name: Print diff on failure
+            if: failure()
+            run: |
+                git diff
