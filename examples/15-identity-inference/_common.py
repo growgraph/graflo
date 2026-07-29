@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from graflo.db.graflo_backend.config import GraFloBackendConfig
+
 from graflo.db.identity_inference import IdentityInferenceConfig
 
 EXAMPLE_DIR = Path(__file__).resolve().parent

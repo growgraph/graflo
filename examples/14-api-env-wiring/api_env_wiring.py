@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import logging
 
-from graflo.architecture.contract.bindings import APIConnector, Bindings
 from graflo.hq.connection_provider import (
     ApiGeneralizedConnConfig,
     InMemoryConnectionProvider,
 )
+
+from graflo.architecture.contract.bindings import APIConnector, Bindings
 
 logger = logging.getLogger(__name__)
 
