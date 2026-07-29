@@ -197,6 +197,222 @@ def rewrite_entity_names_in_pipeline(
         )
 
 
+_PRIMARY_SELECTORS = (None, "identity")
+
+
+def _endpoint_vertex(payload: dict[str, Any], *keys: str) -> str | None:
+    """First string endpoint name among *keys* (``source``/``from``, ``target``/``to``)."""
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, str):
+            return value
+    return None
+
+
+def _pin_endpoint_selectors_in_edge_payload(
+    payload: dict[str, Any], selectors: dict[str, str]
+) -> None:
+    """Point primary-identity endpoints at a named secondary identity, in place.
+
+    Only endpoints currently resolving via the primary identity are touched: a step
+    that already names a secondary identity is expressing an explicit intent that an
+    identity replacement must not override.
+    """
+    for endpoint_keys, match_key in (
+        (("source", "from"), "source_match"),
+        (("target", "to"), "target_match"),
+    ):
+        vertex_name = _endpoint_vertex(payload, *endpoint_keys)
+        if vertex_name is None:
+            continue
+        selector = selectors.get(vertex_name)
+        if selector is None:
+            continue
+        if payload.get(match_key) in _PRIMARY_SELECTORS:
+            payload[match_key] = selector
+
+    links = payload.get("links")
+    if isinstance(links, list):
+        for link in links:
+            if isinstance(link, dict):
+                _pin_endpoint_selectors_in_edge_payload(link, selectors)
+
+
+def _pin_endpoint_selectors_in_step(step: Any, selectors: dict[str, str]) -> None:
+    if isinstance(step, list):
+        for item in step:
+            _pin_endpoint_selectors_in_step(item, selectors)
+        return
+    if not isinstance(step, dict):
+        return
+
+    for key in ("edge", "create_edge"):
+        payload = step.get(key)
+        if isinstance(payload, dict):
+            _pin_endpoint_selectors_in_edge_payload(payload, selectors)
+
+    descend_payload = step.get("descend")
+    if isinstance(descend_payload, dict):
+        for key in ("apply", "pipeline"):
+            nested = descend_payload.get(key)
+            if nested is not None:
+                _pin_endpoint_selectors_in_step(nested, selectors)
+
+    for key in ("apply", "pipeline"):
+        nested = step.get(key)
+        if isinstance(nested, list):
+            _pin_endpoint_selectors_in_step(nested, selectors)
+
+
+def rewrite_endpoint_selectors_in_pipeline(
+    pipeline: list[dict[str, Any]], selectors: dict[str, str]
+) -> list[dict[str, Any]]:
+    """Pin primary-identity edge endpoints of *selectors* keys to a secondary identity.
+
+    ``selectors`` maps a vertex name to the secondary identity name its endpoints
+    should select. Used by ``ReplaceIdentityOp`` with ``endpoints: pin_to_retired`` so
+    edge steps keep matching on the identity that was just retired.
+    """
+    out = deepcopy(pipeline)
+    if not selectors:
+        return out
+    _pin_endpoint_selectors_in_step(out, selectors)
+    return out
+
+
+def _collect_endpoint_selectors_in_edge_payload(
+    payload: dict[str, Any], out: list[tuple[str, str | list[str]]]
+) -> None:
+    for endpoint_keys, match_key in (
+        (("source", "from"), "source_match"),
+        (("target", "to"), "target_match"),
+    ):
+        vertex_name = _endpoint_vertex(payload, *endpoint_keys)
+        if vertex_name is None:
+            continue
+        selector = payload.get(match_key)
+        if selector in _PRIMARY_SELECTORS:
+            continue
+        if isinstance(selector, (str, list)):
+            out.append((vertex_name, selector))
+
+    links = payload.get("links")
+    if isinstance(links, list):
+        for link in links:
+            if isinstance(link, dict):
+                _collect_endpoint_selectors_in_edge_payload(link, out)
+
+
+def _collect_endpoint_selectors_in_step(
+    step: Any, out: list[tuple[str, str | list[str]]]
+) -> None:
+    if isinstance(step, list):
+        for item in step:
+            _collect_endpoint_selectors_in_step(item, out)
+        return
+    if not isinstance(step, dict):
+        return
+
+    for key in ("edge", "create_edge"):
+        payload = step.get(key)
+        if isinstance(payload, dict):
+            _collect_endpoint_selectors_in_edge_payload(payload, out)
+
+    descend_payload = step.get("descend")
+    if isinstance(descend_payload, dict):
+        for key in ("apply", "pipeline"):
+            nested = descend_payload.get(key)
+            if nested is not None:
+                _collect_endpoint_selectors_in_step(nested, out)
+
+    for key in ("apply", "pipeline"):
+        nested = step.get(key)
+        if isinstance(nested, list):
+            _collect_endpoint_selectors_in_step(nested, out)
+
+
+def collect_endpoint_selectors(
+    pipeline: list[dict[str, Any]],
+) -> list[tuple[str, str | list[str]]]:
+    """``(vertex_name, selector)`` for every endpoint matched on a secondary identity.
+
+    Endpoints resolving through the primary identity are omitted — they carry no
+    dependency on a named secondary identity.
+    """
+    out: list[tuple[str, str | list[str]]] = []
+    _collect_endpoint_selectors_in_step(pipeline, out)
+    return out
+
+
+def _retarget_edge_payload(
+    payload: dict[str, Any],
+    mapping: dict[tuple[str, str, str | None], tuple[str, str]],
+) -> None:
+    source = _endpoint_vertex(payload, "source", "from")
+    target = _endpoint_vertex(payload, "target", "to")
+    if source is None or target is None:
+        return
+    relation = payload.get("relation")
+    new_endpoints = mapping.get(
+        (source, target, relation if isinstance(relation, str) else None)
+    )
+    if new_endpoints is not None:
+        new_source, new_target = new_endpoints
+        payload["source" if "source" in payload else "from"] = new_source
+        payload["target" if "target" in payload else "to"] = new_target
+
+    links = payload.get("links")
+    if isinstance(links, list):
+        for link in links:
+            if isinstance(link, dict):
+                _retarget_edge_payload(link, mapping)
+
+
+def _retarget_edges_in_step(
+    step: Any, mapping: dict[tuple[str, str, str | None], tuple[str, str]]
+) -> None:
+    if isinstance(step, list):
+        for item in step:
+            _retarget_edges_in_step(item, mapping)
+        return
+    if not isinstance(step, dict):
+        return
+
+    for key in ("edge", "create_edge"):
+        payload = step.get(key)
+        if isinstance(payload, dict):
+            _retarget_edge_payload(payload, mapping)
+
+    descend_payload = step.get("descend")
+    if isinstance(descend_payload, dict):
+        for key in ("apply", "pipeline"):
+            nested = descend_payload.get(key)
+            if nested is not None:
+                _retarget_edges_in_step(nested, mapping)
+
+    for key in ("apply", "pipeline"):
+        nested = step.get(key)
+        if isinstance(nested, list):
+            _retarget_edges_in_step(nested, mapping)
+
+
+def rewrite_edge_endpoints_in_pipeline(
+    pipeline: list[dict[str, Any]],
+    mapping: dict[tuple[str, str, str | None], tuple[str, str]],
+) -> list[dict[str, Any]]:
+    """Repoint edge steps whose ``EdgeId`` appears in *mapping* at new endpoints.
+
+    Keyed on the full ``(source, target, relation)`` triple rather than on vertex
+    names, so an edge step between the same pair of types under a different relation
+    is left alone.
+    """
+    out = deepcopy(pipeline)
+    if not mapping:
+        return out
+    _retarget_edges_in_step(out, mapping)
+    return out
+
+
 def _map_name(name: str | None, mapping: dict[str, str]) -> str | None:
     if name is None:
         return None

@@ -6,7 +6,7 @@ from typing import Any
 
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.edge import Edge
-from graflo.architecture.schema.vertex import Field
+from graflo.architecture.schema.vertex import Field, Vertex
 from graflo.migrate.models import (
     MigrationOperation,
     OperationType,
@@ -137,23 +137,9 @@ class SchemaDiff:
             old_vertex = old_vertices[name]
             new_vertex = new_vertices[name]
 
-            if list(old_vertex.identity) != list(new_vertex.identity):
-                operations.append(
-                    self._op(
-                        OperationType.CHANGE_VERTEX_IDENTITY,
-                        f"vertex:{name}:identity",
-                        list(old_vertex.identity),
-                        list(new_vertex.identity),
-                        reversible=False,
-                    )
-                )
-                conflicts.append(
-                    SchemaConflict(
-                        key=f"vertex:{name}:identity",
-                        message="Vertex identity changed; requires explicit rekey strategy.",
-                        risk=classify_operation(OperationType.CHANGE_VERTEX_IDENTITY),
-                    )
-                )
+            operations.extend(
+                self._diff_vertex_identity(name, old_vertex, new_vertex, conflicts)
+            )
 
             old_fields = _field_map(old_vertex.properties)
             new_fields = _field_map(new_vertex.properties)
@@ -190,6 +176,114 @@ class SchemaDiff:
                             reversible=False,
                         )
                     )
+
+        return operations
+
+    @staticmethod
+    def _identity_state(vertex: Vertex) -> dict[str, Any]:
+        """Everything that decides how a vertex is keyed at write time.
+
+        Comparing only ``identity`` misses a mode change: a vertex moving from a
+        natural key to a hash keeps ``identity == ["id"]`` on both sides while its
+        write-time key semantics change completely.
+        """
+        return {
+            "mode": vertex.identity_mode,
+            "identity": list(vertex.identity),
+            "hash_identity_properties": list(vertex.hash_identity_properties),
+        }
+
+    @staticmethod
+    def _secondary_identity_state(vertex: Vertex) -> list[dict[str, Any]]:
+        return sorted(
+            (
+                {"name": entry.name, "fields": sorted(entry.fields)}
+                for entry in vertex.secondary_identities
+            ),
+            key=lambda entry: (entry["name"] or "", tuple(entry["fields"])),
+        )
+
+    @staticmethod
+    def _requires_rekey(old_state: dict[str, Any], new_state: dict[str, Any]) -> bool:
+        """Whether stored vertex keys become invalid under the new identity.
+
+        A mode change always invalidates them — the key is computed differently.
+        A natural-to-natural change only invalidates them when the new key is not
+        derivable from the old one; widening a composite key (adding a field) leaves
+        every existing key still addressable.
+        """
+        if old_state["mode"] != new_state["mode"]:
+            return True
+        if new_state["mode"] == "hash":
+            return (
+                old_state["hash_identity_properties"]
+                != new_state["hash_identity_properties"]
+            )
+        if new_state["mode"] != "natural":
+            return False
+        return not set(old_state["identity"]).issubset(set(new_state["identity"]))
+
+    def _diff_vertex_identity(
+        self,
+        name: str,
+        old_vertex: Vertex,
+        new_vertex: Vertex,
+        conflicts: list[SchemaConflict],
+    ) -> list[MigrationOperation]:
+        """Identity, identity mode, and secondary identities for one vertex."""
+        operations: list[MigrationOperation] = []
+
+        old_state = self._identity_state(old_vertex)
+        new_state = self._identity_state(new_vertex)
+        if old_state != new_state:
+            operations.append(
+                self._op(
+                    OperationType.CHANGE_VERTEX_IDENTITY,
+                    f"vertex:{name}:identity",
+                    old_state,
+                    new_state,
+                    reversible=False,
+                )
+            )
+            conflicts.append(
+                SchemaConflict(
+                    key=f"vertex:{name}:identity",
+                    message="Vertex identity changed; requires explicit rekey strategy.",
+                    risk=classify_operation(OperationType.CHANGE_VERTEX_IDENTITY),
+                )
+            )
+            if self._requires_rekey(old_state, new_state):
+                operations.append(
+                    self._op(
+                        OperationType.REKEY_VERTEX,
+                        f"vertex:{name}:rekey",
+                        old_state,
+                        new_state,
+                        reversible=False,
+                    )
+                )
+                conflicts.append(
+                    SchemaConflict(
+                        key=f"vertex:{name}:rekey",
+                        message=(
+                            "Stored vertex keys are no longer derivable from the new "
+                            "identity; existing vertices must be re-keyed."
+                        ),
+                        risk=classify_operation(OperationType.REKEY_VERTEX),
+                    )
+                )
+
+        old_secondary = self._secondary_identity_state(old_vertex)
+        new_secondary = self._secondary_identity_state(new_vertex)
+        if old_secondary != new_secondary:
+            operations.append(
+                self._op(
+                    OperationType.CHANGE_SECONDARY_IDENTITY,
+                    f"vertex:{name}:secondary_identities",
+                    old_secondary,
+                    new_secondary,
+                )
+            )
 
         return operations
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from graflo.architecture.graph_types import EdgeId
 from graflo.architecture.schema.edge import Edge, EdgeConfig
-from graflo.architecture.schema.vertex import Field, Vertex
+from graflo.architecture.schema.vertex import Field, SecondaryIdentity, Vertex
 
 
 def merge_field_pair(a: Field, b: Field) -> Field:
@@ -18,8 +18,47 @@ def merge_field_pair(a: Field, b: Field) -> Field:
     return Field(name=a.name, type=merged_type, description=desc)
 
 
+def _merge_secondary_identities(
+    vertices: list[Vertex], into_name: str, primary: list[str]
+) -> list[SecondaryIdentity]:
+    """Union secondary identities across *vertices*, subsumed entries dropped.
+
+    A set that equals the merged primary identity is dropped rather than kept: it is
+    subsumed by the primary, and ``Vertex._validated_secondary_identities`` rejects a
+    restatement of the primary outright. A name reused for two different field-sets is
+    a real conflict — edge steps select by name, so the merged vertex cannot honour
+    both — and raises.
+    """
+    primary_set = frozenset(primary)
+    by_field_set: dict[frozenset[str], SecondaryIdentity] = {}
+    names: dict[str, frozenset[str]] = {}
+
+    for vertex in vertices:
+        for entry in vertex.secondary_identities:
+            if entry.field_set == primary_set or entry.field_set in by_field_set:
+                continue
+            if entry.name is not None:
+                claimed = names.get(entry.name)
+                if claimed is not None and claimed != entry.field_set:
+                    raise ValueError(
+                        f"Cannot merge into vertex '{into_name}': secondary identity "
+                        f"name '{entry.name}' refers to {sorted(claimed)} and "
+                        f"{sorted(entry.field_set)} on different sources"
+                    )
+                names[entry.name] = entry.field_set
+            by_field_set[entry.field_set] = entry
+
+    return list(by_field_set.values())
+
+
 def merge_vertex_models(vertices: list[Vertex], into_name: str) -> Vertex:
-    """Union-merge vertex definitions into a single :class:`Vertex`."""
+    """Union-merge vertex definitions into a single :class:`Vertex`.
+
+    Identity mode is carried through the merge: ``blank`` / ``assigned`` propagate when
+    any source declares them, and ``hash_identity_properties`` / ``secondary_identities``
+    are unioned. The mutual exclusions enforced by :meth:`Vertex.set_identity` are
+    checked here so the failure names the merge rather than surfacing from pydantic.
+    """
     if not vertices:
         raise ValueError("merge_vertex_models requires at least one vertex")
 
@@ -51,13 +90,45 @@ def merge_vertex_models(vertices: list[Vertex], into_name: str) -> Vertex:
     else:
         desc_out = " / ".join(descriptions)
 
+    blank_out = any(v.blank for v in vertices)
+    assigned_out = any(v.assigned for v in vertices)
+    if blank_out and assigned_out:
+        raise ValueError(
+            f"Cannot merge into vertex '{into_name}': sources mix blank and assigned "
+            "identity modes, which are mutually exclusive"
+        )
+
+    hash_out: list[str] = []
+    seen_hash: set[str] = set()
+    for v in vertices:
+        for name in v.hash_identity_properties:
+            if name not in seen_hash:
+                hash_out.append(name)
+                seen_hash.add(name)
+    if assigned_out and hash_out:
+        raise ValueError(
+            f"Cannot merge into vertex '{into_name}': an assigned source cannot be "
+            f"merged with hash-identity sources (hash properties: {hash_out})"
+        )
+
+    secondary_out = _merge_secondary_identities(vertices, into_name, identity_out)
+    if blank_out and secondary_out:
+        raise ValueError(
+            f"Cannot merge into vertex '{into_name}': a blank source cannot be merged "
+            "with sources declaring secondary_identities — a blank vertex has no "
+            "source-visible key to match on"
+        )
+
     return Vertex(
         name=into_name,
         properties=list(props.values()),
         identity=identity_out,
         filters=filters_out,
         description=desc_out,
-        blank=any(v.blank for v in vertices),
+        blank=blank_out,
+        assigned=assigned_out,
+        hash_identity_properties=hash_out,
+        secondary_identities=secondary_out,
     )
 
 

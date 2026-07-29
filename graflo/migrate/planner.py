@@ -21,6 +21,7 @@ OP_ORDER = {
     OperationType.CHANGE_EDGE_FIELD_TYPE: 80,
     OperationType.REMOVE_EDGE_INDEX: 90,
     OperationType.REMOVE_VERTEX_INDEX: 100,
+    OperationType.CHANGE_SECONDARY_IDENTITY: 105,
     OperationType.REMOVE_EDGE_FIELD: 110,
     OperationType.REMOVE_VERTEX_FIELD: 120,
     OperationType.REMOVE_EDGE: 130,

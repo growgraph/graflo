@@ -44,16 +44,25 @@ from .merge_core import (
     remap_relation_and_merge_edges,
 )
 from .ops import (
+    AddEdgeIndexesOp,
     AddEdgePropertiesOp,
+    AddEdgesOp,
     AddInverseEdgesOp,
+    AddSecondaryIdentitiesOp,
+    AddVertexIndexesOp,
     AddVertexPropertiesOp,
+    AddVerticesOp,
+    ChangeFieldTypesOp,
     ComposeManifestsOp,
     ManifestOp,
     MergeEdgesOp,
     MergeVerticesOp,
     ProjectManifestOp,
+    RemoveEdgeIndexesOp,
     RemoveEdgePropertiesOp,
     RemoveEdgesOp,
+    RemoveSecondaryIdentitiesOp,
+    RemoveVertexIndexesOp,
     RemoveVertexPropertiesOp,
     RemoveVerticesOp,
     RenameEdgePropertiesOp,
@@ -61,7 +70,11 @@ from .ops import (
     RenameResourcesOp,
     RenameVertexPropertiesOp,
     RenameVerticesOp,
+    ReplaceEdgeIdentitiesOp,
+    ReplaceIdentityOp,
+    RetargetEdgesOp,
     SanitizeOp,
+    SetEdgeDirectedOp,
 )
 from .project import compute_projection
 from .rewrite import (
@@ -346,27 +359,42 @@ def apply_merge_vertices(manifest: GraphManifest, op: MergeVerticesOp) -> None:
         )
 
 
+def _rename_field_list(names: list[str], renames: dict[str, str]) -> list[str]:
+    """Apply *renames* to *names*, preserving order and dropping duplicates."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for name in names:
+        new_name = renames.get(name, name)
+        if new_name in seen:
+            continue
+        seen.add(new_name)
+        out.append(new_name)
+    return out
+
+
 def _rename_fields_in_schema(
     schema: Schema, renames: dict[str, dict[str, str]]
 ) -> None:
-    """Mutate vertex properties + identity in place per the rename map."""
+    """Mutate vertex properties + every identity field-set in place per the rename map."""
     if not renames:
         return
     for vertex in schema.core_schema.vertex_config.vertices:
         per_vertex = renames.get(vertex.name)
         if not per_vertex:
             continue
-        # Update identity first so Vertex.validate_assignment doesn't re-add
-        # stale pre-rename identity names into properties as type=None ghosts.
-        renamed_identity: list[str] = []
-        seen_identity: set[str] = set()
-        for name in vertex.identity:
-            new_name = per_vertex.get(name, name)
-            if new_name in seen_identity:
-                continue
-            seen_identity.add(new_name)
-            renamed_identity.append(new_name)
-        vertex.identity = renamed_identity
+        # Update the identity field-sets first so Vertex.validate_assignment doesn't
+        # re-add stale pre-rename names into properties as type=None ghosts.
+        vertex.identity = _rename_field_list(vertex.identity, per_vertex)
+        vertex.hash_identity_properties = _rename_field_list(
+            vertex.hash_identity_properties, per_vertex
+        )
+        if vertex.secondary_identities:
+            vertex.secondary_identities = [
+                entry.model_copy(
+                    update={"fields": _rename_field_list(entry.fields, per_vertex)}
+                )
+                for entry in vertex.secondary_identities
+            ]
 
         new_properties: list[Field] = []
         seen_names: set[str] = set()
@@ -1177,6 +1205,58 @@ def _dispatch_op(manifest: GraphManifest, op: Any) -> None:
         apply_add_inverse_edges(manifest, op)
     elif isinstance(op, ProjectManifestOp):
         apply_project_manifest(manifest, op)
+    elif isinstance(op, ReplaceIdentityOp):
+        from .identity import apply_replace_identity
+
+        apply_replace_identity(manifest, op)
+    elif isinstance(op, AddSecondaryIdentitiesOp):
+        from .identity import apply_add_secondary_identities
+
+        apply_add_secondary_identities(manifest, op)
+    elif isinstance(op, RemoveSecondaryIdentitiesOp):
+        from .identity import apply_remove_secondary_identities
+
+        apply_remove_secondary_identities(manifest, op)
+    elif isinstance(op, ReplaceEdgeIdentitiesOp):
+        from .identity import apply_replace_edge_identities
+
+        apply_replace_edge_identities(manifest, op)
+    elif isinstance(op, AddVerticesOp):
+        from .structure import apply_add_vertices
+
+        apply_add_vertices(manifest, op)
+    elif isinstance(op, AddEdgesOp):
+        from .structure import apply_add_edges
+
+        apply_add_edges(manifest, op)
+    elif isinstance(op, RetargetEdgesOp):
+        from .structure import apply_retarget_edges
+
+        apply_retarget_edges(manifest, op)
+    elif isinstance(op, ChangeFieldTypesOp):
+        from .physical import apply_change_field_types
+
+        apply_change_field_types(manifest, op)
+    elif isinstance(op, AddVertexIndexesOp):
+        from .physical import apply_add_vertex_indexes
+
+        apply_add_vertex_indexes(manifest, op)
+    elif isinstance(op, RemoveVertexIndexesOp):
+        from .physical import apply_remove_vertex_indexes
+
+        apply_remove_vertex_indexes(manifest, op)
+    elif isinstance(op, AddEdgeIndexesOp):
+        from .physical import apply_add_edge_indexes
+
+        apply_add_edge_indexes(manifest, op)
+    elif isinstance(op, RemoveEdgeIndexesOp):
+        from .physical import apply_remove_edge_indexes
+
+        apply_remove_edge_indexes(manifest, op)
+    elif isinstance(op, SetEdgeDirectedOp):
+        from .physical import apply_set_edge_directed
+
+        apply_set_edge_directed(manifest, op)
     elif isinstance(op, SanitizeOp):
         apply_sanitize(manifest, op)
     else:

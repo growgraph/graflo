@@ -8,6 +8,9 @@ from pydantic import Field as PydanticField
 from pydantic import model_validator
 
 from graflo.architecture.base import ConfigBaseModel
+from graflo.architecture.graph_types import Index
+from graflo.architecture.schema.edge import Edge
+from graflo.architecture.schema.vertex import FieldType, SecondaryIdentity, Vertex
 from graflo.onto import DBType
 
 
@@ -87,6 +90,203 @@ class AddVertexPropertiesOp(ConfigBaseModel):
             "Per-vertex property additions: ``{vertex_name: [field_name, ...]}``."
         ),
     )
+
+
+class NaturalIdentityTarget(ConfigBaseModel):
+    """Target a natural key: the named properties identify the vertex directly."""
+
+    mode: Literal["natural"] = "natural"
+    identity: list[str] = PydanticField(
+        ...,
+        description="Property names forming the new primary identity.",
+        min_length=1,
+    )
+
+
+class HashIdentityTarget(ConfigBaseModel):
+    """Target a hash identity: a deterministic synthetic ``id`` digested from fields."""
+
+    mode: Literal["hash"] = "hash"
+    hash_from: list[str] = PydanticField(
+        ...,
+        description="Source property names whose values are digested into ``id``.",
+        min_length=1,
+    )
+
+
+class AssignedIdentityTarget(ConfigBaseModel):
+    """Target an assigned identity: an intentional UUID primary key."""
+
+    mode: Literal["assigned"] = "assigned"
+
+
+class BlankIdentityTarget(ConfigBaseModel):
+    """Target a blank identity: an auto-generated placeholder ID."""
+
+    mode: Literal["blank"] = "blank"
+
+
+IdentityTarget = Annotated[
+    NaturalIdentityTarget
+    | HashIdentityTarget
+    | AssignedIdentityTarget
+    | BlankIdentityTarget,
+    PydanticField(discriminator="mode"),
+]
+
+
+class IdentityReplacement(ConfigBaseModel):
+    """New identity policy for one vertex, plus what becomes of the old one."""
+
+    to: IdentityTarget = PydanticField(
+        ...,
+        description="The identity policy this vertex should have after the op.",
+    )
+    retire: Literal["demote", "keep", "drop"] = PydanticField(
+        default="demote",
+        description=(
+            "What happens to the old identity field-set. ``demote`` turns it into a "
+            "secondary identity (lookup index follows automatically), ``keep`` leaves "
+            "the fields as plain properties, ``drop`` removes them. Demotion is "
+            "downgraded to ``keep`` when the old identity was synthetic (hash / "
+            "assigned / blank) or already equals the new one."
+        ),
+    )
+    retire_as: str | None = PydanticField(
+        default=None,
+        description=(
+            "Name for the demoted secondary identity. Defaults to "
+            "``retired_identity``. Only meaningful with ``retire: demote``."
+        ),
+    )
+    endpoints: Literal["follow_new", "pin_to_retired"] = PydanticField(
+        default="follow_new",
+        description=(
+            "How edge steps that match this vertex on its primary identity behave "
+            "afterwards. ``follow_new`` (default) leaves them on the primary, so they "
+            "match the new identity. ``pin_to_retired`` rewrites them to select the "
+            "demoted secondary identity, preserving the previous matching behaviour "
+            "for sources that only carry the old key. Requires ``retire: demote``."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _validate_endpoint_policy(self) -> IdentityReplacement:
+        if self.endpoints == "pin_to_retired" and self.retire != "demote":
+            raise ValueError(
+                "endpoints: pin_to_retired requires retire: demote — there is no "
+                "retired secondary identity to pin to otherwise"
+            )
+        if self.retire_as is not None and self.retire != "demote":
+            raise ValueError("retire_as is only meaningful with retire: demote")
+        return self
+
+
+class ReplaceIdentityOp(ConfigBaseModel):
+    """Replace the identity policy of one or more vertices.
+
+    Covers both a change of identity *fields* and a change of identity *mode*
+    (``natural`` / ``hash`` / ``assigned`` / ``blank``), because the cascade is the
+    same in either case: the field-set that upserts changes, and everything that
+    referenced the old one must be repointed or retired.
+
+    Not covered: ``blank`` vertices cannot retire by demotion (they cannot declare
+    secondary identities at all), and a no-op replacement does not bump the version.
+    """
+
+    op: Literal["replace_identity"] = "replace_identity"
+    vertices: dict[str, IdentityReplacement] = PydanticField(
+        ...,
+        description="Per-vertex identity replacement: ``{vertex_name: replacement}``.",
+        min_length=1,
+    )
+
+
+class AddSecondaryIdentitiesOp(ConfigBaseModel):
+    """Declare alternate lookup keys on existing vertices.
+
+    Secondary identities are lookup-only: upserts keep using the primary identity.
+    Each declared field-set automatically gains a non-unique index at
+    :meth:`Schema.finish_init`, so this op is how an edge-only source gains a way to
+    reference endpoints by a business key without touching the primary identity.
+    """
+
+    op: Literal["add_secondary_identities"] = "add_secondary_identities"
+    additions: dict[str, list[SecondaryIdentity]] = PydanticField(
+        ...,
+        description=(
+            "Per-vertex secondary identities to declare: "
+            "``{vertex_name: [{name, fields}, ...]}``. A bare field list is accepted "
+            "for each entry and auto-named."
+        ),
+        min_length=1,
+    )
+
+
+class RemoveSecondaryIdentitiesOp(ConfigBaseModel):
+    """Withdraw alternate lookup keys, dropping their derived indexes.
+
+    Rejected when a surviving edge step still selects the removed field-set — that
+    step would have no way to resolve its endpoint.
+    """
+
+    op: Literal["remove_secondary_identities"] = "remove_secondary_identities"
+    removals: dict[str, list[str | list[str]]] = PydanticField(
+        ...,
+        description=(
+            "Per-vertex secondary identities to withdraw, addressed by name or by "
+            "field list: ``{vertex_name: [name | [field, ...], ...]}``."
+        ),
+        min_length=1,
+    )
+
+
+class EdgeIdentitiesEntry(ConfigBaseModel):
+    """New uniqueness keys for one edge triple."""
+
+    source: str = PydanticField(..., description="Source vertex type name.")
+    target: str = PydanticField(..., description="Target vertex type name.")
+    relation: str | None = PydanticField(
+        default=None,
+        description="Relation name; ``None`` matches the edge with no relation set.",
+    )
+    identities: list[list[str]] = PydanticField(
+        ...,
+        description=(
+            "Replacement uniqueness keys. Each key lists fields that, together with "
+            "the resolved endpoints, must be unique; the ``source`` / ``target`` "
+            "tokens stand for the endpoints themselves. An empty list clears them."
+        ),
+    )
+
+    def edge_id(self) -> tuple[str, str, str | None]:
+        return self.source, self.target, self.relation
+
+
+class ReplaceEdgeIdentitiesOp(ConfigBaseModel):
+    """Replace the uniqueness keys of logical edges.
+
+    The edge-side counterpart of :class:`ReplaceIdentityOp`. There is no retire policy:
+    edge identities have no lookup plane to demote into. Non-endpoint tokens are merged
+    into edge ``properties`` by ``Edge.finish_init``, as with authored identities.
+    """
+
+    op: Literal["replace_edge_identities"] = "replace_edge_identities"
+    edges: list[EdgeIdentitiesEntry] = PydanticField(
+        ...,
+        description="Per-edge replacement uniqueness keys.",
+        min_length=1,
+    )
+
+    @model_validator(mode="after")
+    def _validate_unique_selectors(self) -> ReplaceEdgeIdentitiesOp:
+        edge_ids = [entry.edge_id() for entry in self.edges]
+        if len(edge_ids) != len(set(edge_ids)):
+            raise ValueError(
+                "replace_edge_identities entries must be unique by "
+                "(source, target, relation)"
+            )
+        return self
 
 
 class RenameVerticesOp(ConfigBaseModel):
@@ -194,6 +394,243 @@ class AddInverseEdgesOp(ConfigBaseModel):
     )
 
 
+class AddVerticesOp(ConfigBaseModel):
+    """Introduce new logical vertex types.
+
+    The unary counterpart to what :class:`ComposeManifestsOp` can only do binarily.
+    A replayable change set that cannot introduce a type could only ever describe a
+    shrinking graph, which is why this exists alongside ``remove_vertices``.
+    """
+
+    op: Literal["add_vertices"] = "add_vertices"
+    vertices: list[Vertex] = PydanticField(
+        ...,
+        description="Full vertex definitions, in the shape the schema block accepts.",
+        min_length=1,
+    )
+
+    @model_validator(mode="after")
+    def _validate_unique_names(self) -> AddVerticesOp:
+        names = [vertex.name for vertex in self.vertices]
+        if len(names) != len(set(names)):
+            raise ValueError("add_vertices entries must be unique by name")
+        return self
+
+
+class AddEdgesOp(ConfigBaseModel):
+    """Introduce new logical edge relations between existing vertex types."""
+
+    op: Literal["add_edges"] = "add_edges"
+    edges: list[Edge] = PydanticField(
+        ...,
+        description="Full edge definitions, in the shape the schema block accepts.",
+        min_length=1,
+    )
+
+    @model_validator(mode="after")
+    def _validate_unique_ids(self) -> AddEdgesOp:
+        edge_ids = [(edge.source, edge.target, edge.relation) for edge in self.edges]
+        if len(edge_ids) != len(set(edge_ids)):
+            raise ValueError(
+                "add_edges entries must be unique by (source, target, relation)"
+            )
+        return self
+
+
+class EdgeRetargetEntry(ConfigBaseModel):
+    """Repoint one edge triple at a different source and/or target vertex type."""
+
+    source: str = PydanticField(..., description="Current source vertex type name.")
+    target: str = PydanticField(..., description="Current target vertex type name.")
+    relation: str | None = PydanticField(
+        default=None,
+        description="Relation name; ``None`` matches the edge with no relation set.",
+    )
+    new_source: str | None = PydanticField(
+        default=None,
+        description="Replacement source vertex type; omit to keep the current one.",
+    )
+    new_target: str | None = PydanticField(
+        default=None,
+        description="Replacement target vertex type; omit to keep the current one.",
+    )
+
+    def edge_id(self) -> tuple[str, str, str | None]:
+        return self.source, self.target, self.relation
+
+    def retargeted_edge_id(self) -> tuple[str, str, str | None]:
+        return (
+            self.new_source or self.source,
+            self.new_target or self.target,
+            self.relation,
+        )
+
+    @model_validator(mode="after")
+    def _require_a_change(self) -> EdgeRetargetEntry:
+        if self.new_source is None and self.new_target is None:
+            raise ValueError(
+                "retarget_edges requires at least one of new_source or new_target"
+            )
+        if self.retargeted_edge_id() == self.edge_id():
+            raise ValueError(
+                f"retarget_edges: edge {self.edge_id()} would not change endpoints"
+            )
+        return self
+
+
+class RetargetEdgesOp(ConfigBaseModel):
+    """Change which vertex types an edge connects, preserving everything else.
+
+    Remove-plus-add would lose the edge's properties, uniqueness keys, ``directed``
+    flag, and its ``db_profile`` physical spec. Retargeting rewrites the ``EdgeId``
+    everywhere it is keyed instead: edge config, physical specs, and pipeline edge steps.
+    """
+
+    op: Literal["retarget_edges"] = "retarget_edges"
+    edges: list[EdgeRetargetEntry] = PydanticField(
+        ...,
+        description="Per-edge endpoint retargeting.",
+        min_length=1,
+    )
+
+    @model_validator(mode="after")
+    def _validate_unique_selectors(self) -> RetargetEdgesOp:
+        edge_ids = [entry.edge_id() for entry in self.edges]
+        if len(edge_ids) != len(set(edge_ids)):
+            raise ValueError(
+                "retarget_edges entries must be unique by (source, target, relation)"
+            )
+        retargeted = [entry.retargeted_edge_id() for entry in self.edges]
+        if len(retargeted) != len(set(retargeted)):
+            raise ValueError(
+                "retarget_edges entries must not collide after retargeting"
+            )
+        return self
+
+
+class FieldTypeSpec(ConfigBaseModel):
+    """Target logical type for one property."""
+
+    type: FieldType | None = PydanticField(
+        ...,
+        description="New logical field type; ``None`` clears the declared type.",
+    )
+    item_type: FieldType | None = PydanticField(
+        default=None,
+        description="Element type, required when ``type`` is ``LIST``.",
+    )
+
+    @model_validator(mode="after")
+    def _validate_item_type(self) -> FieldTypeSpec:
+        if self.type == FieldType.LIST and self.item_type is None:
+            raise ValueError("a LIST field type requires item_type")
+        if self.type != FieldType.LIST and self.item_type is not None:
+            raise ValueError("item_type is only meaningful for a LIST field type")
+        return self
+
+
+class ChangeFieldTypesOp(ConfigBaseModel):
+    """Set the logical type of existing vertex or edge properties.
+
+    Makes the differ's ``CHANGE_VERTEX_FIELD_TYPE`` / ``CHANGE_EDGE_FIELD_TYPE``
+    authorable. Targets are validated against the profile's ``db_flavor`` so an
+    unsupported type fails here rather than at define time.
+    """
+
+    op: Literal["change_field_types"] = "change_field_types"
+    vertices: dict[str, dict[str, FieldTypeSpec]] = PydanticField(
+        default_factory=dict,
+        description="``{vertex_name: {field_name: {type, item_type}}}``.",
+    )
+    edges: dict[str, dict[str, FieldTypeSpec]] = PydanticField(
+        default_factory=dict,
+        description="``{relation_name: {field_name: {type, item_type}}}``.",
+    )
+
+    @model_validator(mode="after")
+    def _require_a_target(self) -> ChangeFieldTypesOp:
+        if not self.vertices and not self.edges:
+            raise ValueError(
+                "change_field_types requires at least one of vertices or edges"
+            )
+        return self
+
+
+class AddVertexIndexesOp(ConfigBaseModel):
+    """Author secondary indexes on vertices in the database profile."""
+
+    op: Literal["add_vertex_indexes"] = "add_vertex_indexes"
+    indexes: dict[str, list[Index]] = PydanticField(
+        ...,
+        description="``{vertex_name: [Index, ...]}``.",
+        min_length=1,
+    )
+
+
+class RemoveVertexIndexesOp(ConfigBaseModel):
+    """Withdraw authored vertex indexes, addressed by field list.
+
+    Indexes derived from ``secondary_identities`` are not removable here — they would
+    be re-registered by the next ``finish_init``. Use
+    :class:`RemoveSecondaryIdentitiesOp` for those.
+    """
+
+    op: Literal["remove_vertex_indexes"] = "remove_vertex_indexes"
+    indexes: dict[str, list[list[str]]] = PydanticField(
+        ...,
+        description="``{vertex_name: [[field, ...], ...]}``.",
+        min_length=1,
+    )
+
+
+class EdgeIndexEntry(ConfigBaseModel):
+    """Indexes for one edge physical spec."""
+
+    source: str = PydanticField(..., description="Source vertex type name.")
+    target: str = PydanticField(..., description="Target vertex type name.")
+    relation: str | None = PydanticField(
+        default=None,
+        description="Relation name; ``None`` matches the edge with no relation set.",
+    )
+    purpose: str | None = PydanticField(
+        default=None,
+        description="Physical variant purpose; ``None`` addresses the base spec.",
+    )
+    indexes: list[Index] = PydanticField(
+        default_factory=list,
+        description="Indexes to add to this spec.",
+    )
+    fields: list[list[str]] = PydanticField(
+        default_factory=list,
+        description="Field lists identifying indexes to remove from this spec.",
+    )
+
+    def physical_key(self) -> tuple[str, str, str | None, str | None]:
+        return self.source, self.target, self.relation, self.purpose
+
+
+class AddEdgeIndexesOp(ConfigBaseModel):
+    """Author secondary indexes on edge physical specs."""
+
+    op: Literal["add_edge_indexes"] = "add_edge_indexes"
+    edges: list[EdgeIndexEntry] = PydanticField(
+        ...,
+        description="Per-spec indexes to add (``indexes`` on each entry).",
+        min_length=1,
+    )
+
+
+class RemoveEdgeIndexesOp(ConfigBaseModel):
+    """Withdraw authored indexes from edge physical specs, addressed by field list."""
+
+    op: Literal["remove_edge_indexes"] = "remove_edge_indexes"
+    edges: list[EdgeIndexEntry] = PydanticField(
+        ...,
+        description="Per-spec indexes to remove (``fields`` on each entry).",
+        min_length=1,
+    )
+
+
 class EdgeSelector(ConfigBaseModel):
     """Schema edge triple selector matching :data:`~graflo.architecture.graph_types.EdgeId`."""
 
@@ -206,6 +643,26 @@ class EdgeSelector(ConfigBaseModel):
 
     def edge_id(self) -> tuple[str, str, str | None]:
         return self.source, self.target, self.relation
+
+
+class SetEdgeDirectedOp(ConfigBaseModel):
+    """Set the ``directed`` flag on logical edges.
+
+    Small, but load-bearing for replay: ``directed`` decides what
+    :class:`AddInverseEdgesOp` is allowed to duplicate, so an un-authorable flag makes
+    inverse-edge change sets non-replayable.
+    """
+
+    op: Literal["set_edge_directed"] = "set_edge_directed"
+    edges: list[EdgeSelector] = PydanticField(
+        ...,
+        description="Edge triples whose ``directed`` flag changes.",
+        min_length=1,
+    )
+    directed: bool = PydanticField(
+        ...,
+        description="Value applied to every selected edge.",
+    )
 
 
 class ProjectManifestOp(ConfigBaseModel):
@@ -397,6 +854,18 @@ class ComposeManifestsOp(ConfigBaseModel):
 
 ManifestOp = Annotated[
     RemoveVerticesOp
+    | AddVerticesOp
+    | AddEdgesOp
+    | RetargetEdgesOp
+    | AddSecondaryIdentitiesOp
+    | RemoveSecondaryIdentitiesOp
+    | ReplaceEdgeIdentitiesOp
+    | ChangeFieldTypesOp
+    | AddVertexIndexesOp
+    | RemoveVertexIndexesOp
+    | AddEdgeIndexesOp
+    | RemoveEdgeIndexesOp
+    | SetEdgeDirectedOp
     | MergeVerticesOp
     | RenameVertexPropertiesOp
     | RemoveVertexPropertiesOp
@@ -411,6 +880,7 @@ ManifestOp = Annotated[
     | AddEdgePropertiesOp
     | AddInverseEdgesOp
     | ProjectManifestOp
+    | ReplaceIdentityOp
     | SanitizeOp
     | ComposeManifestsOp,
     PydanticField(discriminator="op"),

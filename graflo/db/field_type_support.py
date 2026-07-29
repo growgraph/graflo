@@ -45,9 +45,12 @@ def assert_field_type_supported(db_type: DBType, field: Field) -> None:
     if db_type in _LIST_NATIVE_DBS:
         return
     label = format_field_type_label(field)
+    # ``db_flavor`` reaches this function as a bare string from validated config
+    # models, so the enum's ``.value`` is not always there to read.
+    flavor = getattr(db_type, "value", db_type)
     raise UnsupportedFieldTypeError(
         f"Field '{field.name}' has type {label}, which cannot be stored as a "
-        f"property on backend '{db_type.value}'. "
+        f"property on backend '{flavor}'. "
         "Use a backend that supports list properties, or declare an explicit "
         "STRING field if JSON encoding is intentional."
     )
