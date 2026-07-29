@@ -16,8 +16,8 @@ from graflo.architecture.pipeline.runtime.actor.wrapper import ActorWrapper
 from graflo.architecture.schema.edge import EdgeConfig
 from graflo.architecture.schema.vertex import Field as VertexField
 from graflo.architecture.schema.vertex import Vertex, VertexConfig
+from graflo.connections.onto import PostgresConfig
 from graflo.data_source.sql import SQLConfig, SQLDataSource
-from graflo.db import PostgresConfig
 from graflo.filter.onto import ComparisonOperator, FilterExpression
 from graflo.filter.select import ALL_BASE_COLUMNS, SelectSpec
 from graflo.hq.resource_mapper import ResourceMapper
@@ -739,7 +739,7 @@ class TestResourceMapperTypeLookupOverride:
     """type_lookup_overrides attach a view to introspected edge tables."""
 
     def test_type_lookup_overrides_sets_view_on_connector(self):
-        from graflo.db import PostgresConnection
+        from graflo.db.postgres.conn import PostgresConnection
 
         mock_conn = MagicMock(spec=PostgresConnection)
         mock_result = MagicMock()

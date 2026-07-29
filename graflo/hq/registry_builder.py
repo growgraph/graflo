@@ -21,10 +21,7 @@ from graflo.architecture.contract.bindings import (
 )
 from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.schema import Schema
-from graflo.data_source import DataSourceFactory, DataSourceRegistry
-from graflo.data_source.sql import SQLConfig, SQLDataSource
-from graflo.filter.sql import datetime_range_where_sql
-from graflo.hq.connection_provider import (
+from graflo.connections.provider import (
     ApiGeneralizedConnConfig,
     ConnectionProvider,
     EmptyConnectionProvider,
@@ -32,6 +29,10 @@ from graflo.hq.connection_provider import (
     PostgresGeneralizedConnConfig,
     SparqlGeneralizedConnConfig,
 )
+from graflo.data_source.factory import DataSourceFactory
+from graflo.data_source.registry import DataSourceRegistry
+from graflo.data_source.sql import SQLConfig, SQLDataSource
+from graflo.filter.sql import datetime_range_where_sql
 
 if TYPE_CHECKING:
     from graflo.architecture.contract.bindings import Bindings

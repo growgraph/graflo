@@ -1,5 +1,5 @@
 from graflo.architecture.graph_types import VertexRep
-from graflo.util.merge import (
+from graflo.architecture.graph_types.merge import (
     merge_doc_basis,
 )
 

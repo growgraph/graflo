@@ -6,10 +6,13 @@ import logging
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
+from graflo.architecture.contract.ingestion.steps import (
+    DescendActorConfig,
+    VertexActorConfig,
+)
 from graflo.architecture.graph_types import merge_observation_with_transform_buffer
 
 from .base import Actor, ActorInitContext
-from .config import DescendActorConfig, VertexActorConfig
 from .edge import EdgeActor
 from .transform import TransformActor
 from .vertex import VertexActor

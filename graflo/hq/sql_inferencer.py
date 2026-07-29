@@ -9,8 +9,7 @@ here. Use :class:`graflo.hq.sanitizer.Sanitizer` (or
 import logging
 from dataclasses import dataclass
 
-from graflo.architecture import Resource
-from graflo.architecture.contract.ingestion import IngestionModel
+from graflo.architecture.contract.ingestion import IngestionModel, Resource
 from graflo.architecture.onto_sql import SchemaIntrospectionResult
 from graflo.architecture.schema import Schema
 from graflo.db.postgres import PostgresResourceMapper, PostgresSchemaInferencer

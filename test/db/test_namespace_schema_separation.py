@@ -7,8 +7,8 @@ import pytest
 from graflo.architecture.schema import CoreSchema, GraphMetadata, Schema
 from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.schema.vertex import Field, Vertex, VertexConfig
+from graflo.connections.graflo_backend import GraFloBackendConfig
 from graflo.db.conn import NamespaceNotFoundError, SchemaExistsError
-from graflo.db.graflo_backend.config import GraFloBackendConfig
 from graflo.db.graflo_backend.connection import GraFloBackendConnection
 
 

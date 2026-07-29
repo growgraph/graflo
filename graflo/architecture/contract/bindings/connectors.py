@@ -19,6 +19,7 @@ from pydantic import (
 )
 
 from graflo.architecture.base import ConfigBaseModel
+from graflo.filter.select import JoinClause
 from graflo.onto import BaseEnum
 
 from .column_time_filter import ColumnTimeFilter
@@ -27,16 +28,10 @@ from .column_time_filter import ColumnTimeFilter
 _BASE_TABLE_ALIAS_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\Z")
 
 if TYPE_CHECKING:
-    from graflo.connection_models import ApiAuth, KafkaConnConfig
+    from graflo.connections.sources import ApiAuth, KafkaConnConfig
     from graflo.data_source.api import APIConfig
     from graflo.data_source.kafka import KafkaConfig
-    from graflo.db import PostgresConfig
     from graflo.filter.onto import FilterExpression
-else:
-    try:
-        from graflo.db import PostgresConfig
-    except ImportError:
-        PostgresConfig = Any
 
 
 class BoundSourceKind(BaseEnum):
@@ -200,46 +195,6 @@ class FileConnector(ResourceConnector):
     def bound_source_kind(self) -> BoundSourceKind:
         """File connector always uses ``BoundSourceKind.FILE``."""
         return BoundSourceKind.FILE
-
-
-class JoinClause(ConfigBaseModel):
-    """Specification for a SQL JOIN operation.
-
-    Used by TableConnector to describe multi-table queries. Each JoinClause
-    adds one JOIN to the generated SQL. The base row uses ``TableConnector.base_alias``
-    (default ``base``), not a hard-coded name.
-
-    Attributes:
-        table: Table name to join (e.g. "all_classes").
-        schema_name: Optional schema override for the joined table.
-        alias: SQL alias for the joined table (e.g. "s", "t"). Required when
-            the same table is joined more than once.
-        on_self: Column on the base (left) table used in the ON condition.
-        on_other: Column on the joined (right) table used in the ON condition.
-        join_type: Type of join -- LEFT, INNER, etc. Defaults to LEFT.
-        select_fields: Explicit list of columns to SELECT from this join.
-            When None every column of the joined table is included (aliased
-            with the join alias prefix).
-    """
-
-    table: str = Field(..., description="Table name to join.")
-    schema_name: str | None = Field(
-        default=None, description="Schema override for the joined table."
-    )
-    alias: str | None = Field(
-        default=None, description="SQL alias for the joined table."
-    )
-    on_self: str = Field(
-        ..., description="Column on the base table for the ON condition."
-    )
-    on_other: str = Field(
-        ..., description="Column on the joined table for the ON condition."
-    )
-    join_type: str = Field(default="LEFT", description="JOIN type (LEFT, INNER, etc.).")
-    select_fields: list[str] | None = Field(
-        default=None,
-        description="Columns to SELECT from this join (None = all columns).",
-    )
 
 
 class TableConnector(ResourceConnector):
@@ -724,7 +679,7 @@ class APIConnector(ResourceConnector):
 
     Declares the non-secret access pattern (path, method, pagination). Runtime
     ``base_url`` and credentials are supplied via ``connector_connection`` ->
-    ``conn_proxy`` -> :class:`~graflo.hq.connection_provider.ApiGeneralizedConnConfig`.
+    ``conn_proxy`` -> :class:`~graflo.connections.provider.ApiGeneralizedConnConfig`.
 
     Attributes:
         path: Relative endpoint path (e.g. ``/api/users``).
@@ -815,7 +770,7 @@ class KafkaConnector(ResourceConnector):
     Declares the non-secret access pattern (topics, consumer group, decode
     options). Runtime bootstrap servers and credentials are supplied via
     ``connector_connection`` -> ``conn_proxy`` ->
-    :class:`~graflo.hq.connection_provider.KafkaGeneralizedConnConfig`.
+    :class:`~graflo.connections.provider.KafkaGeneralizedConnConfig`.
 
     Attributes:
         topics: Topic names to subscribe to.

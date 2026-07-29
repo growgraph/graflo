@@ -16,7 +16,7 @@ The manager supports:
     - Automatic connection cleanup
 
 Example:
-    >>> from graflo.db import ArangoConfig
+    >>> from graflo.connections.onto import ArangoConfig
     >>> config = ArangoConfig.from_env()
     >>> with ConnectionManager(connection_config=config) as conn:
     ...     # ArangoDB-specific AQL query (collection is ArangoDB terminology)
@@ -25,8 +25,8 @@ Example:
 
 from typing import Any, cast
 
+from graflo.connections.onto import TARGET_DATABASES, DBConfig
 from graflo.db.arango.conn import ArangoConnection
-from graflo.db.connection import TARGET_DATABASES, DBConfig
 from graflo.db.falkordb.conn import FalkordbConnection
 from graflo.db.graflo_backend.connection import GraFloBackendConnection
 from graflo.db.memgraph.conn import MemgraphConnection

@@ -1,3 +1,3 @@
-# `graflo.db.connection.onto`
+# `graflo.connections.onto`
 
-::: graflo.db.connection.onto
+::: graflo.connections.onto

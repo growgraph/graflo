@@ -98,12 +98,12 @@ ex:paper2  a ex:Publication ;
 Choose your target graph database and load connection config from the corresponding Docker `.env` file:
 
 ```python
-from graflo.db.connection.onto import ArangoConfig
+from graflo.connections.onto import ArangoConfig
 
 conn_conf = ArangoConfig.from_docker_env()
 
 # Alternative targets:
-# from graflo.db.connection.onto import Neo4jConfig, TigergraphConfig, FalkordbConfig
+# from graflo.connections.onto import Neo4jConfig, TigergraphConfig, FalkordbConfig
 # conn_conf = Neo4jConfig.from_docker_env()
 # conn_conf = TigergraphConfig.from_docker_env()
 # conn_conf = FalkordbConfig.from_docker_env()
@@ -272,7 +272,7 @@ engine.define_and_ingest(
 import logging
 from pathlib import Path
 
-from graflo.db.connection.onto import ArangoConfig
+from graflo.connections.onto import ArangoConfig
 from graflo.hq import GraphEngine, IngestionParams
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.contract.bindings import Bindings, SparqlConnector

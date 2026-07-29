@@ -1,3 +1,3 @@
-# `graflo.architecture.pipeline.runtime.actor.config.models`
+# `graflo.architecture.contract.ingestion.steps.models`
 
-::: graflo.architecture.pipeline.runtime.actor.config.models
+::: graflo.architecture.contract.ingestion.steps.models

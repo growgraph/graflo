@@ -9,35 +9,44 @@ Key Components:
     - APIDataSource: REST API runtime executor (built from APIConnector + conn_proxy)
     - SQLDataSource: SQL database data source
     - DataSourceRegistry: Maps DataSources to Resource names
+
+Connector *models* (``APIConnector``, pagination configs, …) live in
+:mod:`graflo.architecture.contract.bindings`. This façade is lazy (PEP 562):
+importing ``graflo.data_source`` does not load source drivers (Kafka, SPARQL,
+…); they load on first attribute access.
 """
 
-from graflo.architecture.contract.bindings import (
-    APIConnector,
-    ApiResponseStructure,
-    PaginationConfig,
-    PaginationRequestConfig,
-)
+from __future__ import annotations
 
-from .api import APIConfig, APIDataSource
-from .base import AbstractDataSource, DataSourceType
-from .factory import DataSourceFactory
-from .file import (
-    FileDataSource,
-    JsonFileDataSource,
-    JsonlFileDataSource,
-    TableFileDataSource,
-)
-from .kafka import KafkaConfig, KafkaDataSource
-from .memory import InMemoryDataSource
-from .registry import DataSourceRegistry
-from .sql import SQLConfig, SQLDataSource
+from typing import Any
+
+_EXPORTS: dict[str, str] = {
+    "APIConfig": "graflo.data_source.api",
+    "APIDataSource": "graflo.data_source.api",
+    "AbstractDataSource": "graflo.data_source.base",
+    "DataSourceType": "graflo.data_source.base",
+    "DataSourceFactory": "graflo.data_source.factory",
+    "FileDataSource": "graflo.data_source.file",
+    "JsonFileDataSource": "graflo.data_source.file",
+    "JsonlFileDataSource": "graflo.data_source.file",
+    "TableFileDataSource": "graflo.data_source.file",
+    "KafkaConfig": "graflo.data_source.kafka",
+    "KafkaDataSource": "graflo.data_source.kafka",
+    "InMemoryDataSource": "graflo.data_source.memory",
+    "DataSourceRegistry": "graflo.data_source.registry",
+    "SQLConfig": "graflo.data_source.sql",
+    "SQLDataSource": "graflo.data_source.sql",
+    "RdfDataSource": "graflo.data_source.rdf",
+    "RdfFileDataSource": "graflo.data_source.rdf",
+    "SparqlDataSource": "graflo.data_source.rdf",
+    "SparqlEndpointDataSource": "graflo.data_source.rdf",
+    "SparqlSourceConfig": "graflo.data_source.rdf",
+}
 
 __all__ = [
     "APIConfig",
-    "APIConnector",
     "APIDataSource",
     "AbstractDataSource",
-    "ApiResponseStructure",
     "DataSourceFactory",
     "DataSourceRegistry",
     "DataSourceType",
@@ -47,29 +56,26 @@ __all__ = [
     "JsonlFileDataSource",
     "KafkaConfig",
     "KafkaDataSource",
-    "PaginationConfig",
-    "PaginationRequestConfig",
+    "RdfDataSource",
+    "RdfFileDataSource",
     "SQLConfig",
     "SQLDataSource",
+    "SparqlDataSource",
+    "SparqlEndpointDataSource",
+    "SparqlSourceConfig",
     "TableFileDataSource",
 ]
 
-# RDF / SPARQL data sources (rdflib, SPARQLWrapper — core deps; optional import if missing)
-try:
-    from .rdf import (
-        RdfDataSource,
-        RdfFileDataSource,
-        SparqlDataSource,
-        SparqlEndpointDataSource,
-        SparqlSourceConfig,
-    )
 
-    __all__ += [
-        "RdfDataSource",
-        "RdfFileDataSource",
-        "SparqlDataSource",
-        "SparqlEndpointDataSource",
-        "SparqlSourceConfig",
-    ]
-except ImportError:
-    pass
+def __getattr__(name: str) -> Any:
+    if name in _EXPORTS:
+        import importlib
+
+        value = getattr(importlib.import_module(_EXPORTS[name]), name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(__all__)

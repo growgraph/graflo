@@ -4,12 +4,12 @@ from typing import Any, cast
 import networkx as nx
 import pytest
 
+from graflo.architecture.contract.ingestion.steps import EdgeActorConfig
 from graflo.architecture.graph_types import EdgeId
 from graflo.architecture.pipeline.runtime.actor import (
     EdgeActor,
     VertexRouterActor,
 )
-from graflo.architecture.pipeline.runtime.actor.config import EdgeActorConfig
 from graflo.architecture.pipeline.runtime.actor.wrapper import ActorWrapper
 from graflo.architecture.schema.edge import Edge
 from graflo.plot.plotter import ManifestPlotter, assemble_tree, fillcolor_palette

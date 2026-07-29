@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from graflo.architecture.database_features import DatabaseProfile
+from graflo.architecture.schema.database_features import DatabaseProfile
 from graflo.architecture.schema.db_aware import VertexConfigDBAware
 from graflo.architecture.schema.vertex import (
     SecondaryIdentity,

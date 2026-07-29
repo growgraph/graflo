@@ -178,7 +178,7 @@ The ingestion process handles the complex nested structure:
 ```python
 from suthing import FileHandle
 from graflo import Caster, Bindings, GraphManifest
-from graflo.db.connection.onto import Neo4jConfig
+from graflo.connections.onto import Neo4jConfig
 
 manifest = GraphManifest.from_config(FileHandle.load("manifest.yaml"))
 manifest.finish_init()

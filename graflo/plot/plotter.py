@@ -25,7 +25,7 @@ from pathlib import Path
 import networkx as nx
 from suthing import FileHandle
 
-from graflo.architecture import GraphManifest
+from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.graph_types import EdgeId
 from graflo.architecture.pipeline.runtime.actor import (
     ActorWrapper,

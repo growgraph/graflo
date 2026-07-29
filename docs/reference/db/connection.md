@@ -1,5 +1,5 @@
-# `graflo.db.connection`
+# `graflo.connections.onto`
 
-::: graflo.db.connection
+::: graflo.connections.onto
     options:
       show_submodules: false

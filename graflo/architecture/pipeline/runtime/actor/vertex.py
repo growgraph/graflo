@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+from graflo.architecture.contract.ingestion.steps import VertexActorConfig
 from graflo.architecture.graph_types import (
     ExtractionContext,
     LocationIndex,
@@ -11,12 +12,11 @@ from graflo.architecture.graph_types import (
     VertexRep,
     merge_observation_with_transform_buffer,
 )
+from graflo.architecture.graph_types.merge import merge_doc_basis
 from graflo.architecture.schema.vertex import VertexConfig, VertexName
 from graflo.onto import ExpressionFlavor
-from graflo.util.merge import merge_doc_basis
 
 from .base import ActorConstants, ActorInitContext, VertexProducingActor
-from .config import VertexActorConfig
 
 
 class VertexActor(VertexProducingActor):

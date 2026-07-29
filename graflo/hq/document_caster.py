@@ -9,12 +9,14 @@ from collections.abc import Iterable
 from typing import Any, Literal
 
 from graflo.architecture.contract.ingestion import IngestionModel
-from graflo.architecture.contract.runtime import ResourceRuntime
-from graflo.architecture.contract.runtime.resource import resolve_effective_vertex_names
 from graflo.architecture.graph_types import (
     GraphContainer,
     ResourceCastResult,
     TransformCastFailure,
+)
+from graflo.architecture.pipeline.runtime.resource import (
+    ResourceRuntime,
+    resolve_effective_vertex_names,
 )
 from graflo.architecture.schema.vertex import VertexConfig
 from graflo.hq.ingestion_parameters import (

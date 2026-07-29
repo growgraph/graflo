@@ -7,9 +7,9 @@ from typing import Any, Literal
 from graflo.architecture.contract.bindings import Bindings
 from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.contract.manifest import GraphManifest
-from graflo.architecture.database_features import DatabaseProfile
 from graflo.architecture.graph_types import EdgeId
 from graflo.architecture.schema.core import CoreSchema
+from graflo.architecture.schema.database_features import DatabaseProfile
 from graflo.architecture.schema.document import Schema
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import Vertex, VertexConfig

@@ -8,7 +8,7 @@ from graflo.architecture.graph_types import GraphContainer
 from graflo.architecture.schema import CoreSchema, GraphMetadata, Schema
 from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.schema.vertex import Field, Vertex, VertexConfig
-from graflo.db.connection import DBConfig
+from graflo.connections.onto import DBConfig
 from graflo.hq.graph_engine import GraphEngine
 from graflo.onto import DBType
 

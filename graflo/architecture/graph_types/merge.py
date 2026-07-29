@@ -10,7 +10,7 @@ Key Functions:
 
 from typing import cast, overload
 
-from graflo.architecture.graph_types import VertexRep
+from graflo.architecture.graph_types.transform import VertexRep
 
 
 @overload

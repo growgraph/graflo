@@ -75,7 +75,7 @@ Transforming the data and ingesting it into an ArangoDB takes a few lines of cod
 ```python
 from suthing import FileHandle
 from graflo import Caster, Bindings, GraphManifest
-from graflo.db.connection.onto import ArangoConfig
+from graflo.connections.onto import ArangoConfig
 
 manifest = GraphManifest.from_config(FileHandle.load("manifest.yaml"))
 manifest.finish_init()

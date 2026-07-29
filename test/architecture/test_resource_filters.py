@@ -16,10 +16,10 @@ import pytest
 from graflo.architecture.contract.bindings import (
     Bindings,
     ColumnTimeFilter,
-    JoinClause,
     TableConnector,
 )
 from graflo.data_source.sql import SQLConfig, SQLDataSource
+from graflo.filter import JoinClause
 from graflo.filter.onto import ComparisonOperator, FilterExpression, LogicalOperator
 from graflo.filter.select import SelectSpec
 from graflo.onto import ExpressionFlavor

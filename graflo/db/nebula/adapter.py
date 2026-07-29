@@ -10,7 +10,7 @@ import abc
 import logging
 from typing import Any
 
-from graflo.db.connection import NebulaConfig
+from graflo.connections.onto import NebulaConfig
 
 logger = logging.getLogger(__name__)
 

@@ -2,6 +2,12 @@ import logging
 
 import pytest
 
+from graflo.architecture.contract.ingestion.steps import (
+    TransformActorConfig,
+    VertexActorConfig,
+    normalize_actor_step,
+    validate_actor_step,
+)
 from graflo.architecture.contract.ingestion.transform import (
     DressConfig,
     KeySelectionConfig,
@@ -22,12 +28,6 @@ from graflo.architecture.pipeline.runtime.actor import (
     EdgeActor,
     TransformActor,
     VertexActor,
-)
-from graflo.architecture.pipeline.runtime.actor.config import (
-    TransformActorConfig,
-    VertexActorConfig,
-    normalize_actor_step,
-    validate_actor_step,
 )
 from graflo.architecture.schema.edge import EdgeConfig
 from graflo.architecture.schema.vertex import VertexConfig

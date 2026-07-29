@@ -11,7 +11,7 @@ Key Components:
 
 Example:
     >>> from graflo.hq import GraphEngine
-    >>> from graflo.db import PostgresConfig
+    >>> from graflo.connections.onto import PostgresConfig
     >>> config = PostgresConfig.from_docker_env()
     >>> engine = GraphEngine()
     >>> manifest = engine.infer_manifest(config, schema_name="public")

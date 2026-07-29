@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 
 from graflo.architecture.schema import Schema
-from graflo.db import ConnectionManager
+from graflo.db.manager import ConnectionManager
 from test.db.test_resolve_vertices import (
     BACKENDS,
     PROBE_VERTEX,
@@ -115,7 +115,7 @@ def _neo4j_probe_indexes(db) -> set[tuple[str, ...]]:
 
 def test_neo4j_creates_secondary_indexes() -> None:
     """Both the unary and the composite secondary identity become real indexes."""
-    from graflo.db import Neo4jConfig
+    from graflo.connections.onto import Neo4jConfig
 
     config = Neo4jConfig.from_docker_env()
     if not config.database:
@@ -140,7 +140,7 @@ def test_neo4j_creates_secondary_indexes() -> None:
 
 def test_postgres_creates_secondary_indexes() -> None:
     """PostgreSQL defines indexes during schema apply, not only vertex tables."""
-    from graflo.db import PostgresConfig
+    from graflo.connections.onto import PostgresConfig
 
     config = PostgresConfig.from_docker_env()
     if not config.database:

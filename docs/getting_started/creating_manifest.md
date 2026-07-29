@@ -134,7 +134,7 @@ Use `bindings` for **where data comes from** (and optionally **which proxy label
 The manifest contains proxy labels only. At runtime you register the real connection config and bind manifest connectors to those proxy labels:
 
 ```python
-from graflo.hq.connection_provider import (
+from graflo.connections.provider import (
     InMemoryConnectionProvider,
     PostgresGeneralizedConnConfig,
 )

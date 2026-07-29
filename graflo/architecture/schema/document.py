@@ -11,8 +11,8 @@ from pydantic import AliasChoices, model_validator
 from pydantic import Field as PydanticField
 
 from graflo.architecture.base import ConfigBaseModel
-from graflo.architecture.database_features import DatabaseProfile
 from graflo.architecture.schema.core import CoreSchema
+from graflo.architecture.schema.database_features import DatabaseProfile
 from graflo.architecture.schema.metadata import GraphMetadata
 from graflo.onto import DBType
 

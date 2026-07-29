@@ -15,9 +15,9 @@ import pytest
 
 from graflo.architecture.contract.bindings import Bindings, FileConnector
 from graflo.architecture.contract.manifest import GraphManifest
-from graflo.db import ConnectionManager
-from graflo.hq import GraphEngine
+from graflo.db.manager import ConnectionManager
 from graflo.hq.caster import IngestionParams
+from graflo.hq.graph_engine import GraphEngine
 
 INSTRUMENT = "instrument"
 ISSUER = "issuer"
@@ -128,7 +128,7 @@ SPACE = "gf_secondary_e2e"
 
 
 def _config(flavor: str, output_dir: Path):
-    from graflo.db import (
+    from graflo.connections.onto import (
         ArangoConfig,
         FalkordbConfig,
         MemgraphConfig,
@@ -162,7 +162,7 @@ def _config(flavor: str, output_dir: Path):
         config.database = SPACE
         return config
     if flavor == "graflo_backend":
-        from graflo.db.graflo_backend.config import GraFloBackendConfig
+        from graflo.connections.graflo_backend import GraFloBackendConfig
 
         return GraFloBackendConfig(output_dir=output_dir)
     config = PostgresConfig.from_docker_env()

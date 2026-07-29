@@ -1,7 +1,7 @@
 import pytest
 import yaml
 
-from graflo import VertexConfig
+from graflo.architecture import VertexConfig
 from graflo.filter.onto import (
     ComparisonOperator,
     FilterExpression,

@@ -10,12 +10,12 @@ from __future__ import annotations
 import pytest
 
 from graflo.architecture.contract.ingestion import IngestionModel
-from graflo.architecture.contract.runtime.edge_derivation import (
+from graflo.architecture.contract.ingestion.steps import EdgeActorConfig
+from graflo.architecture.graph_types.edge_derivation import (
     EdgeDerivationRegistry,
     EndpointMatch,
 )
 from graflo.architecture.pipeline.runtime.actor.base import ActorInitContext
-from graflo.architecture.pipeline.runtime.actor.config import EdgeActorConfig
 from graflo.architecture.pipeline.runtime.actor.wrapper import ActorWrapper
 from graflo.architecture.schema.edge import EdgeConfig
 from graflo.architecture.schema.vertex import Vertex, VertexConfig

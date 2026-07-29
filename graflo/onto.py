@@ -186,3 +186,9 @@ EndpointAmbiguityPolicy: TypeAlias = Literal["all", "first", "skip", "error"]
 
 #: Applied when an edge step leaves ``on_ambiguous`` unset.
 DEFAULT_ENDPOINT_AMBIGUITY: EndpointAmbiguityPolicy = "all"
+
+#: Selector for the primary identity; the default for every edge endpoint.
+PRIMARY_IDENTITY_SELECTOR = "identity"
+
+#: Selector shorthand for "the one declared secondary identity".
+SECONDARY_IDENTITY_SUGAR = "secondary"

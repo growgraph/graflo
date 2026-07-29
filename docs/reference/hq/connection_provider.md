@@ -1,3 +1,3 @@
-# `graflo.hq.connection_provider`
+# `graflo.connections.provider`
 
-::: graflo.hq.connection_provider
+::: graflo.connections.provider

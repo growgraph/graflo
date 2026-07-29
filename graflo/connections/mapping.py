@@ -1,6 +1,6 @@
-from graflo.db.graflo_backend.config import GraFloBackendConfig
+from graflo.connections.graflo_backend import GraFloBackendConfig
+from graflo.onto import DBType
 
-from ... import DBType
 from .onto import (
     ArangoConfig,
     DBConfig,

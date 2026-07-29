@@ -13,10 +13,10 @@ from typing import Any
 
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.schema.vertex import (
-    SECONDARY_IDENTITY_SUGAR,
     SecondaryIdentity,
     Vertex,
 )
+from graflo.onto import SECONDARY_IDENTITY_SUGAR
 
 from .ops import (
     AddSecondaryIdentitiesOp,

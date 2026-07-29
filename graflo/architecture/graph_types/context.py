@@ -8,7 +8,7 @@ from typing import Any
 from pydantic import ConfigDict, Field
 
 from graflo.architecture.base import ConfigBaseModel
-from graflo.architecture.edge_derivation import EdgeDerivation
+from graflo.architecture.graph_types.edge_derivation import EdgeDerivation
 from graflo.architecture.graph_types.identifiers import GraphEntity
 from graflo.architecture.graph_types.location import LocationIndex, ProvenancePath
 from graflo.architecture.graph_types.transform import TransformPayload

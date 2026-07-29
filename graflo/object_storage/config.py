@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, ConfigDict, Field
 
 if TYPE_CHECKING:
-    from graflo.hq.connection_provider import S3GeneralizedConnConfig
+    from graflo.connections.provider import S3GeneralizedConnConfig
 
 
 def parse_dotenv_file(env_file: Path) -> dict[str, str]:
@@ -59,8 +59,8 @@ class MinioConfig(BaseModel):
     )
 
     def to_s3_generalized_conn_config(self) -> S3GeneralizedConnConfig:
-        """Map to runtime provider config for :class:`~graflo.hq.connection_provider.S3GeneralizedConnConfig`."""
-        from graflo.hq.connection_provider import S3GeneralizedConnConfig
+        """Map to runtime provider config for :class:`~graflo.connections.provider.S3GeneralizedConnConfig`."""
+        from graflo.connections.provider import S3GeneralizedConnConfig
 
         return S3GeneralizedConnConfig(
             bucket=self.bucket,

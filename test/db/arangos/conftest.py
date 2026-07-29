@@ -1,6 +1,7 @@
 import pytest
 
-from graflo.db import ArangoConfig, ConnectionManager
+from graflo.connections.onto import ArangoConfig
+from graflo.db.manager import ConnectionManager
 from test.conftest import fetch_schema_obj, ingest_atomic, verify
 
 

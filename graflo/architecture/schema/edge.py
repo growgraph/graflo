@@ -6,7 +6,7 @@ The module supports both ArangoDB and Neo4j through the DBType enum.
 
 Key Components:
     - Edge: Abstract graph edge kind (schema / ``edge_config`` only)
-    - EdgeDerivation: Ingestion wiring (see ``graflo.architecture.edge_derivation``)
+    - EdgeDerivation: Ingestion wiring (see ``graflo.architecture.graph_types.edge_derivation``)
     - EdgeConfig: Manages collections of edges and their configurations
     - WeightConfig: DTO for DB projection helpers (e.g. effective weights); schema uses ``properties``
 
@@ -66,7 +66,7 @@ class Edge(ConfigBaseModel):
     """Abstract graph edge kind (schema / ``edge_config`` only).
 
     Ingestion-only behavior (location filters, relation column, relation from
-    key, etc.) belongs on :class:`~graflo.architecture.edge_derivation.EdgeDerivation`
+    key, etc.) belongs on :class:`~graflo.architecture.graph_types.edge_derivation.EdgeDerivation`
     in pipeline edge steps, not on this model.
     """
 

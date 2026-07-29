@@ -5,7 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 
 from graflo.architecture.schema import Schema
-from graflo.db import Connection
+from graflo.db.conn import Connection
 from graflo.migrate.models import MigrationOperation
 
 

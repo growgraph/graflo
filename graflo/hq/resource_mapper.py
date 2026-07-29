@@ -12,12 +12,12 @@ from graflo.architecture.contract.bindings import (
     TableConnector,
 )
 from graflo.architecture.onto_sql import SchemaIntrospectionResult
-from graflo.db.postgres.conn import PostgresConnection
-from graflo.filter.select import SelectSpec
-from graflo.hq.connection_provider import (
+from graflo.connections.provider import (
     InMemoryConnectionProvider,
     PostgresGeneralizedConnConfig,
 )
+from graflo.db.postgres.conn import PostgresConnection
+from graflo.filter.select import SelectSpec
 
 logger = logging.getLogger(__name__)
 

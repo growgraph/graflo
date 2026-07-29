@@ -1,7 +1,7 @@
 import pytest
 
+from graflo.architecture.contract.ingestion.steps import EdgeActorConfig
 from graflo.architecture.contract.manifest import GraphManifest
-from graflo.architecture.pipeline.runtime.actor.config import EdgeActorConfig
 from graflo.architecture.schema import Schema
 
 

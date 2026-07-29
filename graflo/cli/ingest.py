@@ -28,11 +28,14 @@ from os.path import dirname, join, realpath
 import click
 from suthing import FileHandle
 
-from graflo import Bindings, DataSourceRegistry, DBType, GraphManifest
-from graflo.data_source import DataSourceFactory
-from graflo.db import DBConfig
-from graflo.hq import GraphEngine
-from graflo.hq.connection_provider import EmptyConnectionProvider
+from graflo.architecture.contract.bindings import Bindings
+from graflo.architecture.contract.manifest import GraphManifest
+from graflo.connections.onto import DBConfig
+from graflo.connections.provider import EmptyConnectionProvider
+from graflo.data_source.factory import DataSourceFactory
+from graflo.data_source.registry import DataSourceRegistry
+from graflo.hq.graph_engine import GraphEngine
+from graflo.onto import DBType
 
 logger = logging.getLogger(__name__)
 

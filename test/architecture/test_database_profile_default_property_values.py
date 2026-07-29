@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from graflo.architecture.database_features import (
+from graflo.architecture.schema.database_features import (
     DatabaseProfile,
     DefaultPropertyValues,
     EdgePropertyDefaults,

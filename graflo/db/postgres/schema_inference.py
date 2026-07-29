@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import logging
 
-from graflo.architecture.database_features import DatabaseProfile
 from graflo.architecture.onto_sql import EdgeTableInfo, SchemaIntrospectionResult
 from graflo.architecture.schema import CoreSchema, GraphMetadata, Schema
+from graflo.architecture.schema.database_features import DatabaseProfile
 from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.schema.vertex import Field, FieldType, Vertex, VertexConfig
 from graflo.onto import DBType

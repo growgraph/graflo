@@ -31,12 +31,12 @@ from graflo.architecture.contract.bindings import (
 )
 from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.contract.ingestion.resource import Resource
-from graflo.architecture.database_features import DatabaseProfile
 from graflo.architecture.schema import (
     CoreSchema,
     GraphMetadata,
     Schema,
 )
+from graflo.architecture.schema.database_features import DatabaseProfile
 from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.schema.vertex import Field as VertexField
 from graflo.architecture.schema.vertex import Vertex, VertexConfig

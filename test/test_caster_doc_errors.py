@@ -13,12 +13,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from graflo.architecture.contract.runtime.edge_derivation import EdgeDerivationRegistry
 from graflo.architecture.graph_types import (
     LocationIndex,
     ResourceCastResult,
     TransformCastFailure,
 )
+from graflo.architecture.graph_types.edge_derivation import EdgeDerivationRegistry
 from graflo.architecture.schema.vertex import Field, Vertex, VertexConfig
 from graflo.data_source.base import AbstractDataSource, DataSourceType
 from graflo.hq.caster import (

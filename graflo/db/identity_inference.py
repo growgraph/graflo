@@ -15,9 +15,9 @@ from pydantic import Field as PydanticField
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.schema.graflo_output import GraFloOutput
+from graflo.architecture.schema.identity_uuid import UUID_PATTERN
 from graflo.architecture.schema.vertex import Vertex, VertexConfig
 from graflo.db.graph_introspection import strip_internal_properties
-from graflo.db.identity_uuid import UUID_PATTERN
 
 logger = logging.getLogger(__name__)
 

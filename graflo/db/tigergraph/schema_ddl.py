@@ -7,9 +7,9 @@ import time
 from collections import defaultdict
 from typing import TYPE_CHECKING, Literal
 
-from graflo.architecture.database_features import DatabaseProfile
 from graflo.architecture.graph_types import EdgeId
 from graflo.architecture.schema import Schema
+from graflo.architecture.schema.database_features import DatabaseProfile
 from graflo.architecture.schema.db_aware import EdgeConfigDBAware
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import FieldType, Vertex

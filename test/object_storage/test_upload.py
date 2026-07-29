@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from graflo.hq.connection_provider import S3GeneralizedConnConfig
+from graflo.connections.provider import S3GeneralizedConnConfig
 from graflo.object_storage.upload import upload_staged_csvs
 
 

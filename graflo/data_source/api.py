@@ -19,7 +19,7 @@ from urllib3.util.retry import Retry
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.contract.bindings import PaginationConfig
-from graflo.connection_models import ApiAuth
+from graflo.connections.sources import ApiAuth
 from graflo.data_source.api_response import (
     ResolvedApiResponse,
     detect_carry_params,

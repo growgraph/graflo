@@ -18,7 +18,7 @@ from typing import Any, Literal
 from pydantic import Field
 
 from graflo.architecture.base import ConfigBaseModel
-from graflo.connection_models import KafkaSecurityProtocol
+from graflo.connections.sources import KafkaSecurityProtocol
 from graflo.data_source.base import AbstractDataSource, DataSourceType
 
 logger = logging.getLogger(__name__)

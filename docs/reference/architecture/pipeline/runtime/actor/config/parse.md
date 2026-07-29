@@ -1,3 +1,3 @@
-# `graflo.architecture.pipeline.runtime.actor.config.parse`
+# `graflo.architecture.contract.ingestion.steps.parse`
 
-::: graflo.architecture.pipeline.runtime.actor.config.parse
+::: graflo.architecture.contract.ingestion.steps.parse

@@ -7,23 +7,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from graflo.architecture.graph_types import (
-    ActionContext,
-    AssemblyContext,
-    EdgeId,
-    ExtractionContext,
-    GraphEntity,
-    LocationIndex,
-)
-from graflo.architecture.schema.edge import EdgeConfig
-from graflo.architecture.schema.vertex import VertexConfig
-from graflo.onto import DBType
-from graflo.util.merge import merge_doc_basis
-from graflo.util.transform import pick_unique_dict
-
-from ..assemble import assemble_edges
-from .base import Actor, ActorInitContext
-from .config import (
+from graflo.architecture.contract.ingestion.steps import (
     ActorConfig,
     DescendActorConfig,
     EdgeActorConfig,
@@ -34,6 +18,25 @@ from .config import (
     parse_root_config,
     validate_actor_step,
 )
+from graflo.architecture.graph_types import (
+    ActionContext,
+    AssemblyContext,
+    EdgeId,
+    ExtractionContext,
+    GraphEntity,
+    LocationIndex,
+)
+from graflo.architecture.graph_types.merge import merge_doc_basis
+from graflo.architecture.schema.edge import EdgeConfig
+from graflo.architecture.schema.identity_uuid import (
+    ensure_assigned_uuids_in_acc_vertex,
+)
+from graflo.architecture.schema.vertex import VertexConfig
+from graflo.onto import DBType
+from graflo.util.transform import pick_unique_dict
+
+from ..assemble import assemble_edges
+from .base import Actor, ActorInitContext
 from .descend import DescendActor
 from .edge import EdgeActor
 from .edge_render import add_blank_collections
@@ -141,9 +144,6 @@ class ActorWrapper:
             assembly_ctx = ctx
         else:
             assembly_ctx = AssemblyContext.from_extraction(ctx)
-        # Lazy import: graflo.db pulls architecture via ConnectionManager.
-        from graflo.db.identity_uuid import ensure_assigned_uuids_in_acc_vertex
-
         ensure_assigned_uuids_in_acc_vertex(assembly_ctx.acc_vertex, self.vertex_config)
         assemble_edges(
             ctx=assembly_ctx,

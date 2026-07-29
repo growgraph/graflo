@@ -2,7 +2,7 @@
 
 import pytest
 
-from graflo.db import ConnectionManager
+from graflo.db.manager import ConnectionManager
 
 pytestmark = pytest.mark.nebula
 

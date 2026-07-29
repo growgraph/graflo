@@ -9,7 +9,7 @@ from collections.abc import Iterator
 import pandas as pd
 
 from graflo.data_source.base import AbstractDataSource, DataSourceType
-from graflo.util.chunker import ChunkerFactory
+from graflo.data_source.chunker import ChunkerFactory
 
 
 class InMemoryDataSource(AbstractDataSource):

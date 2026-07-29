@@ -1,3 +1,3 @@
-# `graflo.architecture.pipeline.runtime.actor.config.normalize`
+# `graflo.architecture.contract.ingestion.steps.normalize`
 
-::: graflo.architecture.pipeline.runtime.actor.config.normalize
+::: graflo.architecture.contract.ingestion.steps.normalize

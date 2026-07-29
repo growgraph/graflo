@@ -1,5 +1,5 @@
 """GraFlo on-disk graph backend connection."""
 
-from graflo.db.graflo_backend.config import GraFloBackendConfig
+from graflo.connections.graflo_backend import GraFloBackendConfig
 
 __all__ = ["GraFloBackendConfig"]

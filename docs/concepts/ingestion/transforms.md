@@ -6,7 +6,7 @@ This page documents the transform DSL as implemented in:
 
 - `graflo.architecture.contract.declarations.transform.Transform`
 - `graflo.architecture.pipeline.runtime.actor.transform.TransformActor`
-- `graflo.architecture.pipeline.runtime.actor.config.models.TransformCallConfig`
+- `graflo.architecture.contract.ingestion.steps.models.TransformCallConfig`
 
 ## Mental model
 

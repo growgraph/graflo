@@ -15,7 +15,7 @@ from graflo.architecture.onto_sql import (
 from graflo.architecture.schema.edge import EdgeConfig
 from graflo.architecture.schema.vertex import Field, Vertex, VertexConfig
 from graflo.db.postgres.resource_mapping import PostgresResourceMapper
-from graflo.hq.fuzzy_matcher import FuzzyMatcher
+from graflo.util.fuzzy_matcher import FuzzyMatcher
 
 
 def _build_vertex_config() -> VertexConfig:

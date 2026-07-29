@@ -8,8 +8,8 @@ from typing import Any
 from pydantic import Field as PydanticField
 
 from graflo.architecture.base import ConfigBaseModel
-from graflo.architecture.database_features import DatabaseProfile
 from graflo.architecture.schema import CoreSchema, GraphMetadata, Schema
+from graflo.architecture.schema.database_features import DatabaseProfile
 from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.schema.vertex import Field, Vertex, VertexConfig
 from graflo.onto import DBType

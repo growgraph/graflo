@@ -12,8 +12,8 @@ from graflo.architecture.schema.core import CoreSchema
 from graflo.architecture.schema.edge import EdgeConfig
 from graflo.architecture.schema.metadata import GraphMetadata
 from graflo.architecture.schema.vertex import Field, FieldType, Vertex, VertexConfig
-from graflo.db import ConnectionManager
-from graflo.db.connection import TigergraphBulkLoadConfig
+from graflo.connections.onto import TigergraphBulkLoadConfig
+from graflo.db.manager import ConnectionManager
 from graflo.onto import DBType
 
 

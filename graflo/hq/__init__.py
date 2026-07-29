@@ -2,64 +2,59 @@
 
 This package provides high-level orchestration classes that coordinate
 multiple components for graph database operations.
+
+The façade is lazy (PEP 562): importing ``graflo.hq`` is cheap; orchestration
+classes (and their DB/data-source dependencies) load on first attribute access.
 """
 
-from graflo.hq.caster import (
-    CastBatchResult,
-    Caster,
-    DocCastFailure,
-    DocErrorBudgetExceeded,
-    IngestionParams,
-)
-from graflo.hq.connection_provider import (
-    ApiAuth,
-    ApiGeneralizedConnConfig,
-    ConnectionProvider,
-    EmptyConnectionProvider,
-    GeneralizedConnConfig,
-    InMemoryConnectionProvider,
-    PostgresGeneralizedConnConfig,
-    RestApiConnConfig,
-    S3GeneralizedConnConfig,
-    SparqlAuth,
-    SparqlGeneralizedConnConfig,
-)
-from graflo.hq.db_writer import DBWriter
-from graflo.hq.doc_error_sink import (
-    DocErrorSink,
-    JsonlGzDocErrorSink,
-    failure_sinks_from_ingestion_params,
-)
-from graflo.hq.graph_engine import GraphEngine
-from graflo.hq.registry_builder import RegistryBuilder
-from graflo.hq.resource_mapper import ResourceMapper
-from graflo.hq.sanitizer import Sanitizer
-from graflo.hq.sql_inferencer import SQLInferenceManager
+from __future__ import annotations
+
+from typing import Any
+
+_EXPORTS: dict[str, str] = {
+    "CastBatchResult": "graflo.hq.caster",
+    "Caster": "graflo.hq.caster",
+    "DocCastFailure": "graflo.hq.caster",
+    "DocErrorBudgetExceeded": "graflo.hq.caster",
+    "IngestionParams": "graflo.hq.caster",
+    "DBWriter": "graflo.hq.db_writer",
+    "DocErrorSink": "graflo.hq.doc_error_sink",
+    "JsonlGzDocErrorSink": "graflo.hq.doc_error_sink",
+    "failure_sinks_from_ingestion_params": "graflo.hq.doc_error_sink",
+    "GraphEngine": "graflo.hq.graph_engine",
+    "RegistryBuilder": "graflo.hq.registry_builder",
+    "ResourceMapper": "graflo.hq.resource_mapper",
+    "Sanitizer": "graflo.hq.sanitizer",
+    "SQLInferenceManager": "graflo.hq.sql_inferencer",
+}
 
 __all__ = [
-    "ApiAuth",
-    "ApiGeneralizedConnConfig",
     "CastBatchResult",
     "Caster",
-    "ConnectionProvider",
     "DBWriter",
     "DocCastFailure",
     "DocErrorBudgetExceeded",
     "DocErrorSink",
-    "EmptyConnectionProvider",
-    "GeneralizedConnConfig",
     "GraphEngine",
-    "InMemoryConnectionProvider",
     "IngestionParams",
     "JsonlGzDocErrorSink",
-    "PostgresGeneralizedConnConfig",
     "RegistryBuilder",
     "ResourceMapper",
-    "RestApiConnConfig",
-    "S3GeneralizedConnConfig",
     "SQLInferenceManager",
     "Sanitizer",
-    "SparqlAuth",
-    "SparqlGeneralizedConnConfig",
     "failure_sinks_from_ingestion_params",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    if name in _EXPORTS:
+        import importlib
+
+        value = getattr(importlib.import_module(_EXPORTS[name]), name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(__all__)

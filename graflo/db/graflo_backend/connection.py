@@ -12,8 +12,8 @@ from graflo.architecture.graph_types import GraphContainer
 from graflo.architecture.schema.document import Schema
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig
+from graflo.connections.graflo_backend import GraFloBackendConfig
 from graflo.db.conn import Connection, NamespaceNotFoundError, SchemaExistsError
-from graflo.db.graflo_backend.config import GraFloBackendConfig
 from graflo.filter.onto import parse_filter_expression
 from graflo.onto import AggregationType, DBType, ExpressionFlavor
 

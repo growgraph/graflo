@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 from graflo.architecture.contract.bindings import Bindings
 from graflo.architecture.graph_types import GraphContainer
 from graflo.architecture.schema import Schema
-from graflo.db.connection import TigergraphBulkLoadConfig
+from graflo.connections.onto import TigergraphBulkLoadConfig
 from graflo.db.tigergraph.bulk_csv import BulkCsvAppender
 from graflo.db.tigergraph.bulk_gsql import (
     build_create_and_run_loading_job,
@@ -20,11 +20,11 @@ from graflo.object_storage import upload_staged_csvs
 from graflo.onto import DBType
 
 if TYPE_CHECKING:
-    from graflo.db.tigergraph.conn import TigerGraphConnection
-    from graflo.hq.connection_provider import (
+    from graflo.connections.provider import (
         ConnectionProvider,
         S3GeneralizedConnConfig,
     )
+    from graflo.db.tigergraph.conn import TigerGraphConnection
 
 _tiger_bulk_sessions_lock = threading.Lock()
 _tiger_bulk_sessions: dict[
@@ -105,7 +105,7 @@ def bulk_load_finalize(
     bucket = bulk_cfg.s3_bucket
     tigergraph_s3_loader: S3GeneralizedConnConfig | None = None
     if proxy and connection_provider is not None:
-        from graflo.hq.connection_provider import S3GeneralizedConnConfig
+        from graflo.connections.provider import S3GeneralizedConnConfig
 
         gen = connection_provider.get_generalized_config_by_proxy(proxy)
         if isinstance(gen, S3GeneralizedConnConfig):

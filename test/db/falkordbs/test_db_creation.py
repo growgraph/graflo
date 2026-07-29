@@ -1,6 +1,6 @@
 """Tests for FalkorDB database/graph creation and deletion operations."""
 
-from graflo.db import ConnectionManager
+from graflo.db.manager import ConnectionManager
 
 
 def test_connection_initialization(conn_conf):

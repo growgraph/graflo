@@ -16,12 +16,12 @@ from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.graph_types import GraphContainer
 from graflo.architecture.schema import EdgeRuntime, Schema, SchemaDBAware
 from graflo.architecture.schema.edge import Edge
-from graflo.db.connection import DBConfig
-from graflo.db.identity_inference import compute_hash_identity
-from graflo.db.identity_uuid import (
+from graflo.architecture.schema.identity_uuid import (
     ensure_assigned_uuids_on_docs,
     validate_uuid_typed_identity_fields,
 )
+from graflo.connections.onto import DBConfig
+from graflo.db.identity_inference import compute_hash_identity
 from graflo.db.manager import ConnectionManager
 from graflo.hq.endpoint_resolve import resolve_edge_endpoints
 from graflo.onto import DBType

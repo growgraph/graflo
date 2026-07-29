@@ -35,6 +35,7 @@ from graflo.architecture.graph_types import Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig
+from graflo.connections.onto import FalkordbConfig
 from graflo.db.conn import (
     Connection,
     NamespaceNotFoundError,
@@ -46,8 +47,6 @@ from graflo.db.field_type_support import assert_schema_field_types_supported
 from graflo.db.util import serialize_value
 from graflo.filter.onto import FilterExpression
 from graflo.onto import AggregationType, DBType
-
-from ..connection.onto import FalkordbConfig
 
 logger = logging.getLogger(__name__)
 

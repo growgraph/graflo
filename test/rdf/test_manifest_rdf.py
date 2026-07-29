@@ -8,9 +8,9 @@ import yaml
 from rdflib import Graph, URIRef
 from rdflib.namespace import OWL, RDF
 
-from graflo import GraphManifest
-from graflo.architecture.database_features import EdgePhysicalSpec
+from graflo.architecture import GraphManifest
 from graflo.architecture.graph_types import Index
+from graflo.architecture.schema.database_features import EdgePhysicalSpec
 from graflo.rdf import namespace as ns
 from graflo.rdf.deserializer import ManifestRdfDeserializer
 from graflo.rdf.serializer import ManifestRdfSerializer

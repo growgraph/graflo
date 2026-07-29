@@ -5,14 +5,14 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any, cast
 
-from graflo.architecture.database_features import DatabaseProfile
-from graflo.architecture.pipeline.runtime.actor.config.models import (
+from graflo.architecture.contract.ingestion.steps.models import (
     EdgeActorConfig,
     EdgeLinkConfig,
 )
-from graflo.architecture.pipeline.runtime.actor.config.normalize import (
+from graflo.architecture.contract.ingestion.steps.normalize import (
     normalize_actor_step,
 )
+from graflo.architecture.schema.database_features import DatabaseProfile
 from graflo.architecture.schema.edge import Edge
 
 EdgeTriple = tuple[str, str, str]

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from graflo.db.connection.onto import Neo4jConfig
+from graflo.connections.onto import Neo4jConfig
 from graflo.db.cypher import rel_merge_props_map_from_row_index
 from graflo.db.neo4j.conn import Neo4jConnection
 

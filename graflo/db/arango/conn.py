@@ -37,6 +37,7 @@ from graflo.architecture.graph_types import (
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig
+from graflo.connections.onto import ArangoConfig
 from graflo.db.arango.query import fetch_fields_query
 from graflo.db.arango.util import render_filters
 from graflo.db.conn import (
@@ -58,8 +59,6 @@ from graflo.db.util import get_data_from_cursor, json_serializer
 from graflo.filter.onto import FilterExpression
 from graflo.onto import AggregationType, DBType
 from graflo.util.transform import pick_unique_dict
-
-from ..connection.onto import ArangoConfig
 
 logger = logging.getLogger(__name__)
 

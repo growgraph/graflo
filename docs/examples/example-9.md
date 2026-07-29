@@ -30,7 +30,7 @@ In the companion script, each `TableConnector` sets `name` to match those refere
 The script wires runtime config and binds the manifest connectors to the chosen proxy:
 
 ```python
-from graflo.hq.connection_provider import (
+from graflo.connections.provider import (
     InMemoryConnectionProvider,
     PostgresGeneralizedConnConfig,
 )

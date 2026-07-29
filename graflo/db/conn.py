@@ -59,8 +59,8 @@ from graflo.architecture.graph_types import GraphContainer
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig
+from graflo.connections.onto import TigergraphBulkLoadConfig
 from graflo.db.bulk_exc import UnsupportedBulkLoad
-from graflo.db.connection import TigergraphBulkLoadConfig
 from graflo.db.resolve import (
     DEFAULT_RESOLVE_CHUNK_SIZE,
     bucket_by_key,
@@ -78,7 +78,7 @@ from graflo.onto import (
 
 if TYPE_CHECKING:
     from graflo.architecture.contract.bindings import Bindings
-    from graflo.hq.connection_provider import ConnectionProvider
+    from graflo.connections.provider import ConnectionProvider
 
 logger = logging.getLogger(__name__)
 ConnectionType = TypeVar("ConnectionType", bound="Connection")

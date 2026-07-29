@@ -10,8 +10,8 @@ This module tests the schema inference capabilities, including:
 from unittest.mock import patch
 
 from graflo.architecture.contract.manifest import GraphManifest
-from graflo.hq import GraphEngine
-from graflo.hq.connection_provider import InMemoryConnectionProvider
+from graflo.connections.provider import InMemoryConnectionProvider
+from graflo.hq.graph_engine import GraphEngine
 from graflo.hq.resource_mapper import ResourceMapper
 from graflo.onto import DBType
 

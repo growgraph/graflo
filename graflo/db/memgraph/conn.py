@@ -87,6 +87,7 @@ from graflo.architecture.graph_types import Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig
+from graflo.connections.onto import MemgraphConfig
 from graflo.db.conn import (
     Connection,
     SchemaExistsError,
@@ -96,8 +97,6 @@ from graflo.db.cypher import rel_merge_props_map_from_row_props
 from graflo.db.field_type_support import assert_schema_field_types_supported
 from graflo.filter.onto import FilterExpression
 from graflo.onto import AggregationType, DBType
-
-from ..connection.onto import MemgraphConfig
 
 logger = logging.getLogger(__name__)
 

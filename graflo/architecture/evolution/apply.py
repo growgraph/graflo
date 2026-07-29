@@ -8,11 +8,11 @@ from typing import Any, Literal
 
 from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.contract.manifest import GraphManifest
-from graflo.architecture.database_features import DatabaseProfile
 from graflo.architecture.graph_types import EdgeId
 from graflo.architecture.pipeline.runtime.actor import ActorWrapper
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.core import CoreSchema
+from graflo.architecture.schema.database_features import DatabaseProfile
 from graflo.architecture.schema.edge import EdgeConfig
 from graflo.architecture.schema.vertex import Field, Vertex, VertexConfig
 

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import logging
 
-from graflo.architecture.database_features import DatabaseProfile
 from graflo.architecture.graph_types import Index
 from graflo.architecture.schema import Schema
+from graflo.architecture.schema.database_features import DatabaseProfile
 from graflo.architecture.schema.db_aware import VertexConfigDBAware
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig

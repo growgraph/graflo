@@ -1,8 +1,8 @@
 """Pydantic models for runtime source connection configuration.
 
-Leaf module: no imports from ``bindings``, ``data_source``, ``hq``, or ``connection_provider``.
-Used by :mod:`graflo.hq.connection_provider`, :mod:`graflo.data_source.api`,
-and :mod:`graflo.data_source.kafka`.
+Leaf module: no imports from ``bindings``, ``data_source``, ``hq``, or
+:mod:`graflo.connections.provider`. Used by :mod:`graflo.connections.provider`,
+:mod:`graflo.data_source.api`, and :mod:`graflo.data_source.kafka`.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from typing import Literal, cast
 
 from pydantic import BaseModel, Field
 
-from graflo.db.connection import PostgresConfig, SparqlEndpointConfig
+from graflo.connections.onto import PostgresConfig, SparqlEndpointConfig
 
 AuthType = Literal["bearer", "basic", "digest", "api_key"]
 _VALID_AUTH_TYPES = frozenset({"bearer", "basic", "digest", "api_key"})

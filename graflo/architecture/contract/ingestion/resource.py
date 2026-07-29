@@ -9,12 +9,12 @@ from pydantic import AliasChoices, model_validator
 from pydantic import Field as PydanticField
 
 from graflo.architecture.base import ConfigBaseModel
+from graflo.architecture.contract.ingestion.steps.normalize import (
+    normalize_actor_step,
+)
 from graflo.architecture.graph_types.enums import EncodingType
 from graflo.architecture.graph_types.identifiers import EdgeId
 from graflo.architecture.graph_types.index_config import Weight
-from graflo.architecture.pipeline.runtime.actor.config.normalize import (
-    normalize_actor_step,
-)
 from graflo.architecture.schema.edge import Edge
 
 logger = logging.getLogger(__name__)

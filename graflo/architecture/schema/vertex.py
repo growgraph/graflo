@@ -34,7 +34,11 @@ from pydantic import (
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.filter.onto import FilterExpression
-from graflo.onto import BaseEnum
+from graflo.onto import (
+    PRIMARY_IDENTITY_SELECTOR,
+    SECONDARY_IDENTITY_SUGAR,
+    BaseEnum,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,11 +46,6 @@ logger = logging.getLogger(__name__)
 PropertiesInputType = list[str] | list["Field"] | list[dict[str, Any]]
 VertexName: TypeAlias = str
 IdentityMode: TypeAlias = Literal["natural", "hash", "blank", "assigned"]
-
-#: Selector shorthand for "the one declared secondary identity".
-SECONDARY_IDENTITY_SUGAR = "secondary"
-#: Selector for the primary identity; the default for every edge endpoint.
-PRIMARY_IDENTITY_SELECTOR = "identity"
 
 
 class FieldType(BaseEnum):

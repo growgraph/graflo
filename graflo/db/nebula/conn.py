@@ -13,6 +13,7 @@ from graflo.architecture.graph_types import Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import FieldType, VertexConfig
+from graflo.connections.onto import NebulaConfig
 from graflo.db.conn import (
     Connection,
     NamespaceNotFoundError,
@@ -48,8 +49,6 @@ from graflo.db.nebula.util import (
 )
 from graflo.filter.onto import FilterExpression
 from graflo.onto import AggregationType, DBType, ExpressionFlavor
-
-from ..connection.onto import NebulaConfig
 
 logger = logging.getLogger(__name__)
 

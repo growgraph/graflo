@@ -4,8 +4,8 @@ import pytest
 import yaml
 from suthing import FileHandle
 
-from graflo import EdgeConfig
-from graflo.architecture import VertexConfig
+from graflo.architecture import EdgeConfig
+from graflo.architecture.schema.vertex import VertexConfig
 
 
 @pytest.fixture(scope="session", autouse=True)

@@ -14,7 +14,7 @@ Key Features:
 
 Example:
     >>> from graflo.db.falkordb import FalkordbConnection
-    >>> from graflo.db import FalkordbConfig
+    >>> from graflo.connections.onto import FalkordbConfig
     >>> config = FalkordbConfig(uri="redis://localhost:6379", database="mygraph")
     >>> conn = FalkordbConnection(config)
     >>> conn.init_db(schema, recreate_schema=True)

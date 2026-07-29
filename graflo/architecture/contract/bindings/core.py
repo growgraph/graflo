@@ -201,7 +201,7 @@ class ConnectorConnectionBinding(ConfigBaseModel):
     """Connector -> runtime connection-proxy mapping entry.
 
     This is a non-secret contract block: manifests store proxy names only.
-    At runtime, the :class:`~graflo.hq.connection_provider.ConnectionProvider`
+    At runtime, the :class:`~graflo.connections.provider.ConnectionProvider`
     resolves each ``conn_proxy`` to a concrete generalized config holding
     credentials/secrets.
     """

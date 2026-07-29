@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from graflo.architecture.database_features import DatabaseProfile
+from graflo.architecture.schema.database_features import DatabaseProfile
 from graflo.architecture.schema.db_aware import VertexConfigDBAware
 from graflo.architecture.schema.vertex import Field, FieldType, Vertex, VertexConfig
 from graflo.db.field_type_support import tigergraph_type_for_field

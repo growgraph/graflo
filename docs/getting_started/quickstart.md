@@ -22,7 +22,7 @@ import pathlib
 from suthing import FileHandle
 from graflo import Bindings, Caster, GraphManifest
 from graflo.architecture.contract.bindings import FileConnector
-from graflo.db.connection.onto import ArangoConfig
+from graflo.connections.onto import ArangoConfig
 
 manifest = GraphManifest.from_config(FileHandle.load("manifest.yaml"))
 manifest.finish_init()
@@ -143,7 +143,7 @@ For SQL and SPARQL sources, add **`connector_connection`**: a list of `{"connect
 When all SQL connectors use the same `conn_proxy`, you can wire the runtime config in one call:
 
 ```python
-from graflo.hq.connection_provider import (
+from graflo.connections.provider import (
     InMemoryConnectionProvider,
     PostgresGeneralizedConnConfig,
 )
@@ -176,7 +176,7 @@ You can ingest data directly from PostgreSQL tables. First, infer the schema fro
 
 ```python
 from graflo.hq import GraphEngine
-from graflo.db.connection.onto import PostgresConfig
+from graflo.connections.onto import PostgresConfig
 
 # Connect to PostgreSQL
 pg_config = PostgresConfig.from_docker_env()  # Or from_env(), or create directly
@@ -206,7 +206,7 @@ bindings.add_connector(
 bindings.bind_resource("products", products_connector)
 
 # Ingest
-from graflo.db.connection.onto import ArangoConfig
+from graflo.connections.onto import ArangoConfig
 from graflo.hq import GraphEngine
 
 arango_config = ArangoConfig.from_docker_env()  # Target graph database
@@ -304,7 +304,7 @@ bindings:
 ```python
 from graflo.hq import GraphEngine
 from graflo.hq.caster import IngestionParams
-from graflo.hq.connection_provider import InMemoryConnectionProvider
+from graflo.connections.provider import InMemoryConnectionProvider
 
 manifest = GraphManifest.from_config(FileHandle.load("manifest.yaml"))
 manifest.finish_init()
@@ -474,7 +474,7 @@ export POSTGRES_SCHEMA_NAME=public
 Then load the config:
 
 ```python
-from graflo.db.connection.onto import ArangoConfig, Neo4jConfig, TigergraphConfig, FalkordbConfig, MemgraphConfig, NebulaConfig, PostgresConfig
+from graflo.connections.onto import ArangoConfig, Neo4jConfig, TigergraphConfig, FalkordbConfig, MemgraphConfig, NebulaConfig, PostgresConfig
 
 # Load from default environment variables
 arango_conf = ArangoConfig.from_env()

@@ -72,7 +72,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from graflo.db import ConnectionManager
+from graflo.db.manager import ConnectionManager
 from graflo.onto import AggregationType
 
 pytestmark = pytest.mark.performance

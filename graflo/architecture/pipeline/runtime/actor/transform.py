@@ -6,6 +6,7 @@ import logging
 import traceback
 from typing import Any
 
+from graflo.architecture.contract.ingestion.steps import TransformActorConfig
 from graflo.architecture.contract.ingestion.transform import (
     KeySelectionConfig,
     ProtoTransform,
@@ -19,7 +20,6 @@ from graflo.architecture.graph_types import (
 )
 
 from .base import Actor, ActorInitContext
-from .config import TransformActorConfig
 
 logger = logging.getLogger(__name__)
 

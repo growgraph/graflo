@@ -13,15 +13,16 @@ from graflo.architecture.contract.bindings import (
     PaginationConfig,
     PaginationRequestConfig,
 )
-from graflo.data_source import APIDataSource, DataSourceFactory
-from graflo.data_source.sql import SQLConfig, SQLDataSource
-from graflo.db import PostgresConfig
-from graflo.hq.caster import Caster
-from graflo.hq.connection_provider import (
+from graflo.connections.onto import PostgresConfig
+from graflo.connections.provider import (
     ApiGeneralizedConnConfig,
     InMemoryConnectionProvider,
     RestApiConnConfig,
 )
+from graflo.data_source.api import APIDataSource
+from graflo.data_source.factory import DataSourceFactory
+from graflo.data_source.sql import SQLConfig, SQLDataSource
+from graflo.hq.caster import Caster
 from graflo.hq.ingestion_parameters import IngestionParams
 from graflo.hq.registry_builder import RegistryBuilder
 from test.conftest import fetch_manifest_obj
