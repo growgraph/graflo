@@ -1,8 +1,8 @@
 import logging
 from pathlib import Path
 
-from graflo.db import PostgresConnection
-from graflo.db.connection import PostgresConfig
+from graflo.connections.onto import PostgresConfig
+from graflo.db.postgres.conn import PostgresConnection
 
 logger = logging.getLogger(__name__)
 

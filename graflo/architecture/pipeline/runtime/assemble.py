@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from graflo.architecture.contract.runtime.edge_derivation import (
+from graflo.architecture.graph_types import AssemblyContext, EdgeId, LocationIndex
+from graflo.architecture.graph_types.edge_derivation import (
+    EdgeDerivation,
     EdgeDerivationRegistry,
 )
-from graflo.architecture.edge_derivation import EdgeDerivation
-from graflo.architecture.graph_types import AssemblyContext, EdgeId, LocationIndex
+from graflo.architecture.graph_types.merge import merge_doc_basis
 from graflo.architecture.schema.edge import (
     DEFAULT_TIGERGRAPH_RELATION_WEIGHTNAME,
     Edge,
@@ -16,7 +17,6 @@ from graflo.architecture.schema.edge import (
 )
 from graflo.architecture.schema.vertex import VertexConfig
 from graflo.onto import DBType
-from graflo.util.merge import merge_doc_basis
 
 from .actor.edge_render import render_edge, render_weights
 

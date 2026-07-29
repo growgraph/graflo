@@ -16,6 +16,9 @@ from graflo.onto import DBType
 
 logger = logging.getLogger(__name__)
 
+# Repository root (this file lives at <repo>/graflo/connections/onto.py).
+_DOCKER_ROOT = Path(__file__).resolve().parents[2] / "docker"
+
 # Type variable for DBConfig subclasses
 T = TypeVar("T", bound="DBConfig")
 
@@ -403,7 +406,7 @@ class DBConfig(BaseSettings, abc.ABC):
     def connection_type(self) -> "DBType":
         """Get database type from class."""
         # Map class to DBType - need to import here to avoid circular import
-        from .config_mapping import DB_TYPE_MAPPING
+        from .mapping import DB_TYPE_MAPPING
 
         # Reverse lookup: find DBType for this class
         for db_type, config_class in DB_TYPE_MAPPING.items():
@@ -472,7 +475,7 @@ class DBConfig(BaseSettings, abc.ABC):
                     config_data["uri"] = f"{protocol}://{hostname}"
 
         # Get the appropriate config class and initialize it
-        from .config_mapping import get_config_class
+        from .mapping import get_config_class
 
         config_class = get_config_class(conn_type)
         return config_class(**config_data)
@@ -609,9 +612,7 @@ class ArangoConfig(DBConfig):
         - ARANGO_DATABASE: Database name (optional, can be set later)
         """
         if docker_dir is None:
-            docker_dir = (
-                Path(__file__).parent.parent.parent.parent / "docker" / "arango"
-            )
+            docker_dir = _DOCKER_ROOT / "arango"
         else:
             docker_dir = Path(docker_dir)
 
@@ -711,7 +712,7 @@ class Neo4jConfig(DBConfig):
     def from_docker_env(cls, docker_dir: str | Path | None = None) -> "Neo4jConfig":
         """Load Neo4j config from docker/neo4j/.env file."""
         if docker_dir is None:
-            docker_dir = Path(__file__).parent.parent.parent.parent / "docker" / "neo4j"
+            docker_dir = _DOCKER_ROOT / "neo4j"
         else:
             docker_dir = Path(docker_dir)
 
@@ -876,9 +877,7 @@ class TigergraphConfig(DBConfig):
     ) -> "TigergraphConfig":
         """Load TigerGraph config from docker/tigergraph/.env file."""
         if docker_dir is None:
-            docker_dir = (
-                Path(__file__).parent.parent.parent.parent / "docker" / "tigergraph"
-            )
+            docker_dir = _DOCKER_ROOT / "tigergraph"
         else:
             docker_dir = Path(docker_dir)
 
@@ -988,9 +987,7 @@ class FalkordbConfig(DBConfig):
         - FALKORDB_DATABASE: Graph name (optional, can be set later)
         """
         if docker_dir is None:
-            docker_dir = (
-                Path(__file__).parent.parent.parent.parent / "docker" / "falkordb"
-            )
+            docker_dir = _DOCKER_ROOT / "falkordb"
         else:
             docker_dir = Path(docker_dir)
 
@@ -1068,9 +1065,7 @@ class MemgraphConfig(DBConfig):
         - MEMGRAPH_DATABASE: Database name (optional)
         """
         if docker_dir is None:
-            docker_dir = (
-                Path(__file__).parent.parent.parent.parent / "docker" / "memgraph"
-            )
+            docker_dir = _DOCKER_ROOT / "memgraph"
         else:
             docker_dir = Path(docker_dir)
 
@@ -1172,9 +1167,7 @@ class NebulaConfig(DBConfig):
     def from_docker_env(cls, docker_dir: str | Path | None = None) -> "NebulaConfig":
         """Load NebulaGraph config from docker/nebula/.env file."""
         if docker_dir is None:
-            docker_dir = (
-                Path(__file__).parent.parent.parent.parent / "docker" / "nebula"
-            )
+            docker_dir = _DOCKER_ROOT / "nebula"
         else:
             docker_dir = Path(docker_dir)
 
@@ -1286,9 +1279,7 @@ class PostgresConfig(DBConfig):
     def from_docker_env(cls, docker_dir: str | Path | None = None) -> "PostgresConfig":
         """Load PostgreSQL config from docker/postgres/.env file."""
         if docker_dir is None:
-            docker_dir = (
-                Path(__file__).parent.parent.parent.parent / "docker" / "postgres"
-            )
+            docker_dir = _DOCKER_ROOT / "postgres"
         else:
             docker_dir = Path(docker_dir)
 
@@ -1417,9 +1408,7 @@ class SparqlEndpointConfig(DBConfig):
         - ``TS_DATASET``    – dataset name (optional)
         """
         if docker_dir is None:
-            docker_dir = (
-                Path(__file__).parent.parent.parent.parent / "docker" / "fuseki"
-            )
+            docker_dir = _DOCKER_ROOT / "fuseki"
         else:
             docker_dir = Path(docker_dir)
 

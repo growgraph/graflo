@@ -50,7 +50,7 @@ from typing import Any, cast
 import click
 from pydantic import BaseModel
 
-from graflo.db import TigergraphConfig
+from graflo.connections.onto import TigergraphConfig
 from graflo.db.tigergraph.conn import TigerGraphConnection
 from graflo.db.util import json_serializer
 

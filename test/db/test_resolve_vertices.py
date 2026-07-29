@@ -17,9 +17,9 @@ from typing import Any
 import pytest
 
 from graflo.architecture.schema import Schema
-from graflo.db import (
+from graflo.connections.graflo_backend import GraFloBackendConfig
+from graflo.connections.onto import (
     ArangoConfig,
-    ConnectionManager,
     FalkordbConfig,
     MemgraphConfig,
     NebulaConfig,
@@ -27,7 +27,7 @@ from graflo.db import (
     PostgresConfig,
     TigergraphConfig,
 )
-from graflo.db.graflo_backend.config import GraFloBackendConfig
+from graflo.db.manager import ConnectionManager
 
 PROBE_VERTEX = "GfResolveProbe"
 

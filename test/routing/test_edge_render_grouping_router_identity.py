@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from graflo.architecture.contract.ingestion.steps import (
+    EdgeActorConfig,
+    VertexRouterActorConfig,
+)
 from graflo.architecture.graph_types import (
     AssemblyContext,
     ExtractionContext,
@@ -9,10 +13,6 @@ from graflo.architecture.graph_types import (
     VertexRep,
 )
 from graflo.architecture.pipeline.runtime.actor.base import ActorInitContext
-from graflo.architecture.pipeline.runtime.actor.config import (
-    EdgeActorConfig,
-    VertexRouterActorConfig,
-)
 from graflo.architecture.pipeline.runtime.actor.edge import EdgeActor
 from graflo.architecture.pipeline.runtime.actor.edge_render import render_edge
 from graflo.architecture.pipeline.runtime.actor.vertex_router import VertexRouterActor

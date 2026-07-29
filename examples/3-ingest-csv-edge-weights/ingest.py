@@ -3,7 +3,7 @@ import logging
 from suthing import FileHandle
 
 from graflo import GraphManifest
-from graflo.db import TigergraphConfig
+from graflo.connections import TigergraphConfig
 from graflo.hq import GraphEngine
 from graflo.hq.caster import IngestionParams
 
@@ -20,7 +20,7 @@ ingestion_model = manifest.require_ingestion_model()
 # Load config from docker/neo4j/.env (recommended)
 # This automatically reads NEO4J_BOLT_PORT, NEO4J_AUTH, etc.
 
-# from graflo.db import Neo4jConfig
+# from graflo.connections import Neo4jConfig
 # conn_conf = Neo4jConfig.from_docker_env()
 
 conn_conf = TigergraphConfig.from_docker_env()

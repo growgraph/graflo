@@ -13,9 +13,9 @@ from typing import Any, Protocol, runtime_checkable
 from pydantic import Field as PydanticField
 from pydantic import field_validator
 
-from graflo.architecture.database_features import DatabaseProfile
 from graflo.architecture.graph_types import EdgeId, Index, Weight
-from graflo.onto import DBType
+from graflo.architecture.schema.database_features import DatabaseProfile
+from graflo.onto import PRIMARY_IDENTITY_SELECTOR, DBType
 
 from ..base import ConfigBaseModel
 from .edge import (
@@ -26,7 +26,6 @@ from .edge import (
     _normalize_direct_item,
 )
 from .vertex import (
-    PRIMARY_IDENTITY_SELECTOR,
     Field,
     FieldType,
     SecondaryIdentity,

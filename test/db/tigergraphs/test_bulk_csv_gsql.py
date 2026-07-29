@@ -12,10 +12,13 @@ from graflo.architecture.schema.core import CoreSchema
 from graflo.architecture.schema.edge import EdgeConfig
 from graflo.architecture.schema.metadata import GraphMetadata
 from graflo.architecture.schema.vertex import Field, FieldType, Vertex, VertexConfig
-from graflo.db.connection import TigergraphBulkLoadConfig, TigergraphBulkLoadJobOptions
+from graflo.connections.onto import (
+    TigergraphBulkLoadConfig,
+    TigergraphBulkLoadJobOptions,
+)
+from graflo.connections.provider import S3GeneralizedConnConfig
 from graflo.db.tigergraph.bulk_csv import vertex_column_order
 from graflo.db.tigergraph.bulk_gsql import build_create_and_run_loading_job
-from graflo.hq.connection_provider import S3GeneralizedConnConfig
 from graflo.onto import DBType
 
 

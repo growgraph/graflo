@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from graflo.hq.fuzzy_matcher import FuzzyMatcher
+    from graflo.util.fuzzy_matcher import FuzzyMatcher
 
 
 def fuzzy_match_fragment(
@@ -27,7 +27,7 @@ def fuzzy_match_fragment(
     Returns:
         Best matching vertex name or None if no match above threshold
     """
-    from graflo.hq.fuzzy_matcher import FuzzyMatcher
+    from graflo.util.fuzzy_matcher import FuzzyMatcher
 
     matcher = FuzzyMatcher(vertex_names, threshold)
     match, _ = matcher.match(fragment)
@@ -417,7 +417,7 @@ def infer_edge_vertices_from_table_name(
 
     # Use matcher if provided, otherwise create a temporary one
     if matcher is None:
-        from graflo.hq.fuzzy_matcher import FuzzyMatcher
+        from graflo.util.fuzzy_matcher import FuzzyMatcher
 
         matcher = FuzzyMatcher(vertex_table_names, threshold=0.6, enable_cache=True)
 
@@ -579,7 +579,7 @@ def infer_vertex_from_column_name(
 
     # Use matcher if provided, otherwise create a temporary one
     if matcher is None:
-        from graflo.hq.fuzzy_matcher import FuzzyMatcher
+        from graflo.util.fuzzy_matcher import FuzzyMatcher
 
         matcher = FuzzyMatcher(vertex_table_names, threshold=0.6, enable_cache=True)
 

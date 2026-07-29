@@ -5,12 +5,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from graflo.hq.connection_provider import S3GeneralizedConnConfig
+    from graflo.connections.provider import S3GeneralizedConnConfig
     from graflo.object_storage.config import MinioConfig
 
 
 def boto3_s3_client_from_generalized(cfg: S3GeneralizedConnConfig) -> Any:
-    """Build a boto3 S3 client from :class:`~graflo.hq.connection_provider.S3GeneralizedConnConfig`."""
+    """Build a boto3 S3 client from :class:`~graflo.connections.provider.S3GeneralizedConnConfig`."""
     import boto3
 
     return boto3.client(

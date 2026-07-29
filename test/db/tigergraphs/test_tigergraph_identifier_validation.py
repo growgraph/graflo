@@ -7,8 +7,8 @@ from typing import Any, cast
 
 import pytest
 
-from graflo.architecture.database_features import DatabaseProfile
 from graflo.architecture.schema import Schema
+from graflo.architecture.schema.database_features import DatabaseProfile
 from graflo.architecture.schema.db_aware import EdgeConfigDBAware, VertexConfigDBAware
 from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.schema.vertex import Field, FieldType, Vertex, VertexConfig

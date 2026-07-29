@@ -1,6 +1,6 @@
 import pytest
 
-from graflo.db import ConnectionManager
+from graflo.db.manager import ConnectionManager
 from test.conftest import verify
 
 

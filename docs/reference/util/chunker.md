@@ -1,3 +1,3 @@
-# `graflo.util.chunker`
+# `graflo.data_source.chunker`
 
-::: graflo.util.chunker
+::: graflo.data_source.chunker

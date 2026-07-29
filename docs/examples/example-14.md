@@ -47,7 +47,7 @@ export ORDER_SERVICE_TOKEN=secret
 ## Runtime: one-call wiring
 
 ```python
-from graflo.hq.connection_provider import InMemoryConnectionProvider
+from graflo.connections.provider import InMemoryConnectionProvider
 
 provider = InMemoryConnectionProvider()
 provider.register_all_api_configs_from_env(bindings=bindings)

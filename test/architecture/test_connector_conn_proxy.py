@@ -3,8 +3,8 @@ from __future__ import annotations
 import pytest
 
 from graflo.architecture.contract.bindings import APIConnector, Bindings, TableConnector
-from graflo.db import PostgresConfig
-from graflo.hq.connection_provider import (
+from graflo.connections.onto import PostgresConfig
+from graflo.connections.provider import (
     ApiGeneralizedConnConfig,
     InMemoryConnectionProvider,
     PostgresGeneralizedConnConfig,

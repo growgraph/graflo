@@ -17,13 +17,14 @@ import logging
 from pathlib import Path
 
 from graflo.architecture.contract.bindings import Bindings, TableConnector
-from graflo.db import PostgresConfig, TigergraphConfig
+from graflo.connections import (
+    InMemoryConnectionProvider,
+    PostgresConfig,
+    PostgresGeneralizedConnConfig,
+    TigergraphConfig,
+)
 from graflo.db.postgres.util import load_schema_from_sql_file
 from graflo.hq import GraphEngine, IngestionParams
-from graflo.hq.connection_provider import (
-    InMemoryConnectionProvider,
-    PostgresGeneralizedConnConfig,
-)
 
 logger = logging.getLogger(__name__)
 

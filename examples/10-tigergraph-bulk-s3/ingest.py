@@ -21,12 +21,14 @@ from pathlib import Path
 from suthing import FileHandle
 
 from graflo import GraphManifest
-from graflo.db import MinioConfig, TigergraphConfig
-from graflo.db.connection import TigergraphBulkLoadConfig
+from graflo.connections import (
+    InMemoryConnectionProvider,
+    TigergraphBulkLoadConfig,
+    TigergraphConfig,
+)
 from graflo.hq import GraphEngine
 from graflo.hq.caster import IngestionParams
-from graflo.hq.connection_provider import InMemoryConnectionProvider
-from graflo.object_storage import ensure_staging_bucket_for_config
+from graflo.object_storage import MinioConfig, ensure_staging_bucket_for_config
 
 logger = logging.getLogger(__name__)
 

@@ -1,4 +1,4 @@
-from graflo.db import ConnectionManager
+from graflo.db.manager import ConnectionManager
 
 
 def test_create_vertex_index(conn_conf, schema_obj):

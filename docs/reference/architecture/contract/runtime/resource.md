@@ -1,3 +1,3 @@
-# `graflo.architecture.contract.runtime.resource`
+# `graflo.architecture.pipeline.runtime.resource`
 
-::: graflo.architecture.contract.runtime.resource
+::: graflo.architecture.pipeline.runtime.resource

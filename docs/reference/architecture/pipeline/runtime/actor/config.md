@@ -1,5 +1,5 @@
-# `graflo.architecture.pipeline.runtime.actor.config`
+# `graflo.architecture.contract.ingestion.steps`
 
-::: graflo.architecture.pipeline.runtime.actor.config
+::: graflo.architecture.contract.ingestion.steps
     options:
       show_submodules: false

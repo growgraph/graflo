@@ -11,7 +11,7 @@ from urllib.parse import quote
 from rdflib import RDF, BNode, Graph, Literal, URIRef
 from rdflib.namespace import XSD
 
-from graflo.architecture.pipeline.runtime.actor.config.normalize import (
+from graflo.architecture.contract.ingestion.steps.normalize import (
     normalize_actor_step,
 )
 from graflo.rdf import namespace as ns

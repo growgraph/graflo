@@ -28,7 +28,7 @@ from pathlib import Path
 
 import click
 
-from graflo.db import TigergraphConfig
+from graflo.connections.onto import TigergraphConfig
 from graflo.db.tigergraph.conn import TigerGraphConnection
 
 logger = logging.getLogger(__name__)

@@ -4,9 +4,11 @@ import asyncio
 
 from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.contract.ingestion.resource import Resource
-from graflo.architecture.contract.runtime import build_resource_runtime
-from graflo.architecture.contract.runtime.resource import resolve_effective_vertex_names
 from graflo.architecture.graph_types import GraphContainer
+from graflo.architecture.pipeline.runtime.resource import (
+    build_resource_runtime,
+    resolve_effective_vertex_names,
+)
 from graflo.architecture.schema.core import CoreSchema
 from graflo.architecture.schema.edge import EdgeConfig
 from graflo.architecture.schema.vertex import VertexConfig

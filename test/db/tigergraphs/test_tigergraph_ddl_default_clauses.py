@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from graflo.architecture.database_features import DatabaseProfile, DefaultPropertyValues
+from graflo.architecture.schema.database_features import (
+    DatabaseProfile,
+    DefaultPropertyValues,
+)
 from graflo.architecture.schema.db_aware import VertexConfigDBAware
 from graflo.architecture.schema.vertex import Field, FieldType, Vertex, VertexConfig
 from graflo.db.tigergraph.conn import TigerGraphConnection

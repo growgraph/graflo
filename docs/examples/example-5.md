@@ -157,7 +157,7 @@ The `PostgresConnection` class wraps a `psycopg2` connection and provides method
 
 ```python
 from graflo.db.postgres import PostgresConnection
-from graflo.db.connection.onto import PostgresConfig
+from graflo.connections.onto import PostgresConfig
 
 # Option 1: Load from docker/postgres/.env (recommended)
 postgres_conf = PostgresConfig.from_docker_env()
@@ -211,7 +211,7 @@ load_mock_schema_if_needed(postgres_conn)
 You can ingest data into any supported graph database. Simply uncomment the desired database configuration in your script:
 
 ```python
-from graflo.db.connection.onto import ArangoConfig, Neo4jConfig, TigergraphConfig, FalkordbConfig
+from graflo.connections.onto import ArangoConfig, Neo4jConfig, TigergraphConfig, FalkordbConfig
 
 # Choose one of the following target databases:
 # Option 1: ArangoDB
@@ -265,7 +265,7 @@ Automatically generate a graflo Schema from your PostgreSQL database. This is th
 
 from graflo.hq import GraphEngine
 from graflo.onto import DBType
-from graflo.db.connection.onto import ArangoConfig, Neo4jConfig, TigergraphConfig, FalkordbConfig, PostgresConfig
+from graflo.connections.onto import ArangoConfig, Neo4jConfig, TigergraphConfig, FalkordbConfig, PostgresConfig
 
 # Connect to target graph database to determine database type
 # Choose one of: ArangoConfig, Neo4jConfig, TigergraphConfig, or FalkordbConfig
@@ -429,7 +429,7 @@ import yaml
 
 from graflo.onto import DBType
 from graflo.hq import GraphEngine
-from graflo.db.connection.onto import ArangoConfig, PostgresConfig
+from graflo.connections.onto import ArangoConfig, PostgresConfig
 from graflo.hq.caster import IngestionParams
 
 logger = logging.getLogger(__name__)
@@ -442,7 +442,7 @@ postgres_conf = PostgresConfig.from_docker_env()
 
 # Step 3: Connect to target graph database
 # You can try different databases by uncommenting the desired config:
-from graflo.db.connection.onto import ArangoConfig, Neo4jConfig, TigergraphConfig, FalkordbConfig
+from graflo.connections.onto import ArangoConfig, Neo4jConfig, TigergraphConfig, FalkordbConfig
 
 target_config = ArangoConfig.from_docker_env()  # or Neo4jConfig, TigergraphConfig, FalkordbConfig
 
@@ -781,7 +781,7 @@ register the real runtime connection config under each `conn_proxy` and bind the
 manifest connectors to that proxy:
 
 ```python
-from graflo.hq.connection_provider import (
+from graflo.connections.provider import (
     InMemoryConnectionProvider,
     PostgresGeneralizedConnConfig,
 )

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from graflo.db import PostgresConfig
+from graflo.connections.onto import PostgresConfig
 from graflo.db.postgres import PostgresConnection
 
 logger = logging.getLogger(__name__)

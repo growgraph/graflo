@@ -1,7 +1,7 @@
 import pytest
 
-from graflo import ComparisonOperator
-from graflo.db import ConnectionManager
+from graflo.db.manager import ConnectionManager
+from graflo.filter import ComparisonOperator
 from test.conftest import fetch_schema_obj, ingest_atomic
 
 

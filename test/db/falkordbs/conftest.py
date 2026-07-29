@@ -8,7 +8,8 @@ import uuid
 
 import pytest
 
-from graflo.db import ConnectionManager, FalkordbConfig
+from graflo.connections.onto import FalkordbConfig
+from graflo.db.manager import ConnectionManager
 
 
 @pytest.fixture(scope="function")

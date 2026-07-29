@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
+from graflo.architecture.contract.ingestion.steps import (
+    VertexActorConfig,
+    VertexRouterActorConfig,
+)
 from graflo.architecture.graph_types import (
     ExtractionContext,
     LocationIndex,
     TransformPayload,
 )
 from graflo.architecture.pipeline.runtime.actor.base import ActorInitContext
-from graflo.architecture.pipeline.runtime.actor.config import (
-    VertexActorConfig,
-    VertexRouterActorConfig,
-)
 from graflo.architecture.pipeline.runtime.actor.vertex import VertexActor
 from graflo.architecture.pipeline.runtime.actor.vertex_router import VertexRouterActor
 from graflo.architecture.schema.edge import EdgeConfig

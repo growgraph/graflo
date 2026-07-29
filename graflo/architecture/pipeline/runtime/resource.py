@@ -7,7 +7,13 @@ from collections import defaultdict
 from collections.abc import Callable
 from typing import Any
 
+from graflo.architecture.contract.ingestion.resource import (
+    EdgeInferSpec,
+    ResourceConfig,
+)
+from graflo.architecture.contract.ingestion.transform import ProtoTransform
 from graflo.architecture.graph_types.context import ResourceCastResult
+from graflo.architecture.graph_types.edge_derivation import EdgeDerivationRegistry
 from graflo.architecture.graph_types.identifiers import EdgeId, GraphEntity
 from graflo.architecture.pipeline.runtime.actor import (
     ActorInitContext,
@@ -19,10 +25,6 @@ from graflo.architecture.schema.edge import EdgeConfig
 from graflo.architecture.schema.vertex import VertexConfig
 from graflo.onto import DBType
 from graflo.util.casting import apply_type_casters, resolve_type_casters
-
-from ..ingestion.resource import EdgeInferSpec, ResourceConfig
-from ..ingestion.transform import ProtoTransform
-from .edge_derivation import EdgeDerivationRegistry
 
 logger = logging.getLogger(__name__)
 

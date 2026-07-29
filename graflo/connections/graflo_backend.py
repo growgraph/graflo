@@ -7,7 +7,7 @@ from pathlib import Path
 from pydantic import Field
 from pydantic_settings import SettingsConfigDict
 
-from graflo.db.connection.onto import DBConfig
+from graflo.connections.onto import DBConfig
 from graflo.onto import DBType
 
 

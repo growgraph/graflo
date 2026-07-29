@@ -24,7 +24,7 @@ import sys
 
 import click
 
-from graflo.util.chunker import convert, force_list_wos, tag_wos
+from graflo.data_source.chunker import convert, force_list_wos, tag_wos
 
 logger = logging.getLogger(__name__)
 

@@ -1,4 +1,4 @@
-from graflo import ConnectionManager
+from graflo.db import ConnectionManager
 from test.conftest import ingest_atomic
 from test.db.arangos.conftest import verify_from_db
 

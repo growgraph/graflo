@@ -13,6 +13,7 @@ import pandas as pd
 
 from graflo.architecture.graph_types import EncodingType
 from graflo.data_source.base import AbstractDataSource, DataSourceType
+from graflo.data_source.chunker import ChunkerFactory, ChunkerType
 from graflo.data_source.file import (
     JsonFileDataSource,
     JsonlFileDataSource,
@@ -21,7 +22,6 @@ from graflo.data_source.file import (
 )
 from graflo.data_source.memory import InMemoryDataSource
 from graflo.data_source.sql import SQLConfig, SQLDataSource
-from graflo.util.chunker import ChunkerFactory, ChunkerType
 
 logger = logging.getLogger(__name__)
 

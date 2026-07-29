@@ -48,7 +48,7 @@ export USER_SERVICE_TOKEN=secret
 ## Step 3 — Register configs at runtime
 
 ```python
-from graflo.hq.connection_provider import InMemoryConnectionProvider
+from graflo.connections.provider import InMemoryConnectionProvider
 from graflo.hq.ingestion_parameters import IngestionParams
 
 provider = InMemoryConnectionProvider()

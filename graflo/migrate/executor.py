@@ -5,7 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from graflo.architecture.schema import Schema
-from graflo.db import ConnectionManager, DBConfig
+from graflo.connections.onto import DBConfig
+from graflo.db.manager import ConnectionManager
 from graflo.migrate.emitters import ArangoEmitter, BaseEmitter, Neo4jEmitter
 from graflo.migrate.models import MigrationPlan, MigrationRecord, RiskLevel
 from graflo.migrate.store import FileMigrationStore

@@ -1,7 +1,12 @@
 """Tests for GraphEngine target LPG namespace resolution."""
 
 from graflo.architecture.contract.manifest import GraphManifest
-from graflo.db import ArangoConfig, MemgraphConfig, NebulaConfig, TigergraphConfig
+from graflo.connections.onto import (
+    ArangoConfig,
+    MemgraphConfig,
+    NebulaConfig,
+    TigergraphConfig,
+)
 from graflo.hq.graph_engine import (
     _ensure_graph_target_namespace,
     _resolve_graph_target_namespace,

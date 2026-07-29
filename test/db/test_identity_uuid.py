@@ -8,7 +8,6 @@ import re
 import pytest
 
 from graflo.architecture.contract.ingestion import IngestionModel
-from graflo.architecture.database_features import DatabaseProfile
 from graflo.architecture.graph_types import (
     AssemblyContext,
     ExtractionContext,
@@ -19,17 +18,18 @@ from graflo.architecture.graph_types import (
 from graflo.architecture.pipeline.runtime.actor.wrapper import ActorWrapper
 from graflo.architecture.pipeline.runtime.assemble import assemble_edges
 from graflo.architecture.schema import CoreSchema, GraphMetadata, Schema
+from graflo.architecture.schema.database_features import DatabaseProfile
 from graflo.architecture.schema.edge import Edge, EdgeConfig
-from graflo.architecture.schema.vertex import Field, FieldType, Vertex, VertexConfig
-from graflo.db.connection import Neo4jConfig
-from graflo.db.field_type_support import tigergraph_type_for_field
-from graflo.db.identity_uuid import (
+from graflo.architecture.schema.identity_uuid import (
     UUID_PATTERN,
     ensure_assigned_uuid,
     ensure_assigned_uuids_in_acc_vertex,
     validate_uuid_typed_identity_fields,
     validate_uuid_value,
 )
+from graflo.architecture.schema.vertex import Field, FieldType, Vertex, VertexConfig
+from graflo.connections.onto import Neo4jConfig
+from graflo.db.field_type_support import tigergraph_type_for_field
 from graflo.db.nebula.util import nebula_type
 from graflo.hq.db_writer import DBWriter
 from graflo.hq.document_caster import filter_graph_container_drop_empty_identity_inplace
@@ -166,9 +166,9 @@ def test_ensure_assigned_uuids_in_acc_vertex_before_edges() -> None:
 
 
 def test_actor_wrapper_assemble_mints_assigned() -> None:
+    from graflo.architecture.contract.ingestion.steps import VertexActorConfig
     from graflo.architecture.graph_types import EdgeIntent
     from graflo.architecture.pipeline.runtime.actor.base import ActorInitContext
-    from graflo.architecture.pipeline.runtime.actor.config import VertexActorConfig
 
     vc = VertexConfig(
         vertices=[

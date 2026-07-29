@@ -26,7 +26,7 @@ from datetime import date
 import click
 from suthing import FileHandle, Timer
 
-from graflo.db import ArangoConfig, DBConfig
+from graflo.connections.onto import ArangoConfig, DBConfig
 
 logger = logging.getLogger(__name__)
 

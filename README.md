@@ -103,7 +103,7 @@ pip install "graflo[dev,docs,plot]"
 from suthing import FileHandle
 
 from graflo import Bindings, GraphManifest
-from graflo.db.connection.onto import ArangoConfig
+from graflo.connections.onto import ArangoConfig
 
 manifest = GraphManifest.from_config(FileHandle.load("schema.yaml"))
 manifest.finish_init()
@@ -196,7 +196,7 @@ engine.define_and_ingest(
 
 ```python
 from graflo.hq import GraphEngine
-from graflo.db.connection.onto import PostgresConfig, ArangoConfig
+from graflo.connections.onto import PostgresConfig, ArangoConfig
 from graflo import Caster
 from graflo.onto import DBType
 
@@ -288,7 +288,7 @@ Ontology source: `graflo/rdf/ontology/graflo.ttl`. See [GraFlo ontology](https:/
 ```python
 from pathlib import Path
 from graflo.hq import GraphEngine
-from graflo.db.connection.onto import ArangoConfig
+from graflo.connections.onto import ArangoConfig
 from graflo.architecture.manifest import GraphManifest
 
 engine = GraphEngine()
@@ -301,7 +301,7 @@ schema, ingestion_model = engine.infer_schema_from_rdf(source=ontology)
 bindings = engine.create_bindings_from_rdf(source=ontology)
 
 # Or point at a SPARQL endpoint instead:
-# from graflo.db.connection.onto import SparqlEndpointConfig
+# from graflo.connections.onto import SparqlEndpointConfig
 # sparql_cfg = SparqlEndpointConfig(uri="http://localhost:3030", dataset="mydata")
 # bindings = engine.create_bindings_from_rdf(
 #     source=ontology,

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from graflo.object_storage.s3_client import boto3_s3_client_from_generalized
 
 if TYPE_CHECKING:
-    from graflo.hq.connection_provider import S3GeneralizedConnConfig
+    from graflo.connections.provider import S3GeneralizedConnConfig
 
 
 def upload_staged_csvs(

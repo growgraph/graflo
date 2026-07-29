@@ -10,13 +10,13 @@ from pathlib import Path
 import pytest
 
 from graflo.architecture.contract.ingestion import IngestionModel
-from graflo.architecture.database_features import DatabaseProfile
 from graflo.architecture.graph_types import GraphContainer
 from graflo.architecture.schema import CoreSchema, GraphMetadata, Schema
+from graflo.architecture.schema.database_features import DatabaseProfile
 from graflo.architecture.schema.edge import EdgeConfig
 from graflo.architecture.schema.graflo_output import GraFloOutput
 from graflo.architecture.schema.vertex import Field, Vertex, VertexConfig
-from graflo.db.connection import ArangoConfig
+from graflo.connections.onto import ArangoConfig
 from graflo.db.identity_inference import (
     DEFAULT_MIN_SAMPLE_SIZE,
     IdentityInferenceConfig,

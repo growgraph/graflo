@@ -12,7 +12,7 @@ from graflo.db.postgres.inference_utils import (
     infer_edge_vertices_from_table_name,
     split_by_separator,
 )
-from graflo.hq.fuzzy_matcher import FuzzyMatcher
+from graflo.util.fuzzy_matcher import FuzzyMatcher
 
 
 class TestRelationIdentification:

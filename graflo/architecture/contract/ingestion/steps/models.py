@@ -9,7 +9,7 @@ from pydantic import TypeAdapter, model_validator
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.contract.ingestion.transform import DressConfig
-from graflo.architecture.edge_derivation import EdgeDerivation
+from graflo.architecture.graph_types.edge_derivation import EdgeDerivation
 from graflo.architecture.schema.vertex import VertexName
 from graflo.onto import EndpointAmbiguityPolicy
 

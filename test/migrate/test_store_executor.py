@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from graflo.architecture.schema import Schema
-from graflo.db import DBConfig
+from graflo.connections.onto import DBConfig
 from graflo.migrate.executor import MigrationExecutionError, MigrationExecutor
 from graflo.migrate.io import schema_hash
 from graflo.migrate.models import (

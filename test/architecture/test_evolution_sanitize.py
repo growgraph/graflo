@@ -471,7 +471,7 @@ def _build_multi_relation_manifest(
         UserB --(owns)--> Target
         UserC --(owns)--> Target
     """
-    from graflo.architecture.database_features import DatabaseProfile
+    from graflo.architecture.schema.database_features import DatabaseProfile
 
     meta = GraphMetadata(name="tg_normalize", version="1.0.0")
 
@@ -689,7 +689,7 @@ def _build_tigergraph_manifest(
     pipeline_a: list[dict] | None = None,
     resource_name: str | None = None,
 ) -> GraphManifest:
-    from graflo.architecture.database_features import DatabaseProfile
+    from graflo.architecture.schema.database_features import DatabaseProfile
 
     meta = GraphMetadata(name="tg_sanitize", version="1.0.0")
     vertex_list = vertices or [

@@ -16,16 +16,16 @@ from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.graph_types import GraphContainer
 from graflo.architecture.onto_sql import SchemaIntrospectionResult
 from graflo.architecture.schema import GraFloOutput, Schema
-from graflo.db.connection import DBConfig, PostgresConfig, SparqlEndpointConfig
-from graflo.db.manager import ConnectionManager
-from graflo.db.postgres.conn import PostgresConnection
-from graflo.hq.caster import Caster, IngestionParams
-from graflo.hq.connection_provider import (
+from graflo.connections.onto import DBConfig, PostgresConfig, SparqlEndpointConfig
+from graflo.connections.provider import (
     ConnectionProvider,
     EmptyConnectionProvider,
     InMemoryConnectionProvider,
     SparqlGeneralizedConnConfig,
 )
+from graflo.db.manager import ConnectionManager
+from graflo.db.postgres.conn import PostgresConnection
+from graflo.hq.caster import Caster, IngestionParams
 from graflo.hq.db_writer import DBWriter
 from graflo.hq.resource_mapper import ResourceMapper
 from graflo.hq.sanitizer import Sanitizer

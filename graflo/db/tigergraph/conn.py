@@ -17,8 +17,8 @@ from graflo.architecture.graph_types import GraphContainer, Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig
+from graflo.connections.onto import TigergraphBulkLoadConfig, TigergraphConfig
 from graflo.db.conn import Connection
-from graflo.db.connection import TigergraphBulkLoadConfig, TigergraphConfig
 from graflo.db.tigergraph import (
     compat,  # noqa: F401  # patch requests exceptions on import
 )
@@ -55,7 +55,7 @@ from graflo.db.tigergraph.token_cache import (
 from graflo.onto import DBType
 
 if TYPE_CHECKING:
-    from graflo.hq.connection_provider import ConnectionProvider
+    from graflo.connections.provider import ConnectionProvider
 
 logger = logging.getLogger(__name__)
 

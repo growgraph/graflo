@@ -8,7 +8,8 @@ import uuid
 
 import pytest
 
-from graflo.db import ConnectionManager, MemgraphConfig
+from graflo.connections.onto import MemgraphConfig
+from graflo.db.manager import ConnectionManager
 
 
 @pytest.fixture(scope="function")

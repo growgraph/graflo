@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from graflo.architecture.schema import Schema
-from graflo.db import Connection
+from graflo.db.conn import Connection
 from graflo.migrate.emitters.base import BaseEmitter
 from graflo.migrate.models import MigrationOperation, OperationType
 

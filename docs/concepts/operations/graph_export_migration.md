@@ -165,7 +165,7 @@ Use **`ConnectionManager.graph_export_flavors()`** to list backends with graph e
 
 ```python
 from graflo.hq import GraphEngine
-from graflo.db.connection import Neo4jConfig
+from graflo.connections.onto import Neo4jConfig
 
 output = engine.export_graph(Neo4jConfig(...))
 assert output.core_schema is output.graph_schema.core_schema

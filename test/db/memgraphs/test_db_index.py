@@ -4,7 +4,7 @@ This module validates index creation on vertices and edges,
 both through schema-driven methods and manual Cypher commands.
 """
 
-from graflo.db import ConnectionManager
+from graflo.db.manager import ConnectionManager
 
 
 def test_create_vertex_index(conn_conf, test_graph_name, schema_obj):

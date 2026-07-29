@@ -1,3 +1,3 @@
-# `graflo.util.merge`
+# `graflo.architecture.graph_types.merge`
 
-::: graflo.util.merge
+::: graflo.architecture.graph_types.merge

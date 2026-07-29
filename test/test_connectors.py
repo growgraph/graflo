@@ -613,7 +613,7 @@ def test_api_connector_basic() -> None:
 
 def test_api_connector_build_api_config() -> None:
     from graflo.architecture.contract.bindings import APIConnector
-    from graflo.hq.connection_provider import ApiAuth
+    from graflo.connections.provider import ApiAuth
 
     connector = APIConnector(path="/v1/items", method="GET")
     config = connector.build_api_config(

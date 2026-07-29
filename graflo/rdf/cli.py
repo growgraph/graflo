@@ -7,7 +7,7 @@ import pathlib
 import click
 import yaml
 
-from graflo import GraphManifest
+from graflo.architecture.contract.manifest import GraphManifest
 from graflo.rdf.deserializer import ManifestRdfDeserializer
 from graflo.rdf.serializer import ManifestRdfSerializer
 

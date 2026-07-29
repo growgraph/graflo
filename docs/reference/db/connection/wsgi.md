@@ -1,3 +1,3 @@
-# `graflo.db.connection.wsgi`
+# `graflo.connections.onto.wsgi`
 
-::: graflo.db.connection.wsgi
+::: graflo.connections.onto.wsgi

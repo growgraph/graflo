@@ -13,7 +13,7 @@ from pydantic import field_validator
 
 from graflo.architecture.graph_types import EncodingType
 from graflo.data_source.base import AbstractDataSource, DataSourceType
-from graflo.util.chunker import ChunkerFactory, ChunkerType
+from graflo.data_source.chunker import ChunkerFactory, ChunkerType
 
 
 class FileDataSource(AbstractDataSource):

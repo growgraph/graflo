@@ -11,7 +11,7 @@ Key Features:
 
 Example:
     >>> from graflo.db.postgres import PostgresConnection
-    >>> from graflo.db import PostgresConfig
+    >>> from graflo.connections.onto import PostgresConfig
     >>> config = PostgresConfig.from_docker_env()
     >>> conn = PostgresConnection(config)
     >>> schema_info = conn.introspect_schema()
@@ -34,8 +34,8 @@ from graflo.architecture.onto_sql import (
     SchemaIntrospectionResult,
     VertexTableInfo,
 )
+from graflo.connections.onto import PostgresConfig
 from graflo.db.conn import Connection
-from graflo.db.connection import PostgresConfig
 from graflo.db.postgres.target_write import PostgresTargetWriteMixin
 
 from .inference_utils import (
@@ -858,7 +858,7 @@ class PostgresConnection(PostgresTargetWriteMixin, Connection):
 
         # Create fuzzy matcher once for all tables (significant performance improvement)
         # Caching is enabled by default for better performance
-        from graflo.hq.fuzzy_matcher import FuzzyMatcher
+        from graflo.util.fuzzy_matcher import FuzzyMatcher
 
         matcher = FuzzyMatcher(vertex_table_names, threshold=0.6, enable_cache=True)
 

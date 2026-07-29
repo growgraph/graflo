@@ -5,8 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from graflo.architecture.contract.runtime.edge_derivation import EndpointMatch
-from graflo.architecture.edge_derivation import EdgeDerivation
+from graflo.architecture.contract.ingestion.steps import EdgeActorConfig, EdgeLinkConfig
 from graflo.architecture.graph_types import (
     EdgeId,
     ExtractionContext,
@@ -14,11 +13,14 @@ from graflo.architecture.graph_types import (
     Weight,
     merge_observation_with_transform_buffer,
 )
+from graflo.architecture.graph_types.edge_derivation import (
+    EdgeDerivation,
+    EndpointMatch,
+)
 from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.schema.vertex import VertexConfig, VertexName
 
 from .base import Actor, ActorInitContext
-from .config import EdgeActorConfig, EdgeLinkConfig
 
 logger = logging.getLogger(__name__)
 

@@ -8,8 +8,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from graflo.db import ConnectionManager
-from graflo.db.connection import TigergraphConfig
+from graflo.connections.onto import TigergraphConfig
+from graflo.db.manager import ConnectionManager
 from graflo.db.tigergraph.conn import TigerGraphConnection
 
 

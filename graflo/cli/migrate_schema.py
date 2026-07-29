@@ -9,7 +9,7 @@ from pathlib import Path
 import click
 from suthing import FileHandle
 
-from graflo.db import DBConfig
+from graflo.connections.onto import DBConfig
 from graflo.migrate.diff import SchemaDiff
 from graflo.migrate.executor import MigrationExecutor
 from graflo.migrate.io import load_schema, plan_to_json_serializable, schema_hash

@@ -9,12 +9,15 @@ from typing import TYPE_CHECKING, Any
 
 from graflo.architecture.schema.db_aware import EdgeConfigDBAware, SchemaDBAware
 from graflo.architecture.schema.edge import Edge
-from graflo.db.connection import TigergraphBulkLoadConfig, TigergraphBulkLoadJobOptions
+from graflo.connections.onto import (
+    TigergraphBulkLoadConfig,
+    TigergraphBulkLoadJobOptions,
+)
 from graflo.db.tigergraph.bulk_csv import edge_column_order, vertex_column_order
 from graflo.onto import DBType
 
 if TYPE_CHECKING:
-    from graflo.hq.connection_provider import S3GeneralizedConnConfig
+    from graflo.connections.provider import S3GeneralizedConnConfig
 
 
 def _logical_vertex_for_physical(vc, physical: str) -> str:
@@ -86,7 +89,7 @@ def build_create_and_run_loading_job(
     TigerGraph requires a ``CREATE DATA_SOURCE`` with credentials and (for MinIO) a
     custom endpoint when using ``s3://`` paths; filenames must look like
     ``"$data_source_name:s3://bucket/key"``. Pass *tigergraph_s3_loader* when any path
-    is ``s3://`` (typically the same :class:`~graflo.hq.connection_provider.S3GeneralizedConnConfig`
+    is ``s3://`` (typically the same :class:`~graflo.connections.provider.S3GeneralizedConnConfig`
     used for boto3 upload).
     """
     if schema_db.db_profile.db_flavor != DBType.TIGERGRAPH:

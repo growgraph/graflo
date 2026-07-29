@@ -19,14 +19,13 @@ from graflo.architecture.contract.bindings import Bindings
 from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.graph_types import EncodingType
 from graflo.architecture.schema import Schema
-from graflo.data_source import (
-    AbstractDataSource,
-    DataSourceFactory,
-    DataSourceRegistry,
-)
-from graflo.db.connection import DBConfig
+from graflo.connections.onto import DBConfig
+from graflo.connections.provider import ConnectionProvider, EmptyConnectionProvider
+from graflo.data_source.base import AbstractDataSource
+from graflo.data_source.chunker import ChunkerType
+from graflo.data_source.factory import DataSourceFactory
+from graflo.data_source.registry import DataSourceRegistry
 from graflo.hq.bulk_session import BulkSessionCoordinator
-from graflo.hq.connection_provider import ConnectionProvider, EmptyConnectionProvider
 from graflo.hq.db_writer import DBWriter
 from graflo.hq.doc_error_sink import failure_sinks_from_ingestion_params
 from graflo.hq.document_caster import DocumentCaster
@@ -37,7 +36,6 @@ from graflo.hq.ingestion_parameters import (
     IngestionParams,
 )
 from graflo.hq.registry_builder import RegistryBuilder
-from graflo.util.chunker import ChunkerType
 from graflo.util.data_normalize import normalize_rows
 
 logger = logging.getLogger(__name__)

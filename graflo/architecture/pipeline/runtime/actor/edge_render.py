@@ -9,7 +9,6 @@ from functools import partial
 from itertools import combinations, product, zip_longest
 from typing import Any
 
-from graflo.architecture.edge_derivation import EdgeDerivation
 from graflo.architecture.graph_types import (
     ActionContext,
     AssemblyContext,
@@ -19,6 +18,7 @@ from graflo.architecture.graph_types import (
     Weight,
     context_dict_from_transform_buffer_item,
 )
+from graflo.architecture.graph_types.edge_derivation import EdgeDerivation
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig
 from graflo.architecture.util import project_dict

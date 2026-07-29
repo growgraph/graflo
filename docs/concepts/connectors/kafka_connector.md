@@ -53,7 +53,7 @@ bindings:
 Keep secrets out of YAML. Register bootstrap (and optional auth) on the **`conn_proxy`** label:
 
 ```python
-from graflo.hq.connection_provider import InMemoryConnectionProvider
+from graflo.connections.provider import InMemoryConnectionProvider
 from graflo.hq.ingestion_parameters import IngestionParams
 
 provider = InMemoryConnectionProvider()
@@ -79,7 +79,7 @@ Each `conn_proxy` maps to an uppercase env prefix (`kafka_local` → `KAFKA_LOCA
 Manual registration:
 
 ```python
-from graflo.connection_models import KafkaConnConfig, KafkaGeneralizedConnConfig
+from graflo.connections.sources import KafkaConnConfig, KafkaGeneralizedConnConfig
 
 provider.register_generalized_config(
     conn_proxy="kafka_local",
@@ -134,4 +134,4 @@ uv run pytest test -m kafka --run-kafka
 - [Data source reference — Kafka](../../reference/data_source/index.md#kafka-data-sources)
 - [Runtime connector updates](runtime_updates.md)
 
-Implementation: `graflo.architecture.contract.bindings.KafkaConnector`, `graflo.data_source.kafka.KafkaDataSource`, `graflo.connection_models.KafkaConnConfig`, `graflo.hq.connection_provider`.
+Implementation: `graflo.architecture.contract.bindings.KafkaConnector`, `graflo.data_source.kafka.KafkaDataSource`, `graflo.connections.sources.KafkaConnConfig`, `graflo.connections.provider`.

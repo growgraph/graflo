@@ -33,6 +33,7 @@ from graflo.architecture.graph_types import Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig
+from graflo.connections.onto import Neo4jConfig
 from graflo.db.conn import (
     Connection,
     NamespaceNotFoundError,
@@ -51,8 +52,6 @@ from graflo.db.graph_introspection import (
 )
 from graflo.filter.onto import FilterExpression
 from graflo.onto import AggregationType, DBType
-
-from ..connection.onto import Neo4jConfig
 
 logger = logging.getLogger(__name__)
 

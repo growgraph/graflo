@@ -16,7 +16,7 @@ from pathlib import Path
 
 from suthing import FileHandle
 
-from graflo.db import PostgresConfig, TigergraphConfig
+from graflo.connections import PostgresConfig, TigergraphConfig
 from graflo.db.postgres.util import load_schema_from_sql_file
 from graflo.hq import GraphEngine, IngestionParams
 
@@ -55,7 +55,7 @@ postgres_conf = PostgresConfig.from_docker_env()
 # - FalkorDB: http://localhost:3001 (check FALKORDB_BROWSER_PORT in docker/falkordb/.env)
 #
 # Load config from docker/*/.env files (recommended):
-# from graflo.db import ArangoConfig, Neo4jConfig, TigergraphConfig, FalkordbConfig
+# from graflo.connections import ArangoConfig, Neo4jConfig, TigergraphConfig, FalkordbConfig
 # conn_conf = ArangoConfig.from_docker_env()      # ArangoDB
 # conn_conf = Neo4jConfig.from_docker_env()       # Neo4j
 conn_conf = TigergraphConfig.from_docker_env()  # TigerGraph

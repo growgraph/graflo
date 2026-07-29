@@ -12,11 +12,12 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from graflo.architecture.contract.bindings import JoinClause, TableConnector
+from graflo.architecture.contract.bindings import TableConnector
 from graflo.architecture.contract.ingestion.resource import ResourceConfig
-from graflo.architecture.contract.runtime import ResourceRuntime
 from graflo.architecture.pipeline.runtime.actor import ActorWrapper, EdgeActor
+from graflo.architecture.pipeline.runtime.resource import ResourceRuntime
 from graflo.filter.onto import ComparisonOperator, FilterExpression
+from graflo.filter.select import JoinClause
 
 if TYPE_CHECKING:
     from graflo.architecture.contract.bindings import Bindings

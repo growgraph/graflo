@@ -7,56 +7,47 @@ For lighter imports, prefer:
 - ``graflo.architecture.graph_types`` — runtime containers, contexts, indexes (or submodules)
 - ``graflo.architecture.pipeline.runtime`` — actors and executor
 
-See ``docs/importing.md`` in the package.
+See ``docs/guides/importing.md`` in the package.
+
+The façade is lazy (PEP 562) so that importing any ``graflo.architecture.X``
+submodule does not eagerly load the rest of the architecture tree.
 """
 
-from graflo.architecture.backend import GraFloIndex
-from graflo.architecture.schema import (
-    CoreSchema,
-    EdgeConfigDBAware,
-    GraFloOutput,
-    GraphMetadata,
-    GraphModel,
-    Schema,
-    SchemaDBAware,
-    VertexConfigDBAware,
-)
-from graflo.architecture.schema.edge import Edge, EdgeConfig
-from graflo.architecture.schema.vertex import FieldType, Vertex, VertexConfig
+from __future__ import annotations
 
-from .contract import (
-    APIConnector,
-    Bindings,
-    BoundSourceKind,
-    FileConnector,
-    GraphManifest,
-    IngestionModel,
-    JoinClause,
-    KafkaConnector,
-    ProtoTransform,
-    Resource,
-    ResourceConnector,
-    SparqlConnector,
-    TableConnector,
-    Transform,
-)
-from .database_features import DatabaseProfile
-from .graph_types import Index
+from typing import Any
 
-_LAZY_EXPORTS = {
-    "GraFloBackendConfig": ("graflo.db.graflo_backend.config", "GraFloBackendConfig"),
+_EXPORTS: dict[str, str] = {
+    "GraFloIndex": "graflo.architecture.backend",
+    "CoreSchema": "graflo.architecture.schema",
+    "EdgeConfigDBAware": "graflo.architecture.schema",
+    "GraFloOutput": "graflo.architecture.schema",
+    "GraphMetadata": "graflo.architecture.schema",
+    "GraphModel": "graflo.architecture.schema",
+    "Schema": "graflo.architecture.schema",
+    "SchemaDBAware": "graflo.architecture.schema",
+    "VertexConfigDBAware": "graflo.architecture.schema",
+    "Edge": "graflo.architecture.schema.edge",
+    "EdgeConfig": "graflo.architecture.schema.edge",
+    "FieldType": "graflo.architecture.schema.vertex",
+    "Vertex": "graflo.architecture.schema.vertex",
+    "VertexConfig": "graflo.architecture.schema.vertex",
+    "APIConnector": "graflo.architecture.contract",
+    "Bindings": "graflo.architecture.contract",
+    "BoundSourceKind": "graflo.architecture.contract",
+    "FileConnector": "graflo.architecture.contract",
+    "GraphManifest": "graflo.architecture.contract",
+    "IngestionModel": "graflo.architecture.contract",
+    "KafkaConnector": "graflo.architecture.contract",
+    "ProtoTransform": "graflo.architecture.contract",
+    "Resource": "graflo.architecture.contract",
+    "ResourceConnector": "graflo.architecture.contract",
+    "SparqlConnector": "graflo.architecture.contract",
+    "TableConnector": "graflo.architecture.contract",
+    "Transform": "graflo.architecture.contract",
+    "DatabaseProfile": "graflo.architecture.schema.database_features",
+    "Index": "graflo.architecture.graph_types",
 }
-
-
-def __getattr__(name: str):
-    if name in _LAZY_EXPORTS:
-        module_name, attr_name = _LAZY_EXPORTS[name]
-        import importlib
-
-        module = importlib.import_module(module_name)
-        return getattr(module, attr_name)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
 
 __all__ = [
     "APIConnector",
@@ -69,7 +60,6 @@ __all__ = [
     "EdgeConfigDBAware",
     "FieldType",
     "FileConnector",
-    "GraFloBackendConfig",
     "GraFloIndex",
     "GraFloOutput",
     "GraphManifest",
@@ -77,7 +67,6 @@ __all__ = [
     "GraphModel",
     "Index",
     "IngestionModel",
-    "JoinClause",
     "KafkaConnector",
     "ProtoTransform",
     "Resource",
@@ -91,3 +80,17 @@ __all__ = [
     "VertexConfig",
     "VertexConfigDBAware",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    if name in _EXPORTS:
+        import importlib
+
+        value = getattr(importlib.import_module(_EXPORTS[name]), name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(__all__)

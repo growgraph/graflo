@@ -16,7 +16,7 @@ from graflo.architecture.graph_types import GraphContainer
 from graflo.architecture.schema import CoreSchema, GraphMetadata, Schema
 from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.schema.vertex import Field, Vertex, VertexConfig
-from graflo.db.graflo_backend.config import GraFloBackendConfig
+from graflo.connections.graflo_backend import GraFloBackendConfig
 from graflo.db.graflo_backend.connection import GraFloBackendConnection
 from graflo.db.manager import ConnectionManager
 from graflo.hq.graph_engine import GraphEngine
@@ -157,7 +157,7 @@ def test_ingest_manifest_to_file_backend(
 ) -> None:
     from suthing import FileHandle
 
-    from graflo import GraphManifest
+    from graflo.architecture import GraphManifest
     from graflo.hq.caster import IngestionParams
 
     example_dir = (

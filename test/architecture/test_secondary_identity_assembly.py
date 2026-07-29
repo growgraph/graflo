@@ -15,11 +15,11 @@ from graflo.architecture.graph_types import (
     LocationIndex,
     VertexRep,
 )
+from graflo.architecture.graph_types.merge import merge_doc_basis
 from graflo.architecture.pipeline.runtime.actor.edge_render import render_edge
 from graflo.architecture.pipeline.runtime.assemble import _merge_vertices_for_edge
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import Vertex, VertexConfig
-from graflo.util.merge import merge_doc_basis
 
 
 @pytest.fixture

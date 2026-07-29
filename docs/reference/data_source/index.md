@@ -106,7 +106,7 @@ See **[API connector and pagination](../../concepts/connectors/api_connector.md)
 
 ### ApiAuth / RestApiConnConfig
 
-Runtime **`base_url`** and credentials (`bearer`, `basic`, `digest`, `api_key`) in **`graflo.hq.connection_provider`**, registered on a **`ConnectionProvider`**.
+Runtime **`base_url`** and credentials (`bearer`, `basic`, `digest`, `api_key`) in **`graflo.connections.provider`**, registered on a **`ConnectionProvider`**.
 
 **Env wiring** — map each `conn_proxy` to env vars (`user_service` → `USER_SERVICE_BASE_URL`, `USER_SERVICE_AUTH_TYPE`, …) and call **`register_all_api_configs_from_env(bindings)`** or **`register_api_config_from_env(conn_proxy)`**. See **[API connector and pagination](../../concepts/connectors/api_connector.md)** and **[Example 14](../../examples/example-14.md)**.
 
@@ -129,7 +129,7 @@ Runtime consumer (`confluent-kafka`). Built by **`RegistryBuilder`** from **`Kaf
 
 ### KafkaConnConfig / KafkaGeneralizedConnConfig
 
-Runtime **`bootstrap_servers`** and optional SASL/SSL settings in **`graflo.connection_models`**, registered on a **`ConnectionProvider`**.
+Runtime **`bootstrap_servers`** and optional SASL/SSL settings in **`graflo.connections.sources`**, registered on a **`ConnectionProvider`**.
 
 **Env wiring** — map each `conn_proxy` to env vars (`kafka_local` → `KAFKA_LOCAL_BOOTSTRAP_SERVERS`, …) and call **`register_all_kafka_configs_from_env(bindings)`** or **`register_kafka_config_from_env(conn_proxy)`**.
 
@@ -188,7 +188,7 @@ from graflo.architecture.contract.bindings import (
     PaginationConfig,
     PaginationRequestConfig,
 )
-from graflo.hq.connection_provider import InMemoryConnectionProvider
+from graflo.connections.provider import InMemoryConnectionProvider
 
 connector = APIConnector(
     name="users_api",

@@ -29,7 +29,7 @@ def fuseki_config():
 
     Skips if the .env file is missing (CI without Fuseki).
     """
-    from graflo.db import SparqlEndpointConfig
+    from graflo.connections.onto import SparqlEndpointConfig
 
     try:
         config = SparqlEndpointConfig.from_docker_env()

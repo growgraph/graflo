@@ -4,8 +4,8 @@ import logging
 
 import pytest
 
-from graflo.architecture.database_features import DatabaseProfile
 from graflo.architecture.schema import VertexConfigDBAware
+from graflo.architecture.schema.database_features import DatabaseProfile
 from graflo.architecture.schema.vertex import Field, FieldType, Vertex, VertexConfig
 from graflo.onto import DBType
 
@@ -532,7 +532,7 @@ def test_vertex_properties_conflicting_duplicate_types_raise():
 def test_resource_runtime_vertex_config_excludes_unreferenced_blank_vertices():
     """Blank vertices outside the resource pipeline are not in runtime config."""
     from graflo.architecture.contract.ingestion.resource import Resource
-    from graflo.architecture.contract.runtime import build_resource_runtime
+    from graflo.architecture.pipeline.runtime.resource import build_resource_runtime
     from graflo.architecture.schema.edge import EdgeConfig
 
     schema_vc = VertexConfig(

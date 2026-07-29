@@ -2,7 +2,7 @@
 
 This document describes how vertex and edge indexes are handled across different graph database backends. Understanding this helps ensure your schema has the right indexes for efficient lookups and MERGE operations.
 
-In manifests, physical index and naming configuration lives under **`schema.db_profile`** (the `DatabaseProfile` model; Python module `graflo.architecture.database_features`). Below, **`db_profile`** refers to that object—whether loaded from YAML or constructed in code.
+In manifests, physical index and naming configuration lives under **`schema.db_profile`** (the `DatabaseProfile` model; Python module `graflo.architecture.schema.database_features`). Below, **`db_profile`** refers to that object—whether loaded from YAML or constructed in code.
 
 ## Identity vs Secondary Indexes
 

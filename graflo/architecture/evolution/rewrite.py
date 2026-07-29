@@ -6,7 +6,7 @@ from collections.abc import Callable
 from copy import deepcopy
 from typing import Any
 
-from graflo.architecture.pipeline.runtime.actor.config.normalize import (
+from graflo.architecture.contract.ingestion.steps.normalize import (
     normalize_actor_step,
 )
 

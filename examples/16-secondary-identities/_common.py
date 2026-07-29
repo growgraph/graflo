@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from graflo.db.graflo_backend.config import GraFloBackendConfig
+from graflo.connections import GraFloBackendConfig
 
 EXAMPLE_DIR = Path(__file__).resolve().parent
 DEFAULT_CSV_BACKEND_DIR = EXAMPLE_DIR / "artifacts" / "csv-backend"

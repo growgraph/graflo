@@ -53,7 +53,7 @@ See Also
 
 import pytest
 
-from graflo.db import ConnectionManager
+from graflo.db.manager import ConnectionManager
 from graflo.onto import AggregationType
 
 # =============================================================================

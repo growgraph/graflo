@@ -1,3 +1,3 @@
-# `graflo.connection_models`
+# `graflo.connections.sources`
 
-::: graflo.connection_models
+::: graflo.connections.sources

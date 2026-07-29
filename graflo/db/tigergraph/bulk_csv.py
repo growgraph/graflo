@@ -13,7 +13,7 @@ from graflo.architecture.graph_types import GraphContainer
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.db_aware import EdgeRuntime, SchemaDBAware
 from graflo.architecture.schema.edge import Edge
-from graflo.db.connection import TigergraphBulkLoadConfig
+from graflo.connections.onto import TigergraphBulkLoadConfig
 from graflo.db.tigergraph.bulk_ids import clean_document_for_staging
 from graflo.db.tigergraph.ddl_utils import (
     edge_identity_discriminator_field_names,

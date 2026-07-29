@@ -1,17 +1,17 @@
-"""Update :class:`~graflo.architecture.database_features.DatabaseProfile` after vertex changes."""
+"""Update :class:`~graflo.architecture.schema.database_features.DatabaseProfile` after vertex changes."""
 
 from __future__ import annotations
 
 import logging
 from typing import Any
 
-from graflo.architecture.database_features import (
+from graflo.architecture.graph_types import EdgeId, EdgePhysicalKey, Index
+from graflo.architecture.schema import Schema
+from graflo.architecture.schema.database_features import (
     DatabaseProfile,
     EdgePhysicalSpec,
     EdgePropertyDefaults,
 )
-from graflo.architecture.graph_types import EdgeId, EdgePhysicalKey, Index
-from graflo.architecture.schema import Schema
 from graflo.architecture.schema.edge import Edge
 from graflo.onto import DBType
 

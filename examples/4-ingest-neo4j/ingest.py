@@ -4,7 +4,7 @@ from suthing import FileHandle
 
 from graflo import Bindings, GraphManifest
 from graflo.architecture.contract.bindings import FileConnector
-from graflo.db import Neo4jConfig
+from graflo.connections import Neo4jConfig
 from graflo.hq import GraphEngine
 from graflo.hq.caster import IngestionParams
 

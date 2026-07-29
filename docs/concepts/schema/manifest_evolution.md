@@ -39,7 +39,7 @@ GraFlo provides **contract-level** operations that transform a validated `GraphM
 
 ## Compose two manifests
 
-GraFlo stays deterministic: ScheWea (or a human) may *propose* equivalences; core only *applies* them.
+GraFlo stays deterministic: an external tool (or a human) may *propose* equivalences; core only *applies* them.
 
 ```python
 from graflo.architecture.evolution import (
@@ -352,7 +352,7 @@ explicitly allowed.
 ## Scope notes
 
 - **Transforms**: bodies of named transforms are not rewritten when vertex *field* names change during a merge; that remains an authoring concern. Use **`RenameVertexPropertiesOp`** / **`SanitizeOp`** when you need coordinated field rewrites at the manifest boundary.
-- **Identity ops are contract-level too**: `ReplaceIdentityOp` rewrites the manifest, it does not re-key stored vertices. Propagating identity changes to a live database is tracked as roadmap item (11).
+- **Identity ops are contract-level too**: `ReplaceIdentityOp` rewrites the manifest, it does not re-key stored vertices. Propagating identity changes to a live database is not yet supported.
 - **Bindings**: connector definitions are unchanged; only `resource_connector` rows pointing at dropped resources are removed after a remove operation.
 
 ## See also

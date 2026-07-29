@@ -5,6 +5,10 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Literal
 
+from graflo.architecture.contract.ingestion.steps import (
+    VertexActorConfig,
+    VertexRouterActorConfig,
+)
 from graflo.architecture.graph_types import (
     ExtractionContext,
     LocationIndex,
@@ -13,10 +17,6 @@ from graflo.architecture.graph_types import (
 from graflo.architecture.schema.vertex import VertexConfig, VertexName
 
 from .base import ActorInitContext, VertexProducingActor
-from .config import (
-    VertexActorConfig,
-    VertexRouterActorConfig,
-)
 
 if TYPE_CHECKING:
     from .wrapper import ActorWrapper

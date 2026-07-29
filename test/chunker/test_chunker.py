@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-from graflo.util.chunker import (
+from graflo.data_source.chunker import (
     FileChunker,
     JsonChunker,
     JsonlChunker,

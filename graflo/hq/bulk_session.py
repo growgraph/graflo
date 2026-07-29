@@ -14,8 +14,8 @@ from graflo.db.bulk_exc import UnsupportedBulkLoad
 
 if TYPE_CHECKING:
     from graflo.architecture.contract.bindings import Bindings
-    from graflo.db.connection import DBConfig
-    from graflo.hq.connection_provider import ConnectionProvider
+    from graflo.connections.onto import DBConfig
+    from graflo.connections.provider import ConnectionProvider
 
 
 class BulkSessionCoordinator:

@@ -6,11 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.10.0]
+
+
+### Changed
+
+**Module composition refactor** — the package is now explicitly layered and free of cross-package import-time cycles. Before, 117 of 211 modules formed a single import-time strongly-connected component: importing the declarative contract loaded every DB driver, and the top-level façade needed lazy-loading band-aids to survive its own recursion. Behavior is unchanged; import paths are not. **Breaking — no compatibility shims.** Full old→new path table: [`docs/guides/importing.md`](docs/guides/importing.md).
+
+- **New `graflo.connections` package** — the single home for *how to reach things*, importable without any DB driver: `connections.onto` (ex-`db.connection.onto`: `DBConfig` + per-backend configs), `connections.sources` (ex-`connection_models`), `connections.mapping` (ex-`db.connection.config_mapping`), `connections.graflo_backend` (ex-`db.graflo_backend.config`), `connections.provider` (ex-`hq.connection_provider`). `contract.bindings` no longer imports `graflo.db` (the `try/except ImportError: PostgresConfig = Any` hack is gone). Unused `WSGIConfig` deleted.
+- **Contract ↔ pipeline inversion** — the contract is now purely declarative and the pipeline purely runtime, with a one-way pipeline→contract dependency: actor step configs moved `pipeline.runtime.actor.config.*` → `contract.ingestion.steps.*`; `ResourceRuntime` moved `contract.runtime.resource` → `pipeline.runtime.resource`; `EdgeDerivation`/`EdgeDerivationRegistry` unified in `graph_types.edge_derivation`. `IngestionModel.finish_init` / `prune_to_graph` build runtimes via deferred imports — the single documented seam.
+- **Modules relocated to their true layer** — `database_features` → `architecture.schema.database_features`; `identity_uuid` (identity semantics, not DB code) → `architecture.schema.identity_uuid`, un-deferring its import in the assembly hot path; `fuzzy_matcher` → `util.fuzzy_matcher`; `chunker` → `data_source.chunker`; `merge` → `graph_types.merge`; `JoinClause` → `filter.select`; `PRIMARY_IDENTITY_SELECTOR` / `SECONDARY_IDENTITY_SUGAR` → `graflo.onto`. The `util.onto` backward shim is deleted.
+- **Lazy façades (PEP 562)** — `graflo`, `graflo.architecture`, `graflo.db`, `graflo.data_source`, `graflo.hq`, `graflo.connections` resolve exports on attribute access. Public names are unchanged; `import graflo` and `from graflo import GraphManifest` no longer load DB drivers. Internal code and anything wanting precise static types should import concrete modules (lazy façade attributes type as `Any`).
+- **Layering is enforced** — `test/architecture/test_layering.py` fails on any new upward import-time dependency and on the contract importing runtime, and asserts the contract imports without loading a driver.
+
 ## [1.9.1]
 
 ### Added
 
-Extended manifest-evolution vocabulary — the contract ops could remove, merge, rename and project, but could not author an identity change, create a type, or set a property type. Plan: [`docs/PR6.md`](../docs/PR6.md).
+Extended manifest-evolution vocabulary — the contract ops could remove, merge, rename and project, but could not author an identity change, create a type, or set a property type.
 
 - **`ReplaceIdentityOp`** — replace a vertex's identity policy, covering a change of identity *fields* and a change of identity *mode* (`natural` / `hash` / `assigned` / `blank`) in one op, since both cascade the same way. **`retire`** decides what becomes of the old field-set: `demote` (default) turns it into a secondary identity whose lookup index is derived automatically, `keep` leaves it as plain properties, `drop` removes it. **`endpoints`** separately decides whether edge steps follow the new identity (`follow_new`, default) or stay pinned to the demoted one (`pin_to_retired`). Demotion downgrades to `keep` when the old identity was synthetic or unchanged; `mode: blank` cannot demote at all. Retired-identity indexes are dropped from `db_profile`.
 - **`AddSecondaryIdentitiesOp`** / **`RemoveSecondaryIdentitiesOp`** — declare or withdraw alternate lookup keys on existing vertices, previously authoring-time only. Removal is rejected while an edge step still selects the field-set, and drops the derived index (which `finish_init` only ever adds).
@@ -863,7 +876,6 @@ Extended manifest-evolution vocabulary — the contract ops could remove, merge,
     - `plan` (read-only schema comparison and migration plan generation)
     - `apply` (dry-run or apply with revision and hash checks)
     - `status` and `history` (migration state visibility)
-  - New migration ADR in `planning/graflo-migration-adr.md` documenting normalization rules, risk policy, rename policy, and backend capability matrix
   - New migration test suite in `test/migrate/` (diff, planner, store, executor)
 - **Graph manifest contract**:
   - Introduced `graflo.architecture.manifest.GraphManifest` in `graflo/architecture/manifest.py` as the canonical ingestion contract

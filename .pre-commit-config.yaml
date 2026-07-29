@@ -14,10 +14,11 @@ repos:
     hooks:
     -   id: ty
         name: ty check
-        entry: bash -c 'ty check graflo test'
+        entry: bash -c 'uv run ty check graflo test'
         language: system
         pass_filenames: false
         always_run: true
+
 
   # YAML formatting
 -   repo: https://github.com/macisamuele/language-formatters-pre-commit-hooks

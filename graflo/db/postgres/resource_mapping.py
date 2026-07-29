@@ -24,7 +24,7 @@ from .inference_utils import (
 )
 
 if TYPE_CHECKING:
-    from graflo.hq.fuzzy_matcher import FuzzyMatcher
+    from graflo.util.fuzzy_matcher import FuzzyMatcher
 
 logger = logging.getLogger(__name__)
 
@@ -256,7 +256,7 @@ class PostgresResourceMapper:
         threshold = (
             fuzzy_threshold if fuzzy_threshold is not None else self.fuzzy_threshold
         )
-        from graflo.hq.fuzzy_matcher import FuzzyMatcher
+        from graflo.util.fuzzy_matcher import FuzzyMatcher
 
         matcher = FuzzyMatcher(vertex_names, threshold, enable_cache=True)
 

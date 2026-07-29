@@ -9,19 +9,21 @@ from pydantic import Field as PydanticField
 from pydantic import PrivateAttr, model_validator
 
 from graflo.architecture.base import ConfigBaseModel
-from graflo.architecture.pipeline.runtime.actor import ActorWrapper
+from graflo.architecture.graph_types.edge_derivation import EdgeDerivationRegistry
 from graflo.onto import (
     DEFAULT_ENDPOINT_AMBIGUITY,
     DBType,
     EndpointAmbiguityPolicy,
 )
 
-from ..runtime.edge_derivation import EdgeDerivationRegistry
-from ..runtime.resource import ResourceRuntime
 from .resource import ResourceConfig
 from .transform import ProtoTransform
 
 if TYPE_CHECKING:
+    # Runtime types are imported lazily: the declarative contract must stay
+    # importable without the pipeline runtime (see finish_init / prune_to_graph).
+    from graflo.architecture.pipeline.runtime.actor import ActorWrapper
+    from graflo.architecture.pipeline.runtime.resource import ResourceRuntime
     from graflo.architecture.schema import CoreSchema
 
 
@@ -109,6 +111,9 @@ class IngestionModel(ConfigBaseModel):
         target_db_flavor: DBType | None = None,
     ) -> None:
         """Build per-resource runtimes against graph model and transform library."""
+        # Deferred: the single seam where the declarative model builds runtime state.
+        from graflo.architecture.pipeline.runtime.resource import ResourceRuntime
+
         self._rebuild_config_state()
         runtimes: dict[str, ResourceRuntime] = {}
         for config in self.resources:
@@ -156,6 +161,9 @@ class IngestionModel(ConfigBaseModel):
         self, core_schema: CoreSchema, disconnected: set[str] | None = None
     ) -> None:
         """Drop resource actors that reference disconnected vertices."""
+        # Deferred: pruning instantiates actor trees from declarative pipelines.
+        from graflo.architecture.pipeline.runtime.actor import ActorWrapper
+
         if disconnected is None:
             disconnected = (
                 core_schema.vertex_config.vertex_set - core_schema.edge_config.vertices

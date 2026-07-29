@@ -10,13 +10,13 @@ import uuid
 import pytest
 
 from graflo.architecture.contract.bindings import Bindings, KafkaConnector
-from graflo.connection_models import KafkaConnConfig, KafkaGeneralizedConnConfig
+from graflo.connections.provider import InMemoryConnectionProvider
+from graflo.connections.sources import KafkaConnConfig, KafkaGeneralizedConnConfig
 from graflo.data_source.kafka import (
     KafkaConfig,
     KafkaDataSource,
     decode_kafka_json_value,
 )
-from graflo.hq.connection_provider import InMemoryConnectionProvider
 from graflo.hq.ingestion_parameters import IngestionParams
 from graflo.hq.registry_builder import RegistryBuilder
 from test.conftest import fetch_manifest_obj

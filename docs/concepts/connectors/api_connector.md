@@ -38,7 +38,7 @@ bindings:
 Runtime (Python) — **from environment variables** (recommended for local dev and CI):
 
 ```python
-from graflo.hq.connection_provider import InMemoryConnectionProvider
+from graflo.connections.provider import InMemoryConnectionProvider
 
 provider = InMemoryConnectionProvider()
 provider.register_all_api_configs_from_env(bindings=bindings)
@@ -74,7 +74,7 @@ provider.register_api_config_from_env(conn_proxy="api_source")
 Runtime (Python) — **manual registration**:
 
 ```python
-from graflo.hq.connection_provider import (
+from graflo.connections.provider import (
     ApiAuth,
     ApiGeneralizedConnConfig,
     InMemoryConnectionProvider,
@@ -519,4 +519,4 @@ Declare reusable defaults under **`bindings.connector_templates`** and reference
 - [Runtime connector updates](runtime_updates.md) — patch **`APIConnector`** fields via **`ConnectorUpdate`** (hash recomputes on change)
 - [Quick Start — Using API Data Sources](../../getting_started/quickstart.md#using-api-data-sources)
 
-Implementation: `graflo.architecture.contract.bindings.APIConnector`, `PaginationConfig`, `graflo.data_source.api.APIDataSource`, `graflo.hq.connection_provider`.
+Implementation: `graflo.architecture.contract.bindings.APIConnector`, `PaginationConfig`, `graflo.data_source.api.APIDataSource`, `graflo.connections.provider`.

@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from graflo.architecture.database_features import DatabaseProfile, EdgePhysicalSpec
+from graflo.architecture.schema.database_features import (
+    DatabaseProfile,
+    EdgePhysicalSpec,
+)
 from graflo.architecture.schema.edge import Edge
 from graflo.db.tigergraph.conn import TigerGraphConnection
 from graflo.onto import DBType
