@@ -169,12 +169,22 @@ class ManifestRdfSerializer:
         add_literal(graph, vertex_uri, ns.name, vertex.name)
         add_literal(graph, vertex_uri, ns.description, vertex.description)
         add_literal(graph, vertex_uri, ns.blank, vertex.blank)
+        add_literal(graph, vertex_uri, ns.assigned, vertex.assigned)
 
-        for identity in vertex.identity:
-            identity_node = BNode()
-            graph.add((vertex_uri, ns.hasIdentity, identity_node))
-            graph.add((identity_node, RDF.type, ns.Identity))
-            add_literal(graph, identity_node, ns.identityName, identity)
+        self._emit_identity_names(graph, vertex_uri, ns.hasIdentity, vertex.identity)
+        self._emit_identity_names(
+            graph, vertex_uri, ns.hasHashIdentity, vertex.hash_identity_properties
+        )
+
+        for index, secondary in enumerate(vertex.secondary_identities):
+            secondary_node = BNode()
+            graph.add((vertex_uri, ns.hasSecondaryIdentity, secondary_node))
+            graph.add((secondary_node, RDF.type, ns.SecondaryIdentity))
+            add_literal(graph, secondary_node, ns.artifactIndex, index)
+            add_literal(graph, secondary_node, ns.name, secondary.name)
+            self._emit_identity_names(
+                graph, secondary_node, ns.hasIdentity, secondary.fields
+            )
 
         payload = {}
         if vertex.filters:
@@ -189,6 +199,26 @@ class ManifestRdfSerializer:
 
         for index, field in enumerate(vertex.properties):
             self._emit_field(graph, vertex_uri, field, index)
+
+    @staticmethod
+    def _emit_identity_names(
+        graph: Graph,
+        owner: URIRef | BNode,
+        predicate: URIRef,
+        names: list[str],
+    ) -> None:
+        """Emit an ordered chain of ``gf:Identity`` nodes under ``predicate``.
+
+        The index is what makes the chain ordered: identity lists are positional
+        and RDF triples are not, so a reader without ``gf:artifactIndex`` can
+        only recover the set, not the sequence.
+        """
+        for index, name in enumerate(names):
+            identity_node = BNode()
+            graph.add((owner, predicate, identity_node))
+            graph.add((identity_node, RDF.type, ns.Identity))
+            add_literal(graph, identity_node, ns.artifactIndex, index)
+            add_literal(graph, identity_node, ns.identityName, name)
 
     def _emit_field(
         self,

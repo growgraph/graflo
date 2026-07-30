@@ -41,7 +41,7 @@ description = "Manifest-driven Graph Schema & Transformation Language (GSTL): de
 name = "graflo"
 readme = "README.md"
 requires-python = ">=3.11"
-version = "1.10.0"
+version = "1.10.1"
 
 [project.optional-dependencies]
 dev = [
@@ -57,7 +57,8 @@ docs = [
   "mkdocs-material>=9.6.12",
   "mkdocs-table-reader-plugin>=3.1.0",
   "mkdocs>=1.6.1",
-  "mkdocstrings[python]>=0.29.1"
+  "mkdocstrings[python]>=0.29.1",
+  "ruff"
 ]
 plot = [
   "pygraphviz>=1.14"

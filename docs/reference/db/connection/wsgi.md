@@ -1,3 +1,4 @@
-# `graflo.connections.onto.wsgi`
+# WSGI connection config (removed)
 
-::: graflo.connections.onto.wsgi
+`WSGIConfig` / `graflo.connections.onto.wsgi` was deleted. Use the connection
+configs under [`graflo.connections.onto`](onto.md).

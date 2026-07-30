@@ -43,6 +43,28 @@ uv run python ingest.py
 
 Writes a chunked GraFlo file backend under `artifacts/csv-backend/`.
 
+## Samples from a non-CSV source
+
+`IdentityInferencer.infer()` takes **flat records**, which is why this guide starts from CSV. To
+reach a PostgreSQL table, a directory of mixed files, or a nested API response, sample the source
+first and flatten through its profile:
+
+```python
+from graflo.architecture.onto_sample import profile_sample
+from graflo.hq.graph_engine import GraphEngine
+
+source = GraphEngine().sample_resources(pg_config, schema_name="public", max_docs=500)
+sample = source.get("customers")
+profile = profile_sample(sample)
+
+records = profile.flat_docs(sample.docs)   # nested paths become 'customer.id', 'items[].sku'
+```
+
+A sampled source also carries the **declared** `primary_key` and `foreign_keys` when it has them —
+prefer those over an inferred identity, and see
+[Sampling and profiling](../concepts/schema/sampling_and_profiling.md) for the caps and the caveat
+on `unique`.
+
 ## Identity modes
 
 After inference, each vertex has a derived **`identity_mode`**:
@@ -63,6 +85,7 @@ For attaching edges by a business key that is not the upsert identity, see
 ## Related documentation
 
 - [Vertex identity modes](../concepts/schema/vertex_identity.md)
+- [Sampling and profiling](../concepts/schema/sampling_and_profiling.md) — where samples come from
 - [Example 16 — Secondary identities](../examples/example-16.md)
 - [Core components — Vertex](../concepts/architecture/core_components.md)
 - [Graph export and replay](graph_export_and_replay.md) — file backend ingest pattern

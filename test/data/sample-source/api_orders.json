@@ -1,0 +1,37 @@
+[
+    {
+        "order_id": "o1",
+        "customer": {
+            "id": "c1",
+            "city": "Berlin"
+        },
+        "items": [
+            {
+                "sku": "A-1",
+                "qty": 2
+            },
+            {
+                "sku": "B-2",
+                "qty": 1
+            }
+        ],
+        "tags": [
+            "priority",
+            "gift"
+        ]
+    },
+    {
+        "order_id": "o2",
+        "customer": {
+            "id": "c2",
+            "city": null
+        },
+        "items": [
+            {
+                "sku": "C-3",
+                "qty": 5
+            }
+        ],
+        "tags": []
+    }
+]

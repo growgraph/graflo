@@ -86,6 +86,52 @@ def test_ingestion_model_strict_transform_reference_fails_fast() -> None:
         assert "was not found in ingestion_model.transforms" in str(exc)
 
 
+def test_strict_mode_rejects_pipeline_vertex_step_naming_unknown_vertex() -> None:
+    """A vertex step naming an undeclared vertex is otherwise silently dropped.
+
+    ``filter_vertex_config_for_resource`` intersects the resource's vertex names
+    with the schema's, so a pipeline that writes nothing used to validate clean.
+    A name mismatch between the vertex definition and the step is the common
+    cause, and it produces a manifest that ingests no data at all.
+    """
+    schema = _minimal_schema()
+    ingestion_model = IngestionModel.model_validate(
+        {
+            "resources": [{"name": "r1", "pipeline": [{"vertex": "A"}]}],
+            "transforms": [],
+        }
+    )
+
+    try:
+        ingestion_model.finish_init(schema.core_schema, strict_references=True)
+        assert False, "Expected strict vertex reference validation to fail"
+    except ValueError as exc:
+        assert "references undefined vertices: ['A']" in str(exc)
+
+
+def test_lenient_mode_still_tolerates_unknown_pipeline_vertex_step() -> None:
+    """Non-strict behaviour is unchanged: unknown vertex steps are filtered out."""
+    schema = _minimal_schema()
+    ingestion_model = IngestionModel.model_validate(
+        {
+            "resources": [{"name": "r1", "pipeline": [{"vertex": "A"}]}],
+            "transforms": [],
+        }
+    )
+    ingestion_model.finish_init(schema.core_schema, strict_references=False)
+
+
+def test_strict_mode_accepts_matching_pipeline_vertex_step() -> None:
+    schema = _minimal_schema()
+    ingestion_model = IngestionModel.model_validate(
+        {
+            "resources": [{"name": "r1", "pipeline": [{"vertex": "a"}]}],
+            "transforms": [],
+        }
+    )
+    ingestion_model.finish_init(schema.core_schema, strict_references=True)
+
+
 def test_registry_builder_strict_mode_aggregates_missing_connectors() -> None:
     schema = _minimal_schema()
     ingestion_model = IngestionModel.model_validate(

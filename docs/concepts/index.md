@@ -67,6 +67,10 @@ flowchart LR
 
 Entry points: **`GraphEngine.migrate_graph()`** (schema + data), **`infer_schema_from_graph()`** (schema only), **`export_graph()`** (in-memory `GraFloOutput`). See [Graph export and migration](operations/graph_export_migration.md) and the [Graph DB migration guide](../guides/graph_db_migration.md).
 
+- **SourceSample** — a bounded, verbatim-JSON sample of one or more resources, retaining the
+  connector each document came from. The shared input stage for schema inference, algorithmic or
+  agentic; produced by `GraphEngine.sample_resources()`. See
+  [Sampling and profiling](schema/sampling_and_profiling.md).
 - **Source Instance** — a concrete data artifact (a file, a table, a SPARQL endpoint, an API, a Kafka topic), wrapped by an `AbstractDataSource` with a `DataSourceType` (`FILE`, `SQL`, `SPARQL`, `API`, `KAFKA`, `IN_MEMORY`).
 - **Resource** — a reusable transformation pipeline (actor steps: descend, transform, vertex, edge) that maps raw records to graph elements. Data sources bind to Resources by name via the `DataSourceRegistry`.
 - **GraphManifest** — the canonical top-level contract that composes `schema`, `ingestion_model`, and `bindings`. High-level **contract evolution** (remove/merge vertex types and keep ingestion aligned) is described in [Manifest evolution](schema/manifest_evolution.md).

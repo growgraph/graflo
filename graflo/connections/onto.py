@@ -1,6 +1,7 @@
 import abc
 import logging
 import os
+import re
 import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Self, TypeVar, cast
@@ -1274,6 +1275,54 @@ class PostgresConfig(DBConfig):
             return f"postgresql://{user_encoded}:{password_encoded}@{host}:{port}/{database_encoded}"
         else:
             return f"postgresql://{user_encoded}@{host}:{port}/{database_encoded}"
+
+    @classmethod
+    def from_dsn(cls, dsn: str, **overrides: Any) -> "PostgresConfig":
+        """Build a config from a libpq/SQLAlchemy DSN.
+
+        ``uri`` alone is not enough: ``hostname`` and ``port`` are derived from
+        it, but ``username`` / ``password`` / ``database`` are independent fields,
+        so a config built from a bare URI has no database name and
+        :meth:`to_sqlalchemy_connection_string` raises. This parses the DSN and
+        populates those fields.
+
+        Args:
+            dsn: e.g. ``postgresql://user:pass@host:5432/dbname?options=-csearch_path=sales``
+            **overrides: Explicit field values that win over the parsed DSN.
+
+        Returns:
+            PostgresConfig: Config with credentials and database populated.
+        """
+        from urllib.parse import parse_qs, unquote, urlsplit
+
+        parts = urlsplit(dsn)
+        if not parts.hostname:
+            raise ValueError(f"DSN has no host: {dsn!r}")
+
+        fields: dict[str, Any] = {
+            "uri": f"{parts.scheme or 'postgresql'}://{parts.netloc}"
+        }
+        if parts.username:
+            fields["username"] = unquote(parts.username)
+        if parts.password:
+            fields["password"] = unquote(parts.password)
+        database = unquote(parts.path).lstrip("/")
+        if database:
+            fields["database"] = database
+
+        # Honour a search_path passed either as ?schema= or in libpq options.
+        query = parse_qs(parts.query)
+        schema = next(iter(query.get("schema", [])), None)
+        if schema is None:
+            options = next(iter(query.get("options", [])), "")
+            match = re.search(r"-c\s*search_path=([^\s,]+)", options)
+            if match:
+                schema = match.group(1)
+        if schema:
+            fields["schema_name"] = schema
+
+        fields.update(overrides)
+        return cls(**fields)
 
     @classmethod
     def from_docker_env(cls, docker_dir: str | Path | None = None) -> "PostgresConfig":

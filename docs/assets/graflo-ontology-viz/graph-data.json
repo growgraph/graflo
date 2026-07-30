@@ -190,6 +190,13 @@
             "target": "https://ontology.growgraph.dev/graflo/GrafloArtifact"
         },
         {
+            "id": "sub:https://ontology.growgraph.dev/graflo/SecondaryIdentity->https://ontology.growgraph.dev/graflo/GrafloArtifact",
+            "kind": "subClassOf",
+            "label": "subClassOf",
+            "source": "https://ontology.growgraph.dev/graflo/SecondaryIdentity",
+            "target": "https://ontology.growgraph.dev/graflo/GrafloArtifact"
+        },
+        {
             "id": "sub:https://ontology.growgraph.dev/graflo/SparqlConnector->https://ontology.growgraph.dev/graflo/BoundConnector",
             "kind": "subClassOf",
             "label": "subClassOf",
@@ -342,6 +349,20 @@
             "label": "hasIdentity",
             "source": "https://ontology.growgraph.dev/graflo/Vertex",
             "target": "https://ontology.growgraph.dev/graflo/Identity"
+        },
+        {
+            "id": "prop:https://ontology.growgraph.dev/graflo/hasHashIdentity",
+            "kind": "objectProperty",
+            "label": "hasHashIdentity",
+            "source": "https://ontology.growgraph.dev/graflo/Vertex",
+            "target": "https://ontology.growgraph.dev/graflo/Identity"
+        },
+        {
+            "id": "prop:https://ontology.growgraph.dev/graflo/hasSecondaryIdentity",
+            "kind": "objectProperty",
+            "label": "hasSecondaryIdentity",
+            "source": "https://ontology.growgraph.dev/graflo/Vertex",
+            "target": "https://ontology.growgraph.dev/graflo/SecondaryIdentity"
         },
         {
             "id": "prop:https://ontology.growgraph.dev/graflo/edgeSource",
@@ -768,6 +789,13 @@
             "local": "Schema"
         },
         {
+            "comment": "Alternate named field-set that identifies a vertex for lookup only. Edge endpoints may match on it; upserts always use the primary identity.",
+            "id": "https://ontology.growgraph.dev/graflo/SecondaryIdentity",
+            "kind": "gf",
+            "label": "SecondaryIdentity",
+            "local": "SecondaryIdentity"
+        },
+        {
             "comment": null,
             "id": "https://ontology.growgraph.dev/graflo/SparqlConnector",
             "kind": "gf",
@@ -853,5 +881,5 @@
         }
     ],
     "ontology": "https://ontology.growgraph.dev/graflo",
-    "version": "1.0.0"
+    "version": "1.1.0"
 }

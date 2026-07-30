@@ -61,6 +61,7 @@ nav:
         -   Core components: concepts/architecture/core_components.md
         -   Capabilities: concepts/architecture/capabilities.md
     -   Schema and manifest:
+        -   Sampling and profiling: concepts/schema/sampling_and_profiling.md
         -   Vertex identity: concepts/schema/vertex_identity.md
         -   Backend indexes: concepts/schema/backend_indexes.md
         -   Manifest evolution: concepts/schema/manifest_evolution.md
@@ -81,6 +82,7 @@ nav:
     -   Guides index: guides/index.md
     -   Importing and layering: guides/importing.md
     -   Graph DB migration: guides/graph_db_migration.md
+    -   Graph namespace and schema: guides/graph_namespace_and_schema.md
     -   Graph export and replay: guides/graph_export_and_replay.md
     -   API env wiring: guides/api_env_wiring.md
     -   Identity inference: guides/identity_inference.md

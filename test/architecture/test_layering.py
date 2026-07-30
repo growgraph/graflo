@@ -51,6 +51,7 @@ LAYERS: dict[str, int] = {
     "graflo.architecture.evolution": 4,
     "graflo.architecture.util": 1,  # helpers over graph_types only
     "graflo.architecture.onto_sql": 1,  # leaf pydantic models (SQL introspection)
+    "graflo.architecture.onto_sample": 2,  # leaf sample models; needs FieldType (L2)
     "graflo.data_source": 4,
     "graflo.db": 5,
     "graflo.object_storage": 5,
