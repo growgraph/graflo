@@ -16,7 +16,7 @@ from graflo.architecture.contract.bindings.connectors import (
 )
 
 GF_ONTOLOGY_IRI = "https://ontology.growgraph.dev/graflo"
-GF_VERSION = "1.1.0"
+GF_VERSION = "1.2.0"
 GF_VERSION_IRI = f"{GF_ONTOLOGY_IRI}/{GF_VERSION}"
 GF_BASE = "https://ontology.growgraph.dev/graflo/"
 GF = Namespace(GF_BASE)
@@ -34,6 +34,8 @@ Edge = GF.Edge
 Field = GF.Field
 Identity = GF.Identity
 SecondaryIdentity = GF.SecondaryIdentity
+IdentityFunnel = GF.IdentityFunnel
+IdentityBranch = GF.IdentityBranch
 IngestionModel = GF.IngestionModel
 Resource = GF.Resource
 EdgeInferSpec = GF.EdgeInferSpec
@@ -74,6 +76,12 @@ hasField = GF.hasField
 hasIdentity = GF.hasIdentity
 hasHashIdentity = GF.hasHashIdentity
 hasSecondaryIdentity = GF.hasSecondaryIdentity
+hasIdentityFunnel = GF.hasIdentityFunnel
+hasIdentityBranch = GF.hasIdentityBranch
+hasBranchCondition = GF.hasBranchCondition
+funnelDigest = GF.funnelDigest
+funnelIncludeBranchId = GF.funnelIncludeBranchId
+branchId = GF.branchId
 edgeSource = GF.edgeSource
 edgeTarget = GF.edgeTarget
 hasResource = GF.hasResource

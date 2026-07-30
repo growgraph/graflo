@@ -92,6 +92,74 @@ class TestTargetModes:
         assert party.blank is True
         assert party.secondary_identities == []
 
+    def test_natural_to_funnel(self):
+        out = _replace(
+            _manifest(),
+            to={
+                "mode": "funnel",
+                "funnel": {
+                    "branches": [
+                        {"id": "uid", "fields": ["party_uid"]},
+                        {"id": "weak", "fields": ["name"]},
+                    ]
+                },
+            },
+        )
+
+        party = _vertex(out, "party")
+        assert party.identity_mode == "hash"
+        assert party.has_identity_funnel is True
+        assert party.identity_funnel is not None
+        assert party.identity_funnel.branch_ids == ["uid", "weak"]
+        assert party.hash_identity_properties == []
+        assert party.identity == ["id"]
+
+    def test_funnel_back_to_natural_clears_the_funnel(self):
+        manifest = _manifest(
+            [
+                {
+                    "name": "party",
+                    "properties": ["email", "party_uid"],
+                    "identity_funnel": {
+                        "branches": [{"id": "email", "fields": ["email"]}]
+                    },
+                }
+            ]
+        )
+
+        out = _replace(manifest, to={"mode": "natural", "identity": ["party_uid"]})
+
+        party = _vertex(out, "party")
+        assert party.identity_mode == "natural"
+        assert party.identity_funnel is None
+
+    def test_funnel_requires_its_fields_to_exist(self):
+        with pytest.raises(ValueError, match="does not declare"):
+            _replace(
+                _manifest(),
+                to={
+                    "mode": "funnel",
+                    "funnel": {"branches": [{"id": "a", "fields": ["nope"]}]},
+                },
+            )
+
+    def test_replacing_a_funnel_with_the_same_funnel_is_a_noop(self):
+        funnel = {"branches": [{"id": "email", "fields": ["email"]}]}
+        manifest = _manifest(
+            [
+                {
+                    "name": "party",
+                    "properties": ["email"],
+                    "identity_funnel": funnel,
+                }
+            ]
+        )
+
+        before = _vertex(manifest, "party").to_minimal_canonical_dict()
+        out = _replace(manifest, to={"mode": "funnel", "funnel": funnel})
+
+        assert _vertex(out, "party").to_minimal_canonical_dict() == before
+
     def test_hash_back_to_natural(self):
         manifest = _manifest(
             [

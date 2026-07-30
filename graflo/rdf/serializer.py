@@ -176,6 +176,9 @@ class ManifestRdfSerializer:
             graph, vertex_uri, ns.hasHashIdentity, vertex.hash_identity_properties
         )
 
+        if vertex.identity_funnel is not None:
+            self._emit_identity_funnel(graph, vertex_uri, vertex.identity_funnel)
+
         for index, secondary in enumerate(vertex.secondary_identities):
             secondary_node = BNode()
             graph.add((vertex_uri, ns.hasSecondaryIdentity, secondary_node))
@@ -199,6 +202,37 @@ class ManifestRdfSerializer:
 
         for index, field in enumerate(vertex.properties):
             self._emit_field(graph, vertex_uri, field, index)
+
+    def _emit_identity_funnel(
+        self, graph: Graph, vertex_uri: URIRef, funnel: Any
+    ) -> None:
+        """Emit a funnel as an ordered chain of branch nodes.
+
+        Branch order decides which key a document gets, so it must survive the
+        round-trip: ``gf:artifactIndex`` carries it, exactly as it does for
+        identity field chains.
+        """
+        funnel_node = BNode()
+        graph.add((vertex_uri, ns.hasIdentityFunnel, funnel_node))
+        graph.add((funnel_node, RDF.type, ns.IdentityFunnel))
+        add_literal(graph, funnel_node, ns.funnelDigest, funnel.digest)
+        add_literal(
+            graph, funnel_node, ns.funnelIncludeBranchId, funnel.include_branch_id
+        )
+        for index, branch in enumerate(funnel.branches):
+            branch_node = BNode()
+            graph.add((funnel_node, ns.hasIdentityBranch, branch_node))
+            graph.add((branch_node, RDF.type, ns.IdentityBranch))
+            add_literal(graph, branch_node, ns.artifactIndex, index)
+            add_literal(graph, branch_node, ns.branchId, branch.id)
+            self._emit_identity_names(graph, branch_node, ns.hasIdentity, branch.fields)
+            if branch.when_all_present is not None:
+                self._emit_identity_names(
+                    graph,
+                    branch_node,
+                    ns.hasBranchCondition,
+                    branch.when_all_present,
+                )
 
     @staticmethod
     def _emit_identity_names(

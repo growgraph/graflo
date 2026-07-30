@@ -33,6 +33,7 @@ from pydantic import (
 )
 
 from graflo.architecture.base import ConfigBaseModel
+from graflo.architecture.schema.identity_funnel import IdentityFunnel
 from graflo.filter.onto import FilterExpression
 from graflo.onto import (
     PRIMARY_IDENTITY_SELECTOR,
@@ -489,6 +490,15 @@ class Vertex(ConfigBaseModel):
             "narrow enough to store directly. Distinct from blank (random UUID)."
         ),
     )
+    identity_funnel: IdentityFunnel | None = PydanticField(
+        default=None,
+        description=(
+            "Ordered fallback branches deriving a deterministic synthetic 'id'. "
+            "The first branch whose fields are all present wins. Generalizes "
+            "hash_identity_properties (the single-branch case); the two are "
+            "mutually exclusive."
+        ),
+    )
     secondary_identities: list[SecondaryIdentity] = PydanticField(
         default_factory=list,
         description=(
@@ -557,9 +567,30 @@ class Vertex(ConfigBaseModel):
                 f"Vertex '{self.name}': assigned and hash_identity_properties "
                 "are mutually exclusive"
             )
+        if self.identity_funnel is not None:
+            if self.hash_identity_properties:
+                raise ValueError(
+                    f"Vertex '{self.name}': hash_identity_properties and "
+                    "identity_funnel are mutually exclusive — a funnel with one "
+                    "branch is the general form of a flat hash key"
+                )
+            if self.blank:
+                raise ValueError(
+                    f"Vertex '{self.name}': blank and identity_funnel are "
+                    "mutually exclusive — a blank vertex has no source fields "
+                    "to digest"
+                )
+            if self.assigned:
+                raise ValueError(
+                    f"Vertex '{self.name}': assigned and identity_funnel are "
+                    "mutually exclusive"
+                )
         merged_properties = _merge_duplicate_fields(self.name, list(self.properties))
         identity_names = _dedupe_ordered(list(self.identity))
         hash_identity_names = _dedupe_ordered(list(self.hash_identity_properties))
+        funnel_field_names = (
+            self.identity_funnel.field_names if self.identity_funnel else []
+        )
         list_prop_names = {
             f.name for f in merged_properties if is_list_field_type(f.type)
         }
@@ -575,9 +606,15 @@ class Vertex(ConfigBaseModel):
                     f"Vertex '{self.name}': LIST-typed property '{name}' "
                     "cannot be used in hash_identity_properties"
                 )
+        for name in funnel_field_names:
+            if name in list_prop_names:
+                raise ValueError(
+                    f"Vertex '{self.name}': LIST-typed property '{name}' "
+                    "cannot be used in identity_funnel"
+                )
         seen_names = {f.name for f in merged_properties}
         augmented = list(merged_properties)
-        for name in identity_names + hash_identity_names:
+        for name in identity_names + hash_identity_names + funnel_field_names:
             if name not in seen_names:
                 synth_type = FieldType.UUID if self.assigned and name == "id" else None
                 augmented.append(Field(name=name, type=synth_type))
@@ -683,13 +720,30 @@ class Vertex(ConfigBaseModel):
         return [field.name for field in self.properties]
 
     @property
+    def has_identity_funnel(self) -> bool:
+        """True when identity is derived from ordered funnel branches."""
+        return self.identity_funnel is not None
+
+    @property
+    def digest_source_fields(self) -> list[str]:
+        """Fields feeding the synthetic digest, flat or funnel; empty otherwise."""
+        if self.identity_funnel is not None:
+            return self.identity_funnel.field_names
+        return list(self.hash_identity_properties)
+
+    @property
     def identity_mode(self) -> IdentityMode:
-        """Runtime identity mode: natural, hash, blank, or assigned UUID PK."""
+        """Runtime identity mode: natural, hash, blank, or assigned UUID PK.
+
+        A funnel resolves to ``hash``: both derive a deterministic synthetic key
+        from source fields and share one writer family. Use
+        :attr:`has_identity_funnel` to tell them apart.
+        """
         if self.blank:
             return "blank"
         if self.assigned:
             return "assigned"
-        if self.hash_identity_properties:
+        if self.hash_identity_properties or self.identity_funnel is not None:
             return "hash"
         return "natural"
 
@@ -758,8 +812,17 @@ class VertexConfig(ConfigBaseModel):
 
     @property
     def hash_identity_vertices(self) -> list[str]:
-        """Vertex names using hash-derived synthetic identity fields."""
-        return [v.name for v in self.vertices if v.hash_identity_properties]
+        """Vertex names using digest-derived synthetic identity (flat or funnel)."""
+        return [
+            v.name
+            for v in self.vertices
+            if v.hash_identity_properties or v.identity_funnel is not None
+        ]
+
+    @property
+    def identity_funnel_vertices(self) -> list[str]:
+        """Vertex names whose synthetic identity comes from a funnel."""
+        return [v.name for v in self.vertices if v.identity_funnel is not None]
 
     def vertices_by_identity_mode(self, mode: IdentityMode) -> list[str]:
         """Vertex names whose resolved identity mode matches *mode*."""
@@ -771,7 +834,12 @@ class VertexConfig(ConfigBaseModel):
         blank_id_field = "id"
         for vertex in self.vertices:
             if not vertex.identity:
-                if vertex.hash_identity_properties or vertex.blank or vertex.assigned:
+                if (
+                    vertex.hash_identity_properties
+                    or vertex.identity_funnel is not None
+                    or vertex.blank
+                    or vertex.assigned
+                ):
                     vertex.identity = [blank_id_field]
                 elif self.identity_from_all_properties:
                     vertex.identity = list(vertex.property_names)
@@ -783,11 +851,15 @@ class VertexConfig(ConfigBaseModel):
             vertex.hash_identity_properties = _dedupe_ordered(
                 list(vertex.hash_identity_properties)
             )
-            missing = [
-                field_name
-                for field_name in vertex.identity + vertex.hash_identity_properties
-                if field_name not in vertex.property_names
-            ]
+            missing = _dedupe_ordered(
+                [
+                    field_name
+                    for field_name in vertex.identity
+                    + vertex.hash_identity_properties
+                    + vertex.digest_source_fields
+                    if field_name not in vertex.property_names
+                ]
+            )
             for field_name in missing:
                 synth_type = (
                     FieldType.UUID

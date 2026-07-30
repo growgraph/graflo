@@ -104,7 +104,52 @@ _PHYSICAL_EXPORTS = frozenset(
     }
 )
 
+_CODEC_EXPORTS = frozenset(
+    {
+        "RevisionOp",
+        "op_from_dict",
+        "op_to_dict",
+        "ops_from_dicts",
+        "ops_from_yaml",
+        "ops_to_dicts",
+        "ops_to_yaml_str",
+    }
+)
+
+_HASHING_EXPORTS = frozenset(
+    {
+        "full_hash",
+        "graph_hash",
+        "ingestion_hash",
+        "manifest_hash",
+        "schema_hash",
+        "stable_hash",
+    }
+)
+
+_AUTOGENERATE_EXPORTS = frozenset(
+    {"RenameHints", "diff_manifests", "diff_manifests_verified"}
+)
+
+_INVERSE_EXPORTS = frozenset(
+    {"IRREVERSIBLE", "invert_op", "invert_ops", "irreversible_reason", "is_reversible"}
+)
+
+_REVISION_EXPORTS = frozenset(
+    {
+        "FileRevisionStore",
+        "Revision",
+        "RevisionChain",
+        "RevisionError",
+        "apply_revisions",
+        "build_revision",
+        "compute_revision_id",
+        "downgrade_to",
+    }
+)
+
 __all__ = [
+    "IRREVERSIBLE",
     "AddEdgeIndexesOp",
     "AddEdgePropertiesOp",
     "AddEdgesOp",
@@ -122,6 +167,8 @@ __all__ = [
     "EdgeRetargetEntry",
     "EdgeSelector",
     "FieldTypeSpec",
+    # Revision layer
+    "FileRevisionStore",
     "HashIdentityTarget",
     "IdentityReplacement",
     "IdentityTarget",
@@ -140,6 +187,7 @@ __all__ = [
     "RemoveVertexPropertiesOp",
     "RemoveVerticesOp",
     "RenameEdgePropertiesOp",
+    "RenameHints",
     "RenameRelationsOp",
     "RenameResourcesOp",
     "RenameVertexPropertiesOp",
@@ -147,6 +195,10 @@ __all__ = [
     "ReplaceEdgeIdentitiesOp",
     "ReplaceIdentityOp",
     "RetargetEdgesOp",
+    "Revision",
+    "RevisionChain",
+    "RevisionError",
+    "RevisionOp",
     "SanitizeOp",
     "SetEdgeDirectedOp",
     "VertexEquivalence",
@@ -179,9 +231,31 @@ __all__ = [
     "apply_replace_edge_identities",
     "apply_replace_identity",
     "apply_retarget_edges",
+    "apply_revisions",
     "apply_sanitize",
     "apply_set_edge_directed",
+    "build_revision",
     "compose_manifests",
+    "compute_revision_id",
+    "diff_manifests",
+    "diff_manifests_verified",
+    "downgrade_to",
+    "full_hash",
+    "graph_hash",
+    "ingestion_hash",
+    "invert_op",
+    "invert_ops",
+    "irreversible_reason",
+    "is_reversible",
+    "manifest_hash",
+    "op_from_dict",
+    "op_to_dict",
+    "ops_from_dicts",
+    "ops_from_yaml",
+    "ops_to_dicts",
+    "ops_to_yaml_str",
+    "schema_hash",
+    "stable_hash",
 ]
 
 
@@ -206,6 +280,26 @@ def __getattr__(name: str) -> Any:
         from . import physical as physical_mod
 
         return getattr(physical_mod, name)
+    if name in _CODEC_EXPORTS:
+        from . import codec as codec_mod
+
+        return getattr(codec_mod, name)
+    if name in _HASHING_EXPORTS:
+        from . import hashing as hashing_mod
+
+        return getattr(hashing_mod, name)
+    if name in _AUTOGENERATE_EXPORTS:
+        from . import autogenerate as autogenerate_mod
+
+        return getattr(autogenerate_mod, name)
+    if name in _INVERSE_EXPORTS:
+        from . import inverse as inverse_mod
+
+        return getattr(inverse_mod, name)
+    if name in _REVISION_EXPORTS:
+        from . import revision as revision_mod
+
+        return getattr(revision_mod, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

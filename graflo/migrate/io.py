@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +9,28 @@ from suthing import FileHandle
 
 from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.contract.manifest import GraphManifest
+from graflo.architecture.evolution.hashing import (
+    full_hash,
+    graph_hash,
+    ingestion_hash,
+    manifest_hash,
+    schema_hash,
+    stable_hash,
+)
 from graflo.architecture.schema import Schema
+
+__all__ = [
+    "full_hash",
+    "graph_hash",
+    "ingestion_hash",
+    "load_ingestion_model",
+    "load_manifest",
+    "load_schema",
+    "manifest_hash",
+    "plan_to_json_serializable",
+    "schema_hash",
+    "stable_hash",
+]
 
 
 def load_manifest(path: str | Path) -> GraphManifest:
@@ -40,60 +59,10 @@ def load_ingestion_model(
     return ingestion_model
 
 
-def _stable_hash(payload_obj: Any) -> str:
-    payload = json.dumps(payload_obj, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
-
-
-def graph_hash(schema: Schema) -> str:
-    """Stable hash over logical graph model only."""
-    return _stable_hash(schema.core_schema.to_minimal_canonical_dict())
-
-
-def schema_hash(schema: Schema) -> str:
-    """Stable hash over schema deployment contract (graph + DB profile)."""
-    payload = {
-        "core_schema": schema.core_schema.to_minimal_canonical_dict(),
-        "db_profile": schema.db_profile.to_minimal_canonical_dict(),
-    }
-    return _stable_hash(payload)
-
-
-def ingestion_hash(ingestion_model: IngestionModel) -> str:
-    """Stable hash over ingestion model (resources + transforms)."""
-    return _stable_hash(ingestion_model.to_minimal_canonical_dict())
-
-
-def full_hash(schema: Schema, ingestion_model: IngestionModel, bindings: Any) -> str:
-    """Stable hash over composed deployment object."""
-    payload = {
-        "schema": schema.to_minimal_canonical_dict(),
-        "ingestion": ingestion_model.to_minimal_canonical_dict(),
-        "bindings": (
-            bindings.to_minimal_canonical_dict()
-            if hasattr(bindings, "to_minimal_canonical_dict")
-            else (bindings.to_dict() if hasattr(bindings, "to_dict") else bindings)
-        ),
-    }
-    return _stable_hash(payload)
-
-
-def manifest_hash(manifest: GraphManifest) -> str:
-    """Stable hash over manifest blocks."""
-    payload = {
-        "schema": manifest.graph_schema.to_minimal_canonical_dict()
-        if manifest.graph_schema is not None
-        else None,
-        "ingestion_model": (
-            manifest.ingestion_model.to_minimal_canonical_dict()
-            if manifest.ingestion_model is not None
-            else None
-        ),
-        "bindings": manifest.bindings.to_minimal_canonical_dict()
-        if manifest.bindings is not None
-        else None,
-    }
-    return _stable_hash(payload)
+# Hashing moved down to ``architecture.evolution`` (L4): the revision chain
+# verifies replayed manifests and cannot import ``migrate`` (L6). Re-exported
+# here, where these have always been imported from.
+_stable_hash = stable_hash
 
 
 def plan_to_json_serializable(plan: Any) -> dict[str, Any]:

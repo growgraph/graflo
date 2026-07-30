@@ -10,6 +10,7 @@ from pydantic import model_validator
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.graph_types import Index
 from graflo.architecture.schema.edge import Edge
+from graflo.architecture.schema.identity_funnel import IdentityFunnel
 from graflo.architecture.schema.vertex import FieldType, SecondaryIdentity, Vertex
 from graflo.onto import DBType
 
@@ -114,6 +115,20 @@ class HashIdentityTarget(ConfigBaseModel):
     )
 
 
+class FunnelIdentityTarget(ConfigBaseModel):
+    """Target an identity funnel: ordered fallback branches digested into ``id``.
+
+    The general form of :class:`HashIdentityTarget` — a flat hash key is a funnel
+    with one branch. Both resolve to identity mode ``hash``.
+    """
+
+    mode: Literal["funnel"] = "funnel"
+    funnel: IdentityFunnel = PydanticField(
+        ...,
+        description="Ordered fallback branches; the first complete one wins.",
+    )
+
+
 class AssignedIdentityTarget(ConfigBaseModel):
     """Target an assigned identity: an intentional UUID primary key."""
 
@@ -129,6 +144,7 @@ class BlankIdentityTarget(ConfigBaseModel):
 IdentityTarget = Annotated[
     NaturalIdentityTarget
     | HashIdentityTarget
+    | FunnelIdentityTarget
     | AssignedIdentityTarget
     | BlankIdentityTarget,
     PydanticField(discriminator="mode"),

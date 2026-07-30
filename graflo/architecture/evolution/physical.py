@@ -194,6 +194,8 @@ def apply_remove_vertex_indexes(
             index for index in existing if frozenset(index.fields) not in doomed
         ]
 
+    # finish_init prunes any entry this emptied — an empty list and an absent
+    # key mean the same thing but hash differently.
     schema.finish_init()
 
 

@@ -1,0 +1,59 @@
+metadata:
+    name: identity-funnel-demo
+    version: 1.0.0
+core_schema:
+    vertex_config:
+        vertices:
+        -   name: party
+            properties:
+            -   name: id
+                type: STRING
+            -   name: email
+                type: STRING
+            -   name: phone
+                type: STRING
+            -   name: country
+                type: STRING
+            -   name: name
+                type: STRING
+            -   name: dob
+                type: STRING
+            identity:
+            -   id
+            filters: []
+            blank: false
+            assigned: false
+            hash_identity_properties: []
+            identity_funnel:
+                digest: sha256
+                include_branch_id: true
+                branches:
+                -   id: email
+                    fields:
+                    -   email
+                    when_all_present:
+                    -   email
+                -   id: phone
+                    fields:
+                    -   phone
+                    -   country
+                    when_all_present:
+                    -   phone
+                    -   country
+                -   id: weak
+                    fields:
+                    -   name
+                    -   dob
+                    when_all_present:
+                    -   name
+                    -   dob
+            secondary_identities: []
+        force_types: {}
+        identity_from_all_properties: true
+    edge_config:
+        edges: []
+db_profile:
+    db_flavor: graflo_backend
+    vertex_storage_names: {}
+    vertex_indexes: {}
+    edge_specs: []

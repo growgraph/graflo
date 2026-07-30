@@ -44,6 +44,48 @@ class TestIdentityModeIsVisible:
 
         assert OperationType.CHANGE_VERTEX_IDENTITY in _op_types(NATURAL, new)
 
+    def test_flat_hash_to_funnel_is_detected(self):
+        """Both resolve to mode ``hash``, so only the funnel itself distinguishes them."""
+        old = {
+            "name": "party",
+            "properties": ["id", "email", "phone"],
+            "hash_identity_properties": ["email"],
+        }
+        new = {
+            "name": "party",
+            "properties": ["id", "email", "phone"],
+            "identity_funnel": {"branches": [{"id": "email", "fields": ["email"]}]},
+        }
+
+        ops = _op_types(old, new)
+        assert OperationType.CHANGE_VERTEX_IDENTITY in ops
+        assert OperationType.REKEY_VERTEX in ops
+
+    def test_branch_reorder_rekeys_because_the_key_changes(self):
+        def _with_branches(branches: list[dict]) -> dict:
+            return {
+                "name": "party",
+                "properties": ["id", "email", "phone"],
+                "identity_funnel": {"branches": branches},
+            }
+
+        email = {"id": "email", "fields": ["email"]}
+        phone = {"id": "phone", "fields": ["phone"]}
+
+        ops = _op_types(_with_branches([email, phone]), _with_branches([phone, email]))
+        assert OperationType.REKEY_VERTEX in ops
+
+    def test_identical_funnel_is_an_empty_identity_diff(self):
+        vertex = {
+            "name": "party",
+            "properties": ["id", "email"],
+            "identity_funnel": {"branches": [{"id": "email", "fields": ["email"]}]},
+        }
+
+        ops = _op_types(vertex, dict(vertex))
+        assert OperationType.CHANGE_VERTEX_IDENTITY not in ops
+        assert OperationType.REKEY_VERTEX not in ops
+
     def test_hash_source_change_is_detected(self):
         old = {
             "name": "party",

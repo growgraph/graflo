@@ -7,8 +7,8 @@
 @prefix prov: <http://www.w3.org/ns/prov#> .
 
 <https://ontology.growgraph.dev/graflo> a owl:Ontology ;
-    owl:versionIRI <https://ontology.growgraph.dev/graflo/1.1.0> ;
-    owl:versionInfo "1.1.0" ;
+    owl:versionIRI <https://ontology.growgraph.dev/graflo/1.2.0> ;
+    owl:versionInfo "1.2.0" ;
     rdfs:label "GraFlo Ontology"@en ;
     skos:prefLabel "GraFlo Ontology"@en ;
     rdfs:comment "OWL vocabulary describing GraFlo GraphManifest contracts: schema, ingestion, bindings, transforms, and pipeline actors."@en .
@@ -87,6 +87,18 @@ gf:SecondaryIdentity a owl:Class ;
     rdfs:label "Secondary identity"@en ;
     skos:prefLabel "SecondaryIdentity"@en ;
     rdfs:comment "Alternate named field-set that identifies a vertex for lookup only. Edge endpoints may match on it; upserts always use the primary identity."@en .
+
+gf:IdentityFunnel a owl:Class ;
+    rdfs:subClassOf gf:GrafloArtifact ;
+    rdfs:label "Identity funnel"@en ;
+    skos:prefLabel "IdentityFunnel"@en ;
+    rdfs:comment "Ordered fallback branches deriving a deterministic synthetic id. The first branch whose fields are all present wins. Generalizes hash_identity_properties, which is the single-branch case."@en .
+
+gf:IdentityBranch a owl:Class ;
+    rdfs:subClassOf gf:GrafloArtifact ;
+    rdfs:label "Identity branch"@en ;
+    skos:prefLabel "IdentityBranch"@en ;
+    rdfs:comment "One branch of an identity funnel: the fields digested when it wins, and the condition under which it fires. Ordered by gf:artifactIndex."@en .
 
 gf:IngestionModel a owl:Class ;
     rdfs:subClassOf gf:GrafloArtifact ;
@@ -304,6 +316,36 @@ gf:hasSecondaryIdentity a owl:ObjectProperty ;
     rdfs:domain gf:Vertex ;
     rdfs:range gf:SecondaryIdentity ;
     rdfs:comment "Alternate lookup-only field-set declared in vertex.secondary_identities."@en .
+
+gf:hasIdentityFunnel a owl:ObjectProperty ;
+    rdfs:domain gf:Vertex ;
+    rdfs:range gf:IdentityFunnel ;
+    rdfs:comment "Ordered fallback identity policy declared in vertex.identity_funnel. Mutually exclusive with gf:hasHashIdentity."@en .
+
+gf:hasIdentityBranch a owl:ObjectProperty ;
+    rdfs:domain gf:IdentityFunnel ;
+    rdfs:range gf:IdentityBranch ;
+    rdfs:comment "Branch of an identity funnel. Branch order is significant and is carried by gf:artifactIndex, not by triple order."@en .
+
+gf:hasBranchCondition a owl:ObjectProperty ;
+    rdfs:domain gf:IdentityBranch ;
+    rdfs:range gf:Identity ;
+    rdfs:comment "Field that must be present and non-empty for a branch to fire (branch.when_all_present). Absent when the condition defaults to the branch's own fields."@en .
+
+gf:funnelDigest a owl:DatatypeProperty ;
+    rdfs:domain gf:IdentityFunnel ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Digest codec deriving the synthetic id from the winning branch."@en .
+
+gf:funnelIncludeBranchId a owl:DatatypeProperty ;
+    rdfs:domain gf:IdentityFunnel ;
+    rdfs:range xsd:boolean ;
+    rdfs:comment "Whether the winning branch id takes part in the digest payload, so branches over equal values yield distinct keys."@en .
+
+gf:branchId a owl:DatatypeProperty ;
+    rdfs:domain gf:IdentityBranch ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Branch name, unique within its funnel."@en .
 
 gf:edgeSource a owl:ObjectProperty ;
     rdfs:domain gf:Edge ;

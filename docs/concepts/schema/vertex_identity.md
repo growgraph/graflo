@@ -6,10 +6,12 @@ GraFlo vertices declare how records are matched during upserts through fields on
 
 Each vertex resolves to one of four modes via the derived property **`Vertex.identity_mode`**. Modes describe **how the upsert key is obtained** (not string encoding). They are mutually exclusive.
 
+A flat `hash_identity_properties` list and an `identity_funnel` both resolve to **`hash`**: they share one write path and differ only in how the digest sources are chosen. Use **`Vertex.has_identity_funnel`** to tell them apart.
+
 | `identity_mode` | Authored signal | `identity` | Key behavior |
 |---|---|---|---|
 | **`natural`** | default | `[f]` or `[f1, f2, …]` | Upsert on declared fields. If a field is typed **`UUID`**, validate shape when present — **do not invent**. |
-| **`hash`** | non-empty `hash_identity_properties` | `["id"]` | SHA256 of hash sources → synthetic `id`, then upsert |
+| **`hash`** | non-empty `hash_identity_properties` **or** an `identity_funnel` | `["id"]` | SHA256 of the digest sources → synthetic `id` at **assemble** (before edge projection); writer is an idempotent safety net |
 | **`assigned`** | `assigned: true` | `["id"]` | Intentional UUID PK: empty → `uuid4()` at **assemble** (before edge projection); writer is an idempotent safety net. **Not** blank-edge resolution. |
 | **`blank`** | `blank: true` | `["id"]` | Placeholder: random UUID at write time; listed in `blank_vertices`; **does** blank-edge resolution |
 
@@ -43,6 +45,61 @@ Example:
   properties: [org, product_code, name, category]
   identity: [id]
   hash_identity_properties: [org, product_code, region]
+```
+
+A document whose hash sources are **all** empty gets no identity at all, rather than a digest of `{field: null}` — otherwise every such document would share one key and merge into a single vertex.
+
+### `identity_funnel`
+
+Ordered fallback branches. The first branch whose fields are all present and non-empty wins, and its values are digested into `id`. `hash_identity_properties` is the single-branch case; the two are mutually exclusive.
+
+Use it when different sources identify the same entity by different keys — the classic multi-source ingestion problem, where one system has email, another phone + country, and a third only a weak name/date pair.
+
+```yaml
+- name: party
+  properties: [id, email, phone, country, name, dob]
+  identity: [id]
+  identity_funnel:
+    digest: sha256
+    include_branch_id: true
+    branches:
+      - id: email
+        when_all_present: [email]
+        fields: [email]
+      - id: phone
+        when_all_present: [phone, country]
+        fields: [phone, country]
+      - id: weak
+        when_all_present: [name, dob]
+        fields: [name, dob]
+```
+
+| Field | Meaning |
+|---|---|
+| `digest` | Digest codec. `sha256` only — `uuid5` needs a namespace policy and is not implemented. |
+| `include_branch_id` | Default `true`. Puts the winning branch id in the digest payload, so two branches over equal values cannot collide. Set `false` only to reproduce a flat-hash digest exactly. |
+| `branches[].id` | Branch name, unique within the funnel. Part of the digest when `include_branch_id`. |
+| `branches[].fields` | Fields digested when this branch wins. |
+| `branches[].when_all_present` | Fields that must be present for the branch to fire. Defaults to `fields`. Must be a subset of them — a condition on a field the branch does not digest cannot affect the key. |
+
+**No branch fires → no identity.** The document keeps an empty `id` and is dropped by `drop_empty_identity_docs` (on by default). GraFlo does not invent a key, because a random one would create a duplicate vertex on every re-ingest.
+
+**Changing a funnel rekeys the graph.** Branch order, branch ids and field sets all feed the digest, so reordering two branches produces different keys for the same data. The differ reports this as `REKEY_VERTEX` at CRITICAL risk.
+
+A funnel can also be *proposed* rather than authored — see [cross-resource identity discovery](cross_resource_identity.md), which derives one from sampled documents when several resources key the same entity differently.
+
+Authoring it as an evolution op:
+
+```yaml
+op: replace_identity
+vertices:
+  party:
+    to:
+      mode: funnel
+      funnel:
+        branches:
+          - { id: email, fields: [email] }
+          - { id: phone, when_all_present: [phone, country], fields: [phone, country] }
 ```
 
 ### `blank`
@@ -137,7 +194,7 @@ Two consequences worth knowing:
 
 Not supported in this form: hash- or funnel-derived secondary identities, and upserting a vertex *by* its secondary identity. Both are reserved.
 
-Runnable walkthrough: [Example 16](../../examples/example-16.md) (`examples/16-secondary-identities/`) — instruments and issuers upserted on primary keys, then an edge-only CSV linked by ISIN / LEI.
+Runnable walkthrough: [Example 16](../../examples/example-16.md) (`examples/16-secondary-identities/`) — instruments and issuers upserted on primary keys, then an edge-only CSV linked by ISIN / LEI. For funnels, see [Example 17](../../examples/example-17.md) (`examples/17-identity-funnel/`) — two sources keying the same people by email and by phone + country.
 
 !!! note "Distinct from the SQL connector's `type_lookup`"
     `SqlConnector`'s `type_lookup` also has `source_identity` / `target_identity` fields. Those name **join columns in a lookup table** and are unrelated to schema identities.

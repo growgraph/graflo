@@ -52,6 +52,10 @@ class Schema(ConfigBaseModel):
         compile_secondary_identity_indexes(
             self.core_schema.vertex_config, self.db_profile
         )
+        # Normalize away empty index entries left by index or identity removals:
+        # they mean the same as no entry but hash differently, which would make
+        # a replayed manifest compare unequal to an identically-authored one.
+        self.db_profile.prune_empty_vertex_indexes()
         self.db_profile.validate_against_schema(self.core_schema.edge_config)
 
     def remove_disconnected_vertices(self) -> set[str]:

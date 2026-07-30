@@ -26,6 +26,7 @@ from datetime import date, datetime, time
 from typing import Any
 
 from pydantic import Field as PydanticField
+from pydantic import model_validator
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.schema.identity_uuid import UUID_PATTERN
@@ -91,12 +92,35 @@ class SourceSample(ConfigBaseModel):
     description: str | None = None
     samples: list[ResourceSample] = PydanticField(min_length=1)
 
+    @model_validator(mode="after")
+    def _require_unique_resource_names(self) -> SourceSample:
+        """Reject duplicate resource names.
+
+        ``samples_by_resource`` keys on the name, so a duplicate would silently
+        discard every sample but the last — losing documents without a trace.
+        """
+        seen: set[str] = set()
+        duplicates: set[str] = set()
+        for sample in self.samples:
+            if sample.resource_name in seen:
+                duplicates.add(sample.resource_name)
+            seen.add(sample.resource_name)
+        if duplicates:
+            raise ValueError(
+                f"SourceSample '{self.source_name}': duplicate resource names "
+                f"{sorted(duplicates)}. Merge their documents into one sample — "
+                "keying by name would drop all but the last."
+            )
+        return self
+
     @property
     def samples_by_resource(self) -> dict[str, list[dict[str, Any]]]:
         """Documents keyed by resource name.
 
         This is the input shape consumed by cross-resource identity inference,
         so no adapter is needed between sampling and inference.
+
+        Returns the *live* document lists, not copies — treat them as read-only.
         """
         return {sample.resource_name: sample.docs for sample in self.samples}
 

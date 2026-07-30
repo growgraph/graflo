@@ -12,6 +12,7 @@ from rdflib.namespace import OWL, RDF
 from graflo.architecture import GraphManifest
 from graflo.architecture.graph_types import Index
 from graflo.architecture.schema.database_features import EdgePhysicalSpec
+from graflo.architecture.schema.identity_funnel import IdentityBranch, IdentityFunnel
 from graflo.rdf import namespace as ns
 from graflo.rdf.deserializer import ManifestRdfDeserializer
 from graflo.rdf.serializer import ManifestRdfSerializer
@@ -30,6 +31,18 @@ def _load_example_manifest(name: str) -> GraphManifest:
 
 def _canonical(manifest: GraphManifest) -> dict:
     return manifest.to_minimal_canonical_dict()
+
+
+def _sample_funnel() -> IdentityFunnel:
+    """Two-branch funnel: a strong unary key, then a weaker composite fallback."""
+    return IdentityFunnel(
+        branches=[
+            IdentityBranch(id="by_isin", fields=["isin"]),
+            IdentityBranch(
+                id="by_name", when_all_present=["name", "sid"], fields=["name", "sid"]
+            ),
+        ]
+    )
 
 
 def _round_trip(manifest: GraphManifest) -> GraphManifest:
@@ -161,6 +174,9 @@ def test_context_has_identity_mode_terms() -> None:
     assert '"hasHashIdentity"' in payload
     assert '"hasSecondaryIdentity"' in payload
     assert '"SecondaryIdentity": "gf:SecondaryIdentity"' in payload
+    assert '"hasIdentityFunnel"' in payload
+    assert '"hasIdentityBranch"' in payload
+    assert '"IdentityFunnel": "gf:IdentityFunnel"' in payload
 
 
 def test_round_trip_example_16_secondary_identities() -> None:
@@ -185,8 +201,12 @@ def test_round_trip_example_16_secondary_identities() -> None:
             lambda v: (setattr(v, "assigned", True), setattr(v, "identity", [])),
             "assigned",
         ),
+        (
+            lambda v: setattr(v, "identity_funnel", _sample_funnel()),
+            "hash",
+        ),
     ],
-    ids=["natural", "hash", "blank", "assigned"],
+    ids=["natural", "hash", "blank", "assigned", "funnel"],
 )
 def test_round_trip_preserves_vertex_identity_modes(mutate, expected_mode) -> None:
     """All four identity modes survive RDF. Previously everything read back as natural."""
@@ -202,6 +222,26 @@ def test_round_trip_preserves_vertex_identity_modes(mutate, expected_mode) -> No
     restored_vertex = restored.graph_schema.core_schema.vertex_config.vertices[0]
     assert restored_vertex.identity_mode == expected_mode
     assert restored_vertex.hash_identity_properties == vertex.hash_identity_properties
+
+
+def test_round_trip_preserves_identity_funnel() -> None:
+    """Branch order and conditions decide the key, so both must survive RDF."""
+    original = _load_example_manifest("16-secondary-identities")
+    vertex = original.graph_schema.core_schema.vertex_config.vertices[0]
+    vertex.secondary_identities = []
+    vertex.identity_funnel = _sample_funnel()
+
+    restored = _round_trip(original)
+
+    funnel = restored.graph_schema.core_schema.vertex_config.vertices[0].identity_funnel
+    assert funnel is not None
+    assert funnel.digest == "sha256"
+    assert funnel.include_branch_id is True
+    assert funnel.branch_ids == ["by_isin", "by_name"]
+    assert funnel.branches[0].fields == ["isin"]
+    # Absent condition must read back as None ("default to fields"), not as [].
+    assert funnel.branches[0].when_all_present is None
+    assert funnel.branches[1].when_all_present == ["name", "sid"]
 
 
 def test_round_trip_preserves_identity_field_order() -> None:

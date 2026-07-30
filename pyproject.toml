@@ -41,7 +41,7 @@ description = "Manifest-driven Graph Schema & Transformation Language (GSTL): de
 name = "graflo"
 readme = "README.md"
 requires-python = ">=3.11"
-version = "1.10.1"
+version = "1.10.2"
 
 [project.optional-dependencies]
 dev = [
@@ -72,6 +72,7 @@ manifest_to_rdf = "graflo.rdf.cli:manifest_to_rdf"
 migrate_schema = "graflo.cli.migrate_schema:migrate_schema"
 plot_manifest = "graflo.cli.plot_manifest:plot_manifest"
 rdf_to_manifest = "graflo.rdf.cli:rdf_to_manifest"
+revision = "graflo.cli.revision:revision"
 run_tigergraph_queries = "graflo.cli.run_tigergraph_queries:run_tigergraph_queries"
 xml2json = "graflo.cli.plot_schema:xml2json"
 

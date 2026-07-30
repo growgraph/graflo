@@ -191,6 +191,14 @@ class SchemaDiff:
             "mode": vertex.identity_mode,
             "identity": list(vertex.identity),
             "hash_identity_properties": list(vertex.hash_identity_properties),
+            # A funnel resolves to mode ``hash`` with no flat properties, so the
+            # branches themselves are the only thing that distinguishes two
+            # funnel policies — or a funnel from a flat hash.
+            "identity_funnel": (
+                vertex.identity_funnel.to_minimal_canonical_dict()
+                if vertex.identity_funnel is not None
+                else None
+            ),
         }
 
     @staticmethod
@@ -215,9 +223,12 @@ class SchemaDiff:
         if old_state["mode"] != new_state["mode"]:
             return True
         if new_state["mode"] == "hash":
+            # Covers flat<->funnel and funnel<->funnel: any change to the digest
+            # inputs, the branch order or the branch ids yields different keys.
             return (
                 old_state["hash_identity_properties"]
                 != new_state["hash_identity_properties"]
+                or old_state["identity_funnel"] != new_state["identity_funnel"]
             )
         if new_state["mode"] != "natural":
             return False

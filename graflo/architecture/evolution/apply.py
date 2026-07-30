@@ -388,6 +388,26 @@ def _rename_fields_in_schema(
         vertex.hash_identity_properties = _rename_field_list(
             vertex.hash_identity_properties, per_vertex
         )
+        if vertex.identity_funnel is not None:
+            vertex.identity_funnel = vertex.identity_funnel.model_copy(
+                update={
+                    "branches": [
+                        branch.model_copy(
+                            update={
+                                "fields": _rename_field_list(branch.fields, per_vertex),
+                                "when_all_present": (
+                                    _rename_field_list(
+                                        branch.when_all_present, per_vertex
+                                    )
+                                    if branch.when_all_present is not None
+                                    else None
+                                ),
+                            }
+                        )
+                        for branch in vertex.identity_funnel.branches
+                    ]
+                }
+            )
         if vertex.secondary_identities:
             vertex.secondary_identities = [
                 entry.model_copy(
