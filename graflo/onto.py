@@ -41,7 +41,7 @@ class MetaEnum(EnumMeta):
         """Check if an item is a valid member of the enum.
 
         Args:
-            item: Value to check for membership
+            member: Value to check for membership
 
         Returns:
             bool: True if the item is a valid enum member, False otherwise

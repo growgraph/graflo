@@ -14,6 +14,7 @@
         "Edge": "gf:Edge",
         "Field": "gf:Field",
         "Identity": "gf:Identity",
+        "SecondaryIdentity": "gf:SecondaryIdentity",
         "IngestionModel": "gf:IngestionModel",
         "Resource": "gf:Resource",
         "ProtoTransform": "gf:ProtoTransform",
@@ -83,6 +84,14 @@
         },
         "hasIdentity": {
             "@id": "gf:hasIdentity",
+            "@type": "@id"
+        },
+        "hasHashIdentity": {
+            "@id": "gf:hasHashIdentity",
+            "@type": "@id"
+        },
+        "hasSecondaryIdentity": {
+            "@id": "gf:hasSecondaryIdentity",
             "@type": "@id"
         },
         "edgeSource": {
@@ -199,6 +208,10 @@
         "specIndexesMode": "gf:specIndexesMode",
         "blank": {
             "@id": "gf:blank",
+            "@type": "xsd:boolean"
+        },
+        "assigned": {
+            "@id": "gf:assigned",
             "@type": "xsd:boolean"
         },
         "edgesOnDuplicate": {

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pathlib
 
+import pytest
 import yaml
 from rdflib import Graph, URIRef
 from rdflib.namespace import OWL, RDF
@@ -29,6 +30,14 @@ def _load_example_manifest(name: str) -> GraphManifest:
 
 def _canonical(manifest: GraphManifest) -> dict:
     return manifest.to_minimal_canonical_dict()
+
+
+def _round_trip(manifest: GraphManifest) -> GraphManifest:
+    serializer = ManifestRdfSerializer(include_ontology=False)
+    deserializer = ManifestRdfDeserializer()
+    return deserializer.from_turtle(
+        serializer.to_turtle(manifest, BASE_URI), BASE_URI.rstrip("/")
+    )
 
 
 def test_ontology_file_exists_and_loads() -> None:
@@ -143,6 +152,68 @@ def test_context_has_new_vertex_config_and_label_terms() -> None:
     assert '"forceTypes": "gf:forceTypes"' in payload
     assert '"identityFromAllProperties": "gf:identityFromAllProperties"' in payload
     assert '"prefLabel": "skos:prefLabel"' in payload
+
+
+def test_context_has_identity_mode_terms() -> None:
+    context_path = pathlib.Path(ontology_path()).parent / "graflo-context.jsonld"
+    payload = context_path.read_text(encoding="utf-8")
+    assert '"assigned"' in payload
+    assert '"hasHashIdentity"' in payload
+    assert '"hasSecondaryIdentity"' in payload
+    assert '"SecondaryIdentity": "gf:SecondaryIdentity"' in payload
+
+
+def test_round_trip_example_16_secondary_identities() -> None:
+    original = _load_example_manifest("16-secondary-identities")
+    restored = _round_trip(original)
+
+    assert _canonical(restored) == _canonical(original)
+
+    vertices = restored.graph_schema.core_schema.vertex_config.vertices
+    by_isin = vertices[0].secondary_identities[0]
+    assert by_isin.name == "by_isin"
+    assert by_isin.fields == ["isin"]
+
+
+@pytest.mark.parametrize(
+    "mutate, expected_mode",
+    [
+        (lambda v: None, "natural"),
+        (lambda v: setattr(v, "hash_identity_properties", ["isin", "name"]), "hash"),
+        (lambda v: setattr(v, "blank", True), "blank"),
+        (
+            lambda v: (setattr(v, "assigned", True), setattr(v, "identity", [])),
+            "assigned",
+        ),
+    ],
+    ids=["natural", "hash", "blank", "assigned"],
+)
+def test_round_trip_preserves_vertex_identity_modes(mutate, expected_mode) -> None:
+    """All four identity modes survive RDF. Previously everything read back as natural."""
+    original = _load_example_manifest("16-secondary-identities")
+    vertex = original.graph_schema.core_schema.vertex_config.vertices[0]
+    # blank and assigned vertices reject secondary identities.
+    vertex.secondary_identities = []
+    mutate(vertex)
+    assert vertex.identity_mode == expected_mode
+
+    restored = _round_trip(original)
+
+    restored_vertex = restored.graph_schema.core_schema.vertex_config.vertices[0]
+    assert restored_vertex.identity_mode == expected_mode
+    assert restored_vertex.hash_identity_properties == vertex.hash_identity_properties
+
+
+def test_round_trip_preserves_identity_field_order() -> None:
+    """Identity lists are positional; RDF triples are not, hence gf:artifactIndex."""
+    original = _load_example_manifest("16-secondary-identities")
+    vertex = original.graph_schema.core_schema.vertex_config.vertices[0]
+    vertex.identity = ["sid", "isin", "name"]
+
+    restored = _round_trip(original)
+
+    restored_vertex = restored.graph_schema.core_schema.vertex_config.vertices[0]
+    assert restored_vertex.identity == ["sid", "isin", "name"]
 
 
 def test_profile_and_transform_actor_semantic_links_are_emitted() -> None:

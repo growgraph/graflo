@@ -7,8 +7,8 @@
 @prefix prov: <http://www.w3.org/ns/prov#> .
 
 <https://ontology.growgraph.dev/graflo> a owl:Ontology ;
-    owl:versionIRI <https://ontology.growgraph.dev/graflo/1.0.0> ;
-    owl:versionInfo "1.0.0" ;
+    owl:versionIRI <https://ontology.growgraph.dev/graflo/1.1.0> ;
+    owl:versionInfo "1.1.0" ;
     rdfs:label "GraFlo Ontology"@en ;
     skos:prefLabel "GraFlo Ontology"@en ;
     rdfs:comment "OWL vocabulary describing GraFlo GraphManifest contracts: schema, ingestion, bindings, transforms, and pipeline actors."@en .
@@ -81,6 +81,12 @@ gf:Identity a owl:Class ;
     rdfs:label "Identity field"@en ;
     skos:prefLabel "Identity"@en ;
     rdfs:comment "Manifest-facing identity element (string) promoted to a first-class ontology node for traceability."@en .
+
+gf:SecondaryIdentity a owl:Class ;
+    rdfs:subClassOf gf:GrafloArtifact ;
+    rdfs:label "Secondary identity"@en ;
+    skos:prefLabel "SecondaryIdentity"@en ;
+    rdfs:comment "Alternate named field-set that identifies a vertex for lookup only. Edge endpoints may match on it; upserts always use the primary identity."@en .
 
 gf:IngestionModel a owl:Class ;
     rdfs:subClassOf gf:GrafloArtifact ;
@@ -285,9 +291,19 @@ gf:hasField a owl:ObjectProperty ;
     rdfs:range gf:Field .
 
 gf:hasIdentity a owl:ObjectProperty ;
-    rdfs:domain gf:Vertex , gf:Edge ;
+    rdfs:domain gf:Vertex , gf:Edge , gf:SecondaryIdentity ;
     rdfs:range gf:Identity ;
-    rdfs:comment "Manifest-facing identity chain node for vertex and edge identities."@en .
+    rdfs:comment "Manifest-facing identity chain node for vertex, edge and secondary-identity field lists."@en .
+
+gf:hasHashIdentity a owl:ObjectProperty ;
+    rdfs:domain gf:Vertex ;
+    rdfs:range gf:Identity ;
+    rdfs:comment "Source field whose value contributes to the deterministic SHA256 synthetic id (vertex.hash_identity_properties)."@en .
+
+gf:hasSecondaryIdentity a owl:ObjectProperty ;
+    rdfs:domain gf:Vertex ;
+    rdfs:range gf:SecondaryIdentity ;
+    rdfs:comment "Alternate lookup-only field-set declared in vertex.secondary_identities."@en .
 
 gf:edgeSource a owl:ObjectProperty ;
     rdfs:domain gf:Edge ;
@@ -415,6 +431,11 @@ gf:relation a owl:DatatypeProperty ;
 gf:blank a owl:DatatypeProperty ;
     rdfs:domain gf:Vertex ;
     rdfs:range xsd:boolean .
+
+gf:assigned a owl:DatatypeProperty ;
+    rdfs:domain gf:Vertex ;
+    rdfs:range xsd:boolean ;
+    rdfs:comment "True when the vertex uses an intentional UUID primary key filled at assemble time. Mutually exclusive with gf:blank."@en .
 
 gf:edgesOnDuplicate a owl:ObjectProperty ;
     rdfs:domain gf:IngestionModel ;

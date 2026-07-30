@@ -115,14 +115,9 @@ class ManifestRdfDeserializer:
         return vertex_config
 
     def _parse_vertex(self, graph: Graph, vertex_uri: URIRef | BNode) -> dict[str, Any]:
-        identities = []
-        for identity_node in self._related_nodes(graph, vertex_uri, ns.hasIdentity):
-            identity = self._literal(graph, identity_node, ns.identityName)
-            if identity is not None:
-                identities.append(identity)
         vertex: dict[str, Any] = {
             "name": self._literal(graph, vertex_uri, ns.name),
-            "identity": identities,
+            "identity": self._identity_names(graph, vertex_uri, ns.hasIdentity),
             "properties": self._ordered_nodes(
                 graph,
                 vertex_uri,
@@ -136,12 +131,61 @@ class ManifestRdfDeserializer:
         blank_value = self._literal(graph, vertex_uri, ns.blank)
         if blank_value is not None:
             vertex["blank"] = blank_value.lower() == "true"
+        assigned_value = self._literal(graph, vertex_uri, ns.assigned)
+        if assigned_value is not None:
+            vertex["assigned"] = assigned_value.lower() == "true"
+
+        hash_identity = self._identity_names(graph, vertex_uri, ns.hasHashIdentity)
+        if hash_identity:
+            vertex["hash_identity_properties"] = hash_identity
+
+        secondary = self._ordered_nodes(
+            graph,
+            vertex_uri,
+            ns.hasSecondaryIdentity,
+            self._parse_secondary_identity,
+        )
+        if secondary:
+            vertex["secondary_identities"] = secondary
 
         payload = parse_json_literal(self._literal(graph, vertex_uri, ns.vertexPayload))
         if isinstance(payload, dict):
             vertex.update(payload)
 
         return vertex
+
+    def _identity_names(
+        self,
+        graph: Graph,
+        owner: URIRef | BNode,
+        predicate: URIRef,
+    ) -> list[str]:
+        """Ordered identity token values under ``predicate``.
+
+        Graphs written before ``gf:artifactIndex`` reached identity nodes have no
+        index; ``_ordered_nodes`` treats those as index 0, so they degrade to
+        arbitrary order rather than failing.
+        """
+        names = self._ordered_nodes(
+            graph,
+            owner,
+            predicate,
+            lambda g, node: self._literal(g, node, ns.identityName),
+        )
+        return [name for name in names if name is not None]
+
+    def _parse_secondary_identity(
+        self, graph: Graph, node: URIRef | BNode
+    ) -> dict[str, Any]:
+        secondary: dict[str, Any] = {
+            "fields": self._identity_names(graph, node, ns.hasIdentity)
+        }
+        # Omit rather than null: an unnamed entry must reach SecondaryIdentity's
+        # auto-naming validator, which assigns ``secondary_{position}``.
+        name = self._literal(graph, node, ns.name)
+        if name is not None:
+            secondary["name"] = name
+        return secondary
 
     def _parse_field(
         self, graph: Graph, field_uri: URIRef | BNode
