@@ -61,6 +61,7 @@ nav:
         -   Core components: concepts/architecture/core_components.md
         -   Capabilities: concepts/architecture/capabilities.md
     -   Schema and manifest:
+        -   Sampling and profiling: concepts/schema/sampling_and_profiling.md
         -   Vertex identity: concepts/schema/vertex_identity.md
         -   Backend indexes: concepts/schema/backend_indexes.md
         -   Manifest evolution: concepts/schema/manifest_evolution.md

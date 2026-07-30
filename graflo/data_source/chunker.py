@@ -266,7 +266,15 @@ class TableChunker(FileChunker):
         # After super()._prepare_iteration(), file_obj is guaranteed to be open
         if self.file_obj is None:
             raise RuntimeError("File should be opened by parent _prepare_iteration()")
-        header_line = next(self.file_obj)
+        try:
+            header_line = next(self.file_obj)
+        except StopIteration:
+            # An empty file has no header row. Leave the header empty and let
+            # iteration yield nothing; raising StopIteration from here would
+            # surface as `RuntimeError: generator raised StopIteration` (PEP 479)
+            # to any caller iterating batches.
+            self.header = []
+            return
         if isinstance(header_line, bytes):
             header_line = header_line.decode(self.encoding or "utf-8")
         self.header = header_line.rstrip("\n").split(self.sep)
@@ -486,10 +494,15 @@ class ChunkerFactory:
             ValueError: If file extension is not recognized
         """
         # Get all suffixes and remove compression extensions
-        suffixes = filename.suffixes
-        base_suffix = [y for y in suffixes if y.lower() not in (".gz", ".zip")][
-            -1
-        ].lower()
+        suffixes = [y for y in filename.suffixes if y.lower() not in (".gz", ".zip")]
+        if not suffixes:
+            # A file with no extension (or only .gz/.zip) has nothing to go on.
+            # Raise the documented ValueError rather than an IndexError, so
+            # callers scanning a directory can skip it like any other unknown type.
+            raise ValueError(
+                f"Could not guess chunker type: '{filename.name}' has no file extension"
+            )
+        base_suffix = suffixes[-1].lower()
 
         if base_suffix == ".json":
             return ChunkerType.JSON

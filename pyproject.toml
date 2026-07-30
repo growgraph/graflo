@@ -41,7 +41,7 @@ description = "Manifest-driven Graph Schema & Transformation Language (GSTL): de
 name = "graflo"
 readme = "README.md"
 requires-python = ">=3.11"
-version = "1.10.0"
+version = "1.10.1"
 
 [project.optional-dependencies]
 dev = [

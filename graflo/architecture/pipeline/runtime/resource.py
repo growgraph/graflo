@@ -104,7 +104,9 @@ class ResourceRuntime:
         self._vertex_config = runtime_vertex_config
         self._edge_config = local_edge_config
 
-        self._validate_vertex_references(vertex_config)
+        self._validate_vertex_references(
+            vertex_config, strict_references=strict_references
+        )
         self._validate_infer_edge_spec_targets(self._edge_config)
 
         edge_derivation_registry = EdgeDerivationRegistry()
@@ -190,8 +192,25 @@ class ResourceRuntime:
         )
         return runtime_vertex_config, local_edge_config
 
-    def _validate_vertex_references(self, vertex_config: VertexConfig) -> None:
+    def _validate_vertex_references(
+        self, vertex_config: VertexConfig, *, strict_references: bool = False
+    ) -> None:
         known_vertices = set(vertex_config.vertex_set)
+
+        if strict_references:
+            # Vertex *steps* naming an undeclared vertex are otherwise silently
+            # dropped by filter_vertex_config_for_resource, so a pipeline that
+            # writes nothing validates clean. Under strict references that is an
+            # error: the resource claims to produce a vertex the schema lacks.
+            undeclared = sorted(self.collect_vertex_names() - known_vertices)
+            if undeclared:
+                raise ValueError(
+                    f"Resource '{self.config.name}' pipeline references undefined "
+                    f"vertices: {undeclared}. Declare them in vertex_config, or fix "
+                    "the step names (a common cause is a naming mismatch between "
+                    "the vertex definition and the pipeline step)."
+                )
+
         referenced_vertices: set[str] = set()
 
         for spec in self.config.infer_edge_only:

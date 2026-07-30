@@ -10,7 +10,7 @@ Key Functions:
     - cast_ibes_analyst: Parse and standardize analyst names
     - clear_first_level_nones: Clean dictionaries by removing None values
     - parse_multi_item: Parse complex multi-item strings
-    - pick_unique_dict: Remove duplicate dictionaries
+    - pick_unique_dict: Remove duplicate structures by content hash
 
 Example:
     >>> name = standardize("John. Doe, Smith")
@@ -24,6 +24,7 @@ import time
 from collections import defaultdict
 from datetime import datetime
 from functools import lru_cache
+from typing import TypeVar
 
 ORDINAL_SUFFIX = ["st", "nd", "rd", "th"]
 _CAMEL_TO_SNAKE_STEP1_RE = re.compile(r"(.)([A-Z][a-z]+)")
@@ -33,8 +34,10 @@ _TRAILING_UNDERSCORES_RE = re.compile(r"_+$")
 
 logger = logging.getLogger(__name__)
 
+T = TypeVar("T")
 
-def standardize(k):
+
+def standardize(k: str) -> str:
     """Standardizes a string key by removing periods and splitting.
 
     Handles comma and space-separated strings, normalizing their format.
@@ -51,17 +54,17 @@ def standardize(k):
         >>> standardize("John Doe Smith")
         'John,Doe,Smith'
     """
-    k = k.translate(str.maketrans({".": ""}))
+    cleaned = k.translate(str.maketrans({".": ""}))
     # try to split by ", "
-    k = k.split(", ")
-    if len(k) < 2:
-        k = k[0].split(" ")
+    parts = cleaned.split(", ")
+    if len(parts) < 2:
+        parts = parts[0].split(" ")
     else:
-        k[1] = k[1].translate(str.maketrans({" ": ""}))
-    return ",".join(k)
+        parts[1] = parts[1].translate(str.maketrans({" ": ""}))
+    return ",".join(parts)
 
 
-def parse_date_standard(input_str):
+def parse_date_standard(input_str: str) -> tuple[int, int, int]:
     """Parse a date string in YYYY-MM-DD format.
 
     Args:
@@ -78,7 +81,7 @@ def parse_date_standard(input_str):
     return dt.year, dt.month, dt.day
 
 
-def parse_date_conf(input_str):
+def parse_date_conf(input_str: str) -> tuple[int, int, int]:
     """Parse a date string in YYYYMMDD format.
 
     Args:
@@ -95,7 +98,7 @@ def parse_date_conf(input_str):
     return dt.year, dt.month, dt.day
 
 
-def parse_date_ibes(date0, time0):
+def parse_date_ibes(date0: str | int, time0: str) -> str:
     """Converts IBES date and time to ISO 8601 format datetime.
 
     Args:
@@ -116,7 +119,7 @@ def parse_date_ibes(date0, time0):
     return full_datetime
 
 
-def parse_date_yahoo(date0):
+def parse_date_yahoo(date0: str) -> str:
     """Convert Yahoo Finance date to ISO 8601 format.
 
     Args:
@@ -133,7 +136,7 @@ def parse_date_yahoo(date0):
     return full_datetime
 
 
-def round_str(x, **kwargs):
+def round_str(x: str, **kwargs) -> float:
     """Round a string number to specified precision.
 
     Args:
@@ -150,7 +153,7 @@ def round_str(x, **kwargs):
     return round(float(x), **kwargs)
 
 
-def parse_date_standard_to_epoch(input_str):
+def parse_date_standard_to_epoch(input_str: str) -> float:
     """Convert standard date string to Unix epoch timestamp.
 
     Args:
@@ -168,7 +171,7 @@ def parse_date_standard_to_epoch(input_str):
     return timestamp
 
 
-def cast_ibes_analyst(s):
+def cast_ibes_analyst(s: str) -> tuple[str, str]:
     """Splits and normalizes analyst name strings.
 
     Handles various name formats like 'ADKINS/NARRA' or 'ARFSTROM      J'.
@@ -203,7 +206,7 @@ def cast_ibes_analyst(s):
             return r[0], r[1][:1]
 
 
-def parse_date_reference(input_str):
+def parse_date_reference(input_str: str) -> int | str:
     """Extract year from a date reference string.
 
     Args:
@@ -219,7 +222,7 @@ def parse_date_reference(input_str):
     return _parse_date_reference(input_str)["year"]
 
 
-def _parse_date_reference(input_str):
+def _parse_date_reference(input_str: str) -> dict[str, int | str]:
     """Parse complex, human-written date references.
 
     Handles various date formats like:
@@ -296,7 +299,9 @@ def try_int(x):
         return x
 
 
-def clear_first_level_nones(docs, keys_keep_nones: list | None = None):
+def clear_first_level_nones(
+    docs: list[dict], keys_keep_nones: list | None = None
+) -> list[dict]:
     """Removes None values from dictionaries, with optional key exceptions.
 
     Args:
@@ -319,7 +324,7 @@ def clear_first_level_nones(docs, keys_keep_nones: list | None = None):
     return docs
 
 
-def parse_multi_item(s, mapper: dict, direct: list):
+def parse_multi_item(s: str, mapper: dict, direct: list) -> defaultdict[str, list]:
     """Parses complex multi-item strings into structured data.
 
     Supports parsing strings with quoted or bracketed items.
@@ -371,17 +376,18 @@ def parse_multi_item(s, mapper: dict, direct: list):
     return r
 
 
-def pick_unique_dict(docs):
-    """Removes duplicate dictionaries from a list.
+def pick_unique_dict(docs: list[T]) -> list[T]:
+    """Remove duplicate structures from a list by content hash.
 
-    Uses a hash-based approach to identify unique dictionaries, which is more
-    efficient than JSON serialization and preserves original object types.
+    Uses a hash-based approach that handles nested dicts, lists/tuples,
+    datetime objects, and Decimal types. Preserves original objects and
+    insertion order. Works for vertex dicts and edge triples alike.
 
     Args:
-        docs (list): List of dictionaries.
+        docs: List of structures to deduplicate.
 
     Returns:
-        list: List of unique dictionaries (preserving original objects).
+        List of unique structures (preserving original objects).
 
     Example:
         >>> docs = [{"a": 1}, {"a": 1}, {"b": 2}]
@@ -421,7 +427,7 @@ def pick_unique_dict(docs):
             return obj
 
     # Use a dict to preserve insertion order and original objects
-    seen = {}
+    seen: dict = {}
     for doc in docs:
         # Create hashable representation
         hashable_repr = make_hashable(doc)

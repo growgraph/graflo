@@ -899,7 +899,7 @@ class ArangoConnection(Connection):
             docs_edges = docs_edges[:head]
         if filter_uniques:
             docs_edges = pick_unique_dict(docs_edges)
-        docs_edges_str = json.dumps(docs_edges)
+        docs_edges_str = json.dumps(docs_edges, default=json_serializer)
 
         result_from, source_filter = _arango_edge_endpoint_aql(
             source_class, match_keys_source, 0

@@ -1,3 +1,4 @@
-# `graflo.db.graflo_backend.config`
+# `graflo.db.graflo_backend.config` (moved)
 
-::: graflo.db.graflo_backend.config
+Backend connection config now lives under
+[`graflo.connections.graflo_backend`](../../connections/graflo_backend.md).

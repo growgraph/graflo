@@ -14,6 +14,7 @@ from graflo.architecture.contract.bindings import Bindings
 from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.graph_types import GraphContainer
+from graflo.architecture.onto_sample import DEFAULT_MAX_DOCS, SourceSample
 from graflo.architecture.onto_sql import SchemaIntrospectionResult
 from graflo.architecture.schema import GraFloOutput, Schema
 from graflo.connections.onto import DBConfig, PostgresConfig, SparqlEndpointConfig
@@ -133,6 +134,51 @@ class GraphEngine:
                 schema_name=schema_name,
                 include_raw_tables=include_raw_tables,
             )
+
+    def sample_resources(
+        self,
+        source: "PostgresConfig | Bindings | Path | str | list[Path | str]",
+        *,
+        schema_name: str | None = None,
+        resources: list[str] | None = None,
+        max_docs: int = DEFAULT_MAX_DOCS,
+        source_name: str | None = None,
+    ) -> "SourceSample":
+        """Sample documents from a source, keeping connector provenance.
+
+        The returned :class:`~graflo.architecture.onto_sample.SourceSample` holds
+        pure JSON documents per resource. It is the shared input for schema
+        inference — algorithmic or agentic — and
+        ``SourceSample.samples_by_resource`` is the shape cross-resource identity
+        inference consumes directly.
+
+        Args:
+            source: A ``PostgresConfig``, a ``Bindings`` block, or a file/directory path.
+            schema_name: PostgreSQL schema to sample (PostgreSQL sources only).
+            resources: Restrict sampling to these resource names.
+            max_docs: Cap on documents fetched per resource.
+            source_name: Override the logical source name.
+
+        Returns:
+            SourceSample: Per-resource samples with connector provenance.
+        """
+        from graflo.hq.sampler import ResourceSampler
+
+        sampler = ResourceSampler(max_docs=max_docs)
+        if isinstance(source, PostgresConfig):
+            return sampler.sample_postgres(
+                source,
+                schema_name=schema_name,
+                tables=resources,
+                source_name=source_name,
+            )
+        if isinstance(source, Bindings):
+            return sampler.sample_bindings(
+                source,
+                resources=resources,
+                source_name=source_name or "bindings",
+            )
+        return sampler.sample_files(source, source_name=source_name)
 
     def infer_manifest(
         self,

@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date, datetime, time
-from decimal import Decimal
 from typing import Any
 
 from pydantic import Field, field_serializer, field_validator
@@ -18,30 +16,7 @@ from graflo.architecture.graph_types.identifiers import (
     serialize_edge_key,
     serialize_entity_key,
 )
-
-
-def _pick_unique_dict(docs: list) -> list:
-    """Deduplicate dicts by structure; preserves original objects (local copy of merge logic)."""
-
-    def make_hashable(obj: object) -> Any:
-        if isinstance(obj, dict):
-            return tuple(sorted((k, make_hashable(v)) for k, v in obj.items()))
-        if isinstance(obj, (list, tuple)):
-            return tuple(make_hashable(item) for item in obj)
-        if isinstance(obj, (datetime, date, time)):
-            return ("__datetime__", obj.isoformat())
-        if isinstance(obj, Decimal):
-            return ("__decimal__", str(obj))
-        if isinstance(obj, set):
-            return tuple(sorted(make_hashable(item) for item in obj))
-        return obj
-
-    seen: dict[Any, object] = {}
-    for doc in docs:
-        key = make_hashable(doc)
-        if key not in seen:
-            seen[key] = doc
-    return list(seen.values())
+from graflo.util.transform import pick_unique_dict
 
 
 def _serialize_linear_item(
@@ -133,9 +108,9 @@ class GraphContainer(ConfigBaseModel):
     def pick_unique(self):
         """Remove duplicate entries from vertices and edges."""
         for k, v in self.vertices.items():
-            self.vertices[k] = _pick_unique_dict(v)
+            self.vertices[k] = pick_unique_dict(v)
         for k, v in self.edges.items():
-            self.edges[k] = _pick_unique_dict(v)
+            self.edges[k] = pick_unique_dict(v)
 
     @classmethod
     def from_docs_list(
