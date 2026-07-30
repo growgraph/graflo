@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from graflo.architecture.graph_types import EdgeId
 from graflo.architecture.schema.edge import Edge, EdgeConfig
+from graflo.architecture.schema.identity_funnel import IdentityFunnel
 from graflo.architecture.schema.vertex import Field, SecondaryIdentity, Vertex
 
 
@@ -16,6 +17,31 @@ def merge_field_pair(a: Field, b: Field) -> Field:
     merged_type = a.type if a.type is not None else b.type
     desc = a.description if a.description else b.description
     return Field(name=a.name, type=merged_type, description=desc)
+
+
+def _merge_identity_funnels(
+    vertices: list[Vertex], into_name: str
+) -> IdentityFunnel | None:
+    """Carry an identity funnel through a merge, refusing to invent one.
+
+    Branch order *is* the policy, and branch ids take part in the digest, so
+    concatenating two different funnels would silently rekey existing data.
+    A single funnel (or several identical ones) carries through; anything else
+    is the author's call to make explicitly.
+    """
+    funnels = [v.identity_funnel for v in vertices if v.identity_funnel is not None]
+    if not funnels:
+        return None
+    first = funnels[0]
+    divergent = [f for f in funnels[1:] if f != first]
+    if divergent:
+        raise ValueError(
+            f"Cannot merge into vertex '{into_name}': sources declare different "
+            "identity funnels. Branch order and branch ids determine the key, so "
+            "they cannot be unioned automatically — replace the identity "
+            "explicitly with the funnel you want."
+        )
+    return first
 
 
 def _merge_secondary_identities(
@@ -111,6 +137,20 @@ def merge_vertex_models(vertices: list[Vertex], into_name: str) -> Vertex:
             f"merged with hash-identity sources (hash properties: {hash_out})"
         )
 
+    funnel_out = _merge_identity_funnels(vertices, into_name)
+    if funnel_out is not None:
+        if hash_out:
+            raise ValueError(
+                f"Cannot merge into vertex '{into_name}': sources mix an identity "
+                f"funnel with flat hash properties {hash_out}. Express the flat key "
+                "as a funnel branch first, then merge."
+            )
+        if assigned_out or blank_out:
+            raise ValueError(
+                f"Cannot merge into vertex '{into_name}': an identity funnel cannot "
+                "be merged with assigned or blank sources"
+            )
+
     secondary_out = _merge_secondary_identities(vertices, into_name, identity_out)
     if blank_out and secondary_out:
         raise ValueError(
@@ -128,6 +168,7 @@ def merge_vertex_models(vertices: list[Vertex], into_name: str) -> Vertex:
         blank=blank_out,
         assigned=assigned_out,
         hash_identity_properties=hash_out,
+        identity_funnel=funnel_out,
         secondary_identities=secondary_out,
     )
 

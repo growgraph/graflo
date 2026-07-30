@@ -139,6 +139,10 @@ class ManifestRdfDeserializer:
         if hash_identity:
             vertex["hash_identity_properties"] = hash_identity
 
+        funnel = self._parse_identity_funnel(graph, vertex_uri)
+        if funnel is not None:
+            vertex["identity_funnel"] = funnel
+
         secondary = self._ordered_nodes(
             graph,
             vertex_uri,
@@ -173,6 +177,44 @@ class ManifestRdfDeserializer:
             lambda g, node: self._literal(g, node, ns.identityName),
         )
         return [name for name in names if name is not None]
+
+    def _parse_identity_funnel(
+        self, graph: Graph, vertex_uri: URIRef | BNode
+    ) -> dict[str, Any] | None:
+        """Rebuild ``identity_funnel`` from its branch chain, or ``None``."""
+        funnel_node = self._object(graph, vertex_uri, ns.hasIdentityFunnel)
+        if funnel_node is None:
+            return None
+        branches = self._ordered_nodes(
+            graph,
+            funnel_node,
+            ns.hasIdentityBranch,
+            self._parse_identity_branch,
+        )
+        if not branches:
+            return None
+        funnel: dict[str, Any] = {"branches": branches}
+        digest = self._literal(graph, funnel_node, ns.funnelDigest)
+        if digest is not None:
+            funnel["digest"] = digest
+        include_branch_id = self._literal(graph, funnel_node, ns.funnelIncludeBranchId)
+        if include_branch_id is not None:
+            funnel["include_branch_id"] = include_branch_id.lower() == "true"
+        return funnel
+
+    def _parse_identity_branch(
+        self, graph: Graph, node: URIRef | BNode
+    ) -> dict[str, Any]:
+        branch: dict[str, Any] = {
+            "id": self._literal(graph, node, ns.branchId),
+            "fields": self._identity_names(graph, node, ns.hasIdentity),
+        }
+        # Omit rather than null: an absent condition means "default to fields",
+        # which is not the same as an empty condition (the model rejects that).
+        condition = self._identity_names(graph, node, ns.hasBranchCondition)
+        if condition:
+            branch["when_all_present"] = condition
+        return branch
 
     def _parse_secondary_identity(
         self, graph: Graph, node: URIRef | BNode

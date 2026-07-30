@@ -1,0 +1,51 @@
+schema:
+    metadata:
+        name: identity-funnel-demo
+        version: "1.0.0"
+    graph:
+        vertex_config:
+            vertices:
+            -   name: party
+                properties:
+                -   {name: id, type: STRING}
+                -   {name: email, type: STRING}
+                -   {name: phone, type: STRING}
+                -   {name: country, type: STRING}
+                -   {name: name, type: STRING}
+                -   {name: dob, type: STRING}
+                identity: [id]
+                # Two sources identify the same person differently: the CRM has
+                # email, billing has phone + country. The first complete branch
+                # wins, so a row is keyed by the strongest evidence it carries.
+                identity_funnel:
+                    digest: sha256
+                    include_branch_id: true
+                    branches:
+                    -   id: email
+                        when_all_present: [email]
+                        fields: [email]
+                    -   id: phone
+                        when_all_present: [phone, country]
+                        fields: [phone, country]
+                    -   id: weak
+                        when_all_present: [name, dob]
+                        fields: [name, dob]
+        edge_config:
+            edges: []
+    db_profile: {}
+ingestion_model:
+    resources:
+    -   name: crm
+        pipeline:
+        -   vertex: party
+    -   name: billing
+        pipeline:
+        -   vertex: party
+bindings:
+    connectors:
+    -   regex: "^crm\\.csv$"
+        sub_path: data
+        resource_name: crm
+    -   regex: "^billing\\.csv$"
+        sub_path: data
+        resource_name: billing

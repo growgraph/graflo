@@ -391,6 +391,19 @@ class DatabaseProfile(ConfigBaseModel):
         if tuple(index.fields) not in existing:
             indexes.append(index)
 
+    def prune_empty_vertex_indexes(self) -> None:
+        """Drop vertex entries whose index list is empty.
+
+        An empty list and an absent key describe the same profile, but they
+        serialize — and therefore hash — differently. Since content hashes are
+        what verify a replayed manifest against an authored one, leaving the
+        empty entry behind would make identical schemas compare unequal.
+        """
+        for vertex_name in [
+            name for name, indexes in self.vertex_indexes.items() if not indexes
+        ]:
+            del self.vertex_indexes[vertex_name]
+
     def add_edge_index(
         self,
         edge_id: EdgeId,

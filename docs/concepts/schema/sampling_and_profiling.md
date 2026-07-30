@@ -50,8 +50,11 @@ Three fields on `ResourceSample` carry more weight than the documents themselves
   document past `max_docs` precisely so that a source holding exactly `max_docs` documents is
   distinguishable from one that was cut short.
 
-`SourceSample.samples_by_resource` returns `dict[str, list[dict]]` — the input shape cross-resource
-identity inference consumes, so no adapter sits between sampling and inference.
+`SourceSample.samples_by_resource` returns `dict[str, list[dict]]` — the input shape
+[cross-resource identity inference](cross_resource_identity.md) consumes, so no adapter sits between
+sampling and inference. Two caveats: it hands out the **live** document lists rather than copies, so
+consumers treat them as read-only; and resource names must be unique, which `SourceSample` enforces
+because keying by name would otherwise discard documents without a trace.
 
 ### Guards
 
@@ -140,8 +143,9 @@ Sampling deliberately stops short of proposing anything. What consumes it:
 
 - **[Identity inference](../../guides/identity_inference.md)** — vertex `identity` and
   `hash_identity_properties` from flat samples.
-- **Cross-resource vertex discovery** — aligns fields across resources to find a shared key;
-  consumes `samples_by_resource` directly.
+- **[Cross-resource vertex discovery](cross_resource_identity.md)** — aligns fields across resources
+  to find a shared key; consumes `samples_by_resource` directly, and uses declared
+  `primary_key` / `foreign_keys` as ground truth ahead of any heuristic.
 - **Agentic inference** — an external service receives a serialized `SourceSample` over the wire.
   Because the model is defined once here, the producer and the consumer cannot drift into
   disagreement.

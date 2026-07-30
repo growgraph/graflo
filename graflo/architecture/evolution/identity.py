@@ -9,9 +9,10 @@ lives in its own module rather than in :mod:`~graflo.architecture.evolution.appl
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, NamedTuple
 
 from graflo.architecture.contract.manifest import GraphManifest
+from graflo.architecture.schema.identity_funnel import IdentityFunnel
 from graflo.architecture.schema.vertex import (
     SecondaryIdentity,
     Vertex,
@@ -36,15 +37,29 @@ DEFAULT_RETIRED_IDENTITY_NAME = "retired_identity"
 SYNTHETIC_ID_FIELD = "id"
 
 
-def _target_state(target: IdentityTarget) -> tuple[list[str], bool, bool, list[str]]:
-    """``(identity, blank, assigned, hash_identity_properties)`` for *target*."""
+class _TargetState(NamedTuple):
+    """Resolved identity fields and flags for an :class:`IdentityTarget`."""
+
+    identity: list[str]
+    blank: bool
+    assigned: bool
+    hash_properties: list[str]
+    funnel: IdentityFunnel | None
+
+
+def _target_state(target: IdentityTarget) -> _TargetState:
+    """Identity fields and mode flags for *target*."""
     if target.mode == "natural":
-        return list(target.identity), False, False, []
+        return _TargetState(list(target.identity), False, False, [], None)
     if target.mode == "hash":
-        return [SYNTHETIC_ID_FIELD], False, False, list(target.hash_from)
+        return _TargetState(
+            [SYNTHETIC_ID_FIELD], False, False, list(target.hash_from), None
+        )
+    if target.mode == "funnel":
+        return _TargetState([SYNTHETIC_ID_FIELD], False, False, [], target.funnel)
     if target.mode == "assigned":
-        return [SYNTHETIC_ID_FIELD], False, True, []
-    return [SYNTHETIC_ID_FIELD], True, False, []
+        return _TargetState([SYNTHETIC_ID_FIELD], False, True, [], None)
+    return _TargetState([SYNTHETIC_ID_FIELD], True, False, [], None)
 
 
 def _is_noop(
@@ -53,9 +68,14 @@ def _is_noop(
     mode: str,
     identity: list[str],
     hash_properties: list[str],
+    funnel: IdentityFunnel | None = None,
 ) -> bool:
+    # ``funnel`` and ``hash`` targets both resolve to identity mode ``hash``, so
+    # the funnel itself has to be compared to tell a no-op from a real change.
+    resolved_mode = "hash" if mode == "funnel" else mode
     return (
-        vertex.identity_mode == mode
+        vertex.identity_mode == resolved_mode
+        and vertex.identity_funnel == funnel
         and list(vertex.identity) == identity
         and list(vertex.hash_identity_properties) == hash_properties
     )
@@ -173,6 +193,7 @@ def _replaced_vertex(
     assigned: bool,
     hash_properties: list[str],
     secondary_identities: list[SecondaryIdentity],
+    funnel: IdentityFunnel | None = None,
 ) -> Vertex:
     """Rebuild *vertex* with a new identity policy.
 
@@ -185,6 +206,9 @@ def _replaced_vertex(
     payload["blank"] = blank
     payload["assigned"] = assigned
     payload["hash_identity_properties"] = hash_properties
+    payload["identity_funnel"] = (
+        funnel.to_dict(skip_defaults=False) if funnel is not None else None
+    )
     payload["secondary_identities"] = [
         entry.to_dict(skip_defaults=False) for entry in secondary_identities
     ]
@@ -238,12 +262,13 @@ def apply_replace_identity(manifest: GraphManifest, op: ReplaceIdentityOp) -> No
         if spec is None:
             continue
 
-        identity, blank, assigned, hash_properties = _target_state(spec.to)
+        identity, blank, assigned, hash_properties, funnel = _target_state(spec.to)
         if _is_noop(
             vertex,
             mode=spec.to.mode,
             identity=identity,
             hash_properties=hash_properties,
+            funnel=funnel,
         ):
             logger.debug(
                 "replace_identity: vertex %r already has the requested identity; "
@@ -252,9 +277,13 @@ def apply_replace_identity(manifest: GraphManifest, op: ReplaceIdentityOp) -> No
             )
             continue
 
-        _require_properties_exist(
-            vertex, identity if spec.to.mode == "natural" else hash_properties
-        )
+        if spec.to.mode == "natural":
+            required_properties = identity
+        elif spec.to.mode == "funnel":
+            required_properties = funnel.field_names if funnel else []
+        else:
+            required_properties = hash_properties
+        _require_properties_exist(vertex, required_properties)
 
         old_identity = list(vertex.identity)
         retire = _resolve_retire_policy(
@@ -276,6 +305,7 @@ def apply_replace_identity(manifest: GraphManifest, op: ReplaceIdentityOp) -> No
             preserved = (
                 set(identity)
                 | set(hash_properties)
+                | set(funnel.field_names if funnel else [])
                 | {name for entry in secondary_identities for name in entry.fields}
             )
             to_drop = [name for name in old_identity if name not in preserved]
@@ -302,6 +332,7 @@ def apply_replace_identity(manifest: GraphManifest, op: ReplaceIdentityOp) -> No
             assigned=assigned,
             hash_properties=hash_properties,
             secondary_identities=secondary_identities,
+            funnel=funnel,
         )
         retired_indexes[vertex.name] = old_identity
 
@@ -412,6 +443,7 @@ def apply_add_secondary_identities(
             blank=vertex.blank,
             assigned=vertex.assigned,
             hash_properties=list(vertex.hash_identity_properties),
+            funnel=vertex.identity_funnel,
             secondary_identities=combined,
         )
 
@@ -482,6 +514,7 @@ def apply_remove_secondary_identities(
             blank=vertex.blank,
             assigned=vertex.assigned,
             hash_properties=list(vertex.hash_identity_properties),
+            funnel=vertex.identity_funnel,
             secondary_identities=[
                 entry
                 for entry in vertex.secondary_identities

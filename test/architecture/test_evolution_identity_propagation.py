@@ -1,8 +1,8 @@
 """Identity-mode propagation through rename and merge ops.
 
-Regression cover for `CORE-EVO-001` (rename left `hash_identity_properties` /
-`secondary_identities` pointing at pre-rename field names) and `CORE-EVO-002`
-(merge dropped every identity-mode field except ``blank``).
+Regression cover for two fixed defects: rename left `hash_identity_properties` /
+`secondary_identities` pointing at pre-rename field names, and merge dropped
+every identity-mode field except ``blank``.
 """
 
 import pytest
@@ -58,6 +58,48 @@ class TestRenamePropagation:
         party = _vertex(out, "party")
         assert party.hash_identity_properties == ["email_address", "country"]
         assert party.identity_mode == "hash"
+        assert "email" not in {f.name for f in party.properties}
+
+    def test_identity_funnel_fields_follow_the_rename(self):
+        """Same defect class as `hash_identity_properties`: a rewriter that forgets
+        an identity field-set silently rekeys the graph."""
+        manifest = _manifest(
+            [
+                {
+                    "name": "party",
+                    "properties": ["email", "phone", "country"],
+                    "identity_funnel": {
+                        "branches": [
+                            {"id": "email", "fields": ["email"]},
+                            {
+                                "id": "phone",
+                                "when_all_present": ["phone", "country"],
+                                "fields": ["phone", "country"],
+                            },
+                        ]
+                    },
+                }
+            ]
+        )
+
+        out = apply_evolution(
+            manifest,
+            [
+                RenameVertexPropertiesOp(
+                    renames={"party": {"email": "email_address", "phone": "phone_no"}}
+                )
+            ],
+        )
+
+        party = _vertex(out, "party")
+        assert party.identity_mode == "hash"
+        assert party.identity_funnel is not None
+        assert party.identity_funnel.branches[0].fields == ["email_address"]
+        assert party.identity_funnel.branches[1].fields == ["phone_no", "country"]
+        assert party.identity_funnel.branches[1].when_all_present == [
+            "phone_no",
+            "country",
+        ]
         assert "email" not in {f.name for f in party.properties}
 
     def test_secondary_identity_fields_follow_the_rename(self):
@@ -161,6 +203,76 @@ class TestMergePropagation:
         party = _vertex(out, "party_a")
         assert party.hash_identity_properties == ["email", "country"]
         assert party.identity_mode == "hash"
+
+    def test_identical_identity_funnels_merge_cleanly(self):
+        funnel = {"branches": [{"id": "email", "fields": ["email"]}]}
+        manifest = _manifest(
+            [
+                {"name": "party_a", "properties": ["email"], "identity_funnel": funnel},
+                {
+                    "name": "party_b",
+                    "properties": ["email", "country"],
+                    "identity_funnel": funnel,
+                },
+            ]
+        )
+
+        out = apply_evolution(
+            manifest, [MergeVerticesOp(sources=["party_b"], into="party_a")]
+        )
+
+        party = _vertex(out, "party_a")
+        assert party.identity_funnel is not None
+        assert party.identity_funnel.branch_ids == ["email"]
+
+    def test_divergent_identity_funnels_refuse_to_merge(self):
+        """Branch order and ids decide the key, so unioning them would rekey data."""
+        manifest = _manifest(
+            [
+                {
+                    "name": "party_a",
+                    "properties": ["email"],
+                    "identity_funnel": {
+                        "branches": [{"id": "email", "fields": ["email"]}]
+                    },
+                },
+                {
+                    "name": "party_b",
+                    "properties": ["email", "country"],
+                    "identity_funnel": {
+                        "branches": [{"id": "country", "fields": ["country"]}]
+                    },
+                },
+            ]
+        )
+
+        with pytest.raises(ValueError, match="different identity funnels"):
+            apply_evolution(
+                manifest, [MergeVerticesOp(sources=["party_b"], into="party_a")]
+            )
+
+    def test_funnel_and_flat_hash_refuse_to_merge(self):
+        manifest = _manifest(
+            [
+                {
+                    "name": "party_a",
+                    "properties": ["email"],
+                    "identity_funnel": {
+                        "branches": [{"id": "email", "fields": ["email"]}]
+                    },
+                },
+                {
+                    "name": "party_b",
+                    "properties": ["email"],
+                    "hash_identity_properties": ["email"],
+                },
+            ]
+        )
+
+        with pytest.raises(ValueError, match="funnel with flat hash properties"):
+            apply_evolution(
+                manifest, [MergeVerticesOp(sources=["party_b"], into="party_a")]
+            )
 
     def test_secondary_identities_are_unioned_and_deduped(self):
         manifest = _manifest(

@@ -134,6 +134,20 @@
             "target": "https://ontology.growgraph.dev/graflo/GrafloArtifact"
         },
         {
+            "id": "sub:https://ontology.growgraph.dev/graflo/IdentityBranch->https://ontology.growgraph.dev/graflo/GrafloArtifact",
+            "kind": "subClassOf",
+            "label": "subClassOf",
+            "source": "https://ontology.growgraph.dev/graflo/IdentityBranch",
+            "target": "https://ontology.growgraph.dev/graflo/GrafloArtifact"
+        },
+        {
+            "id": "sub:https://ontology.growgraph.dev/graflo/IdentityFunnel->https://ontology.growgraph.dev/graflo/GrafloArtifact",
+            "kind": "subClassOf",
+            "label": "subClassOf",
+            "source": "https://ontology.growgraph.dev/graflo/IdentityFunnel",
+            "target": "https://ontology.growgraph.dev/graflo/GrafloArtifact"
+        },
+        {
             "id": "sub:https://ontology.growgraph.dev/graflo/Index->https://ontology.growgraph.dev/graflo/GrafloArtifact",
             "kind": "subClassOf",
             "label": "subClassOf",
@@ -363,6 +377,27 @@
             "label": "hasSecondaryIdentity",
             "source": "https://ontology.growgraph.dev/graflo/Vertex",
             "target": "https://ontology.growgraph.dev/graflo/SecondaryIdentity"
+        },
+        {
+            "id": "prop:https://ontology.growgraph.dev/graflo/hasIdentityFunnel",
+            "kind": "objectProperty",
+            "label": "hasIdentityFunnel",
+            "source": "https://ontology.growgraph.dev/graflo/Vertex",
+            "target": "https://ontology.growgraph.dev/graflo/IdentityFunnel"
+        },
+        {
+            "id": "prop:https://ontology.growgraph.dev/graflo/hasIdentityBranch",
+            "kind": "objectProperty",
+            "label": "hasIdentityBranch",
+            "source": "https://ontology.growgraph.dev/graflo/IdentityFunnel",
+            "target": "https://ontology.growgraph.dev/graflo/IdentityBranch"
+        },
+        {
+            "id": "prop:https://ontology.growgraph.dev/graflo/hasBranchCondition",
+            "kind": "objectProperty",
+            "label": "hasBranchCondition",
+            "source": "https://ontology.growgraph.dev/graflo/IdentityBranch",
+            "target": "https://ontology.growgraph.dev/graflo/Identity"
         },
         {
             "id": "prop:https://ontology.growgraph.dev/graflo/edgeSource",
@@ -733,6 +768,20 @@
             "local": "Identity"
         },
         {
+            "comment": "One branch of an identity funnel: the fields digested when it wins, and the condition under which it fires. Ordered by gf:artifactIndex.",
+            "id": "https://ontology.growgraph.dev/graflo/IdentityBranch",
+            "kind": "gf",
+            "label": "IdentityBranch",
+            "local": "IdentityBranch"
+        },
+        {
+            "comment": "Ordered fallback branches deriving a deterministic synthetic id. The first branch whose fields are all present wins. Generalizes hash_identity_properties, which is the single-branch case.",
+            "id": "https://ontology.growgraph.dev/graflo/IdentityFunnel",
+            "kind": "gf",
+            "label": "IdentityFunnel",
+            "local": "IdentityFunnel"
+        },
+        {
             "comment": null,
             "id": "https://ontology.growgraph.dev/graflo/Index",
             "kind": "gf",
@@ -881,5 +930,5 @@
         }
     ],
     "ontology": "https://ontology.growgraph.dev/graflo",
-    "version": "1.1.0"
+    "version": "1.2.0"
 }

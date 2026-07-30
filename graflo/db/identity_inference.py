@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
 import random
 import re
@@ -15,6 +13,13 @@ from pydantic import Field as PydanticField
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.schema.graflo_output import GraFloOutput
+
+# ``compute_hash_identity`` lives in ``architecture.schema`` because the pipeline
+# (L4) computes identities at assemble time and may not import ``db`` (L5). It is
+# re-exported here, where it has always been imported from.
+from graflo.architecture.schema.identity_digest import (  # noqa: F401
+    compute_hash_identity,
+)
 from graflo.architecture.schema.identity_uuid import UUID_PATTERN
 from graflo.architecture.schema.vertex import Vertex, VertexConfig
 from graflo.db.graph_introspection import strip_internal_properties
@@ -185,28 +190,24 @@ def bootstrap_is_stable(
     )
 
 
-def compute_hash_identity(
-    doc: dict[str, Any],
-    source_fields: list[str],
-) -> str:
-    """Compute a deterministic SHA256 hex digest from source field values."""
-    payload = {field: doc.get(field) for field in source_fields}
-    source = json.dumps(payload, sort_keys=True, default=str)
-    return hashlib.sha256(source.encode()).hexdigest()
-
-
-def _column_values(samples: list[dict], field: str) -> list[Any]:
+def column_values(samples: list[dict], field: str) -> list[Any]:
+    """Values of *field* across *samples*, missing keys read as ``None``."""
     return [sample.get(field) for sample in samples]
 
 
-def _eligible_columns(
+def eligible_columns(
     samples: list[dict],
     property_names: list[str],
 ) -> tuple[list[str], dict[str, float]]:
+    """Columns usable as key material, with their type costs.
+
+    Disqualifies list/bytes columns, long text and mostly-null columns — see
+    :func:`infer_column_type_cost`.
+    """
     eligible: list[str] = []
     type_costs: dict[str, float] = {}
     for field in property_names:
-        cost = infer_column_type_cost(_column_values(samples, field))
+        cost = infer_column_type_cost(column_values(samples, field))
         if cost is None:
             continue
         eligible.append(field)
@@ -214,7 +215,8 @@ def _eligible_columns(
     return eligible, type_costs
 
 
-def _minimize_key_fields(samples: list[dict], key_fields: list[str]) -> list[str]:
+def minimize_key_fields(samples: list[dict], key_fields: list[str]) -> list[str]:
+    """Drop fields from *key_fields* while the remainder stays fully unique."""
     minimal = list(key_fields)
     changed = True
     while changed:
@@ -228,10 +230,15 @@ def _minimize_key_fields(samples: list[dict], key_fields: list[str]) -> list[str
     return minimal
 
 
-def _greedy_unique_key(
+def greedy_unique_key(
     samples: list[dict],
     ranked_fields: list[str],
 ) -> list[str] | None:
+    """Grow a key by adding ranked fields until the tuple is unique.
+
+    Scores *tuples*, not columns: a key may be unique while none of its fields
+    is unique alone.
+    """
     if not ranked_fields:
         return None
 
@@ -256,7 +263,7 @@ def _no_viable_result(warning: str) -> IdentityInferenceResult:
     )
 
 
-def _prepare_inference_samples(
+def prepare_inference_samples(
     samples: list[dict],
     config: IdentityInferenceConfig,
     rng: random.Random | None,
@@ -287,14 +294,14 @@ class IdentityInferencer:
         samples: list[dict],
         property_names: list[str] | None = None,
     ) -> IdentityInferenceResult:
-        cleaned_samples = _prepare_inference_samples(samples, self.config, self.rng)
+        cleaned_samples = prepare_inference_samples(samples, self.config, self.rng)
         if len(cleaned_samples) < self.config.min_sample_size:
             return _no_viable_result("sample too small")
 
         resolved_properties = property_names or sorted(
             {key for sample in cleaned_samples for key in sample}
         )
-        eligible, type_costs = _eligible_columns(cleaned_samples, resolved_properties)
+        eligible, type_costs = eligible_columns(cleaned_samples, resolved_properties)
         if not eligible:
             return _no_viable_result("all columns disqualified")
 
@@ -338,11 +345,11 @@ class IdentityInferencer:
                     strategy="unary",
                 )
 
-        composite_key = _greedy_unique_key(cleaned_samples, ranked_fields)
+        composite_key = greedy_unique_key(cleaned_samples, ranked_fields)
         if composite_key is None:
             return _no_viable_result("no unique combination found")
 
-        minimal_key = _minimize_key_fields(cleaned_samples, composite_key)
+        minimal_key = minimize_key_fields(cleaned_samples, composite_key)
         pass_rate = bootstrap_pass_rate(
             cleaned_samples,
             minimal_key,

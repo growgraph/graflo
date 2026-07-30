@@ -189,6 +189,23 @@ class TestVertexIndexes:
         indexes = out.graph_schema.db_profile.vertex_indexes.get("party", [])
         assert all(index.fields != ["name"] for index in indexes)
 
+    def test_removing_the_last_index_drops_the_key_entirely(self):
+        """An empty list and a missing key mean the same thing but hash differently.
+
+        Leaving `{"party": []}` behind makes a replayed manifest compare unequal
+        to an identically-authored one, which breaks revision verification.
+        """
+        manifest = _manifest(
+            db_profile={"vertex_indexes": {"party": [{"fields": ["name"]}]}}
+        )
+
+        out = apply_evolution(
+            manifest, [RemoveVertexIndexesOp(indexes={"party": [["name"]]})]
+        )
+
+        assert out.graph_schema is not None
+        assert "party" not in out.graph_schema.db_profile.vertex_indexes
+
     def test_removing_a_missing_index_is_rejected(self):
         with pytest.raises(ValueError, match="has no index on"):
             apply_evolution(
