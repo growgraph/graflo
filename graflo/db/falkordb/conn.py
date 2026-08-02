@@ -531,6 +531,7 @@ class FalkordbConnection(Connection):
     ) -> None:
         """Define property indexes for the FalkorDB graph."""
         assert_schema_field_types_supported(self.flavor, schema)
+        self.report_edge_direction_support(schema)
         graph_name = self._resolve_graph_name(schema)
         if self._node_count() > 0 and not recreate:
             raise SchemaExistsError(

@@ -207,6 +207,10 @@ def merge_edge_pair(a: Edge, b: Edge) -> Edge:
         properties=list(props.values()),
         type=a.type,
         by=a.by,
+        # Undirected wins: it is the weaker assertion, and treating a merged
+        # undirected edge as directed would let AddInverseEdgesOp synthesize an
+        # inverse that duplicates it.
+        directed=a.directed and b.directed,
     )
 
 

@@ -6,7 +6,7 @@ import pathlib
 
 import pytest
 import yaml
-from rdflib import Graph, URIRef
+from rdflib import Graph, Literal, URIRef
 from rdflib.namespace import OWL, RDF
 
 from graflo.architecture import GraphManifest
@@ -254,6 +254,59 @@ def test_round_trip_preserves_identity_field_order() -> None:
 
     restored_vertex = restored.graph_schema.core_schema.vertex_config.vertices[0]
     assert restored_vertex.identity == ["sid", "isin", "name"]
+
+
+def test_round_trip_preserves_undirected_edge() -> None:
+    """`directed` is a first-class predicate, not an opaque payload key."""
+    original = _load_example_manifest("2-ingest-self-references")
+    assert original.graph_schema is not None
+    edges = original.graph_schema.core_schema.edge_config.edges
+    edges[0].directed = False
+
+    graph = ManifestRdfSerializer(include_ontology=False).to_graph(original, BASE_URI)
+    edge_nodes = list(graph.subjects(RDF.type, ns.Edge))
+    assert edge_nodes
+    directed_literals = [
+        obj
+        for node in edge_nodes
+        for obj in graph.objects(node, ns.edgeDirected)
+        if isinstance(obj, Literal)
+    ]
+    assert [bool(literal.toPython()) for literal in directed_literals] == [False]
+
+    restored = _round_trip(original)
+    assert restored.graph_schema is not None
+    restored_edges = restored.graph_schema.core_schema.edge_config.edges
+    assert restored_edges[0].directed is False
+
+
+def test_directed_edges_emit_no_direction_triple() -> None:
+    """True is the default; keep the common case out of the graph."""
+    manifest = _load_example_manifest("2-ingest-self-references")
+    graph = ManifestRdfSerializer(include_ontology=False).to_graph(manifest, BASE_URI)
+    assert not list(graph.subject_objects(ns.edgeDirected))
+
+    restored = _round_trip(manifest)
+    assert restored.graph_schema is not None
+    for edge in restored.graph_schema.core_schema.edge_config.edges:
+        assert edge.directed is True
+
+
+def test_legacy_edge_payload_still_carries_direction() -> None:
+    """Graphs written before ``gf:edgeDirected`` existed must keep loading."""
+    manifest = _load_example_manifest("2-ingest-self-references")
+    graph = ManifestRdfSerializer(include_ontology=False).to_graph(manifest, BASE_URI)
+    edge_node = next(iter(graph.subjects(RDF.type, ns.Edge)))
+    graph.add((edge_node, ns.edgePayload, Literal('{"directed": false}')))
+
+    restored = ManifestRdfDeserializer().from_turtle(
+        graph.serialize(format="turtle"), BASE_URI.rstrip("/")
+    )
+    assert restored.graph_schema is not None
+    undirected = [
+        e for e in restored.graph_schema.core_schema.edge_config.edges if not e.directed
+    ]
+    assert len(undirected) == 1
 
 
 def test_profile_and_transform_actor_semantic_links_are_emitted() -> None:

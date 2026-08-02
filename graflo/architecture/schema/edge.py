@@ -10,6 +10,29 @@ Key Components:
     - EdgeConfig: Manages collections of edges and their configurations
     - WeightConfig: DTO for DB projection helpers (e.g. effective weights); schema uses ``properties``
 
+Direction semantics:
+    ``Edge.directed`` is a statement about the *model*, not about storage: when
+    false, endpoint order carries no meaning and the two orientations denote one
+    relationship. Backends express that to very different degrees, and only
+    TigerGraph has an undirected edge type. What the flag costs elsewhere is a
+    read-path question — reaching an edge from its target endpoint:
+
+    =============  ==============  =============================================
+    Backend        Native          Reverse traversal
+    =============  ==============  =============================================
+    TigerGraph     yes             schema-time only (``WITH REVERSE_EDGE``)
+    Arango         no              free — both endpoints indexed
+    Neo4j          no              cheap — relationships are doubly linked
+    Memgraph       no              cheap
+    FalkorDB       no              cheap — matrices stored with transposes
+    Nebula         no              cheap, but needs an explicit reverse clause
+    PostgreSQL     no              needs an index on the target column
+    graflo backend no              direction is the storage partition key
+    =============  ==============  =============================================
+
+    The authoritative table lives in :mod:`graflo.db.edge_direction_support`,
+    which also reports per-schema diagnostics at schema-apply time.
+
 Example:
     >>> edge = Edge(source="user", target="post")
     >>> config = EdgeConfig(edges=[edge])
@@ -68,6 +91,14 @@ class Edge(ConfigBaseModel):
     Ingestion-only behavior (location filters, relation column, relation from
     key, etc.) belongs on :class:`~graflo.architecture.graph_types.edge_derivation.EdgeDerivation`
     in pipeline edge steps, not on this model.
+
+    .. note::
+       ``identities`` keys are endpoint-order-sensitive even when ``directed``
+       is false: the ``source`` and ``target`` tokens resolve positionally, so
+       ``(a, b)`` and ``(b, a)`` count as two identities on an edge whose whole
+       premise is that they are one. Canonical endpoint ordering for undirected
+       identity keys is not implemented — declare such edges from a consistent
+       side until it is.
     """
 
     source: VertexName = PydanticField(
@@ -89,8 +120,15 @@ class Edge(ConfigBaseModel):
     directed: bool = PydanticField(
         default=True,
         description=(
-            "When True (default), source→target direction matters. When False, the edge "
-            "is logically undirected; inverse-edge ops must not duplicate it."
+            "When True (default), source→target order is meaningful. When False, the "
+            "edge is logically undirected: the two orientations denote one "
+            "relationship, so inverse-edge ops must not duplicate it and traversal "
+            "may follow it either way. This asserts something about the model, not "
+            "about storage — only TigerGraph has an undirected edge type, and every "
+            "other backend honours it to the extent it can (see "
+            "``graflo.db.edge_direction_support``). Mutually exclusive with "
+            "``EdgePhysicalSpec.reverse_edge``, which pairs a *directed* type with a "
+            "generated reverse one."
         ),
     )
 

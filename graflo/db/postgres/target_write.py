@@ -108,6 +108,7 @@ class PostgresTargetWriteMixin:
     # Supplied by Connection, which follows this mixin in the MRO: annotate
     # rather than stub, so the real implementation is not shadowed.
     define_indexes: Any
+    report_edge_direction_support: Any
 
     def read(self, query: str, params: tuple | None = None) -> list[dict[str, Any]]:
         raise NotImplementedError
@@ -210,6 +211,7 @@ class PostgresTargetWriteMixin:
         create_namespace: bool = True,
     ) -> None:
         """Create vertex/edge tables for the schema."""
+        self.report_edge_direction_support(schema)
         pg_schema = _pg_schema_name(self.config)
         existing = {row["table_name"] for row in self.get_tables(schema_name=pg_schema)}
         expected_vertices = {

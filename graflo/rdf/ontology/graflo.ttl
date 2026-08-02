@@ -603,6 +603,11 @@ gf:edgeBy a owl:DatatypeProperty ;
     rdfs:range xsd:string ;
     rdfs:comment "For indirect edges, the vertex type that defines the edge." .
 
+gf:edgeDirected a owl:DatatypeProperty ;
+    rdfs:domain gf:Edge ;
+    rdfs:range xsd:boolean ;
+    rdfs:comment "Whether source-to-target order is meaningful. False marks a logically undirected edge whose two orientations denote one relationship." .
+
 gf:profileVertexName a owl:DatatypeProperty ;
     rdfs:domain gf:Index ;
     rdfs:range xsd:string ;

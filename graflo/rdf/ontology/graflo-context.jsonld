@@ -197,6 +197,10 @@
         "edgeIdentities": "gf:edgeIdentities",
         "edgeType": "gf:edgeType",
         "edgeBy": "gf:edgeBy",
+        "edgeDirected": {
+            "@id": "gf:edgeDirected",
+            "@type": "xsd:boolean"
+        },
         "profileVertexName": "gf:profileVertexName",
         "indexName": "gf:indexName",
         "indexField": "gf:indexField",

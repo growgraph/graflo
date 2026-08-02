@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.10.3]
+
+### Added
+
+- **Edge direction capability matrix** — `graflo/db/edge_direction_support.py`: which backends have a native undirected edge type (TigerGraph, and only TigerGraph) and what it costs on each target to reach an edge from its *target* endpoint, as a `ReverseTraversalCost` tier — `FREE` (Arango: the edge index covers `_from` and `_to`), `CHEAP` (Neo4j, Memgraph, FalkorDB: relationships are stored bidirectionally), `CLAUSE_REQUIRED` (Nebula: `GO … REVERSELY` / `BIDIRECT`, never emitted today), `INDEX_REQUIRED` (PostgreSQL: the composite unique index is leading-column `source_id`), `SCHEMA_TIME_ONLY` (TigerGraph: `WITH REVERSE_EDGE`, fixed when the type is created), `MATERIALIZATION_REQUIRED` (GraFlo file backend: direction *is* the storage partition key). A test asserts every write target has a tier, so the table cannot drift as backends are added.
+  - **Advisory, not a gate.** Unlike `field_type_support`, nothing here raises: `directed: false` is already expressible in shipped manifests and silently ignored by seven of the eight targets, so refusing it would reject working schemas. `Connection.report_edge_direction_support` logs one diagnostic per undirected edge from each backend's `apply_target_schema` — an author learns what the target does with the assertion instead of watching it vanish. TigerGraph is excluded: it represents the edge natively and has nothing to report.
+- **`gf:edgeDirected`** — direction is now a first-class RDF predicate (`xsd:boolean`, domain `gf:Edge`) alongside `gf:edgeType` / `gf:edgeBy`, rather than a key inside the opaque `gf:edgePayload` blob. Emitted only when false, since `true` is the default and the round-trip is asserted on the model. `gf:edgePayload` is still *read* on load, so graphs serialized before the predicate existed keep deserializing. The round-trip had no test at all before this.
+
+### Fixed
+
+- **`merge_edge_pair` dropped `directed`** — it rebuilt the `Edge` field by field and omitted the flag, so merging two undirected edges onto one `EdgeId` produced a *directed* edge, which then gained a synthesized inverse from `AddInverseEdgesOp` — duplicating the relationship the flag exists to keep single. Reached through `MergeEdgesOp` and through `redirect_and_merge_edges` during `merge_vertices` (only on collision: the redirect itself uses `model_copy` and was always correct). Merged edges now take `a.directed and b.directed` — undirected wins, being the weaker assertion and the one whose loss corrupts a graph.
+
+### Documentation
+
+- `Edge.directed` states its contract: an assertion about the *model* (endpoint order carries no meaning), honoured by each backend to the extent it can, mutually exclusive with `EdgePhysicalSpec.reverse_edge`. The module docstring carries the per-backend table. Also records a known gap — `identities` keys resolve `source` / `target` positionally even on an undirected edge, so `(a, b)` and `(b, a)` still count as two keys; canonical ordering is roadmap **(15)**.
+
 ## [1.10.2]
 
 ### Added

@@ -332,6 +332,7 @@ class ArangoConnection(Connection):
         create_namespace: bool = True,
     ) -> None:
         """Define collections, graphs, and indexes in the connected database."""
+        self.report_edge_direction_support(schema)
         db_name = self._resolve_db_name(schema)
         try:
             if self._schema_has_artifacts() and not recreate:

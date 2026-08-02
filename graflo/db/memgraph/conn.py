@@ -610,6 +610,7 @@ class MemgraphConnection(Connection):
     ) -> None:
         """Validate graph state; Memgraph schema is implicit (labels on write)."""
         assert_schema_field_types_supported(self.flavor, schema)
+        self.report_edge_direction_support(schema)
         if self._node_count() > 0 and not recreate:
             raise SchemaExistsError(
                 "Schema/data already exists in Memgraph. "

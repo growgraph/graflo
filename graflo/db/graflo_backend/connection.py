@@ -85,6 +85,7 @@ class GraFloBackendConnection(Connection):
         recreate: bool,
         create_namespace: bool = True,
     ) -> None:
+        self.report_edge_direction_support(schema)
         layout = GraFloLayout(self.config.output_dir)
         if layout.schema_path.exists() and not recreate:
             raise SchemaExistsError(

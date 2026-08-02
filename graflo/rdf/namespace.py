@@ -146,6 +146,7 @@ identityFromAllProperties = GF.identityFromAllProperties
 edgeIdentities = GF.edgeIdentities
 edgeType = GF.edgeType
 edgeBy = GF.edgeBy
+edgeDirected = GF.edgeDirected
 vertexIndexes = GF.vertexIndexes
 edgeSpecs = GF.edgeSpecs
 profileVertexName = GF.profileVertexName

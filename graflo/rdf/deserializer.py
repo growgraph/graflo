@@ -262,9 +262,14 @@ class ManifestRdfDeserializer:
         if description is not None:
             edge["description"] = description
 
+        # `gf:edgePayload` predates the first-class predicates below and is still
+        # read so graphs serialized before `gf:edgeDirected` existed keep loading.
         payload = parse_json_literal(self._literal(graph, edge_uri, ns.edgePayload))
         if isinstance(payload, dict):
             edge.update(payload)
+        directed = self._literal(graph, edge_uri, ns.edgeDirected)
+        if directed is not None:
+            edge["directed"] = directed.lower() == "true"
         identities = parse_json_literal(
             self._literal(graph, edge_uri, ns.edgeIdentities)
         )

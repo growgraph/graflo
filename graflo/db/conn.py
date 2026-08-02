@@ -277,6 +277,24 @@ class Connection(abc.ABC):
                 this during recreate to decide if the graph/db shell may be dropped.
         """
 
+    def report_edge_direction_support(self, schema: Schema) -> None:
+        """Log how this backend will treat logically undirected edges.
+
+        Advisory only — ``Edge.directed`` is a statement about the model, and
+        every backend except TigerGraph stores it as a directed edge regardless.
+        Backends call this from :meth:`apply_target_schema` so an author who
+        writes ``directed: false`` learns what the target actually does with it
+        instead of having the assertion vanish silently. See
+        :mod:`graflo.db.edge_direction_support`.
+        """
+        from graflo.db.edge_direction_support import check_schema_edge_directions
+
+        for diagnostic in check_schema_edge_directions(self.flavor, schema):
+            level = (
+                logging.WARNING if diagnostic.severity == "warning" else logging.INFO
+            )
+            logger.log(level, "%s %s", diagnostic.message, diagnostic.remedy)
+
     def init_db(
         self,
         schema: Schema,

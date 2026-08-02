@@ -298,17 +298,16 @@ class ManifestRdfSerializer:
         if target_uri is not None:
             graph.add((edge_uri, ns.edgeTarget, target_uri))
 
-        payload: dict[str, Any] = {}
+        # Emitted only when false: `directed` defaults to true, and the round-trip
+        # is asserted on the model, so the common case stays out of the graph.
         if not edge.directed:
-            payload["directed"] = edge.directed
+            add_literal(graph, edge_uri, ns.edgeDirected, edge.directed)
         if edge.identities:
             graph.add((edge_uri, ns.edgeIdentities, json_literal(edge.identities)))
         if edge.type is not None:
             add_literal(graph, edge_uri, ns.edgeType, str(edge.type))
         if edge.by is not None:
             add_literal(graph, edge_uri, ns.edgeBy, edge.by)
-        if payload:
-            graph.add((edge_uri, ns.edgePayload, json_literal(payload)))
 
         for index, field in enumerate(edge.properties):
             self._emit_field(graph, edge_uri, field, index)

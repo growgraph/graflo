@@ -457,6 +457,7 @@ class Neo4jConnection(Connection):
     ) -> None:
         """Define indexes for the schema (labels/relationships are implicit)."""
         assert_schema_field_types_supported(self.flavor, schema)
+        self.report_edge_direction_support(schema)
         db_name = self._resolve_db_name(schema)
         if self._node_count() > 0 and not recreate:
             raise SchemaExistsError(

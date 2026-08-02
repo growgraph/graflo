@@ -459,6 +459,7 @@ class NebulaConnection(Connection):
         create_namespace: bool = True,
     ) -> None:
         """Define tags, edge types, and indexes in the current space."""
+        self.report_edge_direction_support(schema)
         space_name = self._resolve_space_name(schema)
         if recreate:
             if create_namespace:
