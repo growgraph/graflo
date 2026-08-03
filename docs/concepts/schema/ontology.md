@@ -28,25 +28,48 @@ flowchart TB
 | Role | IRI |
 |------|-----|
 | Ontology document | `https://ontology.growgraph.dev/graflo` |
-| Version IRI | `https://ontology.growgraph.dev/graflo/1.0.0` |
-| Version info | `1.0.0` |
+| Version IRI | `https://ontology.growgraph.dev/graflo/1.3.0` |
+| Version info | `1.3.0` |
 | Vocabulary prefix `gf:` | `https://ontology.growgraph.dev/graflo/` |
 
 The Turtle source lives in the package at `graflo/rdf/ontology/graflo.ttl`. Constants are also exposed in Python as `graflo.rdf.namespace` (`GF_ONTOLOGY_IRI`, `GF_VERSION`, `GF_VERSION_IRI`, `GF_BASE`).
 
 ## Interactive visualization
 
-The explorer below is a **class graph** from `graflo.ttl`: `subClassOf` drives a stable force layout (vertical hierarchy, narrow levels); classes without subclass links sit in the **top-left**. **All edges** are drawn — thick arrows = `subClassOf`, dashed = properties. Drag, scroll, click to focus. Regenerate with `uv run python docs/_build/scripts/build_ontology_viz.py` after ontology edits.
+The explorer below is a **class graph** from `graflo.ttl`. Classes are grouped into the blocks the manifest composes — the bands are derived from what `gf:GraphManifest` points at, not hand-assigned. Within a band, columns run **left to right from general to specific**: a class sits one column right of whatever contains it (`gf:Schema` → `gf:CoreSchema` → `gf:VertexConfig` → `gf:Vertex` → `gf:Field`) or generalises it (`gf:Actor` → `gf:VertexProducingActor` → `gf:VertexActor`), and specialization always wins, so a subclass is never level with its superclass. Classes at the same distance stay in the same column — `gf:Vertex` and `gf:Edge` are peers. The layout is deterministic: the same ontology always draws the same picture.
+
+Only the taxonomy is drawn by default; **select a class** to reveal its properties, or switch the filter to *Display all*. `gf:GrafloArtifact` is the superclass of nearly every class, so its 28 links are hidden by default — tick **Show GrafloArtifact** to bring them back. Drag, scroll to zoom, click to focus. Regenerate with `uv run python docs/_build/scripts/build_ontology_viz.py` after ontology edits.
 
 If the embedded viewer is blank in an IDE browser preview, use **Open full screen** in a normal browser tab.
 
 <iframe
+  id="graflo-ontology-viz"
   src="../../../assets/graflo-ontology-viz/embed.html"
   title="GraFlo ontology interactive visualization"
   width="100%"
   height="720"
   style="border: 1px solid var(--md-default-fg-color--lightest); border-radius: 4px;"
 ></iframe>
+
+<script>
+// The iframe cannot read the parent's palette, so hand it over and keep it in sync.
+(function () {
+  var frame = document.getElementById("graflo-ontology-viz");
+  if (!frame) { return; }
+  function push() {
+    var scheme = document.body.getAttribute("data-md-color-scheme") || "default";
+    if (frame.contentWindow) {
+      frame.contentWindow.postMessage({ grafloScheme: scheme }, "*");
+    }
+  }
+  frame.addEventListener("load", push);
+  new MutationObserver(push).observe(document.body, {
+    attributes: true,
+    attributeFilter: ["data-md-color-scheme"],
+  });
+  push();
+})();
+</script>
 
 <p><a href="../../../assets/graflo-ontology-viz/index.html" target="_blank" rel="noopener" class="md-button">Open full screen</a></p>
 
@@ -66,7 +89,7 @@ If the embedded viewer is blank in an IDE browser preview, use **Open full scree
 
 **Bindings block**
 
-- `gf:Bindings`, `gf:FileConnector`, `gf:TableConnector`, `gf:SparqlConnector`
+- `gf:Bindings`, and `gf:BoundConnector` with one subclass per connector model: `gf:FileConnector`, `gf:TableConnector`, `gf:SparqlConnector`, `gf:APIConnector`, `gf:KafkaConnector`
 - `gf:ResourceConnectorBinding`, `gf:ConnectorConnectionBinding`, `gf:StagingProxyBinding`
 
 **Enumerations** (named individuals): `gf:DBType` (ArangoDB, Neo4j, …), transform target/strategy, key-selection mode, edge duplicate policy, bound source kind.

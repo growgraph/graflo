@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import pathlib
 
 import pytest
 import yaml
 from rdflib import Graph, Literal, URIRef
-from rdflib.namespace import OWL, RDF
+from rdflib.namespace import OWL, RDF, RDFS
 
 from graflo.architecture import GraphManifest
+from graflo.architecture.contract.bindings.connectors import (
+    BoundSourceKind,
+    ResourceConnector,
+)
 from graflo.architecture.graph_types import Index
 from graflo.architecture.schema.database_features import EdgePhysicalSpec
 from graflo.architecture.schema.identity_funnel import IdentityBranch, IdentityFunnel
@@ -359,3 +364,131 @@ def test_profile_and_transform_actor_semantic_links_are_emitted() -> None:
     assert any(
         any(graph.objects(node, ns.executesTransform)) for node in transform_actor_nodes
     )
+
+
+# ------------------------------------------------------- connector vocabulary drift
+#
+# `gf:APIConnector` and `gf:KafkaConnector` were absent from the ontology and from
+# the `ns.CONNECTOR_*` registries long after the Python models existed, so
+# `to_graph` raised ``KeyError: 'APIConnector'`` on any manifest using one. These
+# guards enumerate the Python side and demand the RDF side keep up, so the next
+# connector fails here instead of at a user's serialization call.
+
+
+def _concrete_connectors() -> list[type]:
+    seen: list[type] = []
+
+    def walk(cls: type) -> None:
+        for sub in cls.__subclasses__():
+            if not inspect.isabstract(sub):
+                seen.append(sub)
+            walk(sub)
+
+    walk(ResourceConnector)
+    return sorted(seen, key=lambda cls: cls.__name__)
+
+
+def test_every_connector_model_is_registered_and_declared() -> None:
+    ontology = load_ontology_graph()
+    connectors = _concrete_connectors()
+    assert {cls.__name__ for cls in connectors} >= {
+        "FileConnector",
+        "TableConnector",
+        "SparqlConnector",
+        "APIConnector",
+        "KafkaConnector",
+    }
+
+    for cls in connectors:
+        name = cls.__name__
+        assert name in ns.CONNECTOR_CLASSES, name
+        assert name in ns.CONNECTOR_MODELS, name
+        assert ns.CONNECTOR_MODELS[name] is cls, name
+        rdf_type = URIRef(str(ns.CONNECTOR_CLASSES[name]))
+        assert ns.CONNECTOR_CLASS_BY_RDF_TYPE.get(rdf_type) == name, name
+        assert (rdf_type, RDF.type, OWL.Class) in ontology, name
+        assert (rdf_type, RDFS.subClassOf, ns.BoundConnector) in ontology, name
+
+
+def test_every_bound_source_kind_has_an_individual() -> None:
+    ontology = load_ontology_graph()
+    for member in BoundSourceKind:
+        individual = ns.BOUND_SOURCE_KIND_INDIVIDUALS.get(member.value)
+        assert individual is not None, member.value
+        uri = URIRef(str(individual))
+        assert (uri, RDF.type, ns.GF.BoundSourceKind) in ontology, member.value
+        assert (uri, ns.enumValue, Literal(member.value)) in ontology, member.value
+
+
+def _manifest_with_one_connector_of_each_kind() -> GraphManifest:
+    path = EXAMPLES_DIR / "1-ingest-csv" / "manifest.yaml"
+    with path.open(encoding="utf-8") as handle:
+        data = yaml.safe_load(handle)
+    # The example wires two file connectors to named resources; replace the whole
+    # bindings block so the wiring does not have to be kept in sync here.
+    data["bindings"] = {
+        "connectors": [
+            {"name": "file1", "regex": r".*\.csv", "resource_name": "r0"},
+            {"name": "table1", "table_name": "people", "resource_name": "r1"},
+            {
+                "name": "sparql1",
+                "rdf_class": "http://example.org/Person",
+                "resource_name": "r2",
+            },
+            {"name": "api1", "path": "/api/users", "resource_name": "r3"},
+            {
+                "name": "kafka1",
+                "topics": ["events"],
+                "group_id": "g1",
+                "resource_name": "r4",
+            },
+        ]
+    }
+    return GraphManifest.from_dict(data)
+
+
+def test_round_trip_preserves_every_connector_kind() -> None:
+    original = _manifest_with_one_connector_of_each_kind()
+    assert [type(item).__name__ for item in original.bindings.connectors] == [
+        "FileConnector",
+        "TableConnector",
+        "SparqlConnector",
+        "APIConnector",
+        "KafkaConnector",
+    ]
+
+    restored = _round_trip(original)
+    by_name = {item.name: item for item in restored.bindings.connectors}
+    assert set(by_name) == {"file1", "table1", "sparql1", "api1", "kafka1"}
+    assert [type(item).__name__ for item in restored.bindings.connectors] == [
+        type(item).__name__ for item in original.bindings.connectors
+    ]
+
+    assert by_name["file1"].regex == r".*\.csv"
+    assert by_name["table1"].table_name == "people"
+    assert by_name["sparql1"].rdf_class == "http://example.org/Person"
+    assert by_name["api1"].path == "/api/users"
+    assert by_name["kafka1"].topics == ["events"]
+    assert by_name["kafka1"].group_id == "g1"
+
+
+def test_each_connector_carries_its_bound_source_kind() -> None:
+    manifest = _manifest_with_one_connector_of_each_kind()
+    graph = ManifestRdfSerializer(include_ontology=False).to_graph(manifest, BASE_URI)
+
+    emitted = {str(obj) for _, obj in graph.subject_objects(ns.boundSourceKind)}
+    expected = {
+        str(ns.BOUND_SOURCE_KIND_INDIVIDUALS[item.bound_source_kind().value])
+        for item in manifest.bindings.connectors
+    }
+    assert emitted == expected
+    assert len(expected) == len(manifest.bindings.connectors)
+
+
+def test_context_maps_every_connector_class() -> None:
+    with (ontology_path().parent / "graflo-context.jsonld").open(
+        encoding="utf-8"
+    ) as handle:
+        context = json.load(handle)["@context"]
+    for cls in _concrete_connectors():
+        assert context.get(cls.__name__) == f"gf:{cls.__name__}", cls.__name__

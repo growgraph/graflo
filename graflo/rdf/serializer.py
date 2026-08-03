@@ -7,11 +7,7 @@ from typing import Any, cast
 from rdflib import RDF, BNode, Graph, URIRef
 from rdflib.namespace import XSD
 
-from graflo.architecture.contract.bindings.connectors import (
-    FileConnector,
-    SparqlConnector,
-    TableConnector,
-)
+from graflo.architecture.contract.bindings.core import AnyConnector
 from graflo.architecture.contract.ingestion.transform import (
     DressConfig,
     KeySelectionConfig,
@@ -771,7 +767,7 @@ class ManifestRdfSerializer:
         self,
         graph: Graph,
         connector_uri: URIRef,
-        connector: FileConnector | TableConnector | SparqlConnector,
+        connector: AnyConnector,
     ) -> None:
         connector_class = ns.CONNECTOR_CLASSES[type(connector).__name__]
         graph.add((connector_uri, RDF.type, URIRef(str(connector_class))))

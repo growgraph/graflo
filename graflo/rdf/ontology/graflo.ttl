@@ -197,6 +197,16 @@ gf:SparqlConnector a owl:Class ;
     rdfs:label "SPARQL connector"@en ;
     skos:prefLabel "SparqlConnector"@en .
 
+gf:APIConnector a owl:Class ;
+    rdfs:subClassOf gf:BoundConnector ;
+    rdfs:label "API connector"@en ;
+    skos:prefLabel "APIConnector"@en .
+
+gf:KafkaConnector a owl:Class ;
+    rdfs:subClassOf gf:BoundConnector ;
+    rdfs:label "Kafka connector"@en ;
+    skos:prefLabel "KafkaConnector"@en .
+
 gf:ResourceConnectorBinding a owl:Class ;
     rdfs:subClassOf gf:GrafloArtifact ;
     rdfs:label "Resource connector binding"@en ;
@@ -721,6 +731,8 @@ gf:SparqlEndpoint a gf:DBType ; gf:enumValue "sparql" ; rdfs:label "SPARQL endpo
 gf:FileSource a gf:BoundSourceKind ; gf:enumValue "file" ; rdfs:label "File source" ; skos:prefLabel "FileSource" .
 gf:SqlTableSource a gf:BoundSourceKind ; gf:enumValue "sql_table" ; rdfs:label "SQL table source" ; skos:prefLabel "SqlTableSource" .
 gf:SparqlSource a gf:BoundSourceKind ; gf:enumValue "sparql" ; rdfs:label "SPARQL source" ; skos:prefLabel "SparqlSource" .
+gf:ApiSource a gf:BoundSourceKind ; gf:enumValue "api" ; rdfs:label "API source" ; skos:prefLabel "ApiSource" .
+gf:KafkaSource a gf:BoundSourceKind ; gf:enumValue "kafka" ; rdfs:label "Kafka source" ; skos:prefLabel "KafkaSource" .
 
 #################################################################
 # TransformTarget individuals
