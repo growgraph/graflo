@@ -49,6 +49,23 @@ class EdgeType(BaseEnum):
     DIRECT = "direct"
 
 
+class EdgeDirection(BaseEnum):
+    """Which orientations a read follows, relative to the anchor vertex.
+
+    OUT: anchor is the edge source (the historical, and still default, behaviour)
+    IN: anchor is the edge target
+    ANY: either orientation — the correct reading of a logically undirected edge
+
+    Not every backend can answer every value. Reverse reachability is free or
+    cheap on most targets but is fixed at DDL time on TigerGraph; see
+    :mod:`graflo.db.edge_direction_support`.
+    """
+
+    OUT = "out"
+    IN = "in"
+    ANY = "any"
+
+
 class EdgeCastingType(BaseEnum):
     """Types of edge casting supported.
 

@@ -24,9 +24,20 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Literal
 
-from graflo.architecture.graph_types import EdgeId
+from graflo.architecture.graph_types import EdgeDirection, EdgeId
 from graflo.architecture.schema.document import Schema
+from graflo.architecture.schema.edge import Edge
 from graflo.onto import DBType
+
+
+class UnsupportedEdgeDirectionError(ValueError):
+    """Raised when a backend cannot answer a read in the requested direction.
+
+    Only TigerGraph can reach this: reverse reachability there is fixed when the
+    edge type is created (``WITH REVERSE_EDGE``), so no query rewrite recovers it.
+    Failing loudly is deliberate — silently returning outgoing edges for an
+    ``ANY`` request would under-report the neighbourhood with no signal.
+    """
 
 
 class ReverseTraversalCost(StrEnum):
@@ -163,6 +174,61 @@ def reverse_traversal_cost(db_type: DBType) -> ReverseTraversalCost:
         ) from None
 
 
+def default_direction_for_edge(edge: Edge) -> EdgeDirection:
+    """The direction a read should follow for ``edge`` when none is requested.
+
+    This is where ``Edge.directed`` stops being an annotation and starts
+    steering queries: an undirected edge reads as :attr:`EdgeDirection.ANY`,
+    because both orientations denote the same relationship and anchoring on
+    ``source`` alone would drop half the neighbourhood.
+    """
+    return EdgeDirection.OUT if edge.directed else EdgeDirection.ANY
+
+
+def assert_direction_supported(
+    db_type: DBType,
+    direction: EdgeDirection,
+    *,
+    has_reverse_edge: bool = False,
+    edge_is_undirected: bool = False,
+) -> None:
+    """Raise if ``db_type`` cannot answer a read in ``direction``.
+
+    Args:
+        db_type: Backend being queried.
+        direction: Requested orientation.
+        has_reverse_edge: Whether a paired reverse edge type is declared for the
+            edge (``EdgePhysicalSpec.reverse_edge``). Only consulted on backends
+            whose reverse reachability is decided at schema time.
+        edge_is_undirected: Whether the edge type itself was created undirected.
+            On a backend with native undirected edges that already answers both
+            orientations, so no reverse type is needed.
+
+    Raises:
+        UnsupportedEdgeDirectionError: when the backend physically cannot follow
+            the edge backwards.
+    """
+    if direction is EdgeDirection.OUT:
+        return
+    coerced = _coerce(db_type)
+    if (
+        _REVERSE_TRAVERSAL_COST.get(coerced)
+        is not ReverseTraversalCost.SCHEMA_TIME_ONLY
+    ):
+        return
+    if has_reverse_edge:
+        return
+    if edge_is_undirected and coerced in _UNDIRECTED_NATIVE_DBS:
+        return
+    raise UnsupportedEdgeDirectionError(
+        f"Backend '{_label(db_type)}' cannot read edges with direction "
+        f"'{direction.value}': reverse reachability is fixed when the edge type "
+        "is created and no query rewrite recovers it. Declare the edge type as "
+        "undirected (`directed: false`), or pair it with a reverse edge type via "
+        "`db_profile.edge_specs[*].reverse_edge`."
+    )
+
+
 def iter_undirected_edges(schema: Schema) -> Iterable[EdgeId]:
     """Yield the id of every edge in ``schema`` declared logically undirected."""
     for edge in schema.core_schema.edge_config.values():
@@ -231,7 +297,10 @@ def _label(db_type: DBType) -> str:
 __all__ = [
     "EdgeDirectionDiagnostic",
     "ReverseTraversalCost",
+    "UnsupportedEdgeDirectionError",
+    "assert_direction_supported",
     "check_schema_edge_directions",
+    "default_direction_for_edge",
     "iter_undirected_edges",
     "reverse_traversal_cost",
     "supports_native_undirected",

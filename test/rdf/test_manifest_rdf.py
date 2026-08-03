@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import pathlib
 
 import pytest
@@ -278,6 +279,23 @@ def test_round_trip_preserves_undirected_edge() -> None:
     assert restored.graph_schema is not None
     restored_edges = restored.graph_schema.core_schema.edge_config.edges
     assert restored_edges[0].directed is False
+
+
+def test_undirected_edge_is_also_written_to_the_legacy_payload() -> None:
+    """A reader older than ontology 1.3.0 knows only ``gf:edgePayload``.
+
+    Without the duplicate it would see no direction at all and silently treat
+    the edge as directed — data loss the version bump cannot warn about.
+    """
+    original = _load_example_manifest("2-ingest-self-references")
+    assert original.graph_schema is not None
+    original.graph_schema.core_schema.edge_config.edges[0].directed = False
+
+    graph = ManifestRdfSerializer(include_ontology=False).to_graph(original, BASE_URI)
+    payloads = [
+        json.loads(str(obj)) for _, obj in graph.subject_objects(ns.edgePayload)
+    ]
+    assert {"directed": False} in payloads
 
 
 def test_directed_edges_emit_no_direction_triple() -> None:

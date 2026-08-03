@@ -8,6 +8,7 @@ from typing import Any, Protocol
 from psycopg2 import sql
 from psycopg2.extras import execute_values
 
+from graflo.architecture.graph_types import EdgeDirection
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import (
@@ -558,8 +559,11 @@ class PostgresTargetWriteMixin:
         limit: int | None = None,
         return_keys: list | None = None,
         unset_keys: list | None = None,
+        direction: EdgeDirection = EdgeDirection.OUT,
         **kwargs,
     ) -> list[dict[str, Any]]:
+        # Reverse lookup is now indexed (see define_edge_indexes), but the
+        # single-vertex edge read itself is still unimplemented here.
         raise NotImplementedError("fetch_edges is not implemented for PostgreSQL")
 
     def fetch_present_documents(
@@ -645,7 +649,37 @@ class PostgresTargetWriteMixin:
     def define_edge_indexes(
         self, edges: list[Edge], schema: Schema | None = None
     ) -> None:
-        pass
+        """Index ``target_id`` on every edge table, making reverse lookup viable.
+
+        The only pre-existing edge index is the composite uniqueness constraint,
+        whose leading column is ``source_id`` — it cannot serve a lookup keyed on
+        the target, so reaching an edge from its target end meant a sequential
+        scan. That is the whole cost of an undirected edge on PostgreSQL, and it
+        is one index per table.
+        """
+        pg_schema = _pg_schema_name(self.config)
+        for edge in edges:
+            table = edge_table_name(edge.source, edge.target, edge.relation)
+            index_name = f"ix_{table}_target_id"
+            q = sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {}.{} ({})").format(
+                sql.Identifier(index_name),
+                sql.Identifier(pg_schema),
+                sql.Identifier(table),
+                sql.Identifier("target_id"),
+            )
+            try:
+                with self.conn.cursor() as cursor:
+                    cursor.execute(q)
+                self.conn.commit()
+            except Exception as error:
+                self.conn.rollback()
+                logger.warning(
+                    "Failed to create reverse-lookup index %s on %s.%s: %s",
+                    index_name,
+                    pg_schema,
+                    table,
+                    error,
+                )
 
     def fetch_all_docs(
         self,

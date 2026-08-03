@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from graflo.architecture.graph_types import EdgeDirection
 from graflo.architecture.schema.vertex import Field
 from graflo.db.nebula.util import (
     escape_nebula_string,
@@ -207,6 +208,15 @@ def fetch_docs_ngql(
     return f"MATCH (v:`{tag_name}`){where} RETURN {ret}{lim}"
 
 
+# Nebula stores every edge under an out-key *and* an in-key, so the reverse and
+# bidirectional forms cost the same as the forward one — they just have to be asked for.
+_GO_DIRECTION_CLAUSE: dict[EdgeDirection, str] = {
+    EdgeDirection.OUT: "",
+    EdgeDirection.IN: " REVERSELY",
+    EdgeDirection.ANY: " BIDIRECT",
+}
+
+
 def fetch_edges_ngql(
     from_tag: str,
     from_vid: str,
@@ -215,8 +225,14 @@ def fetch_edges_ngql(
     to_vid: str | None = None,
     filter_clause: str = "",
     limit: int | None = None,
+    direction: EdgeDirection = EdgeDirection.OUT,
 ) -> str:
-    """Build a GO / MATCH query for fetching edges."""
+    """Build a GO query for fetching edges incident to one vertex.
+
+    ``$$`` is the vertex at the far end of whichever orientation ``GO`` walked,
+    so the ``to_vid`` predicate keeps meaning "the other endpoint" under
+    ``REVERSELY`` and ``BIDIRECT`` without special-casing.
+    """
     escaped_from = escape_nebula_string(from_vid)
     over = f"`{edge_type}`" if edge_type else "*"
     where_parts: list[str] = []
@@ -228,7 +244,8 @@ def fetch_edges_ngql(
     where = " WHERE " + " AND ".join(where_parts) if where_parts else ""
     lim = f"| LIMIT {limit}" if limit else ""
     return (
-        f'GO FROM "{escaped_from}" OVER {over}{where} '
+        f'GO FROM "{escaped_from}" OVER {over}'
+        f"{_GO_DIRECTION_CLAUSE[direction]}{where} "
         f"YIELD properties(edge) AS props, src(edge) AS src, dst(edge) AS dst, "
         f"type(edge) AS edge_type {lim}"
     )

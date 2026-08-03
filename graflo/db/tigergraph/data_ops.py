@@ -10,8 +10,10 @@ from urllib.parse import quote
 import requests
 from requests import exceptions as requests_exceptions
 
+from graflo.architecture.graph_types import EdgeDirection
 from graflo.architecture.schema.vertex import FieldType
 from graflo.db.conn import consume_insert_edges_kwargs
+from graflo.db.edge_direction_support import assert_direction_supported
 from graflo.db.resolve import (
     DEFAULT_RESOLVE_CHUNK_SIZE,
     build_match_filter,
@@ -29,7 +31,7 @@ from graflo.db.tigergraph.document_utils import (
 )
 from graflo.db.tigergraph.gsql_parsers import parse_restpp_response
 from graflo.filter.onto import FilterExpression
-from graflo.onto import AggregationType, ExpressionFlavor
+from graflo.onto import AggregationType, DBType, ExpressionFlavor
 from graflo.util.transform import pick_unique_dict
 
 logger = logging.getLogger(__name__)
@@ -770,6 +772,9 @@ class TigerGraphDataOps:
         limit: int | None = None,
         return_keys: list[str] | None = None,
         unset_keys: list[str] | None = None,
+        direction: EdgeDirection = EdgeDirection.OUT,
+        reverse_edge_type: str | None = None,
+        edge_is_undirected: bool = False,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
         """
@@ -778,9 +783,17 @@ class TigerGraphDataOps:
         In TigerGraph, you must know at least one vertex ID before you can fetch edges.
         Uses REST API which handles special characters in vertex IDs.
 
+        **Direction is a schema-time property here, not a query option.** REST++
+        ``/edges/{type}/{id}`` returns outgoing edges of directed types plus every
+        orientation of undirected ones. Reaching a *directed* edge backwards is
+        only possible through the paired type created by
+        ``WITH REVERSE_EDGE``, so ``IN`` / ``ANY`` require either
+        ``edge_is_undirected`` or an explicit ``reverse_edge_type``; otherwise
+        this raises rather than silently returning a half-neighbourhood.
+
         Args:
-            from_type: Source vertex type (required)
-            from_id: Source vertex ID (required)
+            from_type: Anchor vertex type (required)
+            from_id: Anchor vertex ID (required)
             edge_type: Optional edge type to filter by
             to_type: Optional target vertex type to filter by (not used in REST API)
             to_id: Optional target vertex ID to filter by (not used in REST API)
@@ -788,10 +801,20 @@ class TigerGraphDataOps:
             limit: Maximum number of edges to return (not supported by REST API)
             return_keys: Keys to return (projection)
             unset_keys: Keys to exclude (projection)
+            direction: Orientations to follow from the anchor
+            reverse_edge_type: Paired reverse type name from
+                ``db_profile.edge_specs[*].reverse_edge``, required for IN / ANY
+                on a directed edge
+            edge_is_undirected: Whether ``edge_type`` was created as
+                ``UNDIRECTED EDGE``, in which case REST already answers both ways
             **kwargs: Additional parameters
 
         Returns:
             list: List of fetched edges
+
+        Raises:
+            UnsupportedEdgeDirectionError: for IN / ANY on a directed edge type
+                with no reverse type declared.
         """
         try:
             if not from_type or not from_id:
@@ -799,15 +822,32 @@ class TigerGraphDataOps:
                     "from_type and from_id are required for fetching edges in TigerGraph"
                 )
 
+            assert_direction_supported(
+                DBType.TIGERGRAPH,
+                direction,
+                has_reverse_edge=reverse_edge_type is not None,
+                edge_is_undirected=edge_is_undirected,
+            )
+
             # Use REST API to get edges
             # Returns: list of edge dictionaries
             logger.debug(
-                f"Fetching edges using REST API: from_type={from_type}, from_id={from_id}, edge_type={edge_type}"
+                f"Fetching edges using REST API: from_type={from_type}, "
+                f"from_id={from_id}, edge_type={edge_type}, direction={direction.value}"
             )
 
             # Handle None edge_type
             edge_type_str = edge_type if edge_type is not None else None
-            edges = self._conn._get_edges(from_type, from_id, edge_type_str)
+            # An undirected type already answers both orientations; otherwise the
+            # reverse orientation *is* a separate, outgoing query on the paired type.
+            if direction is EdgeDirection.OUT or edge_is_undirected:
+                edges = self._conn._get_edges(from_type, from_id, edge_type_str)
+            elif direction is EdgeDirection.IN:
+                edges = self._conn._get_edges(from_type, from_id, reverse_edge_type)
+            else:
+                forward = self._conn._get_edges(from_type, from_id, edge_type_str)
+                backward = self._conn._get_edges(from_type, from_id, reverse_edge_type)
+                edges = list(forward or []) + list(backward or [])
 
             # Parse REST API response format
             # _get_edges() returns list of edge dicts from REST++ API
