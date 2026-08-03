@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Any, ClassVar
 
-from graflo.architecture.graph_types import Index
+from graflo.architecture.graph_types import EdgeDirection, Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import FieldType, VertexConfig
@@ -459,6 +459,7 @@ class NebulaConnection(Connection):
         create_namespace: bool = True,
     ) -> None:
         """Define tags, edge types, and indexes in the current space."""
+        self.report_edge_direction_support(schema)
         space_name = self._resolve_space_name(schema)
         if recreate:
             if create_namespace:
@@ -683,8 +684,14 @@ class NebulaConnection(Connection):
         limit: int | None = None,
         return_keys: list[str] | None = None,
         unset_keys: list[str] | None = None,
+        direction: EdgeDirection = EdgeDirection.OUT,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
+        """Fetch edges incident to one vertex via ``GO``.
+
+        Nebula keeps an out-key and an in-key per edge, so ``IN`` / ``ANY`` are
+        as cheap as ``OUT`` once ``REVERSELY`` / ``BIDIRECT`` is asked for.
+        """
         fc = ""
         if filters is not None:
             if not isinstance(filters, FilterExpression):
@@ -701,6 +708,7 @@ class NebulaConnection(Connection):
             to_vid=to_id,
             filter_clause=fc,
             limit=limit,
+            direction=direction,
         )
         rs = self._execute(q)
         rows = rs.rows_as_dicts()

@@ -16,7 +16,7 @@ structures while allowing for database-specific optimizations and features.
 Submodules (for lighter imports):
 
 - ``identifiers`` — vertex/edge id aliases and edge-key serialization
-- ``enums`` — EdgeMapping, EncodingType, IndexType, EdgeType, EdgeCastingType
+- ``enums`` — EdgeMapping, EncodingType, IndexType, EdgeType, EdgeDirection, EdgeCastingType
 - ``index_config`` — ABCFields, Weight, Index
 - ``container`` — GraphContainer
 - ``location`` — LocationIndex, ProvenancePath
@@ -43,6 +43,7 @@ from graflo.architecture.graph_types.context import (
 # even if context (which pulls edge_derivation → schema → filter) is still loading.
 from graflo.architecture.graph_types.enums import (
     EdgeCastingType,
+    EdgeDirection,
     EdgeMapping,
     EdgeType,
     EncodingType,
@@ -71,6 +72,7 @@ __all__ = [
     "ActionContext",
     "AssemblyContext",
     "EdgeCastingType",
+    "EdgeDirection",
     "EdgeId",
     "EdgeIntent",
     "EdgeMapping",

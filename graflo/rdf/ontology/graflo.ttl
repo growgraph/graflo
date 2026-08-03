@@ -7,8 +7,8 @@
 @prefix prov: <http://www.w3.org/ns/prov#> .
 
 <https://ontology.growgraph.dev/graflo> a owl:Ontology ;
-    owl:versionIRI <https://ontology.growgraph.dev/graflo/1.2.0> ;
-    owl:versionInfo "1.2.0" ;
+    owl:versionIRI <https://ontology.growgraph.dev/graflo/1.3.0> ;
+    owl:versionInfo "1.3.0" ;
     rdfs:label "GraFlo Ontology"@en ;
     skos:prefLabel "GraFlo Ontology"@en ;
     rdfs:comment "OWL vocabulary describing GraFlo GraphManifest contracts: schema, ingestion, bindings, transforms, and pipeline actors."@en .
@@ -196,6 +196,16 @@ gf:SparqlConnector a owl:Class ;
     rdfs:subClassOf gf:BoundConnector ;
     rdfs:label "SPARQL connector"@en ;
     skos:prefLabel "SparqlConnector"@en .
+
+gf:APIConnector a owl:Class ;
+    rdfs:subClassOf gf:BoundConnector ;
+    rdfs:label "API connector"@en ;
+    skos:prefLabel "APIConnector"@en .
+
+gf:KafkaConnector a owl:Class ;
+    rdfs:subClassOf gf:BoundConnector ;
+    rdfs:label "Kafka connector"@en ;
+    skos:prefLabel "KafkaConnector"@en .
 
 gf:ResourceConnectorBinding a owl:Class ;
     rdfs:subClassOf gf:GrafloArtifact ;
@@ -603,6 +613,11 @@ gf:edgeBy a owl:DatatypeProperty ;
     rdfs:range xsd:string ;
     rdfs:comment "For indirect edges, the vertex type that defines the edge." .
 
+gf:edgeDirected a owl:DatatypeProperty ;
+    rdfs:domain gf:Edge ;
+    rdfs:range xsd:boolean ;
+    rdfs:comment "Whether source-to-target order is meaningful. False marks a logically undirected edge whose two orientations denote one relationship." .
+
 gf:profileVertexName a owl:DatatypeProperty ;
     rdfs:domain gf:Index ;
     rdfs:range xsd:string ;
@@ -716,6 +731,8 @@ gf:SparqlEndpoint a gf:DBType ; gf:enumValue "sparql" ; rdfs:label "SPARQL endpo
 gf:FileSource a gf:BoundSourceKind ; gf:enumValue "file" ; rdfs:label "File source" ; skos:prefLabel "FileSource" .
 gf:SqlTableSource a gf:BoundSourceKind ; gf:enumValue "sql_table" ; rdfs:label "SQL table source" ; skos:prefLabel "SqlTableSource" .
 gf:SparqlSource a gf:BoundSourceKind ; gf:enumValue "sparql" ; rdfs:label "SPARQL source" ; skos:prefLabel "SparqlSource" .
+gf:ApiSource a gf:BoundSourceKind ; gf:enumValue "api" ; rdfs:label "API source" ; skos:prefLabel "ApiSource" .
+gf:KafkaSource a gf:BoundSourceKind ; gf:enumValue "kafka" ; rdfs:label "Kafka source" ; skos:prefLabel "KafkaSource" .
 
 #################################################################
 # TransformTarget individuals

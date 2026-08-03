@@ -7,11 +7,7 @@ from typing import Any, cast
 from rdflib import RDF, BNode, Graph, URIRef
 from rdflib.namespace import XSD
 
-from graflo.architecture.contract.bindings.connectors import (
-    FileConnector,
-    SparqlConnector,
-    TableConnector,
-)
+from graflo.architecture.contract.bindings.core import AnyConnector
 from graflo.architecture.contract.ingestion.transform import (
     DressConfig,
     KeySelectionConfig,
@@ -298,17 +294,25 @@ class ManifestRdfSerializer:
         if target_uri is not None:
             graph.add((edge_uri, ns.edgeTarget, target_uri))
 
-        payload: dict[str, Any] = {}
+        # Emitted only when false: `directed` defaults to true, and the round-trip
+        # is asserted on the model, so the common case stays out of the graph.
+        #
+        # Written twice on purpose. `gf:edgeDirected` is the contract term, but a
+        # reader older than ontology 1.3.0 only knows `gf:edgePayload` and would
+        # silently drop the flag — turning an undirected edge directed. The
+        # duplicate is one triple on the rare branch; the alternative is data loss
+        # in a direction the version bump cannot warn about.
         if not edge.directed:
-            payload["directed"] = edge.directed
+            add_literal(graph, edge_uri, ns.edgeDirected, edge.directed)
+            graph.add(
+                (edge_uri, ns.edgePayload, json_literal({"directed": edge.directed}))
+            )
         if edge.identities:
             graph.add((edge_uri, ns.edgeIdentities, json_literal(edge.identities)))
         if edge.type is not None:
             add_literal(graph, edge_uri, ns.edgeType, str(edge.type))
         if edge.by is not None:
             add_literal(graph, edge_uri, ns.edgeBy, edge.by)
-        if payload:
-            graph.add((edge_uri, ns.edgePayload, json_literal(payload)))
 
         for index, field in enumerate(edge.properties):
             self._emit_field(graph, edge_uri, field, index)
@@ -763,7 +767,7 @@ class ManifestRdfSerializer:
         self,
         graph: Graph,
         connector_uri: URIRef,
-        connector: FileConnector | TableConnector | SparqlConnector,
+        connector: AnyConnector,
     ) -> None:
         connector_class = ns.CONNECTOR_CLASSES[type(connector).__name__]
         graph.add((connector_uri, RDF.type, URIRef(str(connector_class))))

@@ -55,7 +55,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeVar
 
-from graflo.architecture.graph_types import GraphContainer
+from graflo.architecture.graph_types import EdgeDirection, GraphContainer
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig
@@ -78,7 +78,9 @@ from graflo.onto import (
 
 if TYPE_CHECKING:
     from graflo.architecture.contract.bindings import Bindings
+    from graflo.architecture.graph_types import EdgeId
     from graflo.connections.provider import ConnectionProvider
+    from graflo.db.edge_direction_support import EdgeDirectionDiagnostic
 
 logger = logging.getLogger(__name__)
 ConnectionType = TypeVar("ConnectionType", bound="Connection")
@@ -277,6 +279,50 @@ class Connection(abc.ABC):
                 this during recreate to decide if the graph/db shell may be dropped.
         """
 
+    @property
+    def _reported_edge_directions(self) -> set["EdgeId"]:
+        """Edges already reported by :meth:`report_edge_direction_support`.
+
+        Held in ``__dict__`` rather than set in ``__init__`` so every backend
+        gets it without touching eight constructors.
+        """
+        seen = self.__dict__.get("_edge_direction_seen")
+        if seen is None:
+            seen = set()
+            self.__dict__["_edge_direction_seen"] = seen
+        return seen
+
+    def edge_direction_diagnostics(
+        self, schema: Schema
+    ) -> list["EdgeDirectionDiagnostic"]:
+        """How this backend will treat each logically undirected edge in ``schema``.
+
+        Returned as data, not just logged, so an API or UI can surface it —
+        ``Edge.directed`` is authored far from where its consequences land, and
+        a log line reaches nobody driving GraFlo over HTTP. Empty when the
+        schema declares no undirected edges, or when the backend represents them
+        natively. See :mod:`graflo.db.edge_direction_support`.
+        """
+        from graflo.db.edge_direction_support import check_schema_edge_directions
+
+        return check_schema_edge_directions(self.flavor, schema)
+
+    def report_edge_direction_support(self, schema: Schema) -> None:
+        """Log :meth:`edge_direction_diagnostics` once per distinct edge.
+
+        Backends call this from :meth:`apply_target_schema`, which runs on every
+        define/recreate; the diagnostics are a static property of the schema and
+        the target, so repeating them each time is noise.
+        """
+        for diagnostic in self.edge_direction_diagnostics(schema):
+            if diagnostic.edge_id in self._reported_edge_directions:
+                continue
+            self._reported_edge_directions.add(diagnostic.edge_id)
+            level = (
+                logging.WARNING if diagnostic.severity == "warning" else logging.INFO
+            )
+            logger.log(level, "%s %s", diagnostic.message, diagnostic.remedy)
+
     def init_db(
         self,
         schema: Schema,
@@ -407,24 +453,38 @@ class Connection(abc.ABC):
         limit: int | None = None,
         return_keys: list[str] | None = None,
         unset_keys: list[str] | None = None,
+        direction: EdgeDirection = EdgeDirection.OUT,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
-        """Fetch edges from the database.
+        """Fetch edges incident to one vertex.
+
+        ``from_type`` / ``from_id`` name the **anchor** vertex; ``direction``
+        decides which orientations are followed from it, and ``to_type`` /
+        ``to_id`` constrain the vertex at the *other* end — whichever end that
+        is. For a logically undirected edge the correct value is
+        :attr:`EdgeDirection.ANY`; :func:`~graflo.db.edge_direction_support.default_direction_for_edge`
+        derives it from the schema edge.
 
         Args:
-            from_type: Source vertex type
-            from_id: Source vertex ID (required)
+            from_type: Anchor vertex type
+            from_id: Anchor vertex ID (required)
             edge_type: Optional edge type to filter by
-            to_type: Optional target vertex type to filter by
-            to_id: Optional target vertex ID to filter by
+            to_type: Optional vertex type of the other endpoint
+            to_id: Optional vertex ID of the other endpoint
             filters: Additional query filters
             limit: Maximum number of edges to return
             return_keys: Keys to return (projection)
             unset_keys: Keys to exclude (projection)
+            direction: Orientations to follow from the anchor. Defaults to
+                :attr:`EdgeDirection.OUT`, the historical behaviour.
             **kwargs: Additional database-specific parameters
 
         Returns:
             list: List of fetched edges
+
+        Raises:
+            UnsupportedEdgeDirectionError: if the backend cannot follow the edge
+                in the requested direction (TigerGraph without a reverse type).
         """
 
     @abc.abstractmethod

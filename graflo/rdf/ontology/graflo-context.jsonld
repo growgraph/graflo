@@ -33,6 +33,8 @@
         "FileConnector": "gf:FileConnector",
         "TableConnector": "gf:TableConnector",
         "SparqlConnector": "gf:SparqlConnector",
+        "APIConnector": "gf:APIConnector",
+        "KafkaConnector": "gf:KafkaConnector",
         "BoundConnector": "gf:BoundConnector",
         "EdgeInferSpec": "gf:EdgeInferSpec",
         "ResourceConnectorBinding": "gf:ResourceConnectorBinding",
@@ -197,6 +199,10 @@
         "edgeIdentities": "gf:edgeIdentities",
         "edgeType": "gf:edgeType",
         "edgeBy": "gf:edgeBy",
+        "edgeDirected": {
+            "@id": "gf:edgeDirected",
+            "@type": "xsd:boolean"
+        },
         "profileVertexName": "gf:profileVertexName",
         "indexName": "gf:indexName",
         "indexField": "gf:indexField",

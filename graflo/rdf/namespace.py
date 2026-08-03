@@ -6,7 +6,13 @@ from rdflib import Namespace
 from rdflib.term import URIRef
 
 from graflo.architecture.contract.bindings.connectors import (
+    APIConnector as APIConnectorModel,
+)
+from graflo.architecture.contract.bindings.connectors import (
     FileConnector as FileConnectorModel,
+)
+from graflo.architecture.contract.bindings.connectors import (
+    KafkaConnector as KafkaConnectorModel,
 )
 from graflo.architecture.contract.bindings.connectors import (
     SparqlConnector as SparqlConnectorModel,
@@ -16,7 +22,7 @@ from graflo.architecture.contract.bindings.connectors import (
 )
 
 GF_ONTOLOGY_IRI = "https://ontology.growgraph.dev/graflo"
-GF_VERSION = "1.2.0"
+GF_VERSION = "1.3.0"
 GF_VERSION_IRI = f"{GF_ONTOLOGY_IRI}/{GF_VERSION}"
 GF_BASE = "https://ontology.growgraph.dev/graflo/"
 GF = Namespace(GF_BASE)
@@ -55,6 +61,8 @@ BoundConnector = GF.BoundConnector
 FileConnector = GF.FileConnector
 TableConnector = GF.TableConnector
 SparqlConnector = GF.SparqlConnector
+APIConnector = GF.APIConnector
+KafkaConnector = GF.KafkaConnector
 ResourceConnectorBinding = GF.ResourceConnectorBinding
 ConnectorConnectionBinding = GF.ConnectorConnectionBinding
 StagingProxyBinding = GF.StagingProxyBinding
@@ -146,6 +154,7 @@ identityFromAllProperties = GF.identityFromAllProperties
 edgeIdentities = GF.edgeIdentities
 edgeType = GF.edgeType
 edgeBy = GF.edgeBy
+edgeDirected = GF.edgeDirected
 vertexIndexes = GF.vertexIndexes
 edgeSpecs = GF.edgeSpecs
 profileVertexName = GF.profileVertexName
@@ -201,6 +210,8 @@ BOUND_SOURCE_KIND_INDIVIDUALS: dict[str, object] = {
     "file": GF.FileSource,
     "sql_table": GF.SqlTableSource,
     "sparql": GF.SparqlSource,
+    "api": GF.ApiSource,
+    "kafka": GF.KafkaSource,
 }
 
 TRANSFORM_TARGET_INDIVIDUALS: dict[str, object] = {
@@ -229,18 +240,24 @@ CONNECTOR_CLASSES: dict[str, object] = {
     "FileConnector": FileConnector,
     "TableConnector": TableConnector,
     "SparqlConnector": SparqlConnector,
+    "APIConnector": APIConnector,
+    "KafkaConnector": KafkaConnector,
 }
 
 CONNECTOR_CLASS_BY_RDF_TYPE: dict[URIRef, str] = {
     FileConnector: "FileConnector",
     TableConnector: "TableConnector",
     SparqlConnector: "SparqlConnector",
+    APIConnector: "APIConnector",
+    KafkaConnector: "KafkaConnector",
 }
 
 CONNECTOR_MODELS = {
     "FileConnector": FileConnectorModel,
     "TableConnector": TableConnectorModel,
     "SparqlConnector": SparqlConnectorModel,
+    "APIConnector": APIConnectorModel,
+    "KafkaConnector": KafkaConnectorModel,
 }
 
 ENUM_REGISTRIES: dict[str, dict[str, object]] = {

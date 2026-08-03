@@ -11,10 +11,16 @@
       <div class="toolbar embed-toolbar">
         <input id="search" type="search" placeholder="Search classes…" />
         <select id="relation-filter">
-          <option value="all">All</option>
           <option value="taxonomy">Taxonomy</option>
+          <option value="all">All</option>
           <option value="has">has*</option>
         </select>
+        <div class="toggle" id="root-toggle">
+          <label for="show-universal-root">
+            <input id="show-universal-root" type="checkbox" />
+            <span id="root-toggle-label">Show root class</span>
+          </label>
+        </div>
         <button id="fit-button" type="button">Fit</button>
         <button id="reset-button" type="button">Reset</button>
       </div>

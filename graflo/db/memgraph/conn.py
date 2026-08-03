@@ -78,12 +78,13 @@ See Also
 
 import logging
 import math
+from collections.abc import Sequence
 from typing import Any
 from urllib.parse import urlparse
 
 import mgclient
 
-from graflo.architecture.graph_types import Index
+from graflo.architecture.graph_types import EdgeDirection, Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig
@@ -93,12 +94,38 @@ from graflo.db.conn import (
     SchemaExistsError,
     consume_insert_edges_kwargs,
 )
-from graflo.db.cypher import rel_merge_props_map_from_row_props
+from graflo.db.cypher import cypher_rel_pattern, rel_merge_props_map_from_row_props
 from graflo.db.field_type_support import assert_schema_field_types_supported
 from graflo.filter.onto import FilterExpression
 from graflo.onto import AggregationType, DBType
 
 logger = logging.getLogger(__name__)
+
+
+def _cursor_column_names(description: Any) -> list[str]:
+    """Column names from a cursor description, across the two driver shapes.
+
+    ``mgclient`` yields ``Column`` objects carrying a ``name`` attribute; the
+    DB-API shape yields sequences whose first element is the name. The branch is
+    explicit because these are genuinely different objects — falling back from
+    one to the other on a missing attribute would turn an unexpected third shape
+    into a confusing ``TypeError`` several frames away.
+    """
+    if not description:
+        return []
+    names: list[str] = []
+    for column in description:
+        if hasattr(column, "name"):
+            names.append(str(column.name))
+        elif isinstance(column, Sequence):
+            names.append(str(column[0]))
+        else:
+            raise TypeError(
+                "Unsupported Memgraph cursor description entry "
+                f"{type(column).__name__}: expected a `.name` attribute or a "
+                "sequence whose first element is the column name."
+            )
+    return names
 
 
 class QueryResult:
@@ -610,6 +637,7 @@ class MemgraphConnection(Connection):
     ) -> None:
         """Validate graph state; Memgraph schema is implicit (labels on write)."""
         assert_schema_field_types_supported(self.flavor, schema)
+        self.report_edge_direction_support(schema)
         if self._node_count() > 0 and not recreate:
             raise SchemaExistsError(
                 "Schema/data already exists in Memgraph. "
@@ -995,23 +1023,27 @@ class MemgraphConnection(Connection):
         limit: int | None = None,
         return_keys: list[str] | None = None,
         unset_keys: list[str] | None = None,
+        direction: EdgeDirection = EdgeDirection.OUT,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
         """Fetch edges from Memgraph using Cypher.
 
-        Retrieves relationships starting from a specific node, optionally filtered
-        by edge type, target node type, and target node ID.
+        Retrieves relationships incident to a specific node, optionally filtered
+        by edge type and by the type/ID of the vertex at the other end.
+        Relationships are stored bidirectionally, so ``IN`` and ``ANY`` cost the
+        same as ``OUT``.
 
         Args:
-            from_type: Source node label (e.g., "Person")
-            from_id: Source node ID (property value, typically "id" or "_key")
+            from_type: Anchor node label (e.g., "Person")
+            from_id: Anchor node ID (property value, typically "id" or "_key")
             edge_type: Optional relationship type to filter by (e.g., "WORKS_AT")
-            to_type: Optional target node label to filter by
-            to_id: Optional target node ID to filter by
+            to_type: Optional label of the other endpoint
+            to_id: Optional ID of the other endpoint
             filters: Additional query filters applied to relationship properties
             limit: Maximum number of edges to return
             return_keys: Keys to return (projection) - not fully supported
             unset_keys: Keys to exclude (projection) - not fully supported
+            direction: Orientations to follow from the anchor
             **kwargs: Additional options
 
         Returns:
@@ -1020,15 +1052,10 @@ class MemgraphConnection(Connection):
         if self.conn is None:
             raise RuntimeError("Connection is closed")
 
-        # Build Cypher query starting from the source node
+        # Build Cypher query starting from the anchor node
         # Use id property (common in Memgraph) or _key if needed
         q = f"MATCH (s:{from_type} {{id: $from_id}})"
-
-        # Build relationship pattern
-        if edge_type:
-            rel_pattern = f"-[r:{edge_type}]->"
-        else:
-            rel_pattern = "-[r]->"
+        rel_pattern = cypher_rel_pattern(edge_type, direction)
 
         # Build target node match
         if to_type:
@@ -1083,7 +1110,7 @@ class MemgraphConnection(Connection):
 
         cursor = self.conn.cursor()
         cursor.execute(q, params)
-        columns = [desc[0] for desc in cursor.description] if cursor.description else []
+        columns = _cursor_column_names(cursor.description)
         results = []
         for row in cursor.fetchall():
             result = {}

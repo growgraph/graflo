@@ -8,7 +8,7 @@ from typing import Any
 
 from graflo.architecture.backend import GraFloBackendReader, GraFloBackendWriter
 from graflo.architecture.backend.layout import GraFloLayout
-from graflo.architecture.graph_types import GraphContainer
+from graflo.architecture.graph_types import EdgeDirection, GraphContainer
 from graflo.architecture.schema.document import Schema
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig
@@ -85,6 +85,7 @@ class GraFloBackendConnection(Connection):
         recreate: bool,
         create_namespace: bool = True,
     ) -> None:
+        self.report_edge_direction_support(schema)
         layout = GraFloLayout(self.config.output_dir)
         if layout.schema_path.exists() and not recreate:
             raise SchemaExistsError(
@@ -208,8 +209,11 @@ class GraFloBackendConnection(Connection):
         limit: int | None = None,
         return_keys: list[str] | None = None,
         unset_keys: list[str] | None = None,
+        direction: EdgeDirection = EdgeDirection.OUT,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
+        # Direction is the storage partition key here, so no orientation is
+        # answerable without materializing the reversed batch.
         raise NotImplementedError(
             "GraFlo file backend does not support filtered edge fetch; use fetch_all_edges"
         )

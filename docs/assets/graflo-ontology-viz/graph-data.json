@@ -1,6 +1,13 @@
 {
     "edges": [
         {
+            "id": "sub:https://ontology.growgraph.dev/graflo/APIConnector->https://ontology.growgraph.dev/graflo/BoundConnector",
+            "kind": "subClassOf",
+            "label": "subClassOf",
+            "source": "https://ontology.growgraph.dev/graflo/APIConnector",
+            "target": "https://ontology.growgraph.dev/graflo/BoundConnector"
+        },
+        {
             "id": "sub:https://ontology.growgraph.dev/graflo/Actor->https://ontology.growgraph.dev/graflo/GrafloArtifact",
             "kind": "subClassOf",
             "label": "subClassOf",
@@ -106,18 +113,18 @@
             "target": "https://ontology.growgraph.dev/graflo/BoundConnector"
         },
         {
-            "id": "sub:https://ontology.growgraph.dev/graflo/GraphManifest->https://ontology.growgraph.dev/graflo/GrafloArtifact",
-            "kind": "subClassOf",
-            "label": "subClassOf",
-            "source": "https://ontology.growgraph.dev/graflo/GraphManifest",
-            "target": "https://ontology.growgraph.dev/graflo/GrafloArtifact"
-        },
-        {
             "id": "sub:https://ontology.growgraph.dev/graflo/GraphManifest->http://www.w3.org/ns/prov#Entity",
             "kind": "subClassOf",
             "label": "subClassOf",
             "source": "https://ontology.growgraph.dev/graflo/GraphManifest",
             "target": "http://www.w3.org/ns/prov#Entity"
+        },
+        {
+            "id": "sub:https://ontology.growgraph.dev/graflo/GraphManifest->https://ontology.growgraph.dev/graflo/GrafloArtifact",
+            "kind": "subClassOf",
+            "label": "subClassOf",
+            "source": "https://ontology.growgraph.dev/graflo/GraphManifest",
+            "target": "https://ontology.growgraph.dev/graflo/GrafloArtifact"
         },
         {
             "id": "sub:https://ontology.growgraph.dev/graflo/GraphMetadata->https://ontology.growgraph.dev/graflo/GrafloArtifact",
@@ -162,17 +169,17 @@
             "target": "https://ontology.growgraph.dev/graflo/GrafloArtifact"
         },
         {
+            "id": "sub:https://ontology.growgraph.dev/graflo/KafkaConnector->https://ontology.growgraph.dev/graflo/BoundConnector",
+            "kind": "subClassOf",
+            "label": "subClassOf",
+            "source": "https://ontology.growgraph.dev/graflo/KafkaConnector",
+            "target": "https://ontology.growgraph.dev/graflo/BoundConnector"
+        },
+        {
             "id": "sub:https://ontology.growgraph.dev/graflo/KeySelectionConfig->https://ontology.growgraph.dev/graflo/GrafloArtifact",
             "kind": "subClassOf",
             "label": "subClassOf",
             "source": "https://ontology.growgraph.dev/graflo/KeySelectionConfig",
-            "target": "https://ontology.growgraph.dev/graflo/GrafloArtifact"
-        },
-        {
-            "id": "sub:https://ontology.growgraph.dev/graflo/ProtoTransform->https://ontology.growgraph.dev/graflo/GrafloArtifact",
-            "kind": "subClassOf",
-            "label": "subClassOf",
-            "source": "https://ontology.growgraph.dev/graflo/ProtoTransform",
             "target": "https://ontology.growgraph.dev/graflo/GrafloArtifact"
         },
         {
@@ -181,6 +188,13 @@
             "label": "subClassOf",
             "source": "https://ontology.growgraph.dev/graflo/ProtoTransform",
             "target": "http://www.w3.org/ns/prov#Activity"
+        },
+        {
+            "id": "sub:https://ontology.growgraph.dev/graflo/ProtoTransform->https://ontology.growgraph.dev/graflo/GrafloArtifact",
+            "kind": "subClassOf",
+            "label": "subClassOf",
+            "source": "https://ontology.growgraph.dev/graflo/ProtoTransform",
+            "target": "https://ontology.growgraph.dev/graflo/GrafloArtifact"
         },
         {
             "id": "sub:https://ontology.growgraph.dev/graflo/Resource->https://ontology.growgraph.dev/graflo/GrafloArtifact",
@@ -281,39 +295,39 @@
             "target": "https://ontology.growgraph.dev/graflo/VertexProducingActor"
         },
         {
-            "id": "prop:https://ontology.growgraph.dev/graflo/hasSchema",
+            "id": "prop:https://ontology.growgraph.dev/graflo/hasConnector",
             "kind": "objectProperty",
-            "label": "hasSchema",
-            "source": "https://ontology.growgraph.dev/graflo/GraphManifest",
-            "target": "https://ontology.growgraph.dev/graflo/Schema"
+            "label": "hasConnector",
+            "source": "https://ontology.growgraph.dev/graflo/Bindings",
+            "target": "https://ontology.growgraph.dev/graflo/BoundConnector"
         },
         {
-            "id": "prop:https://ontology.growgraph.dev/graflo/hasIngestionModel",
+            "id": "prop:https://ontology.growgraph.dev/graflo/bindsConnectorToConnProxy",
             "kind": "objectProperty",
-            "label": "hasIngestionModel",
-            "source": "https://ontology.growgraph.dev/graflo/GraphManifest",
-            "target": "https://ontology.growgraph.dev/graflo/IngestionModel"
+            "label": "bindsConnectorToConnProxy",
+            "source": "https://ontology.growgraph.dev/graflo/Bindings",
+            "target": "https://ontology.growgraph.dev/graflo/ConnectorConnectionBinding"
         },
         {
-            "id": "prop:https://ontology.growgraph.dev/graflo/hasBindings",
+            "id": "prop:https://ontology.growgraph.dev/graflo/bindsResourceToConnector",
             "kind": "objectProperty",
-            "label": "hasBindings",
-            "source": "https://ontology.growgraph.dev/graflo/GraphManifest",
-            "target": "https://ontology.growgraph.dev/graflo/Bindings"
+            "label": "bindsResourceToConnector",
+            "source": "https://ontology.growgraph.dev/graflo/Bindings",
+            "target": "https://ontology.growgraph.dev/graflo/ResourceConnectorBinding"
         },
         {
-            "id": "prop:https://ontology.growgraph.dev/graflo/hasCoreSchema",
+            "id": "prop:https://ontology.growgraph.dev/graflo/hasStagingProxy",
             "kind": "objectProperty",
-            "label": "hasCoreSchema",
-            "source": "https://ontology.growgraph.dev/graflo/Schema",
-            "target": "https://ontology.growgraph.dev/graflo/CoreSchema"
+            "label": "hasStagingProxy",
+            "source": "https://ontology.growgraph.dev/graflo/Bindings",
+            "target": "https://ontology.growgraph.dev/graflo/StagingProxyBinding"
         },
         {
-            "id": "prop:https://ontology.growgraph.dev/graflo/hasVertexConfig",
+            "id": "prop:https://ontology.growgraph.dev/graflo/boundSourceKind",
             "kind": "objectProperty",
-            "label": "hasVertexConfig",
-            "source": "https://ontology.growgraph.dev/graflo/CoreSchema",
-            "target": "https://ontology.growgraph.dev/graflo/VertexConfig"
+            "label": "boundSourceKind",
+            "source": "https://ontology.growgraph.dev/graflo/BoundConnector",
+            "target": "https://ontology.growgraph.dev/graflo/BoundSourceKind"
         },
         {
             "id": "prop:https://ontology.growgraph.dev/graflo/hasEdgeConfig",
@@ -323,81 +337,32 @@
             "target": "https://ontology.growgraph.dev/graflo/EdgeConfig"
         },
         {
-            "id": "prop:https://ontology.growgraph.dev/graflo/hasMetadata",
+            "id": "prop:https://ontology.growgraph.dev/graflo/hasVertexConfig",
             "kind": "objectProperty",
-            "label": "hasMetadata",
-            "source": "https://ontology.growgraph.dev/graflo/Schema",
-            "target": "https://ontology.growgraph.dev/graflo/GraphMetadata"
+            "label": "hasVertexConfig",
+            "source": "https://ontology.growgraph.dev/graflo/CoreSchema",
+            "target": "https://ontology.growgraph.dev/graflo/VertexConfig"
         },
         {
-            "id": "prop:https://ontology.growgraph.dev/graflo/hasDatabaseProfile",
+            "id": "prop:https://ontology.growgraph.dev/graflo/dbFlavor",
             "kind": "objectProperty",
-            "label": "hasDatabaseProfile",
-            "source": "https://ontology.growgraph.dev/graflo/Schema",
-            "target": "https://ontology.growgraph.dev/graflo/DatabaseProfile"
+            "label": "dbFlavor",
+            "source": "https://ontology.growgraph.dev/graflo/DatabaseProfile",
+            "target": "https://ontology.growgraph.dev/graflo/DBType"
         },
         {
-            "id": "prop:https://ontology.growgraph.dev/graflo/hasVertex",
+            "id": "prop:https://ontology.growgraph.dev/graflo/hasEdgeSpec",
             "kind": "objectProperty",
-            "label": "hasVertex",
-            "source": "https://ontology.growgraph.dev/graflo/VertexConfig",
-            "target": "https://ontology.growgraph.dev/graflo/Vertex"
+            "label": "hasEdgeSpec",
+            "source": "https://ontology.growgraph.dev/graflo/DatabaseProfile",
+            "target": "https://ontology.growgraph.dev/graflo/EdgePhysicalSpec"
         },
         {
-            "id": "prop:https://ontology.growgraph.dev/graflo/hasEdge",
+            "id": "prop:https://ontology.growgraph.dev/graflo/hasVertexIndex",
             "kind": "objectProperty",
-            "label": "hasEdge",
-            "source": "https://ontology.growgraph.dev/graflo/EdgeConfig",
-            "target": "https://ontology.growgraph.dev/graflo/Edge"
-        },
-        {
-            "id": "prop:https://ontology.growgraph.dev/graflo/hasField",
-            "kind": "objectProperty",
-            "label": "hasField",
-            "source": "https://ontology.growgraph.dev/graflo/Vertex",
-            "target": "https://ontology.growgraph.dev/graflo/Field"
-        },
-        {
-            "id": "prop:https://ontology.growgraph.dev/graflo/hasIdentity",
-            "kind": "objectProperty",
-            "label": "hasIdentity",
-            "source": "https://ontology.growgraph.dev/graflo/Vertex",
-            "target": "https://ontology.growgraph.dev/graflo/Identity"
-        },
-        {
-            "id": "prop:https://ontology.growgraph.dev/graflo/hasHashIdentity",
-            "kind": "objectProperty",
-            "label": "hasHashIdentity",
-            "source": "https://ontology.growgraph.dev/graflo/Vertex",
-            "target": "https://ontology.growgraph.dev/graflo/Identity"
-        },
-        {
-            "id": "prop:https://ontology.growgraph.dev/graflo/hasSecondaryIdentity",
-            "kind": "objectProperty",
-            "label": "hasSecondaryIdentity",
-            "source": "https://ontology.growgraph.dev/graflo/Vertex",
-            "target": "https://ontology.growgraph.dev/graflo/SecondaryIdentity"
-        },
-        {
-            "id": "prop:https://ontology.growgraph.dev/graflo/hasIdentityFunnel",
-            "kind": "objectProperty",
-            "label": "hasIdentityFunnel",
-            "source": "https://ontology.growgraph.dev/graflo/Vertex",
-            "target": "https://ontology.growgraph.dev/graflo/IdentityFunnel"
-        },
-        {
-            "id": "prop:https://ontology.growgraph.dev/graflo/hasIdentityBranch",
-            "kind": "objectProperty",
-            "label": "hasIdentityBranch",
-            "source": "https://ontology.growgraph.dev/graflo/IdentityFunnel",
-            "target": "https://ontology.growgraph.dev/graflo/IdentityBranch"
-        },
-        {
-            "id": "prop:https://ontology.growgraph.dev/graflo/hasBranchCondition",
-            "kind": "objectProperty",
-            "label": "hasBranchCondition",
-            "source": "https://ontology.growgraph.dev/graflo/IdentityBranch",
-            "target": "https://ontology.growgraph.dev/graflo/Identity"
+            "label": "hasVertexIndex",
+            "source": "https://ontology.growgraph.dev/graflo/DatabaseProfile",
+            "target": "https://ontology.growgraph.dev/graflo/Index"
         },
         {
             "id": "prop:https://ontology.growgraph.dev/graflo/edgeSource",
@@ -414,34 +379,6 @@
             "target": "https://ontology.growgraph.dev/graflo/Vertex"
         },
         {
-            "id": "prop:https://ontology.growgraph.dev/graflo/hasResource",
-            "kind": "objectProperty",
-            "label": "hasResource",
-            "source": "https://ontology.growgraph.dev/graflo/IngestionModel",
-            "target": "https://ontology.growgraph.dev/graflo/Resource"
-        },
-        {
-            "id": "prop:https://ontology.growgraph.dev/graflo/hasTransform",
-            "kind": "objectProperty",
-            "label": "hasTransform",
-            "source": "https://ontology.growgraph.dev/graflo/IngestionModel",
-            "target": "https://ontology.growgraph.dev/graflo/ProtoTransform"
-        },
-        {
-            "id": "prop:https://ontology.growgraph.dev/graflo/hasActor",
-            "kind": "objectProperty",
-            "label": "hasActor",
-            "source": "https://ontology.growgraph.dev/graflo/Resource",
-            "target": "https://ontology.growgraph.dev/graflo/Actor"
-        },
-        {
-            "id": "prop:https://ontology.growgraph.dev/graflo/targetsVertex",
-            "kind": "objectProperty",
-            "label": "targetsVertex",
-            "source": "https://ontology.growgraph.dev/graflo/VertexProducingActor",
-            "target": "https://ontology.growgraph.dev/graflo/Vertex"
-        },
-        {
             "id": "prop:https://ontology.growgraph.dev/graflo/targetsEdge",
             "kind": "objectProperty",
             "label": "targetsEdge",
@@ -449,67 +386,11 @@
             "target": "https://ontology.growgraph.dev/graflo/Edge"
         },
         {
-            "id": "prop:https://ontology.growgraph.dev/graflo/executesTransform",
+            "id": "prop:https://ontology.growgraph.dev/graflo/hasEdge",
             "kind": "objectProperty",
-            "label": "executesTransform",
-            "source": "https://ontology.growgraph.dev/graflo/TransformActor",
-            "target": "https://ontology.growgraph.dev/graflo/ProtoTransform"
-        },
-        {
-            "id": "prop:https://ontology.growgraph.dev/graflo/hasDress",
-            "kind": "objectProperty",
-            "label": "hasDress",
-            "source": "https://ontology.growgraph.dev/graflo/ProtoTransform",
-            "target": "https://ontology.growgraph.dev/graflo/DressConfig"
-        },
-        {
-            "id": "prop:https://ontology.growgraph.dev/graflo/hasKeySelection",
-            "kind": "objectProperty",
-            "label": "hasKeySelection",
-            "source": "https://ontology.growgraph.dev/graflo/ProtoTransform",
-            "target": "https://ontology.growgraph.dev/graflo/KeySelectionConfig"
-        },
-        {
-            "id": "prop:https://ontology.growgraph.dev/graflo/hasConnector",
-            "kind": "objectProperty",
-            "label": "hasConnector",
-            "source": "https://ontology.growgraph.dev/graflo/Bindings",
-            "target": "https://ontology.growgraph.dev/graflo/BoundConnector"
-        },
-        {
-            "id": "prop:https://ontology.growgraph.dev/graflo/bindsResourceToConnector",
-            "kind": "objectProperty",
-            "label": "bindsResourceToConnector",
-            "source": "https://ontology.growgraph.dev/graflo/Bindings",
-            "target": "https://ontology.growgraph.dev/graflo/ResourceConnectorBinding"
-        },
-        {
-            "id": "prop:https://ontology.growgraph.dev/graflo/bindsConnectorToConnProxy",
-            "kind": "objectProperty",
-            "label": "bindsConnectorToConnProxy",
-            "source": "https://ontology.growgraph.dev/graflo/Bindings",
-            "target": "https://ontology.growgraph.dev/graflo/ConnectorConnectionBinding"
-        },
-        {
-            "id": "prop:https://ontology.growgraph.dev/graflo/hasStagingProxy",
-            "kind": "objectProperty",
-            "label": "hasStagingProxy",
-            "source": "https://ontology.growgraph.dev/graflo/Bindings",
-            "target": "https://ontology.growgraph.dev/graflo/StagingProxyBinding"
-        },
-        {
-            "id": "prop:https://ontology.growgraph.dev/graflo/hasVertexIndex",
-            "kind": "objectProperty",
-            "label": "hasVertexIndex",
-            "source": "https://ontology.growgraph.dev/graflo/DatabaseProfile",
-            "target": "https://ontology.growgraph.dev/graflo/Index"
-        },
-        {
-            "id": "prop:https://ontology.growgraph.dev/graflo/hasEdgeSpec",
-            "kind": "objectProperty",
-            "label": "hasEdgeSpec",
-            "source": "https://ontology.growgraph.dev/graflo/DatabaseProfile",
-            "target": "https://ontology.growgraph.dev/graflo/EdgePhysicalSpec"
+            "label": "hasEdge",
+            "source": "https://ontology.growgraph.dev/graflo/EdgeConfig",
+            "target": "https://ontology.growgraph.dev/graflo/Edge"
         },
         {
             "id": "prop:https://ontology.growgraph.dev/graflo/refinesEdge",
@@ -526,20 +407,6 @@
             "target": "https://ontology.growgraph.dev/graflo/Index"
         },
         {
-            "id": "prop:https://ontology.growgraph.dev/graflo/hasEdgeInferOnly",
-            "kind": "objectProperty",
-            "label": "hasEdgeInferOnly",
-            "source": "https://ontology.growgraph.dev/graflo/Resource",
-            "target": "https://ontology.growgraph.dev/graflo/EdgeInferSpec"
-        },
-        {
-            "id": "prop:https://ontology.growgraph.dev/graflo/hasEdgeInferExcept",
-            "kind": "objectProperty",
-            "label": "hasEdgeInferExcept",
-            "source": "https://ontology.growgraph.dev/graflo/Resource",
-            "target": "https://ontology.growgraph.dev/graflo/EdgeInferSpec"
-        },
-        {
             "id": "prop:https://ontology.growgraph.dev/graflo/fieldType",
             "kind": "objectProperty",
             "label": "fieldType",
@@ -547,11 +414,39 @@
             "target": "https://ontology.growgraph.dev/graflo/FieldType"
         },
         {
-            "id": "prop:https://ontology.growgraph.dev/graflo/dbFlavor",
+            "id": "prop:https://ontology.growgraph.dev/graflo/hasBindings",
             "kind": "objectProperty",
-            "label": "dbFlavor",
-            "source": "https://ontology.growgraph.dev/graflo/DatabaseProfile",
-            "target": "https://ontology.growgraph.dev/graflo/DBType"
+            "label": "hasBindings",
+            "source": "https://ontology.growgraph.dev/graflo/GraphManifest",
+            "target": "https://ontology.growgraph.dev/graflo/Bindings"
+        },
+        {
+            "id": "prop:https://ontology.growgraph.dev/graflo/hasIngestionModel",
+            "kind": "objectProperty",
+            "label": "hasIngestionModel",
+            "source": "https://ontology.growgraph.dev/graflo/GraphManifest",
+            "target": "https://ontology.growgraph.dev/graflo/IngestionModel"
+        },
+        {
+            "id": "prop:https://ontology.growgraph.dev/graflo/hasSchema",
+            "kind": "objectProperty",
+            "label": "hasSchema",
+            "source": "https://ontology.growgraph.dev/graflo/GraphManifest",
+            "target": "https://ontology.growgraph.dev/graflo/Schema"
+        },
+        {
+            "id": "prop:https://ontology.growgraph.dev/graflo/hasBranchCondition",
+            "kind": "objectProperty",
+            "label": "hasBranchCondition",
+            "source": "https://ontology.growgraph.dev/graflo/IdentityBranch",
+            "target": "https://ontology.growgraph.dev/graflo/Identity"
+        },
+        {
+            "id": "prop:https://ontology.growgraph.dev/graflo/hasIdentityBranch",
+            "kind": "objectProperty",
+            "label": "hasIdentityBranch",
+            "source": "https://ontology.growgraph.dev/graflo/IdentityFunnel",
+            "target": "https://ontology.growgraph.dev/graflo/IdentityBranch"
         },
         {
             "id": "prop:https://ontology.growgraph.dev/graflo/edgesOnDuplicate",
@@ -561,18 +456,18 @@
             "target": "https://ontology.growgraph.dev/graflo/EdgeDuplicatePolicy"
         },
         {
-            "id": "prop:https://ontology.growgraph.dev/graflo/transformTarget",
+            "id": "prop:https://ontology.growgraph.dev/graflo/hasTransform",
             "kind": "objectProperty",
-            "label": "transformTarget",
-            "source": "https://ontology.growgraph.dev/graflo/ProtoTransform",
-            "target": "https://ontology.growgraph.dev/graflo/TransformTarget"
+            "label": "hasTransform",
+            "source": "https://ontology.growgraph.dev/graflo/IngestionModel",
+            "target": "https://ontology.growgraph.dev/graflo/ProtoTransform"
         },
         {
-            "id": "prop:https://ontology.growgraph.dev/graflo/transformStrategy",
+            "id": "prop:https://ontology.growgraph.dev/graflo/hasResource",
             "kind": "objectProperty",
-            "label": "transformStrategy",
-            "source": "https://ontology.growgraph.dev/graflo/Transform",
-            "target": "https://ontology.growgraph.dev/graflo/TransformStrategy"
+            "label": "hasResource",
+            "source": "https://ontology.growgraph.dev/graflo/IngestionModel",
+            "target": "https://ontology.growgraph.dev/graflo/Resource"
         },
         {
             "id": "prop:https://ontology.growgraph.dev/graflo/keySelectionMode",
@@ -582,11 +477,153 @@
             "target": "https://ontology.growgraph.dev/graflo/KeySelectionMode"
         },
         {
-            "id": "prop:https://ontology.growgraph.dev/graflo/boundSourceKind",
+            "id": "prop:https://ontology.growgraph.dev/graflo/hasDress",
             "kind": "objectProperty",
-            "label": "boundSourceKind",
-            "source": "https://ontology.growgraph.dev/graflo/BoundConnector",
-            "target": "https://ontology.growgraph.dev/graflo/BoundSourceKind"
+            "label": "hasDress",
+            "source": "https://ontology.growgraph.dev/graflo/ProtoTransform",
+            "target": "https://ontology.growgraph.dev/graflo/DressConfig"
+        },
+        {
+            "id": "prop:https://ontology.growgraph.dev/graflo/hasKeySelection",
+            "kind": "objectProperty",
+            "label": "hasKeySelection",
+            "source": "https://ontology.growgraph.dev/graflo/ProtoTransform",
+            "target": "https://ontology.growgraph.dev/graflo/KeySelectionConfig"
+        },
+        {
+            "id": "prop:https://ontology.growgraph.dev/graflo/transformTarget",
+            "kind": "objectProperty",
+            "label": "transformTarget",
+            "source": "https://ontology.growgraph.dev/graflo/ProtoTransform",
+            "target": "https://ontology.growgraph.dev/graflo/TransformTarget"
+        },
+        {
+            "id": "prop:https://ontology.growgraph.dev/graflo/hasActor",
+            "kind": "objectProperty",
+            "label": "hasActor",
+            "source": "https://ontology.growgraph.dev/graflo/Resource",
+            "target": "https://ontology.growgraph.dev/graflo/Actor"
+        },
+        {
+            "id": "prop:https://ontology.growgraph.dev/graflo/hasEdgeInferExcept",
+            "kind": "objectProperty",
+            "label": "hasEdgeInferExcept",
+            "source": "https://ontology.growgraph.dev/graflo/Resource",
+            "target": "https://ontology.growgraph.dev/graflo/EdgeInferSpec"
+        },
+        {
+            "id": "prop:https://ontology.growgraph.dev/graflo/hasEdgeInferOnly",
+            "kind": "objectProperty",
+            "label": "hasEdgeInferOnly",
+            "source": "https://ontology.growgraph.dev/graflo/Resource",
+            "target": "https://ontology.growgraph.dev/graflo/EdgeInferSpec"
+        },
+        {
+            "id": "prop:https://ontology.growgraph.dev/graflo/hasCoreSchema",
+            "kind": "objectProperty",
+            "label": "hasCoreSchema",
+            "source": "https://ontology.growgraph.dev/graflo/Schema",
+            "target": "https://ontology.growgraph.dev/graflo/CoreSchema"
+        },
+        {
+            "id": "prop:https://ontology.growgraph.dev/graflo/hasDatabaseProfile",
+            "kind": "objectProperty",
+            "label": "hasDatabaseProfile",
+            "source": "https://ontology.growgraph.dev/graflo/Schema",
+            "target": "https://ontology.growgraph.dev/graflo/DatabaseProfile"
+        },
+        {
+            "id": "prop:https://ontology.growgraph.dev/graflo/hasMetadata",
+            "kind": "objectProperty",
+            "label": "hasMetadata",
+            "source": "https://ontology.growgraph.dev/graflo/Schema",
+            "target": "https://ontology.growgraph.dev/graflo/GraphMetadata"
+        },
+        {
+            "id": "prop:https://ontology.growgraph.dev/graflo/transformStrategy",
+            "kind": "objectProperty",
+            "label": "transformStrategy",
+            "source": "https://ontology.growgraph.dev/graflo/Transform",
+            "target": "https://ontology.growgraph.dev/graflo/TransformStrategy"
+        },
+        {
+            "id": "prop:https://ontology.growgraph.dev/graflo/executesTransform",
+            "kind": "objectProperty",
+            "label": "executesTransform",
+            "source": "https://ontology.growgraph.dev/graflo/TransformActor",
+            "target": "https://ontology.growgraph.dev/graflo/ProtoTransform"
+        },
+        {
+            "id": "prop:https://ontology.growgraph.dev/graflo/hasField",
+            "kind": "objectProperty",
+            "label": "hasField",
+            "source": "https://ontology.growgraph.dev/graflo/Vertex",
+            "target": "https://ontology.growgraph.dev/graflo/Field"
+        },
+        {
+            "id": "prop:https://ontology.growgraph.dev/graflo/hasHashIdentity",
+            "kind": "objectProperty",
+            "label": "hasHashIdentity",
+            "source": "https://ontology.growgraph.dev/graflo/Vertex",
+            "target": "https://ontology.growgraph.dev/graflo/Identity"
+        },
+        {
+            "id": "prop:https://ontology.growgraph.dev/graflo/hasIdentity",
+            "kind": "objectProperty",
+            "label": "hasIdentity",
+            "source": "https://ontology.growgraph.dev/graflo/Vertex",
+            "target": "https://ontology.growgraph.dev/graflo/Identity"
+        },
+        {
+            "id": "prop:https://ontology.growgraph.dev/graflo/hasIdentityFunnel",
+            "kind": "objectProperty",
+            "label": "hasIdentityFunnel",
+            "source": "https://ontology.growgraph.dev/graflo/Vertex",
+            "target": "https://ontology.growgraph.dev/graflo/IdentityFunnel"
+        },
+        {
+            "id": "prop:https://ontology.growgraph.dev/graflo/hasSecondaryIdentity",
+            "kind": "objectProperty",
+            "label": "hasSecondaryIdentity",
+            "source": "https://ontology.growgraph.dev/graflo/Vertex",
+            "target": "https://ontology.growgraph.dev/graflo/SecondaryIdentity"
+        },
+        {
+            "id": "prop:https://ontology.growgraph.dev/graflo/hasVertex",
+            "kind": "objectProperty",
+            "label": "hasVertex",
+            "source": "https://ontology.growgraph.dev/graflo/VertexConfig",
+            "target": "https://ontology.growgraph.dev/graflo/Vertex"
+        },
+        {
+            "id": "prop:https://ontology.growgraph.dev/graflo/targetsVertex",
+            "kind": "objectProperty",
+            "label": "targetsVertex",
+            "source": "https://ontology.growgraph.dev/graflo/VertexProducingActor",
+            "target": "https://ontology.growgraph.dev/graflo/Vertex"
+        }
+    ],
+    "entryClass": "https://ontology.growgraph.dev/graflo/GraphManifest",
+    "groups": [
+        {
+            "id": "core",
+            "label": "Core"
+        },
+        {
+            "id": "ingestionmodel",
+            "label": "IngestionModel"
+        },
+        {
+            "id": "schema",
+            "label": "Schema"
+        },
+        {
+            "id": "bindings",
+            "label": "Bindings"
+        },
+        {
+            "id": "external",
+            "label": "External"
         }
     ],
     "nodeHeight": 40,
@@ -594,6 +631,8 @@
     "nodes": [
         {
             "comment": null,
+            "datatypeProperties": [],
+            "group": "external",
             "id": "http://www.w3.org/ns/prov#Activity",
             "kind": "external",
             "label": "Activity",
@@ -601,6 +640,8 @@
         },
         {
             "comment": null,
+            "datatypeProperties": [],
+            "group": "external",
             "id": "http://www.w3.org/ns/prov#Entity",
             "kind": "external",
             "label": "Entity",
@@ -608,6 +649,30 @@
         },
         {
             "comment": null,
+            "datatypeProperties": [],
+            "group": "bindings",
+            "id": "https://ontology.growgraph.dev/graflo/APIConnector",
+            "kind": "gf",
+            "label": "APIConnector",
+            "local": "APIConnector"
+        },
+        {
+            "comment": null,
+            "datatypeProperties": [
+                {
+                    "label": "actorType",
+                    "range": "string"
+                },
+                {
+                    "label": "stepIndex",
+                    "range": "integer"
+                },
+                {
+                    "label": "stepPayload",
+                    "range": "string"
+                }
+            ],
+            "group": "ingestionmodel",
             "id": "https://ontology.growgraph.dev/graflo/Actor",
             "kind": "gf",
             "label": "Actor",
@@ -615,6 +680,8 @@
         },
         {
             "comment": null,
+            "datatypeProperties": [],
+            "group": "bindings",
             "id": "https://ontology.growgraph.dev/graflo/Bindings",
             "kind": "gf",
             "label": "Bindings",
@@ -622,6 +689,13 @@
         },
         {
             "comment": null,
+            "datatypeProperties": [
+                {
+                    "label": "connectorPayload",
+                    "range": "string"
+                }
+            ],
+            "group": "bindings",
             "id": "https://ontology.growgraph.dev/graflo/BoundConnector",
             "kind": "gf",
             "label": "BoundConnector",
@@ -629,13 +703,39 @@
         },
         {
             "comment": null,
+            "datatypeProperties": [],
+            "enumValues": [
+                {
+                    "label": "ApiSource",
+                    "value": "api"
+                },
+                {
+                    "label": "FileSource",
+                    "value": "file"
+                },
+                {
+                    "label": "KafkaSource",
+                    "value": "kafka"
+                },
+                {
+                    "label": "SparqlSource",
+                    "value": "sparql"
+                },
+                {
+                    "label": "SqlTableSource",
+                    "value": "sql_table"
+                }
+            ],
+            "group": "bindings",
             "id": "https://ontology.growgraph.dev/graflo/BoundSourceKind",
-            "kind": "gf",
+            "kind": "enum",
             "label": "BoundSourceKind",
             "local": "BoundSourceKind"
         },
         {
             "comment": null,
+            "datatypeProperties": [],
+            "group": "bindings",
             "id": "https://ontology.growgraph.dev/graflo/ConnectorConnectionBinding",
             "kind": "gf",
             "label": "ConnectorConnectionBinding",
@@ -643,6 +743,8 @@
         },
         {
             "comment": null,
+            "datatypeProperties": [],
+            "group": "schema",
             "id": "https://ontology.growgraph.dev/graflo/CoreSchema",
             "kind": "gf",
             "label": "CoreSchema",
@@ -650,6 +752,54 @@
         },
         {
             "comment": null,
+            "datatypeProperties": [],
+            "enumValues": [
+                {
+                    "label": "ArangoDB",
+                    "value": "arango"
+                },
+                {
+                    "label": "FalkorDB",
+                    "value": "falkordb"
+                },
+                {
+                    "label": "Memgraph",
+                    "value": "memgraph"
+                },
+                {
+                    "label": "MongoDB",
+                    "value": "mongodb"
+                },
+                {
+                    "label": "MySQL",
+                    "value": "mysql"
+                },
+                {
+                    "label": "Nebula",
+                    "value": "nebula"
+                },
+                {
+                    "label": "Neo4j",
+                    "value": "neo4j"
+                },
+                {
+                    "label": "Postgres",
+                    "value": "postgres"
+                },
+                {
+                    "label": "SparqlEndpoint",
+                    "value": "sparql"
+                },
+                {
+                    "label": "SQLite",
+                    "value": "sqlite"
+                },
+                {
+                    "label": "TigerGraph",
+                    "value": "tigergraph"
+                }
+            ],
+            "group": "schema",
             "id": "https://ontology.growgraph.dev/graflo/DBType",
             "kind": "enum",
             "label": "DBType",
@@ -657,6 +807,21 @@
         },
         {
             "comment": null,
+            "datatypeProperties": [
+                {
+                    "label": "edgeSpecs",
+                    "range": "string"
+                },
+                {
+                    "label": "profilePayload",
+                    "range": "string"
+                },
+                {
+                    "label": "vertexIndexes",
+                    "range": "string"
+                }
+            ],
+            "group": "schema",
             "id": "https://ontology.growgraph.dev/graflo/DatabaseProfile",
             "kind": "gf",
             "label": "DatabaseProfile",
@@ -664,6 +829,8 @@
         },
         {
             "comment": null,
+            "datatypeProperties": [],
+            "group": "ingestionmodel",
             "id": "https://ontology.growgraph.dev/graflo/DescendActor",
             "kind": "gf",
             "label": "DescendActor",
@@ -671,6 +838,17 @@
         },
         {
             "comment": null,
+            "datatypeProperties": [
+                {
+                    "label": "dressKey",
+                    "range": "string"
+                },
+                {
+                    "label": "dressValue",
+                    "range": "string"
+                }
+            ],
+            "group": "ingestionmodel",
             "id": "https://ontology.growgraph.dev/graflo/DressConfig",
             "kind": "gf",
             "label": "DressConfig",
@@ -678,6 +856,29 @@
         },
         {
             "comment": "Manifest-facing edge item in edge_config.edges.",
+            "datatypeProperties": [
+                {
+                    "label": "edgeBy",
+                    "range": "string"
+                },
+                {
+                    "label": "edgeDirected",
+                    "range": "boolean"
+                },
+                {
+                    "label": "edgeIdentities",
+                    "range": "string"
+                },
+                {
+                    "label": "edgePayload",
+                    "range": "string"
+                },
+                {
+                    "label": "edgeType",
+                    "range": "string"
+                }
+            ],
+            "group": "schema",
             "id": "https://ontology.growgraph.dev/graflo/Edge",
             "kind": "gf",
             "label": "Edge",
@@ -685,6 +886,8 @@
         },
         {
             "comment": "Manifest-facing actor name (edge).",
+            "datatypeProperties": [],
+            "group": "ingestionmodel",
             "id": "https://ontology.growgraph.dev/graflo/EdgeActor",
             "kind": "gf",
             "label": "EdgeActor",
@@ -692,6 +895,8 @@
         },
         {
             "comment": "Manifest-facing edge_config block containing edge declarations.",
+            "datatypeProperties": [],
+            "group": "schema",
             "id": "https://ontology.growgraph.dev/graflo/EdgeConfig",
             "kind": "gf",
             "label": "EdgeConfig",
@@ -699,6 +904,18 @@
         },
         {
             "comment": null,
+            "datatypeProperties": [],
+            "enumValues": [
+                {
+                    "label": "IgnoreDuplicate",
+                    "value": "ignore"
+                },
+                {
+                    "label": "UpsertDuplicate",
+                    "value": "upsert"
+                }
+            ],
+            "group": "ingestionmodel",
             "id": "https://ontology.growgraph.dev/graflo/EdgeDuplicatePolicy",
             "kind": "enum",
             "label": "EdgeDuplicatePolicy",
@@ -706,6 +923,8 @@
         },
         {
             "comment": null,
+            "datatypeProperties": [],
+            "group": "ingestionmodel",
             "id": "https://ontology.growgraph.dev/graflo/EdgeInferSpec",
             "kind": "gf",
             "label": "EdgeInferSpec",
@@ -713,6 +932,33 @@
         },
         {
             "comment": null,
+            "datatypeProperties": [
+                {
+                    "label": "specIndexesMode",
+                    "range": "string"
+                },
+                {
+                    "label": "specPurpose",
+                    "range": "string"
+                },
+                {
+                    "label": "specRelation",
+                    "range": "string"
+                },
+                {
+                    "label": "specRelationName",
+                    "range": "string"
+                },
+                {
+                    "label": "specSource",
+                    "range": "string"
+                },
+                {
+                    "label": "specTarget",
+                    "range": "string"
+                }
+            ],
+            "group": "schema",
             "id": "https://ontology.growgraph.dev/graflo/EdgePhysicalSpec",
             "kind": "gf",
             "label": "EdgePhysicalSpec",
@@ -720,6 +966,8 @@
         },
         {
             "comment": "Manifest-facing field item used in vertex.properties and edge.properties.",
+            "datatypeProperties": [],
+            "group": "schema",
             "id": "https://ontology.growgraph.dev/graflo/Field",
             "kind": "gf",
             "label": "Field",
@@ -727,6 +975,38 @@
         },
         {
             "comment": null,
+            "datatypeProperties": [],
+            "enumValues": [
+                {
+                    "label": "BOOL",
+                    "value": "BOOL"
+                },
+                {
+                    "label": "DATETIME",
+                    "value": "DATETIME"
+                },
+                {
+                    "label": "DOUBLE",
+                    "value": "DOUBLE"
+                },
+                {
+                    "label": "FLOAT",
+                    "value": "FLOAT"
+                },
+                {
+                    "label": "INT",
+                    "value": "INT"
+                },
+                {
+                    "label": "STRING",
+                    "value": "STRING"
+                },
+                {
+                    "label": "UINT",
+                    "value": "UINT"
+                }
+            ],
+            "group": "schema",
             "id": "https://ontology.growgraph.dev/graflo/FieldType",
             "kind": "enum",
             "label": "FieldType",
@@ -734,6 +1014,8 @@
         },
         {
             "comment": null,
+            "datatypeProperties": [],
+            "group": "bindings",
             "id": "https://ontology.growgraph.dev/graflo/FileConnector",
             "kind": "gf",
             "label": "FileConnector",
@@ -741,6 +1023,8 @@
         },
         {
             "comment": null,
+            "datatypeProperties": [],
+            "group": "core",
             "id": "https://ontology.growgraph.dev/graflo/GrafloArtifact",
             "kind": "gf",
             "label": "Artifact",
@@ -748,6 +1032,8 @@
         },
         {
             "comment": null,
+            "datatypeProperties": [],
+            "group": "core",
             "id": "https://ontology.growgraph.dev/graflo/GraphManifest",
             "kind": "gf",
             "label": "GraphManifest",
@@ -755,6 +1041,8 @@
         },
         {
             "comment": null,
+            "datatypeProperties": [],
+            "group": "schema",
             "id": "https://ontology.growgraph.dev/graflo/GraphMetadata",
             "kind": "gf",
             "label": "Metadata",
@@ -762,6 +1050,13 @@
         },
         {
             "comment": "Manifest-facing identity element (string) promoted to a first-class ontology node for traceability.",
+            "datatypeProperties": [
+                {
+                    "label": "identityName",
+                    "range": "string"
+                }
+            ],
+            "group": "schema",
             "id": "https://ontology.growgraph.dev/graflo/Identity",
             "kind": "gf",
             "label": "Identity",
@@ -769,6 +1064,13 @@
         },
         {
             "comment": "One branch of an identity funnel: the fields digested when it wins, and the condition under which it fires. Ordered by gf:artifactIndex.",
+            "datatypeProperties": [
+                {
+                    "label": "branchId",
+                    "range": "string"
+                }
+            ],
+            "group": "schema",
             "id": "https://ontology.growgraph.dev/graflo/IdentityBranch",
             "kind": "gf",
             "label": "IdentityBranch",
@@ -776,6 +1078,17 @@
         },
         {
             "comment": "Ordered fallback branches deriving a deterministic synthetic id. The first branch whose fields are all present wins. Generalizes hash_identity_properties, which is the single-branch case.",
+            "datatypeProperties": [
+                {
+                    "label": "funnelDigest",
+                    "range": "string"
+                },
+                {
+                    "label": "funnelIncludeBranchId",
+                    "range": "boolean"
+                }
+            ],
+            "group": "schema",
             "id": "https://ontology.growgraph.dev/graflo/IdentityFunnel",
             "kind": "gf",
             "label": "IdentityFunnel",
@@ -783,6 +1096,41 @@
         },
         {
             "comment": null,
+            "datatypeProperties": [
+                {
+                    "label": "indexDeduplicate",
+                    "range": "boolean"
+                },
+                {
+                    "label": "indexExcludeEdgeEndpoints",
+                    "range": "boolean"
+                },
+                {
+                    "label": "indexField",
+                    "range": "string"
+                },
+                {
+                    "label": "indexName",
+                    "range": "string"
+                },
+                {
+                    "label": "indexSparse",
+                    "range": "boolean"
+                },
+                {
+                    "label": "indexType",
+                    "range": "string"
+                },
+                {
+                    "label": "indexUnique",
+                    "range": "boolean"
+                },
+                {
+                    "label": "profileVertexName",
+                    "range": "string"
+                }
+            ],
+            "group": "schema",
             "id": "https://ontology.growgraph.dev/graflo/Index",
             "kind": "gf",
             "label": "Index",
@@ -790,6 +1138,8 @@
         },
         {
             "comment": null,
+            "datatypeProperties": [],
+            "group": "ingestionmodel",
             "id": "https://ontology.growgraph.dev/graflo/IngestionModel",
             "kind": "gf",
             "label": "IngestionModel",
@@ -797,6 +1147,22 @@
         },
         {
             "comment": null,
+            "datatypeProperties": [],
+            "group": "bindings",
+            "id": "https://ontology.growgraph.dev/graflo/KafkaConnector",
+            "kind": "gf",
+            "label": "KafkaConnector",
+            "local": "KafkaConnector"
+        },
+        {
+            "comment": null,
+            "datatypeProperties": [
+                {
+                    "label": "keySelectionName",
+                    "range": "string"
+                }
+            ],
+            "group": "ingestionmodel",
             "id": "https://ontology.growgraph.dev/graflo/KeySelectionConfig",
             "kind": "gf",
             "label": "KeySelectionConfig",
@@ -804,6 +1170,22 @@
         },
         {
             "comment": null,
+            "datatypeProperties": [],
+            "enumValues": [
+                {
+                    "label": "AllKeysMode",
+                    "value": "all"
+                },
+                {
+                    "label": "ExcludeKeysMode",
+                    "value": "exclude"
+                },
+                {
+                    "label": "IncludeKeysMode",
+                    "value": "include"
+                }
+            ],
+            "group": "ingestionmodel",
             "id": "https://ontology.growgraph.dev/graflo/KeySelectionMode",
             "kind": "enum",
             "label": "KeySelectionMode",
@@ -811,6 +1193,29 @@
         },
         {
             "comment": null,
+            "datatypeProperties": [
+                {
+                    "label": "transformFunction",
+                    "range": "string"
+                },
+                {
+                    "label": "transformInput",
+                    "range": "string"
+                },
+                {
+                    "label": "transformModule",
+                    "range": "string"
+                },
+                {
+                    "label": "transformOutput",
+                    "range": "string"
+                },
+                {
+                    "label": "transformParams",
+                    "range": "string"
+                }
+            ],
+            "group": "ingestionmodel",
             "id": "https://ontology.growgraph.dev/graflo/ProtoTransform",
             "kind": "gf",
             "label": "ProtoTransform",
@@ -818,6 +1223,13 @@
         },
         {
             "comment": null,
+            "datatypeProperties": [
+                {
+                    "label": "resourcePayload",
+                    "range": "string"
+                }
+            ],
+            "group": "ingestionmodel",
             "id": "https://ontology.growgraph.dev/graflo/Resource",
             "kind": "gf",
             "label": "Resource",
@@ -825,6 +1237,8 @@
         },
         {
             "comment": null,
+            "datatypeProperties": [],
+            "group": "bindings",
             "id": "https://ontology.growgraph.dev/graflo/ResourceConnectorBinding",
             "kind": "gf",
             "label": "ResourceConnectorBinding",
@@ -832,6 +1246,8 @@
         },
         {
             "comment": null,
+            "datatypeProperties": [],
+            "group": "schema",
             "id": "https://ontology.growgraph.dev/graflo/Schema",
             "kind": "gf",
             "label": "Schema",
@@ -839,6 +1255,8 @@
         },
         {
             "comment": "Alternate named field-set that identifies a vertex for lookup only. Edge endpoints may match on it; upserts always use the primary identity.",
+            "datatypeProperties": [],
+            "group": "schema",
             "id": "https://ontology.growgraph.dev/graflo/SecondaryIdentity",
             "kind": "gf",
             "label": "SecondaryIdentity",
@@ -846,6 +1264,8 @@
         },
         {
             "comment": null,
+            "datatypeProperties": [],
+            "group": "bindings",
             "id": "https://ontology.growgraph.dev/graflo/SparqlConnector",
             "kind": "gf",
             "label": "SparqlConnector",
@@ -853,6 +1273,8 @@
         },
         {
             "comment": null,
+            "datatypeProperties": [],
+            "group": "bindings",
             "id": "https://ontology.growgraph.dev/graflo/StagingProxyBinding",
             "kind": "gf",
             "label": "StagingProxyBinding",
@@ -860,6 +1282,8 @@
         },
         {
             "comment": null,
+            "datatypeProperties": [],
+            "group": "bindings",
             "id": "https://ontology.growgraph.dev/graflo/TableConnector",
             "kind": "gf",
             "label": "TableConnector",
@@ -867,6 +1291,13 @@
         },
         {
             "comment": null,
+            "datatypeProperties": [
+                {
+                    "label": "renameMap",
+                    "range": "string"
+                }
+            ],
+            "group": "ingestionmodel",
             "id": "https://ontology.growgraph.dev/graflo/Transform",
             "kind": "gf",
             "label": "Transform",
@@ -874,6 +1305,8 @@
         },
         {
             "comment": null,
+            "datatypeProperties": [],
+            "group": "ingestionmodel",
             "id": "https://ontology.growgraph.dev/graflo/TransformActor",
             "kind": "gf",
             "label": "TransformActor",
@@ -881,20 +1314,63 @@
         },
         {
             "comment": null,
+            "datatypeProperties": [],
+            "enumValues": [
+                {
+                    "label": "AllStrategy",
+                    "value": "all"
+                },
+                {
+                    "label": "EachStrategy",
+                    "value": "each"
+                },
+                {
+                    "label": "SingleStrategy",
+                    "value": "single"
+                }
+            ],
+            "group": "ingestionmodel",
             "id": "https://ontology.growgraph.dev/graflo/TransformStrategy",
-            "kind": "gf",
+            "kind": "enum",
             "label": "TransformStrategy",
             "local": "TransformStrategy"
         },
         {
             "comment": null,
+            "datatypeProperties": [],
+            "enumValues": [
+                {
+                    "label": "KeysTarget",
+                    "value": "keys"
+                },
+                {
+                    "label": "ValuesTarget",
+                    "value": "values"
+                }
+            ],
+            "group": "ingestionmodel",
             "id": "https://ontology.growgraph.dev/graflo/TransformTarget",
-            "kind": "gf",
+            "kind": "enum",
             "label": "TransformTarget",
             "local": "TransformTarget"
         },
         {
             "comment": "Manifest-facing vertex item in vertex_config.vertices.",
+            "datatypeProperties": [
+                {
+                    "label": "assigned",
+                    "range": "boolean"
+                },
+                {
+                    "label": "blank",
+                    "range": "boolean"
+                },
+                {
+                    "label": "vertexPayload",
+                    "range": "string"
+                }
+            ],
+            "group": "schema",
             "id": "https://ontology.growgraph.dev/graflo/Vertex",
             "kind": "gf",
             "label": "Vertex",
@@ -902,6 +1378,8 @@
         },
         {
             "comment": "Manifest-facing actor name (vertex).",
+            "datatypeProperties": [],
+            "group": "ingestionmodel",
             "id": "https://ontology.growgraph.dev/graflo/VertexActor",
             "kind": "gf",
             "label": "VertexActor",
@@ -909,6 +1387,17 @@
         },
         {
             "comment": "Manifest-facing vertex_config block containing vertex declarations and identity policy.",
+            "datatypeProperties": [
+                {
+                    "label": "forceTypes",
+                    "range": "string"
+                },
+                {
+                    "label": "identityFromAllProperties",
+                    "range": "boolean"
+                }
+            ],
+            "group": "schema",
             "id": "https://ontology.growgraph.dev/graflo/VertexConfig",
             "kind": "gf",
             "label": "VertexConfig",
@@ -916,6 +1405,8 @@
         },
         {
             "comment": null,
+            "datatypeProperties": [],
+            "group": "ingestionmodel",
             "id": "https://ontology.growgraph.dev/graflo/VertexProducingActor",
             "kind": "gf",
             "label": "VertexProducingActor",
@@ -923,6 +1414,8 @@
         },
         {
             "comment": null,
+            "datatypeProperties": [],
+            "group": "ingestionmodel",
             "id": "https://ontology.growgraph.dev/graflo/VertexRouterActor",
             "kind": "gf",
             "label": "VertexRouterActor",
@@ -930,5 +1423,48 @@
         }
     ],
     "ontology": "https://ontology.growgraph.dev/graflo",
-    "version": "1.2.0"
+    "sharedProperties": [
+        {
+            "label": "artifactIndex",
+            "range": "integer"
+        },
+        {
+            "label": "connProxy",
+            "range": "string"
+        },
+        {
+            "label": "connectorName",
+            "range": "string"
+        },
+        {
+            "label": "description",
+            "range": "string"
+        },
+        {
+            "label": "enumValue",
+            "range": "string"
+        },
+        {
+            "label": "name",
+            "range": "string"
+        },
+        {
+            "label": "relation",
+            "range": "string"
+        },
+        {
+            "label": "resourceName",
+            "range": "string"
+        },
+        {
+            "label": "targetNamespace",
+            "range": "string"
+        },
+        {
+            "label": "version",
+            "range": "string"
+        }
+    ],
+    "universalRoot": "https://ontology.growgraph.dev/graflo/GrafloArtifact",
+    "version": "1.3.0"
 }

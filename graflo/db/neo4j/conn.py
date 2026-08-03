@@ -29,7 +29,7 @@ from typing import Any
 from neo4j import GraphDatabase
 from neo4j.exceptions import ClientError
 
-from graflo.architecture.graph_types import Index
+from graflo.architecture.graph_types import EdgeDirection, Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig
@@ -40,7 +40,7 @@ from graflo.db.conn import (
     SchemaExistsError,
     consume_insert_edges_kwargs,
 )
-from graflo.db.cypher import rel_merge_props_map_from_row_index
+from graflo.db.cypher import cypher_rel_pattern, rel_merge_props_map_from_row_index
 from graflo.db.field_type_support import assert_schema_field_types_supported
 from graflo.db.graph_introspection import (
     GraphEdgeIntrospection,
@@ -457,6 +457,7 @@ class Neo4jConnection(Connection):
     ) -> None:
         """Define indexes for the schema (labels/relationships are implicit)."""
         assert_schema_field_types_supported(self.flavor, schema)
+        self.report_edge_direction_support(schema)
         db_name = self._resolve_db_name(schema)
         if self._node_count() > 0 and not recreate:
             raise SchemaExistsError(
@@ -673,20 +674,25 @@ class Neo4jConnection(Connection):
         limit: int | None = None,
         return_keys: list | None = None,
         unset_keys: list | None = None,
+        direction: EdgeDirection = EdgeDirection.OUT,
         **kwargs,
     ):
         """Fetch edges from Neo4j using Cypher.
 
+        Relationships are stored bidirectionally, so ``IN`` and ``ANY`` are as
+        cheap as ``OUT`` — the pattern simply drops or flips its arrow.
+
         Args:
-            from_type: Source node label
-            from_id: Source node ID (property name depends on match_keys used)
+            from_type: Anchor node label
+            from_id: Anchor node ID (property name depends on match_keys used)
             edge_type: Optional relationship type to filter by
-            to_type: Optional target node label to filter by
-            to_id: Optional target node ID to filter by
+            to_type: Optional label of the other endpoint
+            to_id: Optional ID of the other endpoint
             filters: Additional query filters
             limit: Maximum number of edges to return
             return_keys: Keys to return (projection)
             unset_keys: Keys to exclude (projection) - not supported in Neo4j
+            direction: Orientations to follow from the anchor
             **kwargs: Additional parameters
 
         Returns:
@@ -695,12 +701,7 @@ class Neo4jConnection(Connection):
         # Build Cypher query to fetch edges
         # Match source node first
         source_match = f"(source:{from_type} {{id: '{from_id}'}})"
-
-        # Build relationship pattern
-        if edge_type:
-            rel_pattern = f"-[r:{edge_type}]->"
-        else:
-            rel_pattern = "-[r]->"
+        rel_pattern = cypher_rel_pattern(edge_type, direction)
 
         # Build target node match
         if to_type:

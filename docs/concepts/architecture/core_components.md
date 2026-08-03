@@ -294,6 +294,32 @@ db_profile:
 
 `reverse_edge` is TigerGraph-only physical metadata on `EdgePhysicalSpec`. It is mutually exclusive with `directed: false` on the logical edge.
 
+**What the other backends do with `directed: false`**
+
+TigerGraph is the only target with an undirected edge *type*. Everywhere else the edge is **stored** directed, and `directed: false` is an assertion about the model: endpoint order carries no meaning, so `AddInverseEdgesOp` will not duplicate the edge, and a read may follow it either way.
+
+Following it either way is what `Connection.fetch_edges(..., direction=...)` does. `EdgeDirection` names the orientations followed from the anchor vertex — `OUT` (the default, and the historical behaviour), `IN`, or `ANY` — and `to_type` / `to_id` constrain the vertex at the *other* end, whichever end that is. `default_direction_for_edge(edge)` derives it from the schema: an undirected edge reads as `ANY`.
+
+| Backend | Native undirected | Reverse read |
+|---------|-------------------|--------------|
+| TigerGraph | yes — `UNDIRECTED EDGE` | **schema-time only**: an `UNDIRECTED` type answers both ways; a *directed* type needs `WITH REVERSE_EDGE`, else the read raises |
+| ArangoDB | no | free — the edge index covers `_from` and `_to`, so `ANY` matches either orientation |
+| Neo4j / Memgraph / FalkorDB | no | cheap — the pattern drops or flips its arrow (`-[r]-`, `<-[r]-`) |
+| Nebula | no | cheap — `GO … REVERSELY` / `BIDIRECT` |
+| PostgreSQL | no | `target_id` is indexed, but `fetch_edges` is not implemented |
+| GraFlo file backend | no | direction **is** the storage partition key; `fetch_edges` is not implemented |
+
+Declaring `directed: false` against a backend with no undirected type is **not an error** — the flag is already present in working manifests, and refusing it would reject valid schemas. Each backend instead reports one diagnostic per undirected edge when the schema is applied, stating what that target actually does; `Connection.edge_direction_diagnostics(schema)` returns them as data, and `report_edge_direction_support` logs them. The matrix lives in [`graflo.db.edge_direction_support`](../../reference/db/edge_direction_support.md).
+
+!!! warning "TigerGraph fails loudly rather than under-reporting"
+    Reverse reachability there is fixed when the edge type is created, so an `IN` / `ANY` read of a directed type with no paired reverse type raises `UnsupportedEdgeDirectionError`. Silently returning only the outgoing half would hand back a partial neighbourhood with no signal.
+
+!!! warning "`identities` stay endpoint-ordered"
+    On an undirected edge the `source` and `target` tokens in an [identity key](#edge) still resolve positionally, so `(a, b)` and `(b, a)` count as two distinct keys. Declare such edges from a consistent side until canonical ordering lands.
+
+!!! note "Single-hop only"
+    `direction` applies to `fetch_edges`, which is one hop from a known vertex. Multi-hop traversal is a separate primitive and does not exist yet.
+
 #### Matching and filtering (ingestion)
 - **`match_source`** / **`match_target`** / **`match`**: edge **actor** options for branch selection when building edges from hierarchical documents
 

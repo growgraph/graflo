@@ -31,6 +31,7 @@ from arango import ArangoClient
 from arango.graph import Graph
 
 from graflo.architecture.graph_types import (
+    EdgeDirection,
     Index,
     IndexType,
 )
@@ -117,6 +118,34 @@ def _arango_edge_upsert_match_literal(
     if weight_keys:
         inner += ", " + ", ".join(f"'{k}': edge.{k}" for k in weight_keys)
     return "{" + inner + "}"
+
+
+def _arango_edge_anchor_clause(
+    anchor_vertex_id: str,
+    direction: EdgeDirection,
+    to_type: str | None,
+    to_vertex_id: str | None,
+) -> str:
+    """Build the AQL FILTER anchoring an edge read on one vertex.
+
+    Endpoint filters follow the anchor to the *opposite* end, so ``to_type`` /
+    ``to_vertex_id`` keep meaning "the other endpoint" in every direction. The
+    edge index covers ``_from`` and ``_to``, so no branch is more expensive.
+    """
+
+    def _branch(anchor_field: str, other_field: str) -> str:
+        parts = [f"e.{anchor_field} == '{anchor_vertex_id}'"]
+        if to_type:
+            parts.append(f"e.{other_field} LIKE '{to_type}/%'")
+        if to_vertex_id is not None:
+            parts.append(f"e.{other_field} == '{to_vertex_id}'")
+        return " && ".join(parts)
+
+    if direction is EdgeDirection.OUT:
+        return _branch("_from", "_to")
+    if direction is EdgeDirection.IN:
+        return _branch("_to", "_from")
+    return f"({_branch('_from', '_to')}) || ({_branch('_to', '_from')})"
 
 
 def _arango_safe_collection_name(name: str) -> str:
@@ -332,6 +361,7 @@ class ArangoConnection(Connection):
         create_namespace: bool = True,
     ) -> None:
         """Define collections, graphs, and indexes in the connected database."""
+        self.report_edge_direction_support(schema)
         db_name = self._resolve_db_name(schema)
         try:
             if self._schema_has_artifacts() and not recreate:
@@ -1075,20 +1105,25 @@ class ArangoConnection(Connection):
         limit: int | None = None,
         return_keys: list[str] | None = None,
         unset_keys: list[str] | None = None,
+        direction: EdgeDirection = EdgeDirection.OUT,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
         """Fetch edges from ArangoDB using AQL.
 
+        Reverse lookup is free here: an edge collection's edge index covers
+        ``_from`` *and* ``_to``, so ``IN`` and ``ANY`` cost the same as ``OUT``.
+
         Args:
-            from_type: Source vertex collection name
-            from_id: Source vertex ID (can be _key or _id)
+            from_type: Anchor vertex collection name
+            from_id: Anchor vertex ID (can be _key or _id)
             edge_type: Optional edge collection name to filter by
-            to_type: Optional target vertex collection name to filter by
-            to_id: Optional target vertex ID to filter by
+            to_type: Optional collection of the other endpoint
+            to_id: Optional ID of the other endpoint
             filters: Additional query filters
             limit: Maximum number of edges to return
             return_keys: Keys to return (projection)
             unset_keys: Keys to exclude (projection)
+            direction: Orientations to follow from the anchor
             **kwargs: Additional parameters
 
         Returns:
@@ -1111,26 +1146,18 @@ class ArangoConnection(Connection):
             raise ValueError("edge_type is required for ArangoDB edge fetching")
 
         filter_clause = render_filters(filters, doc_name="e")
-        filter_parts = []
 
-        if to_type:
-            filter_parts.append(f"e._to LIKE '{to_type}/%'")
+        to_vertex_id: str | None = None
         if to_id and to_type:
-            if not to_id.startswith(to_type):
-                to_vertex_id = f"{to_type}/{to_id}"
-            else:
-                to_vertex_id = to_id
-            filter_parts.append(f"e._to == '{to_vertex_id}'")
+            to_vertex_id = to_id if to_id.startswith(to_type) else f"{to_type}/{to_id}"
 
-        additional_filters = " && ".join(filter_parts)
-        if filter_clause and additional_filters:
-            filter_clause = f"{filter_clause} && {additional_filters}"
-        elif additional_filters:
-            filter_clause = additional_filters
+        anchor_clause = _arango_edge_anchor_clause(
+            from_vertex_id, direction, to_type, to_vertex_id
+        )
 
         query = f"""
             FOR e IN {edge_collection}
-                FILTER e._from == '{from_vertex_id}'
+                FILTER {anchor_clause}
                 {f"FILTER {filter_clause}" if filter_clause else ""}
                 {f"LIMIT {limit}" if limit else ""}
                 RETURN e

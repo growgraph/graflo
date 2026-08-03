@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
+import inspect
+import json
 import pathlib
 
 import pytest
 import yaml
-from rdflib import Graph, URIRef
-from rdflib.namespace import OWL, RDF
+from rdflib import Graph, Literal, URIRef
+from rdflib.namespace import OWL, RDF, RDFS
 
 from graflo.architecture import GraphManifest
+from graflo.architecture.contract.bindings.connectors import (
+    BoundSourceKind,
+    ResourceConnector,
+)
 from graflo.architecture.graph_types import Index
 from graflo.architecture.schema.database_features import EdgePhysicalSpec
 from graflo.architecture.schema.identity_funnel import IdentityBranch, IdentityFunnel
@@ -256,6 +262,76 @@ def test_round_trip_preserves_identity_field_order() -> None:
     assert restored_vertex.identity == ["sid", "isin", "name"]
 
 
+def test_round_trip_preserves_undirected_edge() -> None:
+    """`directed` is a first-class predicate, not an opaque payload key."""
+    original = _load_example_manifest("2-ingest-self-references")
+    assert original.graph_schema is not None
+    edges = original.graph_schema.core_schema.edge_config.edges
+    edges[0].directed = False
+
+    graph = ManifestRdfSerializer(include_ontology=False).to_graph(original, BASE_URI)
+    edge_nodes = list(graph.subjects(RDF.type, ns.Edge))
+    assert edge_nodes
+    directed_literals = [
+        obj
+        for node in edge_nodes
+        for obj in graph.objects(node, ns.edgeDirected)
+        if isinstance(obj, Literal)
+    ]
+    assert [bool(literal.toPython()) for literal in directed_literals] == [False]
+
+    restored = _round_trip(original)
+    assert restored.graph_schema is not None
+    restored_edges = restored.graph_schema.core_schema.edge_config.edges
+    assert restored_edges[0].directed is False
+
+
+def test_undirected_edge_is_also_written_to_the_legacy_payload() -> None:
+    """A reader older than ontology 1.3.0 knows only ``gf:edgePayload``.
+
+    Without the duplicate it would see no direction at all and silently treat
+    the edge as directed — data loss the version bump cannot warn about.
+    """
+    original = _load_example_manifest("2-ingest-self-references")
+    assert original.graph_schema is not None
+    original.graph_schema.core_schema.edge_config.edges[0].directed = False
+
+    graph = ManifestRdfSerializer(include_ontology=False).to_graph(original, BASE_URI)
+    payloads = [
+        json.loads(str(obj)) for _, obj in graph.subject_objects(ns.edgePayload)
+    ]
+    assert {"directed": False} in payloads
+
+
+def test_directed_edges_emit_no_direction_triple() -> None:
+    """True is the default; keep the common case out of the graph."""
+    manifest = _load_example_manifest("2-ingest-self-references")
+    graph = ManifestRdfSerializer(include_ontology=False).to_graph(manifest, BASE_URI)
+    assert not list(graph.subject_objects(ns.edgeDirected))
+
+    restored = _round_trip(manifest)
+    assert restored.graph_schema is not None
+    for edge in restored.graph_schema.core_schema.edge_config.edges:
+        assert edge.directed is True
+
+
+def test_legacy_edge_payload_still_carries_direction() -> None:
+    """Graphs written before ``gf:edgeDirected`` existed must keep loading."""
+    manifest = _load_example_manifest("2-ingest-self-references")
+    graph = ManifestRdfSerializer(include_ontology=False).to_graph(manifest, BASE_URI)
+    edge_node = next(iter(graph.subjects(RDF.type, ns.Edge)))
+    graph.add((edge_node, ns.edgePayload, Literal('{"directed": false}')))
+
+    restored = ManifestRdfDeserializer().from_turtle(
+        graph.serialize(format="turtle"), BASE_URI.rstrip("/")
+    )
+    assert restored.graph_schema is not None
+    undirected = [
+        e for e in restored.graph_schema.core_schema.edge_config.edges if not e.directed
+    ]
+    assert len(undirected) == 1
+
+
 def test_profile_and_transform_actor_semantic_links_are_emitted() -> None:
     manifest = _load_example_manifest("2-ingest-self-references")
     assert manifest.graph_schema is not None
@@ -288,3 +364,131 @@ def test_profile_and_transform_actor_semantic_links_are_emitted() -> None:
     assert any(
         any(graph.objects(node, ns.executesTransform)) for node in transform_actor_nodes
     )
+
+
+# ------------------------------------------------------- connector vocabulary drift
+#
+# `gf:APIConnector` and `gf:KafkaConnector` were absent from the ontology and from
+# the `ns.CONNECTOR_*` registries long after the Python models existed, so
+# `to_graph` raised ``KeyError: 'APIConnector'`` on any manifest using one. These
+# guards enumerate the Python side and demand the RDF side keep up, so the next
+# connector fails here instead of at a user's serialization call.
+
+
+def _concrete_connectors() -> list[type]:
+    seen: list[type] = []
+
+    def walk(cls: type) -> None:
+        for sub in cls.__subclasses__():
+            if not inspect.isabstract(sub):
+                seen.append(sub)
+            walk(sub)
+
+    walk(ResourceConnector)
+    return sorted(seen, key=lambda cls: cls.__name__)
+
+
+def test_every_connector_model_is_registered_and_declared() -> None:
+    ontology = load_ontology_graph()
+    connectors = _concrete_connectors()
+    assert {cls.__name__ for cls in connectors} >= {
+        "FileConnector",
+        "TableConnector",
+        "SparqlConnector",
+        "APIConnector",
+        "KafkaConnector",
+    }
+
+    for cls in connectors:
+        name = cls.__name__
+        assert name in ns.CONNECTOR_CLASSES, name
+        assert name in ns.CONNECTOR_MODELS, name
+        assert ns.CONNECTOR_MODELS[name] is cls, name
+        rdf_type = URIRef(str(ns.CONNECTOR_CLASSES[name]))
+        assert ns.CONNECTOR_CLASS_BY_RDF_TYPE.get(rdf_type) == name, name
+        assert (rdf_type, RDF.type, OWL.Class) in ontology, name
+        assert (rdf_type, RDFS.subClassOf, ns.BoundConnector) in ontology, name
+
+
+def test_every_bound_source_kind_has_an_individual() -> None:
+    ontology = load_ontology_graph()
+    for member in BoundSourceKind:
+        individual = ns.BOUND_SOURCE_KIND_INDIVIDUALS.get(member.value)
+        assert individual is not None, member.value
+        uri = URIRef(str(individual))
+        assert (uri, RDF.type, ns.GF.BoundSourceKind) in ontology, member.value
+        assert (uri, ns.enumValue, Literal(member.value)) in ontology, member.value
+
+
+def _manifest_with_one_connector_of_each_kind() -> GraphManifest:
+    path = EXAMPLES_DIR / "1-ingest-csv" / "manifest.yaml"
+    with path.open(encoding="utf-8") as handle:
+        data = yaml.safe_load(handle)
+    # The example wires two file connectors to named resources; replace the whole
+    # bindings block so the wiring does not have to be kept in sync here.
+    data["bindings"] = {
+        "connectors": [
+            {"name": "file1", "regex": r".*\.csv", "resource_name": "r0"},
+            {"name": "table1", "table_name": "people", "resource_name": "r1"},
+            {
+                "name": "sparql1",
+                "rdf_class": "http://example.org/Person",
+                "resource_name": "r2",
+            },
+            {"name": "api1", "path": "/api/users", "resource_name": "r3"},
+            {
+                "name": "kafka1",
+                "topics": ["events"],
+                "group_id": "g1",
+                "resource_name": "r4",
+            },
+        ]
+    }
+    return GraphManifest.from_dict(data)
+
+
+def test_round_trip_preserves_every_connector_kind() -> None:
+    original = _manifest_with_one_connector_of_each_kind()
+    assert [type(item).__name__ for item in original.bindings.connectors] == [
+        "FileConnector",
+        "TableConnector",
+        "SparqlConnector",
+        "APIConnector",
+        "KafkaConnector",
+    ]
+
+    restored = _round_trip(original)
+    by_name = {item.name: item for item in restored.bindings.connectors}
+    assert set(by_name) == {"file1", "table1", "sparql1", "api1", "kafka1"}
+    assert [type(item).__name__ for item in restored.bindings.connectors] == [
+        type(item).__name__ for item in original.bindings.connectors
+    ]
+
+    assert by_name["file1"].regex == r".*\.csv"
+    assert by_name["table1"].table_name == "people"
+    assert by_name["sparql1"].rdf_class == "http://example.org/Person"
+    assert by_name["api1"].path == "/api/users"
+    assert by_name["kafka1"].topics == ["events"]
+    assert by_name["kafka1"].group_id == "g1"
+
+
+def test_each_connector_carries_its_bound_source_kind() -> None:
+    manifest = _manifest_with_one_connector_of_each_kind()
+    graph = ManifestRdfSerializer(include_ontology=False).to_graph(manifest, BASE_URI)
+
+    emitted = {str(obj) for _, obj in graph.subject_objects(ns.boundSourceKind)}
+    expected = {
+        str(ns.BOUND_SOURCE_KIND_INDIVIDUALS[item.bound_source_kind().value])
+        for item in manifest.bindings.connectors
+    }
+    assert emitted == expected
+    assert len(expected) == len(manifest.bindings.connectors)
+
+
+def test_context_maps_every_connector_class() -> None:
+    with (ontology_path().parent / "graflo-context.jsonld").open(
+        encoding="utf-8"
+    ) as handle:
+        context = json.load(handle)["@context"]
+    for cls in _concrete_connectors():
+        assert context.get(cls.__name__) == f"gf:{cls.__name__}", cls.__name__

@@ -1,4 +1,5 @@
 :root {
+  color-scheme: light;
   --gf-node: #2e7d32;
   --gf-node-border: #1b5e20;
   --enum-node: #ef6c00;
@@ -7,9 +8,97 @@
   --external-node-border: #4527a0;
   --edge-subclass: #546e7a;
   --edge-object: #1565c0;
-  --edge-datatype: #6d4c41;
   --panel-bg: #fafafa;
   --panel-border: #ddd;
+  --page-bg: #fff;
+  --control-bg: #fff;
+  --control-hover: #f0f0f0;
+  --grid-line: #eceff1;
+  --canvas-bg: #fafafa;
+  --overlay-bg: rgba(255, 255, 255, 0.85);
+  --node-text: #fff;
+  --band-fill-alpha: 0.07;
+  --band-stroke-alpha: 0.32;
+  --band-label-lightness: 38%;
+  --text: #212121;
+  --muted: #616161;
+}
+
+/* The embed cannot read the parent's mkdocs palette, so follow the OS by
+   default and let an explicit signal (?scheme= or postMessage) win. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --panel-bg: #1c1f24;
+    --panel-border: #363b42;
+    --page-bg: #15171b;
+    --control-bg: #22262c;
+    --control-hover: #2c3138;
+    --grid-line: #232830;
+    --canvas-bg: #15171b;
+    --overlay-bg: rgba(21, 23, 27, 0.85);
+    --band-fill-alpha: 0.13;
+    --band-stroke-alpha: 0.4;
+    --band-label-lightness: 68%;
+    --gf-node: #3f9b45;
+    --gf-node-border: #6fc275;
+    --enum-node: #d97c14;
+    --enum-node-border: #f0a253;
+    --external-node: #7e5fd3;
+    --external-node-border: #a58ae8;
+    --edge-subclass: #90a4ae;
+    --edge-object: #64b5f6;
+    --text: #e6e8eb;
+    --muted: #a3abb5;
+  }
+}
+
+:root[data-scheme="slate"] {
+  color-scheme: dark;
+  --panel-bg: #1c1f24;
+  --panel-border: #363b42;
+  --page-bg: #15171b;
+  --control-bg: #22262c;
+  --control-hover: #2c3138;
+  --grid-line: #232830;
+  --canvas-bg: #15171b;
+  --overlay-bg: rgba(21, 23, 27, 0.85);
+  --band-fill-alpha: 0.13;
+  --band-stroke-alpha: 0.4;
+  --band-label-lightness: 68%;
+  --gf-node: #3f9b45;
+  --gf-node-border: #6fc275;
+  --enum-node: #d97c14;
+  --enum-node-border: #f0a253;
+  --external-node: #7e5fd3;
+  --external-node-border: #a58ae8;
+  --edge-subclass: #90a4ae;
+  --edge-object: #64b5f6;
+  --text: #e6e8eb;
+  --muted: #a3abb5;
+}
+
+:root[data-scheme="default"] {
+  color-scheme: light;
+  --panel-bg: #fafafa;
+  --panel-border: #ddd;
+  --page-bg: #fff;
+  --control-bg: #fff;
+  --control-hover: #f0f0f0;
+  --grid-line: #eceff1;
+  --canvas-bg: #fafafa;
+  --overlay-bg: rgba(255, 255, 255, 0.85);
+  --band-fill-alpha: 0.07;
+  --band-stroke-alpha: 0.32;
+  --band-label-lightness: 38%;
+  --gf-node: #2e7d32;
+  --gf-node-border: #1b5e20;
+  --enum-node: #ef6c00;
+  --enum-node-border: #e65100;
+  --external-node: #5e35b1;
+  --external-node-border: #4527a0;
+  --edge-subclass: #546e7a;
+  --edge-object: #1565c0;
   --text: #212121;
   --muted: #616161;
 }
@@ -24,7 +113,7 @@ body {
   height: 100%;
   font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
   color: var(--text);
-  background: #fff;
+  background: var(--page-bg);
 }
 
 body.embed {
@@ -85,6 +174,8 @@ body.embed .sidebar {
   border: 1px solid var(--panel-border);
   border-radius: 6px;
   font-size: 0.9rem;
+  background: var(--control-bg);
+  color: var(--text);
 }
 
 .control-row {
@@ -95,7 +186,8 @@ body.embed .sidebar {
 
 button {
   border: 1px solid var(--panel-border);
-  background: #fff;
+  background: var(--control-bg);
+  color: var(--text);
   border-radius: 6px;
   padding: 7px 10px;
   font-size: 0.85rem;
@@ -103,7 +195,7 @@ button {
 }
 
 button:hover {
-  background: #f0f0f0;
+  background: var(--control-hover);
 }
 
 .toggle {
@@ -113,9 +205,37 @@ button:hover {
   font-size: 0.88rem;
 }
 
+.toggle label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+  color: var(--text);
+  margin: 0;
+}
+
+.note {
+  margin: 6px 0 0;
+  font-size: 0.76rem;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
 .legend {
   margin-top: 16px;
   font-size: 0.82rem;
+}
+
+.legend-title {
+  margin: 10px 0 5px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
 }
 
 .legend-item {
@@ -129,7 +249,19 @@ button:hover {
   width: 14px;
   height: 14px;
   border-radius: 4px;
-  border: 1px solid rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(128, 128, 128, 0.35);
+  flex: none;
+}
+
+.shared-properties {
+  margin-top: 14px;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.shared-properties summary {
+  cursor: pointer;
+  font-weight: 600;
 }
 
 .details {
@@ -150,9 +282,44 @@ button:hover {
   font-size: 0.78rem;
 }
 
+.details .breadcrumb {
+  margin-top: 8px;
+  font-size: 0.78rem;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
 .details .comment {
   margin-top: 8px;
   line-height: 1.4;
+}
+
+.details ul {
+  margin: 4px 0 10px;
+  padding-left: 18px;
+}
+
+.details li {
+  margin-bottom: 3px;
+}
+
+.details ul.attrs,
+.details ul.values {
+  list-style: none;
+  padding-left: 0;
+}
+
+.details ul.attrs li,
+.details ul.values li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.8rem;
+}
+
+.details .range {
+  color: var(--muted);
+  font-size: 0.75rem;
 }
 
 .graph-shell {
@@ -161,9 +328,9 @@ button:hover {
   height: 100%;
   overflow: hidden;
   background:
-    linear-gradient(#eceff1 1px, transparent 1px) 0 0 / 24px 24px,
-    linear-gradient(90deg, #eceff1 1px, transparent 1px) 0 0 / 24px 24px,
-    #fafafa;
+    linear-gradient(var(--grid-line) 1px, transparent 1px) 0 0 / 24px 24px,
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px) 0 0 / 24px 24px,
+    var(--canvas-bg);
 }
 
 body.embed .graph-shell {
@@ -190,6 +357,8 @@ body.embed .graph-shell {
   border: 1px solid var(--panel-border);
   border-radius: 6px;
   font-size: 0.85rem;
+  background: var(--control-bg);
+  color: var(--text);
 }
 
 .embed-toolbar select {
@@ -198,11 +367,16 @@ body.embed .graph-shell {
   border: 1px solid var(--panel-border);
   border-radius: 6px;
   font-size: 0.85rem;
+  background: var(--control-bg);
+  color: var(--text);
 }
 
 .embed-toolbar .toggle {
   font-size: 0.82rem;
   white-space: nowrap;
+  background: var(--overlay-bg);
+  border-radius: 6px;
+  padding: 5px 8px;
 }
 
 #graph {
@@ -220,14 +394,37 @@ body.embed .graph-shell {
   cursor: move;
 }
 
+/* Conceptual blocks. Hue arrives per-element as --group-hue so no group name
+   is ever written into this stylesheet. */
+.band {
+  fill: hsl(var(--group-hue) 60% 50% / var(--band-fill-alpha));
+  stroke: hsl(var(--group-hue) 45% 50% / var(--band-stroke-alpha));
+  stroke-width: 1px;
+  stroke-dasharray: 6 5;
+}
+
+.band-label {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  fill: hsl(var(--group-hue) 45% var(--band-label-lightness));
+  pointer-events: none;
+}
+
 .node rect {
   stroke-width: 1.5px;
+}
+
+.node .node-accent {
+  fill: hsl(var(--group-hue) 62% 62%);
+  stroke: none;
 }
 
 .node text {
   font-size: 12px;
   pointer-events: none;
-  fill: #fff;
+  fill: var(--node-text);
   font-weight: 600;
 }
 
@@ -239,6 +436,7 @@ body.embed .graph-shell {
 .node.kind-enum rect {
   fill: var(--enum-node);
   stroke: var(--enum-node-border);
+  stroke-dasharray: 5 3;
 }
 
 .node.kind-external rect {
@@ -250,6 +448,7 @@ body.embed .graph-shell {
   opacity: 0.1;
 }
 
+.node.dimmed .node-accent,
 .node.dimmed text {
   opacity: 0.2;
 }
@@ -265,14 +464,7 @@ body.embed .graph-shell {
 
 .edge.kind-subClassOf {
   stroke: var(--edge-subclass);
-  stroke-width: 3.4px;
-}
-
-.edge.kind-subClassOfReverse {
-  stroke: #7b5ea7;
-  stroke-width: 1.6px;
-  stroke-dasharray: 5 4;
-  opacity: 0.82;
+  stroke-width: 2.4px;
 }
 
 .edge.kind-equivalentClass {
@@ -285,13 +477,6 @@ body.embed .graph-shell {
   stroke: var(--edge-object);
   stroke-width: 1.25px;
   stroke-dasharray: 6 4;
-  opacity: 0.9;
-}
-
-.edge.kind-datatypeProperty {
-  stroke: var(--edge-datatype);
-  stroke-width: 1.25px;
-  stroke-dasharray: 2 4;
   opacity: 0.9;
 }
 
@@ -316,7 +501,7 @@ body.embed .graph-shell {
   z-index: 2;
   font-size: 0.78rem;
   color: var(--muted);
-  background: rgba(255, 255, 255, 0.85);
+  background: var(--overlay-bg);
   padding: 4px 8px;
   border-radius: 4px;
 }
