@@ -25,6 +25,7 @@ Example:
 
 import json
 import logging
+from collections.abc import Sequence
 from typing import Any, cast
 
 from arango import ArangoClient
@@ -32,6 +33,7 @@ from arango.graph import Graph
 
 from graflo.architecture.graph_types import (
     EdgeDirection,
+    GraphContainer,
     Index,
     IndexType,
 )
@@ -148,6 +150,25 @@ def _arango_edge_anchor_clause(
     return f"({_branch('_from', '_to')}) || ({_branch('_to', '_from')})"
 
 
+#: ArangoDB's own numeric collection types, kept because the HTTP API reports
+#: these while python-arango's ``collections()`` reports the string form. Testing
+#: only the numbers made introspection silently recover *nothing* on every recent
+#: driver: no collection matched, so the resulting schema was always empty.
+_ARANGO_COLLECTION_TYPES: dict[int, str] = {2: "document", 3: "edge"}
+
+
+def _arango_collection_kind(raw: Any) -> str | None:
+    """Normalise a reported collection type to ``"document"`` / ``"edge"``."""
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        return _ARANGO_COLLECTION_TYPES.get(raw)
+    if isinstance(raw, str):
+        value = raw.strip().lower()
+        return value if value in ("document", "edge") else None
+    return None
+
+
 def _arango_safe_collection_name(name: str) -> str:
     """Validate collection name for safe AQL interpolation."""
     import re
@@ -171,6 +192,7 @@ class ArangoConnection(Connection):
 
     flavor = DBType.ARANGO
     supports_graph_export = True
+    supports_schema_introspection = True
 
     def __init__(self, config: ArangoConfig):
         """Initialize ArangoDB connection.
@@ -1307,9 +1329,10 @@ class ArangoConnection(Connection):
             name = coll.get("name")
             if not name or name.startswith("_"):
                 continue
-            if coll.get("type") == 3:
+            kind = _arango_collection_kind(coll.get("type"))
+            if kind == "edge":
                 edge_collections.append(name)
-            elif coll.get("type") == 2:
+            elif kind == "document":
                 vertex_collections.append(name)
 
         vertices: list[GraphVertexIntrospection] = []
@@ -1385,6 +1408,113 @@ class ArangoConnection(Connection):
         return GraphSchemaInferencer(db_flavor=DBType.ARANGO).infer_schema(
             introspection, schema_name=resolved_name
         )
+
+    def graph_neighbors(
+        self,
+        vertex_type: str,
+        key: str | dict[str, Any],
+        *,
+        hops: int = 1,
+        direction: EdgeDirection = EdgeDirection.OUT,
+        edge_types: Sequence[str] | None = None,
+        filters: Any | None = None,
+        limit: int | None = None,
+        schema: Schema | None = None,
+    ) -> GraphContainer:
+        """Bounded neighbourhood via AQL ``FOR v, e IN 1..k``.
+
+        Native rather than composed from :meth:`fetch_edges`, because that method
+        anchors on a document ``_id`` (``collection/key``) while callers hold a
+        *logical* identity. Resolving the anchor inside the traversal query keeps
+        Arango's internal key out of the agent-facing contract entirely.
+        """
+        from graflo.db.traversal import _vertex_identity_value, edge_query_name
+
+        if hops < 1:
+            raise ValueError(f"hops must be >= 1, got {hops}")
+        if schema is None:
+            raise ValueError(
+                "graph_neighbors requires a schema: logical vertex and relation "
+                "names cannot be resolved to storage names without one"
+            )
+        if vertex_type not in schema.core_schema.vertex_config.vertex_set:
+            raise ValueError(
+                f"Unknown vertex type {vertex_type!r}; declared: "
+                f"{sorted(schema.core_schema.vertex_config.vertex_set)}"
+            )
+
+        db_aware = schema.resolve_db_aware(DBType.ARANGO)
+        anchor_collection = _arango_safe_collection_name(
+            db_aware.vertex_config.vertex_dbname(vertex_type)
+        )
+        identity_fields = db_aware.vertex_config.identity_fields(vertex_type)
+        if isinstance(key, dict):
+            anchor_filter = " AND ".join(
+                f"doc.`{field}` == {json.dumps(value)}" for field, value in key.items()
+            )
+        else:
+            field = identity_fields[0] if identity_fields else "_key"
+            anchor_filter = f"doc.`{field}` == {json.dumps(key)}"
+
+        allowed = set(edge_types) if edge_types is not None else None
+        collections: list[str] = []
+        far_types: dict[str, str] = {}
+        for edge in schema.core_schema.edge_config.edges:
+            if vertex_type not in (edge.source, edge.target):
+                continue
+            if allowed is not None and edge.relation not in allowed:
+                continue
+            name = edge_query_name(db_aware, edge, DBType.ARANGO)
+            if name is None:
+                continue
+            safe = _arango_safe_collection_name(name)
+            collections.append(safe)
+            far_types[safe] = edge.target if edge.source == vertex_type else edge.source
+        if not collections:
+            return GraphContainer()
+
+        aql_direction = {
+            EdgeDirection.OUT: "OUTBOUND",
+            EdgeDirection.IN: "INBOUND",
+            EdgeDirection.ANY: "ANY",
+        }[direction]
+        limit_clause = f"LIMIT {int(limit)}" if limit is not None else ""
+        query = f"""
+            FOR doc IN {anchor_collection}
+                FILTER {anchor_filter}
+                LIMIT 1
+                FOR v IN 1..{int(hops)} {aql_direction} doc {", ".join(collections)}
+                    {limit_clause}
+                    RETURN DISTINCT v
+        """
+        rows = get_data_from_cursor(self.execute(query))
+
+        # Every declared edge from this anchor lands in the same result set, so
+        # documents are attributed by the far type they can belong to.
+        candidate_types = list(dict.fromkeys(far_types.values()))
+        container = GraphContainer()
+        # Seed with the anchor so a cycle back to it does not report the vertex
+        # you asked about as its own neighbour — the other backends exclude it,
+        # and a neighbourhood that contains its own origin is not one answer.
+        anchor_identity = str(key) if isinstance(key, str) else None
+        if isinstance(key, dict) and identity_fields:
+            anchor_identity = str(key.get(identity_fields[0], ""))
+        seen: set[tuple[str, str]] = (
+            {(vertex_type, anchor_identity)} if anchor_identity else set()
+        )
+        for doc in rows:
+            if not isinstance(doc, dict):
+                continue
+            cleaned = strip_internal_properties(doc)
+            for far_type in candidate_types:
+                identity = _vertex_identity_value(schema, far_type, cleaned)
+                if identity is None or (far_type, identity) in seen:
+                    continue
+                seen.add((far_type, identity))
+                container.vertices.setdefault(far_type, []).append(cleaned)
+                break
+        container.pick_unique()
+        return container
 
     def fetch_all_docs(
         self,

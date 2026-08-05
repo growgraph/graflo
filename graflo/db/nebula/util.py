@@ -41,6 +41,43 @@ FIELD_TYPE_TO_NEBULA: dict[FieldType, str] = {
 
 DEFAULT_NEBULA_TYPE = "string"
 
+#: NebulaGraph DDL type -> graflo ``FieldType``, for reading a catalogue back.
+#: Not the inverse of :data:`FIELD_TYPE_TO_NEBULA`: that map is lossy in the
+#: outbound direction (``UINT``, ``DATETIME`` and ``UUID`` all land on a Nebula
+#: type shared with something else), so a recovered ``string`` column is
+#: reported as ``STRING`` and any narrower intent has to be re-declared by the
+#: modeller rather than guessed at here.
+NEBULA_TYPE_TO_FIELD_TYPE: dict[str, FieldType] = {
+    "int": FieldType.INT,
+    "int8": FieldType.INT,
+    "int16": FieldType.INT,
+    "int32": FieldType.INT,
+    "int64": FieldType.INT,
+    "float": FieldType.FLOAT,
+    "double": FieldType.DOUBLE,
+    "bool": FieldType.BOOL,
+    "string": FieldType.STRING,
+    "date": FieldType.DATETIME,
+    "time": FieldType.DATETIME,
+    "datetime": FieldType.DATETIME,
+    "timestamp": FieldType.DATETIME,
+}
+
+
+def field_type_from_nebula(declared: str | None) -> FieldType | None:
+    """Map a ``DESCRIBE TAG`` / ``DESCRIBE EDGE`` type back to a ``FieldType``.
+
+    Returns ``None`` for a type this mapping does not cover, so the caller can
+    leave the field untyped rather than assert a wrong one.
+    """
+    if not declared:
+        return None
+    # `fixed_string(32)` and friends carry a length the graflo model does not model.
+    base = declared.strip().lower().split("(", 1)[0].strip()
+    if base == "fixed_string":
+        return FieldType.STRING
+    return NEBULA_TYPE_TO_FIELD_TYPE.get(base)
+
 
 def nebula_type(ft: FieldType | None) -> str:
     """Map a scalar graflo ``FieldType`` to the corresponding NebulaGraph type name.

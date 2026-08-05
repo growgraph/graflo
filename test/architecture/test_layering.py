@@ -43,6 +43,15 @@ LAYERS: dict[str, int] = {
     "graflo.filter": 1,
     "graflo.architecture.graph_types": 1,
     "graflo.architecture.schema": 2,
+    # Redundant under longest-prefix matching, but stated so the intent survives:
+    # schema context must never reach db/data_source, since its whole premise is
+    # answering "what can I ask?" without a live database.
+    "graflo.architecture.schema.context": 2,
+    # The read contract. Must be stated: prefix matching would otherwise fall
+    # through to the L4 `graflo.architecture` default and silently grant it
+    # permission to import `db`, which is exactly what it must not do — caps
+    # have to be enforceable without a driver present.
+    "graflo.architecture.query": 2,
     "graflo.connections": 3,
     "graflo.connections.provider": 4,
     "graflo.architecture.contract": 3,

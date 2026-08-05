@@ -8,6 +8,7 @@ from pydantic import Field as PydanticField
 from pydantic import field_validator
 
 from graflo.architecture.base import ConfigBaseModel
+from graflo.architecture.schema.semantics import Semantics
 
 _SEMVER_RE = re.compile(
     r"^\d+\.\d+\.\d+"
@@ -35,6 +36,10 @@ class GraphMetadata(ConfigBaseModel):
     description: str | None = PydanticField(
         default=None,
         description="Optional human-readable description of the schema.",
+    )
+    semantics: Semantics | None = PydanticField(
+        default=None,
+        description="Optional external-vocabulary anchors for the schema as a whole.",
     )
 
     @field_validator("version")

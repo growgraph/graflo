@@ -24,12 +24,13 @@ Example:
 """
 
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 from neo4j import GraphDatabase
 from neo4j.exceptions import ClientError
 
-from graflo.architecture.graph_types import EdgeDirection, Index
+from graflo.architecture.graph_types import EdgeDirection, GraphContainer, Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig
@@ -41,16 +42,13 @@ from graflo.db.conn import (
     consume_insert_edges_kwargs,
 )
 from graflo.db.cypher import cypher_rel_pattern, rel_merge_props_map_from_row_index
+from graflo.db.cypher.traversal import cypher_graph_neighbors
 from graflo.db.field_type_support import assert_schema_field_types_supported
 from graflo.db.graph_introspection import (
-    GraphEdgeIntrospection,
-    GraphIntrospectionResult,
     GraphSchemaInferencer,
-    GraphVertexIntrospection,
-    infer_identity_fields,
     strip_internal_properties,
 )
-from graflo.filter.onto import FilterExpression
+from graflo.filter.onto import FilterExpression, parse_filter_expression
 from graflo.onto import AggregationType, DBType
 
 logger = logging.getLogger(__name__)
@@ -84,6 +82,7 @@ class Neo4jConnection(Connection):
 
     flavor = DBType.NEO4J
     supports_graph_export = True
+    supports_schema_introspection = True
 
     def __init__(self, config: Neo4jConfig):
         """Initialize Neo4j connection.
@@ -778,23 +777,67 @@ class Neo4jConnection(Connection):
         aggregation_function: AggregationType,
         discriminant: str | None = None,
         aggregated_field: str | None = None,
-        filters: list | dict | None = None,
+        filters: FilterExpression | list | dict | None = None,
     ):
-        """Perform aggregation on nodes.
-
-        Note: Not implemented in Neo4j.
+        """Aggregate over nodes of a label.
 
         Args:
-            class_name: Label to aggregate
-            aggregation_function: Type of aggregation to perform
-            discriminant: Field to group by
-            aggregated_field: Field to aggregate
-            filters: Query filters
+            class_name: Label to aggregate.
+            aggregation_function: COUNT, MAX, MIN, AVERAGE or SORTED_UNIQUE.
+            discriminant: Field to group by. COUNT only; returns a mapping.
+            aggregated_field: Field to aggregate. Required for everything but
+                an ungrouped COUNT.
+            filters: Applied before aggregating.
+
+        Returns:
+            An ungrouped COUNT returns an int; a grouped COUNT returns
+            ``{value: count}``; MAX/MIN/AVERAGE return a scalar or ``None``;
+            SORTED_UNIQUE returns a list.
 
         Raises:
-            NotImplementedError: This method is not implemented for Neo4j
+            ValueError: If *aggregated_field* is missing where it is required,
+                or the aggregation type is not supported.
         """
-        raise NotImplementedError
+        filter_clause = ""
+        if filters is not None:
+            expression = parse_filter_expression(filters)
+            filter_clause = (
+                f" WHERE {expression(doc_name='n', kind=self.expression_flavor())}"
+            )
+
+        label = _cypher_escape_identifier(str(class_name))
+        query = f"MATCH (n:`{label}`){filter_clause}"
+
+        if aggregation_function == AggregationType.COUNT:
+            if discriminant:
+                field = _cypher_escape_identifier(discriminant)
+                query += f" RETURN n.`{field}` AS key, count(*) AS value"
+                rows = self.execute(query).data()
+                return {row["key"]: row["value"] for row in rows}
+            query += " RETURN count(n) AS value"
+        else:
+            if not aggregated_field:
+                raise ValueError(
+                    f"aggregated_field is required for {aggregation_function}"
+                )
+            field = _cypher_escape_identifier(aggregated_field)
+            if aggregation_function == AggregationType.MAX:
+                query += f" RETURN max(n.`{field}`) AS value"
+            elif aggregation_function == AggregationType.MIN:
+                query += f" RETURN min(n.`{field}`) AS value"
+            elif aggregation_function == AggregationType.AVERAGE:
+                query += f" RETURN avg(n.`{field}`) AS value"
+            elif aggregation_function == AggregationType.SORTED_UNIQUE:
+                query += f" RETURN DISTINCT n.`{field}` AS value ORDER BY n.`{field}`"
+            else:
+                raise ValueError(
+                    f"Unsupported aggregation type: {aggregation_function}"
+                )
+
+        rows = self.execute(query).data()
+        if aggregation_function == AggregationType.SORTED_UNIQUE:
+            return [row["value"] for row in rows]
+        return rows[0]["value"] if rows else None
 
     def keep_absent_documents(
         self,
@@ -827,81 +870,49 @@ class Neo4jConnection(Connection):
         sample_limit: int = 100,
     ) -> Schema:
         """Infer a graflo Schema from Neo4j via label and relationship sampling."""
+        from graflo.db.cypher.introspection import collect_cypher_introspection
+
         resolved_name = schema_name or self.config.database or "neo4j"
-        labels_query = "CALL db.labels() YIELD label RETURN label"
-        try:
-            label_rows = self.execute(labels_query).data()
-            labels = [row["label"] for row in label_rows if row.get("label")]
-        except ClientError:
-            fallback = """
-                MATCH (n)
-                UNWIND labels(n) AS label
-                RETURN DISTINCT label
-            """
-            label_rows = self.execute(fallback).data()
-            labels = [row["label"] for row in label_rows if row.get("label")]
 
-        vertices: list[GraphVertexIntrospection] = []
-        for label in labels:
-            escaped = _cypher_escape_identifier(label)
-            props_query = f"""
-                MATCH (n:`{escaped}`)
-                WITH n LIMIT {sample_limit}
-                UNWIND keys(n) AS key
-                RETURN DISTINCT key
-            """
-            prop_rows = self.execute(props_query).data()
-            properties = [row["key"] for row in prop_rows if row.get("key")]
-            vertices.append(
-                GraphVertexIntrospection(
-                    name=label,
-                    properties=properties,
-                    identity=infer_identity_fields(properties),
-                )
-            )
+        def run(query: str, keys: Sequence[str]) -> list[dict[str, Any]]:
+            return self.execute(query).data()
 
-        edge_patterns_query = """
-            MATCH (a)-[r]->(b)
-            WITH labels(a)[0] AS source, type(r) AS relation, labels(b)[0] AS target
-            WHERE source IS NOT NULL AND target IS NOT NULL
-            RETURN DISTINCT source, relation, target
-        """
-        pattern_rows = self.execute(edge_patterns_query).data()
-        edges: list[GraphEdgeIntrospection] = []
-        for row in pattern_rows:
-            source = row.get("source")
-            target = row.get("target")
-            relation = row.get("relation")
-            if not source or not target:
-                continue
-            src_esc = _cypher_escape_identifier(source)
-            tgt_esc = _cypher_escape_identifier(target)
-            rel_esc = _cypher_escape_identifier(relation) if relation else None
-            rel_clause = f":`{rel_esc}`" if rel_esc else ""
-            edge_props_query = f"""
-                MATCH (a:`{src_esc}`)-[r{rel_clause}]->(b:`{tgt_esc}`)
-                WITH r LIMIT {sample_limit}
-                UNWIND keys(r) AS key
-                RETURN DISTINCT key
-            """
-            edge_prop_rows = self.execute(edge_props_query).data()
-            edge_properties = [r["key"] for r in edge_prop_rows if r.get("key")]
-            edges.append(
-                GraphEdgeIntrospection(
-                    source=source,
-                    target=target,
-                    relation=relation,
-                    properties=edge_properties,
-                )
-            )
-
-        introspection = GraphIntrospectionResult(
-            name=resolved_name,
-            vertices=vertices,
-            edges=edges,
+        introspection = collect_cypher_introspection(
+            name=resolved_name, run=run, sample_limit=sample_limit
         )
         return GraphSchemaInferencer(db_flavor=DBType.NEO4J).infer_schema(
             introspection, schema_name=resolved_name
+        )
+
+    def graph_neighbors(
+        self,
+        vertex_type: str,
+        key: str | dict[str, Any],
+        *,
+        hops: int = 1,
+        direction: EdgeDirection = EdgeDirection.OUT,
+        edge_types: Sequence[str] | None = None,
+        filters: Any | None = None,
+        limit: int | None = None,
+        schema: Schema | None = None,
+    ) -> GraphContainer:
+        """Bounded neighbourhood via a single variable-length Cypher pattern.
+
+        Native rather than composed from :meth:`fetch_edges`, and not only for
+        speed: ``fetch_edges`` here returns ``RETURN r``, and the driver renders
+        a bare relationship without its endpoints, so a breadth-first walk over
+        it has nothing to step to.
+        """
+        return cypher_graph_neighbors(
+            self,
+            vertex_type=vertex_type,
+            key=key,
+            hops=hops,
+            direction=direction,
+            edge_types=edge_types,
+            limit=limit,
+            schema=schema,
+            run=lambda query: self.execute(query).data(),
         )
 
     def fetch_all_docs(

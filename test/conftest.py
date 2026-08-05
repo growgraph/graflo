@@ -283,13 +283,11 @@ def vertex_config_transform_collision():
         vertices:
         -
             name: person
-            dbname: people
             properties:
             -   id
             -   name
         -
             name: pet
-            dbname: pets
             properties:
             -   name
     """

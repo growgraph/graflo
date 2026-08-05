@@ -58,6 +58,7 @@ from graflo.architecture.graph_types import (
     EdgeId,
     EdgeType,
 )
+from graflo.architecture.schema.semantics import Semantics
 from graflo.architecture.schema.vertex import Field, VertexConfig, VertexName
 
 # Default relation name for TigerGraph edges when relation is not specified
@@ -116,6 +117,10 @@ class Edge(ConfigBaseModel):
     description: str | None = PydanticField(
         default=None,
         description="Optional semantic description of edge intent, direction semantics, and business meaning.",
+    )
+    semantics: Semantics | None = PydanticField(
+        default=None,
+        description="Optional external-vocabulary anchors for this edge type.",
     )
     directed: bool = PydanticField(
         default=True,

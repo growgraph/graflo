@@ -1096,7 +1096,7 @@ class TigerGraphDataOps:
         aggregation_function: AggregationType,
         discriminant: str | None = None,
         aggregated_field: str | None = None,
-        filters: list | dict | None = None,
+        filters: FilterExpression | list | dict | None = None,
     ):
         """
         Perform aggregation operations.

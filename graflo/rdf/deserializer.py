@@ -54,11 +54,15 @@ class ManifestRdfDeserializer:
                 "version": self._literal(graph, metadata_uri, ns.version),
                 "description": self._literal(graph, metadata_uri, ns.description),
             }
-            schema["metadata"] = {
+            metadata: dict[str, Any] = {
                 key: value
                 for key, value in schema["metadata"].items()
                 if value is not None
             }
+            metadata_semantics = self._read_semantics(graph, metadata_uri)
+            if metadata_semantics is not None:
+                metadata["semantics"] = metadata_semantics
+            schema["metadata"] = metadata
 
         if core_uri is not None:
             schema["core_schema"] = self._parse_core_schema(graph, core_uri)
@@ -128,6 +132,9 @@ class ManifestRdfDeserializer:
         description = self._literal(graph, vertex_uri, ns.description)
         if description is not None:
             vertex["description"] = description
+        semantics = self._read_semantics(graph, vertex_uri)
+        if semantics is not None:
+            vertex["semantics"] = semantics
         blank_value = self._literal(graph, vertex_uri, ns.blank)
         if blank_value is not None:
             vertex["blank"] = blank_value.lower() == "true"
@@ -237,7 +244,11 @@ class ManifestRdfDeserializer:
             return {}
         field_type_uri = self._object(graph, field_uri, ns.fieldType)
         description = self._literal(graph, field_uri, ns.description)
-        if field_type_uri is None and description is None:
+        semantics = self._read_semantics(graph, field_uri)
+        # A field with nothing but a name round-trips as a bare string, which is
+        # how most schemas author it. Semantics has to join that condition or a
+        # grounded field would collapse back to a string and lose its block.
+        if field_type_uri is None and description is None and semantics is None:
             return name
         field: dict[str, Any] = {"name": name}
         if field_type_uri is not None:
@@ -246,7 +257,34 @@ class ManifestRdfDeserializer:
                 field["type"] = field_type
         if description is not None:
             field["description"] = description
+        if semantics is not None:
+            field["semantics"] = semantics
         return field
+
+    def _read_semantics(
+        self, graph: Graph, subject: URIRef | BNode | None
+    ) -> dict[str, Any] | None:
+        """Read the semantic-grounding block, or None when nothing was emitted.
+
+        Mirror of ``ManifestRdfSerializer._emit_semantics``; one reader for all
+        four attachment points so the round trip cannot go lossy on one of them.
+        """
+        if subject is None:
+            return None
+        block: dict[str, Any] = {}
+        iri = self._object(graph, subject, ns.semanticIri)
+        if iri is not None:
+            block["iri"] = str(iri)
+        exact_match = [str(obj) for obj in graph.objects(subject, ns.exactMatch)]
+        if exact_match:
+            block["exact_match"] = sorted(exact_match)
+        synonyms = self._literals(graph, subject, ns.altLabel)
+        if synonyms:
+            block["synonyms"] = sorted(synonyms)
+        unit = self._literal(graph, subject, ns.unit)
+        if unit is not None:
+            block["unit"] = unit
+        return block or None
 
     def _parse_edge(self, graph: Graph, edge_uri: URIRef | BNode) -> dict[str, Any]:
         source_uri = self._object(graph, edge_uri, ns.edgeSource)
@@ -261,6 +299,9 @@ class ManifestRdfDeserializer:
         description = self._literal(graph, edge_uri, ns.description)
         if description is not None:
             edge["description"] = description
+        semantics = self._read_semantics(graph, edge_uri)
+        if semantics is not None:
+            edge["semantics"] = semantics
 
         # `gf:edgePayload` predates the first-class predicates below and is still
         # read so graphs serialized before `gf:edgeDirected` existed keep loading.

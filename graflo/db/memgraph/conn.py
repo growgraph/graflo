@@ -96,7 +96,8 @@ from graflo.db.conn import (
 )
 from graflo.db.cypher import cypher_rel_pattern, rel_merge_props_map_from_row_props
 from graflo.db.field_type_support import assert_schema_field_types_supported
-from graflo.filter.onto import FilterExpression
+from graflo.db.graph_introspection import GraphSchemaInferencer
+from graflo.filter.onto import FilterExpression, parse_filter_expression
 from graflo.onto import AggregationType, DBType
 
 logger = logging.getLogger(__name__)
@@ -205,6 +206,7 @@ class MemgraphConnection(Connection):
     """
 
     flavor = DBType.MEMGRAPH
+    supports_schema_introspection = True
 
     # Type annotations for instance attributes.
     # Connection is exported from the C extension via star-import; ty cannot see it.
@@ -1124,13 +1126,42 @@ class MemgraphConnection(Connection):
         cursor.close()
         return results
 
+    def introspect_graph_schema(
+        self,
+        schema_name: str | None = None,
+        *,
+        sample_limit: int = 100,
+    ) -> Schema:
+        """Infer a graflo Schema from Memgraph via label and relationship sampling.
+
+        Memgraph speaks the same Cypher introspection dialect as Neo4j, so the
+        sampling itself is shared; only the driver's row shape differs -- the
+        mgclient cursor yields tuples, which the runner pairs with the query's
+        ``RETURN`` aliases.
+        """
+        from graflo.db.cypher.introspection import collect_cypher_introspection
+
+        resolved_name = schema_name or self._database_name or "memgraph"
+
+        def run(query: str, keys: Sequence[str]) -> list[dict[str, Any]]:
+            result = self.execute(query)
+            columns = list(result.columns) or list(keys)
+            return [dict(zip(columns, row)) for row in result.result_set]
+
+        introspection = collect_cypher_introspection(
+            name=resolved_name, run=run, sample_limit=sample_limit
+        )
+        return GraphSchemaInferencer(db_flavor=DBType.MEMGRAPH).infer_schema(
+            introspection, schema_name=resolved_name
+        )
+
     def aggregate(
         self,
         class_name: str,
         aggregation_function: AggregationType,
         discriminant: str | None = None,
         aggregated_field: str | None = None,
-        filters: list[Any] | dict[str, Any] | None = None,
+        filters: FilterExpression | list[Any] | dict[str, Any] | None = None,
     ) -> int | float | list[dict[str, Any]] | dict[str, int | float] | None:
         """Perform aggregation operations on nodes.
 
@@ -1215,7 +1246,7 @@ class MemgraphConnection(Connection):
         # Build filter clause
         filter_clause = ""
         if filters is not None:
-            ff = FilterExpression.from_dict(filters)
+            ff = parse_filter_expression(filters)
             filter_str = ff(doc_name="n", kind=self.expression_flavor())
             filter_clause = f" WHERE {filter_str}"
 

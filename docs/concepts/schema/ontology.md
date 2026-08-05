@@ -28,8 +28,8 @@ flowchart TB
 | Role | IRI |
 |------|-----|
 | Ontology document | `https://ontology.growgraph.dev/graflo` |
-| Version IRI | `https://ontology.growgraph.dev/graflo/1.3.0` |
-| Version info | `1.3.0` |
+| Version IRI | `https://ontology.growgraph.dev/graflo/1.4.0` |
+| Version info | `1.4.0` |
 | Vocabulary prefix `gf:` | `https://ontology.growgraph.dev/graflo/` |
 
 The Turtle source lives in the package at `graflo/rdf/ontology/graflo.ttl`. Constants are also exposed in Python as `graflo.rdf.namespace` (`GF_ONTOLOGY_IRI`, `GF_VERSION`, `GF_VERSION_IRI`, `GF_BASE`).
@@ -91,6 +91,27 @@ If the embedded viewer is blank in an IDE browser preview, use **Open full scree
 
 - `gf:Bindings`, and `gf:BoundConnector` with one subclass per connector model: `gf:FileConnector`, `gf:TableConnector`, `gf:SparqlConnector`, `gf:APIConnector`, `gf:KafkaConnector`
 - `gf:ResourceConnectorBinding`, `gf:ConnectorConnectionBinding`, `gf:StagingProxyBinding`
+
+**Semantic grounding** (optional, added in 1.4.0)
+
+An element may be anchored to an external vocabulary through a `semantics:` block on the schema metadata, a vertex, an edge, or a field:
+
+```yaml
+vertices:
+-   name: person
+    identity: [email]
+    semantics:
+        iri: https://schema.org/Person
+        exact_match: [http://xmlns.com/foaf/0.1/Person]
+        synonyms: [individual, human]
+    properties:
+    -   name: speed
+        type: FLOAT
+        semantics:
+            unit: m/s
+```
+
+This maps to `gf:semanticIri`, `skos:exactMatch`, `skos:altLabel`, and — fields only — `gf:unit`. The block is purely descriptive: identity, storage naming and ingestion behave identically whether or not it is present. `unit` is rejected outside a field, where it would be meaningless.
 
 **Enumerations** (named individuals): `gf:DBType` (ArangoDB, Neo4j, …), transform target/strategy, key-selection mode, edge duplicate policy, bound source kind.
 

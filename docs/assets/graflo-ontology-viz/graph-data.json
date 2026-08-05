@@ -1461,10 +1461,14 @@
             "range": "string"
         },
         {
+            "label": "unit",
+            "range": "string"
+        },
+        {
             "label": "version",
             "range": "string"
         }
     ],
     "universalRoot": "https://ontology.growgraph.dev/graflo/GrafloArtifact",
-    "version": "1.3.0"
+    "version": "1.4.0"
 }

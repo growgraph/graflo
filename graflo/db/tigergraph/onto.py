@@ -23,3 +23,21 @@ TIGERGRAPH_TYPE_ALIASES: dict[str, str] = {
 
 # Bare scalar TigerGraph types (LIST is compositional: LIST<item>, not a bare type)
 VALID_TIGERGRAPH_TYPES: set[str] = set(SCALAR_FIELD_TYPE_VALUES)
+
+
+def field_type_from_gsql(declared: str | None) -> FieldType | None:
+    """Map a GSQL DDL type token back to a ``FieldType``.
+
+    Returns ``None`` for anything outside the mapping -- ``MAP<..>``, ``SET<..>``
+    and user-defined tuples have no graflo equivalent, and a recovered schema is
+    more useful with an untyped field than with a wrong one.
+    """
+    if not declared:
+        return None
+    token = declared.strip().upper()
+    if token.startswith("LIST<"):
+        return FieldType.LIST
+    token = TIGERGRAPH_TYPE_ALIASES.get(token, token)
+    if token in VALID_TIGERGRAPH_TYPES:
+        return FieldType(token)
+    return None
