@@ -492,3 +492,112 @@ def test_context_maps_every_connector_class() -> None:
         context = json.load(handle)["@context"]
     for cls in _concrete_connectors():
         assert context.get(cls.__name__) == f"gf:{cls.__name__}", cls.__name__
+
+
+def _grounded_manifest() -> GraphManifest:
+    """Manifest carrying a semantics block at all four attachment points."""
+    return GraphManifest.from_dict(
+        {
+            "schema": {
+                "metadata": {
+                    "name": "grounded",
+                    "version": "1.0.0",
+                    "semantics": {"iri": "https://schema.org/Dataset"},
+                },
+                "graph": {
+                    "vertex_config": {
+                        "vertices": [
+                            {
+                                "name": "person",
+                                "properties": [
+                                    "email",
+                                    {
+                                        "name": "speed",
+                                        "type": "FLOAT",
+                                        "semantics": {
+                                            "unit": "m/s",
+                                            "iri": "https://qudt.org/vocab/quantitykind/Speed",
+                                        },
+                                    },
+                                ],
+                                "identity": ["email"],
+                                "semantics": {
+                                    "iri": "https://schema.org/Person",
+                                    "exact_match": ["http://xmlns.com/foaf/0.1/Person"],
+                                    "synonyms": ["human", "individual"],
+                                },
+                            },
+                            {
+                                "name": "company",
+                                "properties": ["tax_id"],
+                                "identity": ["tax_id"],
+                            },
+                        ]
+                    },
+                    "edge_config": {
+                        "edges": [
+                            {
+                                "source": "person",
+                                "target": "company",
+                                "relation": "works_at",
+                                "semantics": {"iri": "https://schema.org/worksFor"},
+                            }
+                        ]
+                    },
+                },
+            }
+        }
+    )
+
+
+def test_semantics_round_trips_at_every_attachment_point() -> None:
+    manifest = _grounded_manifest()
+    ttl = ManifestRdfSerializer().to_turtle(manifest, BASE_URI)
+    restored = ManifestRdfDeserializer().from_turtle(ttl, BASE_URI)
+    assert _canonical(restored) == _canonical(manifest)
+
+
+def test_semantics_emits_expected_triples() -> None:
+    graph = ManifestRdfSerializer(include_ontology=False).to_graph(
+        _grounded_manifest(), BASE_URI
+    )
+    person = URIRef(f"{BASE_URI}schema/core/vertex/person")
+    assert (person, ns.semanticIri, URIRef("https://schema.org/Person")) in graph
+    assert (
+        person,
+        ns.exactMatch,
+        URIRef("http://xmlns.com/foaf/0.1/Person"),
+    ) in graph
+    assert set(graph.objects(person, ns.altLabel)) == {
+        Literal("human"),
+        Literal("individual"),
+    }
+    speed = URIRef(f"{BASE_URI}schema/core/vertex/person/field/speed")
+    assert (speed, ns.unit, Literal("m/s")) in graph
+
+
+def test_schemas_without_semantics_emit_no_semantic_triples() -> None:
+    """Absent blocks stay absent — the vocabulary costs nothing when unused."""
+    graph = ManifestRdfSerializer(include_ontology=False).to_graph(
+        _load_example_manifest("1-ingest-csv"), BASE_URI
+    )
+    assert not list(graph.subjects(ns.semanticIri, None))
+    assert not list(graph.subjects(ns.unit, None))
+
+
+def test_ontology_declares_semantic_terms() -> None:
+    ontology = load_ontology_graph()
+    assert (ns.semanticIri, RDF.type, OWL.ObjectProperty) in ontology
+    assert (ns.unit, RDF.type, OWL.DatatypeProperty) in ontology
+    # Domain-free on purpose: the docs viz derives its grouping from domain/range
+    # structure, and these terms attach to four unrelated classes.
+    assert not list(ontology.objects(ns.semanticIri, RDFS.domain))
+
+
+def test_context_has_semantic_terms() -> None:
+    payload = (
+        pathlib.Path(ontology_path()).parent / "graflo-context.jsonld"
+    ).read_text(encoding="utf-8")
+    assert '"semanticIri"' in payload
+    assert '"unit": "gf:unit"' in payload
+    assert '"altLabel": "skos:altLabel"' in payload

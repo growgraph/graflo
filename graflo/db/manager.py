@@ -27,6 +27,7 @@ from typing import Any, cast
 
 from graflo.connections.onto import TARGET_DATABASES, DBConfig
 from graflo.db.arango.conn import ArangoConnection
+from graflo.db.conn import ConnectionCapability
 from graflo.db.falkordb.conn import FalkordbConnection
 from graflo.db.graflo_backend.connection import GraFloBackendConnection
 from graflo.db.memgraph.conn import MemgraphConnection
@@ -68,20 +69,44 @@ class ConnectionManager:
     }
 
     @classmethod
-    def graph_export_flavors(cls) -> list[DBType]:
-        """Database types that support graph introspection and bulk export."""
+    def flavors_supporting(cls, capability: ConnectionCapability) -> list[DBType]:
+        """Database types whose connection class declares *capability*."""
         return [
             db_type
             for db_type, conn_cls in cls.target_conn_mapping.items()
-            if getattr(conn_cls, "supports_graph_export", False)
+            if getattr(conn_cls, capability.value, False)
         ]
 
     @classmethod
-    def open_graph_connection(cls, connection_config: DBConfig):
-        """Open a graph database connection without target-only validation.
+    def graph_export_flavors(cls) -> list[DBType]:
+        """Database types that support bulk graph export."""
+        return cls.flavors_supporting(ConnectionCapability.GRAPH_EXPORT)
 
-        Use for graph sources (introspection, export) as well as targets.
-        Caller is responsible for closing the connection.
+    @classmethod
+    def open_read_connection(
+        cls,
+        connection_config: DBConfig,
+        *,
+        require: ConnectionCapability,
+    ):
+        """Open a connection for reading, gated on the capability actually needed.
+
+        Replaces ``open_graph_connection``, which gated every read path on
+        ``supports_graph_export`` -- "can dump the whole graph". That is a far
+        stronger claim than "can describe itself" or "can answer a bounded
+        read", and asking for it is why introspection reached three of eight
+        backends. Callers now name the capability they use, so a backend that
+        can introspect but not export is no longer turned away.
+
+        The caller is responsible for closing the connection.
+
+        Args:
+            connection_config: Which database to open.
+            require: The capability the caller is about to exercise.
+
+        Raises:
+            ValueError: If the flavor has no implementation, or does not declare
+                *require*.
         """
         db_type = connection_config.connection_type
         conn_cls = cls.target_conn_mapping.get(db_type)
@@ -89,10 +114,10 @@ class ConnectionManager:
             raise ValueError(
                 f"No graph connection implementation for database type {db_type!r}"
             )
-        if not getattr(conn_cls, "supports_graph_export", False):
-            supported = [t.value for t in cls.graph_export_flavors()]
+        if not getattr(conn_cls, require.value, False):
+            supported = [t.value for t in cls.flavors_supporting(require)]
             raise ValueError(
-                f"Database type {db_type!r} does not support graph export/introspection. "
+                f"Database type {db_type!r} does not support {require.label}. "
                 f"Supported types: {supported}"
             )
         return conn_cls(config=cast(Any, connection_config))

@@ -85,20 +85,44 @@ if [ -d "test" ]; then
 fi
 
 fail=0
-for i in "${!pids[@]}"; do
-  pid="${pids[$i]}"
-  name="${names[$i]}"
-  log_file="${logs[$i]}"
-  if wait "$pid"; then
-    echo "✅ ${name} passed (log: ${log_file})"
-  else
-    echo "❌ ${name} failed (log: ${log_file})"
-    echo "--- ${name} (last 60 lines) ---"
-    tail -n 60 "$log_file"
-    echo "--- end ${name} ---"
-    fail=1
-  fi
-done
+
+reap() {
+  for i in "${!pids[@]}"; do
+    pid="${pids[$i]}"
+    name="${names[$i]}"
+    log_file="${logs[$i]}"
+    if wait "$pid"; then
+      echo "✅ ${name} passed (log: ${log_file})"
+    else
+      echo "❌ ${name} failed (log: ${log_file})"
+      echo "--- ${name} (last 60 lines) ---"
+      tail -n 60 "$log_file"
+      echo "--- end ${name} ---"
+      fail=1
+    fi
+  done
+  pids=()
+  names=()
+  logs=()
+}
+
+reap
+
+# Cross-backend suites live at the root of test/db rather than in a per-backend
+# directory, so the loop above never reaches them and `--ignore=test/db` excludes
+# them too. Without this job they run only when invoked by hand.
+#
+# They run *after* the per-backend jobs, not alongside them, because by
+# definition they touch every backend at once. Parallelism here is only safe
+# where each suite owns a namespace, and Neo4j and Memgraph have none to own:
+# a cross-backend `recreate_schema=True` issues a database-wide wipe that
+# deletes whatever the per-backend suite just ingested. The two jobs were
+# racing for one database, and the loser reported a data bug.
+cross_backend_files=$(printf '%s ' "${ROOT}"/test_*.py)
+if [ -n "${cross_backend_files// /}" ]; then
+  run_suite "db-cross-backend" "uv run pytest ${cross_backend_files} ${pytest_opts[*]}"
+  reap
+fi
 
 echo "Logs written to: ${LOG_DIR}"
 exit "$fail"

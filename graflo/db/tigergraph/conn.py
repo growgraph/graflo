@@ -16,7 +16,7 @@ from graflo.architecture.contract.bindings import Bindings
 from graflo.architecture.graph_types import GraphContainer, Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.edge import Edge
-from graflo.architecture.schema.vertex import VertexConfig
+from graflo.architecture.schema.vertex import FieldType, VertexConfig
 from graflo.connections.onto import TigergraphBulkLoadConfig, TigergraphConfig
 from graflo.db.conn import Connection
 from graflo.db.tigergraph import (
@@ -76,6 +76,10 @@ class TigerGraphConnection(Connection):
     """TigerGraph database connection — facade over auth, REST, GSQL, DDL, and data ops."""
 
     flavor = DBType.TIGERGRAPH
+    supports_schema_introspection = True
+    # GSQL DDL is a real catalogue: the recovered schema is complete, not a
+    # lower bound, so `sample_limit` has nothing to bound.
+    schema_introspection_is_sampled = False
 
     def __init__(self, config: TigergraphConfig):
         super().__init__()
@@ -563,6 +567,82 @@ class TigerGraphConnection(Connection):
 
     def keep_absent_documents(self, *args, **kwargs):
         return self._data.keep_absent_documents(*args, **kwargs)
+
+    def introspect_graph_schema(
+        self,
+        schema_name: str | None = None,
+        *,
+        sample_limit: int = 100,
+    ) -> Schema:
+        """Recover a graflo Schema from TigerGraph's GSQL catalogue.
+
+        TigerGraph is the only backend that stores a real schema, so this reads
+        rather than samples: attribute names, declared types, endpoint pairs and
+        the ``DIRECTED`` / ``UNDIRECTED`` keyword all come straight from the DDL.
+        ``sample_limit`` is accepted for interface symmetry and deliberately
+        unused -- the result is complete, which is why ``sample_limit`` is left
+        ``None`` on the introspection so a consumer can tell the difference.
+        """
+        from graflo.db.graph_introspection import (
+            GraphEdgeIntrospection,
+            GraphIntrospectionResult,
+            GraphSchemaInferencer,
+            GraphVertexIntrospection,
+        )
+        from graflo.db.tigergraph.gsql_parsers import (
+            parse_show_edge_ddl,
+            parse_show_vertex_ddl,
+        )
+        from graflo.db.tigergraph.onto import field_type_from_gsql
+
+        graph_name = schema_name or self._require_configured_graph_name()
+
+        def _types(attributes) -> dict[str, FieldType]:
+            resolved = {}
+            for attribute in attributes:
+                declared = field_type_from_gsql(attribute.declared_type)
+                if declared is not None:
+                    resolved[attribute.name] = declared
+            return resolved
+
+        vertex_ddl = parse_show_vertex_ddl(
+            str(self._execute_gsql(f"USE GRAPH {graph_name}\nSHOW VERTEX *"))
+        )
+        vertices = [
+            GraphVertexIntrospection(
+                name=ddl.name,
+                properties=[a.name for a in ddl.attributes],
+                # PRIMARY_ID is a declared identity, not an inferred one, so it
+                # wins over the name-guessing fallback the sampling backends need.
+                identity=[ddl.primary_id] if ddl.primary_id else [],
+                property_types=_types(ddl.attributes),
+            )
+            for ddl in vertex_ddl
+        ]
+
+        edge_ddl = parse_show_edge_ddl(
+            str(self._execute_gsql(f"USE GRAPH {graph_name}\nSHOW EDGE *"))
+        )
+        edges = [
+            GraphEdgeIntrospection(
+                source=source,
+                target=target,
+                relation=ddl.name,
+                properties=[a.name for a in ddl.attributes],
+                property_types=_types(ddl.attributes),
+                directed=ddl.directed,
+                collection_name=ddl.name,
+            )
+            for ddl in edge_ddl
+            for source, target in ddl.endpoints
+        ]
+
+        introspection = GraphIntrospectionResult(
+            name=graph_name, vertices=vertices, edges=edges
+        )
+        return GraphSchemaInferencer(db_flavor=DBType.TIGERGRAPH).infer_schema(
+            introspection, schema_name=graph_name
+        )
 
 
 __all__ = [

@@ -22,10 +22,14 @@ from graflo.architecture.contract.bindings.connectors import (
 )
 
 GF_ONTOLOGY_IRI = "https://ontology.growgraph.dev/graflo"
-GF_VERSION = "1.3.0"
+GF_VERSION = "1.4.0"
 GF_VERSION_IRI = f"{GF_ONTOLOGY_IRI}/{GF_VERSION}"
 GF_BASE = "https://ontology.growgraph.dev/graflo/"
 GF = Namespace(GF_BASE)
+
+SKOS = Namespace("http://www.w3.org/2004/02/skos/core#")
+exactMatch = SKOS.exactMatch
+altLabel = SKOS.altLabel
 
 # Classes
 GraphManifest = GF.GraphManifest
@@ -115,6 +119,10 @@ hasEdgeInferExcept = GF.hasEdgeInferExcept
 name = GF.name
 version = GF.version
 description = GF.description
+# Semantic grounding. `semanticIri` is GraFlo's own term; equivalence and
+# alternative labels reuse SKOS rather than minting parallel vocabulary.
+semanticIri = GF.semanticIri
+unit = GF.unit
 enumValue = GF.enumValue
 fieldType = GF.fieldType
 dbFlavor = GF.dbFlavor

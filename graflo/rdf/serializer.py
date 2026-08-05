@@ -100,6 +100,7 @@ class ManifestRdfSerializer:
         add_literal(graph, metadata_uri, ns.name, schema.metadata.name)
         add_literal(graph, metadata_uri, ns.version, schema.metadata.version)
         add_literal(graph, metadata_uri, ns.description, schema.metadata.description)
+        self._emit_semantics(graph, metadata_uri, schema.metadata.semantics)
 
         core_uri = URIRef(join_uri(str(schema_uri), "core"))
         graph.add((schema_uri, ns.hasCoreSchema, core_uri))
@@ -164,6 +165,7 @@ class ManifestRdfSerializer:
         graph.add((vertex_uri, RDF.type, ns.Vertex))
         add_literal(graph, vertex_uri, ns.name, vertex.name)
         add_literal(graph, vertex_uri, ns.description, vertex.description)
+        self._emit_semantics(graph, vertex_uri, vertex.semantics)
         add_literal(graph, vertex_uri, ns.blank, vertex.blank)
         add_literal(graph, vertex_uri, ns.assigned, vertex.assigned)
 
@@ -230,6 +232,27 @@ class ManifestRdfSerializer:
                     branch.when_all_present,
                 )
 
+    def _emit_semantics(
+        self,
+        graph: Graph,
+        subject: URIRef | BNode,
+        semantics: Any,
+    ) -> None:
+        """Emit the optional semantic-grounding block for any element.
+
+        One helper for all four attachment points (schema metadata, vertex, edge,
+        field) so the vocabulary cannot drift between them.
+        """
+        if semantics is None:
+            return
+        if semantics.iri:
+            graph.add((subject, ns.semanticIri, URIRef(semantics.iri)))
+        for iri in semantics.exact_match:
+            graph.add((subject, ns.exactMatch, URIRef(iri)))
+        for synonym in semantics.synonyms:
+            add_literal(graph, subject, ns.altLabel, synonym)
+        add_literal(graph, subject, ns.unit, getattr(semantics, "unit", None))
+
     @staticmethod
     def _emit_identity_names(
         graph: Graph,
@@ -267,6 +290,7 @@ class ManifestRdfSerializer:
         add_literal(graph, field_uri, ns.artifactIndex, index)
         add_literal(graph, field_uri, ns.name, field_obj.name)
         add_literal(graph, field_uri, ns.description, field_obj.description)
+        self._emit_semantics(graph, field_uri, field_obj.semantics)
         if field_obj.type is not None:
             add_enum_individual(
                 graph,
@@ -286,6 +310,7 @@ class ManifestRdfSerializer:
         graph.add((edge_uri, RDF.type, ns.Edge))
         add_literal(graph, edge_uri, ns.relation, edge.relation)
         add_literal(graph, edge_uri, ns.description, edge.description)
+        self._emit_semantics(graph, edge_uri, edge.semantics)
 
         source_uri = vertex_uri_by_name.get(edge.source)
         target_uri = vertex_uri_by_name.get(edge.target)

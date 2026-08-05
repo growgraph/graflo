@@ -52,7 +52,9 @@ Example:
 
 import abc
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
+from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeVar
 
 from graflo.architecture.graph_types import EdgeDirection, GraphContainer
@@ -81,6 +83,7 @@ if TYPE_CHECKING:
     from graflo.architecture.graph_types import EdgeId
     from graflo.connections.provider import ConnectionProvider
     from graflo.db.edge_direction_support import EdgeDirectionDiagnostic
+    from graflo.filter.onto import FilterExpression
 
 logger = logging.getLogger(__name__)
 ConnectionType = TypeVar("ConnectionType", bound="Connection")
@@ -148,6 +151,28 @@ class NamespaceNotFoundError(RuntimeError):
     """Raised when create=False and the target graph/database/space does not exist."""
 
 
+class ConnectionCapability(Enum):
+    """A capability a caller needs from a connection, by ClassVar name.
+
+    Values are the attribute names on :class:`Connection` so that opening a
+    connection for a purpose and declaring support for that purpose cannot drift
+    apart -- there is one name, not a flag and a matching-by-convention check.
+    """
+
+    GRAPH_READ = "supports_graph_read"
+    GRAPH_EXPORT = "supports_graph_export"
+    SCHEMA_INTROSPECTION = "supports_schema_introspection"
+
+    @property
+    def label(self) -> str:
+        """Human-readable name, for error messages."""
+        return {
+            ConnectionCapability.GRAPH_READ: "bounded graph reads",
+            ConnectionCapability.GRAPH_EXPORT: "bulk graph export",
+            ConnectionCapability.SCHEMA_INTROSPECTION: "schema introspection",
+        }[self]
+
+
 class Connection(abc.ABC):
     """Abstract base class for database connections.
 
@@ -162,7 +187,21 @@ class Connection(abc.ABC):
     """
 
     flavor: ClassVar[DBType] = DBType.ARANGO  # Overridden by subclasses
+
+    #: Can bulk-export the whole graph (used by export and migration).
     supports_graph_export: ClassVar[bool] = False
+    #: Can answer bounded reads — ``fetch_edges`` and therefore traversal.
+    #: Distinct from export: reading a neighbourhood is not dumping a graph, and
+    #: conflating the two is what limited introspection to three backends.
+    supports_graph_read: ClassVar[bool] = True
+    #: Has a real :meth:`introspect_graph_schema`, rather than the raising default.
+    supports_schema_introspection: ClassVar[bool] = False
+    #: Whether :meth:`introspect_graph_schema` samples rows rather than reading a
+    #: catalogue. Sampling recovers a *lower bound* — a property present on no
+    #: sampled row is simply absent from the result — so a consumer needs this to
+    #: know how far to trust the recovered schema. Set ``False`` only where the
+    #: backend stores a real DDL catalogue.
+    schema_introspection_is_sampled: ClassVar[bool] = True
 
     def __init__(self):
         """Initialize the connection."""
@@ -576,7 +615,7 @@ class Connection(abc.ABC):
         aggregation_function: AggregationType,
         discriminant: str | None = None,
         aggregated_field: str | None = None,
-        filters: list[Any] | dict[str, Any] | None = None,
+        filters: "FilterExpression | list[Any] | dict[str, Any] | None" = None,
     ) -> int | float | list[dict[str, Any]] | dict[str, int | float] | None:
         """Perform aggregation on a collection.
 
@@ -585,7 +624,10 @@ class Connection(abc.ABC):
             aggregation_function: Type of aggregation to perform
             discriminant: Field to group by
             aggregated_field: Field to aggregate
-            filters: Query filters
+            filters: Query filters. Accepts a built ``FilterExpression`` as well
+                as the shorthand dict/list forms, matching ``fetch_edges`` —
+                callers holding a typed query model should not have to round-trip
+                it back through a dict to aggregate.
 
         Returns:
             Aggregation results (type depends on aggregation function)
@@ -687,6 +729,104 @@ class Connection(abc.ABC):
         raise UnsupportedBulkLoad(
             f"Database flavor {self.flavor!r} does not support native bulk load"
         )
+
+    def graph_neighbors(
+        self,
+        vertex_type: str,
+        key: str | dict[str, Any],
+        *,
+        hops: int = 1,
+        direction: EdgeDirection = EdgeDirection.OUT,
+        edge_types: Sequence[str] | None = None,
+        filters: Any | None = None,
+        limit: int | None = None,
+        schema: Schema | None = None,
+    ) -> GraphContainer:
+        """Bounded neighbourhood around one anchor vertex.
+
+        Returns a :class:`~graflo.architecture.graph_types.container.GraphContainer`
+        so every backend answers in the same shape — the point of the whole read
+        path being DB-agnostic.
+
+        The default is a breadth-first composition of :meth:`fetch_edges` and
+        :meth:`fetch_docs`, which gives correct multi-hop semantics on any
+        backend that can answer a single hop. Backends with a native multi-hop
+        form (AQL ``1..k``, Cypher variable-length, nGQL ``GO … STEPS``) override
+        this for a single round trip; the conformance suite asserts the override
+        returns exactly what the default would.
+
+        Args:
+            vertex_type: Logical type of the anchor vertex.
+            key: Anchor's identity — a raw id, or a field mapping to resolve.
+            hops: Maximum hop distance. Must be >= 1.
+            direction: Orientations followed from the anchor. Edges declared
+                ``directed=False`` are followed both ways regardless.
+            edge_types: Restrict traversal to these logical relation names.
+            filters: Optional ``FilterExpression`` applied to edges.
+            limit: Maximum edges to accumulate.
+            schema: Schema used for logical -> storage name resolution. Required
+                for anything but the simplest single-collection graphs.
+
+        Returns:
+            GraphContainer: vertices and edges reached, deduplicated.
+
+        Raises:
+            UnsupportedEdgeDirectionError: if the backend cannot follow an edge
+                in the requested direction (TigerGraph without a reverse type).
+        """
+        from graflo.db.traversal import bfs_neighbors
+
+        return bfs_neighbors(
+            self,
+            anchor_type=vertex_type,
+            anchor_key=key,
+            hops=hops,
+            direction=direction,
+            edge_types=edge_types,
+            filters=filters,
+            limit=limit,
+            schema=schema,
+        )
+
+    def traverse(self, query: Any, *, schema: Schema) -> GraphContainer:
+        """Answer a :class:`~graflo.architecture.query.TraverseQuery`.
+
+        The multi-seed form of :meth:`graph_neighbors`. Seeds are walked in
+        order and merged into one container, so a vertex reachable from several
+        seeds appears once.
+
+        The query is **not** validated here. Cap enforcement belongs to the
+        surface that accepted the request, before any connection is opened —
+        validating again at the driver would make the ordering ambiguous and
+        invite a caller to skip the earlier check.
+
+        Args:
+            query: A ``TraverseQuery``. Typed as ``Any`` because ``db`` sits at
+                layer 5 and ``architecture.query`` at layer 2; importing it at
+                module scope would be an upward import.
+            schema: Required, for logical -> storage name resolution.
+
+        Returns:
+            GraphContainer: everything reached from any seed, deduplicated.
+        """
+        container = GraphContainer()
+        for seed in query.seeds:
+            reached = self.graph_neighbors(
+                seed["vertex_type"],
+                seed["key"],
+                hops=query.max_hops,
+                direction=query.edge_direction,
+                edge_types=query.edge_relations,
+                filters=query.filters,
+                limit=query.limit,
+                schema=schema,
+            )
+            for vertex_type, docs in reached.vertices.items():
+                container.vertices.setdefault(vertex_type, []).extend(docs)
+            for edge_id, rows in reached.edges.items():
+                container.edges.setdefault(edge_id, []).extend(rows)
+        container.pick_unique()
+        return container
 
     def introspect_graph_schema(
         self,

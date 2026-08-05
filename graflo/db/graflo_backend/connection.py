@@ -14,10 +14,25 @@ from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig
 from graflo.connections.graflo_backend import GraFloBackendConfig
 from graflo.db.conn import Connection, NamespaceNotFoundError, SchemaExistsError
-from graflo.filter.onto import parse_filter_expression
+from graflo.filter.onto import FilterExpression, parse_filter_expression
 from graflo.onto import AggregationType, DBType, ExpressionFlavor
 
 logger = logging.getLogger(__name__)
+
+#: Ceiling on rows held in the in-process edge index. Traversal over a file
+#: backend larger than this is the wrong tool; the bound is logged, never silent.
+_EDGE_INDEX_MAX_ROWS = 2_000_000
+
+
+def _first_value(doc: Any, fields: list[str]) -> str | None:
+    """First present identity value in *doc*, as a string."""
+    if not isinstance(doc, dict):
+        return None
+    for field in [*fields, "_key", "id"]:
+        value = doc.get(field)
+        if value is not None:
+            return str(value)
+    return None
 
 
 class GraFloBackendConnection(Connection):
@@ -25,10 +40,12 @@ class GraFloBackendConnection(Connection):
 
     flavor = DBType.GRAFLO_BACKEND
     supports_graph_export = True
+    supports_schema_introspection = True
 
     def __init__(self, config: GraFloBackendConfig) -> None:
         super().__init__()
         self.config = config
+        self._edge_index_cache: dict[str, list[dict[str, Any]]] | None = None
         self._writer = GraFloBackendWriter(
             config.output_dir,
             chunk_size=config.chunk_size,
@@ -212,11 +229,107 @@ class GraFloBackendConnection(Connection):
         direction: EdgeDirection = EdgeDirection.OUT,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
-        # Direction is the storage partition key here, so no orientation is
-        # answerable without materializing the reversed batch.
-        raise NotImplementedError(
-            "GraFlo file backend does not support filtered edge fetch; use fetch_all_edges"
-        )
+        """Edges incident to one vertex, served from a lazily built index.
+
+        Direction is this backend's storage partition key, so the reverse
+        orientation has to be materialized to be answerable at all. That is a
+        statement about *storage*; an in-process read index is not storage, so
+        building one here does not contradict the ``MATERIALIZATION_REQUIRED``
+        tier in the capability matrix — it is exactly what that tier prescribes.
+        """
+        index = self._edge_index()
+        entries = index.get(edge_type) if edge_type is not None else None
+        if entries is None:
+            # No edge_type: search every indexed edge type.
+            entries = [row for rows in index.values() for row in rows]
+
+        matched: list[dict[str, Any]] = []
+        for row in entries:
+            source_id = row.get("_from_key")
+            target_id = row.get("_to_key")
+            if direction is EdgeDirection.OUT:
+                anchored = source_id == from_id
+                far = target_id
+            elif direction is EdgeDirection.IN:
+                anchored = target_id == from_id
+                far = source_id
+            else:
+                if source_id == from_id:
+                    anchored, far = True, target_id
+                elif target_id == from_id:
+                    anchored, far = True, source_id
+                else:
+                    anchored, far = False, None
+            if not anchored:
+                continue
+            if to_id is not None and far != to_id:
+                continue
+            matched.append(row)
+            if limit is not None and len(matched) >= limit:
+                break
+
+        if filters is not None:
+            expression = parse_filter_expression(filters)
+            matched = [
+                row for row in matched if expression(row, kind=ExpressionFlavor.PYTHON)
+            ]
+        if return_keys or unset_keys:
+            keep = set(return_keys) if return_keys else None
+            drop = set(unset_keys) if unset_keys else set()
+            matched = [
+                {
+                    k: v
+                    for k, v in row.items()
+                    if (keep is None or k in keep) and k not in drop
+                }
+                for row in matched
+            ]
+        return matched
+
+    def _edge_index(self) -> dict[str, list[dict[str, Any]]]:
+        """Storage edge name -> flat edge rows, built once per connection.
+
+        Rows carry ``_from_key`` / ``_to_key`` so both orientations are
+        answerable from one pass over the chunked files.
+        """
+        if self._edge_index_cache is not None:
+            return self._edge_index_cache
+
+        schema = self._reader.read_schema()
+        db_aware = schema.resolve_db_aware(self.flavor)
+        index: dict[str, list[dict[str, Any]]] = {}
+        total = 0
+        for edge in schema.core_schema.edge_config.edges:
+            storage = db_aware.edge_config.runtime(edge).storage_name()
+            if storage is None:
+                continue
+            rows = index.setdefault(storage, [])
+            source_identity = db_aware.vertex_config.identity_fields(edge.source)
+            target_identity = db_aware.vertex_config.identity_fields(edge.target)
+            for batch in self._reader.iter_edge_batches(edge.edge_id):
+                for record in batch:
+                    if not isinstance(record, list) or len(record) < 2:
+                        continue
+                    source_doc, target_doc = record[0], record[1]
+                    weight = record[2] if len(record) > 2 else {}
+                    rows.append(
+                        {
+                            **(weight if isinstance(weight, dict) else {}),
+                            "_from_key": _first_value(source_doc, source_identity),
+                            "_to_key": _first_value(target_doc, target_identity),
+                        }
+                    )
+                    total += 1
+                    if total >= _EDGE_INDEX_MAX_ROWS:
+                        logger.warning(
+                            "GraFlo file backend edge index hit its %s-row bound; "
+                            "traversal results may be incomplete",
+                            _EDGE_INDEX_MAX_ROWS,
+                        )
+                        self._edge_index_cache = index
+                        return index
+        self._edge_index_cache = index
+        return index
 
     def fetch_present_documents(
         self,
@@ -255,7 +368,7 @@ class GraFloBackendConnection(Connection):
         aggregation_function: AggregationType,
         discriminant: str | None = None,
         aggregated_field: str | None = None,
-        filters: list[Any] | dict[str, Any] | None = None,
+        filters: FilterExpression | list[Any] | dict[str, Any] | None = None,
     ) -> int | float | list[dict[str, Any]] | dict[str, int | float] | None:
         raise NotImplementedError(
             "GraFlo file backend does not support aggregate queries"

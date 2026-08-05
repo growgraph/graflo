@@ -100,12 +100,15 @@ class PostgresConnection(PostgresTargetWriteMixin, Connection):
             logger.error(f"Failed to connect to PostgreSQL: {e}", exc_info=True)
             raise
 
-    def read(self, query: str, params: tuple | None = None) -> list[dict[str, Any]]:
+    def read(
+        self, query: str, params: tuple | dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
         """Execute a SELECT query and return results as a list of dictionaries.
 
         Args:
             query: SQL SELECT query to execute
-            params: Optional tuple of parameters for parameterized queries
+            params: Optional parameters — a tuple for ``%s`` placeholders, or a
+                mapping for named ``%(name)s`` ones.
 
         Returns:
             List of dictionaries, where each dictionary represents a row with column names as keys.

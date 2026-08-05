@@ -14,10 +14,16 @@ L0  graflo.onto            enums and core vocabulary (DBType, identity selectors
 
 L1  graflo.filter          FilterExpression, SelectSpec, JoinClause
     graflo.architecture.graph_types   containers, contexts, identifiers, EdgeDerivation
+    graflo.architecture.onto_sql      leaf pydantic models (SQL introspection)
+    graflo.architecture.util          helpers over graph_types only
 
 L2  graflo.architecture.schema        Schema, VertexConfig, EdgeConfig,
                                       DatabaseProfile, db-aware projections,
                                       identity_uuid helpers
+    graflo.architecture.query         read contract (QueryCaps, NodeQuery,
+                                      NeighborQuery, TraverseQuery, AggregateQuery,
+                                      and QueryResult)
+    graflo.architecture.onto_sample   leaf sample models (ResourceSample, etc.)
 
 L3  graflo.connections     connection *configs*: DBConfig + per-backend configs
                            (onto), source configs (sources), DBType mapping

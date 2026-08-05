@@ -34,6 +34,7 @@ from pydantic import (
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.schema.identity_funnel import IdentityFunnel
+from graflo.architecture.schema.semantics import FieldSemantics, Semantics
 from graflo.filter.onto import FilterExpression
 from graflo.onto import (
     PRIMARY_IDENTITY_SELECTOR,
@@ -141,6 +142,15 @@ def _normalize_field_type_input(v: Any, *, label: str) -> FieldType | None:
     )
 
 
+#: Vertex keys that moved elsewhere. Kept as a lookup so the error names the
+#: destination instead of just refusing an unknown key.
+RELOCATED_VERTEX_KEYS: dict[str, str] = {
+    "dbname": "db_profile.vertex_storage_names",
+    "indexes": "db_profile.vertex_indexes",
+    "transforms": "the ingestion model, as resource pipeline steps",
+}
+
+
 class Field(ConfigBaseModel):
     """Represents a typed field in a vertex.
 
@@ -177,6 +187,10 @@ class Field(ConfigBaseModel):
     description: str | None = PydanticField(
         default=None,
         description="Optional semantic description of the field for schema inference and downstream reasoning.",
+    )
+    semantics: FieldSemantics | None = PydanticField(
+        default=None,
+        description="Optional external-vocabulary anchors and unit for this field.",
     )
 
     @field_validator("type", mode="before")
@@ -260,16 +274,15 @@ def _parse_string_to_dict(field_str: str) -> dict | None:
 
 
 def _dict_to_field(field_dict: dict[str, Any]) -> Field:
-    """Convert a dict to a Field object."""
-    name = field_dict.get("name")
-    if name is None:
+    """Convert a dict to a Field object.
+
+    Delegates to the model rather than copying keys across by hand: an
+    enumerated constructor silently drops any field it was not updated for, and
+    ``extra="forbid"`` only helps if the dict actually reaches validation.
+    """
+    if field_dict.get("name") is None:
         raise ValueError(f"Field dict must have 'name' key: {field_dict}")
-    return Field(
-        name=name,
-        type=field_dict.get("type"),
-        item_type=field_dict.get("item_type"),
-        description=field_dict.get("description"),
-    )
+    return Field.model_validate(field_dict)
 
 
 def _normalize_fields_item(item: str | Field | dict[str, Any]) -> Field:
@@ -446,8 +459,10 @@ class Vertex(ConfigBaseModel):
         ... ])
     """
 
-    # Allow extra keys when loading from YAML (e.g. transforms, other runtime keys)
-    model_config = ConfigDict(extra="ignore")
+    # Unknown keys are an error, like every other config model. They used to be
+    # dropped silently, which meant an authored block a given graflo did not know
+    # about vanished on the next round-trip with no diagnostic at all.
+    model_config = ConfigDict(extra="forbid")
 
     name: str = PydanticField(
         ...,
@@ -468,6 +483,10 @@ class Vertex(ConfigBaseModel):
     description: str | None = PydanticField(
         default=None,
         description="Optional semantic description of the vertex meaning, role, and intended interpretation.",
+    )
+    semantics: Semantics | None = PydanticField(
+        default=None,
+        description="Optional external-vocabulary anchors for this vertex type.",
     )
     blank: bool = PydanticField(
         default=False,
@@ -555,6 +574,28 @@ class Vertex(ConfigBaseModel):
         if isinstance(v, list):
             return v
         raise ValueError("hash_identity_properties must be a list[str]")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_relocated_keys(cls, data: Any) -> Any:
+        """Point at the new home for keys that used to live on a vertex.
+
+        These were silently dropped while this model ignored extra keys, so an
+        author moving an old manifest forward got no signal that a physical name
+        or an index had gone missing. Naming the destination is the whole value
+        of forbidding them.
+        """
+        if not isinstance(data, dict):
+            return data
+        relocated = [key for key in RELOCATED_VERTEX_KEYS if key in data]
+        if relocated:
+            name = data.get("name", "<unnamed>")
+            moves = "; ".join(
+                f"'{key}' now belongs in {RELOCATED_VERTEX_KEYS[key]}"
+                for key in relocated
+            )
+            raise ValueError(f"Vertex '{name}': {moves}")
+        return data
 
     @model_validator(mode="after")
     def set_identity(self) -> Vertex:
@@ -766,8 +807,8 @@ class VertexConfig(ConfigBaseModel):
         force_types: Dictionary mapping vertex names to type lists
     """
 
-    # Allow extra keys when loading from YAML (e.g. vertex_config wrapper key)
-    model_config = ConfigDict(extra="ignore")
+    # See Vertex: silently dropping unknown keys hides authoring mistakes.
+    model_config = ConfigDict(extra="forbid")
 
     vertices: list[Vertex] = PydanticField(
         ...,

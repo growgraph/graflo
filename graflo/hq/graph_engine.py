@@ -24,6 +24,7 @@ from graflo.connections.provider import (
     InMemoryConnectionProvider,
     SparqlGeneralizedConnConfig,
 )
+from graflo.db.conn import ConnectionCapability
 from graflo.db.manager import ConnectionManager
 from graflo.db.postgres.conn import PostgresConnection
 from graflo.hq.caster import Caster, IngestionParams
@@ -605,7 +606,12 @@ class GraphEngine:
         data_limit: int | None = None,
     ) -> tuple[Schema, GraphContainer]:
         """Open one source connection, introspect schema, and export data."""
-        conn = ConnectionManager.open_graph_connection(source_config)
+        # Export is the stronger of the two capabilities used here, so it is the
+        # one to require: a backend that can introspect but not dump the graph
+        # cannot satisfy this call.
+        conn = ConnectionManager.open_read_connection(
+            source_config, require=ConnectionCapability.GRAPH_EXPORT
+        )
         try:
             schema = conn.introspect_graph_schema(
                 schema_name=schema_name, sample_limit=sample_limit
@@ -644,8 +650,15 @@ class GraphEngine:
         sample_limit: int = 100,
         target_db_flavor: DBType | None = None,
     ) -> Schema:
-        """Infer a graflo Schema from a graph database source."""
-        conn = ConnectionManager.open_graph_connection(source_config)
+        """Infer a graflo Schema from a graph database source.
+
+        Requires only introspection. This used to demand bulk-export support and
+        so reached three backends; it now reaches every backend that can
+        describe itself, which is all eight.
+        """
+        conn = ConnectionManager.open_read_connection(
+            source_config, require=ConnectionCapability.SCHEMA_INTROSPECTION
+        )
         try:
             schema = conn.introspect_graph_schema(
                 schema_name=schema_name, sample_limit=sample_limit

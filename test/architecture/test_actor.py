@@ -372,7 +372,6 @@ def test_transform_tuple_output_maps_to_vertex_index_fields_in_order():
                 {
                     "name": "pair",
                     "properties": ["left", "right"],
-                    "indexes": [{"fields": ["left", "right"]}],
                 }
             ]
         }
@@ -1551,7 +1550,6 @@ def test_rename_removes_source_keys_from_vertex_effective_doc() -> None:
                 {
                     "name": "resource",
                     "properties": ["context", "title", "bkuid", "r_id", "r_name"],
-                    "indexes": [{"fields": ["bkuid"]}],
                 }
             ]
         }
@@ -1663,7 +1661,6 @@ def test_infer_vertex_from_rename_destination_keys() -> None:
                 {
                     "name": "resource",
                     "properties": ["context", "title", "bkuid"],
-                    "indexes": [{"fields": ["bkuid"]}],
                 }
             ]
         }

@@ -22,35 +22,19 @@ def schema_ibes_vertices():
         fields:
         -   datetime_review
         -   datetime_announce
-        indexes:
-        -   fields:
-            -   _key
     -   name: ticker
         fields:
         -   cusip
-        indexes:
-        -   fields:
-            -   cusip
     -   name: agency
         fields:
         -   aname
-        indexes:
-        -   fields:
-            -   aname
     -   name: analyst
         fields:
         -   last_name
         -   initial
-        indexes:
-        -   fields:
-            -   last_name
-            -   initial
     -   name: recommendation
         fields:
         -   erec
-        indexes:
-        -   fields:
-            -   irec
     """)
     return VertexConfig.from_dict(tc)
 

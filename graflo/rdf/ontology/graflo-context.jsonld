@@ -184,6 +184,16 @@
         "name": "gf:name",
         "version": "gf:version",
         "description": "gf:description",
+        "semanticIri": {
+            "@id": "gf:semanticIri",
+            "@type": "@id"
+        },
+        "unit": "gf:unit",
+        "exactMatch": {
+            "@id": "skos:exactMatch",
+            "@type": "@id"
+        },
+        "altLabel": "skos:altLabel",
         "enumValue": "gf:enumValue",
         "fieldType": {
             "@id": "gf:fieldType",

@@ -11,7 +11,7 @@ from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.schema import CoreSchema, GraphMetadata, Schema
 from graflo.architecture.schema.database_features import DatabaseProfile
 from graflo.architecture.schema.edge import Edge, EdgeConfig
-from graflo.architecture.schema.vertex import Field, Vertex, VertexConfig
+from graflo.architecture.schema.vertex import Field, FieldType, Vertex, VertexConfig
 from graflo.onto import DBType
 
 logger = logging.getLogger(__name__)
@@ -25,6 +25,11 @@ class GraphVertexIntrospection(ConfigBaseModel):
     name: str
     properties: list[str] = PydanticField(default_factory=list)
     identity: list[str] = PydanticField(default_factory=list)
+    #: Declared property types, where the backend has a catalogue to report them
+    #: (``DESCRIBE TAG``, GSQL DDL, ``information_schema``). Sampling backends
+    #: leave this empty rather than guess, and the inferencer falls back to
+    #: ``STRING`` only for what is genuinely unknown.
+    property_types: dict[str, FieldType] = PydanticField(default_factory=dict)
 
 
 class GraphEdgeIntrospection(ConfigBaseModel):
@@ -35,6 +40,13 @@ class GraphEdgeIntrospection(ConfigBaseModel):
     relation: str | None = None
     properties: list[str] = PydanticField(default_factory=list)
     collection_name: str | None = None
+    #: ``False`` only when the backend *states* the edge is undirected -- today
+    #: that is TigerGraph's ``UNDIRECTED EDGE`` DDL. Sampling backends observe
+    #: edges in one orientation and cannot tell the difference, so they leave
+    #: the default: an unproven ``directed: false`` would silently widen every
+    #: query built on the recovered schema.
+    directed: bool = True
+    property_types: dict[str, FieldType] = PydanticField(default_factory=dict)
 
 
 class GraphIntrospectionResult(ConfigBaseModel):
@@ -43,6 +55,11 @@ class GraphIntrospectionResult(ConfigBaseModel):
     name: str
     vertices: list[GraphVertexIntrospection] = PydanticField(default_factory=list)
     edges: list[GraphEdgeIntrospection] = PydanticField(default_factory=list)
+    #: Rows examined per type where the result came from sampling, ``None`` where
+    #: it came from a DDL catalogue and is therefore complete. A modeller needs
+    #: this to know how far to trust the recovered schema: a low sample against a
+    #: large graph misses rare properties and rare edge patterns entirely.
+    sample_limit: int | None = None
 
 
 def infer_identity_fields(properties: list[str]) -> list[str]:
@@ -53,6 +70,12 @@ def infer_identity_fields(properties: list[str]) -> list[str]:
     if properties:
         return [properties[0]]
     return ["id"]
+
+
+def _field(name: str, types: dict[str, FieldType]) -> Field:
+    """Build a ``Field``, typed when the backend reported a type for it."""
+    declared = types.get(name)
+    return Field(name=name) if declared is None else Field(name=name, type=declared)
 
 
 def merge_property_names(existing: list[str], sampled: list[str]) -> list[str]:
@@ -82,10 +105,11 @@ class GraphSchemaInferencer:
                 if vertex_info.identity
                 else infer_identity_fields(vertex_info.properties)
             )
-            fields = [Field(name=p) for p in vertex_info.properties]
+            types = vertex_info.property_types
+            fields = [_field(p, types) for p in vertex_info.properties]
             for ident in identity:
                 if ident not in vertex_info.properties:
-                    fields.insert(0, Field(name=ident))
+                    fields.insert(0, _field(ident, types))
             vertices.append(
                 Vertex(
                     name=vertex_info.name,
@@ -117,13 +141,16 @@ class GraphSchemaInferencer:
                     edge_info.target,
                 )
                 continue
-            weight_fields = [Field(name=p) for p in edge_info.properties]
+            weight_fields = [
+                _field(p, edge_info.property_types) for p in edge_info.properties
+            ]
             edges.append(
                 Edge(
                     source=edge_info.source,
                     target=edge_info.target,
                     relation=edge_info.relation,
                     properties=weight_fields,
+                    directed=edge_info.directed,
                 )
             )
         return EdgeConfig(edges=edges)

@@ -25,22 +25,11 @@ def vertex_pub():
     tc = yaml.safe_load(
         """
         name: publication
-        dbname: publications
         properties:
         -   arxiv
         -   doi
         -   created
         -   data_source
-        indexes:
-        -   fields:
-            -   arxiv
-            -   doi
-        -   unique: false
-            fields:
-            -   created
-        -   unique: false
-            fields:
-            -   created
         filters:
         -   OR:
             -   IF_THEN:
@@ -57,14 +46,6 @@ def vertex_pub():
                 -   field: value
                     cmp_operator: ">"
                     value: 0
-        transforms:
-        -   foo: cast_ibes_analyst
-            module: graflo.util.transform
-            input:
-            -   ANALYST
-            output:
-            -   last_name
-            -   initial
     """
     )
     return tc
@@ -98,7 +79,6 @@ def vertex_config_kg():
         """
     vertices:
     -   name: publication
-        dbname: publications
         properties:
         -   arxiv
         -   doi
@@ -108,7 +88,6 @@ def vertex_config_kg():
         -   arxiv
         -   doi
     -   name: entity
-        dbname: entities
         properties:
         -   linker_type
         -   ent_db_type
@@ -120,7 +99,6 @@ def vertex_config_kg():
         -   id
         -   ent_type
     -   name: mention
-        dbname: mentions
         properties:
         -   text
         identity:
@@ -173,7 +151,6 @@ def schema_vc_openalex():
     tc = yaml.safe_load("""
     vertices:
     -   name: author
-        dbname: authors
         properties:
         -   _key
         -   display_name
@@ -181,7 +158,6 @@ def schema_vc_openalex():
         identity:
         -   _key
     -   name: concept
-        dbname: concepts
         properties:
         -   _key
         -   wikidata
@@ -193,7 +169,6 @@ def schema_vc_openalex():
         identity:
         -   _key
     -   name: institution
-        dbname: institutions
         properties:
         -   _key
         -   display_name
@@ -208,7 +183,6 @@ def schema_vc_openalex():
         identity:
         -   _key
     -   name: source
-        dbname: sources
         properties:
         -   _key
         -   issn_l
@@ -220,7 +194,6 @@ def schema_vc_openalex():
         identity:
         -   _key
     -   name: work
-        dbname: works
         properties:
         -   _key
         -   doi
@@ -289,20 +262,13 @@ def sample_openalex():
 @pytest.fixture()
 def vertex_config_collision():
     tc = yaml.safe_load("""
-    vertex_config:
     vertices:
     -   name: person
         properties:
         -   id
-        indexes:
-        -   fields:
-            -   id
     -   name: company
         properties:
         -   id
-        indexes:
-        -   fields:
-            -   id
     """)
     return VertexConfig.from_dict(tc)
 
@@ -342,20 +308,13 @@ def resource_collision():
 @pytest.fixture()
 def vertex_config_cross():
     tc = yaml.safe_load("""
-    vertex_config:
     vertices:
     -   name: person
         properties:
         -   id
-        indexes:
-        -   fields:
-            -   id
     -   name: company
         properties:
         -   name
-        indexes:
-        -   fields:
-            -   name
     """)
     return VertexConfig.from_dict(tc)
 
@@ -376,23 +335,15 @@ def vc_openalex():
     tc = yaml.safe_load("""
     vertices:
     -   name: author
-        dbname: authors
         properties:
         -   _key
         -   display_name
-        indexes:
-        -   fields:
-            -   _key
     -   name: institution
-        dbname: institutions
         properties:
         -   _key
         -   display_name
         -   country
         -   type
-        indexes:
-        -   fields:
-            -   _key
     """)
     return VertexConfig.from_dict(tc)
 
@@ -495,10 +446,8 @@ def resource_kg_menton_triple():
 @pytest.fixture()
 def vertex_config_kg_mention():
     tc = yaml.safe_load("""
-    vertex_config:
     vertices:
     -   name: mention
-        dbname: mentions
         properties:
         -   text
         identity:
@@ -536,15 +485,11 @@ def data_key_property():
 def vertex_key_property():
     tc = yaml.safe_load(
         """
-    vertex_config:
     vertices:
         -   name: package
             properties:
             -   name
             -   version
-            indexes:
-            -   fields:
-                -   name
     """
     )
     return VertexConfig.from_dict(tc)
@@ -558,25 +503,16 @@ def schema_vc_deb():
         properties:
         -   name
         -   version
-        indexes:
-        -   fields:
-            -   name
     -   name: maintainer
         properties:
         -   name
         -   email
-        indexes:
-        -   fields:
-            -   email
     -   name: bug
         properties:
         -   id
         -   subject
         -   severity
         -   date
-        indexes:
-        -   fields:
-            -   id
     """)
     return VertexConfig.from_dict(tc)
 
@@ -587,33 +523,14 @@ def vc_ticker():
         """
         vertices:
         -   name: ticker
-            dbname: tickers
             properties:
             -   cusip
             -   cname
             -   oftic
-            indexes:
-            -   fields:
-                -   cusip
-                -   cname
-                -   oftic
         -   name: feature
-            dbname: features
             properties:
             -   name
             -   value
-            indexes:
-            -   fields:
-                -   name
-                -   value
-            -   type: hash
-                unique: false
-                fields:
-                -   value
-            -   type: hash
-                unique: false
-                fields:
-                -   name
     """
     )
     return VertexConfig.from_dict(tc)
@@ -639,33 +556,14 @@ def vc_ticker_filtered():
         """
         vertices:
         -   name: ticker
-            dbname: tickers
             properties:
             -   cusip
             -   cname
             -   oftic
-            indexes:
-            -   fields:
-                -   cusip
-                -   cname
-                -   oftic
         -   name: feature
-            dbname: features
             properties:
             -   name
             -   value
-            indexes:
-            -   fields:
-                -   name
-                -   value
-            -   type: hash
-                unique: false
-                fields:
-                -   value
-            -   type: hash
-                unique: false
-                fields:
-                -   name
             filters:
             -   field: name
                 foo: __ne__
@@ -673,3 +571,79 @@ def vc_ticker_filtered():
     """
     )
     return VertexConfig.from_dict(tc)
+
+
+@pytest.fixture()
+def context_schema():
+    """Schema exercising every shape schema-context traversal must handle.
+
+    Contains a self-loop, parallel edges between one pair, an undirected edge, a
+    cycle, an isolated vertex type, and one type of each identity mode.
+    """
+    from graflo.architecture.graph_types import Index
+    from graflo.architecture.schema.core import CoreSchema
+    from graflo.architecture.schema.database_features import DatabaseProfile
+    from graflo.architecture.schema.document import Schema
+    from graflo.architecture.schema.edge import Edge
+    from graflo.architecture.schema.metadata import GraphMetadata
+    from graflo.architecture.schema.vertex import Field, Vertex
+
+    vertices = [
+        Vertex(
+            name="person",
+            properties=[
+                Field(name="email", type="string"),
+                Field(name="name", type="string"),
+                Field(name="age", type="int"),
+                Field(name="bio", type="string"),
+            ],
+            identity=["email"],
+        ),
+        Vertex(
+            name="company",
+            properties=[
+                Field(name="tax_id", type="string"),
+                Field(name="title", type="string"),
+            ],
+            identity=["tax_id"],
+        ),
+        Vertex(
+            name="city",
+            properties=[Field(name="code", type="string")],
+            identity=["code"],
+        ),
+        Vertex(
+            name="doc",
+            properties=[Field(name="body", type="string")],
+            blank=True,
+        ),
+        Vertex(
+            name="orphan",
+            properties=[Field(name="tag", type="string")],
+            identity=["tag"],
+        ),
+    ]
+    edges = [
+        # self-loop
+        Edge(source="person", target="person", relation="knows"),
+        # parallel edges: same endpoints, different relations
+        Edge(source="person", target="company", relation="works_at"),
+        Edge(source="person", target="company", relation="founded"),
+        # undirected — traversable from its target even under OUT
+        Edge(source="company", target="city", relation="hq_in", directed=False),
+        Edge(source="person", target="city", relation="lives_in"),
+        # relation-less edge: exercises the None-relation sort key
+        Edge(source="doc", target="person", relation=None),
+    ]
+    return Schema(
+        metadata=GraphMetadata(
+            name="context-fixture", version="1.0.0", description="context test schema"
+        ),
+        core_schema=CoreSchema(
+            vertex_config=VertexConfig(vertices=vertices),
+            edge_config=EdgeConfig(edges=edges),
+        ),
+        db_profile=DatabaseProfile(
+            vertex_indexes={"person": [Index(fields=["name"])]},
+        ),
+    )

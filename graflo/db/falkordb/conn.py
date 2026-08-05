@@ -25,13 +25,14 @@ Example:
 """
 
 import logging
+from collections.abc import Sequence
 from typing import Any
 from urllib.parse import urlparse
 
 from falkordb import FalkorDB
 from falkordb.graph import Graph
 
-from graflo.architecture.graph_types import EdgeDirection, Index
+from graflo.architecture.graph_types import EdgeDirection, GraphContainer, Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import VertexConfig
@@ -44,8 +45,9 @@ from graflo.db.conn import (
 )
 from graflo.db.cypher import cypher_rel_pattern, rel_merge_props_map_from_row_index
 from graflo.db.field_type_support import assert_schema_field_types_supported
+from graflo.db.graph_introspection import GraphSchemaInferencer
 from graflo.db.util import serialize_value
-from graflo.filter.onto import FilterExpression
+from graflo.filter.onto import FilterExpression, parse_filter_expression
 from graflo.onto import AggregationType, DBType
 
 logger = logging.getLogger(__name__)
@@ -67,6 +69,7 @@ class FalkordbConnection(Connection):
     """
 
     flavor = DBType.FALKORDB
+    supports_schema_introspection = True
 
     # Type annotations for instance attributes
     client: FalkorDB | None
@@ -889,6 +892,51 @@ class FalkordbConnection(Connection):
         else:
             return [self._edge_to_dict(row[0]) for row in result.result_set]
 
+    def graph_neighbors(
+        self,
+        vertex_type: str,
+        key: str | dict[str, Any],
+        *,
+        hops: int = 1,
+        direction: EdgeDirection = EdgeDirection.OUT,
+        edge_types: Sequence[str] | None = None,
+        filters: Any | None = None,
+        limit: int | None = None,
+        schema: Schema | None = None,
+    ) -> GraphContainer:
+        """Bounded neighbourhood via a variable-length OpenCypher pattern.
+
+        Same reasoning as Neo4j: ``fetch_edges`` returns ``RETURN r``, and a bare
+        relationship carries no endpoints, so the generic breadth-first default
+        has nothing to walk to.
+        """
+        from graflo.db.cypher.traversal import cypher_graph_neighbors
+
+        def run(query: str) -> list[dict[str, Any]]:
+            result = self.execute(query)
+            rows: list[dict[str, Any]] = []
+            for row in result.result_set:
+                far = row[0]
+                properties = (
+                    dict(far.properties)
+                    if hasattr(far, "properties")
+                    else (dict(far) if isinstance(far, dict) else {})
+                )
+                rows.append({"far": properties})
+            return rows
+
+        return cypher_graph_neighbors(
+            self,
+            vertex_type=vertex_type,
+            key=key,
+            hops=hops,
+            direction=direction,
+            edge_types=edge_types,
+            limit=limit,
+            schema=schema,
+            run=run,
+        )
+
     def _edge_to_dict(self, edge) -> dict:
         """Convert a FalkorDB edge to a dictionary.
 
@@ -955,13 +1003,40 @@ class FalkordbConnection(Connection):
 
         return results
 
+    def introspect_graph_schema(
+        self,
+        schema_name: str | None = None,
+        *,
+        sample_limit: int = 100,
+    ) -> Schema:
+        """Infer a graflo Schema from FalkorDB via label and relationship sampling.
+
+        Shares the Cypher-family sampling with Neo4j and Memgraph; only the row
+        shape differs, since the FalkorDB client returns positional tuples that
+        the runner pairs with the query's ``RETURN`` aliases.
+        """
+        from graflo.db.cypher.introspection import collect_cypher_introspection
+
+        resolved_name = schema_name or self._graph_name or "falkordb"
+
+        def run(query: str, keys: Sequence[str]) -> list[dict[str, Any]]:
+            result = self.execute(query)
+            return [dict(zip(keys, row)) for row in result.result_set]
+
+        introspection = collect_cypher_introspection(
+            name=resolved_name, run=run, sample_limit=sample_limit
+        )
+        return GraphSchemaInferencer(db_flavor=DBType.FALKORDB).infer_schema(
+            introspection, schema_name=resolved_name
+        )
+
     def aggregate(
         self,
         class_name,
         aggregation_function: AggregationType,
         discriminant: str | None = None,
         aggregated_field: str | None = None,
-        filters: list | dict | None = None,
+        filters: FilterExpression | list | dict | None = None,
     ):
         """Perform aggregation on nodes.
 
@@ -977,7 +1052,7 @@ class FalkordbConnection(Connection):
         """
         # Build filter clause
         if filters is not None:
-            ff = FilterExpression.from_dict(filters)
+            ff = parse_filter_expression(filters)
             filter_clause = f"WHERE {ff(doc_name='n', kind=self.expression_flavor())}"
         else:
             filter_clause = ""

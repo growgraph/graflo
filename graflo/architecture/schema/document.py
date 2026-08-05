@@ -62,26 +62,34 @@ class Schema(ConfigBaseModel):
         return self.core_schema.remove_disconnected_vertices()
 
     def resolve_db_aware(self, db_flavor: DBType | None = None) -> SchemaDBAware:
-        """Build DB-aware runtime wrappers without mutating logical schema."""
+        """Build DB-aware runtime wrappers for *db_flavor*.
+
+        Non-mutating: when *db_flavor* differs from the authored profile, the
+        wrappers are built over a copy. This used to assign onto
+        ``self.db_profile``, which made the schema's flavor a function of
+        whoever resolved it last — fine while resolution only ever happened once
+        per ingest, wrong as soon as two readers want two different targets from
+        one shared ``Schema``.
+        """
         from .db_aware import (
             EdgeConfigDBAware,
             SchemaDBAware,
             VertexConfigDBAware,
         )
 
-        if db_flavor is not None:
-            self.db_profile.db_flavor = db_flavor
+        profile = self.db_profile
+        if db_flavor is not None and profile.db_flavor != db_flavor:
+            profile = profile.model_copy(deep=True)
+            profile.db_flavor = db_flavor
 
-        vertex_db = VertexConfigDBAware(self.core_schema.vertex_config, self.db_profile)
-        edge_db = EdgeConfigDBAware(
-            self.core_schema.edge_config, vertex_db, self.db_profile
-        )
+        vertex_db = VertexConfigDBAware(self.core_schema.vertex_config, profile)
+        edge_db = EdgeConfigDBAware(self.core_schema.edge_config, vertex_db, profile)
         vertex_db.compile_secondary_identity_indexes()
         edge_db.compile_identity_indexes()
         return SchemaDBAware(
             vertex_config=vertex_db,
             edge_config=edge_db,
-            db_profile=self.db_profile,
+            db_profile=profile,
         )
 
     @staticmethod

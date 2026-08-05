@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Collection
 from typing import Any, Protocol
 
 from psycopg2 import sql
@@ -20,7 +21,7 @@ from graflo.architecture.schema.vertex import (
 )
 from graflo.db.conn import NamespaceNotFoundError, SchemaExistsError
 from graflo.db.field_type_support import assert_field_type_supported
-from graflo.filter.onto import parse_filter_expression
+from graflo.filter.onto import FilterExpression, parse_filter_expression
 from graflo.onto import AggregationType, DBType, ExpressionFlavor
 
 
@@ -61,6 +62,54 @@ def _pg_column_type_for_field(field: Field) -> str:
     return _PG_TEXT
 
 
+#: PostgreSQL type (``information_schema`` name or ``udt_name``) -> ``FieldType``.
+#: Not the inverse of :func:`_pg_column_type_for_field`, which writes every
+#: scalar as ``TEXT``: reading back a graflo-written table therefore reports
+#: ``STRING`` throughout, which is accurate. The wider mapping matters for a
+#: graph-shaped database graflo did not create.
+_PG_TYPE_TO_FIELD_TYPE: dict[str, FieldType] = {
+    "text": FieldType.STRING,
+    "varchar": FieldType.STRING,
+    "character varying": FieldType.STRING,
+    "bpchar": FieldType.STRING,
+    "character": FieldType.STRING,
+    "int2": FieldType.INT,
+    "int4": FieldType.INT,
+    "int8": FieldType.INT,
+    "smallint": FieldType.INT,
+    "integer": FieldType.INT,
+    "bigint": FieldType.INT,
+    "float4": FieldType.FLOAT,
+    "real": FieldType.FLOAT,
+    "float8": FieldType.DOUBLE,
+    "double precision": FieldType.DOUBLE,
+    "numeric": FieldType.DOUBLE,
+    "bool": FieldType.BOOL,
+    "boolean": FieldType.BOOL,
+    "date": FieldType.DATETIME,
+    "timestamp": FieldType.DATETIME,
+    "timestamptz": FieldType.DATETIME,
+    "timestamp without time zone": FieldType.DATETIME,
+    "timestamp with time zone": FieldType.DATETIME,
+    "uuid": FieldType.UUID,
+}
+
+#: Columns graflo writes onto an edge table for its own bookkeeping. They are
+#: the structure, not properties of the relation, so they must not surface as
+#: `Field`s on a recovered edge.
+EDGE_ENDPOINT_COLUMNS = frozenset({"source_id", "target_id"})
+
+
+def field_type_from_postgres(declared: str | None) -> FieldType | None:
+    """Map a PostgreSQL column type back to a ``FieldType``, or ``None``."""
+    if not declared:
+        return None
+    base = declared.strip().lower().split("(", 1)[0].strip()
+    if base.endswith("[]"):
+        return FieldType.LIST
+    return _PG_TYPE_TO_FIELD_TYPE.get(base)
+
+
 def _pg_schema_name(config) -> str:
     return config.schema_name or "public"
 
@@ -73,9 +122,51 @@ def vertex_table_name(vertex_name: str) -> str:
     return vertex_name
 
 
+#: SQL aggregate per graflo ``AggregationType``. ``SORTED_UNIQUE`` has no plain
+#: aggregate equivalent and is deliberately absent rather than silently mapped.
+_PG_AGGREGATIONS: dict[AggregationType, str] = {
+    AggregationType.COUNT: "COUNT",
+    AggregationType.MAX: "MAX",
+    AggregationType.MIN: "MIN",
+    AggregationType.AVERAGE: "AVG",
+}
+
+
+#: Suffix every graflo edge table carries. Vertex tables never end in it because
+#: :func:`vertex_table_name` is the identity function on the vertex type name.
+EDGE_TABLE_SUFFIX = "_edges"
+
+
 def edge_table_name(source: str, target: str, relation: str | None) -> str:
     rel = relation or "relates"
-    return f"{source}_{target}_{rel}_edges"
+    return f"{source}_{target}_{rel}{EDGE_TABLE_SUFFIX}"
+
+
+def split_edge_table_name(
+    table: str, vertex_names: Collection[str]
+) -> tuple[str, str, str] | None:
+    """Recover ``(source, target, relation)`` from an edge table name.
+
+    ``{source}_{target}_{relation}_edges`` is ambiguous on its own -- every
+    component may itself contain underscores. Resolving it needs the universe of
+    vertex type names to anchor the first two components; ``relation`` is then
+    whatever remains. Returns ``None`` when no split against ``vertex_names``
+    works, which callers must treat as "not a table I own" rather than guessing.
+    """
+    if not table.endswith(EDGE_TABLE_SUFFIX):
+        return None
+    stem = table[: -len(EDGE_TABLE_SUFFIX)]
+    # Longest candidate first so `person_group` wins over `person` when both are
+    # vertex types and the table is `person_group_person_knows_edges`.
+    ordered = sorted(set(vertex_names), key=len, reverse=True)
+    for source in ordered:
+        if not stem.startswith(f"{source}_"):
+            continue
+        rest = stem[len(source) + 1 :]
+        for target in ordered:
+            if rest.startswith(f"{target}_"):
+                return source, target, rest[len(target) + 1 :]
+    return None
 
 
 def _edge_unique_index_name(table: str) -> str:
@@ -104,6 +195,10 @@ class PostgresTargetWriteMixin:
     """Mixin implementing :class:`~graflo.db.conn.Connection` target operations."""
 
     flavor = DBType.POSTGRES
+    supports_schema_introspection = True
+    # The graph shape lives in the table layout, which `information_schema`
+    # reports in full; nothing here is sampled.
+    schema_introspection_is_sampled = False
     config: Any
     conn: _Psycopg2Conn
     # Supplied by Connection, which follows this mixin in the MRO: annotate
@@ -111,10 +206,17 @@ class PostgresTargetWriteMixin:
     define_indexes: Any
     report_edge_direction_support: Any
 
-    def read(self, query: str, params: tuple | None = None) -> list[dict[str, Any]]:
+    def read(
+        self, query: str, params: tuple | dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
         raise NotImplementedError
 
     def get_tables(self, schema_name: str | None = None) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
+    def get_table_columns(
+        self, table_name: str, schema_name: str | None = None
+    ) -> list[dict[str, Any]]:
         raise NotImplementedError
 
     def _execute_write(self, query: str, params: tuple | list | None = None) -> None:
@@ -168,14 +270,29 @@ class PostgresTargetWriteMixin:
         delete_all: bool = False,
     ) -> None:
         pg_schema = _pg_schema_name(self.config)
+        present = [row["table_name"] for row in self.get_tables(schema_name=pg_schema)]
         tables: list[str] = []
         if delete_all:
-            tables = [
-                row["table_name"] for row in self.get_tables(schema_name=pg_schema)
-            ]
+            tables = list(present)
         else:
-            for v in vertex_types:
-                tables.append(vertex_table_name(v))
+            requested = [vertex_table_name(v) for v in vertex_types]
+            tables.extend(requested)
+            # Dropping a vertex type must drop the edges incident to it, the way
+            # every graph backend does (Neo4j DETACH DELETE, Arango dropping the
+            # graph's edge collections). PostgreSQL stores edges in freestanding
+            # tables that no foreign key ties to the vertex table, so without
+            # this they survive every drop and accumulate in the namespace.
+            dropped = set(requested)
+            vertex_universe = dropped | {
+                t for t in present if not t.endswith(EDGE_TABLE_SUFFIX)
+            }
+            for table in present:
+                parts = split_edge_table_name(table, vertex_universe)
+                if parts is None:
+                    continue
+                source, target, _ = parts
+                if source in dropped or target in dropped:
+                    tables.append(table)
         for table in tables:
             q = sql.SQL("DROP TABLE IF EXISTS {}.{} CASCADE").format(
                 sql.Identifier(pg_schema),
@@ -562,9 +679,65 @@ class PostgresTargetWriteMixin:
         direction: EdgeDirection = EdgeDirection.OUT,
         **kwargs,
     ) -> list[dict[str, Any]]:
-        # Reverse lookup is now indexed (see define_edge_indexes), but the
-        # single-vertex edge read itself is still unimplemented here.
-        raise NotImplementedError("fetch_edges is not implemented for PostgreSQL")
+        """Edges incident to one vertex, read from the edge table.
+
+        ``edge_type`` names the edge table (the storage name), matching
+        ``fetch_all_edges``'s ``collection_name``. Endpoints live in
+        ``source_id`` / ``target_id``; ``define_edge_indexes`` indexes the latter,
+        so the inbound branch is not a sequential scan.
+        """
+        if edge_type is None:
+            raise ValueError(
+                "PostgreSQL fetch_edges requires edge_type (the edge table name)"
+            )
+        pg_schema = _pg_schema_name(self.config)
+        qualified = f"{_quote_ident(pg_schema)}.{_quote_ident(edge_type)}"
+
+        extra = ""
+        if filters is not None:
+            rendered = str(parse_filter_expression(filters)(kind=ExpressionFlavor.SQL))
+            if rendered:
+                extra = f" AND ({rendered})"
+        far_clause = ""
+        if to_id is not None:
+            far_clause = " AND {far} = %(to_id)s"
+
+        def branch(anchor_column: str, far_column: str) -> str:
+            clause = far_clause.format(far=_quote_ident(far_column))
+            return (
+                f"SELECT * FROM {qualified} "
+                f"WHERE {_quote_ident(anchor_column)} = %(from_id)s{clause}{extra}"
+            )
+
+        if direction is EdgeDirection.OUT:
+            sql = branch("source_id", "target_id")
+        elif direction is EdgeDirection.IN:
+            sql = branch("target_id", "source_id")
+        else:
+            # No edge is both outgoing and incoming for the same anchor unless it
+            # is a self-loop, so UNION (not UNION ALL) also dedupes that case.
+            sql = f"{branch('source_id', 'target_id')} UNION {branch('target_id', 'source_id')}"
+
+        if limit is not None:
+            sql = f"{sql} LIMIT {int(limit)}"
+
+        params: dict[str, Any] = {"from_id": from_id}
+        if to_id is not None:
+            params["to_id"] = to_id
+        rows = self.read(sql, params)
+
+        if return_keys or unset_keys:
+            keep = set(return_keys) if return_keys else None
+            drop = set(unset_keys) if unset_keys else set()
+            rows = [
+                {
+                    k: v
+                    for k, v in row.items()
+                    if (keep is None or k in keep) and k not in drop
+                }
+                for row in rows
+            ]
+        return rows
 
     def fetch_present_documents(
         self,
@@ -585,9 +758,50 @@ class PostgresTargetWriteMixin:
         aggregation_function: AggregationType,
         discriminant: str | None = None,
         aggregated_field: str | None = None,
-        filters: list | dict | None = None,
+        filters: FilterExpression | list | dict | None = None,
     ) -> int | float | list[dict[str, Any]] | dict[str, int | float] | None:
-        raise NotImplementedError("aggregate is not implemented for PostgreSQL")
+        """Aggregate over a vertex table, optionally grouped by *discriminant*.
+
+        Mirrors the shape the other backends return: a list of
+        ``{discriminant, _value}`` rows when grouping, otherwise a single
+        ``{_value}`` row.
+        """
+        pg_schema = _pg_schema_name(self.config)
+        table = vertex_table_name(class_name)
+        qualified = f"{_quote_ident(pg_schema)}.{_quote_ident(table)}"
+
+        sql_function = _PG_AGGREGATIONS.get(aggregation_function)
+        if sql_function is None:
+            raise ValueError(
+                f"Aggregation {aggregation_function!r} is not supported on PostgreSQL; "
+                f"supported: {sorted(a.value for a in _PG_AGGREGATIONS)}"
+            )
+
+        if aggregation_function == AggregationType.COUNT and aggregated_field is None:
+            expression = "COUNT(*)"
+        elif aggregated_field is None:
+            raise ValueError(
+                f"Aggregation {aggregation_function!r} requires aggregated_field"
+            )
+        else:
+            expression = f"{sql_function}({_quote_ident(aggregated_field)})"
+
+        where_clause = ""
+        if filters is not None:
+            rendered = str(parse_filter_expression(filters)(kind=ExpressionFlavor.SQL))
+            if rendered:
+                where_clause = f" WHERE {rendered}"
+
+        if discriminant is None:
+            q = f"SELECT {expression} AS _value FROM {qualified}{where_clause}"
+        else:
+            column = _quote_ident(discriminant)
+            q = (
+                f"SELECT {column} AS {_quote_ident(discriminant)}, "
+                f"{expression} AS _value FROM {qualified}{where_clause} "
+                f"GROUP BY {column}"
+            )
+        return self.read(q)
 
     def keep_absent_documents(
         self,
@@ -688,6 +902,89 @@ class PostgresTargetWriteMixin:
         limit: int | None = None,
     ) -> list[dict[str, Any]]:
         return self.fetch_docs(class_name, limit=limit)
+
+    def introspect_graph_schema(
+        self,
+        schema_name: str | None = None,
+        *,
+        sample_limit: int = 100,
+    ) -> Schema:
+        """Recover a graflo Schema from a graph-shaped PostgreSQL namespace.
+
+        Reads the catalogue rather than sampling rows: the graph shape lives in
+        the table layout graflo writes -- one table per vertex type, and
+        ``{source}_{target}_{relation}_edges`` with ``source_id`` / ``target_id``
+        for each edge type -- so ``information_schema`` answers the whole
+        question and ``sample_limit`` is accepted only for interface symmetry.
+
+        Distinct from :meth:`introspect_schema`, which infers a graph from an
+        *arbitrary* relational database by following foreign keys. This one
+        assumes the graflo layout and recovers exactly what was written.
+        """
+        from graflo.db.graph_introspection import (
+            GraphEdgeIntrospection,
+            GraphIntrospectionResult,
+            GraphSchemaInferencer,
+            GraphVertexIntrospection,
+            infer_identity_fields,
+        )
+
+        pg_schema = _pg_schema_name(self.config)
+        present = [row["table_name"] for row in self.get_tables(schema_name=pg_schema)]
+        vertex_tables = [t for t in present if not t.endswith(EDGE_TABLE_SUFFIX)]
+
+        def columns(table: str) -> tuple[list[str], dict[str, FieldType]]:
+            names: list[str] = []
+            types: dict[str, FieldType] = {}
+            for column in self.get_table_columns(table, schema_name=pg_schema):
+                name = column.get("name")
+                if not name:
+                    continue
+                names.append(name)
+                declared = field_type_from_postgres(column.get("type"))
+                if declared is not None:
+                    types[name] = declared
+            return names, types
+
+        vertices: list[GraphVertexIntrospection] = []
+        for table in vertex_tables:
+            properties, types = columns(table)
+            vertices.append(
+                GraphVertexIntrospection(
+                    name=table,
+                    properties=properties,
+                    identity=infer_identity_fields(properties),
+                    property_types=types,
+                )
+            )
+
+        edges: list[GraphEdgeIntrospection] = []
+        for table in present:
+            parts = split_edge_table_name(table, vertex_tables)
+            if parts is None:
+                continue
+            source, target, relation = parts
+            names, types = columns(table)
+            weights = [c for c in names if c not in EDGE_ENDPOINT_COLUMNS]
+            edges.append(
+                GraphEdgeIntrospection(
+                    source=source,
+                    target=target,
+                    relation=relation,
+                    properties=weights,
+                    property_types={
+                        k: v for k, v in types.items() if k in set(weights)
+                    },
+                    collection_name=table,
+                )
+            )
+
+        introspection = GraphIntrospectionResult(
+            name=schema_name or pg_schema, vertices=vertices, edges=edges
+        )
+        return GraphSchemaInferencer(db_flavor=DBType.POSTGRES).infer_schema(
+            introspection, schema_name=schema_name or pg_schema
+        )
 
     def fetch_all_edges(
         self,

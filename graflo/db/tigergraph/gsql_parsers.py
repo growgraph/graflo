@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
+from dataclasses import dataclass
 from typing import Any
 
 LS_INSTALLED_QUERY_PATTERN = re.compile(
@@ -176,6 +177,152 @@ def parse_show_edge_output_with_vertices(
                 edge_map[edge_name].append((source, target))
 
     return dict(edge_map)
+
+
+# ---------------------------------------------------------------------------
+# Full DDL recovery
+#
+# The parsers above answer "which types exist"; these answer "what do they look
+# like". TigerGraph is the one backend with a real DDL catalogue, so its schema
+# can be recovered exactly -- attribute names, declared types, endpoint pairs and
+# the DIRECTED/UNDIRECTED keyword -- with no sampling and no guessing.
+# ---------------------------------------------------------------------------
+
+#: `- VERTEX person(PRIMARY_ID id STRING, name STRING) WITH STATS="..."`
+#: MULTILINE matters: a declaration without a trailing `WITH` clause -- which is
+#: every edge and some vertices -- ends at the end of its *line*, and without the
+#: flag `$` only matches the end of the whole `SHOW` output, so exactly one
+#: declaration per response would parse.
+VERTEX_DDL_PATTERN = re.compile(
+    r"-\s*VERTEX\s+(\w+)\s*\((.*?)\)\s*(?:WITH\b|$)",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+#: `- DIRECTED EDGE knows(FROM person, TO person, since STRING)`
+EDGE_DDL_PATTERN = re.compile(
+    r"-\s*(DIRECTED|UNDIRECTED)\s+EDGE\s+(\w+)\s*\((.*?)\)\s*(?:WITH\b|$)",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+@dataclass(frozen=True)
+class GsqlAttribute:
+    """One attribute of a GSQL vertex or edge type."""
+
+    name: str
+    #: Raw GSQL type token, uppercased -- e.g. ``STRING``, ``INT``, ``LIST<INT>``.
+    #: Left raw so mapping to a ``FieldType`` stays out of this pure parser.
+    declared_type: str
+
+
+@dataclass(frozen=True)
+class GsqlVertexDdl:
+    """A recovered ``CREATE VERTEX`` declaration."""
+
+    name: str
+    primary_id: str | None
+    attributes: list[GsqlAttribute]
+
+
+@dataclass(frozen=True)
+class GsqlEdgeDdl:
+    """A recovered ``CREATE ... EDGE`` declaration.
+
+    ``endpoints`` holds every ``FROM x, TO y`` pair, since a single GSQL edge
+    type may declare several separated by ``|``.
+    """
+
+    name: str
+    directed: bool
+    endpoints: list[tuple[str, str]]
+    attributes: list[GsqlAttribute]
+
+
+def split_ddl_terms(body: str) -> list[str]:
+    """Split a DDL parameter list on top-level commas and pipes.
+
+    Depth-aware because a compound type spells its arguments with commas of its
+    own -- ``MAP<INT, STRING>`` is one term, not two. ``|`` separates the endpoint
+    clauses of a multi-endpoint edge (``FROM a, TO b | FROM c, TO d``) and is
+    treated the same way, so every pair is recovered rather than just the first.
+    """
+    terms: list[str] = []
+    depth = 0
+    current: list[str] = []
+    for char in body:
+        if char in "<([":
+            depth += 1
+        elif char in ">)]":
+            depth -= 1
+        if char in ",|" and depth == 0:
+            terms.append("".join(current).strip())
+            current = []
+            continue
+        current.append(char)
+    tail = "".join(current).strip()
+    if tail:
+        terms.append(tail)
+    return [t for t in terms if t]
+
+
+def _parse_ddl_body(
+    body: str,
+) -> tuple[str | None, list[tuple[str, str]], list[GsqlAttribute]]:
+    """Split a DDL body into its primary id, endpoint pairs and attributes."""
+    primary_id: str | None = None
+    froms: list[str] = []
+    tos: list[str] = []
+    attributes: list[GsqlAttribute] = []
+    for term in split_ddl_terms(body):
+        tokens = term.split()
+        if not tokens:
+            continue
+        head = tokens[0].upper()
+        if head == "PRIMARY_ID" and len(tokens) >= 3:
+            primary_id = tokens[1]
+            attributes.append(GsqlAttribute(tokens[1], tokens[2].upper()))
+        elif head == "FROM" and len(tokens) >= 2:
+            froms.append(tokens[1])
+        elif head == "TO" and len(tokens) >= 2:
+            tos.append(tokens[1])
+        elif len(tokens) >= 2:
+            # `name STRING COMPRESS` / `name STRING DEFAULT "x"` -- the type is
+            # the second token; the rest is storage or default detail graflo
+            # does not model.
+            attributes.append(GsqlAttribute(tokens[0], tokens[1].upper()))
+    return primary_id, list(zip(froms, tos)), attributes
+
+
+def parse_show_vertex_ddl(result_str: str) -> list[GsqlVertexDdl]:
+    """Recover full ``VERTEX`` declarations from ``SHOW VERTEX *`` output."""
+    vertices: list[GsqlVertexDdl] = []
+    for match in VERTEX_DDL_PATTERN.finditer(result_str):
+        name, body = match.group(1), match.group(2)
+        primary_id, _, attributes = _parse_ddl_body(body)
+        vertices.append(GsqlVertexDdl(name, primary_id, attributes))
+    return vertices
+
+
+def parse_show_edge_ddl(result_str: str) -> list[GsqlEdgeDdl]:
+    """Recover full ``EDGE`` declarations from ``SHOW EDGE *`` output.
+
+    The ``UNDIRECTED`` keyword is the point: it is the only place any backend
+    *states* an edge is undirected, so it is the only place ``Edge.directed``
+    can be recovered rather than assumed.
+    """
+    edges: list[GsqlEdgeDdl] = []
+    for match in EDGE_DDL_PATTERN.finditer(result_str):
+        keyword, name, body = match.group(1), match.group(2), match.group(3)
+        _, endpoints, attributes = _parse_ddl_body(body)
+        edges.append(
+            GsqlEdgeDdl(
+                name=name,
+                directed=keyword.upper() == "DIRECTED",
+                endpoints=endpoints,
+                attributes=attributes,
+            )
+        )
+    return edges
 
 
 def parse_installed_queries_from_ls(result_str: str) -> list[str]:

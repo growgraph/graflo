@@ -42,6 +42,7 @@ from graflo.db.nebula.query import (
     insert_edges_ngql,
 )
 from graflo.db.nebula.util import (
+    field_type_from_nebula,
     make_vid,
     render_filters_cypher,
     render_filters_ngql,
@@ -67,6 +68,11 @@ class NebulaConnection(Connection):
     """
 
     flavor: ClassVar[DBType] = DBType.NEBULA
+    supports_schema_introspection: ClassVar[bool] = True
+    # Properties and their types come from `DESCRIBE`, but nGQL records no
+    # endpoint tags on an edge type, so those must be observed on real edges.
+    # Half-sampled is still sampled: an edge type with no stored edges is lost.
+    schema_introspection_is_sampled: ClassVar[bool] = True
 
     def __init__(self, config: NebulaConfig):
         super().__init__()
@@ -673,6 +679,139 @@ class NebulaConnection(Connection):
                 result.append(row)
         return result
 
+    def _describe_properties(
+        self, kind: str, name: str
+    ) -> tuple[list[str], dict[str, FieldType]]:
+        """Read a tag's or edge type's declared columns via ``DESCRIBE``."""
+        try:
+            rows = self._execute(f"DESCRIBE {kind} `{name}`").rows_as_dicts()
+        except Exception:
+            logger.debug("DESCRIBE %s `%s` failed", kind, name, exc_info=True)
+            return [], {}
+        properties: list[str] = []
+        types: dict[str, FieldType] = {}
+        for row in rows:
+            field = row.get("Field") or row.get("field")
+            if not field:
+                continue
+            properties.append(field)
+            declared = field_type_from_nebula(row.get("Type") or row.get("type"))
+            if declared is not None:
+                types[field] = declared
+        return properties, types
+
+    def _sample_edge_endpoints(
+        self, edge_type: str, sample_limit: int
+    ) -> list[tuple[str, str]]:
+        """Sample the ``(source_tag, target_tag)`` pairs an edge type connects.
+
+        An nGQL edge type carries no endpoint tags in its DDL -- unlike a
+        TigerGraph ``CREATE ... EDGE``, which names them -- so the pairs have to
+        be observed on real edges. An edge type present in the catalogue but with
+        no stored edges yields nothing and is dropped, which is the honest
+        outcome: there is no way to tell what it would connect.
+        """
+        query = (
+            f"MATCH (a)-[e:`{edge_type}`]->(b) "
+            f"RETURN DISTINCT tags(a) AS s, tags(b) AS t LIMIT {int(sample_limit)}"
+        )
+        try:
+            rows = self._execute(query).rows_as_dicts()
+        except Exception:
+            logger.debug("endpoint sampling failed for `%s`", edge_type, exc_info=True)
+            return []
+        pairs: list[tuple[str, str]] = []
+        for row in rows:
+            source, target = row.get("s"), row.get("t")
+            if not isinstance(source, list) or not isinstance(target, list):
+                continue
+            if not source or not target:
+                continue
+            pair = (str(source[0]), str(target[0]))
+            if pair not in pairs:
+                pairs.append(pair)
+        return pairs
+
+    def introspect_graph_schema(
+        self,
+        schema_name: str | None = None,
+        *,
+        sample_limit: int = 100,
+    ) -> Schema:
+        """Infer a graflo Schema from NebulaGraph's tag and edge-type catalogue.
+
+        Properties and their declared types come from ``DESCRIBE``, so they are
+        complete rather than sampled. Edge *endpoints* are the exception -- nGQL
+        does not record them -- so those are sampled, and ``sample_limit`` bounds
+        only that half.
+        """
+        from graflo.db.graph_introspection import (
+            GraphEdgeIntrospection,
+            GraphIntrospectionResult,
+            GraphSchemaInferencer,
+            GraphVertexIntrospection,
+            infer_identity_fields,
+        )
+
+        resolved_name = (
+            schema_name or self._space_name or self.config.schema_name or "nebula"
+        )
+        try:
+            tag_rows = self._execute("SHOW TAGS").rows_as_dicts()
+        except Exception as error:
+            raise RuntimeError(
+                f"Cannot introspect NebulaGraph space {resolved_name!r}: SHOW TAGS failed"
+            ) from error
+
+        vertices: list[GraphVertexIntrospection] = []
+        for row in tag_rows:
+            tag = row.get("Name") or row.get("name")
+            if not tag:
+                continue
+            properties, types = self._describe_properties("TAG", tag)
+            vertices.append(
+                GraphVertexIntrospection(
+                    name=tag,
+                    properties=properties,
+                    identity=infer_identity_fields(properties),
+                    property_types=types,
+                )
+            )
+
+        try:
+            edge_rows = self._execute("SHOW EDGES").rows_as_dicts()
+        except Exception:
+            logger.debug("SHOW EDGES failed", exc_info=True)
+            edge_rows = []
+
+        edges: list[GraphEdgeIntrospection] = []
+        for row in edge_rows:
+            edge_type = row.get("Name") or row.get("name")
+            if not edge_type:
+                continue
+            properties, types = self._describe_properties("EDGE", edge_type)
+            for source, target in self._sample_edge_endpoints(edge_type, sample_limit):
+                edges.append(
+                    GraphEdgeIntrospection(
+                        source=source,
+                        target=target,
+                        relation=edge_type,
+                        properties=properties,
+                        property_types=types,
+                        collection_name=edge_type,
+                    )
+                )
+
+        introspection = GraphIntrospectionResult(
+            name=resolved_name,
+            vertices=vertices,
+            edges=edges,
+            sample_limit=sample_limit,
+        )
+        return GraphSchemaInferencer(db_flavor=DBType.NEBULA).infer_schema(
+            introspection, schema_name=resolved_name
+        )
+
     def fetch_edges(
         self,
         from_type: str,
@@ -800,7 +939,7 @@ class NebulaConnection(Connection):
         aggregation_function: AggregationType,
         discriminant: str | None = None,
         aggregated_field: str | None = None,
-        filters: list[Any] | dict[str, Any] | None = None,
+        filters: FilterExpression | list[Any] | dict[str, Any] | None = None,
     ) -> int | float | list[dict[str, Any]] | dict[str, int | float] | None:
         agg_name = (
             aggregation_function.value
