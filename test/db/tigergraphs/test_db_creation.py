@@ -12,6 +12,9 @@ from graflo.connections.onto import TigergraphConfig
 from graflo.db.manager import ConnectionManager
 from graflo.db.tigergraph.conn import TigerGraphConnection
 
+# Every test here needs a live TigerGraph, whose schema DDL runs 15-40s per graph.
+pytestmark = pytest.mark.tigergraph
+
 
 def test_create_database(conn_conf, test_graph_name):
     """Test creating a new TigerGraph database (graph)."""

@@ -85,6 +85,7 @@ To verify your installation, you can run:
 
 ```python
 import graflo
+
 print(graflo.__version__)
 ```
 

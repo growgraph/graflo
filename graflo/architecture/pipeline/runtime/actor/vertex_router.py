@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from typing import TYPE_CHECKING, Any, Literal
 
 from graflo.architecture.contract.ingestion.steps import (
@@ -22,6 +23,12 @@ if TYPE_CHECKING:
     from .wrapper import ActorWrapper
 
 logger = logging.getLogger(__name__)
+
+# Casting may run the same actor tree from several worker threads (sibling
+# batches in flight); lazy child construction must not race. Module-level
+# rather than per-actor: actors are deep-copied (manifest projection,
+# evolution) and a held lock cannot cross a copy or pickle.
+_VERTEX_ACTOR_CREATE_LOCK = threading.Lock()
 
 
 class VertexRouterActor(VertexProducingActor):
@@ -81,6 +88,8 @@ class VertexRouterActor(VertexProducingActor):
 
         if vertex_type not in self.vertex_config.vertex_set:
             return None
+        # Fast path without the lock: dict reads are atomic, and a wrapper is only
+        # published after finish_init completes, so it is never seen half-built.
         wrapper = self._vertex_actors.get(vertex_type)
         if wrapper is not None:
             return wrapper
@@ -89,22 +98,26 @@ class VertexRouterActor(VertexProducingActor):
                 "VertexRouterActor._get_or_create_wrapper called before finish_init"
             )
 
-        if vertex_type in self.vertex_from_map:
-            per_type_from = self.vertex_from_map[vertex_type]
-        else:
-            per_type_from = self.from_doc
-        config = VertexActorConfig.model_validate(
-            {
-                "type": "vertex",
-                "vertex": vertex_type,
-                "from": per_type_from,
-                "keep_fields": list(self.keep_fields) if self.keep_fields else None,
-                "extraction_scope": self.extraction_scope,
-            }
-        )
-        wrapper = ActorWrapper.from_config(config)
-        wrapper.finish_init(self._init_ctx)
-        self._vertex_actors[vertex_type] = wrapper
+        with _VERTEX_ACTOR_CREATE_LOCK:
+            wrapper = self._vertex_actors.get(vertex_type)
+            if wrapper is not None:
+                return wrapper
+            if vertex_type in self.vertex_from_map:
+                per_type_from = self.vertex_from_map[vertex_type]
+            else:
+                per_type_from = self.from_doc
+            config = VertexActorConfig.model_validate(
+                {
+                    "type": "vertex",
+                    "vertex": vertex_type,
+                    "from": per_type_from,
+                    "keep_fields": list(self.keep_fields) if self.keep_fields else None,
+                    "extraction_scope": self.extraction_scope,
+                }
+            )
+            wrapper = ActorWrapper.from_config(config)
+            wrapper.finish_init(self._init_ctx)
+            self._vertex_actors[vertex_type] = wrapper
         logger.debug(
             "VertexRouterActor: lazily registered VertexActor(%s) for type_field=%s role=%s",
             vertex_type,

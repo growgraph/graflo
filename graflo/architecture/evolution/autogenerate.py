@@ -28,6 +28,7 @@ import logging
 from typing import Any
 
 from pydantic import Field as PydanticField
+from pydantic import model_validator
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.contract.manifest import GraphManifest
@@ -61,6 +62,7 @@ from .ops import (
     RenameVerticesOp,
     ReplaceIdentityOp,
     SetEdgeDirectedOp,
+    validate_rename_map_is_injective,
 )
 
 logger = logging.getLogger(__name__)
@@ -91,6 +93,43 @@ class RenameHints(ConfigBaseModel):
         default_factory=dict,
         description="``{relation: {old_field: new_field}}``.",
     )
+
+    @model_validator(mode="after")
+    def _reject_collapsing_maps(self) -> RenameHints:
+        """Reject hints that would collapse two names onto one.
+
+        The hints are handed to the rename ops verbatim, and the differ itself keys
+        by the renamed name (``hints.vertices.get(name, name)``), so a collapsing
+        hint corrupts the *diff* before any op is applied.
+        """
+        validate_rename_map_is_injective(
+            self.vertices,
+            kind="rename hint: vertices",
+            merge_hint="MergeVerticesOp(sources=[...], into=...)",
+        )
+        validate_rename_map_is_injective(
+            self.relations,
+            kind="rename hint: relations",
+            merge_hint="MergeEdgesOp(sources=[...], into=...)",
+        )
+        validate_rename_map_is_injective(
+            self.resources,
+            kind="rename hint: resources",
+            merge_hint="ComposeManifestsOp with explicit resource_renames",
+        )
+        for vertex_name, field_renames in self.vertex_properties.items():
+            validate_rename_map_is_injective(
+                field_renames,
+                kind=f"rename hint: vertex_properties[{vertex_name!r}]",
+                merge_hint="RemoveVertexPropertiesOp to drop the redundant field first",
+            )
+        for relation, field_renames in self.edge_properties.items():
+            validate_rename_map_is_injective(
+                field_renames,
+                kind=f"rename hint: edge_properties[{relation!r}]",
+                merge_hint="RemoveEdgePropertiesOp to drop the redundant field first",
+            )
+        return self
 
 
 def diff_manifests(

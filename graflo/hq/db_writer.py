@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import AsyncExitStack
 from typing import Any
 from uuid import uuid4
 
@@ -30,6 +31,18 @@ from graflo.onto import DBType
 
 logger = logging.getLogger(__name__)
 
+# Backends whose upsert primitive is atomic per key under concurrency:
+# Postgres INSERT .. ON CONFLICT, Arango UPSERT with OPTIONS {exclusive: true}
+# (collection-level write lock), and the keyed REST/NGQL upserts of TigerGraph
+# and Nebula cannot create duplicate vertices for the same identity. Cypher
+# MERGE, by contrast, is check-then-create per transaction: two concurrent
+# writers merging the same key can BOTH create, leaving duplicate nodes unless
+# a uniqueness constraint exists (which graflo does not require). Flavors not
+# listed here get a per-collection write lock when batches or sources overlap.
+_CONCURRENT_UPSERT_SAFE_FLAVORS = frozenset(
+    {DBType.POSTGRES, DBType.ARANGO, DBType.TIGERGRAPH, DBType.NEBULA}
+)
+
 
 class DBWriter:
     """Push :class:`GraphContainer` data to the target graph database.
@@ -38,6 +51,13 @@ class DBWriter:
     ``ingestion_model`` for the target database (``db_profile.db_flavor``,
     :meth:`Schema.finish_init`, :meth:`IngestionModel.finish_init`) before
     calling :meth:`write`; this class does not repeat that work on every batch.
+
+    Concurrency contract: one instance may serve concurrent :meth:`write`
+    calls (sibling batches in flight) from a single event loop. All per-batch
+    mutation happens on the caller's ``gc``; instance state is limited to the
+    cached db-aware schema (pre-warm it via :meth:`_db_aware_for` before
+    fanning out) and one shared semaphore, so ``max_concurrent`` bounds DB
+    operations across every in-flight batch, not per call.
 
     Attributes:
         schema: Schema configuration providing vertex/edge metadata.
@@ -59,6 +79,10 @@ class DBWriter:
         self.max_concurrent = max_concurrent
         self._schema_db_aware: SchemaDBAware | None = None
         self._schema_db_aware_flavor: DBType | None = None
+        self._semaphore: asyncio.Semaphore | None = None
+        self._semaphore_loop: asyncio.AbstractEventLoop | None = None
+        self._collection_locks: dict[str, asyncio.Lock] = {}
+        self._collection_locks_loop: asyncio.AbstractEventLoop | None = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -101,7 +125,10 @@ class DBWriter:
         resource = self.ingestion_model.fetch_resource(resource_name)
 
         await self._push_vertices(gc, conn_conf)
-        self._resolve_blank_edges(gc, conn_conf)
+        # O(blank vertices x edges x rows) of pure Python. Called straight from the
+        # event loop it stalled every other coroutine — including the batch prefetch
+        # that is supposed to overlap with the write.
+        await asyncio.to_thread(self._resolve_blank_edges, gc, conn_conf)
         await self._enrich_extra_weights(gc, conn_conf, resource)
         await self._push_edges(gc, conn_conf, resource)
 
@@ -130,10 +157,10 @@ class DBWriter:
         UUID-typed natural identity fields are validated when present.
         """
         vc = self._db_aware_for(conn_conf).vertex_config
-        semaphore = asyncio.Semaphore(self.max_concurrent)
 
         async def _push_one(vcol: str, data: list[dict]):
-            async with semaphore:
+            async with AsyncExitStack() as stack:
+                await self._acquire_write_slot(stack, conn_conf, vc.vertex_dbname(vcol))
 
                 def _sync():
                     with ConnectionManager(connection_config=conn_conf) as db:
@@ -385,7 +412,6 @@ class DBWriter:
         vc = schema_db.vertex_config
         ec = schema_db.edge_config
         core_ec = self.schema.core_schema.edge_config
-        semaphore = asyncio.Semaphore(self.max_concurrent)
 
         def _schema_edge_for(edge_id: tuple) -> Edge | None:
             """Return the schema Edge for a gc edge key, or None if not declared."""
@@ -403,7 +429,12 @@ class DBWriter:
             edge = _schema_edge_for(edge_id)
             if edge is None:
                 return
-            async with semaphore:
+            async with AsyncExitStack() as stack:
+                # Cypher relationship MERGE has the same concurrent
+                # check-then-create race as node MERGE; lock per relation store.
+                await self._acquire_write_slot(
+                    stack, conn_conf, f"edge:{ec.runtime(edge).storage_name()}"
+                )
 
                 def _sync() -> None:
                     _, _, relation = edge_id
@@ -523,6 +554,35 @@ class DBWriter:
         else:
             logger.debug("Edge %s endpoint resolution: %s", edge_id, stats.summary())
         return resolved
+
+    def _db_semaphore(self) -> asyncio.Semaphore:
+        """Shared semaphore so ``max_concurrent`` bounds the whole run.
+
+        Created lazily per event loop: a writer reused across separate
+        ``asyncio.run`` calls must not carry a semaphore bound to a closed loop.
+        """
+        loop = asyncio.get_running_loop()
+        if self._semaphore is None or self._semaphore_loop is not loop:
+            self._semaphore = asyncio.Semaphore(self.max_concurrent)
+            self._semaphore_loop = loop
+        return self._semaphore
+
+    async def _acquire_write_slot(
+        self, stack: AsyncExitStack, conn_conf: DBConfig, collection: str
+    ) -> None:
+        """Enter the semaphore and, when the backend's upsert can race with
+        itself (Cypher MERGE has no cross-transaction atomicity), a
+        per-collection lock so the same collection is written by one batch at a
+        time while distinct collections still proceed in parallel."""
+        await stack.enter_async_context(self._db_semaphore())
+        if conn_conf.connection_type in _CONCURRENT_UPSERT_SAFE_FLAVORS:
+            return
+        loop = asyncio.get_running_loop()
+        if self._collection_locks_loop is not loop:
+            self._collection_locks = {}
+            self._collection_locks_loop = loop
+        lock = self._collection_locks.setdefault(collection, asyncio.Lock())
+        await stack.enter_async_context(lock)
 
     def _db_aware_for(self, conn_conf: DBConfig) -> SchemaDBAware:
         """Return a cached :class:`SchemaDBAware` for *conn_conf*'s DB flavor."""

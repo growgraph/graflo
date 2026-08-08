@@ -57,7 +57,9 @@ source = GraphEngine().sample_resources(pg_config, schema_name="public", max_doc
 sample = source.get("customers")
 profile = profile_sample(sample)
 
-records = profile.flat_docs(sample.docs)   # nested paths become 'customer.id', 'items[].sku'
+records = profile.flat_docs(
+    sample.docs
+)  # nested paths become 'customer.id', 'items[].sku'
 ```
 
 A sampled source also carries the **declared** `primary_key` and `foreign_keys` when it has them —

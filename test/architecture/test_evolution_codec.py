@@ -110,6 +110,49 @@ class TestUnionCoverage:
             f"stale payloads: {sorted(set(OP_PAYLOADS) - declared)}"
         )
 
+    def test_every_op_is_classified_for_ingestion_reach(self) -> None:
+        """A new op must be classified, so schema-only callers cannot silently no-op.
+
+        ``INGESTION_REWRITING_OPS`` drives the schema-artifact guard in graflo-server.
+        An op left out of it applies to a schema-only manifest with its ingestion half
+        silently dropped, which is how a rename reaches the schema but not the
+        resources that reference it.
+        """
+        declared = {cls.model_fields["op"].default for cls in _union_members()}
+        declared.add("compose_manifests")
+
+        stale = sorted(ops_module.INGESTION_REWRITING_OPS - declared)
+        assert not stale, f"unknown ops classified as ingestion-rewriting: {stale}"
+
+        # Ops that only ever touch schema/db_profile. Listed explicitly so adding an
+        # op forces a decision rather than defaulting to "schema-only".
+        schema_only = {
+            "add_edge_indexes",
+            "add_edge_properties",
+            "add_edges",
+            "add_secondary_identities",
+            "add_vertex_indexes",
+            "add_vertex_properties",
+            "add_vertices",
+            "change_field_types",
+            "compose_manifests",
+            "remove_edge_indexes",
+            "remove_edge_properties",
+            "remove_secondary_identities",
+            "remove_vertex_indexes",
+            "rename_edge_properties",
+            "replace_edge_identities",
+            "retarget_edges",
+            "set_edge_directed",
+        }
+        unclassified = sorted(
+            declared - ops_module.INGESTION_REWRITING_OPS - schema_only
+        )
+        assert not unclassified, (
+            f"ops not classified for ingestion reach: {unclassified}; add each to "
+            "INGESTION_REWRITING_OPS or to schema_only here"
+        )
+
     def test_the_vocabulary_is_thirty_ops(self) -> None:
         exported = {
             name

@@ -41,11 +41,12 @@ description = "Manifest-driven Graph Schema & Transformation Language (GSTL): de
 name = "graflo"
 readme = "README.md"
 requires-python = ">=3.11"
-version = "1.10.4"
+version = "1.10.5"
 
 [project.optional-dependencies]
 dev = [
   "pre-commit>=4.2.0",
+  "pytest-timeout>=2.4.0",
   "pytest-xdist>=3.8.0",
   "pytest>=9.0.2",
   "ty>=0.0.1a24"
@@ -84,14 +85,6 @@ include = ["graflo"]
 
 [tool.hatch.build.targets.wheel]
 include = ["graflo"]
-
-[tool.pytest.ini_options]
-markers = [
-  "bulk_e2e: marks TigerGraph native bulk end-to-end tests (skipped unless --run-bulk-e2e is passed)",
-  "kafka: marks Kafka integration tests (skipped unless --run-kafka is passed)",
-  "nebula: marks NebulaGraph integration tests (skipped unless --run-nebula is passed)",
-  "performance: marks performance / stress tests (skipped unless --run-performance is passed)"
-]
 
 [tool.ruff.lint]
 # Ruff 0.16 expanded defaults (~413 rules). Keep the new set, but silence

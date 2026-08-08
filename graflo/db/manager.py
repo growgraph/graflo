@@ -155,9 +155,12 @@ class ConnectionManager:
         db_type = self.config.connection_type
         cls = self.target_conn_mapping[db_type]
 
+        config = self.config
         if self.working_db is not None:
-            self.config.database = self.working_db
-        self.conn = cls(config=cast(Any, self.config))
+            # Work on a copy: the caller's config may be shared across concurrent
+            # connection managers, and mutating it here would leak working_db.
+            config = config.model_copy(update={"database": self.working_db})
+        self.conn = cls(config=cast(Any, config))
         return self.conn
 
     def close(self):

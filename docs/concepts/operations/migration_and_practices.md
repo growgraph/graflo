@@ -83,7 +83,9 @@ Schema comparison gives you a predictable transition path between versions. Inst
 - **TigerGraph token caching**: Secret-based API tokens are cached per process for the ingest run (one fetch per cluster/graph/secret, not per upsert batch or `ConnectionManager` open)
 - **Batch processing**: Process large datasets in configurable batches (`IngestionParams.batch_size` on `Caster` / `GraphEngine`)
 - **Batch prefetch**: While one batch is cast and written, `Caster.process_data_source` can prefetch up to `IngestionParams.batch_prefetch` additional batches from `AbstractDataSource.iter_batches` (bounded memory, overlapped I/O)
-- **Parallel execution**: Utilize multiple cores for faster processing (`n_cores` parameter of `Caster`)
+- **Cast dispatch** (`IngestionParams.cast_executor`): casting is pure Python and holds the GIL, so the default (`auto`) casts in process, handing work to a worker one contiguous slice of the batch at a time. Set `cast_executor="process"` to spread documents over `n_cores` worker **processes** — the only mode that uses more than one core. It pays off when per-document cast work is large relative to the entities emitted (chained transforms, deep `descend` trees), since results have to travel back; measure before adopting it. `cast_executor="thread"` is GIL-bound and kept only as an escape hatch.
+- **Concurrent writes** (`IngestionParams.max_concurrent_db_ops`, default 8): vertex collections and edge types within a batch are written concurrently. This is I/O-bound work, which is where concurrency actually pays.
+- **Concurrent sources** (`IngestionParams.max_concurrent_sources`, defaults to `n_cores`): how many data sources are processed at once.
 - **Ingestion scope filters**: Limit a run to specific resources (`IngestionParams.resources`), connectors (`IngestionParams.connectors` — name or hash, same refs as `resource_connector`), and/or vertex types (`IngestionParams.vertices`). When both `resources` and `connectors` are set, only connectors bound to listed resources that also match the connector filter are ingested.
 - **Efficient resource handling**: Optimized processing of both table and tree-like data
 
@@ -93,7 +95,7 @@ Schema comparison gives you a predictable transition path between versions. Inst
 2. Leverage blank vertices (`blank: true` on the vertex definition) for complex relationship modeling; include them in the resource pipeline when they must be populated at cast time
 3. Define reusable transforms in **`ingestion_model.transforms`** and reference them from resource steps
 4. Configure appropriate batch sizes based on your data volume
-5. Enable parallel processing for large datasets
+5. Raise `max_concurrent_db_ops` before reaching for `cast_executor="process"`: writes are I/O-bound and gain from concurrency, casting is GIL-bound and does not
 6. Choose the right relationship attribute based on your data format:
    - **`relation_field`** on an edge **actor** step — relation from a column/field
    - **`relation_from_key`** on an edge **actor** step — relation from JSON keys

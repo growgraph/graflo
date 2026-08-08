@@ -26,6 +26,11 @@ from graflo.data_source.chunker import ChunkerType
 from graflo.data_source.factory import DataSourceFactory
 from graflo.data_source.registry import DataSourceRegistry
 from graflo.hq.bulk_session import BulkSessionCoordinator
+from graflo.hq.concurrency_gate import (
+    SerialReason,
+    bulk_load_enabled,
+    effective_in_flight,
+)
 from graflo.hq.db_writer import DBWriter
 from graflo.hq.doc_error_sink import failure_sinks_from_ingestion_params
 from graflo.hq.document_caster import DocumentCaster
@@ -36,6 +41,7 @@ from graflo.hq.ingestion_parameters import (
     IngestionParams,
 )
 from graflo.hq.registry_builder import RegistryBuilder
+from graflo.onto import DBType
 from graflo.util.data_normalize import normalize_rows
 
 logger = logging.getLogger(__name__)
@@ -57,12 +63,18 @@ class Caster:
         self.ingestion_model = ingestion_model
         self._document_caster = DocumentCaster(ingestion_model)
         self._allowed_vertex_names: set[str] | None = None
+        # Error-budget accounting is shared by all in-flight batches and sources;
+        # it stays correct because every writer runs on the one event loop and
+        # serializes on this asyncio.Lock.
         self._doc_cast_error_total = 0
         self._doc_cast_error_io_lock = asyncio.Lock()
         self._failure_sinks = failure_sinks_from_ingestion_params(ingestion_params)
         self._bulk_coordinator = BulkSessionCoordinator(schema=self.schema)
         self._ingest_bindings: Bindings | None = None
         self._connection_provider: ConnectionProvider = EmptyConnectionProvider()
+        # One writer per run: the db-aware schema projection is resolved once and
+        # its semaphore bounds DB operations across all in-flight batches.
+        self._db_writer: DBWriter | None = None
 
     async def _ensure_bulk_session(self, conn_conf: DBConfig) -> str | None:
         return await self._bulk_coordinator.ensure_session(conn_conf)
@@ -136,7 +148,7 @@ class Caster:
         gc = result.graph
 
         if conn_conf is not None:
-            writer = self._make_db_writer()
+            writer = self._get_db_writer(conn_conf)
             bulk_sid = await self._ensure_bulk_session(conn_conf)
             await writer.write(
                 gc=gc,
@@ -152,6 +164,8 @@ class Caster:
         conn_conf: None | DBConfig = None,
     ):
         actual_resource_name = resource_name or data_source.resource_name
+
+        in_flight = self._effective_in_flight(actual_resource_name, conn_conf)
 
         limit = self.ingestion_params.max_items
         batch_prefetch = self.ingestion_params.batch_prefetch
@@ -189,13 +203,22 @@ class Caster:
         producer_task = asyncio.create_task(_produce_batches())
         process_error: Exception | None = None
         try:
-            while True:
-                item = await queue.get()
-                if item is sentinel:
-                    break
-                batch = cast(list[dict], item)
-                await self.process_batch(
-                    batch,
+            if in_flight <= 1:
+                while True:
+                    item = await queue.get()
+                    if item is sentinel:
+                        break
+                    batch = cast(list[dict], item)
+                    await self.process_batch(
+                        batch,
+                        resource_name=actual_resource_name,
+                        conn_conf=conn_conf,
+                    )
+            else:
+                await self._process_batches_pipelined(
+                    queue,
+                    sentinel,
+                    in_flight=in_flight,
                     resource_name=actual_resource_name,
                     conn_conf=conn_conf,
                 )
@@ -212,6 +235,100 @@ class Caster:
 
         if fetch_error is not None:
             raise fetch_error
+
+    def _effective_in_flight(
+        self, resource_name: str | None, conn_conf: DBConfig | None
+    ) -> int:
+        """Resolve how many batches of this source may be in flight at once."""
+        try:
+            runtime = self.ingestion_model.fetch_resource(resource_name)
+        except (ValueError, RuntimeError):
+            runtime = None
+        in_flight, serial_reason = effective_in_flight(
+            runtime,
+            self.ingestion_params,
+            conn_conf,
+            bulk_enabled=bulk_load_enabled(conn_conf),
+        )
+        if (
+            serial_reason is not None
+            and serial_reason is not SerialReason.USER_OVERRIDE
+        ):
+            logger.info(
+                "Resource %r: batches processed serially (%s)",
+                resource_name,
+                serial_reason.value,
+            )
+        return in_flight
+
+    async def _process_batches_pipelined(
+        self,
+        queue: asyncio.Queue,
+        sentinel: object,
+        *,
+        in_flight: int,
+        resource_name: str | None,
+        conn_conf: DBConfig | None,
+    ) -> None:
+        """Process batches with up to *in_flight* cast+write tasks concurrent.
+
+        Casting of batch N+1 overlaps the DB write of batch N. Error contract
+        matches the serial loop: the first exception (by completion order)
+        propagates bare after in-flight siblings are cancelled — deliberately
+        not a ``TaskGroup``, whose ``ExceptionGroup`` would break callers that
+        catch e.g. :class:`DocErrorBudgetExceeded` directly.
+        """
+        sem = asyncio.Semaphore(in_flight)
+        pending: set[asyncio.Task] = set()
+        first_error: BaseException | None = None
+
+        def _on_done(task: asyncio.Task) -> None:
+            nonlocal first_error
+            pending.discard(task)
+            if not task.cancelled():
+                exc = task.exception()
+                if exc is not None and first_error is None:
+                    first_error = exc
+            sem.release()
+
+        try:
+            while True:
+                await sem.acquire()
+                if first_error is not None:
+                    sem.release()
+                    break
+                item = await queue.get()
+                if item is sentinel:
+                    sem.release()
+                    break
+                batch = cast(list[dict], item)
+                task = asyncio.create_task(
+                    self.process_batch(
+                        batch,
+                        resource_name=resource_name,
+                        conn_conf=conn_conf,
+                    )
+                )
+                pending.add(task)
+                task.add_done_callback(_on_done)
+
+            if first_error is None and pending:
+                done, _ = await asyncio.wait(set(pending))
+                for task in done:
+                    if task.cancelled():
+                        continue
+                    exc = task.exception()
+                    if exc is not None and first_error is None:
+                        first_error = exc
+        finally:
+            remaining = set(pending)
+            for task in remaining:
+                task.cancel()
+            if remaining:
+                await asyncio.gather(*remaining, return_exceptions=True)
+
+        if first_error is not None:
+            raise first_error
 
     async def process_resource(
         self,
@@ -257,17 +374,64 @@ class Caster:
             conn_conf=conn_conf,
         )
 
+    async def _process_source_group(
+        self,
+        group: list[AbstractDataSource],
+        *,
+        conn_conf: DBConfig | None,
+        resource_name: str,
+    ) -> None:
+        """Process one resource's data sources, fanning out when there are many."""
+        source_workers = (
+            self.ingestion_params.max_concurrent_sources
+            if self.ingestion_params.max_concurrent_sources is not None
+            # Sources of one resource are independent shards (one file each);
+            # interleaving them is safe. The fallback no longer hides behind
+            # n_cores, which governs CPU-bound cast workers.
+            else min(4, len(group))
+        )
+        if source_workers <= 1 or len(group) <= 1:
+            for data_source in group:
+                await self.process_data_source(
+                    data_source=data_source, conn_conf=conn_conf
+                )
+            return
+
+        queue_tasks: asyncio.Queue = asyncio.Queue()
+        for item in group:
+            await queue_tasks.put(item)
+        for _ in range(source_workers):
+            await queue_tasks.put(None)
+
+        worker_tasks = [
+            asyncio.create_task(
+                self.process_with_queue(queue_tasks, conn_conf=conn_conf)
+            )
+            for _ in range(source_workers)
+        ]
+        try:
+            await asyncio.gather(*worker_tasks)
+        except BaseException:
+            for wt in worker_tasks:
+                wt.cancel()
+            await asyncio.gather(*worker_tasks, return_exceptions=True)
+            raise
+
     async def process_with_queue(
         self, tasks: asyncio.Queue, conn_conf: DBConfig | None = None
     ):
+        """Drain data-source tasks from *tasks* until a sentinel (``None``).
+
+        Exceptions propagate to the caller (``ingest_data_sources`` cancels the
+        sibling workers); they used to be logged and swallowed here, which made
+        a failed source indistinguishable from a finished one.
+        """
         SENTINEL = None
 
         while True:
+            task = await tasks.get()
             try:
-                task = await tasks.get()
-
                 if task is SENTINEL:
-                    tasks.task_done()
                     break
 
                 if isinstance(task, tuple) and len(task) == 2:
@@ -281,11 +445,8 @@ class Caster:
                     await self.process_data_source(
                         data_source=task, conn_conf=conn_conf
                     )
+            finally:
                 tasks.task_done()
-            except Exception as e:
-                logger.error(f"Error processing task: {e}", exc_info=True)
-                tasks.task_done()
-                break
 
     @staticmethod
     def normalize_resource(
@@ -309,6 +470,7 @@ class Caster:
         self.ingestion_params = ingestion_params
         self._document_caster = DocumentCaster(self.ingestion_model)
         self._doc_cast_error_total = 0
+        self._db_writer = None
         init_only = ingestion_params.init_only
 
         if init_only:
@@ -318,7 +480,7 @@ class Caster:
         self._ingest_bindings = bindings
         self._connection_provider = connection_provider or EmptyConnectionProvider()
         try:
-            tasks: list[AbstractDataSource] = []
+            resource_groups: list[tuple[str, list[AbstractDataSource]]] = []
             for resource_name in self.ingestion_model._resources:
                 if (
                     allowed_resource_names is not None
@@ -330,33 +492,28 @@ class Caster:
                     logger.info(
                         f"For resource name {resource_name} {len(data_sources)} data sources were found"
                     )
-                    tasks.extend(data_sources)
+                    resource_groups.append((resource_name, data_sources))
 
             with Timer() as klepsidra:
-                if self.ingestion_params.n_cores > 1:
-                    queue_tasks: asyncio.Queue = asyncio.Queue()
-                    for item in tasks:
-                        await queue_tasks.put(item)
-
-                    for _ in range(self.ingestion_params.n_cores):
-                        await queue_tasks.put(None)
-
-                    worker_tasks = [
-                        self.process_with_queue(queue_tasks, conn_conf=conn_conf)
-                        for _ in range(self.ingestion_params.n_cores)
-                    ]
-
-                    await asyncio.gather(*worker_tasks)
-                else:
-                    for data_source in tasks:
-                        await self.process_data_source(
-                            data_source=data_source, conn_conf=conn_conf
-                        )
+                # Resource declaration order is semantic: a later resource may
+                # depend on database state written by an earlier one (edges over
+                # another resource's vertices, secondary-identity endpoint
+                # resolution, extra weights). Sources fan out *within* a
+                # resource — they are independent shards of the same stream —
+                # with a barrier between resources.
+                for resource_name, group in resource_groups:
+                    await self._process_source_group(
+                        group, conn_conf=conn_conf, resource_name=resource_name
+                    )
             logger.info(f"Processing took {klepsidra.elapsed:.1f} sec")
         finally:
             await self._finalize_bulk_session(conn_conf)
+            # The cast pool outlives individual batches on purpose; the run is where
+            # it stops.
+            self._document_caster.close()
             self._ingest_bindings = None
             self._connection_provider = EmptyConnectionProvider()
+            self._db_writer = None
 
     def ingest(
         self,
@@ -447,14 +604,35 @@ class Caster:
         return allowed_resource_names
 
     def _make_db_writer(self) -> DBWriter:
-        max_concurrent = (
-            self.ingestion_params.max_concurrent_db_ops
-            if self.ingestion_params.max_concurrent_db_ops is not None
-            else self.ingestion_params.n_cores
-        )
+        max_concurrent = self.ingestion_params.max_concurrent_db_ops
         return DBWriter(
             schema=self.schema,
             ingestion_model=self.ingestion_model,
             dry=self.ingestion_params.dry,
             max_concurrent=max_concurrent,
         )
+
+    def _get_db_writer(self, conn_conf: DBConfig) -> DBWriter:
+        """Run-scoped writer, created on first use (synchronously on the loop).
+
+        Reusing one writer keeps ``schema.resolve_db_aware`` to a single call
+        per run and makes ``max_concurrent_db_ops`` a run-wide bound.
+        """
+        if self._db_writer is None:
+            writer = self._make_db_writer()
+            if (
+                conn_conf.connection_type == DBType.GRAFLO_BACKEND
+                and writer.max_concurrent > 1
+            ):
+                # The chunked-file backend rewrites its index.json on every
+                # writer close; concurrent writers clobber each other's entries.
+                logger.warning(
+                    "graflo_backend target does not support concurrent writers; "
+                    "forcing max_concurrent_db_ops=1."
+                )
+                writer.max_concurrent = 1
+            # Pre-warm the db-aware projection so concurrent write() calls never
+            # race the lazy cache fill.
+            writer._db_aware_for(conn_conf)
+            self._db_writer = writer
+        return self._db_writer

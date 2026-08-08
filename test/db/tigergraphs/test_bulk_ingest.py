@@ -16,6 +16,9 @@ from graflo.connections.onto import TigergraphBulkLoadConfig
 from graflo.db.manager import ConnectionManager
 from graflo.onto import DBType
 
+# Every test here needs a live TigerGraph, whose schema DDL runs 15-40s per graph.
+pytestmark = pytest.mark.tigergraph
+
 
 def _bulk_schema(graph_name: str) -> Schema:
     return Schema(

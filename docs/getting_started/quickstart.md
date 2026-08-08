@@ -66,9 +66,7 @@ bindings.add_connector(
     people_connector,
 )
 bindings.bind_resource("people", people_connector)
-departments_connector = FileConnector(
-    regex="^dep.*\.csv$", sub_path=pathlib.Path(".")
-)
+departments_connector = FileConnector(regex="^dep.*\.csv$", sub_path=pathlib.Path("."))
 bindings.add_connector(
     departments_connector,
 )
@@ -120,7 +118,7 @@ engine.define_and_ingest(
 # Option 2: Use Caster directly (schema must be defined separately)
 # engine = GraphEngine()
 # engine.define_schema(manifest=manifest, target_db_config=conn_conf, recreate_schema=False)
-# 
+#
 # caster = Caster(schema=schema, ingestion_model=ingestion_model)
 # caster.ingest(
 #     target_db_config=conn_conf,
@@ -474,7 +472,15 @@ export POSTGRES_SCHEMA_NAME=public
 Then load the config:
 
 ```python
-from graflo.connections.onto import ArangoConfig, Neo4jConfig, TigergraphConfig, FalkordbConfig, MemgraphConfig, NebulaConfig, PostgresConfig
+from graflo.connections.onto import (
+    ArangoConfig,
+    Neo4jConfig,
+    TigergraphConfig,
+    FalkordbConfig,
+    MemgraphConfig,
+    NebulaConfig,
+    PostgresConfig,
+)
 
 # Load from default environment variables
 arango_conf = ArangoConfig.from_env()

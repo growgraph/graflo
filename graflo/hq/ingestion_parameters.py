@@ -83,7 +83,38 @@ class IngestionParams(BaseModel):
     """
 
     clear_data: bool = False
-    n_cores: int = 1
+    n_cores: int = Field(
+        default=1,
+        ge=1,
+        description=(
+            "Number of cast worker processes. With cast_executor='auto' (default), "
+            "n_cores > 1 routes large batches to worker processes (workers fold and "
+            "filter their own chunks, so the parallelism is real end to end); "
+            "1 keeps casting in-process."
+        ),
+    )
+    cast_executor: Literal["auto", "inline", "thread", "process"] = Field(
+        default="auto",
+        description=(
+            "How casting is dispatched. 'auto' (default) picks 'process' when "
+            "n_cores > 1, dynamic_edges is off, and the batch is large enough to "
+            "amortize transfer; otherwise it casts in process. 'inline' forces "
+            "in-process casting. 'process' always spreads documents over n_cores "
+            "worker processes. 'thread' is GIL-bound and kept only as an escape "
+            "hatch (never used with dynamic_edges, which would race)."
+        ),
+    )
+    max_concurrent_sources: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "How many data sources of one resource are processed concurrently "
+            "(sources of a resource are independent shards, e.g. one file "
+            "each). Defaults to min(4, sources in the resource). Resources "
+            "themselves always run in declaration order — later resources may "
+            "depend on earlier ones' database state."
+        ),
+    )
     max_items: int | None = Field(
         default=None,
         ge=1,
@@ -105,6 +136,17 @@ class IngestionParams(BaseModel):
             "Keeps ingestion lazy with bounded memory."
         ),
     )
+    max_in_flight_batches: int = Field(
+        default=2,
+        ge=1,
+        description=(
+            "How many batches of one data source may be cast/written concurrently, "
+            "so casting batch N+1 overlaps writing batch N. Configurations where "
+            "batch order is semantic (dynamic_edges, blank vertices, extra_weights, "
+            "native bulk load, graflo_backend target) are forced to 1 automatically. "
+            "Set to 1 to disable overlap entirely."
+        ),
+    )
     dry: bool = False
     init_only: bool = False
     limit_files: int | None = None
@@ -119,7 +161,15 @@ class IngestionParams(BaseModel):
         ),
     )
     vertices: list[str] | None = None
-    max_concurrent_db_ops: int | None = None
+    max_concurrent_db_ops: int = Field(
+        default=8,
+        ge=1,
+        description=(
+            "Upper bound on concurrent DB operations per batch. Writes are I/O-bound, "
+            "so this is where concurrency actually pays; it used to default to "
+            "n_cores, which meant writes were serial out of the box."
+        ),
+    )
     datetime_after: str | None = None
     datetime_before: str | None = None
     datetime_column: str | None = None

@@ -731,13 +731,16 @@ class TestSustainedLoad:
                     except Exception as e:
                         errors.append(f"R: {e}")
 
-        # Launch threads
+        # Launch threads. daemon=True because the join below is bounded at 5s:
+        # a worker still blocked on the backend after that would otherwise be
+        # joined without a timeout by threading._shutdown at interpreter exit,
+        # hanging pytest after the run has already reported.
         threads = [
-            threading.Thread(target=writer),
-            threading.Thread(target=writer),
-            threading.Thread(target=reader),
-            threading.Thread(target=reader),
-            threading.Thread(target=reader),
+            threading.Thread(target=writer, daemon=True),
+            threading.Thread(target=writer, daemon=True),
+            threading.Thread(target=reader, daemon=True),
+            threading.Thread(target=reader, daemon=True),
+            threading.Thread(target=reader, daemon=True),
         ]
 
         start = time.perf_counter()

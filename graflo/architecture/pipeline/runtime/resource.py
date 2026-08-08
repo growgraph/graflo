@@ -92,6 +92,9 @@ class ResourceRuntime:
         target_db_flavor: DBType | None = None,
     ) -> None:
         self.config = config
+        # Retained so the runtime can describe itself: rebuilding it elsewhere (a cast
+        # worker process) has to reproduce the same flavor-dependent behaviour.
+        self._target_db_flavor = target_db_flavor
         self._type_casters = resolve_type_casters(config.types)
         self._root = ActorWrapper(*config.pipeline)
         self._executor = ActorExecutor(self._root)
@@ -141,6 +144,11 @@ class ResourceRuntime:
     @property
     def edge_config(self) -> EdgeConfig:
         return self._edge_config
+
+    @property
+    def target_db_flavor(self) -> DBType | None:
+        """Target flavor this runtime was built for, if any."""
+        return self._target_db_flavor
 
     @property
     def edge_derivation(self) -> EdgeDerivationRegistry:

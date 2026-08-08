@@ -7,13 +7,14 @@ from collections.abc import Sequence
 from typing import Any, Literal
 
 from graflo.architecture.contract.ingestion import IngestionModel
+from graflo.architecture.contract.ingestion.steps.normalize import normalize_actor_step
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.graph_types import EdgeId
 from graflo.architecture.pipeline.runtime.actor import ActorWrapper
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.core import CoreSchema
 from graflo.architecture.schema.database_features import DatabaseProfile
-from graflo.architecture.schema.edge import EdgeConfig
+from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.schema.vertex import Field, Vertex, VertexConfig
 
 from .db_profile import (
@@ -88,6 +89,7 @@ from .rewrite import (
     rewrite_vertex_field_names_in_pipeline,
     rewrite_vertex_names_in_pipeline,
     rewrite_vertex_names_in_value,
+    rewrite_vertex_weight_names,
 )
 from .sanitize import (
     compute_vertex_field_renames,
@@ -328,7 +330,108 @@ def _rewrite_ingestion_for_merge(im: IngestionModel, mapping: dict[str, str]) ->
     im.resources = new_resources
 
 
-def apply_merge_vertices(manifest: GraphManifest, op: MergeVerticesOp) -> None:
+def _merged_name_step_counts(
+    steps: list[Any], merged: str, *, path: str = "pipeline"
+) -> list[str]:
+    """Paths of pipeline levels where *merged* is produced by more than one step.
+
+    A level producing the merged name twice means one source document yielded both
+    of the pre-merge types. After the merge they share an accumulator slot, so
+    ``assemble`` merges them into a single node — two real-world entities become
+    one. That is almost never what a type merge was meant to do.
+    """
+    hits: list[str] = []
+    produced = 0
+    for index, step in enumerate(steps):
+        if not isinstance(step, dict):
+            continue
+        normalized = normalize_actor_step(dict(step))
+        step_type = normalized.get("type")
+        if step_type == "vertex":
+            if normalized.get("vertex") == merged:
+                produced += 1
+        elif step_type == "vertex_router":
+            type_map = normalized.get("type_map")
+            if isinstance(type_map, dict) and any(
+                value == merged for value in type_map.values()
+            ):
+                produced += 1
+        elif step_type == "descend":
+            sub = normalized.get("pipeline")
+            if isinstance(sub, list):
+                hits.extend(
+                    _merged_name_step_counts(
+                        sub, merged, path=f"{path}[{index}].pipeline"
+                    )
+                )
+    if produced > 1:
+        hits.append(f"{path} ({produced} steps produce {merged!r})")
+    return hits
+
+
+def _describe_merge_impact(
+    manifest: GraphManifest,
+    *,
+    before_edges: list[Edge],
+    merged: str,
+    mapping: dict[str, str],
+) -> tuple[list[str], list[str], list[str]]:
+    """Return ``(self_relations, fused_levels, advisories)`` for a completed merge.
+
+    Everything here is invisible in the manifest diff but changes what ingestion
+    emits, which is why the merge reports it rather than leaving it to be
+    discovered against a populated database.
+    """
+    self_relations = sorted(
+        f"({edge.source}, {edge.target}, {edge.relation}) -> "
+        f"({mapping.get(edge.source, edge.source)}, "
+        f"{mapping.get(edge.target, edge.target)}, {edge.relation})"
+        for edge in before_edges
+        if edge.source != edge.target
+        and mapping.get(edge.source, edge.source)
+        == mapping.get(edge.target, edge.target)
+    )
+
+    fused_levels: list[str] = []
+    if manifest.ingestion_model is not None:
+        for resource in manifest.ingestion_model.resources:
+            fused_levels.extend(
+                f"{resource.name}: {hit}"
+                for hit in _merged_name_step_counts(resource.pipeline, merged)
+            )
+
+    advisories: list[str] = []
+    schema = manifest.graph_schema
+    if schema is not None:
+        vertex_config = schema.core_schema.vertex_config
+        if merged in vertex_config.vertex_set:
+            identity = list(vertex_config[merged].identity)
+            if len(identity) > 1:
+                advisories.append(
+                    f"merged identity for {merged!r} is the union {identity}; if no "
+                    "source row carries all of these, rows will not collide and the "
+                    "types merge without the entities merging"
+                )
+        pairs: dict[tuple[str, str], list[str | None]] = {}
+        for edge in schema.core_schema.edge_config.edges:
+            pairs.setdefault((edge.source, edge.target), []).append(edge.relation)
+        ambiguous = sorted(
+            f"({source}, {target}): {sorted(str(r) for r in relations)}"
+            for (source, target), relations in pairs.items()
+            if len(relations) > 1
+        )
+        if ambiguous:
+            advisories.append(
+                "vertex pairs now carry more than one relation, which changes edge "
+                f"inference for resources using infer_edges: {ambiguous}"
+            )
+    return self_relations, fused_levels, advisories
+
+
+def apply_merge_vertices(
+    manifest: GraphManifest,
+    op: MergeVerticesOp,
+) -> None:
     """Mutate *manifest* in place: merge source vertices into ``into``."""
     schema = manifest.graph_schema
     if schema is None:
@@ -341,6 +444,7 @@ def apply_merge_vertices(manifest: GraphManifest, op: MergeVerticesOp) -> None:
         raise ValueError("merge_vertices: `into` must not appear in `sources`")
 
     core = schema.core_schema
+    before_edges = list(core.edge_config.edges)
     new_vc = _build_merged_vertex_config(core.vertex_config, sources, into)
     m = {s: into for s in sources}
     merged_edges = redirect_and_merge_edges(core.edge_config.edges, m)
@@ -357,6 +461,28 @@ def apply_merge_vertices(manifest: GraphManifest, op: MergeVerticesOp) -> None:
         manifest.ingestion_model = IngestionModel.model_validate(
             manifest.ingestion_model.to_dict(skip_defaults=False)
         )
+
+    self_relations, fused_levels, advisories = _describe_merge_impact(
+        manifest, before_edges=before_edges, merged=into, mapping=m
+    )
+    if self_relations and not op.allow_self_relations:
+        raise ValueError(
+            f"merge_vertices: merging {sorted(sset)} into {into!r} turns edges into "
+            f"self-relations: {self_relations}. Both endpoints then share one "
+            "accumulator slot, so assembly merges rows that were separate nodes. "
+            "Remove or retarget those edges first, or set allow_self_relations=true "
+            "to accept the self-relation."
+        )
+    if fused_levels and not op.allow_row_fusion:
+        raise ValueError(
+            f"merge_vertices: merging {sorted(sset)} into {into!r} leaves pipeline "
+            f"levels producing {into!r} more than once: {fused_levels}. One source "
+            "document yielded both types, so the merged rows fuse into a single "
+            "node. Split the resource, or set allow_row_fusion=true if fusing them "
+            "is the intent."
+        )
+    for advisory in advisories:
+        logger.warning("merge_vertices: %s", advisory)
 
 
 def _rename_field_list(names: list[str], renames: dict[str, str]) -> list[str]:
@@ -682,6 +808,15 @@ def _apply_rename_entities(
                         edges=edge_map,
                     )
 
+                # `merge_collections` holds vertex names; `collect_vertex_names`
+                # counts them, so leaving them behind strands the reference.
+                merge_collections = resource.get("merge_collections")
+                if isinstance(merge_collections, list):
+                    resource["merge_collections"] = [
+                        vertex_map.get(name, name) if isinstance(name, str) else name
+                        for name in merge_collections
+                    ]
+
                 for spec_key in ("infer_edge_only", "infer_edge_except"):
                     specs = resource.get(spec_key)
                     if not isinstance(specs, list):
@@ -720,6 +855,13 @@ def _apply_rename_entities(
                             if isinstance(edge.get("relation"), str):
                                 edge["relation"] = edge_map.get(
                                     edge["relation"], edge["relation"]
+                                )
+                        # `vertex_weights[].name` is a vertex name, on the entry and
+                        # on its nested edge alike.
+                        for holder in (entry, edge):
+                            if isinstance(holder, dict):
+                                rewrite_vertex_weight_names(
+                                    holder, lambda name: vertex_map.get(name, name)
                                 )
 
     bindings_payload = payload.get("bindings")
@@ -763,25 +905,106 @@ def _apply_rename_entities(
     manifest.bindings = updated.bindings
 
 
+def _validate_rename_against_existing(
+    renames: dict[str, str], existing: set[str], *, kind: str, noun: str
+) -> None:
+    """Reject renames whose sources are absent or whose targets collide.
+
+    An unknown source is a typo that would otherwise apply as a silent no-op and
+    still be recorded as a real change by the revision machinery. A target that
+    collides with a name staying put is the same collapse the op-level injectivity
+    check rejects, just spread across the map and the schema instead of within
+    the map.
+    """
+    unknown = sorted(set(renames) - existing)
+    if unknown:
+        raise ValueError(f"{kind}: unknown {noun}: {unknown}")
+
+    surviving = existing - set(renames)
+    collisions = sorted(
+        f"{source!r} -> {target!r}"
+        for source, target in renames.items()
+        if target in surviving
+    )
+    if collisions:
+        raise ValueError(
+            f"{kind}: renamed {noun} collide with existing ones: {collisions}. "
+            f"Renaming cannot merge types — merge them explicitly instead."
+        )
+
+
+def _rename_vertices_inplace(
+    manifest: GraphManifest, vertex_map: dict[str, str]
+) -> None:
+    """Apply a vertex rename map without the injectivity or collision guards.
+
+    Internal entry point for :mod:`~graflo.architecture.evolution.compose`, which
+    maps boundary-equivalent vertices onto a shared name on purpose and then calls
+    ``_collapse_duplicate_vertices`` to merge what the collapse duplicated. Callers
+    that do *not* follow up with a merge must use :func:`apply_rename_vertices`.
+    """
+    _apply_rename_entities(manifest, vertex_map=vertex_map)
+
+
 def apply_rename_vertices(manifest: GraphManifest, op: RenameVerticesOp) -> None:
     """Rename logical vertex names across schema/ingestion/bindings."""
-    _apply_rename_entities(manifest, vertex_map=op.vertices)
+    schema = manifest.graph_schema
+    if schema is not None:
+        _validate_rename_against_existing(
+            op.vertices,
+            set(schema.core_schema.vertex_config.vertex_set),
+            kind="rename_vertices",
+            noun="vertices",
+        )
+    _rename_vertices_inplace(manifest, op.vertices)
 
 
-def apply_rename_relations(manifest: GraphManifest, op: RenameRelationsOp) -> None:
-    """Rename logical relation names across schema/ingestion/db profile."""
-    _apply_rename_entities(manifest, edge_map=op.relations)
+def _rename_relations_inplace(
+    manifest: GraphManifest, relation_map: dict[str, str]
+) -> None:
+    """Apply a relation rename map without the injectivity guard.
+
+    Internal entry point for :func:`apply_merge_edges`, which merges *by* mapping
+    several relations onto one and so is deliberately non-injective.
+    """
+    # `_apply_rename_entities` already rewrites the db_profile relation keys, and it
+    # replaces `manifest.graph_schema` wholesale — so the profile must not be renamed
+    # a second time here (a chained map like {r1: r2, r2: r3} would compose with
+    # itself and take the profile to r3 while the schema stopped at r2), and the
+    # schema has to be re-read afterwards rather than captured before.
+    _apply_rename_entities(manifest, edge_map=relation_map)
     schema = manifest.graph_schema
     if schema is None:
         return
-    apply_relation_rename_to_db_profile(schema.db_profile, op.relations)
     merge_relation_entries_in_db_profile(schema.db_profile)
     schema.db_profile = _revalidate_db_profile(schema.db_profile)
     schema.finish_init()
 
 
+def apply_rename_relations(manifest: GraphManifest, op: RenameRelationsOp) -> None:
+    """Rename logical relation names across schema/ingestion/db profile."""
+    schema = manifest.graph_schema
+    if schema is not None:
+        known_relations = {
+            edge.relation
+            for edge in schema.core_schema.edge_config.edges
+            if edge.relation is not None
+        }
+        unknown = sorted(set(op.relations) - known_relations)
+        if unknown:
+            raise ValueError(f"rename_relations: unknown relations: {unknown}")
+    _rename_relations_inplace(manifest, op.relations)
+
+
 def apply_rename_resources(manifest: GraphManifest, op: RenameResourcesOp) -> None:
     """Rename ingestion resources and bindings references."""
+    if manifest.ingestion_model is not None:
+        _validate_rename_against_existing(
+            op.resources,
+            {resource.name for resource in manifest.ingestion_model.resources},
+            kind="rename_resources",
+            noun="resources",
+        )
     _apply_rename_entities(manifest, resource_map=op.resources)
 
 
@@ -924,18 +1147,27 @@ def apply_merge_edges(manifest: GraphManifest, op: MergeEdgesOp) -> None:
     if op.into in set(op.sources):
         raise ValueError("merge_edges: `sources` must not include `into`")
     relation_map = {source: op.into for source in op.sources}
-    apply_rename_relations(manifest, RenameRelationsOp(relations=relation_map))
     schema = manifest.graph_schema
-    if schema is None:
-        return
-    merged_edges = remap_relation_and_merge_edges(
-        schema.core_schema.edge_config.edges, relation_map
-    )
-    schema.core_schema = CoreSchema(
-        vertex_config=schema.core_schema.vertex_config,
-        edge_config=edge_config_from_edges(merged_edges),
-    )
-    schema.finish_init()
+    if schema is not None:
+        # Collapse the schema edges *first*, on the model, so `merge_edge_pair` unions
+        # properties and identities. Renaming first would leave two edges under one
+        # edge_id, which `EdgeConfig` now rejects — and silently shadowed one of them
+        # before it did. The profile is renamed in place ahead of the assignment
+        # because assigning `core_schema` revalidates the profile against it.
+        apply_relation_rename_to_db_profile(schema.db_profile, relation_map)
+        merge_relation_entries_in_db_profile(schema.db_profile)
+        merged_edges = remap_relation_and_merge_edges(
+            schema.core_schema.edge_config.edges, relation_map
+        )
+        schema.core_schema = CoreSchema(
+            vertex_config=schema.core_schema.vertex_config,
+            edge_config=edge_config_from_edges(merged_edges),
+        )
+        schema.db_profile = _revalidate_db_profile(schema.db_profile)
+    # Deliberately non-injective, so this takes the unguarded internal path. Schema and
+    # profile are already collapsed; this carries the rename into ingestion. Reapplying
+    # the map to the profile is a no-op because `into` is never one of `sources`.
+    _rename_relations_inplace(manifest, relation_map)
 
 
 def apply_rename_edge_properties(

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from graflo.architecture.schema.core import CoreSchema
 from graflo.architecture.schema.database_features import (
     DatabaseProfile,
@@ -13,6 +15,9 @@ from graflo.architecture.schema.metadata import GraphMetadata
 from graflo.architecture.schema.vertex import Field, FieldType, Vertex, VertexConfig
 from graflo.db.manager import ConnectionManager
 from graflo.onto import DBType
+
+# Every test here needs a live TigerGraph, whose schema DDL runs 15-40s per graph.
+pytestmark = pytest.mark.tigergraph
 
 
 def test_init_db_vertex_identity_string_default(conn_conf, test_graph_name) -> None:

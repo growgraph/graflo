@@ -16,7 +16,9 @@ from graflo.architecture.schema.vertex import Vertex, VertexConfig
 
 from .apply import (
     _bump_schema_version,
+    _rename_vertices_inplace,
     _revalidate_db_profile,
+    apply_merge_vertices,
     apply_rename_relations,
     apply_rename_resources,
     apply_rename_vertex_properties,
@@ -29,6 +31,7 @@ from .merge_core import (
 )
 from .ops import (
     ComposeManifestsOp,
+    MergeVerticesOp,
     RenameRelationsOp,
     RenameResourcesOp,
     RenameVertexPropertiesOp,
@@ -162,6 +165,40 @@ def _collapse_duplicate_vertices(manifest: GraphManifest) -> None:
         schema.db_profile = _revalidate_db_profile(schema.db_profile)
 
 
+def _apply_vertex_alignment(manifest: GraphManifest, vmap: dict[str, str]) -> None:
+    """Apply a boundary vertex map, merging where several sources share one target.
+
+    Two equivalences on the same side may legitimately name the same ``into``. That
+    is a merge, not a rename, so it goes through the merge machinery — which unions
+    properties and identity and redirects edges — rather than leaving the schema
+    transiently holding two definitions under one name.
+    """
+    groups: dict[str, list[str]] = {}
+    for source, target in vmap.items():
+        groups.setdefault(target, []).append(source)
+
+    injective: dict[str, str] = {}
+    for target, sources in sorted(groups.items()):
+        if len(sources) == 1:
+            injective[sources[0]] = target
+            continue
+        merge_sources = sorted(name for name in sources if name != target)
+        # Composition is where merging two types onto one boundary name is the whole
+        # point, and the caller stated the equivalence explicitly, so the merge
+        # guards do not apply here.
+        apply_merge_vertices(
+            manifest,
+            MergeVerticesOp(
+                sources=merge_sources,
+                into=target,
+                allow_self_relations=True,
+                allow_row_fusion=True,
+            ),
+        )
+    if injective:
+        _rename_vertices_inplace(manifest, injective)
+
+
 def _align_side(
     manifest: GraphManifest,
     *,
@@ -178,7 +215,7 @@ def _align_side(
 
     vmap = _vertex_rename_map(op.vertices, side=side)
     if vmap:
-        apply_rename_vertices(manifest, RenameVerticesOp(vertices=vmap))
+        _apply_vertex_alignment(manifest, vmap)
         _collapse_duplicate_vertices(manifest)
 
     rmap = _relation_rename_map(op.relations, side=side)

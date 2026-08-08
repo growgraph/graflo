@@ -41,6 +41,7 @@ Example:
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Iterator
 from typing import Any, cast
 
@@ -294,6 +295,15 @@ class EdgeConfig(ConfigBaseModel):
     @model_validator(mode="after")
     def _build_edges_map(self) -> EdgeConfig:
         """Build internal mapping of edge IDs to edge configurations."""
+        # See VertexConfig.build_vertices_map: the list is the serialized truth and the
+        # map the lookup truth, so a duplicate edge_id lets them disagree silently.
+        duplicates = sorted(
+            str(edge_id)
+            for edge_id, count in Counter(e.edge_id for e in self.edges).items()
+            if count > 1
+        )
+        if duplicates:
+            raise ValueError(f"duplicate edge definitions: {duplicates}")
         object.__setattr__(self, "_edges_map", {e.edge_id: e for e in self.edges})
         return self
 

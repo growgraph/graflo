@@ -289,7 +289,12 @@ class TestInvertSequence:
                 {"op": "add_vertex_properties", "additions": {"party": ["tag"]}}
             ),
             op_from_dict(
-                {"op": "merge_vertices", "sources": ["order"], "into": "party"}
+                {
+                    "op": "merge_vertices",
+                    "sources": ["order"],
+                    "into": "party",
+                    "allow_self_relations": True,
+                }
             ),
         ]
 

@@ -172,9 +172,7 @@ source = DataSourceFactory.create_file_data_source(path="data.json")
 
 # Explicit type with custom separator
 source = DataSourceFactory.create_file_data_source(
-    path="data.csv",
-    file_type="table",
-    sep="\t"
+    path="data.csv", file_type="table", sep="\t"
 )
 ```
 

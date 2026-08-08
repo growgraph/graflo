@@ -20,6 +20,7 @@ from __future__ import annotations
 import ast
 import json
 import logging
+from collections import Counter
 from typing import Any, Literal, TypeAlias
 
 from pydantic import (
@@ -832,6 +833,17 @@ class VertexConfig(ConfigBaseModel):
 
     @model_validator(mode="after")
     def build_vertices_map(self) -> VertexConfig:
+        # `vertices` is the serialized truth and `_vertices_map` the lookup truth.
+        # Without this check a duplicate name lets the two disagree silently: the map
+        # keeps the last definition, the shadowed one still round-trips through YAML,
+        # and `vertex_set` reports a count that the list does not match.
+        duplicates = sorted(
+            name
+            for name, count in Counter(v.name for v in self.vertices).items()
+            if count > 1
+        )
+        if duplicates:
+            raise ValueError(f"duplicate vertex names: {duplicates}")
         object.__setattr__(
             self,
             "_vertices_map",

@@ -183,7 +183,7 @@ engine.define_and_ingest(
 # from graflo.hq import GraphEngine
 # engine = GraphEngine()
 # engine.define_schema(manifest=manifest, target_db_config=conn_conf, recreate_schema=False)
-# 
+#
 # caster = Caster(schema=schema, ingestion_model=ingestion_model)
 # caster.ingest(
 #     target_db_config=conn_conf,

@@ -433,6 +433,14 @@ _HANDLERS: dict[str, Any] = {
 
 
 def _flip(mapping: dict[str, str]) -> dict[str, str]:
+    """Invert a rename map.
+
+    Sound only because the rename ops reject non-injective maps at construction
+    (``validate_rename_map_is_injective``): flipping ``{a: c, b: c}`` would silently
+    drop one entry and make the "inverse" lossy. The flipped map is itself validated
+    when the inverse op is constructed, so a violation surfaces rather than replaying
+    a corrupted manifest.
+    """
     return {new: old for old, new in mapping.items()}
 
 

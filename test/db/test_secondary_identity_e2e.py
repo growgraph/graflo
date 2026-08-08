@@ -120,7 +120,7 @@ BACKENDS = [
     # that a write-time MATCH could not have covered.
     pytest.param("postgres", id="postgres"),
     pytest.param("nebula", id="nebula", marks=pytest.mark.nebula),
-    pytest.param("tigergraph", id="tigergraph", marks=pytest.mark.slow),
+    pytest.param("tigergraph", id="tigergraph", marks=pytest.mark.tigergraph),
     pytest.param("graflo_backend", id="graflo_backend"),
 ]
 

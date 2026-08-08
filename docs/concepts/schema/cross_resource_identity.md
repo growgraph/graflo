@@ -10,10 +10,10 @@ with the per-resource field maps and the evidence behind the choice.
 It is deterministic inference over samples. No LLM, no live database.
 
 ```python
-sample = engine.sample_resources(bindings)          # SourceSample
+sample = engine.sample_resources(bindings)  # SourceSample
 proposal = infer_from_source_sample(sample, vertex_name="party")
 
-if proposal.strategy != "no_viable_identity":       # after human review
+if proposal.strategy != "no_viable_identity":  # after human review
     vertex = apply_proposal_to_vertex(vertex, proposal)
 ```
 
