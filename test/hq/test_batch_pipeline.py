@@ -102,6 +102,58 @@ class TestOverlap:
         assert spy.high_water == 1
 
 
+class TestSourceFanOutRespectsTheGate:
+    """A gate-serialized resource must not fan its sources out either —
+    concurrent sources share the same runtime and reintroduce the very
+    cross-batch hazards the gate prevents."""
+
+    class _SourceSpy:
+        """Replacement for ``Caster.process_data_source`` measuring concurrency."""
+
+        def __init__(self) -> None:
+            self.active = 0
+            self.high_water = 0
+            self.calls = 0
+
+        async def __call__(self, data_source, resource_name=None, conn_conf=None):
+            del data_source, resource_name, conn_conf
+            self.calls += 1
+            self.active += 1
+            self.high_water = max(self.high_water, self.active)
+            try:
+                await asyncio.sleep(0.02)
+            finally:
+                self.active -= 1
+
+    def _fan_out(self, caster: Caster, n_sources: int = 3) -> _SourceSpy:
+        spy = self._SourceSpy()
+        caster.process_data_source = spy  # ty: ignore[invalid-assignment]
+        asyncio.run(
+            caster._process_source_group(
+                [_NBatchSource(1) for _ in range(n_sources)],
+                conn_conf=None,
+                resource_name="fake_resource",
+            )
+        )
+        return spy
+
+    def test_plain_resource_fans_sources_out(self) -> None:
+        spy = self._fan_out(_caster())
+        assert spy.calls == 3
+        assert spy.high_water > 1
+
+    def test_dynamic_edges_serializes_sources(self) -> None:
+        spy = self._fan_out(_caster(dynamic_edges=True))
+        assert spy.calls == 3
+        assert spy.high_water == 1
+
+    def test_user_batch_override_does_not_serialize_sources(self) -> None:
+        """max_in_flight_batches=1 targets batches; sources have their own knob."""
+        spy = self._fan_out(_caster(max_in_flight_batches=1))
+        assert spy.calls == 3
+        assert spy.high_water > 1
+
+
 class TestErrors:
     def test_first_error_propagates_bare_and_stops_the_source(self) -> None:
         spy = _BatchSpy(fail_on_call=2)

@@ -236,20 +236,26 @@ class Caster:
         if fetch_error is not None:
             raise fetch_error
 
-    def _effective_in_flight(
+    def _gate_resource(
         self, resource_name: str | None, conn_conf: DBConfig | None
-    ) -> int:
-        """Resolve how many batches of this source may be in flight at once."""
+    ) -> tuple[int, SerialReason | None]:
+        """Gate result for one resource: allowed in-flight batches and why not."""
         try:
             runtime = self.ingestion_model.fetch_resource(resource_name)
         except (ValueError, RuntimeError):
             runtime = None
-        in_flight, serial_reason = effective_in_flight(
+        return effective_in_flight(
             runtime,
             self.ingestion_params,
             conn_conf,
             bulk_enabled=bulk_load_enabled(conn_conf),
         )
+
+    def _effective_in_flight(
+        self, resource_name: str | None, conn_conf: DBConfig | None
+    ) -> int:
+        """Resolve how many batches of this source may be in flight at once."""
+        in_flight, serial_reason = self._gate_resource(resource_name, conn_conf)
         if (
             serial_reason is not None
             and serial_reason is not SerialReason.USER_OVERRIDE
@@ -390,6 +396,23 @@ class Caster:
             # n_cores, which governs CPU-bound cast workers.
             else min(4, len(group))
         )
+        # A resource the gate serializes must not fan its sources out either:
+        # concurrent sources share the same ResourceRuntime (dynamic_edges would
+        # race its mid-cast registrations) and reintroduce exactly the cross-batch
+        # ordering hazards the gate exists to prevent. USER_OVERRIDE is excluded —
+        # max_in_flight_batches=1 targets batches; sources have their own knob.
+        _, serial_reason = self._gate_resource(resource_name, conn_conf)
+        if (
+            serial_reason is not None
+            and serial_reason is not SerialReason.USER_OVERRIDE
+            and source_workers > 1
+        ):
+            logger.info(
+                "Resource %r: sources processed serially (%s)",
+                resource_name,
+                serial_reason.value,
+            )
+            source_workers = 1
         if source_workers <= 1 or len(group) <= 1:
             for data_source in group:
                 await self.process_data_source(

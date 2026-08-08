@@ -6,16 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+
+
 ## [1.10.5]
 
 ### Fixed
 
 - **Cast worker pools could deadlock on a lock inherited from `fork`.** `DocumentCaster` built its `ProcessPoolExecutor` with the platform default start method, which on Linux is `fork`. Pools are created lazily *mid-run*, on the event-loop thread, while `asyncio.to_thread` workers are concurrently casting and writing — so a child could inherit `_VERTEX_ACTOR_CREATE_LOCK` or a `logging` handler lock already held, and permanently locked. It then deadlocked on its first log call inside `init_worker`, and the parent blocked forever in the `asyncio.gather` over the executor futures, and again in `close()`. The pool now uses an explicit `spawn` context: workers start from a clean interpreter, so no lock crosses the boundary. `init_worker`/`cast_chunk` were already module-level and `CastSpec` already picklable, so nothing else changed; the extra per-worker graflo import is what the existing LRU pool cache already amortizes.
+- **A gate-serialized resource could still fan its sources out.** The serial gate covered batches but not `max_concurrent_sources`, so a `dynamic_edges` (or `extra_weights` / bulk / graflo_backend) resource with several files would run sources concurrently — sharing one `ResourceRuntime` across threads, exactly the race the batch gate prevents. Source fan-out now consults the same gate (an explicit `max_in_flight_batches=1` still only affects batches).
 
 ### Changed
 
 - **Test suites bound their own runtime.** `pytest.ini` gains `faulthandler_timeout` and `pytest-timeout` (`timeout_method = thread`, since a deadlocked C-level lock ignores signals), so a hang now produces an all-thread stack dump instead of an indefinite silent stall. `run-tests.sh` wraps each job in `timeout` (`SUITE_TIMEOUT`, default 1800s) and reports an interrupted suite distinctly from a failed one. The `[tool.pytest.ini_options]` block in `pyproject.toml` was dead config — pytest reads `pytest.ini` first when both exist — and has been removed in favour of the file that was actually in effect.
 - **Live TigerGraph tests are gated behind `--run-tigergraph`.** GSQL schema DDL costs 15–40s per graph, which made TigerGraph ~96% of the suite's wall-clock while every other backend finished in seconds; a full `./run-tests.sh` went from ~255s to ~37s. The gate follows the existing `--run-nebula` idiom and covers the five `test/db/tigergraphs/` modules that need a live instance plus the `[tigergraph]` params of the cross-backend suites — the twelve TigerGraph *unit* test modules still run by default. This retires the `slow` marker, which was declared but never gated and so had never skipped anything.
+- **Docs: the parallelism model is now documented.** New concept page **Parallelism** (`docs/concepts/ingestion/parallelism.md`): the four concurrency levers, which knob to turn for which bottleneck, the configurations graflo serializes on purpose, and the `dynamic_edges` discovery-pass-then-freeze workflow. `IngestionParams.cast_executor` / `dynamic_edges` / `max_in_flight_batches` field descriptions rewritten in plain language (`dynamic_edges` previously had none); the stale performance section in *Migration and practices* corrected.
 
 ### Fixed
 

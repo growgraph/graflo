@@ -245,6 +245,7 @@ The `Schema` is the single source of truth for **graph structure** (not for inge
 | Page | Description |
 |------|-------------|
 | [Transforms](ingestion/transforms.md) | Named transforms and pipeline steps |
+| [Parallelism](ingestion/parallelism.md) | Batch pipelining, cast workers, write fan-out — which knob to turn, and when graflo runs serially on purpose |
 | [Document cast errors](ingestion/doc_errors.md) | Per-document error policy and doc error sink |
 
 ### Connectors
@@ -271,4 +272,5 @@ The `Schema` is the single source of truth for **graph structure** (not for inge
 - **Schema inference** — From PostgreSQL 3NF or OWL/RDFS. See [Example 5](../examples/example-5.md).
 - **Graph export and migration** — See [Graph export and migration](operations/graph_export_migration.md) and [Example 13](../examples/example-13.md).
 - **Schema migrations** — Plan and apply guarded schema deltas via `migrate_schema`. See [Migration and practices](operations/migration_and_practices.md#schema-migration).
-- **Typed properties**, **batching and concurrency**, **ingestion scope filters**, **SelectSpec**, and **blank vertices** — see [Capabilities](architecture/capabilities.md).
+- **Typed properties**, **SelectSpec**, and **blank vertices** — see [Capabilities](architecture/capabilities.md).
+- **Batching, concurrency, and ingestion scope filters** — see [Parallelism](ingestion/parallelism.md) and [Migration and practices](operations/migration_and_practices.md#performance-optimization).

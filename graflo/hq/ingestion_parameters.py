@@ -96,12 +96,15 @@ class IngestionParams(BaseModel):
     cast_executor: Literal["auto", "inline", "thread", "process"] = Field(
         default="auto",
         description=(
-            "How casting is dispatched. 'auto' (default) picks 'process' when "
-            "n_cores > 1, dynamic_edges is off, and the batch is large enough to "
-            "amortize transfer; otherwise it casts in process. 'inline' forces "
-            "in-process casting. 'process' always spreads documents over n_cores "
-            "worker processes. 'thread' is GIL-bound and kept only as an escape "
-            "hatch (never used with dynamic_edges, which would race)."
+            "How documents are cast. Leave on 'auto': with n_cores=1 casting "
+            "runs in-process; with n_cores > 1 large batches are spread over "
+            "worker processes automatically. 'inline' pins casting in-process "
+            "regardless of n_cores; 'process' always uses worker processes; "
+            "'thread' is a legacy escape hatch (GIL-bound, rarely useful). "
+            "With dynamic_edges=True this setting is effectively ignored — "
+            "edge discovery is order-dependent, so casting always runs "
+            "sequentially in-process; no action needed on your side. See the "
+            "'Parallelism' concept page for the full picture."
         ),
     )
     max_concurrent_sources: int | None = Field(
@@ -142,9 +145,11 @@ class IngestionParams(BaseModel):
         description=(
             "How many batches of one data source may be cast/written concurrently, "
             "so casting batch N+1 overlaps writing batch N. Configurations where "
-            "batch order is semantic (dynamic_edges, blank vertices, extra_weights, "
-            "native bulk load, graflo_backend target) are forced to 1 automatically. "
-            "Set to 1 to disable overlap entirely."
+            "batch order is semantic are forced to 1 automatically and logged at "
+            "INFO — see the 'Parallelism' concept page for the full list "
+            "(dynamic_edges, blank vertices, extra_weights, secondary-identity "
+            "endpoints, native bulk load, graflo_backend target). Set to 1 to "
+            "disable overlap entirely."
         ),
     )
     dry: bool = False
@@ -177,7 +182,20 @@ class IngestionParams(BaseModel):
     # Strict contract checks for major-release style validation workflows.
     strict_references: bool = True
     strict_registry: bool = True
-    dynamic_edges: bool = False
+    dynamic_edges: bool = Field(
+        default=False,
+        description=(
+            "Discover edges from the data during casting: a document may "
+            "register an edge type the schema does not declare, and later "
+            "documents can then infer over it. Because that feedback is "
+            "order-dependent, the resource runs fully serial — casting stays "
+            "in-process single-threaded, and batches and sources are processed "
+            "one at a time (automatic; logged at INFO). Per-batch DB writes and "
+            "batch prefetch stay concurrent. For throughput, use dynamic_edges "
+            "as a discovery pass on a sample, add the discovered edges to the "
+            "schema, then re-ingest with dynamic_edges off and full parallelism."
+        ),
+    )
     on_doc_error: Literal["skip", "fail"] = "skip"
     doc_error_sink_path: Path | None = Field(
         default=None,

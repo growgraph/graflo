@@ -69,6 +69,7 @@ nav:
         -   GraFlo ontology: concepts/schema/ontology.md
     -   Ingestion:
         -   Transforms: concepts/ingestion/transforms.md
+        -   Parallelism: concepts/ingestion/parallelism.md
         -   Document cast errors: concepts/ingestion/doc_errors.md
     -   Connectors:
         -   Table views and SelectSpec: concepts/connectors/table_views.md
