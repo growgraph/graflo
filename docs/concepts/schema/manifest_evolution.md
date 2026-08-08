@@ -60,7 +60,9 @@ composed = compose_manifests(
                 right="Customer",
                 into="Person",
                 properties=[
-                    PropertyEquivalence(left="client_id", right="customer_id", into="id"),
+                    PropertyEquivalence(
+                        left="client_id", right="customer_id", into="id"
+                    ),
                     PropertyEquivalence(
                         left="email", right="email_addr", into="email", identity=True
                     ),
@@ -268,7 +270,11 @@ Appended inverse step:
 Use when you need a smaller manifest that retains only specific vertex types and edge triples (for example agent experiments or publishing a focused contract):
 
 ```python
-from graflo.architecture.evolution import EdgeSelector, ProjectManifestOp, apply_evolution
+from graflo.architecture.evolution import (
+    EdgeSelector,
+    ProjectManifestOp,
+    apply_evolution,
+)
 
 slice = apply_evolution(
     manifest,
@@ -308,9 +314,9 @@ evolved = apply_evolution(
             vertices={
                 "party": {
                     "to": {"mode": "natural", "identity": ["party_uid"]},
-                    "retire": "demote",          # default
+                    "retire": "demote",  # default
                     "retire_as": "by_legacy",
-                    "endpoints": "follow_new",   # default
+                    "endpoints": "follow_new",  # default
                 }
             }
         )
@@ -383,7 +389,9 @@ a rename, and guessing would turn a data-preserving rename into a destructive dr
 `RenameHints` when the intent is known:
 
 ```python
-ops, _ = diff_manifests(base, target, hints=RenameHints(vertex_properties={"party": {"mail": "email"}}))
+ops, _ = diff_manifests(
+    base, target, hints=RenameHints(vertex_properties={"party": {"mail": "email"}})
+)
 ```
 
 ### Recording and replaying
@@ -393,7 +401,7 @@ from graflo.architecture.evolution import build_revision, RevisionChain, apply_r
 
 r1 = build_revision(base, ops, label="add email")
 chain = RevisionChain(revisions=[r1])
-restored = apply_revisions(base, chain)          # verifies every recorded hash
+restored = apply_revisions(base, chain)  # verifies every recorded hash
 ```
 
 A `Revision` carries its ops, its parent (`down_revision`), and the manifest hash **before
@@ -409,8 +417,8 @@ step, so a base that has drifted fails loudly instead of producing a plausible w
 ### Going back
 
 ```python
-downgrade_to(chain, target_revision, base=base)      # exact, always preferred
-downgrade_to(chain, target_revision, current=head)   # inverses; may refuse
+downgrade_to(chain, target_revision, base=base)  # exact, always preferred
+downgrade_to(chain, target_revision, current=head)  # inverses; may refuse
 ```
 
 Replaying from the base is correct for every chain. Inversion is a fallback for when no base

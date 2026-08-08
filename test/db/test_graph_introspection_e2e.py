@@ -103,7 +103,7 @@ BACKENDS = [
     pytest.param("memgraph", id="memgraph"),
     pytest.param("falkordb", id="falkordb"),
     pytest.param("postgres", id="postgres"),
-    pytest.param("tigergraph", id="tigergraph"),
+    pytest.param("tigergraph", id="tigergraph", marks=pytest.mark.tigergraph),
     pytest.param("nebula", id="nebula", marks=pytest.mark.nebula),
 ]
 

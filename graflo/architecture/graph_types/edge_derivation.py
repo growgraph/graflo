@@ -157,6 +157,14 @@ class EdgeDerivationRegistry:
     def endpoint_match_for(self, edge_id: EdgeId) -> EndpointMatch | None:
         return self._endpoint_match.get(edge_id)
 
+    def has_endpoint_matches(self) -> bool:
+        """Whether any edge locates its endpoints by a secondary identity.
+
+        Such edges are resolved against database state at write time, which
+        makes cross-batch write ordering semantic for the resource.
+        """
+        return bool(self._endpoint_match)
+
     def merge_vertex_weights(self, edge_id: EdgeId, rules: list[Weight]) -> None:
         """Append vertex weight rules for *edge_id*, deduplicating by stable fingerprint."""
         if not rules:

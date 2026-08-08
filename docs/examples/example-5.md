@@ -185,23 +185,27 @@ If you need to set up the database schema, you can load it from a SQL file:
 ```python
 from pathlib import Path
 
+
 def load_mock_schema_if_needed(postgres_conn: PostgresConnection) -> None:
     """Load mock schema SQL file into PostgreSQL database if it exists."""
     schema_file = Path("mock_schema.sql")
-    
+
     if not schema_file.exists():
-        logger.warning("Mock schema file not found. Assuming database is already initialized.")
+        logger.warning(
+            "Mock schema file not found. Assuming database is already initialized."
+        )
         return
-    
+
     logger.info(f"Loading mock schema from {schema_file}")
     with open(schema_file, "r") as f:
         sql_content = f.read()
-    
+
     # Execute SQL statements
     with postgres_conn.conn.cursor() as cursor:
         # Parse and execute statements...
         cursor.execute(sql_content)
         postgres_conn.conn.commit()
+
 
 load_mock_schema_if_needed(postgres_conn)
 ```
@@ -211,7 +215,12 @@ load_mock_schema_if_needed(postgres_conn)
 You can ingest data into any supported graph database. Simply uncomment the desired database configuration in your script:
 
 ```python
-from graflo.connections.onto import ArangoConfig, Neo4jConfig, TigergraphConfig, FalkordbConfig
+from graflo.connections.onto import (
+    ArangoConfig,
+    Neo4jConfig,
+    TigergraphConfig,
+    FalkordbConfig,
+)
 
 # Choose one of the following target databases:
 # Option 1: ArangoDB
@@ -262,14 +271,21 @@ Automatically generate a graflo Schema from your PostgreSQL database. This is th
 5. **Creates Resources**: Resource definitions are generated for each table with appropriate actors (VertexActor for vertex tables, EdgeActor for edge tables). Foreign keys are mapped to vertex matching keys.
 
 ```python
-
 from graflo.hq import GraphEngine
 from graflo.onto import DBType
-from graflo.connections.onto import ArangoConfig, Neo4jConfig, TigergraphConfig, FalkordbConfig, PostgresConfig
+from graflo.connections.onto import (
+    ArangoConfig,
+    Neo4jConfig,
+    TigergraphConfig,
+    FalkordbConfig,
+    PostgresConfig,
+)
 
 # Connect to target graph database to determine database type
 # Choose one of: ArangoConfig, Neo4jConfig, TigergraphConfig, or FalkordbConfig
-target_config = ArangoConfig.from_docker_env()  # or Neo4jConfig, TigergraphConfig, FalkordbConfig
+target_config = (
+    ArangoConfig.from_docker_env()
+)  # or Neo4jConfig, TigergraphConfig, FalkordbConfig
 
 # Get database type from target config
 db_type = target_config.connection_type
@@ -442,9 +458,16 @@ postgres_conf = PostgresConfig.from_docker_env()
 
 # Step 3: Connect to target graph database
 # You can try different databases by uncommenting the desired config:
-from graflo.connections.onto import ArangoConfig, Neo4jConfig, TigergraphConfig, FalkordbConfig
+from graflo.connections.onto import (
+    ArangoConfig,
+    Neo4jConfig,
+    TigergraphConfig,
+    FalkordbConfig,
+)
 
-target_config = ArangoConfig.from_docker_env()  # or Neo4jConfig, TigergraphConfig, FalkordbConfig
+target_config = (
+    ArangoConfig.from_docker_env()
+)  # or Neo4jConfig, TigergraphConfig, FalkordbConfig
 
 # Step 4: Infer Schema from PostgreSQL database structure
 # Connection is automatically managed inside infer_schema()

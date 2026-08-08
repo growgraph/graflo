@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Any
 
 from .ops import (
+    INGESTION_REWRITING_OPS,
     AddEdgeIndexesOp,
     AddEdgePropertiesOp,
     AddEdgesOp,
@@ -53,6 +54,7 @@ from .ops import (
     SanitizeOp,
     SetEdgeDirectedOp,
     VertexEquivalence,
+    ops_reaching_ingestion,
 )
 
 _APPLY_EXPORTS = frozenset(
@@ -149,6 +151,7 @@ _REVISION_EXPORTS = frozenset(
 )
 
 __all__ = [
+    "INGESTION_REWRITING_OPS",
     "IRREVERSIBLE",
     "AddEdgeIndexesOp",
     "AddEdgePropertiesOp",
@@ -252,6 +255,7 @@ __all__ = [
     "op_to_dict",
     "ops_from_dicts",
     "ops_from_yaml",
+    "ops_reaching_ingestion",
     "ops_to_dicts",
     "ops_to_yaml_str",
     "schema_hash",

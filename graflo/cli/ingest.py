@@ -35,6 +35,7 @@ from graflo.connections.provider import EmptyConnectionProvider
 from graflo.data_source.factory import DataSourceFactory
 from graflo.data_source.registry import DataSourceRegistry
 from graflo.hq.graph_engine import GraphEngine
+from graflo.hq.ingestion_parameters import IngestionParams
 from graflo.onto import DBType
 
 logger = logging.getLogger(__name__)
@@ -77,13 +78,10 @@ logger = logging.getLogger(__name__)
     help="Path to data source configuration file (supports API, SQL, file sources)",
 )
 @click.option("--limit-files", type=int, default=None)
-@click.option("--batch-size", type=int, default=5000)
-@click.option("--n-cores", type=int, default=1)
 @click.option(
-    "--n-threads",
-    type=int,
-    default=1,
+    "--batch-size", type=int, default=IngestionParams.model_fields["batch_size"].default
 )
+@click.option("--n-cores", type=int, default=1)
 @click.option("--fresh-start", type=bool, help="wipe existing database")
 @click.option(
     "--init-only",
@@ -136,8 +134,8 @@ def ingest(
         schema_path: Path to schema configuration file
         source_path: Path to source data directory
         limit_files: Optional limit on number of files to process
-        batch_size: Number of items to process in each batch (default: 5000)
-        n_cores: Number of CPU cores/threads to use for parallel processing (default: 1)
+        batch_size: Number of source items to group per batch (default: IngestionParams.batch_size)
+        n_cores: Degree of parallelism for casting (default: 1)
         fresh_start: Whether to wipe existing database before ingestion
         init_only: Whether to only initialize the database without ingestion
         resource_connector_config_path: Optional path to resource connector configuration
@@ -192,8 +190,6 @@ def ingest(
     engine = GraphEngine(target_db_flavor=db_type)
 
     # Create ingestion params with CLI arguments
-    from graflo.hq.caster import IngestionParams
-
     ingestion_params = IngestionParams(
         n_cores=n_cores,
         batch_size=batch_size,

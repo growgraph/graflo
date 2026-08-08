@@ -47,11 +47,15 @@ from graflo.db import TigergraphConfig, PostgresConfig
 
 # Neo4j → TigerGraph
 tg_engine = GraphEngine(target_db_flavor=DBType.TIGERGRAPH)
-tg_engine.migrate_graph(Neo4jConfig.from_env(), TigergraphConfig.from_env(), recreate_schema=True)
+tg_engine.migrate_graph(
+    Neo4jConfig.from_env(), TigergraphConfig.from_env(), recreate_schema=True
+)
 
 # ArangoDB → PostgreSQL (relational graph tables)
 pg_engine = GraphEngine(target_db_flavor=DBType.POSTGRES)
-pg_engine.migrate_graph(ArangoConfig.from_env(), PostgresConfig.from_env(), recreate_schema=True)
+pg_engine.migrate_graph(
+    ArangoConfig.from_env(), PostgresConfig.from_env(), recreate_schema=True
+)
 ```
 
 ## Step 3 — Schema only (no data load)

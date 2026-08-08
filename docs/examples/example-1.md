@@ -107,9 +107,7 @@ bindings.add_connector(
     people_connector,
 )
 bindings.bind_resource("people", people_connector)
-departments_connector = FileConnector(
-    regex="^dep.*\.csv$", sub_path=pathlib.Path(".")
-)
+departments_connector = FileConnector(regex="^dep.*\.csv$", sub_path=pathlib.Path("."))
 bindings.add_connector(
     departments_connector,
 )
@@ -149,7 +147,6 @@ caster.ingest(
     bindings=bindings,  # Source data bindings
     ingestion_params=ingestion_params,
 )
-
 ```
 
 To capture **per-document cast failures** (bad CSV rows while others succeed) as gzip JSONL, set **`doc_error_sink_path`** on **`IngestionParams`** or use **`uv run ingest ... --doc-error-sink ./doc_cast_failures.jsonl.gz`**. See [Document cast errors and doc error sink](../concepts/ingestion/doc_errors.md). The runnable **`examples/1-ingest-csv/ingest.py`** includes commented placeholders for this option.

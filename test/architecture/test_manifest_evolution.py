@@ -135,6 +135,9 @@ def test_merge_vertices_into_new_name() -> None:
                 op="merge_vertices",
                 sources=["a", "b"],
                 into="ab",
+                # a -> b becomes a self-relation on ab; that is the outcome asserted
+                # below, so state it rather than tripping the guard.
+                allow_self_relations=True,
             )
         ],
         bump_version=False,
@@ -156,7 +159,14 @@ def test_merge_vertices_into_existing_canonical() -> None:
     m.finish_init()
     out = apply_evolution(
         m,
-        [MergeVerticesOp(op="merge_vertices", sources=["b"], into="a")],
+        [
+            MergeVerticesOp(
+                op="merge_vertices",
+                sources=["b"],
+                into="a",
+                allow_self_relations=True,
+            )
+        ],
         bump_version=False,
     )
     schema = out.require_schema()

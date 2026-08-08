@@ -122,3 +122,53 @@ def test_blank_vertex_default_identity_depends_on_db_flavor():
 
     assert arango_cfg["blank_v"].identity == ["id"]
     assert neo4j_cfg["blank_v"].identity == ["id"]
+
+
+def test_max_concurrent_bounds_concurrent_write_calls(monkeypatch):
+    """One writer instance serves sibling in-flight batches; the semaphore is
+    shared, so max_concurrent bounds DB operations across all of them."""
+    schema = _build_schema()
+    writer = DBWriter(
+        schema=schema,
+        ingestion_model=_build_ingestion_model(schema),
+        dry=False,
+        max_concurrent=1,
+    )
+
+    state = {"active": 0, "high_water": 0}
+
+    class _CountingDB(_FakeDB):
+        def upsert_docs_batch(self, docs, class_name, match_keys, **kwargs):
+            state["active"] += 1
+            state["high_water"] = max(state["high_water"], state["active"])
+            try:
+                import time
+
+                time.sleep(0.02)
+                super().upsert_docs_batch(docs, class_name, match_keys, **kwargs)
+            finally:
+                state["active"] -= 1
+
+    class _CountingConnectionManager(_FakeConnectionManager):
+        db = _CountingDB()
+
+    monkeypatch.setattr(
+        "graflo.hq.db_writer.ConnectionManager", _CountingConnectionManager
+    )
+    conn_conf = Neo4jConfig(uri="bolt://localhost:7687", username="u", password="p")
+
+    def _gc() -> GraphContainer:
+        return GraphContainer(
+            vertices={"target_v": [{"id": "a"}], "blank_v": [{}]},
+            edges={},
+            linear=[],
+        )
+
+    async def _two_concurrent_writes() -> None:
+        await asyncio.gather(
+            writer._push_vertices(_gc(), conn_conf),
+            writer._push_vertices(_gc(), conn_conf),
+        )
+
+    asyncio.run(_two_concurrent_writes())
+    assert state["high_water"] == 1

@@ -29,7 +29,7 @@ from graflo.db import Neo4jConfig, ArangoConfig, TigergraphConfig
 
 engine = GraphEngine(target_db_flavor=DBType.ARANGO)
 engine.migrate_graph(
-    Neo4jConfig.from_docker_env(),   # source
+    Neo4jConfig.from_docker_env(),  # source
     ArangoConfig.from_docker_env(),  # target
     recreate_schema=True,
     sample_limit=100,
@@ -37,7 +37,9 @@ engine.migrate_graph(
 
 # Other targets — same API, different config:
 GraphEngine(target_db_flavor=DBType.TIGERGRAPH).migrate_graph(
-    Neo4jConfig.from_env(), TigergraphConfig.from_env(), recreate_schema=True,
+    Neo4jConfig.from_env(),
+    TigergraphConfig.from_env(),
+    recreate_schema=True,
 )
 ```
 
@@ -75,7 +77,7 @@ from graflo import GraphEngine, DBType
 from graflo.db import Neo4jConfig, ArangoConfig, PostgresConfig
 from graflo.db.graflo_backend.config import GraFloBackendConfig
 
-neo4j = Neo4jConfig.from_env()       # or Neo4jConfig.from_docker_env()
+neo4j = Neo4jConfig.from_env()  # or Neo4jConfig.from_docker_env()
 arango = ArangoConfig.from_env()
 postgres = PostgresConfig.from_env()
 backend = GraFloBackendConfig(output_dir=Path("artifacts/neo4j-backend"))
@@ -184,8 +186,8 @@ This is the core 1.8.6 workflow — already shown in [Quick start — graph → 
 
 ```python
 engine.migrate_graph(
-    Neo4jConfig(...),          # source
-    ArangoConfig(...),         # target
+    Neo4jConfig(...),  # source
+    ArangoConfig(...),  # target
     recreate_schema=True,
     clear_data=False,
     sample_limit=100,

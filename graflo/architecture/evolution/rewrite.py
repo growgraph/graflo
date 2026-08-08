@@ -82,6 +82,24 @@ def _build_name_transformer(
     return lambda value: transform.get(value, value)
 
 
+def rewrite_vertex_weight_names(
+    payload: dict[str, Any], vertex_name: Callable[[str], str]
+) -> None:
+    """Rewrite ``vertex_weights[].name`` in place.
+
+    ``Weight.name`` on an edge step is a *vertex* name — it selects which endpoint's
+    observation columns the weight reads — and ``collect_vertex_names_from_pipeline``
+    counts it as a vertex reference. Missing it leaves a pipeline pointing at a type
+    the schema no longer has.
+    """
+    weights = payload.get("vertex_weights")
+    if not isinstance(weights, list):
+        return
+    for weight in weights:
+        if isinstance(weight, dict) and isinstance(weight.get("name"), str):
+            weight["name"] = vertex_name(weight["name"])
+
+
 def _rewrite_entity_names_in_edge_step(
     payload: dict[str, Any],
     *,
@@ -92,6 +110,8 @@ def _rewrite_entity_names_in_edge_step(
         value = payload.get(key)
         if isinstance(value, str):
             payload[key] = vertex_name(value)
+
+    rewrite_vertex_weight_names(payload, vertex_name)
 
     relation = payload.get("relation")
     if isinstance(relation, str):
@@ -154,6 +174,14 @@ def rewrite_entity_names_in_pipeline(
     if isinstance(edge_payload, dict):
         _rewrite_entity_names_in_edge_step(
             edge_payload,
+            vertex_name=vertex_name,
+            edge_name=edge_name,
+        )
+    elif step.get("type") == "edge":
+        # Flat form: the edge payload *is* the step. Only string-valued endpoint keys
+        # are touched, so a vertex step's dict-valued ``from`` column map is unaffected.
+        _rewrite_entity_names_in_edge_step(
+            step,
             vertex_name=vertex_name,
             edge_name=edge_name,
         )
@@ -413,6 +441,43 @@ def rewrite_edge_endpoints_in_pipeline(
     return out
 
 
+def _merge_vertex_from_map(
+    vfm: dict[str, Any], mapping: dict[str, str]
+) -> dict[str, Any]:
+    """Remap ``vertex_from_map`` keys, unioning the column maps that collide.
+
+    A merge points several vertex names at one, so their per-vertex ``from`` maps
+    collide. Keeping the last one silently drops the other sources' column mappings,
+    which is exactly the routed data going missing. Fields present in both must agree.
+    """
+    out: dict[str, Any] = {}
+    origin: dict[str, dict[str, str]] = {}
+    for name, columns in vfm.items():
+        new_name = mapping.get(name, name)
+        if new_name not in out:
+            out[new_name] = columns
+            origin[new_name] = {field: name for field in columns or {}}
+            continue
+        existing = out[new_name]
+        if not isinstance(existing, dict) or not isinstance(columns, dict):
+            raise ValueError(
+                f"cannot merge vertex_from_map entries for {new_name!r}: "
+                "expected per-vertex field maps"
+            )
+        merged = dict(existing)
+        for field, column in columns.items():
+            if field in merged and merged[field] != column:
+                raise ValueError(
+                    f"cannot merge vertex_from_map for {new_name!r}: field {field!r} "
+                    f"reads {merged[field]!r} for {origin[new_name][field]!r} but "
+                    f"{column!r} for {name!r}"
+                )
+            merged[field] = column
+            origin[new_name][field] = name
+        out[new_name] = merged
+    return out
+
+
 def _map_name(name: str | None, mapping: dict[str, str]) -> str | None:
     if name is None:
         return None
@@ -442,11 +507,7 @@ def rewrite_vertex_names_in_step(
             }
         vfm = out.get("vertex_from_map")
         if isinstance(vfm, dict):
-            new_vfm: dict[str, Any] = {}
-            for k, v in vfm.items():
-                nk = mapping.get(k, k)
-                new_vfm[nk] = v
-            out["vertex_from_map"] = new_vfm
+            out["vertex_from_map"] = _merge_vertex_from_map(vfm, mapping)
 
     elif t == "edge":
         for key in ("source", "from"):
@@ -459,6 +520,7 @@ def rewrite_vertex_names_in_step(
                 val = out[key]
                 if isinstance(val, str) and val in mapping:
                     out[key] = mapping[val]
+        rewrite_vertex_weight_names(out, lambda name: mapping.get(name, name))
 
     elif t == "descend":
         pl = out.get("pipeline")
@@ -495,8 +557,10 @@ def rewrite_vertex_names_in_value(obj: Any, mapping: dict[str, str]) -> Any:
         return [rewrite_vertex_names_in_value(x, mapping) for x in obj]
     if isinstance(obj, dict):
         if "edge" in obj and isinstance(obj["edge"], dict):
-            inner = dict(obj)
+            inner = deepcopy(obj)
             inner["edge"] = rewrite_vertex_names_in_value(obj["edge"], mapping)
+            # An extra_weights entry carries vertex_weights alongside its edge.
+            rewrite_vertex_weight_names(inner, lambda name: mapping.get(name, name))
             return inner
         t = obj.get("type")
         if t in ("vertex", "edge", "descend", "vertex_router"):
@@ -511,6 +575,7 @@ def rewrite_vertex_names_in_value(obj: Any, mapping: dict[str, str]) -> Any:
                 out["source"] = mapping[src]
             if isinstance(tgt, str) and tgt in mapping:
                 out["target"] = mapping[tgt]
+            rewrite_vertex_weight_names(out, lambda name: mapping.get(name, name))
             return out
         if "vertex" in obj and isinstance(obj["vertex"], str) and t is None:
             out = deepcopy(obj)

@@ -324,6 +324,10 @@ classDiagram
     class IngestionParams {
         +clear_data: bool
         +n_cores: int
+        +cast_executor: str
+        +max_in_flight_batches: int
+        +max_concurrent_sources: int?
+        +max_concurrent_db_ops: int
         +resources: list[str]?
         +connectors: list[str]?
         +vertices: list[str]?
@@ -331,6 +335,8 @@ classDiagram
         +batch_prefetch: int
         +max_items: int?
         +dry: bool
+        +dynamic_edges: bool
+        +on_doc_error: str
         +datetime_after: str?
         +datetime_before: str?
         +datetime_column: str?

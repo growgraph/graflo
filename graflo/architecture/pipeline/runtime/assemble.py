@@ -154,7 +154,10 @@ def assemble_edges(
     if infer_edge_except is None:
         infer_edge_except = set()
 
-    emitted_pairs: set[tuple[str, str]] = set()
+    # Pairs an explicit edge actor already produced. Inference skips them so it does
+    # not duplicate authored edges — the same intent as the documented per-resource
+    # auto-exclusion, applied at (source, target) granularity.
+    explicit_pairs: set[tuple[str, str]] = set()
 
     for intent in ctx.edge_intents:
         edge = intent.edge
@@ -172,7 +175,7 @@ def assemble_edges(
             derivation=intent.derivation,
             edge_derivation=edge_derivation,
         ):
-            emitted_pairs.add((edge.source, edge.target))
+            explicit_pairs.add((edge.source, edge.target))
     ctx.extraction.edge_intents = []
 
     if not infer_edges:
@@ -181,7 +184,7 @@ def assemble_edges(
     populated = {v for v, dd in ctx.acc_vertex.items() if any(dd.values())}
     for edge_id, edge in edge_config.items():
         s, t, _ = edge_id
-        if (s, t) in emitted_pairs or s not in populated or t not in populated:
+        if (s, t) in explicit_pairs or s not in populated or t not in populated:
             continue
         if not _is_inference_allowed(
             edge_id,
@@ -194,7 +197,12 @@ def assemble_edges(
             derivation=None,
             target_db_flavor=target_db_flavor,
         )
-        if _emit_edge_documents(
+        # Deliberately does not record (s, t): `edge_config.items()` yields each
+        # edge_id once, so recording the pair could only ever suppress a *different*
+        # relation between the same two vertex types. Two declared relations on one
+        # pair are both inferable, and dropping one of them by iteration order was
+        # silent edge loss.
+        _emit_edge_documents(
             ctx=ctx,
             vertex_config=vertex_config,
             edge=edge,
@@ -202,5 +210,4 @@ def assemble_edges(
             relation_input_field=relation_input,
             derivation=None,
             edge_derivation=edge_derivation,
-        ):
-            emitted_pairs.add((s, t))
+        )

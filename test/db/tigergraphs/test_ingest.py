@@ -4,6 +4,9 @@ from graflo.db.manager import ConnectionManager
 from graflo.filter import ComparisonOperator
 from test.conftest import fetch_schema_obj, ingest_atomic
 
+# Every test here needs a live TigerGraph, whose schema DDL runs 15-40s per graph.
+pytestmark = pytest.mark.tigergraph
+
 
 @pytest.fixture(scope="function")
 def modes():

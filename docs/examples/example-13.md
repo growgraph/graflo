@@ -94,6 +94,7 @@ manifest.finish_init()
 
 # Manifest file connectors use sub_path: data relative to the example directory.
 import os
+
 os.chdir("examples/13-graph-export-migration")
 
 backend = GraFloBackendConfig(output_dir=Path("artifacts/csv-backend"))

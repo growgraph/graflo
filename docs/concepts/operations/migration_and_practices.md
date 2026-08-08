@@ -80,20 +80,24 @@ Schema comparison gives you a predictable transition path between versions. Inst
 
 ## Performance optimization
 
+For the full concurrency model — what runs in parallel, which knob to turn for which bottleneck, and when graflo deliberately runs serially — see **[Parallelism](../ingestion/parallelism.md)**. In brief:
+
+- **Batch pipelining** (**`IngestionParams.max_in_flight_batches`**, default 2): casting batch N+1 overlaps writing batch N. Configurations where batch order is semantic (`dynamic_edges`, blank vertices, `extra_weights`, secondary-identity endpoints, bulk load, GraFlo file backend) are serialized automatically.
+- **Batch prefetch** (**`IngestionParams.batch_prefetch`**, default 2): the reader runs ahead of processing — bounded memory, overlapped source I/O. Distinct from pipelining, which overlaps cast and write.
+- **Cast workers** (**`IngestionParams.n_cores`** with `cast_executor="auto"`): with `n_cores > 1`, large batches are cast across worker processes automatically — worth it for heavy per-document work (chained transforms, deep `descend` trees).
+- **Concurrent writes** (**`IngestionParams.max_concurrent_db_ops`**, default 8): vertex collections and edge types within a batch are written concurrently. This is I/O-bound work, which is where concurrency actually pays.
+- **Concurrent sources** (**`IngestionParams.max_concurrent_sources`**, defaults to `min(4, sources)`): how many data sources *of one resource* run at once. Resources themselves always run in declaration order.
 - **TigerGraph token caching**: Secret-based API tokens are cached per process for the ingest run (one fetch per cluster/graph/secret, not per upsert batch or `ConnectionManager` open)
 - **Batch processing**: Process large datasets in configurable batches (`IngestionParams.batch_size` on `Caster` / `GraphEngine`)
-- **Batch prefetch**: While one batch is cast and written, `Caster.process_data_source` can prefetch up to `IngestionParams.batch_prefetch` additional batches from `AbstractDataSource.iter_batches` (bounded memory, overlapped I/O)
-- **Parallel execution**: Utilize multiple cores for faster processing (`n_cores` parameter of `Caster`)
 - **Ingestion scope filters**: Limit a run to specific resources (`IngestionParams.resources`), connectors (`IngestionParams.connectors` — name or hash, same refs as `resource_connector`), and/or vertex types (`IngestionParams.vertices`). When both `resources` and `connectors` are set, only connectors bound to listed resources that also match the connector filter are ingested.
-- **Efficient resource handling**: Optimized processing of both table and tree-like data
 
 ## Best practices
 
 1. Use compound identity fields for natural keys, and **`schema.db_profile`** secondary indexes for query performance
 2. Leverage blank vertices (`blank: true` on the vertex definition) for complex relationship modeling; include them in the resource pipeline when they must be populated at cast time
 3. Define reusable transforms in **`ingestion_model.transforms`** and reference them from resource steps
-4. Configure appropriate batch sizes based on your data volume
-5. Enable parallel processing for large datasets
+4. Configure appropriate batch sizes based on your data volume; with `n_cores > 1`, keep `batch_size` comfortably above `n_cores × 64` so batches qualify for worker-process casting
+5. Tune for your actual bottleneck: raise `max_concurrent_db_ops` when the database is slow, set `n_cores=4..8` when transforms are heavy — see **[Parallelism](../ingestion/parallelism.md)** for the decision list
 6. Choose the right relationship attribute based on your data format:
    - **`relation_field`** on an edge **actor** step — relation from a column/field
    - **`relation_from_key`** on an edge **actor** step — relation from JSON keys

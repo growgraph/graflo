@@ -12,13 +12,28 @@ ROOT="test/db"
 LOG_DIR="${TMPDIR:-/tmp}/graflo-test-logs-$$"
 mkdir -p "$LOG_DIR"
 
+# Every job is fanned out into the background with its output redirected, so a
+# wedged suite used to be indistinguishable from a slow one: no terminal output,
+# and `wait` below blocks forever. Bound each job instead.
+#
+# SIGINT rather than SIGTERM: pytest traps it and still prints the results it
+# collected, which is what tells you *which* test hung. --kill-after covers the
+# case where pytest itself is the thing that is stuck.
+SUITE_TIMEOUT="${SUITE_TIMEOUT:-1800}"
+TIMEOUT_BIN=""
+if command -v timeout >/dev/null 2>&1; then
+  TIMEOUT_BIN="timeout --signal=INT --kill-after=60 ${SUITE_TIMEOUT}"
+else
+  echo "warning: GNU timeout not found; suites will run unbounded" >&2
+fi
+
 # Default suites (safe-ish parallelism: backend-level only)
 suites=()
 pytest_opts=()
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --run-bulk-e2e|--run-performance|--run-nebula|--reset)
+    --run-bulk-e2e|--run-performance|--run-nebula|--run-kafka|--run-tigergraph|--reset)
       pytest_opts+=("$1")
       shift
       ;;
@@ -34,8 +49,15 @@ OPTIONS:
   --run-bulk-e2e     Include tests marked bulk_e2e
   --run-performance  Include tests marked performance
   --run-nebula       Include tests marked nebula
+  --run-kafka        Include tests marked kafka
+  --run-tigergraph   Include live TigerGraph tests (adds ~4 min: GSQL schema DDL
+                     costs 15-40s per graph, and every other backend runs in
+                     seconds)
   --reset            Enable reset fixture behavior
   -h, --help         Show this help
+
+ENVIRONMENT:
+  SUITE_TIMEOUT      Seconds before a suite is interrupted (default 1800)
 EOF
       exit 0
       ;;
@@ -59,8 +81,10 @@ run_suite() {
   local command="$2"
   local log_file="${LOG_DIR}/${name}.log"
 
-  echo "==> Starting ${name}"
-  bash -lc "$command" >"$log_file" 2>&1 &
+  # Print the log path up front, not just at the end of the run: a suite that
+  # stalls is only diagnosable if you can tail it while it is still stuck.
+  echo "==> Starting ${name} (log: ${log_file})"
+  bash -lc "${TIMEOUT_BIN} $command" >"$log_file" 2>&1 &
   pids+=("$!")
   names+=("$name")
   logs+=("$log_file")
@@ -91,10 +115,20 @@ reap() {
     pid="${pids[$i]}"
     name="${names[$i]}"
     log_file="${logs[$i]}"
-    if wait "$pid"; then
+    status=0
+    wait "$pid" || status=$?
+    if [ "$status" -eq 0 ]; then
       echo "✅ ${name} passed (log: ${log_file})"
     else
-      echo "❌ ${name} failed (log: ${log_file})"
+      # 124 is GNU timeout's "the command was still running". Worth calling out
+      # separately: a timeout means a hang to investigate, not a failed assertion.
+      if [ "$status" -eq 124 ]; then
+        echo "⏱️  ${name} TIMED OUT after ${SUITE_TIMEOUT}s (log: ${log_file})"
+        echo "    pytest was interrupted; the tail below shows where it was."
+        echo "    Raise the budget with SUITE_TIMEOUT=<seconds> if this is expected."
+      else
+        echo "❌ ${name} failed with exit ${status} (log: ${log_file})"
+      fi
       echo "--- ${name} (last 60 lines) ---"
       tail -n 60 "$log_file"
       echo "--- end ${name} ---"

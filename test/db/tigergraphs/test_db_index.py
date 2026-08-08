@@ -4,6 +4,9 @@ import pytest
 
 from graflo.db.manager import ConnectionManager
 
+# Every test here needs a live TigerGraph, whose schema DDL runs 15-40s per graph.
+pytestmark = pytest.mark.tigergraph
+
 
 def test_create_vertex_index(conn_conf, schema_obj, test_graph_name):
     """Test creating vertex indexes using GSQL CREATE INDEX."""

@@ -31,7 +31,10 @@ The label `bulk_s3` is referenced from **`TigergraphConfig.bulk_load.s3_staging_
 
 ```python
 import os
-from graflo.connections.provider import InMemoryConnectionProvider, S3GeneralizedConnConfig
+from graflo.connections.provider import (
+    InMemoryConnectionProvider,
+    S3GeneralizedConnConfig,
+)
 
 provider = InMemoryConnectionProvider()
 provider.register_generalized_config(

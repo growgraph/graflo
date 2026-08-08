@@ -83,7 +83,41 @@ class IngestionParams(BaseModel):
     """
 
     clear_data: bool = False
-    n_cores: int = 1
+    n_cores: int = Field(
+        default=1,
+        ge=1,
+        description=(
+            "Number of cast worker processes. With cast_executor='auto' (default), "
+            "n_cores > 1 routes large batches to worker processes (workers fold and "
+            "filter their own chunks, so the parallelism is real end to end); "
+            "1 keeps casting in-process."
+        ),
+    )
+    cast_executor: Literal["auto", "inline", "thread", "process"] = Field(
+        default="auto",
+        description=(
+            "How documents are cast. Leave on 'auto': with n_cores=1 casting "
+            "runs in-process; with n_cores > 1 large batches are spread over "
+            "worker processes automatically. 'inline' pins casting in-process "
+            "regardless of n_cores; 'process' always uses worker processes; "
+            "'thread' is a legacy escape hatch (GIL-bound, rarely useful). "
+            "With dynamic_edges=True this setting is effectively ignored — "
+            "edge discovery is order-dependent, so casting always runs "
+            "sequentially in-process; no action needed on your side. See the "
+            "'Parallelism' concept page for the full picture."
+        ),
+    )
+    max_concurrent_sources: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "How many data sources of one resource are processed concurrently "
+            "(sources of a resource are independent shards, e.g. one file "
+            "each). Defaults to min(4, sources in the resource). Resources "
+            "themselves always run in declaration order — later resources may "
+            "depend on earlier ones' database state."
+        ),
+    )
     max_items: int | None = Field(
         default=None,
         ge=1,
@@ -105,6 +139,19 @@ class IngestionParams(BaseModel):
             "Keeps ingestion lazy with bounded memory."
         ),
     )
+    max_in_flight_batches: int = Field(
+        default=2,
+        ge=1,
+        description=(
+            "How many batches of one data source may be cast/written concurrently, "
+            "so casting batch N+1 overlaps writing batch N. Configurations where "
+            "batch order is semantic are forced to 1 automatically and logged at "
+            "INFO — see the 'Parallelism' concept page for the full list "
+            "(dynamic_edges, blank vertices, extra_weights, secondary-identity "
+            "endpoints, native bulk load, graflo_backend target). Set to 1 to "
+            "disable overlap entirely."
+        ),
+    )
     dry: bool = False
     init_only: bool = False
     limit_files: int | None = None
@@ -119,7 +166,15 @@ class IngestionParams(BaseModel):
         ),
     )
     vertices: list[str] | None = None
-    max_concurrent_db_ops: int | None = None
+    max_concurrent_db_ops: int = Field(
+        default=8,
+        ge=1,
+        description=(
+            "Upper bound on concurrent DB operations per batch. Writes are I/O-bound, "
+            "so this is where concurrency actually pays; it used to default to "
+            "n_cores, which meant writes were serial out of the box."
+        ),
+    )
     datetime_after: str | None = None
     datetime_before: str | None = None
     datetime_column: str | None = None
@@ -127,7 +182,20 @@ class IngestionParams(BaseModel):
     # Strict contract checks for major-release style validation workflows.
     strict_references: bool = True
     strict_registry: bool = True
-    dynamic_edges: bool = False
+    dynamic_edges: bool = Field(
+        default=False,
+        description=(
+            "Discover edges from the data during casting: a document may "
+            "register an edge type the schema does not declare, and later "
+            "documents can then infer over it. Because that feedback is "
+            "order-dependent, the resource runs fully serial — casting stays "
+            "in-process single-threaded, and batches and sources are processed "
+            "one at a time (automatic; logged at INFO). Per-batch DB writes and "
+            "batch prefetch stay concurrent. For throughput, use dynamic_edges "
+            "as a discovery pass on a sample, add the discovered edges to the "
+            "schema, then re-ingest with dynamic_edges off and full parallelism."
+        ),
+    )
     on_doc_error: Literal["skip", "fail"] = "skip"
     doc_error_sink_path: Path | None = Field(
         default=None,

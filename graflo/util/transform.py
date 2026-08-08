@@ -19,6 +19,7 @@ Example:
 """
 
 import logging
+import math
 import re
 import time
 from collections import defaultdict
@@ -422,6 +423,12 @@ def pick_unique_dict(docs: list[T]) -> list[T]:
         elif isinstance(obj, set):
             # Convert set to sorted tuple for consistent hashing
             return tuple(sorted(make_hashable(item) for item in obj))
+        elif isinstance(obj, float) and math.isnan(obj):
+            # NaN != NaN, so two NaN-carrying docs would never compare equal —
+            # except by accident of object identity (the np.nan singleton),
+            # which a pickle round-trip (worker processes) silently breaks.
+            # Normalize to a marker so dedup follows value semantics.
+            return ("__nan__",)
         else:
             # Primitive types (int, float, str, bool, None) are already hashable
             return obj

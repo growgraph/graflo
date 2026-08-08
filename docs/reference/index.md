@@ -56,7 +56,7 @@ Manifest serialization and domain ontology inference:
 Main graflo functionality:
 
 - **[Caster](hq/caster.md)**: Main data ingestion and transformation engine
-- **[Ingestion parameters](hq/ingestion_parameters.md)**: `IngestionParams`, row-error policy types, and batch cast results (`CastBatchResult`, …)
+- **[Ingestion parameters](hq/ingestion_parameters.md)**: `IngestionParams`, row-error policy types, and batch cast results (`CastBatchResult`, …) — see also the **[Parallelism](../concepts/ingestion/parallelism.md)** concept page for how the concurrency knobs interact
 - **[Data Sources](data_source/index.md)**: Data source abstraction layer (files, APIs, SQL, Kafka, in-memory)
 - **[Ontology](onto.md)**: Core data types and enums
 

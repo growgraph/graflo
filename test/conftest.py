@@ -32,6 +32,10 @@ def pytest_configure(config):
         "markers",
         "kafka: Kafka integration tests (skipped unless --run-kafka)",
     )
+    config.addinivalue_line(
+        "markers",
+        "tigergraph: live TigerGraph tests (skipped unless --run-tigergraph)",
+    )
 
 
 def pytest_addoption(parser):
@@ -60,6 +64,12 @@ def pytest_addoption(parser):
         default=False,
         help="Run Kafka integration tests marked @pytest.mark.kafka",
     )
+    parser.addoption(
+        "--run-tigergraph",
+        action="store_true",
+        default=False,
+        help="Run live TigerGraph tests marked @pytest.mark.tigergraph",
+    )
 
 
 def pytest_collection_modifyitems(config, items):
@@ -68,6 +78,11 @@ def pytest_collection_modifyitems(config, items):
         "performance": ("--run-performance", "need --run-performance option to run"),
         "nebula": ("--run-nebula", "need --run-nebula option to run"),
         "kafka": ("--run-kafka", "need --run-kafka option to run"),
+        # TigerGraph schema DDL costs 15-40s per graph, which made it ~96% of the
+        # suite's wall-clock while every other backend finished in seconds. It is
+        # gated like nebula rather than trimmed: the cost is inherent to GSQL, not
+        # to how the tests are written.
+        "tigergraph": ("--run-tigergraph", "need --run-tigergraph option to run"),
     }
     for marker_name, (option, reason) in _skip_map.items():
         if config.getoption(option):

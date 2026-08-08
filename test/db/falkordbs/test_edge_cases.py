@@ -69,22 +69,45 @@ See Also
 """
 
 import concurrent.futures
-import math
 import threading
 import uuid
-from typing import Any, cast
-
-import pytest
+from typing import Any
 
 from graflo.db.manager import ConnectionManager
 from graflo.onto import AggregationType
 
-# =============================================================================
-# CYPHER INJECTION ATTACKS
-# =============================================================================
+# Shared, backend-agnostic cases. Bodies live once in test/db/cypher_cases/;
+# only the FalkorDB-specific tests remain in this file.
+from test.db.cypher_cases.boundaries import (
+    BoundaryConditionsCases,
+    BoundaryValueAnalysisCases,
+    MalformedInputsCases,
+    PathologicalIdsCases,
+    TypeConfusionCases,
+)
+from test.db.cypher_cases.encoding import (
+    LabelAbuseCases,
+    MalformedEncodingCases,
+    PropertyKeySmugglingCases,
+)
+from test.db.cypher_cases.graphs import PathologicalGraphsCases, StateCorruptionCases
+from test.db.cypher_cases.injection import (
+    CypherInjectionCases,
+    QueryInjectionAdvancedCases,
+    ReDoSCases,
+)
+from test.db.cypher_cases.queries import (
+    AggregationCases,
+    EdgeOperationsCases,
+    FilterCases,
+    QueryComplexityCases,
+    SchemaEvolutionCases,
+    TemporalAnomaliesCases,
+)
+from test.db.cypher_cases.stress import BatchStressCases, MemoryExhaustionCases
 
 
-class TestCypherInjection:
+class TestCypherInjection(CypherInjectionCases):
     """Security tests for Cypher injection prevention.
 
     Validates that the connector properly sanitizes user inputs to prevent
@@ -100,83 +123,6 @@ class TestCypherInjection:
         - OWASP Injection Prevention Cheat Sheet
         - Neo4j Cypher Injection documentation
     """
-
-    def test_injection_via_node_property_value(
-        self, conn_conf, test_graph_name, clean_db
-    ):
-        """Verify property values cannot escape string context to inject Cypher.
-
-        Attempts classic injection connectors adapted from SQL injection,
-        including quote escaping, comment injection, and UNION-based attacks.
-        """
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            # Classic SQL injection adapted for Cypher
-            malicious_payloads = [
-                "'; MATCH (n) DETACH DELETE n; //",
-                "' OR 1=1 --",
-                "test'}) MATCH (x) DETACH DELETE x CREATE (n:Pwned {id: '1",
-                '" OR ""="',
-                "\\'; DROP DATABASE test; --",
-                "' UNION MATCH (n) RETURN n.password //",
-                "${injection}",
-                "{{injection}}",
-                "' + '' + '",
-            ]
-
-            for i, payload in enumerate(malicious_payloads):
-                docs = [{"id": str(i), "name": payload}]
-                db.upsert_docs_batch(docs, "InjectionTest", match_keys=["id"])
-
-            # Verify all nodes were created (injection didn't execute)
-            result = db.fetch_docs("InjectionTest")
-            assert len(result) == len(malicious_payloads)
-
-            # Verify the malicious strings were stored as-is
-            for node in result:
-                assert node["name"] in malicious_payloads
-
-    def test_injection_via_label_name(self, conn_conf, test_graph_name, clean_db):
-        """Try to inject via label name parameter."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            # These should either be sanitized or raise proper errors
-            dangerous_labels = [
-                "User`) MATCH (n) DETACH DELETE n CREATE (x:`Pwned",
-                "User:Admin",  # Multi-label injection
-                "User MATCH (n) DELETE n CREATE (:`Pwned",
-            ]
-
-            for label in dangerous_labels:
-                docs = [{"id": "1", "name": "test"}]
-                try:
-                    db.upsert_docs_batch(docs, label, match_keys=["id"])
-                except Exception:
-                    # Expected - dangerous labels should be rejected
-                    pass
-
-    def test_injection_via_match_keys(self, conn_conf, test_graph_name, clean_db):
-        """Try to inject via match_keys parameter."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            docs = [{"id": "1", "name": "test"}]
-
-            dangerous_keys = [
-                "id}) MATCH (n) DELETE n MERGE (x:Pwned {x",
-                "id: '1'})-[:OWNS]->(m) DELETE m MERGE (n:Safe {id",
-            ]
-
-            for key in dangerous_keys:
-                try:
-                    db.upsert_docs_batch(docs, "User", match_keys=[key])
-                except Exception:
-                    # Expected behavior
-                    pass
-
-
-# =============================================================================
-# UNICODE & SPECIAL CHARACTERS TORTURE
-# =============================================================================
 
 
 class TestUnicodeTorture:
@@ -288,12 +234,7 @@ class TestUnicodeTorture:
             assert len(result) == len(invisible_strings)
 
 
-# =============================================================================
-# BOUNDARY CONDITIONS & LIMITS
-# =============================================================================
-
-
-class TestBoundaryConditions:
+class TestBoundaryConditions(BoundaryConditionsCases):
     """Boundary value analysis for connector limits.
 
     Systematically tests edge cases at operational boundaries including
@@ -306,78 +247,6 @@ class TestBoundaryConditions:
         - Numeric extremes (int64 bounds, denormalized floats)
         - Special values (NaN, Inf, negative zero)
     """
-
-    def test_empty_batch(self, conn_conf, test_graph_name, clean_db):
-        """Inserting empty batch should not crash."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            db.upsert_docs_batch([], "Empty", match_keys=["id"])
-            result = db.fetch_docs("Empty")
-            assert len(result) == 0
-
-    def test_empty_document(self, conn_conf, test_graph_name, clean_db):
-        """Insert document with no properties except match key."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            docs = [{"id": "lonely"}]
-            db.upsert_docs_batch(docs, "Minimal", match_keys=["id"])
-            result = db.fetch_docs("Minimal")
-            assert len(result) == 1
-
-    def test_very_long_string(self, conn_conf, test_graph_name, clean_db):
-        """Test with very long string values."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            # 1MB string
-            huge_string = "x" * (1024 * 1024)
-            docs = [{"id": "huge", "data": huge_string}]
-            db.upsert_docs_batch(docs, "HugeData", match_keys=["id"])
-
-            result = db.fetch_docs("HugeData")
-            assert len(result) == 1
-            assert len(result[0]["data"]) == len(huge_string)
-
-    def test_extreme_numbers(self, conn_conf, test_graph_name, clean_db):
-        """Test extreme numeric values."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            extreme_values = [
-                ("max_int", 2**63 - 1),
-                ("min_int", -(2**63)),
-                ("tiny_float", 1e-308),
-                ("huge_float", 1e308),
-                ("negative_zero", -0.0),
-                ("small_negative", -1e-308),
-            ]
-
-            for name, value in extreme_values:
-                docs = [{"id": name, "value": value}]
-                try:
-                    db.upsert_docs_batch(docs, "ExtremeNums", match_keys=["id"])
-                except (OverflowError, ValueError):
-                    # Some values may be out of range
-                    pass
-
-            result = db.fetch_docs("ExtremeNums")
-            assert len(result) > 0
-
-    def test_special_float_values(self, conn_conf, test_graph_name, clean_db):
-        """Test NaN, Inf, -Inf handling."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            special_floats = [
-                ("nan", float("nan")),
-                ("inf", float("inf")),
-                ("neg_inf", float("-inf")),
-            ]
-
-            for name, value in special_floats:
-                docs = [{"id": name, "value": value}]
-                try:
-                    db.upsert_docs_batch(docs, "SpecialFloats", match_keys=["id"])
-                except (ValueError, TypeError):
-                    # Special floats may not be supported
-                    pass
 
     def test_deeply_nested_dict(self, conn_conf, test_graph_name, clean_db):
         """Test with deeply nested dictionary structure."""
@@ -396,20 +265,6 @@ class TestBoundaryConditions:
             except Exception:
                 # Deep nesting may not be supported
                 pass
-
-    def test_wide_document(self, conn_conf, test_graph_name, clean_db):
-        """Test document with many properties."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            # Document with 1000 properties
-            doc = {"id": "wide"}
-            for i in range(1000):
-                doc[f"prop_{i}"] = f"value_{i}"
-
-            db.upsert_docs_batch([doc], "WideNode", match_keys=["id"])
-            result = db.fetch_docs("WideNode")
-            assert len(result) == 1
-            assert len(result[0]) >= 1000
 
     def test_negative_limit(self, conn_conf, test_graph_name, clean_db):
         """Test fetch with negative limit."""
@@ -446,12 +301,7 @@ class TestBoundaryConditions:
             assert isinstance(result, list)
 
 
-# =============================================================================
-# TYPE CONFUSION & COERCION
-# =============================================================================
-
-
-class TestTypeConfusion:
+class TestTypeConfusion(TypeConfusionCases):
     """Test type handling edge cases."""
 
     def test_none_values(self, conn_conf, test_graph_name, clean_db):
@@ -504,23 +354,6 @@ class TestTypeConfusion:
                     # Some list types may not be supported
                     pass
 
-    def test_string_number_collision(self, conn_conf, test_graph_name, clean_db):
-        """Test when string and number have same representation."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            # These should be distinct
-            docs = [
-                {"id": "123", "type": "string_id"},
-                {"id": 123, "type": "int_id"},
-            ]
-
-            for doc in docs:
-                db.upsert_docs_batch([doc], "TypeCollision", match_keys=["id"])
-
-            result = db.fetch_docs("TypeCollision")
-            # Behavior depends on type handling - may merge or keep separate
-            assert len(result) >= 1
-
     def test_dict_property_value(self, conn_conf, test_graph_name, clean_db):
         """Test dictionary/map as property value."""
         _ = clean_db
@@ -538,34 +371,8 @@ class TestTypeConfusion:
                 pass
 
 
-# =============================================================================
-# MALFORMED INPUTS
-# =============================================================================
-
-
-class TestMalformedInputs:
+class TestMalformedInputs(MalformedInputsCases):
     """Test handling of malformed or invalid inputs."""
-
-    def test_empty_match_keys(self, conn_conf, test_graph_name, clean_db):
-        """Test with empty match_keys list."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            docs = [{"id": "1", "name": "test"}]
-            try:
-                db.upsert_docs_batch(docs, "NoKeys", match_keys=[])
-                # Should either work or raise clear error
-            except (ValueError, KeyError):
-                pass  # Expected
-
-    def test_missing_match_key_in_doc(self, conn_conf, test_graph_name, clean_db):
-        """Test when document missing the match key."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            docs = [{"name": "no_id"}]  # Missing 'id' key
-            try:
-                db.upsert_docs_batch(docs, "MissingKey", match_keys=["id"])
-            except (KeyError, ValueError):
-                pass  # Expected
 
     def test_non_string_property_names(self, conn_conf, test_graph_name, clean_db):
         """Test with non-string property names."""
@@ -582,7 +389,7 @@ class TestMalformedInputs:
                 try:
                     db.upsert_docs_batch([doc], "WeirdKeys", match_keys=["id"])
                 except (TypeError, ValueError):
-                    pass  # Expected for invalid keys
+                    pass
 
     def test_reserved_property_names(self, conn_conf, test_graph_name, clean_db):
         """Test with Cypher reserved words as property names."""
@@ -635,12 +442,7 @@ class TestMalformedInputs:
                     pass
 
 
-# =============================================================================
-# PATHOLOGICAL GRAPH STRUCTURES
-# =============================================================================
-
-
-class TestPathologicalGraphs:
+class TestPathologicalGraphs(PathologicalGraphsCases):
     """Graph topology stress tests with pathological structures.
 
     Creates graph patterns known to cause performance issues or
@@ -677,31 +479,6 @@ class TestPathologicalGraphs:
             result = db.execute("MATCH (p:Person)-[r:LOVES]->(p) RETURN count(r)")
             assert result.result_set[0][0] == 1
 
-    def test_bidirectional_edges(self, conn_conf, test_graph_name, clean_db):
-        """Create edges in both directions between same nodes."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            db.upsert_docs_batch([{"id": "A"}, {"id": "B"}], "Node", match_keys=["id"])
-
-            # A -> B and B -> A
-            edges = [
-                [{"id": "A"}, {"id": "B"}, {}],
-                [{"id": "B"}, {"id": "A"}, {}],
-            ]
-            db.insert_edges_batch(
-                edges,
-                source_class="Node",
-                target_class="Node",
-                relation_name="CONNECTED",
-                match_keys_source=["id"],
-                match_keys_target=["id"],
-            )
-
-            result = db.execute(
-                "MATCH (a:Node)-[r:CONNECTED]->(b:Node) RETURN count(r)"
-            )
-            assert result.result_set[0][0] == 2
-
     def test_multiple_edges_same_nodes(self, conn_conf, test_graph_name, clean_db):
         """Create multiple edges of same type between same nodes."""
         _ = clean_db
@@ -724,62 +501,6 @@ class TestPathologicalGraphs:
             result = db.execute("MATCH (a:Node)-[r:MULTI]->(b:Node) RETURN count(r)")
             # With MERGE, should be 1 (updated each time)
             assert result.result_set[0][0] >= 1
-
-    def test_long_chain(self, conn_conf, test_graph_name, clean_db):
-        """Create a very long chain of nodes."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            chain_length = 100
-            docs = [{"id": str(i)} for i in range(chain_length)]
-            db.upsert_docs_batch(docs, "ChainNode", match_keys=["id"])
-
-            # Create chain: 0->1->2->...->99
-            edges = [
-                [{"id": str(i)}, {"id": str(i + 1)}, {}]
-                for i in range(chain_length - 1)
-            ]
-            db.insert_edges_batch(
-                edges,
-                source_class="ChainNode",
-                target_class="ChainNode",
-                relation_name="NEXT",
-                match_keys_source=["id"],
-                match_keys_target=["id"],
-            )
-
-            # Query path length
-            result = db.execute(
-                "MATCH p=(start:ChainNode {id: '0'})-[:NEXT*]->(end:ChainNode {id: '99'}) "
-                "RETURN length(p)"
-            )
-            assert result.result_set[0][0] == 99
-
-    def test_star_topology(self, conn_conf, test_graph_name, clean_db):
-        """Create star topology with many edges from one node."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            # Central node
-            db.upsert_docs_batch([{"id": "center"}], "Star", match_keys=["id"])
-
-            # Peripheral nodes
-            peripherals = [{"id": f"p{i}"} for i in range(100)]
-            db.upsert_docs_batch(peripherals, "Star", match_keys=["id"])
-
-            # Edges from center to all peripherals
-            edges = [[{"id": "center"}, {"id": f"p{i}"}, {}] for i in range(100)]
-            db.insert_edges_batch(
-                edges,
-                source_class="Star",
-                target_class="Star",
-                relation_name="RADIATES",
-                match_keys_source=["id"],
-                match_keys_target=["id"],
-            )
-
-            result = db.execute(
-                "MATCH (c:Star {id: 'center'})-[r:RADIATES]->() RETURN count(r)"
-            )
-            assert result.result_set[0][0] == 100
 
     def test_complete_graph(self, conn_conf, test_graph_name, clean_db):
         """Create complete graph (every node connected to every other)."""
@@ -810,12 +531,6 @@ class TestPathologicalGraphs:
             assert result.result_set[0][0] == n * (n - 1)
 
 
-# =============================================================================
-# CONCURRENCY CHAOS
-# =============================================================================
-
-
-@pytest.mark.performance
 class TestConcurrencyChaos:
     """Thread safety and race condition testing.
 
@@ -869,17 +584,24 @@ class TestConcurrencyChaos:
                 except Exception as e:
                     errors.append(f"Reader error: {e}")
 
+        # daemon=True and a bounded join: a worker blocked on a wedged DB socket
+        # must fail this test, not stall the join here and then stall
+        # threading._shutdown at interpreter exit -- which hangs pytest *after*
+        # it has already reported success.
         threads = [
-            threading.Thread(target=writer),
-            threading.Thread(target=reader),
-            threading.Thread(target=writer),
-            threading.Thread(target=reader),
+            threading.Thread(target=writer, daemon=True),
+            threading.Thread(target=reader, daemon=True),
+            threading.Thread(target=writer, daemon=True),
+            threading.Thread(target=reader, daemon=True),
         ]
 
         for t in threads:
             t.start()
         for t in threads:
-            t.join()
+            t.join(timeout=30)
+        assert not any(t.is_alive() for t in threads), (
+            "read/write workers did not finish within 30s"
+        )
 
         # Should complete without errors
         assert len(errors) == 0, f"Errors occurred: {errors}"
@@ -908,59 +630,11 @@ class TestConcurrencyChaos:
             assert len(result) == 1
 
 
-# =============================================================================
-# STATE CORRUPTION
-# =============================================================================
-
-
-class TestStateCorruption:
+class TestStateCorruption(StateCorruptionCases):
     """Test state handling and connection management."""
 
-    def test_operations_after_close(self, conn_conf, test_graph_name):
-        """Attempt operations after connection is closed."""
-        db = ConnectionManager(connection_config=conn_conf)
-        db.__enter__()
-        db.__exit__(None, None, None)
 
-        # These should fail gracefully
-        with pytest.raises(Exception):
-            fetch_docs = cast(Any, db).fetch_docs
-            fetch_docs("SomeLabel")
-
-    def test_double_close(self, conn_conf, test_graph_name):
-        """Close connection twice."""
-        db = ConnectionManager(connection_config=conn_conf)
-        db.__enter__()
-        db.__exit__(None, None, None)
-        # Second close should not crash
-        db.__exit__(None, None, None)
-
-    def test_nested_context_managers(self, conn_conf, test_graph_name, clean_db):
-        """Test nested connection managers."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db1:
-            docs = [{"id": "outer"}]
-            db1.upsert_docs_batch(docs, "Nested", match_keys=["id"])
-
-            with ConnectionManager(connection_config=conn_conf) as db2:
-                # Inner connection should see outer's data
-                result = db2.fetch_docs("Nested")
-                assert len(result) == 1
-
-                docs = [{"id": "inner"}]
-                db2.upsert_docs_batch(docs, "Nested", match_keys=["id"])
-
-            # Outer should see inner's data
-            result = db1.fetch_docs("Nested")
-            assert len(result) == 2
-
-
-# =============================================================================
-# AGGREGATION EDGE CASES
-# =============================================================================
-
-
-class TestAggregationEdgeCases:
+class TestAggregationEdgeCases(AggregationCases):
     """Test aggregation with edge cases."""
 
     def test_aggregate_empty_collection(self, conn_conf, test_graph_name, clean_db):
@@ -969,24 +643,6 @@ class TestAggregationEdgeCases:
         with ConnectionManager(connection_config=conn_conf) as db:
             count = db.aggregate("NonExistent", AggregationType.COUNT)
             assert count == 0
-
-    def test_aggregate_with_null_values(self, conn_conf, test_graph_name, clean_db):
-        """Aggregate field with null values."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            docs = [
-                {"id": "1", "score": 10},
-                {"id": "2", "score": None},
-                {"id": "3"},  # Missing score entirely
-                {"id": "4", "score": 20},
-            ]
-            db.upsert_docs_batch(docs, "NullAgg", match_keys=["id"])
-
-            avg = db.aggregate(
-                "NullAgg", AggregationType.AVERAGE, aggregated_field="score"
-            )
-            # Should handle nulls gracefully
-            assert avg is not None or avg == 0 or math.isnan(avg) if avg else True
 
     def test_aggregate_discriminant_with_nulls(
         self, conn_conf, test_graph_name, clean_db
@@ -1009,24 +665,8 @@ class TestAggregationEdgeCases:
             assert result["A"] == 2
 
 
-# =============================================================================
-# FILTER EDGE CASES
-# =============================================================================
-
-
-class TestFilterEdgeCases:
+class TestFilterEdgeCases(FilterCases):
     """Test filter expressions with edge cases."""
-
-    def test_filter_non_existent_field(self, conn_conf, test_graph_name, clean_db):
-        """Filter on field that doesn't exist."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            docs = [{"id": "1", "name": "test"}]
-            db.upsert_docs_batch(docs, "FilterTest", match_keys=["id"])
-
-            # Filter on non-existent field
-            result = db.fetch_docs("FilterTest", filters=["==", "value", "ghost_field"])
-            assert len(result) == 0
 
     def test_filter_with_special_characters(self, conn_conf, test_graph_name, clean_db):
         """Filter values containing special characters."""
@@ -1041,128 +681,15 @@ class TestFilterEdgeCases:
                 assert len(result) == 1
 
 
-# =============================================================================
-# EDGE OPERATIONS EDGE CASES
-# =============================================================================
-
-
-class TestEdgeOperationsEdgeCases:
+class TestEdgeOperationsEdgeCases(EdgeOperationsCases):
     """Test edge/relationship operations with edge cases."""
 
-    def test_edge_between_non_existent_nodes(
-        self, conn_conf, test_graph_name, clean_db
-    ):
-        """Create edge between nodes that don't exist."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            edges = [[{"id": "ghost1"}, {"id": "ghost2"}, {}]]
-            db.insert_edges_batch(
-                edges,
-                source_class="Ghost",
-                target_class="Ghost",
-                relation_name="HAUNTS",
-                match_keys_source=["id"],
-                match_keys_target=["id"],
-            )
 
-            # Should not create any edges
-            result = db.execute("MATCH ()-[r:HAUNTS]->() RETURN count(r)")
-            assert result.result_set[0][0] == 0
-
-    def test_edge_with_empty_properties(self, conn_conf, test_graph_name, clean_db):
-        """Create edge with empty properties dict."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            db.upsert_docs_batch([{"id": "A"}, {"id": "B"}], "Node", match_keys=["id"])
-
-            edges = [[{"id": "A"}, {"id": "B"}, {}]]
-            db.insert_edges_batch(
-                edges,
-                source_class="Node",
-                target_class="Node",
-                relation_name="EMPTY_PROPS",
-                match_keys_source=["id"],
-                match_keys_target=["id"],
-            )
-
-            result = db.execute("MATCH ()-[r:EMPTY_PROPS]->() RETURN count(r)")
-            assert result.result_set[0][0] == 1
-
-    def test_edge_with_none_properties(self, conn_conf, test_graph_name, clean_db):
-        """Create edge with None values in properties."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            db.upsert_docs_batch([{"id": "A"}, {"id": "B"}], "Node", match_keys=["id"])
-
-            edges = [[{"id": "A"}, {"id": "B"}, {"weight": None, "type": "test"}]]
-            db.insert_edges_batch(
-                edges,
-                source_class="Node",
-                target_class="Node",
-                relation_name="NULL_PROPS",
-                match_keys_source=["id"],
-                match_keys_target=["id"],
-            )
-
-            result = db.execute("MATCH ()-[r:NULL_PROPS]->() RETURN r.type")
-            assert result.result_set[0][0] == "test"
-
-
-# =============================================================================
-# BATCH OPERATIONS STRESS
-# =============================================================================
-
-
-@pytest.mark.performance
-class TestBatchStress:
+class TestBatchStress(BatchStressCases):
     """Stress test batch operations."""
 
-    def test_large_batch_insert(self, conn_conf, test_graph_name, clean_db):
-        """Insert very large batch."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            # 10,000 documents
-            docs = [{"id": str(i), "data": f"value_{i}"} for i in range(10000)]
-            db.upsert_docs_batch(docs, "LargeBatch", match_keys=["id"])
 
-            count = db.aggregate("LargeBatch", AggregationType.COUNT)
-            assert count == 10000
-
-    def test_batch_with_duplicates(self, conn_conf, test_graph_name, clean_db):
-        """Batch containing duplicate keys."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            docs = [
-                {"id": "1", "version": 1},
-                {"id": "2", "version": 1},
-                {"id": "1", "version": 2},  # Duplicate id
-                {"id": "1", "version": 3},  # Another duplicate
-            ]
-            db.upsert_docs_batch(docs, "Duplicates", match_keys=["id"])
-
-            result = db.fetch_docs("Duplicates")
-            # Should have 2 unique ids
-            ids = {r["id"] for r in result}
-            assert len(ids) == 2
-
-    def test_rapid_fire_small_batches(self, conn_conf, test_graph_name, clean_db):
-        """Many small rapid batches."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            for i in range(100):
-                docs = [{"id": str(i), "batch": i}]
-                db.upsert_docs_batch(docs, "RapidFire", match_keys=["id"])
-
-            count = db.aggregate("RapidFire", AggregationType.COUNT)
-            assert count == 100
-
-
-# =============================================================================
-# MEMORY EXHAUSTION ATTACKS
-# =============================================================================
-
-
-class TestMemoryExhaustion:
+class TestMemoryExhaustion(MemoryExhaustionCases):
     """Memory exhaustion and resource abuse testing.
 
     Attempts to trigger out-of-memory conditions or excessive resource
@@ -1175,63 +702,6 @@ class TestMemoryExhaustion:
         - Deeply nested JSON-like string structures
         - Binary data encoded as strings
     """
-
-    def test_exponential_property_growth(self, conn_conf, test_graph_name, clean_db):
-        """Property value that doubles on each upsert - memory bomb attempt."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            payload = "A"
-            for i in range(20):  # 2^20 = 1MB final payload
-                docs = [{"id": "growing", "bomb": payload}]
-                db.upsert_docs_batch(docs, "MemBomb", match_keys=["id"])
-                payload = payload * 2
-
-            result = db.fetch_docs("MemBomb")
-            assert len(result) == 1
-
-    def test_million_tiny_properties(self, conn_conf, test_graph_name, clean_db):
-        """Document with extreme number of tiny properties."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            # 10,000 single-char properties
-            doc = {"id": "hydra"}
-            for i in range(10000):
-                doc[f"p{i}"] = "x"
-
-            try:
-                db.upsert_docs_batch([doc], "Hydra", match_keys=["id"])
-            except Exception:
-                pass  # May legitimately fail
-
-    def test_recursive_json_like_string(self, conn_conf, test_graph_name, clean_db):
-        """String that looks like deeply nested JSON - parser confusion."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            # String that might confuse naive JSON parsers
-            evil = '{"a":' * 100 + '"bomb"' + "}" * 100
-            docs = [{"id": "json_bomb", "data": evil}]
-            db.upsert_docs_batch(docs, "JsonBomb", match_keys=["id"])
-
-            result = db.fetch_docs("JsonBomb")
-            assert len(result) == 1
-            assert result[0]["data"] == evil
-
-    def test_binary_payload_in_string(self, conn_conf, test_graph_name, clean_db):
-        """Binary data disguised as string."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            # Random-looking binary data
-            binary_payload = bytes(range(256)).decode("latin-1")
-            docs = [{"id": "binary", "payload": binary_payload}]
-            try:
-                db.upsert_docs_batch(docs, "Binary", match_keys=["id"])
-            except Exception:
-                pass  # Binary may not be supported
-
-
-# =============================================================================
-# CARTESIAN PRODUCT BOMBS
-# =============================================================================
 
 
 class TestCartesianProductBomb:
@@ -1286,244 +756,21 @@ class TestCartesianProductBomb:
                 )
                 assert result.result_set[0][0] > 0
             except Exception:
-                pass  # Timeout acceptable
-
-
-# =============================================================================
-# MALFORMED ENCODING ATTACKS
-# =============================================================================
-
-
-class TestMalformedEncoding:
-    """Test with malformed or invalid encodings."""
-
-    def test_overlong_utf8_sequences(self, conn_conf, test_graph_name, clean_db):
-        """UTF-8 overlong encoding (security bypass attempt)."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            # Overlong encoding of '/' (0x2F)
-            # Normal: 0x2F, Overlong: 0xC0 0xAF
-            try:
-                overlong = b"\xc0\xaf".decode("utf-8", errors="replace")
-                docs = [{"id": "overlong", "path": overlong}]
-                db.upsert_docs_batch(docs, "Overlong", match_keys=["id"])
-            except Exception:
                 pass
 
-    def test_utf8_bom_injection(self, conn_conf, test_graph_name, clean_db):
-        """BOM characters injected mid-string."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            bom_variants = [
-                "\ufeffstart",  # BOM at start
-                "mid\ufeffdle",  # BOM in middle
-                "end\ufeff",  # BOM at end
-                "\ufeff\ufeff\ufeff",  # Multiple BOMs
-            ]
 
-            for i, text in enumerate(bom_variants):
-                docs = [{"id": str(i), "text": text}]
-                db.upsert_docs_batch(docs, "BOMTest", match_keys=["id"])
-
-            result = db.fetch_docs("BOMTest")
-            assert len(result) == len(bom_variants)
-
-    def test_surrogate_pairs(self, conn_conf, test_graph_name, clean_db):
-        """Lone surrogate characters (invalid UTF-16 in UTF-8)."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            # These are invalid in well-formed UTF-8
-            try:
-                lone_high = "\ud800"  # High surrogate without low
-                docs = [{"id": "surrogate", "broken": lone_high}]
-                db.upsert_docs_batch(docs, "Surrogate", match_keys=["id"])
-            except Exception:
-                pass  # Expected to fail
-
-    def test_private_use_area_flood(self, conn_conf, test_graph_name, clean_db):
-        """Flood with Private Use Area characters."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            # PUA characters - valid but unusual
-            pua_string = "".join(chr(0xE000 + i) for i in range(1000))
-            docs = [{"id": "pua", "custom": pua_string}]
-            db.upsert_docs_batch(docs, "PUA", match_keys=["id"])
-
-            result = db.fetch_docs("PUA")
-            assert len(result) == 1
+class TestMalformedEncoding(MalformedEncodingCases):
+    """Test with malformed or invalid encodings."""
 
 
-# =============================================================================
-# PROPERTY KEY SMUGGLING
-# =============================================================================
-
-
-class TestPropertyKeySmuggling:
+class TestPropertyKeySmuggling(PropertyKeySmugglingCases):
     """Attempt to smuggle malicious content via property keys."""
 
-    def test_cypher_keywords_as_keys(self, conn_conf, test_graph_name, clean_db):
-        """Use Cypher keywords as property names."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            keywords = [
-                "MATCH",
-                "WHERE",
-                "RETURN",
-                "CREATE",
-                "DELETE",
-                "MERGE",
-                "SET",
-                "REMOVE",
-                "DETACH",
-                "OPTIONAL",
-                "WITH",
-                "UNWIND",
-                "FOREACH",
-                "CALL",
-                "YIELD",
-            ]
 
-            docs = [{"id": "keyword_node"}]
-            for kw in keywords:
-                docs[0][kw] = f"value_for_{kw}"
-
-            try:
-                db.upsert_docs_batch(docs, "Keywords", match_keys=["id"])
-                result = db.fetch_docs("Keywords")
-                assert len(result) == 1
-            except Exception:
-                pass  # Some keywords may be rejected
-
-    def test_operators_in_keys(self, conn_conf, test_graph_name, clean_db):
-        """Property names containing operators."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            operator_keys = [
-                "a+b",
-                "a-b",
-                "a*b",
-                "a/b",
-                "a%b",
-                "a=b",
-                "a<>b",
-                "a<b",
-                "a>b",
-                "a AND b",
-                "a OR b",
-                "NOT a",
-            ]
-
-            for i, key in enumerate(operator_keys):
-                docs = [{"id": str(i), key: "trapped"}]
-                try:
-                    db.upsert_docs_batch(docs, "Operators", match_keys=["id"])
-                except Exception:
-                    pass
-
-    def test_internal_property_names(self, conn_conf, test_graph_name, clean_db):
-        """Try to use internal FalkorDB/Neo4j property names."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            internal_names = [
-                "_id",
-                "__id__",
-                "_key",
-                "__key__",
-                "_labels",
-                "__labels__",
-                "_type",
-                "__type__",
-                "__class__",
-                "__dict__",
-                "__proto__",
-            ]
-
-            for name in internal_names:
-                docs = [{"id": name, name: "internal_value"}]
-                try:
-                    db.upsert_docs_batch(docs, "Internal", match_keys=["id"])
-                except Exception:
-                    pass
-
-    def test_whitespace_only_keys(self, conn_conf, test_graph_name, clean_db):
-        """Property names that are only whitespace."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            whitespace_keys = [
-                " ",  # Single space
-                "  ",  # Multiple spaces
-                "\t",  # Tab
-                "\n",  # Newline
-                " \t\n ",  # Mixed
-            ]
-
-            for i, key in enumerate(whitespace_keys):
-                docs = [{"id": str(i), key: "ghostly"}]
-                try:
-                    db.upsert_docs_batch(docs, "Whitespace", match_keys=["id"])
-                except Exception:
-                    pass
-
-
-# =============================================================================
-# TEMPORAL ANOMALIES
-# =============================================================================
-
-
-class TestTemporalAnomalies:
+class TestTemporalAnomalies(TemporalAnomaliesCases):
     """Test with extreme or invalid temporal values."""
 
-    def test_epoch_boundaries(self, conn_conf, test_graph_name, clean_db):
-        """Test Unix epoch edge cases."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            epochs = [
-                ("unix_zero", 0),
-                ("before_unix", -86400),  # Day before epoch
-                ("y2k38_minus", 2147483647),  # Max 32-bit signed
-                ("y2k38_plus", 2147483648),  # Overflow 32-bit
-                ("far_future", 253402300799),  # Dec 31, 9999
-                ("negative_max", -2147483648),  # Min 32-bit signed
-            ]
 
-            for name, epoch in epochs:
-                docs = [{"id": name, "timestamp": epoch}]
-                try:
-                    db.upsert_docs_batch(docs, "Epochs", match_keys=["id"])
-                except (OverflowError, ValueError):
-                    pass
-
-            result = db.fetch_docs("Epochs")
-            assert len(result) > 0
-
-    def test_datetime_strings_as_injection(self, conn_conf, test_graph_name, clean_db):
-        """Datetime strings that might be parsed unexpectedly."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            evil_dates = [
-                "0000-00-00",
-                "9999-99-99",
-                "2024-13-45",  # Invalid month/day
-                "2024-02-30",  # Feb 30
-                "2024-00-01",  # Month 0
-                "'2024-01-01'); DROP TABLE users; --",
-                "2024-01-01T25:99:99Z",  # Invalid time
-            ]
-
-            for i, date_str in enumerate(evil_dates):
-                docs = [{"id": str(i), "date": date_str}]
-                db.upsert_docs_batch(docs, "EvilDates", match_keys=["id"])
-
-            result = db.fetch_docs("EvilDates")
-            assert len(result) == len(evil_dates)
-
-
-# =============================================================================
-# GRAPH ALGORITHM EXPLOITS
-# =============================================================================
-
-
-@pytest.mark.performance
 class TestGraphAlgorithmExploits:
     """Pathological graph structures that stress graph algorithms.
 
@@ -1683,15 +930,9 @@ class TestGraphAlgorithmExploits:
                 )
                 assert result.result_set[0][0] > 0
             except Exception:
-                pass  # Timeout is acceptable for pathological graph queries
+                pass
 
 
-# =============================================================================
-# CONNECTION & STATE TORTURE
-# =============================================================================
-
-
-@pytest.mark.performance
 class TestConnectionTorture:
     """Stress connection handling and state management."""
 
@@ -1736,95 +977,8 @@ class TestConnectionTorture:
             assert count == 50000
 
 
-# =============================================================================
-# QUERY INJECTION ADVANCED
-# =============================================================================
-
-
-class TestQueryInjectionAdvanced:
+class TestQueryInjectionAdvanced(QueryInjectionAdvancedCases):
     """More sophisticated injection attempts."""
-
-    def test_comment_injection(self, conn_conf, test_graph_name, clean_db):
-        """Try to inject via comment syntax."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            comment_payloads = [
-                "value /* comment */ more",
-                "value // line comment",
-                "value /* /* nested */ */",
-                "value --sql comment",
-                "value # shell comment",
-            ]
-
-            for i, payload in enumerate(comment_payloads):
-                docs = [{"id": str(i), "data": payload}]
-                db.upsert_docs_batch(docs, "Comments", match_keys=["id"])
-
-            result = db.fetch_docs("Comments")
-            assert len(result) == len(comment_payloads)
-
-    def test_parameter_pollution(self, conn_conf, test_graph_name, clean_db):
-        """Try parameter pollution attacks."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            pollution_payloads = [
-                "$batch[0].id",
-                "${batch}",
-                "{{batch}}",
-                "{batch[0]}",
-                "$__proto__",
-                "$constructor",
-            ]
-
-            for i, payload in enumerate(pollution_payloads):
-                docs = [{"id": str(i), "pollute": payload}]
-                db.upsert_docs_batch(docs, "Pollute", match_keys=["id"])
-
-            result = db.fetch_docs("Pollute")
-            assert len(result) == len(pollution_payloads)
-
-    def test_label_injection_via_value(self, conn_conf, test_graph_name, clean_db):
-        """Values that look like label specifications."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            label_payloads = [
-                ":Admin",
-                "User:Admin",
-                "(n:Admin)",
-                "}-[:ADMIN]->",
-                "`:Admin`",
-            ]
-
-            for i, payload in enumerate(label_payloads):
-                docs = [{"id": str(i), "label_attempt": payload}]
-                db.upsert_docs_batch(docs, "LabelInject", match_keys=["id"])
-
-            result = db.fetch_docs("LabelInject")
-            assert len(result) == len(label_payloads)
-
-    def test_unicode_homoglyph_injection(self, conn_conf, test_graph_name, clean_db):
-        """Use Unicode homoglyphs to bypass filters."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            # Characters that look like ASCII but aren't
-            homoglyphs = [
-                "ᎷᎪᎢᏟᎻ",  # Cherokee letters that look like MATCH
-                "ⒹⒺⓁⒺⓉⒺ",  # Circled letters
-                "ＭＡＴＣＨ",  # Fullwidth
-                "𝐌𝐀𝐓𝐂𝐇",  # Mathematical bold
-            ]
-
-            for i, payload in enumerate(homoglyphs):
-                docs = [{"id": str(i), "sneaky": payload}]
-                db.upsert_docs_batch(docs, "Homoglyph", match_keys=["id"])
-
-            result = db.fetch_docs("Homoglyph")
-            assert len(result) == len(homoglyphs)
-
-
-# =============================================================================
-# DATA TYPE TORTURE
-# =============================================================================
 
 
 class TestDataTypeTorture:
@@ -1934,12 +1088,7 @@ class TestDataTypeTorture:
             # Verify null char was sanitized (removed)
             null_doc = next((r for r in result if r["id"] == "null_char"), None)
             assert null_doc is not None
-            assert null_doc["empty"] == ""  # Null byte was stripped
-
-
-# =============================================================================
-# FILTER SADISM
-# =============================================================================
+            assert null_doc["empty"] == ""
 
 
 class TestFilterSadism:
@@ -2009,11 +1158,6 @@ class TestFilterSadism:
             assert len(result) == 3
 
 
-# =============================================================================
-# DEADLOCK & RACE CONDITION HELL
-# =============================================================================
-
-
 class TestDeadlockHell:
     """Deadlock detection and transaction isolation testing.
 
@@ -2066,8 +1210,8 @@ class TestDeadlockHell:
             except Exception as e:
                 errors.append(str(e))
 
-        t1 = threading.Thread(target=update_a_then_b)
-        t2 = threading.Thread(target=update_b_then_a)
+        t1 = threading.Thread(target=update_a_then_b, daemon=True)
+        t2 = threading.Thread(target=update_b_then_a, daemon=True)
 
         t1.start()
         t2.start()
@@ -2123,24 +1267,21 @@ class TestDeadlockHell:
                     if counts[i] < counts[i - 1]:
                         phantoms_detected.append((counts[i - 1], counts[i]))
 
-        t1 = threading.Thread(target=inserter)
-        t2 = threading.Thread(target=reader)
+        t1 = threading.Thread(target=inserter, daemon=True)
+        t2 = threading.Thread(target=reader, daemon=True)
 
         t1.start()
         t2.start()
-        t1.join()
-        t2.join()
+        # Bounded like the sibling deadlock test above: this class exists to catch
+        # a hung backend, so it must not itself hang the run when it finds one.
+        t1.join(timeout=30)
+        t2.join(timeout=30)
 
-        # Phantom reads are possible in some isolation levels
-        # We just verify it doesn't crash
-
-
-# =============================================================================
-# REGEX DENIAL OF SERVICE (ReDoS)
-# =============================================================================
+        assert not t1.is_alive(), "Inserter thread appears stuck"
+        assert not t2.is_alive(), "Reader thread appears stuck"
 
 
-class TestReDoS:
+class TestReDoS(ReDoSCases):
     """Test patterns that could cause ReDoS if regex is used internally."""
 
     def test_evil_regex_patterns_as_values(self, conn_conf, test_graph_name, clean_db):
@@ -2162,135 +1303,13 @@ class TestReDoS:
             result = db.fetch_docs("ReDoS")
             assert len(result) == len(redos_patterns)
 
-    def test_filter_with_potential_redos(self, conn_conf, test_graph_name, clean_db):
-        """Filter operations with ReDoS-vulnerable patterns."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            docs = [{"id": "target", "data": "normal_value"}]
-            db.upsert_docs_batch(docs, "ReDoSFilter", match_keys=["id"])
 
-            # These could be catastrophic if the filter uses regex matching
-            evil_filters = [
-                ".*" * 20 + "x",
-                "(a+)+" * 10,
-                "((a+)+)+" * 5,
-            ]
-
-            for pattern in evil_filters:
-                try:
-                    # This should NOT hang
-                    result = db.fetch_docs(
-                        "ReDoSFilter",
-                        filters=["==", pattern, "data"],
-                        limit=1,
-                    )
-                    assert isinstance(result, list)
-                except Exception:
-                    pass  # Exception is fine, hanging is not
-
-
-# =============================================================================
-# LABEL & RELATIONSHIP TYPE ABUSE
-# =============================================================================
-
-
-class TestLabelAbuse:
+class TestLabelAbuse(LabelAbuseCases):
     """Abuse label and relationship type naming."""
 
-    def test_very_long_label_name(self, conn_conf, test_graph_name, clean_db):
-        """Extremely long label names."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            # 1000 character label name
-            long_label = "A" * 1000
-            docs = [{"id": "1"}]
-            try:
-                db.upsert_docs_batch(docs, long_label, match_keys=["id"])
-            except Exception:
-                pass  # May be rejected
 
-    def test_numeric_label_name(self, conn_conf, test_graph_name, clean_db):
-        """Labels that are purely numeric."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            numeric_labels = ["123", "0", "-1", "3.14", "1e10"]
-            for label in numeric_labels:
-                docs = [{"id": "1"}]
-                try:
-                    db.upsert_docs_batch(docs, label, match_keys=["id"])
-                except Exception:
-                    pass
-
-    def test_unicode_label_names(self, conn_conf, test_graph_name, clean_db):
-        """Labels with various Unicode characters."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            unicode_labels = [
-                "Ümläüt",
-                "日本語",
-                "Ελληνικά",
-                "العربية",
-                "🔥Fire🔥",
-            ]
-            for label in unicode_labels:
-                docs = [{"id": "1"}]
-                try:
-                    db.upsert_docs_batch(docs, label, match_keys=["id"])
-                    result = db.fetch_docs(label)
-                    assert len(result) == 1
-                except Exception:
-                    pass  # Unicode labels may not be supported
-
-    def test_reserved_label_names(self, conn_conf, test_graph_name, clean_db):
-        """Try to use reserved/internal label names."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            reserved = [
-                "_internal",
-                "__system__",
-                "Node",  # Base type in some systems
-                "Relationship",
-                "Entity",
-            ]
-            for label in reserved:
-                docs = [{"id": "1"}]
-                try:
-                    db.upsert_docs_batch(docs, label, match_keys=["id"])
-                except Exception:
-                    pass
-
-
-# =============================================================================
-# QUERY COMPLEXITY ATTACKS
-# =============================================================================
-
-
-class TestQueryComplexity:
+class TestQueryComplexity(QueryComplexityCases):
     """Queries designed to be computationally expensive."""
-
-    def test_deeply_nested_optional_match(self, conn_conf, test_graph_name, clean_db):
-        """Complex nested optional match patterns."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            # Create some data
-            docs = [{"id": str(i)} for i in range(10)]
-            db.upsert_docs_batch(docs, "Complex", match_keys=["id"])
-
-            # Query with many optional matches
-            query = """
-                MATCH (n:Complex)
-                OPTIONAL MATCH (n)-[:REL1]->(a)
-                OPTIONAL MATCH (n)-[:REL2]->(b)
-                OPTIONAL MATCH (n)-[:REL3]->(c)
-                OPTIONAL MATCH (n)-[:REL4]->(d)
-                OPTIONAL MATCH (n)-[:REL5]->(e)
-                RETURN count(*)
-            """
-            try:
-                result = db.execute(query)
-                assert result.result_set[0][0] == 10
-            except Exception:
-                pass
 
     def test_union_bomb(self, conn_conf, test_graph_name, clean_db):
         """Many UNION clauses."""
@@ -2309,35 +1328,8 @@ class TestQueryComplexity:
             except Exception:
                 pass
 
-    def test_with_chain_explosion(self, conn_conf, test_graph_name, clean_db):
-        """Long chain of WITH clauses accumulating data."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            docs = [{"id": str(i)} for i in range(5)]
-            db.upsert_docs_batch(docs, "WithChain", match_keys=["id"])
 
-            query = """
-                MATCH (n:WithChain)
-                WITH collect(n) AS nodes1
-                WITH nodes1, size(nodes1) AS s1
-                WITH nodes1, s1, s1 * 2 AS s2
-                WITH nodes1, s1, s2, s1 + s2 AS s3
-                WITH nodes1, s1, s2, s3, s1 * s2 * s3 AS s4
-                RETURN s1, s2, s3, s4
-            """
-            try:
-                result = db.execute(query)
-                assert len(result.result_set) > 0
-            except Exception:
-                pass
-
-
-# =============================================================================
-# SCHEMA EVOLUTION ATTACKS
-# =============================================================================
-
-
-class TestSchemaEvolution:
+class TestSchemaEvolution(SchemaEvolutionCases):
     """Test rapid schema changes and type mutations."""
 
     def test_property_type_mutation(self, conn_conf, test_graph_name, clean_db):
@@ -2365,150 +1357,10 @@ class TestSchemaEvolution:
             # Should have exactly one node (upserted multiple times)
             assert len(result) == 1
 
-    def test_add_remove_properties_rapidly(self, conn_conf, test_graph_name, clean_db):
-        """Add and remove properties in rapid succession."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            for i in range(20):
-                # Add new property
-                doc = {"id": "evolving", f"prop_{i}": f"value_{i}"}
-                db.upsert_docs_batch([doc], "Evolving", match_keys=["id"])
 
-            result = db.fetch_docs("Evolving")
-            assert len(result) == 1
-            # Should have accumulated all properties
-            assert "prop_19" in result[0]
-
-
-# =============================================================================
-# BOUNDARY VALUE ANALYSIS
-# =============================================================================
-
-
-class TestBoundaryValueAnalysis:
+class TestBoundaryValueAnalysis(BoundaryValueAnalysisCases):
     """Systematic boundary value testing."""
 
-    def test_string_length_boundaries(self, conn_conf, test_graph_name, clean_db):
-        """Test strings at various length boundaries."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            # Test at power-of-two boundaries
-            lengths = [0, 1, 255, 256, 1023, 1024, 65535, 65536]
 
-            for length in lengths:
-                docs = [{"id": f"len_{length}", "data": "x" * length}]
-                try:
-                    db.upsert_docs_batch(docs, "StringBounds", match_keys=["id"])
-                except Exception:
-                    pass
-
-            result = db.fetch_docs("StringBounds")
-            assert len(result) > 0
-
-    def test_array_length_boundaries(self, conn_conf, test_graph_name, clean_db):
-        """Test arrays at various length boundaries."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            lengths = [0, 1, 100, 1000, 10000]
-
-            for length in lengths:
-                arr = list(range(length))
-                docs = [{"id": f"arr_{length}", "data": arr}]
-                try:
-                    db.upsert_docs_batch(docs, "ArrayBounds", match_keys=["id"])
-                except Exception:
-                    pass  # Large arrays may not be supported
-
-    def test_property_count_boundaries(self, conn_conf, test_graph_name, clean_db):
-        """Test documents with boundary number of properties."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            counts = [1, 10, 100, 500, 1000]
-
-            for count in counts:
-                doc: dict[str, str | int] = {"id": f"props_{count}"}
-                for i in range(count):
-                    doc[f"p{i}"] = i
-
-                try:
-                    db.upsert_docs_batch([doc], "PropCount", match_keys=["id"])
-                except Exception:
-                    pass
-
-
-# =============================================================================
-# PATHOLOGICAL ID PATTERNS
-# =============================================================================
-
-
-class TestPathologicalIds:
+class TestPathologicalIds(PathologicalIdsCases):
     """IDs designed to cause problems."""
-
-    def test_collision_prone_ids(self, conn_conf, test_graph_name, clean_db):
-        """IDs that might collide in weak hash functions."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            # These pairs are known to collide in some hash functions
-            collision_pairs = [
-                ("aaa", "bbb"),  # May collide in some weak hashes
-                ("", " "),  # Empty vs space
-                ("0", "00"),  # Leading zeros
-                ("null", "NULL"),  # Case variants
-            ]
-
-            all_ids = [id for pair in collision_pairs for id in pair]
-            docs = [{"id": id, "unique_marker": i} for i, id in enumerate(all_ids)]
-            db.upsert_docs_batch(docs, "Collisions", match_keys=["id"])
-
-            result = db.fetch_docs("Collisions")
-            # All should be stored as distinct
-            assert len(result) == len(all_ids)
-
-    def test_lookalike_ids(self, conn_conf, test_graph_name, clean_db):
-        """IDs that look similar but are different."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            lookalikes = [
-                "O0",  # O (letter) vs 0 (zero)
-                "0O",
-                "l1",  # l (letter) vs 1 (one)
-                "1l",
-                "rn",  # looks like 'm'
-                "m",
-                "vv",  # looks like 'w'
-                "w",
-            ]
-
-            docs = [{"id": id, "marker": i} for i, id in enumerate(lookalikes)]
-            db.upsert_docs_batch(docs, "Lookalikes", match_keys=["id"])
-
-            result = db.fetch_docs("Lookalikes")
-            assert len(result) == len(lookalikes)
-
-    def test_id_with_sql_keywords(self, conn_conf, test_graph_name, clean_db):
-        """IDs that are SQL keywords."""
-        _ = clean_db
-        with ConnectionManager(connection_config=conn_conf) as db:
-            sql_keywords = [
-                "SELECT",
-                "INSERT",
-                "UPDATE",
-                "DELETE",
-                "DROP",
-                "TABLE",
-                "DATABASE",
-                "INDEX",
-                "FROM",
-                "WHERE",
-                "JOIN",
-                "UNION",
-                "GROUP",
-                "ORDER",
-                "HAVING",
-            ]
-
-            docs = [{"id": kw} for kw in sql_keywords]
-            db.upsert_docs_batch(docs, "SQLKeywords", match_keys=["id"])
-
-            result = db.fetch_docs("SQLKeywords")
-            assert len(result) == len(sql_keywords)

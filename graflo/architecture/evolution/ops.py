@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from collections.abc import Sequence
+from typing import Annotated, Any, Literal
 
 from pydantic import Field as PydanticField
 from pydantic import model_validator
@@ -13,6 +14,37 @@ from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.identity_funnel import IdentityFunnel
 from graflo.architecture.schema.vertex import FieldType, SecondaryIdentity, Vertex
 from graflo.onto import DBType
+
+
+def validate_rename_map_is_injective(
+    renames: dict[str, str], *, kind: str, merge_hint: str
+) -> None:
+    """Reject a rename map that would collapse two names onto one.
+
+    A rename is a relabelling: it must not change how many types exist. Two sources
+    sharing a target is a *merge*, and the merge ops exist precisely because merging
+    needs decisions a rename cannot express — which properties survive, how identity
+    combines, what happens to edges that become self-loops. Left unchecked the
+    collapse is silent: the name-keyed lookup maps in ``VertexConfig`` / ``EdgeConfig``
+    keep the last definition and the earlier one is shadowed but still serialized.
+    """
+    collisions: dict[str, list[str]] = {}
+    for source, target in renames.items():
+        collisions.setdefault(target, []).append(source)
+    collapsed = {
+        target: sorted(sources)
+        for target, sources in collisions.items()
+        if len(sources) > 1
+    }
+    if collapsed:
+        detail = "; ".join(
+            f"{target!r} is the target of {sources}"
+            for target, sources in sorted(collapsed.items())
+        )
+        raise ValueError(
+            f"{kind} rename map is not injective: {detail}. "
+            f"Renaming cannot merge types — use {merge_hint}."
+        )
 
 
 class RemoveVerticesOp(ConfigBaseModel):
@@ -43,6 +75,22 @@ class MergeVerticesOp(ConfigBaseModel):
         description=(
             "Resulting vertex type name. If it already exists, source vertices are "
             "merged into it. If it does not exist, a new vertex is built from all sources."
+        ),
+    )
+    allow_self_relations: bool = PydanticField(
+        default=False,
+        description=(
+            "Accept edges whose endpoints both land on ``into``. A self-relation makes "
+            "both endpoints share one accumulator slot, so assembly merges rows that "
+            "were previously separate nodes. Rejected unless set."
+        ),
+    )
+    allow_row_fusion: bool = PydanticField(
+        default=False,
+        description=(
+            "Accept resource pipelines that produce ``into`` more than once at the same "
+            "level. Those steps then write to one accumulator slot, fusing what a single "
+            "source document emitted as two entities. Rejected unless set."
         ),
     )
 
@@ -311,8 +359,17 @@ class RenameVerticesOp(ConfigBaseModel):
     op: Literal["rename_vertices"] = "rename_vertices"
     vertices: dict[str, str] = PydanticField(
         ...,
-        description="Vertex rename map: ``{old_vertex: new_vertex}``.",
+        description="Vertex rename map: ``{old_vertex: new_vertex}``. Must be injective.",
     )
+
+    @model_validator(mode="after")
+    def _reject_collapsing_map(self) -> RenameVerticesOp:
+        validate_rename_map_is_injective(
+            self.vertices,
+            kind="rename_vertices",
+            merge_hint="MergeVerticesOp(sources=[...], into=...)",
+        )
+        return self
 
 
 class RenameRelationsOp(ConfigBaseModel):
@@ -321,8 +378,17 @@ class RenameRelationsOp(ConfigBaseModel):
     op: Literal["rename_relations"] = "rename_relations"
     relations: dict[str, str] = PydanticField(
         ...,
-        description="Relation rename map: ``{old_relation: new_relation}``.",
+        description="Relation rename map: ``{old_relation: new_relation}``. Must be injective.",
     )
+
+    @model_validator(mode="after")
+    def _reject_collapsing_map(self) -> RenameRelationsOp:
+        validate_rename_map_is_injective(
+            self.relations,
+            kind="rename_relations",
+            merge_hint="MergeEdgesOp(sources=[...], into=...)",
+        )
+        return self
 
 
 class RenameResourcesOp(ConfigBaseModel):
@@ -331,8 +397,22 @@ class RenameResourcesOp(ConfigBaseModel):
     op: Literal["rename_resources"] = "rename_resources"
     resources: dict[str, str] = PydanticField(
         ...,
-        description="Ingestion resource rename map: ``{old_resource: new_resource}``.",
+        description=(
+            "Ingestion resource rename map: ``{old_resource: new_resource}``. Must be injective."
+        ),
     )
+
+    @model_validator(mode="after")
+    def _reject_collapsing_map(self) -> RenameResourcesOp:
+        # IngestionModel already rejects duplicate resource names, so a collapsing
+        # map fails downstream anyway — but with a message about the model rather
+        # than about the op the author actually wrote.
+        validate_rename_map_is_injective(
+            self.resources,
+            kind="rename_resources",
+            merge_hint="ComposeManifestsOp with explicit resource_renames",
+        )
+        return self
 
 
 class RemoveEdgesOp(ConfigBaseModel):
@@ -901,3 +981,37 @@ ManifestOp = Annotated[
     | ComposeManifestsOp,
     PydanticField(discriminator="op"),
 ]
+
+
+# Ops whose effect extends past `schema` into `ingestion_model`. Applying one to a
+# manifest that carries no ingestion block silently drops that half of the work, which
+# matters when schema and resources are stored as separate registry artifacts: the
+# schema gains renamed vertices while the resources keep pointing at the old names.
+# Every op in the vocabulary is classified — see
+# ``test_evolution_codec.py::test_every_op_is_classified_for_ingestion_reach``.
+INGESTION_REWRITING_OPS: frozenset[str] = frozenset(
+    {
+        "add_inverse_edges",
+        "merge_edges",
+        "merge_vertices",
+        "project_manifest",
+        "remove_edges",
+        "remove_vertex_properties",
+        "remove_vertices",
+        "rename_relations",
+        "rename_resources",
+        "rename_vertex_properties",
+        "rename_vertices",
+        "replace_identity",
+        "sanitize",
+    }
+)
+
+
+def ops_reaching_ingestion(ops: Sequence[Any]) -> list[str]:
+    """Names of *ops* whose effect extends into ``ingestion_model``, in order."""
+    return [
+        name
+        for name in (getattr(op, "op", None) for op in ops)
+        if isinstance(name, str) and name in INGESTION_REWRITING_OPS
+    ]

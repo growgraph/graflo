@@ -127,7 +127,7 @@ BACKENDS: list[Any] = [
     pytest.param(_postgres_config, id="postgres"),
     pytest.param(_graflo_backend_config, id="graflo_backend"),
     pytest.param(_nebula_config, id="nebula", marks=pytest.mark.nebula),
-    pytest.param(_tigergraph_config, id="tigergraph", marks=pytest.mark.slow),
+    pytest.param(_tigergraph_config, id="tigergraph", marks=pytest.mark.tigergraph),
 ]
 
 
