@@ -183,6 +183,13 @@
             "target": "https://ontology.growgraph.dev/graflo/GrafloArtifact"
         },
         {
+            "id": "sub:https://ontology.growgraph.dev/graflo/NamingConvention->https://ontology.growgraph.dev/graflo/GrafloArtifact",
+            "kind": "subClassOf",
+            "label": "subClassOf",
+            "source": "https://ontology.growgraph.dev/graflo/NamingConvention",
+            "target": "https://ontology.growgraph.dev/graflo/GrafloArtifact"
+        },
+        {
             "id": "sub:https://ontology.growgraph.dev/graflo/ProtoTransform->http://www.w3.org/ns/prov#Activity",
             "kind": "subClassOf",
             "label": "subClassOf",
@@ -435,6 +442,13 @@
             "target": "https://ontology.growgraph.dev/graflo/Schema"
         },
         {
+            "id": "prop:https://ontology.growgraph.dev/graflo/hasNamingConvention",
+            "kind": "objectProperty",
+            "label": "has naming convention",
+            "source": "https://ontology.growgraph.dev/graflo/GraphMetadata",
+            "target": "https://ontology.growgraph.dev/graflo/NamingConvention"
+        },
+        {
             "id": "prop:https://ontology.growgraph.dev/graflo/hasBranchCondition",
             "kind": "objectProperty",
             "label": "hasBranchCondition",
@@ -475,6 +489,27 @@
             "label": "keySelectionMode",
             "source": "https://ontology.growgraph.dev/graflo/KeySelectionConfig",
             "target": "https://ontology.growgraph.dev/graflo/KeySelectionMode"
+        },
+        {
+            "id": "prop:https://ontology.growgraph.dev/graflo/propertyCase",
+            "kind": "objectProperty",
+            "label": "property case",
+            "source": "https://ontology.growgraph.dev/graflo/NamingConvention",
+            "target": "https://ontology.growgraph.dev/graflo/NameCase"
+        },
+        {
+            "id": "prop:https://ontology.growgraph.dev/graflo/relationCase",
+            "kind": "objectProperty",
+            "label": "relation case",
+            "source": "https://ontology.growgraph.dev/graflo/NamingConvention",
+            "target": "https://ontology.growgraph.dev/graflo/NameCase"
+        },
+        {
+            "id": "prop:https://ontology.growgraph.dev/graflo/vertexCase",
+            "kind": "objectProperty",
+            "label": "vertex case",
+            "source": "https://ontology.growgraph.dev/graflo/NamingConvention",
+            "target": "https://ontology.growgraph.dev/graflo/NameCase"
         },
         {
             "id": "prop:https://ontology.growgraph.dev/graflo/hasDress",
@@ -610,12 +645,12 @@
             "label": "Core"
         },
         {
-            "id": "ingestionmodel",
-            "label": "IngestionModel"
-        },
-        {
             "id": "schema",
             "label": "Schema"
+        },
+        {
+            "id": "ingestionmodel",
+            "label": "IngestionModel"
         },
         {
             "id": "bindings",
@@ -1193,6 +1228,55 @@
         },
         {
             "comment": null,
+            "datatypeProperties": [],
+            "enumValues": [
+                {
+                    "label": "camelCase",
+                    "value": "camel"
+                },
+                {
+                    "label": "kebab-case",
+                    "value": "kebab"
+                },
+                {
+                    "label": "PascalCase",
+                    "value": "pascal"
+                },
+                {
+                    "label": "preserve",
+                    "value": "preserve"
+                },
+                {
+                    "label": "snake_case",
+                    "value": "snake"
+                },
+                {
+                    "label": "UPPER_SNAKE_CASE",
+                    "value": "upper_snake"
+                }
+            ],
+            "group": "schema",
+            "id": "https://ontology.growgraph.dev/graflo/NameCase",
+            "kind": "enum",
+            "label": "NameCase",
+            "local": "NameCase"
+        },
+        {
+            "comment": "Manifest-facing declaration of how a schema spells the identifiers it invents.",
+            "datatypeProperties": [
+                {
+                    "label": "singularVertexNames",
+                    "range": "boolean"
+                }
+            ],
+            "group": "schema",
+            "id": "https://ontology.growgraph.dev/graflo/NamingConvention",
+            "kind": "gf",
+            "label": "NamingConvention",
+            "local": "NamingConvention"
+        },
+        {
+            "comment": null,
             "datatypeProperties": [
                 {
                     "label": "transformFunction",
@@ -1470,5 +1554,5 @@
         }
     ],
     "universalRoot": "https://ontology.growgraph.dev/graflo/GrafloArtifact",
-    "version": "1.4.0"
+    "version": "1.5.0"
 }

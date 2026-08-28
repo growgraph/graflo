@@ -22,7 +22,7 @@ from graflo.architecture.contract.bindings.connectors import (
 )
 
 GF_ONTOLOGY_IRI = "https://ontology.growgraph.dev/graflo"
-GF_VERSION = "1.4.0"
+GF_VERSION = "1.5.0"
 GF_VERSION_IRI = f"{GF_ONTOLOGY_IRI}/{GF_VERSION}"
 GF_BASE = "https://ontology.growgraph.dev/graflo/"
 GF = Namespace(GF_BASE)
@@ -123,6 +123,17 @@ description = GF.description
 # alternative labels reuse SKOS rather than minting parallel vocabulary.
 semanticIri = GF.semanticIri
 unit = GF.unit
+
+# Declared naming style. Like the grounding terms above, these are descriptive:
+# they record how the schema's invented identifiers were spelled, and nothing
+# consults them at runtime.
+NamingConvention = GF.NamingConvention
+NameCase = GF.NameCase
+hasNamingConvention = GF.hasNamingConvention
+vertexCase = GF.vertexCase
+relationCase = GF.relationCase
+propertyCase = GF.propertyCase
+singularVertexNames = GF.singularVertexNames
 enumValue = GF.enumValue
 fieldType = GF.fieldType
 dbFlavor = GF.dbFlavor
@@ -212,6 +223,15 @@ FIELD_TYPE_INDIVIDUALS: dict[str, object] = {
     "BOOL": GF.BOOL,
     "STRING": GF.STRING,
     "DATETIME": GF.DATETIME,
+}
+
+NAME_CASE_INDIVIDUALS: dict[str, object] = {
+    "pascal": GF.PascalCase,
+    "camel": GF.CamelCase,
+    "snake": GF.SnakeCase,
+    "upper_snake": GF.UpperSnakeCase,
+    "kebab": GF.KebabCase,
+    "preserve": GF.PreserveCase,
 }
 
 BOUND_SOURCE_KIND_INDIVIDUALS: dict[str, object] = {

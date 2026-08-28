@@ -8,6 +8,7 @@ from pydantic import Field as PydanticField
 from pydantic import field_validator
 
 from graflo.architecture.base import ConfigBaseModel
+from graflo.architecture.schema.naming import NamingConvention
 from graflo.architecture.schema.semantics import Semantics
 
 _SEMVER_RE = re.compile(
@@ -40,6 +41,16 @@ class GraphMetadata(ConfigBaseModel):
     semantics: Semantics | None = PydanticField(
         default=None,
         description="Optional external-vocabulary anchors for the schema as a whole.",
+    )
+    naming: NamingConvention | None = PydanticField(
+        default=None,
+        description=(
+            "Optional declaration of the naming style this schema's invented "
+            "identifiers follow. Purely descriptive: nothing consults it at "
+            "runtime. Its audience is the next author — human or agent — "
+            "extending this schema, who would otherwise have to infer the "
+            "convention from the names and usually infers it wrong."
+        ),
     )
 
     @field_validator("version")
