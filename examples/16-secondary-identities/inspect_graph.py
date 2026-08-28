@@ -53,14 +53,14 @@ def _endpoint_label(endpoint: Any) -> str:
     help="GraFlo file backend root directory.",
 )
 def main(backend_dir: Path) -> None:
-    """Print vertices and issued_by edges resolved to primary keys."""
+    """Print vertices and issuedBy edges resolved to primary keys."""
     reader = GraFloBackendReader(backend_dir)
     schema = reader.read_schema()
     index = reader.read_index()
 
     instruments = _all_vertices(reader, "instrument")
     issuers = _all_vertices(reader, "issuer")
-    edges = _all_edges(reader, ("instrument", "issuer", "issued_by"))
+    edges = _all_edges(reader, ("instrument", "issuer", "issuedBy"))
 
     click.echo(f"Backend: {backend_dir.resolve()}")
     click.echo(f"Schema:  {schema.metadata.name}")
@@ -84,7 +84,7 @@ def main(backend_dir: Path) -> None:
     for doc in sorted(issuers, key=lambda d: d.get("iid", "")):
         click.echo(f"  {doc.get('iid')}: lei={doc.get('lei')}  {doc.get('name')}")
     click.echo("")
-    click.echo("issued_by edges (source/target are primary identities):")
+    click.echo("issuedBy edges (source/target are primary identities):")
     if not edges:
         click.echo("  (none — did ingest.py run?)")
         return

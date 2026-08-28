@@ -46,7 +46,7 @@ core_schema:
         edges:
         -   source: instrument
             target: issuer
-            relation: issued_by
+            relation: issuedBy
             directed: true
             identities: []
             properties:

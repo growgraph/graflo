@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [Unreleased]
+## [1.11.0]
 
 ### Added
 
@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `property_case` carries an obligation the other two do not. **A property name binds to a key in the source document**, so any value other than `preserve` requires emitting the rename that `NamingConvention.rename_map()` computes; without it the schema declares `customerEmail` while the document still holds `customer_email`, and the column populates with nothing, silently.
 
 - **Conversion and cross-convention identity** — `convert()` restyles an identifier without being told its current style (`split_words` recovers the words from any of them, so conversion cannot be told the wrong origin), and `canonical_key()` / `same_concept()` decide whether two names denote one concept. **Merges must compare on those**: composition matches by name, so a PascalCase manifest merged with a snake_case one otherwise yields `Customer` and `customer` as unrelated types with the data split between them and nothing raising. Recorded as `CORE-MERGE-001` for graflo's own compose ops.
+
+### Changed
+
+- **Example manifests adopt the declared relation convention** — `is_child_of` → `isChildOf`, `is_parent_of` → `isParentOf` (example 12), `issued_by` → `issuedBy` (example 16), with their scripts, READMEs, docs pages and example 16's committed backend artifacts (whose filenames encode the relation).
+
+  Examples **7** and **11** are deliberately left in snake_case: their relation names come from a `relation_type` column in `relations.csv`, not from the manifest. A name the data supplies is not one the schema invented, so the convention no longer governs it — the same reason `property_case` defaults to `preserve`. Restyling those would mean rewriting sample data to match a cosmetic preference.
 
 - **Ontology 1.4.0 → 1.5.0.** `gf:NamingConvention`, `gf:NameCase` with six individuals, `gf:hasNamingConvention`, `gf:vertexCase`, `gf:relationCase`, `gf:propertyCase`, `gf:singularVertexNames`, plus JSON-LD context terms and a round-trip test. Unlike `gf:semanticIri` these carry `rdfs:domain`: that property is domain-free because it attaches at four points and no single domain is true of it, while the naming block attaches at exactly one — and the domain is what lets the docs viz reach `gf:NamingConvention` rather than leaving it outside every derived block.
 

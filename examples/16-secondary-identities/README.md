@@ -25,7 +25,7 @@ uv run python inspect_graph.py
 | `source_match` / `target_match` | Per-endpoint selector (name, field list, or `secondary`) |
 | `endpoints_on_ambiguous: all` | Soft uniqueness — attach to every match when a key collides |
 
-Expected after ingest: **3** instruments, **3** issuers, **3** `issued_by` edges
+Expected after ingest: **3** instruments, **3** issuers, **3** `issuedBy` edges
 whose endpoints are the primary identities (`S1→I1`, `S2→I2`, `S3→I3`) — not the
 ISINs/LEIs from `links.csv`.
 

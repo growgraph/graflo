@@ -15,10 +15,10 @@ schema:
             edges:
             -   source: person
                 target: person
-                relation: is_child_of
+                relation: isChildOf
             -   source: person
                 target: person
-                relation: is_parent_of
+                relation: isParentOf
     db_profile: {}
 
 ingestion_model:
@@ -58,10 +58,10 @@ ingestion_model:
                 links:
                 -   source_role: self
                     target_role: parent
-                    relation: is_child_of
+                    relation: isChildOf
                 -   source_role: self
                     target_role: child
-                    relation: is_parent_of
+                    relation: isParentOf
 
 bindings:
     connectors:

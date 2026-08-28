@@ -3,7 +3,7 @@
 Each CSV row encodes a person along with their parent and child IDs.
 Three 'vertex: person' steps with distinct roles (self / parent / child) extract
 the three role-distinct vertices from the same flat row. A single 'edge' step
-with a 'links' list emits both relationship types — is_child_of and is_parent_of
+with a 'links' list emits both relationship types — isChildOf and isParentOf
 — without needing to repeat the vertex extraction.
 
 Run from this directory:
