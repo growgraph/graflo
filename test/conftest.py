@@ -133,7 +133,14 @@ def schema_obj():
 def ingest_atomic(conn_conf, current_path, test_db_name, schema_o, mode, n_cores=1):
     path = Path(current_path) / f"data/{mode}"
 
-    conn_conf.database = test_db_name
+    # Not `conn_conf.database = ...`: Nebula's space and PostgreSQL's schema
+    # live on `schema_name`, and assigning `database` there is silently
+    # ignored — so the ingest would land in whatever namespace the config
+    # already pointed at, and the caller's assertions would read a different
+    # one. See test/db/backends.set_target_namespace.
+    from test.db.backends import set_target_namespace
+
+    set_target_namespace(conn_conf, test_db_name)
 
     # Create Bindings for file-based resources
     # Map each resource to a FileConnector that matches files in the data directory

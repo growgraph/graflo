@@ -10,13 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`Connection.vertex_address`** — how a backend addresses a vertex in an edge query. The default is the first identity field present, which is what every backend but NebulaGraph wants; Nebula overrides it to compose the VID from *all* identity fields, the way its write path already did. Traversal now resolves anchors and far endpoints through it.
+
+- **An ingest suite for NebulaGraph** (`test/db/nebulas/test_ingest.py`) — Nebula was the only graph backend with no `define_schema` + `ingest` coverage in its own directory, so nothing checked that a real manifest survives the path every other backend is tested on. It runs the same `review` dataset as the FalkorDB, Memgraph and Neo4j suites, so its counts are directly comparable. Three separate bugs below were found by writing it.
+
 - **`ConnectionCapability.SCHEMA_DDL`** and the matching `Connection.supports_schema_ddl` ClassVar. A backend with no migration emitter is now refused **by name, before a connection is opened**, and the error names the backends that do have one — so a caller can map it to a 501 instead of relaying an opaque driver error raised from inside an emitter. Declared on ArangoDB and Neo4j; a test pins the declaration against the executor's emitter registry so the two cannot drift.
 
   It says an emitter is registered — not that every operation is implemented, and not that applying to a *populated* target works. It does not, on any backend.
 
 - **A first-write regression suite** (`test/db/test_first_write_guard.py`) asserting on every backend that `apply_target_schema(recreate=False)` refuses a populated target, and that `recreate=True` still succeeds. The guard protects a first write from clobbering a populated graph; migration inherits it by routing DDL through the same call, which is why migration cannot run against a real database today. Pinning it is what keeps the fix honest — migration needs its own entry point rather than a relaxed guard.
 
-- **[Adding a database backend](docs/guides/adding_a_backend.md)** — the twelve registration points a new backend needs, the 19 abstract methods grouped by concern, the capability flags, the traversal endpoint-name contract, and how to wire the test suites. Previously tribal knowledge: `contributing.md` said nothing about implementing a `Connection`.
+- **Adding a database backend** — the twelve registration points a new backend needs, the 19 abstract methods grouped by concern, the capability flags, the traversal endpoint-name contract, and how to wire the test suites. Previously tribal knowledge: `contributing.md` said nothing about implementing a `Connection`.
 
 - **PostgreSQL is now a graph export source.** `PostgresTargetWriteMixin` implements both `fetch_all_docs` and `fetch_all_edges`, but never declared `supports_graph_export`, so `ConnectionManager.flavors_supporting(GRAPH_EXPORT)` excluded it and `GraphEngine.migrate_graph()` refused it as a source. The capability is now declared, taking bulk export from three backends to four.
 
@@ -26,11 +30,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **NebulaGraph reports what it could not do.** Connect-time space selection and tag discovery swallowed every exception bare. Failing to select a space stays non-fatal (`define_schema` creates it) but is now logged; failing to *describe* a tag that `SHOW TAGS` just listed is logged at warning, because it leaves the tag with an empty property list and writes against it silently omit properties.
+
+- **`ingest_atomic` targets the namespace field each flavor actually reads.** It set `conn_conf.database`, which Nebula and PostgreSQL accept and ignore — their namespace is `schema_name`. The shared ingest helper could therefore never drive those two backends, which is a large part of why Nebula had no ingest test.
+
 - **One backend registry for the cross-backend test suites.** Five suites each carried their own `BACKENDS` list *and* their own flavor-to-config `if/elif` chain, so a new backend had to be added in five places and a per-backend setup fix applied only to whichever copies the author remembered. `test/db/backends.py` now holds `ALL_BACKENDS`, `config_for` and `backend_params`; a suite declares only which backends it covers, keeping its own reason for any it excludes. Opt-in markers are applied centrally, so a gated backend cannot be run unmarked by accident.
 
 - **`load_reserved_words` is no longer TigerGraph-specific.** It was an early return on `db_flavor != TIGERGRAPH`; reserved-word sources are now a `_RESERVED_WORD_SOURCES` mapping of flavor to (subpackage, JSON keys). A backend joins by dropping `reserved_words.json` into its own subpackage and adding a row. Behaviour is unchanged: TigerGraph resolves the same 214 words, every other flavor an empty set.
 
 ### Fixed
+
+- **NebulaGraph created its tags under the wrong names.** `define_vertex_classes` and `define_vertex_indexes` iterated logical vertex names, while reads, writes and `clear_data` all resolve through the db-aware `vertex_dbname`. Any manifest setting `vertex_storage_names` therefore declared tags nothing wrote to, and every ingest failed with `No schema found`. Both now resolve the storage name; `db_profile` lookups stay keyed on the logical name.
+
+- **NebulaGraph silently created no indexes for untyped properties.** A tag index over a `string` column must carry a length, and the DDL asked `field.type == FieldType.STRING` to decide which columns those were — but an untyped field (and `DATETIME`, and `UUID`) also lands on `string`. So a manifest that declares properties without explicit types — the common case — produced `CREATE TAG INDEX` statements Nebula rejected as `Invalid param!`, and the rejection was logged at debug and discarded. The result was a graph with no indexes at all, where every filtered read failed with `IndexNotFound` for no visible reason. Index-column typing now asks the same question the column DDL answered (`is_nebula_string_field`), and a rejected index is logged at **warning** with the consequence spelled out.
+
+- **NebulaGraph traversal returned empty for composite identities.** Anchor resolution took the first identity field as the vertex address, but Nebula's VID joins *every* identity field with `::`. A vertex identified by two fields resolved to a VID that exists nowhere, so `graph_neighbors` returned an empty container rather than raising — indistinguishable from a vertex with no neighbours. Fixed via `Connection.vertex_address`.
+
+- **`docker/nebula`'s Graph Studio pointed at the wrong port.** `NEBULA_ADDRESS` used `${NEBULA_PORT}`, the *host*-side port, against the container hostname; graphd always listens on `9669` inside the network. Studio could not connect whenever the mapped port differed from the default.
 
 - **FalkorDB's first-write guard never fired.** `_node_count()` probed the result object for `.data()` or iteration, but the driver's `QueryResult` exposes neither — it returns rows under `result_set`, the way every other query in that class already reads them. So the count was always `0`, and `apply_target_schema(recreate=False)` silently accepted a populated graph instead of raising `SchemaExistsError`. Found by the new first-write suite, which is the case for asserting a guard rather than trusting it.
 

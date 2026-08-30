@@ -741,6 +741,23 @@ class Connection(abc.ABC):
             f"Database flavor {self.flavor!r} does not support native bulk load"
         )
 
+    def vertex_address(
+        self, doc: dict[str, Any], identity_fields: Sequence[str]
+    ) -> str | None:
+        """How this backend addresses *doc* in an edge query.
+
+        Most backends key a vertex on a single value, so the first identity
+        field that is present is the address. NebulaGraph composes a VID from
+        *every* identity field, so it overrides this — without which a
+        composite identity resolves to a prefix that matches no edge, and the
+        traversal returns empty rather than failing.
+        """
+        for field in identity_fields:
+            value = doc.get(field)
+            if value is not None:
+                return str(value)
+        return None
+
     def graph_neighbors(
         self,
         vertex_type: str,

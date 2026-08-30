@@ -1510,7 +1510,7 @@ class ArangoConnection(Connection):
                 continue
             cleaned = strip_internal_properties(doc)
             for far_type in candidate_types:
-                identity = _vertex_identity_value(schema, far_type, cleaned)
+                identity = _vertex_identity_value(self, schema, far_type, cleaned)
                 if identity is None or (far_type, identity) in seen:
                     continue
                 seen.add((far_type, identity))

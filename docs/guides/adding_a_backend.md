@@ -79,6 +79,16 @@ Missing one of these is the usual cause of a confusing first failure.
 | 11 | `graflo/migrate/executor.py` — an emitter | Optional; pair it with `supports_schema_ddl = True` |
 | 12 | `graflo/filter/onto.py` | Only if you introduce a new `ExpressionFlavor` |
 
+### Addressing a vertex
+
+`Connection.vertex_address` says how your backend names a vertex in an edge
+query. The default — the first identity field present — is right for a backend
+that keys on one value. If yours composes an address from several fields
+(NebulaGraph joins every identity field with `::`), override it, and override
+it to match your write path exactly. A mismatch does not raise: the anchor
+resolves to an address that exists nowhere and traversal returns an empty
+container, which reads as "no neighbours".
+
 ### The traversal endpoint contract
 
 `db/traversal.py` normalises edge rows by matching column names against

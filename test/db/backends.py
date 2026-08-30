@@ -20,6 +20,8 @@ from typing import Any
 
 import pytest
 
+from graflo.onto import DBType
+
 #: Every flavor a cross-backend suite can address, in the order the suites
 #: list them. Not every suite covers all of these -- see each suite's own
 #: BACKENDS for what it excludes and why.
@@ -57,6 +59,28 @@ def backend_params(flavors: Sequence[str]) -> list[Any]:
         pytest.param(flavor, id=flavor, marks=OPT_IN_MARKS.get(flavor, ()))
         for flavor in flavors
     ]
+
+
+#: Which config field carries the namespace, per flavor. PostgreSQL's schema
+#: and Nebula's space live on ``schema_name``; everything else uses
+#: ``database``. Assigning ``database`` on the first two is *accepted and then
+#: ignored* — a silent no-op that is exactly what this mapping prevents.
+_NAMESPACE_FIELD: dict[DBType, str] = {
+    DBType.POSTGRES: "schema_name",
+    DBType.NEBULA: "schema_name",
+}
+
+
+def set_target_namespace(config: Any, name: str) -> None:
+    """Point *config* at namespace *name*, on whatever field its flavor reads.
+
+    Neo4j and Memgraph have no per-suite namespace on the community edition, so
+    they are left alone rather than given a name that would not take effect.
+    """
+    flavor = config.connection_type
+    if flavor in (DBType.NEO4J, DBType.MEMGRAPH):
+        return
+    setattr(config, _NAMESPACE_FIELD.get(flavor, "database"), name)
 
 
 def config_for(

@@ -95,14 +95,20 @@ def _incident_edges(
 
 
 def _vertex_identity_value(
-    schema: Schema, vertex_type: str, doc: dict[str, Any]
+    conn: Connection, schema: Schema, vertex_type: str, doc: dict[str, Any]
 ) -> str | None:
-    """Best-effort identity of *doc*, for cycle detection across hops."""
+    """Address of *doc*, as the backend expects it in an edge query.
+
+    Delegates to :meth:`Connection.vertex_address` so a backend that composes
+    its vertex id from several fields (NebulaGraph) is addressed the way it
+    stores things, rather than by the first identity field alone. The
+    ``_key`` / ``id`` / ``_id`` fallbacks stay for docs that carry a native id
+    but none of the declared identity fields.
+    """
     vertex = schema.core_schema.vertex_config[vertex_type]
-    for field in vertex.identity:
-        value = doc.get(field)
-        if value is not None:
-            return str(value)
+    address = conn.vertex_address(doc, vertex.identity)
+    if address is not None:
+        return address
     for fallback in ("_key", "id", "_id"):
         value = doc.get(fallback)
         if value is not None:
@@ -227,7 +233,7 @@ def bfs_neighbors(
                 for doc in _hydrate_far_endpoints(
                     conn, db_aware, schema, far_type, far_ids
                 ):
-                    identity = _vertex_identity_value(schema, far_type, doc)
+                    identity = _vertex_identity_value(conn, schema, far_type, doc)
                     if identity is None or (far_type, identity) in visited:
                         continue
                     visited.add((far_type, identity))
@@ -284,7 +290,7 @@ def _resolve_anchor_id(
     docs = conn.fetch_docs(storage, filters=filters, limit=1)
     if not docs:
         return None
-    return _vertex_identity_value(schema, anchor_type, docs[0])
+    return _vertex_identity_value(conn, schema, anchor_type, docs[0])
 
 
 def _fetch_edge_rows(
