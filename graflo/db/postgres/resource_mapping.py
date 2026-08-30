@@ -15,13 +15,13 @@ from typing import TYPE_CHECKING, Any
 
 from graflo.architecture.contract.ingestion.resource import Resource
 from graflo.architecture.schema.vertex import VertexConfig
-
-from ...architecture import EdgeConfig
-from .conn import EdgeTableInfo, SchemaIntrospectionResult
-from .inference_utils import (
+from graflo.db.sql.inference_utils import (
     detect_separator,
     split_by_separator,
 )
+
+from ...architecture import EdgeConfig
+from .conn import EdgeTableInfo, SchemaIntrospectionResult
 
 if TYPE_CHECKING:
     from graflo.util.fuzzy_matcher import FuzzyMatcher

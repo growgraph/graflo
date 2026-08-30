@@ -1,21 +1,33 @@
 # Graph export and migration
 
-Since **1.8.6**, GraFlo treats existing graph databases as **sources**: introspect schema and data from Neo4j or ArangoDB (or a file backend) and load into **any** supported target — another LPG, PostgreSQL, or disk — with **`GraphEngine.migrate_graph()`**. No manifest YAML is required for graph-to-graph moves.
+Since **1.8.6**, GraFlo treats existing graph databases as **sources**: introspect schema and data from Neo4j, ArangoDB or PostgreSQL (or a file backend) and load into **any** supported target — another LPG, PostgreSQL, or disk — with **`GraphEngine.migrate_graph()`**. No manifest YAML is required for graph-to-graph moves.
 
 Since **1.8.7**, **`GraFloBackendConfig`** adds a chunked on-disk backend that is both a durable export format and an optional intermediate store for large or repeated migrations.
+
+!!! warning "`migrate_graph()` cannot complete a move today"
+
+    Introspection and export both work, and every step below runs — but the
+    final write raises `ValueError: Empty resource container`, for **every**
+    source/target pair. `migrate_graph()` builds an empty `IngestionModel` and
+    then asks `DBWriter` to write through it, which has no resource to resolve.
+
+    Until that is fixed, use the pieces directly: `GraphEngine.export_graph()`
+    and `infer_schema_from_graph()` are unaffected, and
+    `define_schema()` + `ingest()` with an authored manifest is the working
+    path to load the result.
 
 ## Overview
 
 | Direction | Entry point | Source backends | Target backends |
 |---|---|---|---|
-| **Graph → graph** | `GraphEngine.migrate_graph()` | Neo4j, ArangoDB, file backend | Any supported `DBType` (LPG, PostgreSQL, file backend) |
-| Graph → file backend | `GraphEngine.migrate_graph()` | Neo4j, ArangoDB, file backend | `GraFloBackendConfig` |
+| **Graph → graph** | `GraphEngine.migrate_graph()` | Neo4j, ArangoDB, PostgreSQL, file backend | Any supported `DBType` (LPG, PostgreSQL, file backend) |
+| Graph → file backend | `GraphEngine.migrate_graph()` | Neo4j, ArangoDB, PostgreSQL, file backend | `GraFloBackendConfig` |
 | File backend → graph | `GraphEngine.migrate_graph()` | `GraFloBackendConfig` | Any supported LPG target |
 | File backend → relational | `GraphEngine.migrate_graph()` | `GraFloBackendConfig` | PostgreSQL (vertex + junction edge tables) |
 | Tabular/RDF/API → graph | `GraphEngine.ingest()` / `define_and_ingest()` | CSV / JSON / SQL / API manifest resources | Any supported target |
 | Resources → file backend | `GraphEngine.ingest()` / `define_and_ingest()` | CSV / JSON / SQL / API manifest resources | `GraFloBackendConfig` |
-| Graph schema only | `GraphEngine.infer_schema_from_graph()` | Neo4j, ArangoDB, file backend | — (returns `Schema`) |
-| In-memory export | `GraphEngine.export_graph()` | Neo4j, ArangoDB, file backend | — (returns `GraFloOutput`) |
+| Graph schema only | `GraphEngine.infer_schema_from_graph()` | Neo4j, ArangoDB, PostgreSQL, file backend | — (returns `Schema`) |
+| In-memory export | `GraphEngine.export_graph()` | Neo4j, ArangoDB, PostgreSQL, file backend | — (returns `GraFloOutput`) |
 
 **Manifest sources vs graph sources.** PostgreSQL, CSV, RDF, and APIs enter through a **`GraphManifest`** and actor pipelines ([Example 5](../../examples/example-5.md)). Existing graph databases enter through introspection — see the [Graph DB migration guide](../../guides/graph_db_migration.md).
 

@@ -5,7 +5,7 @@ Export a live graph to a chunked GraFlo file backend on disk, then replay into a
 ## Prerequisites
 
 - Python 3.11+
-- Optional graph source: Neo4j or ArangoDB (for export)
+- Optional graph source: Neo4j, ArangoDB or PostgreSQL (for export)
 - Optional connection configs via environment variables or `docker/<backend>/.env`
 
 ## When to use this

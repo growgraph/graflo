@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Schema inference works against any SQL engine SQLAlchemy can reflect**, not only PostgreSQL. The new `graflo.db.sql` package draws the line the old code never did: `SqlMetadataProvider` names the seven questions introspection asks — tables, columns, primary keys, unique columns, foreign keys, row counts, sample rows — and everything downstream is derived from the answers. PostgreSQL keeps its `pg_catalog` fast path by satisfying that protocol; `SqlAlchemyMetadataProvider` satisfies it for SQLite, MySQL, DuckDB, Snowflake, BigQuery or anything else with a dialect installed.
+
+  `SQLInferenceManager` now takes any provider, so inferring from MySQL, SQLite or DuckDB needs only the dialect installed and a SQLAlchemy engine. Note this does *not* wire up the `DBType.MYSQL` / `DBType.SQLITE` enum members — those still have no config class and remain placeholders; you construct the engine yourself. Guide: [SQL schema inference](docs/guides/sql_schema_inference.md).
+
+  The classification heuristics were lifted out of `PostgresConnection` unchanged, and it still exposes them as methods, now delegating. An equivalence suite points both providers at the same live PostgreSQL database and asserts they return the same graph — the only place the reflection path can be checked against a known-good one.
+
 - **`Connection.vertex_address`** — how a backend addresses a vertex in an edge query. The default is the first identity field present, which is what every backend but NebulaGraph wants; Nebula overrides it to compose the VID from *all* identity fields, the way its write path already did. Traversal now resolves anchors and far endpoints through it.
 
 - **An ingest suite for NebulaGraph** (`test/db/nebulas/test_ingest.py`) — Nebula was the only graph backend with no `define_schema` + `ingest` coverage in its own directory, so nothing checked that a real manifest survives the path every other backend is tested on. It runs the same `review` dataset as the FalkorDB, Memgraph and Neo4j suites, so its counts are directly comparable. Three separate bugs below were found by writing it.
@@ -29,6 +35,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   It is a `SparqlEndpointConfig` subclass, **not** a new `DBType` — SPARQL endpoints remain source-only, so this adds a vendor, not a backend.
 
 ### Changed
+
+- **One type table for every dialect.** `PostgresTypeMapper` moved to `graflo.db.sql.types.SqlTypeMapper` and grew the spellings other engines use — `INT64`, `FLOAT64`, `BIGNUMERIC`, `NVARCHAR`, `tinyint`, `BYTES` and friends. Entries are appended and exact matches are tried before the substring fallback, so no existing name resolves differently; a test pins that PostgreSQL's own spellings are unchanged. `PostgresTypeMapper` remains as a subclass.
+
+  An unrecognised type still becomes `STRING` with a warning rather than raising. Inference produces a draft for a modeller to correct, so refusing a whole database over one exotic column would be the wrong trade — deliberately the opposite of the write-side policy in `field_type_support`, where a wrong type corrupts data.
+
+- **Reflection gaps degrade instead of aborting.** Constraint reflection is not uniform across dialects — a warehouse that does not enforce keys may not implement the call at all, and SQLAlchemy signals that by raising. `SqlAlchemyMetadataProvider` now treats an unimplemented reflection method as "none declared", which is the honest answer, and logs when a call fails outright. The consequence is stated rather than hidden: with no foreign keys, edge detection falls back to name-based inference, which is weaker on denormalised schemas.
+
+- **`inference_utils` moved to `graflo.db.sql`.** Its heuristics are name-based and were never PostgreSQL-specific; leaving them under `postgres/` would have made the new package depend upwards on a single dialect.
+
+- **`test/db/sql` is a registered suite.** `run-tests.sh` only ran the named per-backend directories, and `other-tests` ignores `test/db` wholesale, so a new directory there would have been collected by nothing.
 
 - **NebulaGraph reports what it could not do.** Connect-time space selection and tag discovery swallowed every exception bare. Failing to select a space stays non-fatal (`define_schema` creates it) but is now logged; failing to *describe* a tag that `SHOW TAGS` just listed is logged at warning, because it leaves the tag with an empty property list and writes against it silently omit properties.
 
