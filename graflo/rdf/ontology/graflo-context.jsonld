@@ -194,6 +194,23 @@
             "@type": "@id"
         },
         "altLabel": "skos:altLabel",
+        "hasNamingConvention": {
+            "@id": "gf:hasNamingConvention",
+            "@type": "@id"
+        },
+        "vertexCase": {
+            "@id": "gf:vertexCase",
+            "@type": "@id"
+        },
+        "relationCase": {
+            "@id": "gf:relationCase",
+            "@type": "@id"
+        },
+        "propertyCase": {
+            "@id": "gf:propertyCase",
+            "@type": "@id"
+        },
+        "singularVertexNames": "gf:singularVertexNames",
         "enumValue": "gf:enumValue",
         "fieldType": {
             "@id": "gf:fieldType",

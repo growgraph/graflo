@@ -67,7 +67,7 @@ resources:
         lookup_only: true
       - from: instrument
         to: issuer
-        relation: issued_by
+        relation: issuedBy
         source_match: by_isin
         target_match: by_lei
 ```

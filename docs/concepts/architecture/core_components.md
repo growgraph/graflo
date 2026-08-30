@@ -396,7 +396,7 @@ An `Actor` describes how the current level of the document should be mapped/tran
 - `EdgeActor`: Creates edges between vertices. Operates in three modes:
   - **Static mode** (`from`/`to` set on both sides): vertex types declared at config time.
   - **Dynamic / mixed mode** (at least one of `source_type_field` / `target_type_field` / `source_role` / `target_role` set): vertex types resolved at extraction time by looking up accumulator slots. `source_role` / `target_role` are ergonomic aliases for `source_type_field` / `target_type_field` — the slot lookup is identical whether the slot was populated by `vertex+role` or `vertex_router+role` (with router role inferred from `type_field` when omitted).
-  - **Multi-link mode** (`links` list set): each item in `links` emits one edge intent per row. Use when one flat row encodes multiple distinct relationship types (e.g. `is_child_of` and `is_parent_of` from the same row).
+  - **Multi-link mode** (`links` list set): each item in `links` emits one edge intent per row. Use when one flat row encodes multiple distinct relationship types (e.g. `isChildOf` and `isParentOf` from the same row).
 - `VertexRouterActor`: Routes documents to the correct `VertexActor` based on a type field read from the document at runtime. Vertices are stored at `lindex.extend((role, 0))`; when `role` is omitted it is inferred from `type_field`. Optional router-level **`from`** provides a default `{vertex_field: doc_field}` projection; **`vertex_from_map`** overrides per resolved vertex type. Use when the vertex type varies per row; for a fixed vertex type with role-distinct slots, use `vertex+role` instead.
 
 ```mermaid
@@ -446,10 +446,10 @@ Both pairs are equivalent at runtime — they name the same path segment in `acc
 | Both static | Dynamic from key | `from: server, to: database, relation_from_key: true` |
 | Both dynamic (router) | Static | `source_role: src, target_role: tgt, relation: uses` |
 | Both dynamic (router) | Dynamic from field | `source_role: src, target_role: tgt, relation_field: rt` |
-| Both role-slot | Static | `source_role: self, target_role: parent, relation: is_child_of` |
+| Both role-slot | Static | `source_role: self, target_role: parent, relation: isChildOf` |
 | Mixed (static + dynamic) | Dynamic | `from: person, target_role: tgt, relation_field: rt` |
 | Mixed (dynamic + static) | Dynamic | `source_role: src, to: institution, relation_field: rt` |
-| Multiple relations from one row | Static per link | `links: [{source_role: self, target_role: parent, relation: is_child_of}, ...]` |
+| Multiple relations from one row | Static per link | `links: [{source_role: self, target_role: parent, relation: isChildOf}, ...]` |
 
 `source_type_field` / `target_type_field` (or `source_role` / `target_role`) must equal the accumulator slot segment of the upstream `VertexRouterActor` — `role` (inferred from `type_field` when omitted). For a static `vertex` step, `source_role` / `target_role` must equal that step’s `role`.
 

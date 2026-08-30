@@ -63,10 +63,10 @@ edge_config:
   edges:
     - source: person
       target: person
-      relation: is_child_of
+      relation: isChildOf
     - source: person
       target: person
-      relation: is_parent_of
+      relation: isParentOf
 ```
 
 ## Resource Mapping
@@ -105,10 +105,10 @@ resources:
           links:
             - source_role: self
               target_role: parent
-              relation: is_child_of
+              relation: isChildOf
             - source_role: self
               target_role: child
-              relation: is_parent_of
+              relation: isParentOf
 ```
 
 ## How it works
@@ -122,11 +122,11 @@ flowchart TD
     VA_child["vertex: person\nrole: child\nstores @ lindex.(child,0)\nkeep_fields=[id] — no passthrough"]
 
     EA["edge: links"]
-    L1["link 1\nsource_role=self → lindex.(self,0)\ntarget_role=parent → lindex.(parent,0)\nrelation=is_child_of"]
-    L2["link 2\nsource_role=self → lindex.(self,0)\ntarget_role=child → lindex.(child,0)\nrelation=is_parent_of"]
+    L1["link 1\nsource_role=self → lindex.(self,0)\ntarget_role=parent → lindex.(parent,0)\nrelation=isChildOf"]
+    L2["link 2\nsource_role=self → lindex.(self,0)\ntarget_role=child → lindex.(child,0)\nrelation=isParentOf"]
 
-    I1["EdgeIntent\nperson 12 → person 13\nis_child_of"]
-    I2["EdgeIntent\nperson 12 → person 21\nis_parent_of"]
+    I1["EdgeIntent\nperson 12 → person 13\nisChildOf"]
+    I2["EdgeIntent\nperson 12 → person 21\nisParentOf"]
     V["person vertices\n12: {id,name,age}\n13: {id}\n21: {id}"]
 
     CSV --> VA_self & VA_parent & VA_child
@@ -144,7 +144,7 @@ Step by step for row `person=12, parent=13, child=21, name=Bob, age=35`:
 1. **`vertex: person, role: self`** — renames `person → id`, then picks up `name=Bob` and `age=35` via passthrough. Stores at `lindex.(self, 0)`. Extraction reads from an effective merged observation (raw row + same-location transform output).
 2. **`vertex: person, role: parent`** — renames `parent → id`. `keep_fields: [id]` prevents `name`/`age` leaking in. Stores at `lindex.(parent, 0)`.
 3. **`vertex: person, role: child`** — renames `child → id`. `keep_fields: [id]` restricts passthrough. Stores at `lindex.(child, 0)`.
-4. **`edge: links`** — link 1 scans `acc_vertex` at `lindex.(self, 0)` and `lindex.(parent, 0)`, emits `(person 12 → person 13, is_child_of)`. Link 2 scans `self` and `child` slots, emits `(person 12 → person 21, is_parent_of)`.
+4. **`edge: links`** — link 1 scans `acc_vertex` at `lindex.(self, 0)` and `lindex.(parent, 0)`, emits `(person 12 → person 13, isChildOf)`. Link 2 scans `self` and `child` slots, emits `(person 12 → person 21, isParentOf)`.
 
 ## Key configuration fields
 
@@ -191,7 +191,7 @@ Expected output:
 Ingestion complete!
 Schema: vertex_roles_multi_edge
 Vertices: ['person']
-Edges: [('person', 'person', 'is_child_of'), ('person', 'person', 'is_parent_of')]
+Edges: [('person', 'person', 'isChildOf'), ('person', 'person', 'isParentOf')]
 ```
 
 ## Key Takeaways

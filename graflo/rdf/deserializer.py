@@ -62,6 +62,9 @@ class ManifestRdfDeserializer:
             metadata_semantics = self._read_semantics(graph, metadata_uri)
             if metadata_semantics is not None:
                 metadata["semantics"] = metadata_semantics
+            metadata_naming = self._read_naming(graph, metadata_uri)
+            if metadata_naming is not None:
+                metadata["naming"] = metadata_naming
             schema["metadata"] = metadata
 
         if core_uri is not None:
@@ -260,6 +263,34 @@ class ManifestRdfDeserializer:
         if semantics is not None:
             field["semantics"] = semantics
         return field
+
+    def _read_naming(
+        self, graph: Graph, subject: URIRef | BNode | None
+    ) -> dict[str, Any] | None:
+        """Read the declared naming convention, or None when absent.
+
+        Mirror of ``ManifestRdfSerializer._emit_naming``.
+        """
+        if subject is None:
+            return None
+        naming_uri = graph.value(subject, ns.hasNamingConvention)
+        if naming_uri is None:
+            return None
+        naming: dict[str, Any] = {}
+        for key, predicate in (
+            ("vertex_case", ns.vertexCase),
+            ("relation_case", ns.relationCase),
+            ("property_case", ns.propertyCase),
+        ):
+            individual = graph.value(naming_uri, predicate)
+            if isinstance(individual, URIRef | BNode):
+                value = reverse_enum(ns.NAME_CASE_INDIVIDUALS, individual)
+                if value is not None:
+                    naming[key] = value
+        singular = graph.value(naming_uri, ns.singularVertexNames)
+        if isinstance(singular, Literal):
+            naming["singular_vertex_names"] = bool(singular.toPython())
+        return naming or None
 
     def _read_semantics(
         self, graph: Graph, subject: URIRef | BNode | None

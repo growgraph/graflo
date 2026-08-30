@@ -601,3 +601,103 @@ def test_context_has_semantic_terms() -> None:
     assert '"semanticIri"' in payload
     assert '"unit": "gf:unit"' in payload
     assert '"altLabel": "skos:altLabel"' in payload
+
+
+# ----------------------------------------------------------------------
+# Declared naming convention (1.5.0)
+# ----------------------------------------------------------------------
+
+
+def _named_manifest(**naming: object) -> GraphManifest:
+    """A minimal manifest carrying a naming declaration."""
+    return GraphManifest(
+        schema={
+            "metadata": {"name": "shop", "naming": naming},
+            "graph": {
+                "vertex_config": {
+                    "vertices": [
+                        {
+                            "name": "Customer",
+                            "properties": [{"name": "id"}],
+                            "identity": ["id"],
+                        }
+                    ]
+                },
+                "edge_config": {"edges": []},
+            },
+        }
+    )
+
+
+def test_naming_convention_round_trips() -> None:
+    """A declared convention must survive RDF, or it is worse than absent.
+
+    A block that silently disappears on the way through leaves a consumer
+    believing the schema declared nothing, which is the same failure mode as
+    the field types that used to be dropped for want of an individual.
+    """
+    manifest = _named_manifest(
+        vertex_case="pascal",
+        relation_case="camel",
+        property_case="snake",
+        singular_vertex_names=False,
+    )
+    ttl = ManifestRdfSerializer().to_turtle(manifest, BASE_URI)
+    restored = ManifestRdfDeserializer().from_turtle(ttl, BASE_URI)
+    assert _canonical(restored) == _canonical(manifest)
+
+
+@pytest.mark.parametrize(
+    "case", ["pascal", "camel", "snake", "upper_snake", "kebab", "preserve"]
+)
+def test_every_name_case_has_an_individual(case: str) -> None:
+    """Exhaustive by construction: an unmapped enum emits nothing at all.
+
+    ``add_enum_individual`` is silent when a value has no individual, which is
+    how ``UUID`` and ``LIST`` came to vanish from field types unnoticed.
+    """
+    assert case in ns.NAME_CASE_INDIVIDUALS
+    manifest = _named_manifest(vertex_case=case, relation_case=case)
+    restored = ManifestRdfDeserializer().from_turtle(
+        ManifestRdfSerializer().to_turtle(manifest, BASE_URI), BASE_URI
+    )
+    assert restored.graph_schema is not None
+    naming = restored.graph_schema.metadata.naming
+    assert naming is not None
+    assert str(naming.vertex_case) == case
+
+
+def test_schemas_without_naming_emit_no_naming_triples() -> None:
+    """Absent block stays absent — the vocabulary costs nothing when unused."""
+    manifest = GraphManifest(
+        schema={
+            "metadata": {"name": "shop"},
+            "graph": {
+                "vertex_config": {
+                    "vertices": [
+                        {
+                            "name": "Customer",
+                            "properties": [{"name": "id"}],
+                            "identity": ["id"],
+                        }
+                    ]
+                },
+                "edge_config": {"edges": []},
+            },
+        }
+    )
+    graph = ManifestRdfSerializer().to_graph(manifest, BASE_URI)
+    assert not list(graph.subject_objects(ns.hasNamingConvention))
+
+
+def test_ontology_declares_naming_terms() -> None:
+    ontology = load_ontology_graph()
+    assert (ns.NamingConvention, RDF.type, OWL.Class) in ontology
+    assert (ns.hasNamingConvention, RDF.type, OWL.ObjectProperty) in ontology
+    assert (ns.singularVertexNames, RDF.type, OWL.DatatypeProperty) in ontology
+    # Domain-bearing, unlike gf:semanticIri: the naming block attaches at exactly
+    # one place, so a domain is honest — and it is what lets the docs viz reach
+    # gf:NamingConvention rather than leaving it floating outside every block.
+    assert ns.GraphMetadata in set(
+        ontology.objects(ns.hasNamingConvention, RDFS.domain)
+    )

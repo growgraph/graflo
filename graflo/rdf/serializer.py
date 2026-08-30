@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-from rdflib import RDF, BNode, Graph, URIRef
+from rdflib import RDF, BNode, Graph, Literal, URIRef
 from rdflib.namespace import XSD
 
 from graflo.architecture.contract.bindings.core import AnyConnector
@@ -101,6 +101,7 @@ class ManifestRdfSerializer:
         add_literal(graph, metadata_uri, ns.version, schema.metadata.version)
         add_literal(graph, metadata_uri, ns.description, schema.metadata.description)
         self._emit_semantics(graph, metadata_uri, schema.metadata.semantics)
+        self._emit_naming(graph, metadata_uri, schema.metadata.naming)
 
         core_uri = URIRef(join_uri(str(schema_uri), "core"))
         graph.add((schema_uri, ns.hasCoreSchema, core_uri))
@@ -252,6 +253,40 @@ class ManifestRdfSerializer:
         for synonym in semantics.synonyms:
             add_literal(graph, subject, ns.altLabel, synonym)
         add_literal(graph, subject, ns.unit, getattr(semantics, "unit", None))
+
+    def _emit_naming(
+        self,
+        graph: Graph,
+        subject: URIRef | BNode,
+        naming: Any,
+    ) -> None:
+        """Emit the optional declared naming convention.
+
+        A node of its own rather than four predicates on the metadata: the
+        convention is a single decision, and splitting it would let a consumer
+        read a vertex style with no relation style and believe the schema
+        declared one.
+        """
+        if naming is None:
+            return
+        naming_uri = URIRef(join_uri(str(subject), "naming"))
+        graph.add((subject, ns.hasNamingConvention, naming_uri))
+        graph.add((naming_uri, RDF.type, ns.NamingConvention))
+        for predicate, value in (
+            (ns.vertexCase, naming.vertex_case),
+            (ns.relationCase, naming.relation_case),
+            (ns.propertyCase, naming.property_case),
+        ):
+            add_enum_individual(
+                graph, naming_uri, predicate, str(value), ns.NAME_CASE_INDIVIDUALS
+            )
+        graph.add(
+            (
+                naming_uri,
+                ns.singularVertexNames,
+                Literal(bool(naming.singular_vertex_names)),
+            )
+        )
 
     @staticmethod
     def _emit_identity_names(

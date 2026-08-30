@@ -1,15 +1,15 @@
 {
-    "created_at": "2026-07-28T23:12:24.773937+00:00",
+    "created_at": "2026-08-28T12:26:42.128701+00:00",
     "edges": {
-        "instrument__issued_by__issuer": {
+        "instrument__issuedBy__issuer": {
             "chunks": [
-                "edges/instrument__issued_by__issuer.000.jsonl.gz"
+                "edges/instrument__issuedBy__issuer.000.jsonl.gz"
             ],
             "record_count": 3
         }
     },
-    "graflo_version": "1.9.0",
-    "schema_hash": "61b8d99deb7c7e314e9149ad52ebba186095a79a17fc2a3a18e5d410bcf0e274",
+    "graflo_version": "1.11.0",
+    "schema_hash": "1d8a1d4ba97c8d5a5f61d92379b6f5c84fbe0914f8cff6da7ea40b725f883080",
     "vertices": {
         "instrument": {
             "chunks": [

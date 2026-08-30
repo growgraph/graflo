@@ -7,8 +7,8 @@
 @prefix prov: <http://www.w3.org/ns/prov#> .
 
 <https://ontology.growgraph.dev/graflo> a owl:Ontology ;
-    owl:versionIRI <https://ontology.growgraph.dev/graflo/1.4.0> ;
-    owl:versionInfo "1.4.0" ;
+    owl:versionIRI <https://ontology.growgraph.dev/graflo/1.5.0> ;
+    owl:versionInfo "1.5.0" ;
     rdfs:label "GraFlo Ontology"@en ;
     skos:prefLabel "GraFlo Ontology"@en ;
     rdfs:comment "OWL vocabulary describing GraFlo GraphManifest contracts: schema, ingestion, bindings, transforms, and pipeline actors."@en .
@@ -235,6 +235,16 @@ gf:Index a owl:Class ;
 gf:FieldType a owl:Class ;
     rdfs:label "Field type enumeration"@en ;
     skos:prefLabel "FieldType"@en .
+
+gf:NameCase a owl:Class ;
+    rdfs:label "Name case enumeration"@en ;
+    skos:prefLabel "NameCase"@en .
+
+gf:NamingConvention a owl:Class ;
+    rdfs:subClassOf gf:GrafloArtifact ;
+    rdfs:label "Naming convention"@en ;
+    skos:prefLabel "NamingConvention"@en ;
+    rdfs:comment "Manifest-facing declaration of how a schema spells the identifiers it invents."@en .
 
 gf:DBType a owl:Class ;
     rdfs:label "Database type enumeration"@en ;
@@ -473,6 +483,51 @@ gf:unit a owl:DatatypeProperty ;
     rdfs:label "unit"@en ;
     skos:prefLabel "unit"@en ;
     rdfs:comment "Unit of measure for a field value, as a UCUM or QUDT token."@en .
+
+# Declared naming style. Descriptive like the grounding terms above: it records
+# how the schema's invented identifiers were spelled so a later author — human
+# or agent — extending the same schema need not infer the convention from the
+# names. Nothing consults it at runtime.
+#
+# Unlike gf:semanticIri these DO carry rdfs:domain. That property is domain-free
+# because it attaches at four points (metadata, vertex, edge, field) and no
+# single domain is true of it; the naming block attaches at exactly one, so a
+# domain is an honest statement rather than a distortion — and it is what lets
+# the documentation viz reach gf:NamingConvention at all.
+gf:hasNamingConvention a owl:ObjectProperty ;
+    rdfs:domain gf:GraphMetadata ;
+    rdfs:range gf:NamingConvention ;
+    rdfs:label "has naming convention"@en ;
+    skos:prefLabel "has naming convention"@en ;
+    rdfs:comment "Declared naming style for the identifiers this schema invents."@en .
+
+gf:vertexCase a owl:ObjectProperty ;
+    rdfs:domain gf:NamingConvention ;
+    rdfs:range gf:NameCase ;
+    rdfs:label "vertex case"@en ;
+    skos:prefLabel "vertex case"@en ;
+    rdfs:comment "Surface style for vertex type names."@en .
+
+gf:relationCase a owl:ObjectProperty ;
+    rdfs:domain gf:NamingConvention ;
+    rdfs:range gf:NameCase ;
+    rdfs:label "relation case"@en ;
+    skos:prefLabel "relation case"@en ;
+    rdfs:comment "Surface style for edge relation names."@en .
+
+gf:propertyCase a owl:ObjectProperty ;
+    rdfs:domain gf:NamingConvention ;
+    rdfs:range gf:NameCase ;
+    rdfs:label "property case"@en ;
+    skos:prefLabel "property case"@en ;
+    rdfs:comment "Surface style for property names; `preserve` keeps the source spelling, which is the default because a property name binds to a key in the source document."@en .
+
+# No rdfs:label: every other gf: datatype property either omits one or gives a
+# label identical to its local name, and the docs viz keys on that.
+gf:singularVertexNames a owl:DatatypeProperty ;
+    rdfs:domain gf:NamingConvention ;
+    rdfs:range xsd:boolean ;
+    rdfs:comment "Whether a vertex is named for one instance rather than the collection."@en .
 
 gf:enumValue a owl:DatatypeProperty ;
     rdfs:range xsd:string ;
@@ -724,6 +779,17 @@ gf:DOUBLE a gf:FieldType ; gf:enumValue "DOUBLE" ; rdfs:label "DOUBLE" ; skos:pr
 gf:BOOL a gf:FieldType ; gf:enumValue "BOOL" ; rdfs:label "BOOL" ; skos:prefLabel "BOOL" .
 gf:STRING a gf:FieldType ; gf:enumValue "STRING" ; rdfs:label "STRING" ; skos:prefLabel "STRING" .
 gf:DATETIME a gf:FieldType ; gf:enumValue "DATETIME" ; rdfs:label "DATETIME" ; skos:prefLabel "DATETIME" .
+
+#################################################################
+# NameCase individuals
+#################################################################
+
+gf:PascalCase a gf:NameCase ; gf:enumValue "pascal" ; rdfs:label "PascalCase" ; skos:prefLabel "PascalCase" .
+gf:CamelCase a gf:NameCase ; gf:enumValue "camel" ; rdfs:label "camelCase" ; skos:prefLabel "camelCase" .
+gf:SnakeCase a gf:NameCase ; gf:enumValue "snake" ; rdfs:label "snake_case" ; skos:prefLabel "snake_case" .
+gf:UpperSnakeCase a gf:NameCase ; gf:enumValue "upper_snake" ; rdfs:label "UPPER_SNAKE_CASE" ; skos:prefLabel "UPPER_SNAKE_CASE" .
+gf:KebabCase a gf:NameCase ; gf:enumValue "kebab" ; rdfs:label "kebab-case" ; skos:prefLabel "kebab-case" .
+gf:PreserveCase a gf:NameCase ; gf:enumValue "preserve" ; rdfs:label "preserve" ; skos:prefLabel "preserve" .
 
 #################################################################
 # DBType individuals

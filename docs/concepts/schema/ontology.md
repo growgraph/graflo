@@ -28,8 +28,8 @@ flowchart TB
 | Role | IRI |
 |------|-----|
 | Ontology document | `https://ontology.growgraph.dev/graflo` |
-| Version IRI | `https://ontology.growgraph.dev/graflo/1.4.0` |
-| Version info | `1.4.0` |
+| Version IRI | `https://ontology.growgraph.dev/graflo/1.5.0` |
+| Version info | `1.5.0` |
 | Vocabulary prefix `gf:` | `https://ontology.growgraph.dev/graflo/` |
 
 The Turtle source lives in the package at `graflo/rdf/ontology/graflo.ttl`. Constants are also exposed in Python as `graflo.rdf.namespace` (`GF_ONTOLOGY_IRI`, `GF_VERSION`, `GF_VERSION_IRI`, `GF_BASE`).
@@ -112,6 +112,24 @@ vertices:
 ```
 
 This maps to `gf:semanticIri`, `skos:exactMatch`, `skos:altLabel`, and — fields only — `gf:unit`. The block is purely descriptive: identity, storage naming and ingestion behave identically whether or not it is present. `unit` is rejected outside a field, where it would be meaningless.
+
+**Naming convention** (optional, added in 1.5.0)
+
+Schema metadata may declare how the schema spells the identifiers it *invents*:
+
+```yaml
+metadata:
+    name: shop
+    naming:
+        vertex_case: pascal          # Customer, OrderLine
+        relation_case: camel         # placedBy, reportsTo
+        property_case: preserve      # exactly as the source names them
+        singular_vertex_names: true
+```
+
+This maps to `gf:hasNamingConvention` and a `gf:NamingConvention` node carrying `gf:vertexCase`, `gf:relationCase`, `gf:propertyCase` (each a `gf:NameCase` individual) and `gf:singularVertexNames`.
+
+Two things the block is careful about. `property_case` defaults to `preserve` because a property name binds to a key in the source document — restyling one without emitting the matching `transform.rename` yields a column that silently never populates. And like `semantics:`, the block is **descriptive**: it records the convention the names follow so a later author extending the schema need not infer it, but nothing consults it at runtime and declaring it does not rewrite anything.
 
 **Enumerations** (named individuals): `gf:DBType` (ArangoDB, Neo4j, …), transform target/strategy, key-selection mode, edge duplicate policy, bound source kind.
 
