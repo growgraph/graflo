@@ -18,6 +18,7 @@ from graflo.architecture.contract.manifest import GraphManifest
 from graflo.db.manager import ConnectionManager
 from graflo.hq.caster import IngestionParams
 from graflo.hq.graph_engine import GraphEngine
+from test.db.backends import backend_params, config_for
 
 INSTRUMENT = "instrument"
 ISSUER = "issuer"
@@ -111,64 +112,26 @@ def _manifest(root: Path) -> GraphManifest:
     return manifest
 
 
-BACKENDS = [
-    pytest.param("neo4j", id="neo4j"),
-    pytest.param("arango", id="arango"),
-    pytest.param("memgraph", id="memgraph"),
-    pytest.param("falkordb", id="falkordb"),
-    # Endpoints addressed by key rather than matched by property — the case
-    # that a write-time MATCH could not have covered.
-    pytest.param("postgres", id="postgres"),
-    pytest.param("nebula", id="nebula", marks=pytest.mark.nebula),
-    pytest.param("tigergraph", id="tigergraph", marks=pytest.mark.tigergraph),
-    pytest.param("graflo_backend", id="graflo_backend"),
-]
+BACKENDS = backend_params(
+    [
+        "neo4j",
+        "arango",
+        "memgraph",
+        "falkordb",
+        # Endpoints addressed by key rather than matched by property — the case
+        # that a write-time MATCH could not have covered.
+        "postgres",
+        "nebula",
+        "tigergraph",
+        "graflo_backend",
+    ]
+)
 
 SPACE = "gf_secondary_e2e"
 
 
 def _config(flavor: str, output_dir: Path):
-    from graflo.connections.onto import (
-        ArangoConfig,
-        FalkordbConfig,
-        MemgraphConfig,
-        NebulaConfig,
-        Neo4jConfig,
-        PostgresConfig,
-        TigergraphConfig,
-    )
-
-    if flavor == "neo4j":
-        config = Neo4jConfig.from_docker_env()
-        config.database = config.database or "_system"
-        return config
-    if flavor == "arango":
-        config = ArangoConfig.from_docker_env()
-        config.database = SPACE
-        return config
-    if flavor == "memgraph":
-        return MemgraphConfig.from_docker_env()
-    if flavor == "falkordb":
-        config = FalkordbConfig.from_docker_env()
-        config.database = SPACE
-        return config
-    if flavor == "nebula":
-        config = NebulaConfig.from_docker_env()
-        config.uri = f"nebula://localhost:{config.port}"
-        config.schema_name = SPACE
-        return config
-    if flavor == "tigergraph":
-        config = TigergraphConfig.from_docker_env()
-        config.database = SPACE
-        return config
-    if flavor == "graflo_backend":
-        from graflo.connections.graflo_backend import GraFloBackendConfig
-
-        return GraFloBackendConfig(output_dir=output_dir)
-    config = PostgresConfig.from_docker_env()
-    config.database = config.database or "postgres"
-    config.schema_name = SPACE
-    return config
+    return config_for(flavor, space=SPACE, output_dir=output_dir)
 
 
 @pytest.fixture(scope="module")

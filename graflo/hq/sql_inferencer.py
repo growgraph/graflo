@@ -12,8 +12,9 @@ from dataclasses import dataclass
 from graflo.architecture.contract.ingestion import IngestionModel, Resource
 from graflo.architecture.onto_sql import SchemaIntrospectionResult
 from graflo.architecture.schema import Schema
+from graflo.db import sql as sql_introspect
 from graflo.db.postgres import PostgresResourceMapper, PostgresSchemaInferencer
-from graflo.db.postgres.conn import PostgresConnection
+from graflo.db.sql.provider import SqlMetadataProvider
 from graflo.onto import DBType
 
 logger = logging.getLogger(__name__)
@@ -40,22 +41,29 @@ class SQLInferenceManager:
 
     def __init__(
         self,
-        conn: PostgresConnection,
+        conn: SqlMetadataProvider,
         target_db_flavor: DBType = DBType.ARANGO,
         fuzzy_threshold: float = 0.8,
+        default_schema: str | None = None,
     ):
-        """Initialize the PostgreSQL inference manager.
+        """Initialize the inference manager.
 
         Args:
-            conn: PostgresConnection instance
+            conn: Any :class:`~graflo.db.sql.provider.SqlMetadataProvider` — a
+                ``PostgresConnection`` reading ``pg_catalog``, or a
+                ``SqlAlchemyMetadataProvider`` reflecting any other engine.
             target_db_flavor: Target database flavor (used for type mapping
                 during inference; does NOT trigger sanitization).
             fuzzy_threshold: Similarity threshold for fuzzy matching (0.0 to 1.0, default 0.8)
+            default_schema: Namespace used when a call passes no schema name.
+                ``None`` means the engine's own default, which is right for
+                single-namespace engines like SQLite.
         """
         self.target_db_flavor = target_db_flavor
         self.conn = conn
+        self.default_schema = default_schema
         self.inferencer = PostgresSchemaInferencer(
-            db_flavor=target_db_flavor, conn=conn
+            db_flavor=target_db_flavor, provider=conn
         )
         self.mapper = PostgresResourceMapper(fuzzy_threshold=fuzzy_threshold)
 
@@ -74,9 +82,11 @@ class SQLInferenceManager:
         Returns:
             SchemaIntrospectionResult: PostgreSQL schema introspection result
         """
-        return self.conn.introspect_schema(
-            schema_name=schema_name,
-            include_raw_tables=include_raw_tables,
+        return sql_introspect.introspect_schema(
+            self.conn,
+            schema_name,
+            include_raw_tables,
+            default_schema=self.default_schema,
         )
 
     def infer_schema(

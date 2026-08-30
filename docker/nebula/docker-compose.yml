@@ -79,7 +79,10 @@ services:
         environment:
         -   NGINX_HOST=localhost
         -   NGINX_PORT=${GRAPHSTUDIO_PORT}
-        -   NEBULA_ADDRESS=nebula-graphd:${NEBULA_PORT}
+        # Container-side port, which is always 9669 (see graphd's --port and
+        # the "${NEBULA_PORT}:9669" mapping above). ${NEBULA_PORT} is the
+        # host-side port, so using it here breaks studio whenever the two differ.
+        -   NEBULA_ADDRESS=nebula-graphd:9669
 
 networks:
     nebula-net:

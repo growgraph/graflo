@@ -23,6 +23,8 @@ Indexes are non-unique by design. Secondary identities are *softly* unique, and 
 
 **TigerGraph** supports single-field attribute indexes only; a composite secondary identity logs a warning and is skipped. Resolution there uses an interpreted GSQL query and does not depend on the index.
 
+**NebulaGraph** requires a length on every `string` column named in a tag index, and rejects the whole statement without one. GraFlo derives that from the column type it emitted, so an *untyped* property — which becomes a Nebula `string`, as do `DATETIME` and `UUID` — is indexed correctly rather than skipped. A rejected index is logged at **warning**: without it, every filtered read on the tag fails with `IndexNotFound`, and the cause is several layers from the symptom.
+
 ## Backend Summary
 
 | Backend | Identity index | How |

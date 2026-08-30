@@ -24,7 +24,7 @@ identities, and DB profile — then infer, validate, migrate, and load into any 
 ## Highlights
 
 - **One manifest, many backends** — ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph, PostgreSQL, or a GraFlo file backend on disk.
-- **Graph DB migration** — Move Neo4j, ArangoDB, or a file backend to **any** supported target (including PostgreSQL) with `GraphEngine.migrate_graph()` — no manifest required. See [Graph DB migration guide](guides/graph_db_migration.md).
+- **Graph DB migration** — Introspect and export from Neo4j, ArangoDB, PostgreSQL, or a file backend, targeting **any** supported engine. `GraphEngine.migrate_graph()` does not yet complete a move end to end — see the guide. See [Graph DB migration guide](guides/graph_db_migration.md).
 - **Explicit identities** — upsert on keys instead of blind duplication.
 - **Reusable ingestion** — actor pipelines bind to files, SQL, SPARQL/RDF, APIs, or in-memory batches.
 - **Schema as contract** — validated at `finish_init`; migrations via `migrate_schema`.

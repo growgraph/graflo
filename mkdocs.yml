@@ -89,6 +89,8 @@ nav:
     -   API env wiring: guides/api_env_wiring.md
     -   Identity inference: guides/identity_inference.md
     -   TigerGraph bulk load: guides/tigergraph_bulk_load.md
+    -   SQL schema inference: guides/sql_schema_inference.md
+    -   Adding a database backend: guides/adding_a_backend.md
 -   Examples:
     -   Examples Index: examples/index.md
     -   1 - Ingest Multiple Tabular Sources (CSV, ArangoDB): examples/example-1.md

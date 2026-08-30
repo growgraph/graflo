@@ -186,17 +186,18 @@ Typical flow: PostgreSQL (or CSV/RDF/API) → manifest → any graph target. See
 |---|---|---|
 | **Neo4j** | `Connection.introspect_graph_schema()` | `supports_graph_export = True` |
 | **ArangoDB** | same | `supports_graph_export = True` |
+| **PostgreSQL** | `Connection.introspect_graph_schema()` | `supports_graph_export = True` since 1.11.1; reads the catalogue rather than sampling |
 | **GraFlo file backend** | reads `schema.yaml` + gzip JSONL chunks | also a migration **target** |
 
 List in code: `ConnectionManager.graph_export_flavors()`.
 
 Typical flow: Neo4j → ArangoDB (or TigerGraph, PostgreSQL, …) via **`GraphEngine.migrate_graph()`** — no manifest. See [Graph DB migration guide](../guides/graph_db_migration.md).
 
-TigerGraph, FalkorDB, Memgraph, and NebulaGraph are supported **targets** for manifest ingestion and `migrate_graph()` but not yet live graph **sources** (use a file backend as intermediate storage).
+TigerGraph, FalkorDB, Memgraph, and NebulaGraph are supported **targets** for manifest ingestion but are not live graph **sources** — they implement neither `fetch_all_docs` nor `fetch_all_edges`, so use a file backend as intermediate storage.
 
 ### Migration and ingestion targets (`DBType` output)
 
-All supported output backends accept manifest-driven **`ingest()`** and graph-source **`migrate_graph()`**:
+All supported output backends accept manifest-driven **`ingest()`**. They are also valid `migrate_graph()` *targets*, though that entry point does not currently complete a move — see [Graph export and migration](operations/graph_export_migration.md):
 
 | Target | Native LPG | Notes |
 |---|---|---|

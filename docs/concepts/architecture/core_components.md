@@ -11,7 +11,7 @@ The `Schema` is the single source of truth for the LPG structure. It encapsulate
 - Identity and physical index configurations
 - DB profile defaults and DB-aware projection settings
 - Automatic schema inference from normalized PostgreSQL databases (3NF with PK/FK) or from OWL/RDFS ontologies
-- Graph-source inference from Neo4j or ArangoDB via **`Connection.introspect_graph_schema()`** (see [Graph export and migration](../operations/graph_export_migration.md))
+- Graph-source inference from Neo4j, ArangoDB or PostgreSQL via **`Connection.introspect_graph_schema()`** (see [Graph export and migration](../operations/graph_export_migration.md))
 
 ### GraFloOutput, GraphContainer, and file backend
 

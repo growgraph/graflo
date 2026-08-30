@@ -162,6 +162,7 @@ class ConnectionCapability(Enum):
     GRAPH_READ = "supports_graph_read"
     GRAPH_EXPORT = "supports_graph_export"
     SCHEMA_INTROSPECTION = "supports_schema_introspection"
+    SCHEMA_DDL = "supports_schema_ddl"
 
     @property
     def label(self) -> str:
@@ -170,6 +171,7 @@ class ConnectionCapability(Enum):
             ConnectionCapability.GRAPH_READ: "bounded graph reads",
             ConnectionCapability.GRAPH_EXPORT: "bulk graph export",
             ConnectionCapability.SCHEMA_INTROSPECTION: "schema introspection",
+            ConnectionCapability.SCHEMA_DDL: "schema migration DDL",
         }[self]
 
 
@@ -196,6 +198,15 @@ class Connection(abc.ABC):
     supports_graph_read: ClassVar[bool] = True
     #: Has a real :meth:`introspect_graph_schema`, rather than the raising default.
     supports_schema_introspection: ClassVar[bool] = False
+    #: A migration emitter exists for this backend, so a non-dry-run apply can
+    #: be attempted at all. Declaring it is what lets a caller refuse an
+    #: unsupported backend **by name, before opening a connection**, instead of
+    #: surfacing a driver error from deep inside an emitter.
+    #:
+    #: It says an emitter is registered — not that every operation is
+    #: implemented, and not that applying to a *populated* target works
+    #: (it does not, on any backend: see ``CORE-MIGRATE-001``).
+    supports_schema_ddl: ClassVar[bool] = False
     #: Whether :meth:`introspect_graph_schema` samples rows rather than reading a
     #: catalogue. Sampling recovers a *lower bound* — a property present on no
     #: sampled row is simply absent from the result — so a consumer needs this to
@@ -729,6 +740,23 @@ class Connection(abc.ABC):
         raise UnsupportedBulkLoad(
             f"Database flavor {self.flavor!r} does not support native bulk load"
         )
+
+    def vertex_address(
+        self, doc: dict[str, Any], identity_fields: Sequence[str]
+    ) -> str | None:
+        """How this backend addresses *doc* in an edge query.
+
+        Most backends key a vertex on a single value, so the first identity
+        field that is present is the address. NebulaGraph composes a VID from
+        *every* identity field, so it overrides this — without which a
+        composite identity resolves to a prefix that matches no edge, and the
+        traversal returns empty rather than failing.
+        """
+        for field in identity_fields:
+            value = doc.get(field)
+            if value is not None:
+                return str(value)
+        return None
 
     def graph_neighbors(
         self,

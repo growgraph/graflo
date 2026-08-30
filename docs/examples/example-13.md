@@ -17,7 +17,7 @@ artifacts/neo4j-backend/
 ## Prerequisites
 
 - Python 3.11+
-- Optional **graph source**: Neo4j or ArangoDB (for `export-backend`)
+- Optional **graph source**: Neo4j, ArangoDB or PostgreSQL (for `export-backend`)
 - Optional **targets**: another LPG or PostgreSQL (for replay commands)
 - Connection configs via environment variables or `docker/<backend>/.env`
 
@@ -25,10 +25,10 @@ artifacts/neo4j-backend/
 
 | Task | API | Source | Target |
 |---|---|---|---|
-| Export graph to disk | `migrate_graph()` | Neo4j, ArangoDB, file backend | `GraFloBackendConfig` |
+| Export graph to disk | `migrate_graph()` | Neo4j, ArangoDB, PostgreSQL, file backend | `GraFloBackendConfig` |
 | Replay from disk | `migrate_graph()` | `GraFloBackendConfig` | Any LPG / PostgreSQL |
 | Ingest resources to disk | `ingest()` / `define_and_ingest()` | CSV manifest resources | `GraFloBackendConfig` |
-| Schema only | `infer_schema_from_graph()` | Neo4j, ArangoDB, file backend | — (`Schema`) |
+| Schema only | `infer_schema_from_graph()` | Neo4j, ArangoDB, PostgreSQL, file backend | — (`Schema`) |
 
 ## Step 1 — Export Neo4j to a file backend
 

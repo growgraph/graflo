@@ -95,14 +95,20 @@ def _incident_edges(
 
 
 def _vertex_identity_value(
-    schema: Schema, vertex_type: str, doc: dict[str, Any]
+    conn: Connection, schema: Schema, vertex_type: str, doc: dict[str, Any]
 ) -> str | None:
-    """Best-effort identity of *doc*, for cycle detection across hops."""
+    """Address of *doc*, as the backend expects it in an edge query.
+
+    Delegates to :meth:`Connection.vertex_address` so a backend that composes
+    its vertex id from several fields (NebulaGraph) is addressed the way it
+    stores things, rather than by the first identity field alone. The
+    ``_key`` / ``id`` / ``_id`` fallbacks stay for docs that carry a native id
+    but none of the declared identity fields.
+    """
     vertex = schema.core_schema.vertex_config[vertex_type]
-    for field in vertex.identity:
-        value = doc.get(field)
-        if value is not None:
-            return str(value)
+    address = conn.vertex_address(doc, vertex.identity)
+    if address is not None:
+        return address
     for fallback in ("_key", "id", "_id"):
         value = doc.get(fallback)
         if value is not None:
@@ -227,7 +233,7 @@ def bfs_neighbors(
                 for doc in _hydrate_far_endpoints(
                     conn, db_aware, schema, far_type, far_ids
                 ):
-                    identity = _vertex_identity_value(schema, far_type, doc)
+                    identity = _vertex_identity_value(conn, schema, far_type, doc)
                     if identity is None or (far_type, identity) in visited:
                         continue
                     visited.add((far_type, identity))
@@ -284,7 +290,7 @@ def _resolve_anchor_id(
     docs = conn.fetch_docs(storage, filters=filters, limit=1)
     if not docs:
         return None
-    return _vertex_identity_value(schema, anchor_type, docs[0])
+    return _vertex_identity_value(conn, schema, anchor_type, docs[0])
 
 
 def _fetch_edge_rows(
@@ -328,8 +334,19 @@ def _fetch_edge_rows(
 
 
 #: Keys under which backends report the two endpoints of an edge row.
+#:
+#: This is a *name union*, not a per-flavor contract: a dict row is matched
+#: against every candidate in order. A backend whose ``fetch_edges`` returns
+#: endpoints under some other name resolves to ``(None, None)`` here, and its
+#: rows are then dropped from the neighbourhood — so a new backend must either
+#: emit one of these names or add its own. :func:`normalize_edge_row` logs when
+#: that happens rather than losing the row quietly.
 _SOURCE_KEYS = ("_from", "source_id", "src", "_src", "from", "from_id", "_from_key")
 _TARGET_KEYS = ("_to", "target_id", "dst", "_dst", "to", "to_id", "_to_key")
+
+#: Rows already reported as unresolvable, keyed by their sorted column names, so
+#: a mismatch is reported once per shape instead of once per row.
+_reported_unresolved: set[tuple[str, ...]] = set()
 
 
 def _strip_collection(value: Any) -> str | None:
@@ -372,6 +389,21 @@ def normalize_edge_row(row: Any) -> tuple[dict[str, Any], str | None, str | None
         if source is None and target is None:
             source = _strip_collection(row.get("_from_key"))
             target = _strip_collection(row.get("_to_key"))
+        if source is None and target is None and row:
+            # Neither endpoint resolved, so the caller will drop this row from
+            # the neighbourhood. Silent loss reads as "no such neighbour", which
+            # is indistinguishable from a correct empty result — say so instead.
+            shape = tuple(sorted(str(k) for k in row))
+            if shape not in _reported_unresolved:
+                _reported_unresolved.add(shape)
+                logger.warning(
+                    "normalize_edge_row: no endpoint keys in edge row with columns "
+                    "%s; rows of this shape are dropped from traversal. Expected one "
+                    "of %s for the source and %s for the target.",
+                    list(shape),
+                    list(_SOURCE_KEYS),
+                    list(_TARGET_KEYS),
+                )
         return dict(row), source, target
     return {}, None, None
 

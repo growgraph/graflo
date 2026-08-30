@@ -7,6 +7,7 @@ Supports NebulaGraph 3.x (nGQL via ``nebula3-python``) and 5.x (ISO GQL via
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from typing import Any, ClassVar
 
 from graflo.architecture.graph_types import EdgeDirection, Index
@@ -43,6 +44,7 @@ from graflo.db.nebula.query import (
 )
 from graflo.db.nebula.util import (
     field_type_from_nebula,
+    is_nebula_string_field,
     make_vid,
     render_filters_cypher,
     render_filters_ngql,
@@ -82,10 +84,19 @@ class NebulaConnection(Connection):
         self._tag_fields: dict[str, list[str]] = {}
 
         if config.schema_name:
+            # A missing space is legitimate here — define_schema creates it —
+            # so this is not fatal. But swallowing it silently also hides a bad
+            # credential or an unreachable graphd behind the first confusing
+            # error much later, so say what happened.
             try:
                 self._use_space(config.schema_name)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(
+                    "Could not select space '%s' at connect time: %s. "
+                    "It will be created by define_schema if missing.",
+                    config.schema_name,
+                    e,
+                )
 
     # ------------------------------------------------------------------
     # Expression flavour override (instance-level, depends on version)
@@ -118,7 +129,10 @@ class NebulaConnection(Connection):
         try:
             rs = self._adapter.execute("SHOW TAGS")
             tag_names = [r.get("Name", r.get("name", "")) for r in rs.rows_as_dicts()]
-        except Exception:
+        except Exception as e:
+            # Expected on a space that does not exist yet; anything else leaves
+            # _tag_fields empty, which downstream reads as "tag has no fields".
+            logger.debug("Could not list tags in space '%s': %s", self._space_name, e)
             return
         for tag in tag_names:
             if not tag:
@@ -128,8 +142,17 @@ class NebulaConnection(Connection):
                 self._tag_fields[tag] = [
                     r.get("Field", r.get("field", "")) for r in desc.rows_as_dicts()
                 ]
-            except Exception:
-                pass
+            except Exception as e:
+                # SHOW TAGS listed it, so failing to describe it is not a
+                # missing-space race — the tag stays absent from _tag_fields and
+                # every write against it will build an empty property list.
+                logger.warning(
+                    "Could not describe tag '%s' in space '%s': %s. "
+                    "Writes to this tag may omit properties.",
+                    tag,
+                    self._space_name,
+                    e,
+                )
 
     def _wait_for_dml_ready(self, tag_name: str) -> None:
         """Wait until DML operations are possible on a tag.
@@ -275,16 +298,27 @@ class NebulaConnection(Connection):
         self.define_edge_classes(edges)
 
     def define_vertex_classes(self, schema: Schema) -> None:
-        for vname in schema.core_schema.vertex_config.vertex_set:
-            fields = schema.core_schema.vertex_config.properties(vname)
-            stmt = create_tag_ngql(vname, fields)
-            self._execute(stmt)
-            self._tag_fields[vname] = [f.name for f in fields]
-            logger.debug("Created tag '%s'", vname)
+        """Create one tag per vertex type, named as the rest of this class reads it.
 
-        if schema.core_schema.vertex_config.vertex_set:
-            sample_tag = next(iter(schema.core_schema.vertex_config.vertex_set))
-            self._wait_for_dml_ready(sample_tag)
+        The tag name comes from the db-aware projection, not the logical vertex
+        name: reads, writes and ``clear_data`` all resolve through
+        ``vertex_dbname``, so declaring a tag under the logical name instead
+        leaves a schema nothing writes to, and every UPSERT fails with
+        ``No schema found`` on any manifest that sets ``vertex_storage_names``.
+        """
+        logical = schema.core_schema.vertex_config
+        db_aware = schema.resolve_db_aware(DBType.NEBULA).vertex_config
+        for vname in logical.vertex_set:
+            tag = db_aware.vertex_dbname(vname)
+            fields = logical.properties(vname)
+            stmt = create_tag_ngql(tag, fields)
+            self._execute(stmt)
+            self._tag_fields[tag] = [f.name for f in fields]
+            logger.debug("Created tag '%s' for vertex '%s'", tag, vname)
+
+        if logical.vertex_set:
+            sample = next(iter(logical.vertex_set))
+            self._wait_for_dml_ready(db_aware.vertex_dbname(sample))
 
     def define_edge_classes(self, edges: list[Edge]) -> None:
         created: set[str] = set()
@@ -315,9 +349,17 @@ class NebulaConnection(Connection):
             logger.warning(
                 "Schema is None: identity indexes cannot be ensured without schema"
             )
+        # Index the tag under the name it was actually created with; the
+        # db_profile lookups below stay keyed on the logical name.
+        db_aware = (
+            schema.resolve_db_aware(DBType.NEBULA).vertex_config
+            if schema is not None
+            else None
+        )
         for vname in vertex_config.vertex_set:
+            tag = db_aware.vertex_dbname(vname) if db_aware is not None else vname
             fields = vertex_config.properties(vname)
-            string_fields = {f.name for f in fields if f.type == FieldType.STRING}
+            string_fields = {f.name for f in fields if is_nebula_string_field(f)}
             index_list = (
                 schema.db_profile.vertex_secondary_indexes(vname)
                 if schema is not None
@@ -336,7 +378,7 @@ class NebulaConnection(Connection):
                 if not key or key in seen:
                     continue
                 seen.add(key)
-                self._add_tag_index(vname, idx, string_fields=string_fields)
+                self._add_tag_index(tag, idx, string_fields=string_fields)
 
     def define_edge_indexes(
         self, edges: list[Edge], schema: Schema | None = None
@@ -367,7 +409,15 @@ class NebulaConnection(Connection):
             self._rebuild_index(idx_name, kind="TAG")
             logger.debug("Created tag index '%s'", idx_name)
         except Exception as e:
-            logger.debug("Tag index '%s' note: %s", idx_name, e)
+            # Not debug: without this index every filtered read on the tag fails
+            # with IndexNotFound, and the cause is three layers away.
+            logger.warning(
+                "Tag index '%s' on '%s' was not created: %s. Filtered reads on "
+                "these fields will fail with IndexNotFound.",
+                idx_name,
+                tag_name,
+                e,
+            )
 
     def _add_edge_index(self, edge_type: str, index: Index) -> None:
         idx_fields = [str(f) for f in index.fields]
@@ -378,7 +428,13 @@ class NebulaConnection(Connection):
             self._rebuild_index(idx_name, kind="EDGE")
             logger.debug("Created edge index '%s'", idx_name)
         except Exception as e:
-            logger.debug("Edge index '%s' note: %s", idx_name, e)
+            logger.warning(
+                "Edge index '%s' on '%s' was not created: %s. Filtered reads on "
+                "these fields will fail with IndexNotFound.",
+                idx_name,
+                edge_type,
+                e,
+            )
 
     def _rebuild_index(self, idx_name: str, kind: str = "TAG") -> None:
         """Rebuild an index, waiting for propagation first, then for completion."""
@@ -811,6 +867,22 @@ class NebulaConnection(Connection):
         return GraphSchemaInferencer(db_flavor=DBType.NEBULA).infer_schema(
             introspection, schema_name=resolved_name
         )
+
+    def vertex_address(
+        self, doc: dict[str, Any], identity_fields: Sequence[str]
+    ) -> str | None:
+        """Compose the VID exactly as the write path does.
+
+        Nebula addresses a vertex by VID, and :func:`make_vid` joins *all*
+        identity-field values with ``::``. Falling back to the base
+        implementation would address a composite-identity vertex by its first
+        field alone — a VID that exists nowhere, so every edge query anchored
+        on it returns empty instead of raising.
+        """
+        keys = list(identity_fields)
+        if not keys or any(doc.get(k) is None for k in keys):
+            return None
+        return make_vid(doc, keys)
 
     def fetch_edges(
         self,

@@ -13,10 +13,9 @@ from graflo.architecture.schema import CoreSchema, GraphMetadata, Schema
 from graflo.architecture.schema.database_features import DatabaseProfile
 from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.schema.vertex import Field, FieldType, Vertex, VertexConfig
+from graflo.db.sql.provider import SqlMetadataProvider
+from graflo.db.sql.types import SqlTypeMapper
 from graflo.onto import DBType
-
-from .conn import PostgresConnection
-from .types import PostgresTypeMapper
 
 logger = logging.getLogger(__name__)
 
@@ -31,17 +30,21 @@ class PostgresSchemaInferencer:
     def __init__(
         self,
         db_flavor: DBType = DBType.ARANGO,
-        conn: PostgresConnection | None = None,
+        provider: SqlMetadataProvider | None = None,
+        type_mapper: SqlTypeMapper | None = None,
     ):
         """Initialize the schema inferencer.
 
         Args:
             db_flavor: Target database flavor for the inferred schema
-            conn: PostgreSQL connection for sampling data to infer types (optional)
+            provider: Metadata source, used to sample rows when refining a
+                declared column type. Optional — without it the declared type
+                is taken as-is, which is what a catalogue-only inference does.
+            type_mapper: Type-name mapping; defaults to the dialect-neutral one.
         """
         self.db_flavor = db_flavor
-        self.type_mapper = PostgresTypeMapper()
-        self.conn = conn
+        self.type_mapper = type_mapper or SqlTypeMapper()
+        self.provider = provider
 
     def infer_vertex_config(
         self, introspection_result: SchemaIntrospectionResult
@@ -121,8 +124,8 @@ class PostgresSchemaInferencer:
             # Sampling does not refine LIST; caller should use map_field for item_type
             return mapped_type
 
-        # If we have a connection, sample data to refine the type
-        if self.conn is None:
+        # With a metadata source we can sample rows and refine the declared type
+        if self.provider is None:
             logger.debug(
                 f"No connection available for sampling, using mapped type '{mapped_type}' "
                 f"for column '{column_name}' in table '{table_name}'"
@@ -130,11 +133,9 @@ class PostgresSchemaInferencer:
             return mapped_type
 
         try:
-            # Sample 5 rows from the table
-            query = (
-                f'SELECT "{column_name}" FROM "{schema_name}"."{table_name}" LIMIT 5'
+            samples = self.provider.get_table_sample_rows(
+                table_name, schema_name or None, limit=5
             )
-            samples = self.conn.read(query)
 
             if not samples:
                 logger.debug(

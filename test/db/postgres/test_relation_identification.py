@@ -1,6 +1,6 @@
 """Tests for relation table identification logic in PostgreSQL connection."""
 
-from graflo.db.postgres.inference_utils import (
+from graflo.db.sql.inference_utils import (
     _determine_source_target_vertices,
     _extract_fk_vertex_names,
     _extract_key_fragments,

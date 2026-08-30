@@ -2,10 +2,23 @@
 
 Move an existing labeled property graph from one database to another — no manifest YAML required. GraFlo introspects the source schema and data, sanitizes for the target flavor, and loads in one `migrate_graph()` call.
 
+!!! warning "`migrate_graph()` cannot complete a move today"
+
+    Introspection and export both work, and every step below runs — but the
+    final write raises `ValueError: Empty resource container`, for **every**
+    source/target pair. `migrate_graph()` builds an empty `IngestionModel` and
+    then asks `DBWriter` to write through it, which has no resource to resolve.
+
+    Until that is fixed, use the pieces directly: `GraphEngine.export_graph()`
+    and `infer_schema_from_graph()` are unaffected, and
+    `define_schema()` + `ingest()` with an authored manifest is the working
+    path to load the result.
+
+
 ## Prerequisites
 
 - Python 3.11+
-- Source: **Neo4j**, **ArangoDB**, or a **GraFlo file backend** (see [Capability guard](../concepts/operations/graph_export_migration.md#capability-guard))
+- Source: **Neo4j**, **ArangoDB**, **PostgreSQL**, or a **GraFlo file backend** (see [Capability guard](../concepts/operations/graph_export_migration.md#capability-guard))
 - Target: any supported output `DBType` — ArangoDB, Neo4j, TigerGraph, FalkorDB, Memgraph, NebulaGraph, PostgreSQL, or file backend
 - Connection configs via `from_env()`, `from_docker_env()`, or constructors
 

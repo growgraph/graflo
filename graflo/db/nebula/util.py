@@ -100,6 +100,18 @@ def nebula_type_for_field(field: Field) -> str:
     return nebula_type(field.type)
 
 
+def is_nebula_string_field(field: Field) -> bool:
+    """Whether *field* becomes a variable-length ``string`` column.
+
+    Index DDL must ask the same question the column DDL answered: Nebula
+    rejects ``CREATE TAG INDEX`` on a string column given without a length.
+    Testing ``field.type == FieldType.STRING`` is not that question — an
+    untyped field, a ``DATETIME`` and a ``UUID`` all land on ``string`` too,
+    and an index over any of them is rejected as ``Invalid param!``.
+    """
+    return nebula_type(field.type) == DEFAULT_NEBULA_TYPE
+
+
 # ---------------------------------------------------------------------------
 # Value serialisation
 # ---------------------------------------------------------------------------

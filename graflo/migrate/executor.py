@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 
 from graflo.architecture.schema import Schema
 from graflo.connections.onto import DBConfig
+from graflo.db.conn import ConnectionCapability
 from graflo.db.manager import ConnectionManager
 from graflo.migrate.emitters import ArangoEmitter, BaseEmitter, Neo4jEmitter
 from graflo.migrate.models import MigrationPlan, MigrationRecord, RiskLevel
@@ -55,8 +56,19 @@ class MigrationExecutor:
         """Execute migration plan and persist revision on success."""
         db_type = conn_conf.connection_type
         if db_type not in self._emitters:
+            # Refuse by name before opening a connection. Reaching the driver
+            # first turns "this backend has no emitter" into an opaque error
+            # raised from inside one, which a caller cannot map to a 501.
+            supported = sorted(
+                flavor.value
+                for flavor in ConnectionManager.flavors_supporting(
+                    ConnectionCapability.SCHEMA_DDL
+                )
+            )
             raise MigrationExecutionError(
-                f"Backend '{db_type}' is not supported by v1 executor."
+                f"Backend '{db_type}' has no migration emitter. "
+                f"Backends declaring {ConnectionCapability.SCHEMA_DDL.label}: "
+                f"{', '.join(supported) or 'none'}."
             )
         emitter = self._emitters[db_type]
 

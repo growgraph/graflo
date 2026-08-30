@@ -747,10 +747,16 @@ class GraphEngine:
                 vertices[vertex.name] = docs
 
         for edge in schema.core_schema.edge_config.values():
+            # Backends that store endpoints as a single identity value (rather
+            # than a resolvable document reference) need to be told which field
+            # that value belongs to, so the exported endpoint doc is keyed the
+            # way DBWriter resolves it.
             edge_docs = conn.fetch_all_edges(
                 edge.source,
                 edge.target,
                 edge.relation,
+                match_keys_source=tuple(vc.identity_fields(edge.source)),
+                match_keys_target=tuple(vc.identity_fields(edge.target)),
                 limit=limit,
             )
             if edge_docs:

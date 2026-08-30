@@ -11,23 +11,14 @@ module never leaves artifacts behind for other suites to trip over.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
 
 from graflo.architecture.schema import Schema
-from graflo.connections.graflo_backend import GraFloBackendConfig
-from graflo.connections.onto import (
-    ArangoConfig,
-    FalkordbConfig,
-    MemgraphConfig,
-    NebulaConfig,
-    Neo4jConfig,
-    PostgresConfig,
-    TigergraphConfig,
-)
 from graflo.db.manager import ConnectionManager
+from test.db.backends import ALL_BACKENDS, backend_params, config_for
 
 PROBE_VERTEX = "GfResolveProbe"
 
@@ -66,69 +57,11 @@ def _probe_schema() -> Schema:
 
 # ── backend configuration ────────────────────────────────────────────────
 
+#: Every backend, including the file backend — endpoint resolution is the one
+#: capability all of them must answer, whatever their storage model.
+BACKENDS: list[Any] = backend_params(list(ALL_BACKENDS))
 
-def _neo4j_config(tmp_path_factory: pytest.TempPathFactory) -> Neo4jConfig:
-    cfg = Neo4jConfig.from_docker_env()
-    if not cfg.database:
-        cfg.database = "_system"
-    return cfg
-
-
-def _arango_config(tmp_path_factory: pytest.TempPathFactory) -> ArangoConfig:
-    cfg = ArangoConfig.from_docker_env()
-    cfg.database = "gf_resolve_probe"
-    return cfg
-
-
-def _memgraph_config(tmp_path_factory: pytest.TempPathFactory) -> MemgraphConfig:
-    return MemgraphConfig.from_docker_env()
-
-
-def _falkordb_config(tmp_path_factory: pytest.TempPathFactory) -> FalkordbConfig:
-    cfg = FalkordbConfig.from_docker_env()
-    cfg.database = "gf_resolve_probe"
-    return cfg
-
-
-def _postgres_config(tmp_path_factory: pytest.TempPathFactory) -> PostgresConfig:
-    cfg = PostgresConfig.from_docker_env()
-    if not cfg.database:
-        cfg.database = "postgres"
-    # Isolated schema keeps the probe table out of `public`, where the
-    # introspection suite counts tables.
-    cfg.schema_name = "gf_resolve_probe"
-    return cfg
-
-
-def _nebula_config(tmp_path_factory: pytest.TempPathFactory) -> NebulaConfig:
-    cfg = NebulaConfig.from_docker_env()
-    cfg.uri = f"nebula://localhost:{cfg.port}"
-    cfg.schema_name = "gf_resolve_probe"
-    return cfg
-
-
-def _tigergraph_config(tmp_path_factory: pytest.TempPathFactory) -> TigergraphConfig:
-    cfg = TigergraphConfig.from_docker_env()
-    cfg.database = "gf_resolve_probe"
-    return cfg
-
-
-def _graflo_backend_config(
-    tmp_path_factory: pytest.TempPathFactory,
-) -> GraFloBackendConfig:
-    return GraFloBackendConfig(output_dir=tmp_path_factory.mktemp("gf_resolve_probe"))
-
-
-BACKENDS: list[Any] = [
-    pytest.param(_neo4j_config, id="neo4j"),
-    pytest.param(_arango_config, id="arango"),
-    pytest.param(_memgraph_config, id="memgraph"),
-    pytest.param(_falkordb_config, id="falkordb"),
-    pytest.param(_postgres_config, id="postgres"),
-    pytest.param(_graflo_backend_config, id="graflo_backend"),
-    pytest.param(_nebula_config, id="nebula", marks=pytest.mark.nebula),
-    pytest.param(_tigergraph_config, id="tigergraph", marks=pytest.mark.tigergraph),
-]
+PROBE_SPACE = "gf_resolve_probe"
 
 
 @pytest.fixture(scope="module")
@@ -136,12 +69,13 @@ def probe_db(
     request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory
 ) -> Iterator[Any]:
     """Seeded connection for one backend; skips when the backend is unreachable."""
-    make_config: Callable[[pytest.TempPathFactory], Any] = request.param
     schema = _probe_schema()
     try:
-        config = make_config(tmp_path_factory)
+        config = config_for(
+            request.param, space=PROBE_SPACE, tmp_path_factory=tmp_path_factory
+        )
     except Exception as error:  # pragma: no cover - environment dependent
-        pytest.skip(f"backend config unavailable: {error}")
+        pytest.skip(f"{request.param} config unavailable: {error}")
 
     try:
         manager = ConnectionManager(connection_config=config)

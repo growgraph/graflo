@@ -61,14 +61,14 @@ identities, and DB profile — then infer, validate, migrate, and load into any 
 
 The engines listed in **What you get** are the supported **output** `DBType` values in `graflo.onto` (including **PostgreSQL** as a relational graph store). Each backend uses its own `Connection` implementation under the shared `ConnectionManager` / `DBWriter` / `GraphEngine` flow.
 
-**Graph sources** (introspection and bulk export) are supported on **Neo4j**, **ArangoDB**, and the **GraFlo file backend** via `GraphEngine.migrate_graph()`. See [Graph export and migration](docs/concepts/operations/graph_export_migration.md).
+**Graph sources** (introspection and bulk export) are supported on **Neo4j**, **ArangoDB**, **PostgreSQL**, and the **GraFlo file backend**. Note that `GraphEngine.migrate_graph()` itself currently fails at the write step for every source/target pair; `export_graph()` and `infer_schema_from_graph()` are unaffected. See [Graph export and migration](docs/concepts/operations/graph_export_migration.md).
 
 ## More capabilities
 
 - **GraFlo ontology (manifest RDF)** — Serialize any `GraphManifest` to RDF (Turtle, JSON-LD) using the published vocabulary at [`https://ontology.growgraph.dev/graflo`](https://ontology.growgraph.dev/graflo) (`owl:versionInfo` **1.0.0**). Covers schema, ingestion (resources, transforms, pipeline actors), and bindings. Round-trip via `graflo.rdf` or the `manifest-to-rdf` / `rdf-to-manifest` CLI. This is the **meta-model** of GraFlo itself — distinct from importing a **domain** OWL ontology into an LPG schema (`RdfInferenceManager`). Details: [docs — GraFlo ontology](https://growgraph.github.io/graflo/concepts/schema/ontology/).
 - **SPARQL & RDF** — Endpoints and RDF files (`.ttl`, `.rdf`, `.n3`, …); optional OWL/RDFS **domain** schema inference (`rdflib`, `SPARQLWrapper` in the default install).
-- **Schema inference** — From PostgreSQL-style 3NF layouts (PK/FK heuristics) or from OWL/RDFS (`owl:Class` → vertices, `owl:ObjectProperty` → edges, `owl:DatatypeProperty` → vertex fields).
-- **Graph export & migration** — Introspect Neo4j or ArangoDB, export to a **chunked file backend** (`GraFloBackendConfig`), ingest manifest resources to disk, or migrate graph→graph / graph→PostgreSQL with `GraphEngine.migrate_graph()` / `ingest()`.
+- **Schema inference** — From 3NF relational layouts (PK/FK heuristics) on **any engine SQLAlchemy can reflect** — PostgreSQL reads its own catalogue, everything else arrives through reflection — or from OWL/RDFS (`owl:Class` → vertices, `owl:ObjectProperty` → edges, `owl:DatatypeProperty` → vertex fields).
+- **Graph export & migration** — Introspect Neo4j, ArangoDB or PostgreSQL, export to a **chunked file backend** (`GraFloBackendConfig`), ingest manifest resources to disk, or migrate graph→graph / graph→PostgreSQL with `GraphEngine.migrate_graph()` / `ingest()`.
 - **REST API env wiring** — Register `base_url` and `ApiAuth` credentials from environment variables per `conn_proxy` label (`register_all_api_configs_from_env`); see [API connector and pagination](docs/concepts/connectors/api_connector.md).
 - **Schema migrations** — Plan and apply guarded schema deltas (`migrate_schema` console script → `graflo.cli.migrate_schema`; library in `graflo.migrate`; see docs).
 - **Typed `properties`** — Optional field types (`INT`, `FLOAT`, `STRING`, `DATETIME`, `BOOL`) on vertices and edges.

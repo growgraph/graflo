@@ -192,6 +192,9 @@ class ArangoConnection(Connection):
 
     flavor = DBType.ARANGO
     supports_graph_export = True
+    # A migration emitter is registered for this backend
+    # (graflo/migrate/executor.py); the other six have none.
+    supports_schema_ddl = True
     supports_schema_introspection = True
 
     def __init__(self, config: ArangoConfig):
@@ -1507,7 +1510,7 @@ class ArangoConnection(Connection):
                 continue
             cleaned = strip_internal_properties(doc)
             for far_type in candidate_types:
-                identity = _vertex_identity_value(schema, far_type, cleaned)
+                identity = _vertex_identity_value(self, schema, far_type, cleaned)
                 if identity is None or (far_type, identity) in seen:
                     continue
                 seen.add((far_type, identity))

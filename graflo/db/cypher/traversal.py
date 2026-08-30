@@ -155,7 +155,7 @@ def cypher_graph_neighbors(
             doc = row.get("far")
             if not isinstance(doc, dict):
                 continue
-            identity = _vertex_identity_value(schema, far_type, doc)
+            identity = _vertex_identity_value(conn, schema, far_type, doc)
             if identity is None or (far_type, identity) in seen:
                 continue
             seen.add((far_type, identity))
