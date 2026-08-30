@@ -14,8 +14,10 @@ import pytest
 
 from graflo.architecture.schema import Schema
 from graflo.db.manager import ConnectionManager
+from test.db.backends import config_for
 from test.db.test_resolve_vertices import (
     BACKENDS,
+    PROBE_SPACE,
     PROBE_VERTEX,
     SEED_DOCS,
 )
@@ -78,9 +80,11 @@ def indexed_db(
     """Connection whose probe vertex declares two secondary identities."""
     schema = Schema.model_validate(SCHEMA_WITH_SECONDARY)
     try:
-        config = request.param(tmp_path_factory)
+        config = config_for(
+            request.param, space=PROBE_SPACE, tmp_path_factory=tmp_path_factory
+        )
     except Exception as error:  # pragma: no cover - environment dependent
-        pytest.skip(f"backend config unavailable: {error}")
+        pytest.skip(f"{request.param} config unavailable: {error}")
 
     try:
         manager = ConnectionManager(connection_config=config)

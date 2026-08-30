@@ -51,8 +51,15 @@ def test_export_graph_container_builds_vertices_and_edges() -> None:
     assert gc.vertices["person"][0]["name"] == "Alice"
     assert ("person", "person", "knows") in gc.edges
     conn.fetch_all_docs.assert_called_once_with("person", limit=None)
+    # Endpoint identity fields travel with the request so backends that store
+    # an endpoint as a bare identity value can key the exported doc correctly.
     conn.fetch_all_edges.assert_called_once_with(
-        "person", "person", "knows", limit=None
+        "person",
+        "person",
+        "knows",
+        match_keys_source=("id",),
+        match_keys_target=("id",),
+        limit=None,
     )
 
 

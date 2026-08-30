@@ -192,6 +192,18 @@ def json_serializer(obj):
     return serialized
 
 
+#: Where each flavor's reserved words live: the backend subpackage holding a
+#: ``reserved_words.json``, and the keys under ``reserved_words`` to union.
+#:
+#: A backend joins by dropping that file into its own subpackage and adding a
+#: row here — nothing in the sanitizer changes. A flavor that is absent simply
+#: has no reserved words, which is the correct answer for backends that quote
+#: identifiers rather than reject them.
+_RESERVED_WORD_SOURCES: dict[DBType, tuple[str, tuple[str, ...]]] = {
+    DBType.TIGERGRAPH: ("tigergraph", ("gsql_keywords", "cpp_keywords")),
+}
+
+
 def load_reserved_words(db_flavor: DBType) -> set[str]:
     """Load reserved words for a given database flavor.
 
@@ -200,37 +212,39 @@ def load_reserved_words(db_flavor: DBType) -> set[str]:
 
     Returns:
         Set of reserved words (uppercase) for the database flavor.
-        Returns empty set if no reserved words file exists or for unsupported flavors.
+        Empty set when the flavor declares no source, or its file is missing
+        or unparseable.
     """
-    if db_flavor != DBType.TIGERGRAPH:
-        # Currently only TigerGraph has reserved words defined
+    source = _RESERVED_WORD_SOURCES.get(db_flavor)
+    if source is None:
         return set()
+    package, keys = source
 
-    # Load TigerGraph reserved words
-    json_path = Path(__file__).parent / "tigergraph" / "reserved_words.json"
+    json_path = Path(__file__).parent / package / "reserved_words.json"
     try:
         with open(json_path, "r") as f:
             reserved_data = json.load(f)
     except FileNotFoundError:
         logger.warning(
-            f"Could not find reserved_words.json at {json_path}, "
-            f"no reserved word sanitization will be performed"
+            "Could not find reserved_words.json at %s, "
+            "no reserved word sanitization will be performed for %s",
+            json_path,
+            db_flavor,
         )
         return set()
     except json.JSONDecodeError as e:
         logger.warning(
-            f"Could not parse reserved_words.json: {e}, "
-            f"no reserved word sanitization will be performed"
+            "Could not parse reserved_words.json: %s, "
+            "no reserved word sanitization will be performed for %s",
+            e,
+            db_flavor,
         )
         return set()
 
-    reserved_words = set()
-    reserved_words.update(
-        reserved_data.get("reserved_words", {}).get("gsql_keywords", [])
-    )
-    reserved_words.update(
-        reserved_data.get("reserved_words", {}).get("cpp_keywords", [])
-    )
+    declared = reserved_data.get("reserved_words", {})
+    reserved_words: set[str] = set()
+    for key in keys:
+        reserved_words.update(declared.get(key, []))
 
     # Return uppercase set for case-insensitive comparison
     return {word.upper() for word in reserved_words}

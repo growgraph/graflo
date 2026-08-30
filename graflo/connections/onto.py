@@ -1421,6 +1421,18 @@ class SparqlEndpointConfig(DBConfig):
         """Dataset name acts as the schema equivalent."""
         return self.dataset
 
+    def _query_path(self, dataset: str) -> str:
+        """Path below ``uri`` for the query endpoint. Fuseki: ``<ds>/sparql``.
+
+        Vendors lay their endpoints out differently; override this (and
+        :meth:`_graph_store_path`) rather than reassembling the whole URL.
+        """
+        return f"{dataset}/sparql"
+
+    def _graph_store_path(self, dataset: str) -> str:
+        """Path below ``uri`` for the Graph Store endpoint. Fuseki: ``<ds>/data``."""
+        return f"{dataset}/data"
+
     @property
     def query_endpoint(self) -> str:
         """Full SPARQL query endpoint URL.
@@ -1430,7 +1442,7 @@ class SparqlEndpointConfig(DBConfig):
         """
         base = (self.uri or "").rstrip("/")
         ds = self._fuseki_dataset_path_segment()
-        return f"{base}/{ds}/sparql"
+        return f"{base}/{self._query_path(ds)}"
 
     @property
     def graph_store_endpoint(self) -> str:
@@ -1441,7 +1453,7 @@ class SparqlEndpointConfig(DBConfig):
         """
         base = (self.uri or "").rstrip("/")
         ds = self._fuseki_dataset_path_segment()
-        return f"{base}/{ds}/data"
+        return f"{base}/{self._graph_store_path(ds)}"
 
     @classmethod
     def from_docker_env(
@@ -1488,3 +1500,39 @@ class SparqlEndpointConfig(DBConfig):
             config_data["dataset"] = env_vars["TS_DATASET"]
 
         return cls(**config_data)
+
+
+class GraphDBConfig(SparqlEndpointConfig):
+    """Configuration for an Ontotext GraphDB SPARQL endpoint.
+
+    GraphDB is a standard SPARQL 1.1 server, so it is reachable through the
+    same source-side machinery as Fuseki -- only the URL layout and the default
+    port differ:
+
+    * queries at ``<uri>/repositories/<repository>``
+    * Graph Store operations at
+      ``<uri>/repositories/<repository>/rdf-graphs/service``
+
+    ``dataset`` carries the repository id, matching the base class where the
+    dataset name is the schema-level identifier.
+
+    Example:
+        >>> config = GraphDBConfig(uri="http://localhost:7200", dataset="kb")
+        >>> config.query_endpoint
+        'http://localhost:7200/repositories/kb'
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="GRAPHDB_",
+        case_sensitive=False,
+    )
+
+    def _get_default_port(self) -> int:
+        """Default GraphDB HTTP port."""
+        return 7200
+
+    def _query_path(self, dataset: str) -> str:
+        return f"repositories/{dataset}"
+
+    def _graph_store_path(self, dataset: str) -> str:
+        return f"repositories/{dataset}/rdf-graphs/service"

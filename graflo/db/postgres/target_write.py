@@ -196,6 +196,8 @@ class PostgresTargetWriteMixin:
 
     flavor = DBType.POSTGRES
     supports_schema_introspection = True
+    # fetch_all_docs / fetch_all_edges are both implemented below.
+    supports_graph_export = True
     # The graph shape lives in the table layout, which `information_schema`
     # reports in full; nothing here is sampled.
     schema_introspection_is_sampled = False
@@ -986,6 +988,26 @@ class PostgresTargetWriteMixin:
             introspection, schema_name=schema_name or pg_schema
         )
 
+    def _endpoint_key(
+        self, match_keys: tuple[str, ...] | None, vertex_name: str
+    ) -> str:
+        """Name the column that ``source_id`` / ``target_id`` actually holds.
+
+        Edge tables store the endpoint's *first identity field* value rather
+        than a surrogate (see :meth:`_create_edge_table`), so an exported
+        endpoint document has to be keyed by that field's name: ``DBWriter``
+        resolves endpoints on ``identity_fields[0]`` and finds nothing under a
+        generic ``"id"``.
+        """
+        if match_keys:
+            return match_keys[0]
+        schema = getattr(self, "_target_schema", None)
+        if schema is not None:
+            fields = schema.core_schema.vertex_config.identity_fields(vertex_name)
+            if fields:
+                return fields[0]
+        return "id"
+
     def fetch_all_edges(
         self,
         source_class: str,
@@ -1006,13 +1028,19 @@ class PostgresTargetWriteMixin:
             f"SELECT * FROM {_quote_ident(pg_schema)}.{_quote_ident(table)}"
             f"{limit_clause}"
         )
+        source_key = self._endpoint_key(match_keys_source, source_class)
+        target_key = self._endpoint_key(match_keys_target, target_class)
         rows = self.read(q)
         result: list[list[dict[str, Any]]] = []
         for row in rows:
-            source_doc = {"id": row.get("source_id")}
-            target_doc = {"id": row.get("target_id")}
+            source_doc = {source_key: row.get("source_id")}
+            target_doc = {target_key: row.get("target_id")}
             weight = {
-                k: v for k, v in row.items() if k not in ("source_id", "target_id")
+                k: v
+                for k, v in row.items()
+                if k not in ("source_id", "target_id", "id")
             }
+            if relation_name and "relation" not in weight:
+                weight["relation"] = relation_name
             result.append([source_doc, target_doc, weight])
         return result

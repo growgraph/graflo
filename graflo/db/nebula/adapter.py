@@ -31,11 +31,20 @@ class NebulaResultSet:
         return self._raw
 
     def is_succeeded(self) -> bool:
+        """Whether the statement succeeded.
+
+        The two drivers report failure differently: v3 returns a status on the
+        result, while v5 raises from :meth:`ResultSet.raise_on_error`, which
+        :meth:`NebulaV5Adapter.execute` calls before wrapping. So a v5 result
+        that reaches here has already been checked -- ``True`` is a fact about
+        an error-free path, not an assumption that nothing failed.
+        """
         if self._is_v3:
             return self._raw.is_succeeded()
         return True
 
     def error_msg(self) -> str:
+        """Driver error message; empty on v5, where failures raise instead."""
         if self._is_v3:
             return self._raw.error_msg()
         return ""
@@ -49,7 +58,9 @@ class NebulaResultSet:
         """Return all rows as list of primitive-type dicts."""
         if self._is_v3:
             return self._raw.as_primitive()
-        return self._raw.as_primitive()
+        # nebula5-python exposes no as_primitive(); rows come back as an
+        # iterator, so materialise it to match the v3 contract.
+        return list(self._raw.as_primitive_by_row())
 
 
 class NebulaClientAdapter(abc.ABC):
@@ -122,7 +133,16 @@ class NebulaV3Adapter(NebulaClientAdapter):
 
 
 class NebulaV5Adapter(NebulaClientAdapter):
-    """Adapter for ``nebula5-python`` (NebulaGraph 5.x, gRPC / ISO GQL)."""
+    """Adapter for ``nebula5-python`` (NebulaGraph 5.x, gRPC / ISO GQL).
+
+    .. warning::
+       **Experimental and unverified.** NebulaGraph 5.x ships no open-source
+       server image, so this path is exercised by no test and no CI job. Most
+       statement builders in :mod:`graflo.db.nebula.query` still emit nGQL
+       rather than GQL, so DDL, writes and introspection are expected to fail
+       here. Treat 5.x as unsupported until it can be run against a real
+       instance; 3.x is the validated target.
+    """
 
     def __init__(self) -> None:
         self._client: Any = None
@@ -140,12 +160,23 @@ class NebulaV5Adapter(NebulaClientAdapter):
             user_name=username,
             password=password,
         )
-        logger.info("Connected to NebulaGraph 5.x at %s:%s", hostname, port)
+        logger.warning(
+            "Connected to NebulaGraph 5.x at %s:%s using the experimental v5 "
+            "adapter. This path is unverified -- no open-source 5.x server "
+            "image exists, so it is covered by no test, and most statement "
+            "builders still emit nGQL rather than GQL. Use NebulaGraph 3.x for "
+            "supported behaviour.",
+            hostname,
+            port,
+        )
 
     def execute(self, statement: str) -> NebulaResultSet:
         if self._client is None:
             raise RuntimeError("Not connected")
         result = self._client.execute(statement)
+        # Without this the driver's error status is never inspected and every
+        # failed statement is reported as a success.
+        result.raise_on_error()
         return NebulaResultSet(result, is_v3=False)
 
     def use_space(self, space_name: str) -> None:

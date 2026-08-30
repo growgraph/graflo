@@ -29,6 +29,7 @@ from graflo.architecture.schema import Schema
 from graflo.db.manager import ConnectionManager
 from graflo.hq.caster import IngestionParams
 from graflo.hq.graph_engine import GraphEngine
+from test.db.backends import backend_params, config_for
 
 NODE = "node"
 LINK = "links"
@@ -97,15 +98,18 @@ MANIFEST: dict[str, Any] = {
 #: Every backend that declares `supports_schema_introspection`, except the file
 #: backend, which stores the authored `Schema` verbatim and so round-trips by
 #: construction rather than by introspection.
-BACKENDS = [
-    pytest.param("neo4j", id="neo4j"),
-    pytest.param("arango", id="arango"),
-    pytest.param("memgraph", id="memgraph"),
-    pytest.param("falkordb", id="falkordb"),
-    pytest.param("postgres", id="postgres"),
-    pytest.param("tigergraph", id="tigergraph", marks=pytest.mark.tigergraph),
-    pytest.param("nebula", id="nebula", marks=pytest.mark.nebula),
-]
+BACKENDS = backend_params(
+    [
+        "neo4j",
+        "arango",
+        "memgraph",
+        "falkordb",
+        "postgres",
+        "tigergraph",
+        "nebula",
+    ]
+)
+
 
 #: Backends whose catalogue names the edge relation. The Cypher family stores a
 #: relationship type, Nebula and TigerGraph an edge type, PostgreSQL encodes it
@@ -126,42 +130,7 @@ TYPED_CATALOGUE_BACKENDS = {"tigergraph", "nebula", "postgres"}
 
 
 def _config(flavor: str):
-    from graflo.connections.onto import (
-        ArangoConfig,
-        FalkordbConfig,
-        MemgraphConfig,
-        NebulaConfig,
-        Neo4jConfig,
-        PostgresConfig,
-        TigergraphConfig,
-    )
-
-    if flavor == "neo4j":
-        config = Neo4jConfig.from_docker_env()
-        config.database = config.database or "_system"
-        return config
-    if flavor == "arango":
-        config = ArangoConfig.from_docker_env()
-        config.database = SPACE
-        return config
-    if flavor == "memgraph":
-        return MemgraphConfig.from_docker_env()
-    if flavor == "falkordb":
-        config = FalkordbConfig.from_docker_env()
-        config.database = SPACE
-        return config
-    if flavor == "postgres":
-        config = PostgresConfig.from_docker_env()
-        config.schema_name = SPACE
-        return config
-    if flavor == "tigergraph":
-        config = TigergraphConfig.from_docker_env()
-        config.database = SPACE
-        return config
-    config = NebulaConfig.from_docker_env()
-    config.uri = f"nebula://localhost:{config.port}"
-    config.schema_name = SPACE
-    return config
+    return config_for(flavor, space=SPACE)
 
 
 def _manifest(root: Path) -> GraphManifest:

@@ -328,8 +328,19 @@ def _fetch_edge_rows(
 
 
 #: Keys under which backends report the two endpoints of an edge row.
+#:
+#: This is a *name union*, not a per-flavor contract: a dict row is matched
+#: against every candidate in order. A backend whose ``fetch_edges`` returns
+#: endpoints under some other name resolves to ``(None, None)`` here, and its
+#: rows are then dropped from the neighbourhood — so a new backend must either
+#: emit one of these names or add its own. :func:`normalize_edge_row` logs when
+#: that happens rather than losing the row quietly.
 _SOURCE_KEYS = ("_from", "source_id", "src", "_src", "from", "from_id", "_from_key")
 _TARGET_KEYS = ("_to", "target_id", "dst", "_dst", "to", "to_id", "_to_key")
+
+#: Rows already reported as unresolvable, keyed by their sorted column names, so
+#: a mismatch is reported once per shape instead of once per row.
+_reported_unresolved: set[tuple[str, ...]] = set()
 
 
 def _strip_collection(value: Any) -> str | None:
@@ -372,6 +383,21 @@ def normalize_edge_row(row: Any) -> tuple[dict[str, Any], str | None, str | None
         if source is None and target is None:
             source = _strip_collection(row.get("_from_key"))
             target = _strip_collection(row.get("_to_key"))
+        if source is None and target is None and row:
+            # Neither endpoint resolved, so the caller will drop this row from
+            # the neighbourhood. Silent loss reads as "no such neighbour", which
+            # is indistinguishable from a correct empty result — say so instead.
+            shape = tuple(sorted(str(k) for k in row))
+            if shape not in _reported_unresolved:
+                _reported_unresolved.add(shape)
+                logger.warning(
+                    "normalize_edge_row: no endpoint keys in edge row with columns "
+                    "%s; rows of this shape are dropped from traversal. Expected one "
+                    "of %s for the source and %s for the target.",
+                    list(shape),
+                    list(_SOURCE_KEYS),
+                    list(_TARGET_KEYS),
+                )
         return dict(row), source, target
     return {}, None, None
 

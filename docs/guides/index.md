@@ -18,6 +18,7 @@ Task-oriented walkthroughs for common GraFlo workflows. Each guide links to the 
 | Migrate between schema versions | — | — | [Migration and practices](../concepts/operations/migration_and_practices.md) |
 | Infer a manifest from PostgreSQL | — | [Example 5](../examples/example-5.md) | [Capabilities](../concepts/architecture/capabilities.md) |
 | Ingest RDF with an OWL ontology | — | [Example 6](../examples/example-6.md) | [Capabilities](../concepts/architecture/capabilities.md) |
+| Support a new database backend | [Adding a database backend](adding_a_backend.md) | — | [Capabilities](../concepts/architecture/capabilities.md), [Importing and layering](importing.md) |
 
 ## Getting started path
 

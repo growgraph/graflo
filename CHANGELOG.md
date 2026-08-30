@@ -6,6 +6,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.11.1]
+
+### Added
+
+- **`ConnectionCapability.SCHEMA_DDL`** and the matching `Connection.supports_schema_ddl` ClassVar. A backend with no migration emitter is now refused **by name, before a connection is opened**, and the error names the backends that do have one — so a caller can map it to a 501 instead of relaying an opaque driver error raised from inside an emitter. Declared on ArangoDB and Neo4j; a test pins the declaration against the executor's emitter registry so the two cannot drift.
+
+  It says an emitter is registered — not that every operation is implemented, and not that applying to a *populated* target works. It does not, on any backend.
+
+- **A first-write regression suite** (`test/db/test_first_write_guard.py`) asserting on every backend that `apply_target_schema(recreate=False)` refuses a populated target, and that `recreate=True` still succeeds. The guard protects a first write from clobbering a populated graph; migration inherits it by routing DDL through the same call, which is why migration cannot run against a real database today. Pinning it is what keeps the fix honest — migration needs its own entry point rather than a relaxed guard.
+
+- **[Adding a database backend](docs/guides/adding_a_backend.md)** — the twelve registration points a new backend needs, the 19 abstract methods grouped by concern, the capability flags, the traversal endpoint-name contract, and how to wire the test suites. Previously tribal knowledge: `contributing.md` said nothing about implementing a `Connection`.
+
+- **PostgreSQL is now a graph export source.** `PostgresTargetWriteMixin` implements both `fetch_all_docs` and `fetch_all_edges`, but never declared `supports_graph_export`, so `ConnectionManager.flavors_supporting(GRAPH_EXPORT)` excluded it and `GraphEngine.migrate_graph()` refused it as a source. The capability is now declared, taking bulk export from three backends to four.
+
+- **`GraphDBConfig`** (`graflo/connections/onto.py`) — an Ontotext GraphDB SPARQL endpoint, reachable through the existing source-side machinery. GraphDB is a standard SPARQL 1.1 server, so only the URL layout differs: queries at `<uri>/repositories/<repo>` and Graph Store operations at `<uri>/repositories/<repo>/rdf-graphs/service`, with `7200` as the default port. `SparqlEndpointConfig` grew two overridable hooks (`_query_path`, `_graph_store_path`) instead of hardcoding the Fuseki layout; Fuseki's own endpoints are unchanged.
+
+  It is a `SparqlEndpointConfig` subclass, **not** a new `DBType` — SPARQL endpoints remain source-only, so this adds a vendor, not a backend.
+
+### Changed
+
+- **One backend registry for the cross-backend test suites.** Five suites each carried their own `BACKENDS` list *and* their own flavor-to-config `if/elif` chain, so a new backend had to be added in five places and a per-backend setup fix applied only to whichever copies the author remembered. `test/db/backends.py` now holds `ALL_BACKENDS`, `config_for` and `backend_params`; a suite declares only which backends it covers, keeping its own reason for any it excludes. Opt-in markers are applied centrally, so a gated backend cannot be run unmarked by accident.
+
+- **`load_reserved_words` is no longer TigerGraph-specific.** It was an early return on `db_flavor != TIGERGRAPH`; reserved-word sources are now a `_RESERVED_WORD_SOURCES` mapping of flavor to (subpackage, JSON keys). A backend joins by dropping `reserved_words.json` into its own subpackage and adding a row. Behaviour is unchanged: TigerGraph resolves the same 214 words, every other flavor an empty set.
+
+### Fixed
+
+- **FalkorDB's first-write guard never fired.** `_node_count()` probed the result object for `.data()` or iteration, but the driver's `QueryResult` exposes neither — it returns rows under `result_set`, the way every other query in that class already reads them. So the count was always `0`, and `apply_target_schema(recreate=False)` silently accepted a populated graph instead of raising `SchemaExistsError`. Found by the new first-write suite, which is the case for asserting a guard rather than trusting it.
+
+- **Unrecognised edge rows were dropped from traversal in silence.** `normalize_edge_row` matches endpoint columns against a union of known names; a backend emitting some other name resolved to no endpoints and had its rows discarded, which reads as "no neighbours" rather than as a fault. It now logs once per unrecognised row shape, naming the columns it saw and the names it expected.
+
+- **Exported edge endpoints from PostgreSQL were unresolvable.** Edge tables store the endpoint's *first identity field* value in `source_id`/`target_id`, but `fetch_all_edges` returned it keyed as `{"id": ...}`. `DBWriter` resolves endpoints on `identity_fields[0]`, so unless a vertex's identity happened to be literally named `id`, every exported edge silently matched nothing. Endpoints are now keyed by the real field name, the edge table's own surrogate `id` no longer leaks in as an edge property, and `relation` is carried on the weight as the Arango exporter already did.
+
+  `GraphEngine._export_graph_container` now passes `match_keys_source` / `match_keys_target` — parameters the `Connection.fetch_all_edges` signature already declared and no caller supplied.
+
+- **NebulaGraph 5.x reported every failed statement as a success.** `NebulaV5Adapter.execute` never called `ResultSet.raise_on_error()`, and `NebulaResultSet.is_succeeded()` returned a hardcoded `True` for v5, so errors were discarded in full. `raise_on_error()` is now invoked before the result is wrapped. Separately, `rows_as_dicts()` called `as_primitive()`, which `nebula5-python`'s `ResultSet` does not define — v5 now uses `as_primitive_by_row()`.
+
+  Both paths remain **experimental and unverified**: NebulaGraph 5.x ships no open-source server image, so nothing here is covered by a test, and most builders in `nebula/query.py` still emit nGQL rather than GQL. Connecting with the v5 adapter now logs an explicit warning saying so. NebulaGraph 3.x is the supported target.
+
+### Removed
+
+- **Dead package directories** `graflo/db/{connection,protocols,transports,grafeo}/` and `test/db/grafeos/`, plus the empty `graflo/db/postgres/heuristics.py`. None contained a single `.py` file — only stale bytecode from an abandoned protocol/transport split — and nothing imported them. The orphaned `docs/reference/db/postgres/heuristics.md` went with them; the `db/connection/*` reference pages stay, since those are deliberate "moved" redirects rather than module stubs.
+
 ## [1.11.0]
 
 ### Added

@@ -507,20 +507,19 @@ class FalkordbConnection(Connection):
         logger.info("Selected FalkorDB graph '%s'", graph_name)
 
     def _node_count(self) -> int:
+        """Number of nodes in the graph, or 0 if it cannot be determined.
+
+        Reads ``result_set`` the way every other query in this class does.
+        The driver's ``QueryResult`` exposes neither ``data()`` nor iteration,
+        so probing for those returned 0 for a populated graph — which silently
+        disabled the first-write guard in :meth:`apply_target_schema`.
+        """
         try:
             result = self.execute("MATCH (n) RETURN count(n) AS c")
-            count = 0
-            if hasattr(result, "data") and result.data():
-                count = result.data()[0].get("c", 0) or 0
-            elif result is not None and hasattr(result, "__iter__"):
-                for record in result:
-                    count = (
-                        record.get("c", 0)
-                        if hasattr(record, "get")
-                        else getattr(record, "c", 0)
-                    ) or 0
-                    break
-            return int(count)
+            rows = getattr(result, "result_set", None)
+            if not rows or not rows[0]:
+                return 0
+            return int(rows[0][0] or 0)
         except Exception as e:
             logger.debug("Could not check graph node count: %s", e)
             return 0

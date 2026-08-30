@@ -192,6 +192,9 @@ class ArangoConnection(Connection):
 
     flavor = DBType.ARANGO
     supports_graph_export = True
+    # A migration emitter is registered for this backend
+    # (graflo/migrate/executor.py); the other six have none.
+    supports_schema_ddl = True
     supports_schema_introspection = True
 
     def __init__(self, config: ArangoConfig):

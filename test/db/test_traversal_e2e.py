@@ -23,6 +23,7 @@ from graflo.architecture.graph_types import EdgeDirection, GraphContainer
 from graflo.db.manager import ConnectionManager
 from graflo.hq.caster import IngestionParams
 from graflo.hq.graph_engine import GraphEngine
+from test.db.backends import backend_params, config_for
 
 NODE = "node"
 LINK = "links"
@@ -100,52 +101,13 @@ MANIFEST: dict[str, Any] = {
 
 #: TigerGraph is excluded: its reverse reachability is a DDL-time decision and
 #: the outbound-only case is covered by the query-shape suite.
-BACKENDS = [
-    pytest.param("neo4j", id="neo4j"),
-    pytest.param("arango", id="arango"),
-    pytest.param("memgraph", id="memgraph"),
-    pytest.param("falkordb", id="falkordb"),
-    pytest.param("postgres", id="postgres"),
-    pytest.param("nebula", id="nebula", marks=pytest.mark.nebula),
-]
+BACKENDS = backend_params(
+    ["neo4j", "arango", "memgraph", "falkordb", "postgres", "nebula"]
+)
 
 
 def _config(flavor: str):
-    from graflo.connections.onto import (
-        ArangoConfig,
-        FalkordbConfig,
-        MemgraphConfig,
-        NebulaConfig,
-        Neo4jConfig,
-        PostgresConfig,
-    )
-
-    if flavor == "neo4j":
-        config = Neo4jConfig.from_docker_env()
-        config.database = config.database or "_system"
-        return config
-    if flavor == "arango":
-        config = ArangoConfig.from_docker_env()
-        config.database = SPACE
-        return config
-    if flavor == "memgraph":
-        return MemgraphConfig.from_docker_env()
-    if flavor == "falkordb":
-        config = FalkordbConfig.from_docker_env()
-        config.database = SPACE
-        return config
-    if flavor == "postgres":
-        config = PostgresConfig.from_docker_env()
-        # Without this the suite ingests into `public`, colliding with every
-        # other Postgres suite sharing the docker instance -- notably
-        # test/db/postgres/test_introspection.py, which asserts exact table
-        # counts. Mirrors test_secondary_identity_e2e.py.
-        config.schema_name = SPACE
-        return config
-    config = NebulaConfig.from_docker_env()
-    config.uri = f"nebula://localhost:{config.port}"
-    config.schema_name = SPACE
-    return config
+    return config_for(flavor, space=SPACE)
 
 
 def _manifest(root: Path) -> GraphManifest:

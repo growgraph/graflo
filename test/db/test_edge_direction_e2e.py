@@ -24,6 +24,7 @@ from graflo.db.edge_direction_support import default_direction_for_edge
 from graflo.db.manager import ConnectionManager
 from graflo.hq.caster import IngestionParams
 from graflo.hq.graph_engine import GraphEngine
+from test.db.backends import backend_params, config_for
 
 PERSON = "person"
 RELATION = "knows"
@@ -102,42 +103,11 @@ MANIFEST: dict[str, Any] = {
 # Backends whose fetch_edges can answer a direction at all. TigerGraph is
 # excluded on purpose: reverse reachability there is a DDL-time decision, and
 # PostgreSQL / the file backend do not implement fetch_edges.
-BACKENDS = [
-    pytest.param("neo4j", id="neo4j"),
-    pytest.param("arango", id="arango"),
-    pytest.param("memgraph", id="memgraph"),
-    pytest.param("falkordb", id="falkordb"),
-    pytest.param("nebula", id="nebula", marks=pytest.mark.nebula),
-]
+BACKENDS = backend_params(["neo4j", "arango", "memgraph", "falkordb", "nebula"])
 
 
 def _config(flavor: str):
-    from graflo.connections.onto import (
-        ArangoConfig,
-        FalkordbConfig,
-        MemgraphConfig,
-        NebulaConfig,
-        Neo4jConfig,
-    )
-
-    if flavor == "neo4j":
-        config = Neo4jConfig.from_docker_env()
-        config.database = config.database or "_system"
-        return config
-    if flavor == "arango":
-        config = ArangoConfig.from_docker_env()
-        config.database = SPACE
-        return config
-    if flavor == "memgraph":
-        return MemgraphConfig.from_docker_env()
-    if flavor == "falkordb":
-        config = FalkordbConfig.from_docker_env()
-        config.database = SPACE
-        return config
-    config = NebulaConfig.from_docker_env()
-    config.uri = f"nebula://localhost:{config.port}"
-    config.schema_name = SPACE
-    return config
+    return config_for(flavor, space=SPACE)
 
 
 def _manifest(root: Path) -> GraphManifest:
