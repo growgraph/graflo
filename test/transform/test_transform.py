@@ -16,6 +16,7 @@ from graflo.util.transform import (
     remove_prefix,
     remove_suffix,
     snake_to_camel,
+    tagged_key,
 )
 
 logger = logging.getLogger(__name__)
@@ -476,6 +477,25 @@ def test_gated_normalized_key_as_manifest_transform():
         "match_key": "alpha"
     }
     assert t({"secondary_key": "zz7", "shared_raw": "ABC-Alpha"}) == {"match_key": None}
+
+
+def test_tagged_key_namespaces_value():
+    assert tagged_key("f2", tag="a") == "a:f2"
+    assert tagged_key(" o1 ", tag="b") == "b:o1"
+
+
+def test_tagged_key_none_and_empty_return_none():
+    assert tagged_key(None, tag="a") is None
+    assert tagged_key("", tag="a") is None
+    assert tagged_key("   ", tag="a") is None
+
+
+def test_tagged_key_custom_sep():
+    assert tagged_key("f2", tag="a", sep="/") == "a/f2"
+
+
+def test_tagged_key_non_string_value():
+    assert tagged_key(42, tag="a") == "a:42"
 
 
 def test_target_keys_rejects_input_groups():

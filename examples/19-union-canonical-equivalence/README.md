@@ -3,9 +3,17 @@
 Two independent manifests describe overlapping entities. Source A speaks its
 own vocabulary (`Firm`, `firm_id`); a **canonical map** translates it into the
 target model (`Company`, `company_id`). Source B's `Org` is **equivalent** to
-`Company` — but only conditionally: an A-record participates in the entity-level
-equivalence only when its `secondary_key` starts with `abc_`. Non-`abc_` records are
-still ingested; they just must never fuse with B-entities.
+`Company` — but only conditionally: an A-record participates in the
+entity-level equivalence only when its `secondary_key` starts with `abc_`.
+Non-matching records are still ingested; they just must never fuse with
+B-entities.
+
+The guiding principle: **a primary identity is a property of the class.** The
+merged `Company` gets ONE identity definition referencing only canonical
+attributes (`match_key`, `local_key`). *How* each source populates them —
+gating, normalization, namespacing — is resource knowledge, appended to the
+resource pipelines as fundamental evolution ops. The source manifests stay
+pure.
 
 ## The recipe, in order
 
@@ -25,53 +33,58 @@ validate_compose_against_canonical_map(canonical_map, op,
 # 4. compose (name_conflict defaults to "error")
 union = compose_manifests(canonical_a, B, op)
 
-# 5. install the conditional-equivalence identity, post-compose
-union = apply_evolution(union, [ReplaceIdentityOp(vertices={"Company":
-    IdentityReplacement(to=FunnelIdentityTarget(funnel=IdentityFunnel(branches=[
-        IdentityBranch(id="shared",  fields=["match_key"]),   # fuses
-        IdentityBranch(id="a_local", fields=["company_id"]),  # non-abc_ A
-        IdentityBranch(id="b_local", fields=["org_id"]),      # B fallback
-    ])), retire="keep")})])
+# 5. apply the identity alignment — emits only fundamental ops
+union = apply_evolution(union, alignment_to_ops(ALIGNMENT, manifest=union,
+                                                canonical_maps=[canonical_map]))
 ```
+
+`alignment_to_ops` composes four fundamentals:
+
+1. `AddVertexPropertiesOp` — declare `match_key` + `local_key` on `Company`;
+2. `AddResourceTransformsOp` — per-resource derivation steps appended to the
+   pipelines (the new ingestion-side fundamental op);
+3. `ReplaceIdentityOp` — a priority funnel over the canonical attributes only:
+   `[match_key, local_key]`, no side-specific branches;
+4. `AddSecondaryIdentitiesOp` — `by_company_id` / `by_org_id` keep the retired
+   side keys addressable for lookups and edge-endpoint resolution.
 
 ## How the condition works
 
 The gate lives in a **resource transform**, not a connector filter — a
-connector filter would drop the non-`abc_` records entirely, and they must still
-be ingested. `gated_normalized_key` emits the normalized shared key only when
-the gate matches, and `None` otherwise:
+connector filter would drop the non-matching records entirely, and they must
+still be ingested. `gated_normalized_key` emits the normalized shared key only
+when the gate matches, and `None` otherwise:
 
-```yaml
-transforms:
--   name: gate_match_key
-    module: graflo.util.transform
-    foo: gated_normalized_key
-    params: {prefix: abc_, strip_prefix: ABC-}
-    input: [secondary_key, shared_raw]
-    output: [match_key]
+```python
+AlignmentRow(into="match_key", sources={
+    "r_a": DerivationSpec(input=["secondary_key", "shared_raw"],
+                          params={"prefix": "abc_", "strip_prefix": "ABC-"}),
+    "r_b": DerivationSpec(input=["org_id", "shared_raw"],
+                          params={"prefix": "", "strip_prefix": "ABC-"}),
+})
 ```
 
-`None` is an empty value to the identity digest, so the funnel's `shared`
-branch never fires for a non-`abc_` record — it falls through to `a_local` and
-keys off its own `company_id`. Source B reuses the same function with
-`prefix: ''` (an always-true gate), so both sides share one normalization code
-path and cannot drift apart.
+`None` is an empty value to the identity digest, so the funnel's `match_key`
+branch never fires for a non-gated record — it falls through to `local_key`,
+which each resource fills from its own key via `tagged_key`, **namespaced**
+(`a:f2` vs `b:o1`) so cross-side collisions are impossible. Source B reuses
+the same derivation function with `prefix: ''` (an always-true gate), so both
+sides share one normal form.
 
-Two records that take the `shared` branch with the same normalized value
-digest to the same synthetic `id` — across two resources, with no join and no
-live lookup. `include_branch_id` (the default) keeps the three branches
-collision-free: a `shared` digest can never equal an `a_local` digest, even
-over equal values.
+**Derivation inputs are RAW source-doc field names** (`firm_id`, not
+`company_id`): property renames rewrite `vertex.from` maps so documents keep
+their original keys, and transform inputs are never rewritten. Passing the
+supplied canonical maps to `alignment_to_ops` makes this a loud validation
+error instead of a silent empty derivation.
 
-## Why this order
+## Priority semantics
 
-- **The funnel goes in after compose.** It references both sides' local keys
-  (`company_id`, `org_id`), which coexist only on the merged class —
-  `replace_identity` refuses to key a vertex on properties it does not declare.
-- **Validation goes in before compose.** `compose_manifests` checks that
-  equivalence endpoints *exist*, but cannot know that `Firm` is a name the
-  canonical map retired. `validate_compose_against_canonical_map` can, and
-  fails loudly instead of composing a wrong union.
+With several alignment rows, row order is funnel priority: a record keys by
+the **highest-priority attribute it carries**. Two records fuse when their
+strongest present attribute coincides. A match on a lower-priority attribute
+does *not* fuse records when one of them also carries a higher-priority one —
+that trade (deterministic, digest-only, no write-time lookups) is deliberate
+and pinned in the test suite.
 
 ## Run it
 
@@ -87,27 +100,26 @@ uv run python build_union.py --stale-demo   # the validator failing loudly
 `inspect_fusion.py` prints one row per emitted vertex doc:
 
 ```
-resource  local key   gate    match_key   id
-r_a       f1          abc_7   alpha       9f56063a…
-r_a       f2          zz9     -           2b69296f…
-r_b       o1          -       alpha       9f56063a…
+resource  local_key   gate    match_key   id
+r_a       a:f1        abc_7   alpha       ada61dd4…
+r_a       a:f2        zz9     -           f52e9036…
+r_b       b:o1        -       alpha       ada61dd4…
 
 3 records → 2 vertices (1 fused)
 ```
 
 `f1` (gate `abc_7`) and `o1` normalize to the same `match_key` and fuse; `f2`
-carries the same raw shared value but fails the gate, so it keys locally and
+carries the same raw shared value but fails the gate, so it keys by `a:f2` and
 stays a separate vertex.
 
 ## Notes
 
-- **Equivalence is declared, never inferred.** The canonical map and the
-  `VertexEquivalence` are author-supplied; validation only cross-checks the
-  two declarations against each other.
+- **Equivalence is declared, never inferred.** The canonical map, the
+  `VertexEquivalence`, and the `IdentityAlignment` are author-supplied;
+  validation only cross-checks the declarations against each other.
 - **A merge is a stated intent.** A canonical map that collapses two classes
   requires `allow_merges: true`; a compose op that collapses two right-side
-  classes onto one target requires `allow_implicit_merge=True` — and the
-  validator warns when the collapse will turn an edge into a self-relation.
+  classes onto one target requires `allow_implicit_merge=True`.
 - **Changing the funnel rekeys the graph** — branch order, ids, and field sets
   all feed the digest (see example 17).
 

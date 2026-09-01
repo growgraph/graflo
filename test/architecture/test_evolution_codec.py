@@ -73,6 +73,23 @@ OP_PAYLOADS: dict[str, dict] = {
     "remove_edge_properties": {"removals": {"purchases": ["scratch"]}},
     "add_edge_properties": {"additions": {"purchases": ["note"]}},
     "add_inverse_edges": {"relations": {"purchases": "purchased_by"}},
+    "add_resource_transforms": {
+        "additions": {
+            "crm": [
+                {
+                    "transform": {
+                        "call": {
+                            "module": "graflo.util.transform",
+                            "foo": "tagged_key",
+                            "params": {"tag": "a"},
+                            "input": ["party_id"],
+                            "output": ["local_key"],
+                        }
+                    }
+                }
+            ]
+        },
+    },
     "project_manifest": {"keep_vertices": ["party"]},
     "replace_identity": {
         "vertices": {"party": {"to": {"mode": "natural", "identity": ["email"]}}}
@@ -153,15 +170,15 @@ class TestUnionCoverage:
             "INGESTION_REWRITING_OPS or to schema_only here"
         )
 
-    def test_the_vocabulary_is_thirty_ops(self) -> None:
+    def test_the_vocabulary_is_thirty_one_ops(self) -> None:
         exported = {
             name
             for name in dir(ops_module)
             if name.endswith("Op")
             and hasattr(getattr(ops_module, name), "model_fields")
         }
-        assert len(exported) == 30
-        assert len(_union_members()) == 29  # 30 minus the binary compose op
+        assert len(exported) == 31
+        assert len(_union_members()) == 30  # 31 minus the binary compose op
 
 
 class TestRoundTrip:

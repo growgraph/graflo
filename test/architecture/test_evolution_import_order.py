@@ -19,6 +19,10 @@ from graflo.architecture.evolution.rewrite import pipeline_mentions_any_vertex
             "from graflo import EdgeConfig; "
             "from graflo.architecture.evolution.rewrite import pipeline_mentions_any_vertex"
         ),
+        (
+            "from graflo.architecture.evolution import "
+            "apply_add_resource_transforms, alignment_to_ops"
+        ),
     ],
 )
 def test_critical_imports_in_clean_subprocess(snippet: str) -> None:

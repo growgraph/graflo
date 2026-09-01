@@ -69,6 +69,10 @@ IRREVERSIBLE: dict[str, str] = {
     "sanitize": "renames are flavor-driven and not recorded per element",
     "project_manifest": "projection drops elements outright",
     "compose_manifests": "composition is binary; there is no single prior manifest",
+    "add_resource_transforms": (
+        "appended pipeline steps are not tracked per-op; there is no "
+        "remove_resource_transforms op"
+    ),
 }
 
 

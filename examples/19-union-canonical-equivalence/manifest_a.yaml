@@ -10,7 +10,6 @@ schema:
                 -   firm_id
                 -   secondary_key
                 -   shared_raw
-                -   match_key
                 identity:
                 -   firm_id
         edge_config:
@@ -19,19 +18,5 @@ ingestion_model:
     resources:
     -   name: r_a
         pipeline:
-        -   transform:
-                call:
-                    use: gate_match_key
         -   vertex: Firm
-    transforms:
-    -   name: gate_match_key
-        module: graflo.util.transform
-        foo: gated_normalized_key
-        params:
-            prefix: abc_
-            strip_prefix: ABC-
-        input:
-        -   secondary_key
-        -   shared_raw
-        output:
-        -   match_key
+    transforms: []

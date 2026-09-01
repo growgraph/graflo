@@ -558,3 +558,27 @@ def gated_normalized_key(
     if casefold:
         key = key.casefold()
     return key or None
+
+
+def tagged_key(value: object, *, tag: str, sep: str = ":") -> str | None:
+    """Namespace a side-local key: tag ``"a"`` turns ``"f2"`` into ``"a:f2"``.
+
+    ``None``/empty *value* returns ``None``, which is an empty value to
+    identity digests — the funnel branch listing the output field is skipped.
+    Disambiguation is resource knowledge: each resource tags its own local
+    keys, so a class-level fallback identity stays side-agnostic while
+    cross-resource collisions become impossible. Normalization beyond a
+    whitespace strip is a separate concern — compose another transform step.
+
+    Args:
+        value: The side-local key material.
+        tag: Namespace prefix identifying the resource/side.
+        sep: Separator between *tag* and the key.
+
+    Returns:
+        ``f"{tag}{sep}{key}"``, or ``None`` when *value* is missing or empty.
+    """
+    if value is None:
+        return None
+    key = str(value).strip()
+    return f"{tag}{sep}{key}" if key else None

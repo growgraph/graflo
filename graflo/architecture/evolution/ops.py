@@ -9,6 +9,7 @@ from pydantic import Field as PydanticField
 from pydantic import model_validator
 
 from graflo.architecture.base import ConfigBaseModel
+from graflo.architecture.contract.ingestion.transform import ProtoTransform
 from graflo.architecture.graph_types import Index
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.identity_funnel import IdentityFunnel
@@ -490,6 +491,74 @@ class AddInverseEdgesOp(ConfigBaseModel):
     )
 
 
+class AddResourceTransformsOp(ConfigBaseModel):
+    """Append transform steps to named resources' pipelines.
+
+    The first op whose primary effect is ingestion: ``graph_schema`` is
+    untouched. Steps are appended at the ROOT level of each pipeline; actor
+    type-priority sorting (transform runs before vertex extraction at the same
+    level) makes the position safe. Nested ``descend`` levels are not
+    targetable in this form.
+
+    Steps may reference a registry transform via ``call.use`` (resolved
+    against the manifest's existing ``ingestion_model.transforms`` union the
+    op's own ``transforms``) or carry a fully inline ``call``
+    (``module`` + ``foo`` + ``params``), which cannot collide by name.
+    """
+
+    op: Literal["add_resource_transforms"] = "add_resource_transforms"
+    additions: dict[str, list[dict[str, Any]]] = PydanticField(
+        ...,
+        description=(
+            "Per-resource transform steps to append: "
+            "``{resource_name: [step_dict, ...]}``."
+        ),
+        min_length=1,
+    )
+    transforms: list[ProtoTransform] = PydanticField(
+        default_factory=list,
+        description=(
+            "Named transforms to register in ``ingestion_model.transforms`` "
+            "for steps that reference them via ``call.use``. A name already "
+            "registered with a different body is an error at apply time."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _validate_steps(self) -> AddResourceTransformsOp:
+        from graflo.architecture.contract.ingestion.steps.models import (
+            TransformActorConfig,
+        )
+        from graflo.architecture.contract.ingestion.steps.normalize import (
+            normalize_actor_step,
+        )
+
+        for resource_name, steps in self.additions.items():
+            if not steps:
+                raise ValueError(
+                    f"add_resource_transforms: empty step list for resource "
+                    f"{resource_name!r}"
+                )
+            for step in steps:
+                normalized = normalize_actor_step(step)
+                if (
+                    not isinstance(normalized, dict)
+                    or normalized.get("type") != "transform"
+                ):
+                    raise ValueError(
+                        f"add_resource_transforms: step for resource "
+                        f"{resource_name!r} is not a transform step: {step!r}"
+                    )
+                TransformActorConfig.model_validate(normalized)
+        for proto in self.transforms:
+            if not proto.name:
+                raise ValueError(
+                    "add_resource_transforms: registry transforms must define "
+                    "a non-empty name"
+                )
+        return self
+
+
 class AddVerticesOp(ConfigBaseModel):
     """Introduce new logical vertex types.
 
@@ -950,6 +1019,7 @@ class ComposeManifestsOp(ConfigBaseModel):
 
 ManifestOp = Annotated[
     RemoveVerticesOp
+    | AddResourceTransformsOp
     | AddVerticesOp
     | AddEdgesOp
     | RetargetEdgesOp
@@ -992,6 +1062,7 @@ ManifestOp = Annotated[
 INGESTION_REWRITING_OPS: frozenset[str] = frozenset(
     {
         "add_inverse_edges",
+        "add_resource_transforms",
         "merge_edges",
         "merge_vertices",
         "project_manifest",

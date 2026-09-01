@@ -35,6 +35,7 @@ GraFlo provides **contract-level** operations that transform a validated `GraphM
 | **Add / remove vertex & edge indexes** | Authors `db_profile.vertex_indexes` and `edge_specs[].indexes` directly. Indexes derived from `secondary_identities` cannot be removed this way — they would be re-registered by the next `finish_init`, so the op points at **remove secondary identities** instead. |
 | **Set edge directed** | Sets `Edge.directed` on selected triples. Load-bearing for replay: `directed` decides what **add inverse edges** may duplicate. |
 | **Sanitize** | Target-`DBType` policy: reserved-word-safe names on `DatabaseProfile`, reserved vertex field renames, and (for TigerGraph) consistent identity tuples per edge relation. This is the same work **`graflo.hq.sanitizer.Sanitizer`** applies by building a single **`SanitizeOp`**. |
+| **Add resource transforms** | Appends transform steps to named resources' pipelines (root level; actor type-priority ordering runs them before vertex extraction at that level) and optionally registers named transforms (loud on same-name/different-body, mirroring compose). The only op whose primary effect is ingestion; requires `ingestion_model` and raises otherwise. Steps may reference the registry via `call.use` or carry a fully inline `call` (collision-free). Irreversible. |
 | **Compose manifests** | Binary union of two full `GraphManifest`s (schema **and** resources/bindings) via `ComposeManifestsOp` + `compose_manifests(left, right, op)`. Consumes **explicit** equivalence maps only (no semantic inference): vertex→vertex, property alignment, optional derived identity, relation equivalences, resource renames / `name_conflict`. Distinct from unary `MergeVerticesOp`. Rejected by unary `apply_evolution`. |
 
 ## Compose two manifests
@@ -104,7 +105,40 @@ composed = compose_manifests(canonical_left, right, op)
 
 `canonical_map_to_ops` emits property renames first (keyed by the *source* class names), then class merges (only with `allow_merges=True` — collapsing two classes is a stated intent, not a rename) and renames. `validate_compose_against_canonical_map` raises `ComposeCanonicalConflictError` on: a stale pre-canonical class name used as an equivalence `left`/`into`; an `into` that differs from the (canonical) `left`; a property equivalence that uses a retired attribute name or re-targets an attribute the map already routed; and equivalences that collapse several classes onto one `into` without `allow_implicit_merge=True`. It also warns when an acknowledged collapse will turn an existing edge into a self-relation, since compose bypasses the unary self-relation guard. It deliberately re-checks nothing compose already raises on (collisions, incompatible types, divergent funnels).
 
-Worked end-to-end in [Example 19](../../examples/example-19.md), including a conditionally-shared identity installed post-compose via `ReplaceIdentityOp` + `FunnelIdentityTarget`.
+### Identity alignment
+
+When the composed class should deduplicate entities across its sources, the identity question splits along a principle: **a primary identity is a property of the class**, so the class declares one identity over canonical attributes only — while *how* each source populates those attributes is resource knowledge, expressed as pipeline steps. `IdentityAlignment` states both halves declaratively, and `alignment_to_ops` composes them from fundamentals:
+
+```python
+from graflo.architecture.evolution import (
+    AlignmentRow, DerivationSpec, IdentityAlignment,
+    LocalKeySource, LocalKeySpec, alignment_to_ops,
+)
+
+alignment = IdentityAlignment(
+    vertex="Company",
+    rows=[AlignmentRow(into="match_key", sources={     # priority order
+        "r_a": DerivationSpec(input=["secondary_key", "shared_raw"],
+                              params={"prefix": "abc_", "strip_prefix": "ABC-"}),
+        "r_b": DerivationSpec(input=["org_id", "shared_raw"],
+                              params={"prefix": ""}),
+    })],
+    local_key=LocalKeySpec(sources={                   # fallback, namespaced
+        "r_a": LocalKeySource(field="firm_id", tag="a"),
+        "r_b": LocalKeySource(field="org_id", tag="b"),
+    }),
+    secondary_identities={"by_company_id": ["company_id"],
+                          "by_org_id": ["org_id"]},
+)
+union = apply_evolution(union, alignment_to_ops(alignment, manifest=union,
+                                                canonical_maps=[cm]))
+```
+
+The emitted op sequence: `AddVertexPropertiesOp` (declare the canonical attributes), `AddResourceTransformsOp` (per-resource derivation steps, inline calls), `ReplaceIdentityOp` (a priority funnel — one branch per row in order, then the `local_key` fallback; `retire: keep`), and `AddSecondaryIdentitiesOp` (the retired side keys as lookup-only secondaries). Row order is funnel priority: a record keys by the highest-priority attribute it carries, so two records fuse when their strongest present attribute coincides — a match on a lower-priority attribute does not fuse records when one side also carries a stronger one. The `local_key` values are namespaced per resource (`a:f2` vs `b:o1`), so non-aligned records stay ingested without cross-source collisions.
+
+Two rules the validator enforces (`validate_alignment`, raising `AlignmentConflictError`): derivation inputs are **raw source-doc field names** — property renames rewrite `vertex.from` maps so documents keep their original keys, and transform inputs are never rewritten (pass `canonical_maps` to catch canonical names used by mistake); and alignment targets must not collide with the class's current primary-identity fields.
+
+Worked end-to-end in [Example 19](../../examples/example-19.md).
 
 ## API
 

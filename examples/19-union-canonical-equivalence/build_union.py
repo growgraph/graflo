@@ -1,6 +1,7 @@
 """
 Build the union of two manifests in a canonical vocabulary, with a
-conditionally-equivalent boundary class.
+conditionally-equivalent boundary class — composed entirely from fundamental
+evolution ops.
 
 The recipe, in order:
 
@@ -8,7 +9,14 @@ The recipe, in order:
 2. validate the compose op against the canonical map — fails loudly on stale
    names, retargeted attributes, or unacknowledged merges
 3. ``compose_manifests`` with an explicit ``VertexEquivalence``
-4. install the conditional-equivalence identity funnel post-compose
+4. apply the identity alignment: ``alignment_to_ops`` emits only fundamentals
+   (declare canonical attrs → per-resource derivation transforms → priority
+   funnel over canonical attrs → per-side secondary identities)
+
+A primary identity is a property of the class: the funnel references only
+canonical attributes (``match_key``, ``local_key``). How each source populates
+them — gating, normalization, namespacing — is resource knowledge, appended to
+the resource pipelines as ops. The source manifests stay pure.
 
     cd examples/19-union-canonical-equivalence
     uv run python build_union.py                # → artifacts/manifest_union.yaml
@@ -24,29 +32,57 @@ from suthing import FileHandle
 
 from graflo import GraphManifest
 from graflo.architecture.evolution import (
+    AlignmentRow,
     CanonicalMap,
     ComposeManifestsOp,
-    FunnelIdentityTarget,
-    IdentityReplacement,
-    ReplaceIdentityOp,
+    DerivationSpec,
+    IdentityAlignment,
+    LocalKeySource,
+    LocalKeySpec,
     VertexEquivalence,
+    alignment_to_ops,
     apply_evolution,
     canonical_map_to_ops,
     compose_manifests,
     validate_compose_against_canonical_map,
 )
-from graflo.architecture.schema.identity_funnel import IdentityBranch, IdentityFunnel
 
 EXAMPLE_DIR = Path(__file__).resolve().parent
 
-# The equivalence funnel: shared evidence first, side-local keys as fallback.
-# Only records the gate transform gave a match_key can take the shared branch.
-FUNNEL = IdentityFunnel(
-    branches=[
-        IdentityBranch(id="shared", fields=["match_key"]),
-        IdentityBranch(id="a_local", fields=["company_id"]),
-        IdentityBranch(id="b_local", fields=["org_id"]),
-    ]
+# The identity alignment: rows are canonical attributes in priority order;
+# derivation inputs are RAW source-doc field names (renamed documents still
+# carry their original keys). The local_key fallback keeps non-gated records
+# ingested as their own entities, namespaced per resource so cross-side
+# collisions are impossible.
+ALIGNMENT = IdentityAlignment(
+    vertex="Company",
+    rows=[
+        AlignmentRow(
+            into="match_key",
+            sources={
+                "r_a": DerivationSpec(
+                    input=["secondary_key", "shared_raw"],
+                    params={"prefix": "abc_", "strip_prefix": "ABC-"},
+                ),
+                "r_b": DerivationSpec(
+                    # Empty prefix = always-true gate: same normalization,
+                    # one code path, no drift between the two sides.
+                    input=["org_id", "shared_raw"],
+                    params={"prefix": "", "strip_prefix": "ABC-"},
+                ),
+            },
+        )
+    ],
+    local_key=LocalKeySpec(
+        sources={
+            "r_a": LocalKeySource(field="firm_id", tag="a"),
+            "r_b": LocalKeySource(field="org_id", tag="b"),
+        }
+    ),
+    secondary_identities={
+        "by_company_id": ["company_id"],
+        "by_org_id": ["org_id"],
+    },
 )
 
 
@@ -86,21 +122,10 @@ def build_union(*, stale_demo: bool = False) -> GraphManifest:
     # Step 4 — compose (loud on collisions: name_conflict defaults to "error").
     union = compose_manifests(canonical_a, manifest_b, op)
 
-    # Step 5 — install the conditional-equivalence identity, post-compose only:
-    # the funnel references both sides' local keys, which coexist on the merged
-    # class and nowhere else.
+    # Step 5 — apply the identity alignment as fundamental ops.
     return apply_evolution(
         union,
-        [
-            ReplaceIdentityOp(
-                vertices={
-                    "Company": IdentityReplacement(
-                        to=FunnelIdentityTarget(funnel=FUNNEL),
-                        retire="keep",
-                    )
-                }
-            )
-        ],
+        alignment_to_ops(ALIGNMENT, manifest=union, canonical_maps=[canonical_map]),
     )
 
 

@@ -24,6 +24,7 @@ from .ops import (
     AddEdgePropertiesOp,
     AddEdgesOp,
     AddInverseEdgesOp,
+    AddResourceTransformsOp,
     AddSecondaryIdentitiesOp,
     AddVertexIndexesOp,
     AddVertexPropertiesOp,
@@ -56,6 +57,7 @@ from .ops import (
 #: binary ``compose_manifests``.
 RevisionOp = Annotated[
     RemoveVerticesOp
+    | AddResourceTransformsOp
     | AddVerticesOp
     | AddEdgesOp
     | RetargetEdgesOp
