@@ -26,6 +26,7 @@ from .ops import (
     EdgeRetargetEntry,
     EdgeSelector,
     FieldTypeSpec,
+    FunnelIdentityTarget,
     HashIdentityTarget,
     IdentityReplacement,
     IdentityTarget,
@@ -81,6 +82,15 @@ _APPLY_EXPORTS = frozenset(
 )
 
 _COMPOSE_EXPORTS = frozenset({"compose_manifests"})
+
+_CANONICAL_EXPORTS = frozenset(
+    {
+        "CanonicalMap",
+        "ComposeCanonicalConflictError",
+        "canonical_map_to_ops",
+        "validate_compose_against_canonical_map",
+    }
+)
 
 _IDENTITY_EXPORTS = frozenset(
     {
@@ -163,7 +173,9 @@ __all__ = [
     "AddVerticesOp",
     "AssignedIdentityTarget",
     "BlankIdentityTarget",
+    "CanonicalMap",
     "ChangeFieldTypesOp",
+    "ComposeCanonicalConflictError",
     "ComposeManifestsOp",
     "EdgeIdentitiesEntry",
     "EdgeIndexEntry",
@@ -172,6 +184,7 @@ __all__ = [
     "FieldTypeSpec",
     # Revision layer
     "FileRevisionStore",
+    "FunnelIdentityTarget",
     "HashIdentityTarget",
     "IdentityReplacement",
     "IdentityTarget",
@@ -238,6 +251,7 @@ __all__ = [
     "apply_sanitize",
     "apply_set_edge_directed",
     "build_revision",
+    "canonical_map_to_ops",
     "compose_manifests",
     "compute_revision_id",
     "diff_manifests",
@@ -260,6 +274,7 @@ __all__ = [
     "ops_to_yaml_str",
     "schema_hash",
     "stable_hash",
+    "validate_compose_against_canonical_map",
 ]
 
 
@@ -272,6 +287,10 @@ def __getattr__(name: str) -> Any:
         from . import compose as compose_mod
 
         return getattr(compose_mod, name)
+    if name in _CANONICAL_EXPORTS:
+        from . import canonical as canonical_mod
+
+        return getattr(canonical_mod, name)
     if name in _IDENTITY_EXPORTS:
         from . import identity as identity_mod
 

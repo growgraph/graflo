@@ -1,0 +1,118 @@
+ingestion_model:
+    edges_on_duplicate: ignore
+    endpoints_on_ambiguous: all
+    resources:
+    -   drop_trivial_input_fields: false
+        encoding: utf-8
+        extra_weights: []
+        fail_fast: false
+        infer_edge_except: []
+        infer_edge_only: []
+        infer_edges: true
+        merge_collections: []
+        name: r_a
+        pipeline:
+        -   call:
+                use: gate_match_key
+            type: transform
+        -   from:
+                company_id: firm_id
+            type: vertex
+            vertex: Company
+        tolerate_transform_errors: true
+        types: {}
+    -   drop_trivial_input_fields: false
+        encoding: utf-8
+        extra_weights: []
+        fail_fast: false
+        infer_edge_except: []
+        infer_edge_only: []
+        infer_edges: true
+        merge_collections: []
+        name: r_b
+        pipeline:
+        -   transform:
+                call:
+                    use: normalize_match_key
+        -   vertex: Company
+        tolerate_transform_errors: true
+        types: {}
+    transforms:
+    -   foo: gated_normalized_key
+        input:
+        -   secondary_key
+        -   shared_raw
+        input_groups: []
+        keys:
+            mode: all
+            names: []
+        module: graflo.util.transform
+        name: gate_match_key
+        output:
+        -   match_key
+        output_groups: []
+        params:
+            prefix: abc_
+            strip_prefix: ABC-
+        target: values
+    -   foo: gated_normalized_key
+        input:
+        -   org_id
+        -   shared_raw
+        input_groups: []
+        keys:
+            mode: all
+            names: []
+        module: graflo.util.transform
+        name: normalize_match_key
+        output:
+        -   match_key
+        output_groups: []
+        params:
+            prefix: ''
+            strip_prefix: ABC-
+        target: values
+schema:
+    core_schema:
+        edge_config:
+            edges: []
+        vertex_config:
+            force_types: {}
+            identity_from_all_properties: true
+            vertices:
+            -   assigned: false
+                blank: false
+                filters: []
+                hash_identity_properties: []
+                identity:
+                -   id
+                identity_funnel:
+                    branches:
+                    -   fields:
+                        -   match_key
+                        id: shared
+                    -   fields:
+                        -   company_id
+                        id: a_local
+                    -   fields:
+                        -   org_id
+                        id: b_local
+                    digest: sha256
+                    include_branch_id: true
+                name: Company
+                properties:
+                -   name: company_id
+                -   name: secondary_key
+                -   name: shared_raw
+                -   name: match_key
+                -   name: org_id
+                -   name: id
+                secondary_identities: []
+    db_profile:
+        db_flavor: arango
+        edge_specs: []
+        vertex_indexes: {}
+        vertex_storage_names: {}
+    metadata:
+        name: source-a+source-b
+        version: 1.3.0

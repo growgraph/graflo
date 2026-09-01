@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.11.2]
+
+### Added
+
+- **`CanonicalMap`** (`graflo.architecture.evolution.canonical`) — a declared translation of one manifest's vocabulary into a canonical one, serving two moments of a union build from a single source of truth: `canonical_map_to_ops` turns it into unary rename/merge ops (property renames first, keyed by source class names; class merges only with `allow_merges=True`), and `validate_compose_against_canonical_map` cross-checks a `ComposeManifestsOp` against it *before* `compose_manifests` runs. The validator raises `ComposeCanonicalConflictError` on stale pre-canonical names in an equivalence (which compose's existence checks cannot see — they compose silently into the wrong union), on an `into` differing from the canonical `left`, on property equivalences that use retired or re-targeted attribute names, and on unacknowledged multi-class collapses (`allow_implicit_merge=True` states the intent); it warns when an acknowledged collapse turns an existing edge into a self-relation, since compose bypasses the unary guard. It deliberately re-checks nothing compose already raises on. This is a *user-declared* partial answer to compose's exact-string name matching; compose itself still consults neither `canonical_key` nor `same_concept`.
+
+- **`gated_normalized_key`** (`graflo.util.transform`) — normalize-and-gate in one call: the normalized value when the gate field starts with a prefix, `None` otherwise. `None` is an empty value to identity digests, so a funnel branch listing the output field is skipped — the idiom for *conditional entity equivalence*: only records that pass the gate share the cross-source match key, everything else keys off a side-local fallback branch and is still ingested. An empty prefix makes the gate always pass, letting the other side of an equivalence reuse the same function (and the same normal form) unconditionally.
+
+- **Example 19 — union of manifests with conditional equivalence** (`examples/19-union-canonical-equivalence/`): canonicalize one side with `canonical_map_to_ops`, validate, compose, then install a shared/local identity funnel post-compose via `ReplaceIdentityOp` + `FunnelIdentityTarget` — records passing the gate fuse across sources, records failing it stay separate. Includes a `--stale-demo` run showing the validator failing loudly. Documented in a new "Canonical maps" section of the manifest-evolution concepts page.
+
+### Fixed
+
+- `FunnelIdentityTarget` was missing from the `graflo.architecture.evolution` façade exports (every other identity target was there); importing it required reaching into `evolution.ops`.
+
+
 ## [1.11.1]
 
 ### Added

@@ -79,6 +79,33 @@ composed = compose_manifests(
 
 Empty `vertices` / `relations` yields a **disjoint union** (both resource sets and bindings retained), subject to collision policy.
 
+## Canonical maps
+
+When one side of a compose is first translated into a target vocabulary, the translation and the compose op are two declarations that can silently contradict each other — most dangerously via a *stale name*: an equivalence written against a class or attribute the translation retired still passes compose's existence checks and composes into the wrong union. `CanonicalMap` makes the translation a single source of truth serving both moments:
+
+```python
+from graflo.architecture.evolution import (
+    CanonicalMap,
+    apply_evolution,
+    canonical_map_to_ops,
+    compose_manifests,
+    validate_compose_against_canonical_map,
+)
+
+cm = CanonicalMap(
+    vertices={"Firm": "Company"},
+    properties={"Firm": {"firm_id": "company_id"}},
+)
+canonical_left = apply_evolution(left, canonical_map_to_ops(cm))
+
+validate_compose_against_canonical_map(cm, op, left=canonical_left, right=right)
+composed = compose_manifests(canonical_left, right, op)
+```
+
+`canonical_map_to_ops` emits property renames first (keyed by the *source* class names), then class merges (only with `allow_merges=True` — collapsing two classes is a stated intent, not a rename) and renames. `validate_compose_against_canonical_map` raises `ComposeCanonicalConflictError` on: a stale pre-canonical class name used as an equivalence `left`/`into`; an `into` that differs from the (canonical) `left`; a property equivalence that uses a retired attribute name or re-targets an attribute the map already routed; and equivalences that collapse several classes onto one `into` without `allow_implicit_merge=True`. It also warns when an acknowledged collapse will turn an existing edge into a self-relation, since compose bypasses the unary self-relation guard. It deliberately re-checks nothing compose already raises on (collisions, incompatible types, divergent funnels).
+
+Worked end-to-end in [Example 19](../../examples/example-19.md), including a conditionally-shared identity installed post-compose via `ReplaceIdentityOp` + `FunnelIdentityTarget`.
+
 ## API
 
 ```python

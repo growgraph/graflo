@@ -11,6 +11,7 @@ from graflo.architecture.contract.ingestion.transform import (
 )
 from graflo.util.transform import (
     camel_to_snake,
+    gated_normalized_key,
     parse_multi_item,
     remove_prefix,
     remove_suffix,
@@ -415,6 +416,66 @@ def test_input_groups_rejects_dress():
             input_groups=(("value",),),
             dress=DressConfig(key="name", value="value"),
         )
+
+
+def test_gated_normalized_key_gate_hit_normalizes():
+    assert (
+        gated_normalized_key(
+            "abc_42", " ABC-Alpha ", prefix="abc_", strip_prefix="ABC-"
+        )
+        == "alpha"
+    )
+
+
+def test_gated_normalized_key_gate_miss_returns_none():
+    assert gated_normalized_key("xx42", "ABC-Alpha", prefix="abc_") is None
+
+
+def test_gated_normalized_key_none_inputs_return_none():
+    assert gated_normalized_key(None, "ABC-Alpha", prefix="abc_") is None
+    assert gated_normalized_key("abc_42", None, prefix="abc_") is None
+
+
+def test_gated_normalized_key_empty_prefix_always_passes():
+    assert gated_normalized_key("anything", "Alpha", prefix="") == "alpha"
+
+
+def test_gated_normalized_key_idempotent():
+    once = gated_normalized_key(
+        "abc_1", "ABC-Alpha", prefix="abc_", strip_prefix="ABC-"
+    )
+    assert once is not None
+    twice = gated_normalized_key("abc_1", once, prefix="abc_", strip_prefix="ABC-")
+    assert twice == once
+
+
+def test_gated_normalized_key_no_casefold_keeps_case():
+    assert (
+        gated_normalized_key("abc_1", "Alpha", prefix="abc_", casefold=False) == "Alpha"
+    )
+
+
+def test_gated_normalized_key_empty_result_is_none():
+    assert gated_normalized_key("abc_1", "  ", prefix="abc_") is None
+    assert (
+        gated_normalized_key("abc_1", "ABC-", prefix="abc_", strip_prefix="ABC-")
+        is None
+    )
+
+
+def test_gated_normalized_key_as_manifest_transform():
+    """Registry-style usage: two inputs -> one output, params carry the gate."""
+    t = Transform(
+        module="graflo.util.transform",
+        foo="gated_normalized_key",
+        input=("secondary_key", "shared_raw"),
+        output=("match_key",),
+        params={"prefix": "abc_", "strip_prefix": "ABC-"},
+    )
+    assert t({"secondary_key": "abc_7", "shared_raw": "ABC-Alpha"}) == {
+        "match_key": "alpha"
+    }
+    assert t({"secondary_key": "zz7", "shared_raw": "ABC-Alpha"}) == {"match_key": None}
 
 
 def test_target_keys_rejects_input_groups():

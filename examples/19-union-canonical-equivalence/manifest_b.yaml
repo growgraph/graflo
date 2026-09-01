@@ -1,0 +1,38 @@
+schema:
+    metadata:
+        name: source-b
+        version: 1.0.0
+    graph:
+        vertex_config:
+            vertices:
+            -   name: Org
+                properties:
+                -   org_id
+                -   shared_raw
+                -   match_key
+                identity:
+                -   org_id
+        edge_config:
+            edges: []
+ingestion_model:
+    resources:
+    -   name: r_b
+        pipeline:
+        -   transform:
+                call:
+                    use: normalize_match_key
+        -   vertex: Org
+    transforms:
+    -   name: normalize_match_key
+        module: graflo.util.transform
+        foo: gated_normalized_key
+        params:
+            # Empty prefix = always-true gate: same normalization as source A,
+            # one code path, no drift between the two sides' normal forms.
+            prefix: ''
+            strip_prefix: ABC-
+        input:
+        -   org_id
+        -   shared_raw
+        output:
+        -   match_key
