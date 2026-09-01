@@ -19,6 +19,7 @@ from graflo.architecture.contract.bindings.connectors import (
 from graflo.architecture.graph_types import Index
 from graflo.architecture.schema.database_features import EdgePhysicalSpec
 from graflo.architecture.schema.identity_funnel import IdentityBranch, IdentityFunnel
+from graflo.architecture.schema.vertex import FieldType
 from graflo.rdf import namespace as ns
 from graflo.rdf.deserializer import ManifestRdfDeserializer
 from graflo.rdf.serializer import ManifestRdfSerializer
@@ -701,3 +702,88 @@ def test_ontology_declares_naming_terms() -> None:
     assert ns.GraphMetadata in set(
         ontology.objects(ns.hasNamingConvention, RDFS.domain)
     )
+
+
+# ── field types: the round trip must be total over FieldType ─────────────────
+
+
+def test_every_field_type_has_an_individual() -> None:
+    """`FieldType` is the enum the round trip is least allowed to lose.
+
+    `add_enum_individual` emits nothing for an unmapped value, so a missing
+    entry does not raise -- the field simply arrives back untyped. `UUID` and
+    `LIST` were missing for exactly that reason. Exhaustiveness is the only
+    thing that catches the next one.
+    """
+    ontology = load_ontology_graph()
+    for member in FieldType:
+        individual = ns.FIELD_TYPE_INDIVIDUALS.get(member.value)
+        assert individual is not None, member.value
+        uri = URIRef(str(individual))
+        assert (uri, RDF.type, ns.GF.FieldType) in ontology, member.value
+        assert (uri, ns.enumValue, Literal(member.value)) in ontology, member.value
+
+
+def _manifest_with_field_types() -> GraphManifest:
+    """One vertex carrying a property of every scalar type, plus a LIST."""
+    properties: list[dict[str, str]] = [{"name": "id", "type": "STRING"}]
+    properties += [
+        {"name": f"p_{member.value.lower()}", "type": member.value}
+        for member in FieldType
+        if member is not FieldType.LIST and member.value != "STRING"
+    ]
+    properties.append(
+        {"name": "p_list", "type": "LIST", "item_type": "STRING"},
+    )
+    return GraphManifest.from_dict(
+        {
+            "schema": {
+                "metadata": {"name": "field-types"},
+                "graph": {
+                    "vertex_config": {
+                        "vertices": [
+                            {
+                                "name": "thing",
+                                "properties": properties,
+                                "identity": ["id"],
+                            }
+                        ]
+                    },
+                    "edge_config": {"edges": []},
+                },
+            }
+        }
+    )
+
+
+def test_round_trip_preserves_every_field_type() -> None:
+    manifest = _manifest_with_field_types()
+    ttl = ManifestRdfSerializer(include_ontology=False).to_turtle(manifest, BASE_URI)
+    restored = ManifestRdfDeserializer().from_turtle(ttl, BASE_URI.rstrip("/"))
+    assert _canonical(restored) == _canonical(manifest)
+
+
+def test_round_trip_preserves_list_item_type() -> None:
+    """A `LIST` without its `item_type` fails `Field`'s own validator.
+
+    Before `gf:itemType` existed the element type was dropped on the way out,
+    so the field came back as an untyped one and the loss was invisible.
+    """
+    manifest = _manifest_with_field_types()
+    ttl = ManifestRdfSerializer(include_ontology=False).to_turtle(manifest, BASE_URI)
+    restored = ManifestRdfDeserializer().from_turtle(ttl, BASE_URI.rstrip("/"))
+    schema = restored.graph_schema
+    assert schema is not None
+    vertex = next(
+        v for v in schema.core_schema.vertex_config.vertices if v.name == "thing"
+    )
+    field = next(f for f in vertex.properties if getattr(f, "name", f) == "p_list")
+    assert str(field.type) == FieldType.LIST.value
+    assert str(field.item_type) == FieldType.STRING.value
+
+
+def test_ontology_declares_item_type() -> None:
+    ontology = load_ontology_graph()
+    assert (ns.itemType, RDF.type, OWL.ObjectProperty) in ontology
+    assert ns.Field in set(ontology.objects(ns.itemType, RDFS.domain))
+    assert ns.GF.FieldType in set(ontology.objects(ns.itemType, RDFS.range))

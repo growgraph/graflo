@@ -6,6 +6,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.12.0]
+
+### Added
+
+- **Canonical form** (`graflo.architecture.evolution.canonicalize`) — the payload a content hash is taken over, and the first half of V0 of version control for world models. `to_minimal_canonical_dict()` already normalized defaults, `None`, aliases and key order; what it did not normalize is **list order**, so two identical schemas authored in different order — or one authored and one replayed, since `apply_add_vertices` appends — hashed differently. `canonical_payload()` adds exactly that one normalization.
+
+  It is driven by `LIST_ORDER`, a total classification of all 49 sequence-typed fields reachable from `GraphManifest` as `SORTED` or `PRESERVED`, keyed by `(model name, field name)` so the module imports no contract model and adds no layering edge. **The two mistakes are not symmetric**: marking an order-significant list `SORTED` makes two *different* models hash equal, which nothing downstream can detect; marking an order-insignificant one `PRESERVED` is a missed dedup. So doubt resolves to `PRESERVED`, and every `SORTED` entry carries the reason order does not matter there.
+
+  Vertices, edges, properties, registries, index sets and semantic term lists sort. Pipelines, `Vertex.identity`, funnel branches, compound-index columns, transform argument tuples, join and projection order, and filter operands are preserved. `Vertex.identity` is preserved because a backend's `vertex_address` resolves an endpoint through the *first* identity field and PostgreSQL's edge FK is `identity_fields[0]` — **not** because it feeds the identity digest, which sorts its own payload keys and is order-insensitive.
+
+  Sorting is by each element's canonical JSON rendering rather than a per-field key: total over heterogeneous unions, no tie-break rule, and no way for the result to depend on input order. Nesting is independent — `Edge.identities` sorts its alternative keys while each composite key keeps its own order. Classification stops at a mapping unless the field is listed in `CLASSIFIED_MAPPINGS`, since nearly every dict in the contract (`params`, `row_annotations`, `force_types`, weight maps) is free-form user payload whose ordering GraFlo may not assert.
+
+  Reaching an unclassified sequence raises `UnclassifiedListField` rather than guessing — a default of either kind would silently decide a hash question. Three test families pin it: exhaustiveness in both directions (nothing unclassified, nothing stale, and a new *typed* mapping is flagged), effect (reordering a `SORTED` field does not move the hash, reordering identity fields does), and stability (idempotent, non-mutating, and equal across `finish_init` — which replay depends on).
+
+### Changed
+
+- **Content hashes are taken over the canonical payload**, and `CANON_VERSION` is part of the hashed bytes rather than a wrapper around them, so a future change to the canonicalization rules produces different hashes by construction instead of reinterpreting old ones. **All hash values change.** Nothing depends on the old values outside dev-local `revisions/` side-car stores, which should be discarded.
+
+- **`manifest_hash` no longer covers schema metadata.** It hashed the whole `Schema` — name, semver and description included — while `schema_hash` hashed only `core_schema` + `db_profile`, so bumping a schema's version changed the manifest's content address while leaving the schema's untouched. A content address that moves when the label moves cannot recognise that two versions carry identical content, which is what dedup and lineage rest on. Both now exclude metadata, and a manifest's hash covers its schema's by construction rather than storing a second hash beside it.
+
+### Fixed
+
+- **The RDF round trip no longer loses field types.** `FieldType` has nine members; the ontology declared seven — `UUID` and `LIST` had no individual, and `add_enum_individual` emits nothing for an unmapped value, so a `UUID` or `LIST<STRING>` property round-tripped to an *untyped* field with no error raised anywhere. `Field.item_type` was never emitted at all, so even a declared `LIST` came back with no element type and could not satisfy `Field`'s own validator.
+
+  `gf:UUID` and `gf:LIST` are now declared individuals, and the new `gf:itemType` object property (domain `gf:Field`, range `gf:FieldType`) carries a list's element type. A field bearing only an `item_type` no longer collapses to a bare string on the way back.
+
+  The durable half is a test that is **exhaustive over `FieldType`** rather than over the members someone remembered: every member must have an individual, that individual must be typed and carry its `gf:enumValue`, and a manifest holding a property of every type must round-trip canonically equal. Silent-drop bugs in this layer do not raise, so exhaustiveness is the only thing that catches the next one.
+
+  Ontology bumped to **1.6.0** (additive: two individuals, one property), with `graflo-context.jsonld` and the docs viz regenerated.
+
 ## [1.11.2]
 
 ### Added

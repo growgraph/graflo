@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>GraFlo Ontology (v1.5.0)</title>
+  <title>GraFlo Ontology (v1.6.0)</title>
   <link rel="stylesheet" href="graph-view.css" />
 </head>
 <body class="embed">
@@ -447,6 +447,13 @@
       "id": "prop:https://ontology.growgraph.dev/graflo/fieldType",
       "kind": "objectProperty",
       "label": "fieldType",
+      "source": "https://ontology.growgraph.dev/graflo/Field",
+      "target": "https://ontology.growgraph.dev/graflo/FieldType"
+    },
+    {
+      "id": "prop:https://ontology.growgraph.dev/graflo/itemType",
+      "kind": "objectProperty",
+      "label": "itemType",
       "source": "https://ontology.growgraph.dev/graflo/Field",
       "target": "https://ontology.growgraph.dev/graflo/FieldType"
     },
@@ -1063,12 +1070,20 @@
           "value": "INT"
         },
         {
+          "label": "LIST",
+          "value": "LIST"
+        },
+        {
           "label": "STRING",
           "value": "STRING"
         },
         {
           "label": "UINT",
           "value": "UINT"
+        },
+        {
+          "label": "UUID",
+          "value": "UUID"
         }
       ],
       "group": "schema",
@@ -1584,7 +1599,7 @@
     }
   ],
   "universalRoot": "https://ontology.growgraph.dev/graflo/GrafloArtifact",
-  "version": "1.5.0"
+  "version": "1.6.0"
 };</script>
   <script src="graph-view.js"></script>
 </body>

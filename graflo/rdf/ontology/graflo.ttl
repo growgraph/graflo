@@ -7,8 +7,8 @@
 @prefix prov: <http://www.w3.org/ns/prov#> .
 
 <https://ontology.growgraph.dev/graflo> a owl:Ontology ;
-    owl:versionIRI <https://ontology.growgraph.dev/graflo/1.5.0> ;
-    owl:versionInfo "1.5.0" ;
+    owl:versionIRI <https://ontology.growgraph.dev/graflo/1.6.0> ;
+    owl:versionInfo "1.6.0" ;
     rdfs:label "GraFlo Ontology"@en ;
     skos:prefLabel "GraFlo Ontology"@en ;
     rdfs:comment "OWL vocabulary describing GraFlo GraphManifest contracts: schema, ingestion, bindings, transforms, and pipeline actors."@en .
@@ -537,6 +537,11 @@ gf:fieldType a owl:ObjectProperty ;
     rdfs:domain gf:Field ;
     rdfs:range gf:FieldType .
 
+gf:itemType a owl:ObjectProperty ;
+    rdfs:domain gf:Field ;
+    rdfs:range gf:FieldType ;
+    rdfs:comment "Element type of a LIST field; a scalar FieldType."@en .
+
 gf:dbFlavor a owl:ObjectProperty ;
     rdfs:domain gf:DatabaseProfile ;
     rdfs:range gf:DBType .
@@ -779,6 +784,8 @@ gf:DOUBLE a gf:FieldType ; gf:enumValue "DOUBLE" ; rdfs:label "DOUBLE" ; skos:pr
 gf:BOOL a gf:FieldType ; gf:enumValue "BOOL" ; rdfs:label "BOOL" ; skos:prefLabel "BOOL" .
 gf:STRING a gf:FieldType ; gf:enumValue "STRING" ; rdfs:label "STRING" ; skos:prefLabel "STRING" .
 gf:DATETIME a gf:FieldType ; gf:enumValue "DATETIME" ; rdfs:label "DATETIME" ; skos:prefLabel "DATETIME" .
+gf:UUID a gf:FieldType ; gf:enumValue "UUID" ; rdfs:label "UUID" ; skos:prefLabel "UUID" .
+gf:LIST a gf:FieldType ; gf:enumValue "LIST" ; rdfs:label "LIST" ; skos:prefLabel "LIST" .
 
 #################################################################
 # NameCase individuals

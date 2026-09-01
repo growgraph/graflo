@@ -155,6 +155,16 @@ _HASHING_EXPORTS = frozenset(
     }
 )
 
+_CANONICALIZE_EXPORTS = frozenset(
+    {
+        "CANON_VERSION",
+        "LIST_ORDER",
+        "ListOrder",
+        "UnclassifiedListField",
+        "canonical_payload",
+    }
+)
+
 _AUTOGENERATE_EXPORTS = frozenset(
     {"RenameHints", "diff_manifests", "diff_manifests_verified"}
 )
@@ -177,8 +187,10 @@ _REVISION_EXPORTS = frozenset(
 )
 
 __all__ = [
+    "CANON_VERSION",
     "INGESTION_REWRITING_OPS",
     "IRREVERSIBLE",
+    "LIST_ORDER",
     "AddEdgeIndexesOp",
     "AddEdgePropertiesOp",
     "AddEdgesOp",
@@ -209,6 +221,7 @@ __all__ = [
     "IdentityAlignment",
     "IdentityReplacement",
     "IdentityTarget",
+    "ListOrder",
     "LocalKeySource",
     "LocalKeySpec",
     "ManifestOp",
@@ -240,6 +253,7 @@ __all__ = [
     "RevisionOp",
     "SanitizeOp",
     "SetEdgeDirectedOp",
+    "UnclassifiedListField",
     "VertexEquivalence",
     "alignment_to_ops",
     "apply_add_edge_indexes",
@@ -277,6 +291,7 @@ __all__ = [
     "apply_set_edge_directed",
     "build_revision",
     "canonical_map_to_ops",
+    "canonical_payload",
     "compose_manifests",
     "compute_revision_id",
     "diff_manifests",
@@ -345,6 +360,10 @@ def __getattr__(name: str) -> Any:
         from . import hashing as hashing_mod
 
         return getattr(hashing_mod, name)
+    if name in _CANONICALIZE_EXPORTS:
+        from . import canonicalize as canonicalize_mod
+
+        return getattr(canonicalize_mod, name)
     if name in _AUTOGENERATE_EXPORTS:
         from . import autogenerate as autogenerate_mod
 

@@ -246,18 +246,28 @@ class ManifestRdfDeserializer:
         if name is None:
             return {}
         field_type_uri = self._object(graph, field_uri, ns.fieldType)
+        item_type_uri = self._object(graph, field_uri, ns.itemType)
         description = self._literal(graph, field_uri, ns.description)
         semantics = self._read_semantics(graph, field_uri)
         # A field with nothing but a name round-trips as a bare string, which is
         # how most schemas author it. Semantics has to join that condition or a
         # grounded field would collapse back to a string and lose its block.
-        if field_type_uri is None and description is None and semantics is None:
+        if (
+            field_type_uri is None
+            and item_type_uri is None
+            and description is None
+            and semantics is None
+        ):
             return name
         field: dict[str, Any] = {"name": name}
         if field_type_uri is not None:
             field_type = reverse_enum(ns.ENUM_REGISTRIES["field_type"], field_type_uri)
             if field_type is not None:
                 field["type"] = field_type
+        if item_type_uri is not None:
+            item_type = reverse_enum(ns.ENUM_REGISTRIES["field_type"], item_type_uri)
+            if item_type is not None:
+                field["item_type"] = item_type
         if description is not None:
             field["description"] = description
         if semantics is not None:
