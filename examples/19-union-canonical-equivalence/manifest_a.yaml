@@ -1,0 +1,22 @@
+schema:
+    metadata:
+        name: source-a
+        version: 1.0.0
+    graph:
+        vertex_config:
+            vertices:
+            -   name: Firm
+                properties:
+                -   firm_id
+                -   secondary_key
+                -   shared_raw
+                identity:
+                -   firm_id
+        edge_config:
+            edges: []
+ingestion_model:
+    resources:
+    -   name: r_a
+        pipeline:
+        -   vertex: Firm
+    transforms: []

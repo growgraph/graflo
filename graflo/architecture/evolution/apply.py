@@ -49,6 +49,7 @@ from .ops import (
     AddEdgePropertiesOp,
     AddEdgesOp,
     AddInverseEdgesOp,
+    AddResourceTransformsOp,
     AddSecondaryIdentitiesOp,
     AddVertexIndexesOp,
     AddVertexPropertiesOp,
@@ -1511,6 +1512,10 @@ def _dispatch_op(manifest: GraphManifest, op: Any) -> None:
         apply_set_edge_directed(manifest, op)
     elif isinstance(op, SanitizeOp):
         apply_sanitize(manifest, op)
+    elif isinstance(op, AddResourceTransformsOp):
+        from .ingestion import apply_add_resource_transforms
+
+        apply_add_resource_transforms(manifest, op)
     else:
         raise TypeError(f"Unsupported evolution op: {type(op)!r}")
 

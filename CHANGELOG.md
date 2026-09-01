@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.11.2]
+
+### Added
+
+- **`CanonicalMap`** (`graflo.architecture.evolution.canonical`) — a declared translation of one manifest's vocabulary into a canonical one, serving two moments of a union build from a single source of truth: `canonical_map_to_ops` turns it into unary rename/merge ops (property renames first, keyed by source class names; class merges only with `allow_merges=True`), and `validate_compose_against_canonical_map` cross-checks a `ComposeManifestsOp` against it *before* `compose_manifests` runs. The validator raises `ComposeCanonicalConflictError` on stale pre-canonical names in an equivalence (which compose's existence checks cannot see — they compose silently into the wrong union), on an `into` differing from the canonical `left`, on property equivalences that use retired or re-targeted attribute names, and on unacknowledged multi-class collapses (`allow_implicit_merge=True` states the intent); it warns when an acknowledged collapse turns an existing edge into a self-relation, since compose bypasses the unary guard. It deliberately re-checks nothing compose already raises on. This is a *user-declared* partial answer to compose's exact-string name matching; compose itself still consults neither `canonical_key` nor `same_concept`.
+
+- **`AddResourceTransformsOp`** — the first evolution op whose primary effect is ingestion: it appends transform steps to named resources' pipelines (root level; actor type-priority ordering runs them before vertex extraction at that level) and optionally registers named transforms, colliding as loudly as compose does (same name with a different body raises; identical bodies dedupe). Steps may reference the registry via `call.use` — resolved against the existing registry union the op's own entries — or carry a fully inline `call`, which cannot collide by name. Applying it to a manifest without `ingestion_model` raises rather than silently dropping the op's entire effect, and the eager transform-module import surfaces a bad `module`/`foo` at apply time. Irreversible (there is no remove-steps op). The op vocabulary grows to 31.
+
+- **`IdentityAlignment` + `alignment_to_ops`** (`graflo.architecture.evolution.alignment`) — a composer, not a mechanism: it states, for one canonical class, which canonical attributes carry cross-source entity equivalence (rows, in priority order), how each resource derives them from its raw doc fields (gating, normalization), a namespaced `local_key` fallback for records matching no row, and which retired side keys stay addressable — then emits only fundamental ops: `AddVertexPropertiesOp` → `AddResourceTransformsOp` → `ReplaceIdentityOp` (a priority funnel over canonical attributes only; `retire: keep`) → `AddSecondaryIdentitiesOp`. The division of labor is the point: a primary identity is a property of the class, so the funnel names only canonical attributes, while everything source-specific lives in the resource pipelines. `validate_alignment` (raising `AlignmentConflictError`) rejects unknown vertices/resources, targets colliding with the current primary identity, undeclared secondary fields — and, given the `CanonicalMap`s, derivation inputs written in canonical vocabulary, because renamed documents still carry their raw field names (property renames rewrite `vertex.from` maps, never `transform.call.input`).
+
+- **`gated_normalized_key` and `tagged_key`** (`graflo.util.transform`) — the two derivation fundamentals behind conditional equivalence. `gated_normalized_key` normalizes and gates in one call: the normalized value when the gate field starts with a prefix, `None` otherwise; `None` is an empty value to identity digests, so a funnel branch listing the output field is skipped, and an empty prefix makes the gate always pass so both sides of an equivalence share one normal form. `tagged_key` namespaces a side-local key (`"f2"` → `"a:f2"`), keeping a class-level fallback identity side-agnostic while making cross-resource collisions impossible.
+
+- **Example 19 — union of manifests with conditional equivalence** (`examples/19-union-canonical-equivalence/`): pure source manifests, canonicalized with `canonical_map_to_ops`, validated, composed, then aligned via `alignment_to_ops` — records passing the gate fuse across sources, records failing it keep a namespaced local key and stay separate. Includes a `--stale-demo` run showing the validator failing loudly. Documented in the "Canonical maps" and "Identity alignment" sections of the manifest-evolution concepts page.
+
+### Fixed
+
+- `FunnelIdentityTarget` was missing from the `graflo.architecture.evolution` façade exports (every other identity target was there); importing it required reaching into `evolution.ops`.
+
+
 ## [1.11.1]
 
 ### Added

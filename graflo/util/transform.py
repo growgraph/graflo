@@ -513,3 +513,72 @@ def snake_to_camel(s: str, upper_first: bool = False) -> str:
     head = parts[0].capitalize() if upper_first else parts[0].lower()
     tail = "".join(part.capitalize() for part in parts[1:])
     return f"{leading_part}{head}{tail}{trailing_part}"
+
+
+def gated_normalized_key(
+    gate: str | None,
+    value: str | None,
+    *,
+    prefix: str,
+    strip_prefix: str | None = None,
+    casefold: bool = True,
+    strip_chars: str | None = None,
+) -> str | None:
+    """Return the normalized *value* when *gate* starts with *prefix*, else ``None``.
+
+    Designed for conditional entity equivalence: emit a shared match key only
+    for records that participate in it. ``None`` is treated as an empty value
+    by identity digests, so an identity-funnel branch listing the output field
+    is skipped and the record falls through to its side-local branch.
+
+    An empty *prefix* makes the gate always pass, which lets the other side of
+    an equivalence reuse the same function (and thus the same normal form)
+    unconditionally.
+
+    Args:
+        gate: Field deciding participation (e.g. ``u_number``).
+        value: Raw key material to normalize.
+        prefix: Required prefix of *gate*; ``""`` always passes.
+        strip_prefix: Prefix removed from *value* when present.
+        casefold: Casefold the normalized value.
+        strip_chars: Characters stripped from both ends of *value*
+            (``None`` strips whitespace).
+
+    Returns:
+        The normalized key, or ``None`` when *gate* or *value* is missing or
+        the gate does not match.
+    """
+    if value is None or gate is None:
+        return None
+    if not str(gate).startswith(prefix):
+        return None
+    key = str(value).strip(strip_chars)
+    if strip_prefix:
+        key = key.removeprefix(strip_prefix)
+    if casefold:
+        key = key.casefold()
+    return key or None
+
+
+def tagged_key(value: object, *, tag: str, sep: str = ":") -> str | None:
+    """Namespace a side-local key: tag ``"a"`` turns ``"f2"`` into ``"a:f2"``.
+
+    ``None``/empty *value* returns ``None``, which is an empty value to
+    identity digests — the funnel branch listing the output field is skipped.
+    Disambiguation is resource knowledge: each resource tags its own local
+    keys, so a class-level fallback identity stays side-agnostic while
+    cross-resource collisions become impossible. Normalization beyond a
+    whitespace strip is a separate concern — compose another transform step.
+
+    Args:
+        value: The side-local key material.
+        tag: Namespace prefix identifying the resource/side.
+        sep: Separator between *tag* and the key.
+
+    Returns:
+        ``f"{tag}{sep}{key}"``, or ``None`` when *value* is missing or empty.
+    """
+    if value is None:
+        return None
+    key = str(value).strip()
+    return f"{tag}{sep}{key}" if key else None

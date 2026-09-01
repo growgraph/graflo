@@ -111,6 +111,7 @@ nav:
     -   16 - Secondary identities for edge-only sources: examples/example-16.md
     -   17 - Identity funnel across two sources: examples/example-17.md
     -   18 - Cross-resource identity discovery: examples/example-18.md
+    -   19 - Union of manifests with conditional equivalence: examples/example-19.md
 -   API Reference: reference/
 -   Contributing: contributing.md
 markdown_extensions:
