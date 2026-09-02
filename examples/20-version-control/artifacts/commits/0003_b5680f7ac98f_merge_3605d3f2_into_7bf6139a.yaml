@@ -1,0 +1,38 @@
+created_at: '2026-01-01T00:00:00+00:00'
+id: b5680f7ac98f
+kind: merge
+label: merge 3605d3f2 into 7bf6139a
+merge_recipe:
+    hash: 4ea45b6edd5c630eee04a1940ee3ba3c1022252a19a0a38ae674f9eb86b1ca60
+    payload:
+        base: d8374f8667830fc1c02c797fd3a83fb8b0aa3900b2fbf900e588b4741f6730f1
+        equivalences: {}
+        kind: merge3
+        left: e92e699a09f558b77afc6167db763c4762ecdcf49995685d39e01d3088460781
+        resolutions:
+        -   ops:
+            -   op: replace_identity
+                vertices:
+                    person:
+                        endpoints: follow_new
+                        retire: keep
+                        to:
+                            identity:
+                            -   ssn
+                            mode: natural
+            rationale: took left
+            slot:
+            -   vertex
+            -   person
+            -   identity
+        right: 3ec44956d61fe281451ce530a817ada3bc5051c5d9eb8ffa43ce8f4d5862466e
+ops:
+-   additions:
+        person:
+        -   email_verified
+    op: add_vertex_properties
+parents:
+-   7bf6139a6c5e
+-   3605d3f2ffac
+tree: b78f2b4a7175441b914589ac8911c51e09b9b51fb09d329f7cf5b9f4974caf79
+tree_before: e92e699a09f558b77afc6167db763c4762ecdcf49995685d39e01d3088460781

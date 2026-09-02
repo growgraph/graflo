@@ -2,6 +2,19 @@
 
 This section provides detailed API documentation for all graflo components and modules.
 
+The per-module pages below are **generated at build time** from the source tree
+by `docs/_build/gen_pages.py`, which walks `graflo/**/*.py` and renders an
+`mkdocstrings` page for each module. Nothing under `reference/` needs to be
+written by hand, and a hand-written page at a module's path is inert -- the
+generator replaces it before anything renders. To document a module, add
+docstrings to it.
+
+This page and the two section overviews (`data_source/`, `rdf/`) are the
+exceptions. An overview at `reference/<pkg>/index.md` shares a URL with the
+generated package page, so the generator skips any package whose overview
+exists on disk — which means an overview must carry its own `::: graflo.<pkg>`
+block to document the package itself.
+
 ## Architecture
 
 Core architectural components that define the graflo framework:
@@ -64,8 +77,8 @@ Main graflo functionality:
 
 Helper modules and utilities:
 
-- **[Chunker](util/chunker.md)**: Data chunking and batching utilities
-- **[Merge](util/merge.md)**: Data merging and deduplication
+- **[Chunker](data_source/chunker.md)**: Data chunking and batching utilities
+- **[Merge](architecture/graph_types/merge.md)**: Data merging and deduplication
 - **[Transform](util/transform.md)**: Data transformation utilities
 - **[Miscellaneous](util/misc.md)**: Other utility functions
 
@@ -83,9 +96,13 @@ Graph visualization and plotting:
 
 ## Command Line Interface
 
-CLI tools for graflo operations:
+The `graflo` command groups every verb; each is also installed as its own
+console script, so `graflo ingest ...` and `ingest ...` are the same code.
 
+- **[`graflo`](cli/main.md)**: the umbrella group
+- **[Version control](cli/commit.md)**: `commit`, `log`, `verify`, `checkout`, `merge`, `revert`, `stamp` (see [Version control](../concepts/schema/versioning.md#cli))
 - **[Ingest](cli/ingest.md)**: Data ingestion commands
+- **[Schema migration](cli/migrate_schema.md)**: plan and execute changes against a database
 - **Manifest ↔ RDF**: `manifest-to-rdf`, `rdf-to-manifest` (see [GraFlo ontology](../concepts/schema/ontology.md#cli))
 - **[Database Management](cli/manage_dbs.md)**: Database administration commands
 - **[Schema Visualization](cli/plot_manifest.md)**: Schema visualization commands

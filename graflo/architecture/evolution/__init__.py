@@ -82,7 +82,7 @@ _APPLY_EXPORTS = frozenset(
     }
 )
 
-_COMPOSE_EXPORTS = frozenset({"compose_manifests"})
+_COMPOSE_EXPORTS = frozenset({"ComposeNameConflictError", "compose_manifests"})
 
 _INGESTION_APPLY_EXPORTS = frozenset({"apply_add_resource_transforms"})
 
@@ -238,6 +238,7 @@ __all__ = [
     "CommitError",
     "ComposeCanonicalConflictError",
     "ComposeManifestsOp",
+    "ComposeNameConflictError",
     "ConflictResolution",
     "DerivationSpec",
     "EdgeIdentitiesEntry",
@@ -247,7 +248,6 @@ __all__ = [
     "FieldTypeSpec",
     "FileCommitStore",
     # Revision layer
-    "FileRevisionStore",
     "FunnelIdentityTarget",
     "HashIdentityTarget",
     "History",
@@ -285,9 +285,6 @@ __all__ = [
     "ReplaceEdgeIdentitiesOp",
     "ReplaceIdentityOp",
     "RetargetEdgesOp",
-    "Revision",
-    "RevisionChain",
-    "RevisionError",
     "RevisionOp",
     "SanitizeOp",
     "SetEdgeDirectedOp",
@@ -338,7 +335,6 @@ __all__ = [
     "describe_slot",
     "diff_manifests",
     "diff_manifests_verified",
-    "downgrade_to",
     "find_merge_base",
     "full_hash",
     "graph_hash",

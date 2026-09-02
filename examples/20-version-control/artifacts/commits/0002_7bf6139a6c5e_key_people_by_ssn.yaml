@@ -1,0 +1,21 @@
+created_at: '2026-01-01T00:00:00+00:00'
+id: 7bf6139a6c5e
+label: key people by SSN
+ops:
+-   op: replace_identity
+    vertices:
+        person:
+            endpoints: follow_new
+            retire: keep
+            to:
+                identity:
+                -   ssn
+                mode: natural
+-   additions:
+        person:
+        -   ssn_verified
+    op: add_vertex_properties
+parents:
+-   97382d5d748c
+tree: e92e699a09f558b77afc6167db763c4762ecdcf49995685d39e01d3088460781
+tree_before: d8374f8667830fc1c02c797fd3a83fb8b0aa3900b2fbf900e588b4741f6730f1

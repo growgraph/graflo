@@ -416,19 +416,12 @@ diff the schemas — a mode change or a non-widening key swap emits `CHANGE_VERT
 **and** `REKEY_VERTEX`, both CRITICAL and blocked by `MigrationPlanner` unless high risk is
 explicitly allowed.
 
-## Revision chains
+## Deriving a change set
 
-Individual ops rewrite a manifest. A **revision chain** records *sequences* of them so a
-manifest's history can be stored, replayed and verified.
+Individual ops rewrite a manifest. Recording *sequences* of them — so a
+manifest's history can be stored, replayed and verified — is
+[version control](versioning.md), which has its own page.
 
-The model is a **git log, not an Alembic script**. Alembic's core abstraction is a
-reversible `upgrade()` / `downgrade()` pair, and GraFlo cannot honour that: `merge_vertices`
-discards which source each property came from, `change_field_types` discards the previous
-type, `sanitize` and `project_manifest` drop material outright. A `downgrade` that quietly
-produces a *different* manifest is worse than none. So revisions move forward, and going
-back means replaying from the base.
-
-### Deriving a change set
 
 ```python
 from graflo.architecture.evolution import diff_manifests_verified
@@ -455,68 +448,14 @@ ops, _ = diff_manifests(
 )
 ```
 
-### Recording and replaying
 
-```python
-from graflo.architecture.evolution import build_revision, RevisionChain, apply_revisions
+### Where this goes next
 
-r1 = build_revision(base, ops, label="add email")
-chain = RevisionChain(revisions=[r1])
-restored = apply_revisions(base, chain)  # verifies every recorded hash
-```
-
-A `Revision` carries its ops, its parent (`down_revision`), and the manifest hash **before
-and after** it. `build_revision` applies the ops rather than trusting them, so both hashes
-describe a transition that actually happened. Revision ids are content-derived, so
-regenerating the same change set yields the same id instead of a duplicate under a new name.
-
-`RevisionChain` validates that the links form one linear chain *and* that each revision's
-`manifest_hash_before` equals its predecessor's `manifest_hash_after` — a chain whose steps
-do not meet cannot describe one history. `apply_revisions` re-checks both hashes at every
-step, so a base that has drifted fails loudly instead of producing a plausible wrong answer.
-
-### Going back
-
-```python
-downgrade_to(chain, target_revision, base=base)  # exact, always preferred
-downgrade_to(chain, target_revision, current=head)  # inverses; may refuse
-```
-
-Replaying from the base is correct for every chain. Inversion is a fallback for when no base
-is available, and it is deliberately partial: `invert_op` returns `None` for the lossy ops,
-and a removal cannot be undone from the post-state because the data it would restore is
-gone. Both cases raise with the reason rather than returning an approximation.
-
-| Reversible | Irreversible |
-|---|---|
-| add ↔ remove: vertices, edges, vertex/edge properties, vertex/edge indexes | `merge_vertices`, `merge_edges` |
-| rename: vertices, relations, resources, vertex/edge properties | `change_field_types` |
-| `set_edge_directed`, `add_inverse_edges`, `retarget_edges` | `sanitize`, `project_manifest` |
-| `replace_identity` (with `retire: keep`), add/remove secondary identities | `compose_manifests` (binary) |
-
-### Storage and CLI
-
-`FileRevisionStore` keeps one YAML file per revision under `.graflo/revisions/`, named
-`<index>_<revision>_<slug>.yaml`. Order comes from the parent links, not the filenames.
-
-```bash
-uv run revision new --from-manifest base.yaml --to-manifest target.yaml --label "add order"
-uv run revision history
-uv run revision verify --base base.yaml --against target.yaml
-uv run revision apply --base base.yaml --upto <revision> --output-path out.yaml
-uv run revision downgrade --base base.yaml --upto <revision>
-```
-
-Ops are serialized through `graflo.architecture.evolution.codec`, which **verifies its own
-output**: it emits the compact form, re-validates it, and falls back to the full form when
-the compact one would not load back. That is not defensive habit — `IdentityTarget.mode`
-has a default, so dropping defaults silently strips the discriminator a nested union needs.
-A change set that cannot be read back is the one failure this layer must not have.
-
-### Not in scope
-
-Applying a revision chain to a **live database**. `migrate` remains the DB-facing plane, and
-extending it beyond additive DDL is tracked separately. Revisions describe the contract.
+`diff_manifests` produces the change set; a **commit** records it with the
+content hash before and after, so replay is verified rather than assumed, and
+commits form a **DAG** rather than a line. Merging two branches of that DAG,
+resolving conflicts, and replaying a recorded resolution are all covered in
+[Version control](versioning.md).
 
 ## Scope notes
 

@@ -6,6 +6,52 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+
+### Added
+
+- **Compose matches type names by canonical form**, closing `CORE-MERGE-001`. Composition matched vertices and relations by *raw name*, so a manifest authored as `order_line` combined with one authored as `OrderLine` produced two unrelated types with the source data split between them and nothing raising. Names now collide both exactly and when they key alike under `canonical_key`, and the existing `name_conflict` policy decides what happens.
+
+  **Reusing that policy rather than adding a flag is the point.** An exact collision has always raised under the default `name_conflict="error"`, and exact equality is the *stronger* evidence that two types are one concept — so a weaker signal must not trigger a more aggressive action. `error` raises `ComposeNameConflictError` naming both spellings and the three ways out; `prefix_right` keeps them apart explicitly; and a new `fuse_right` adopts the left spelling, rewriting the right side's *pipelines* as well as its schema.
+
+  Scope is deliberately narrow: **type names only**. Property names are not folded — a field name binds to a key in the source document, so treating `customer_email` and `customerEmail` as one property would fuse two columns fed by two different keys. Resource, connector and transform names are not folded either; those are addresses looked up exactly, where two similar names split nothing and the check would be pure false positive.
+
+  Two further gaps closed while the area was open: a declared `into` that keys alike to an unrelated type is now caught before alignment runs, and `_assert_no_canonical_split` asserts the invariant on the *result*, so a future path into the union is covered without anyone remembering to add a check. An equivalence authored in the wrong convention now says which spelling the manifest actually has instead of only that the name is absent.
+
+- **`canonical_slug`** (`graflo.architecture.schema.naming`) — `canonical_key` as one string, with the fallback for wordless names in one place rather than open-coded at each of the seven call sites.
+
+- **Example 20 — version control** (`examples/20-version-control/`): record commits over a manifest, fork it, hit a real identity conflict, resolve it, record the merge commit, and replay the recorded decision after one branch advances. Database-free. Documented in the new "Version control" concepts page.
+
+- **The `docs` extra no longer carries `ruff`.** A linter declared as a documentation dependency, unpinned, and a second uncoordinated source of truth for the version beside `.pre-commit-config.yaml`'s `rev`. The pinned `ruff-pre-commit` hook owns it now, matching `graflo-server`, `schewea` and `decigent`, which declare it nowhere.
+
+### Changed
+
+- **The version-control documentation describes what ships.** `concepts/schema/manifest_evolution.md` had ~100 lines documenting `build_revision`, `RevisionChain`, `apply_revisions`, `downgrade_to` and `FileRevisionStore` — all deleted — plus a CLI block for a `revision` console script that no longer exists. That section is replaced by a pointer to the new **[Version control](docs/concepts/schema/versioning.md)** page, covering content addressing and the sorted-vs-preserved rule, provenance, the commit DAG, slots and three-way merge, tracked merges, and the `graflo` verbs. `naming.py`'s module docstring, which asserted that composition matches by name "and nothing raises", is rewritten to describe what both combining paths now do.
+
+### Fixed
+
+- **`from graflo.architecture.evolution import *` raised `AttributeError`.** Retiring `revision.py` removed the dispatch branch but left `Revision`, `RevisionChain`, `RevisionError`, `FileRevisionStore` and `downgrade_to` in `__all__` — an advertised name with nothing behind it. Ordinary imports could not catch this, because nobody imports the name that is gone. A test now asserts that every name in `__all__` resolves, and that `import *` succeeds, across all seven lazy façades.
+
+- **`re_merge` reported a resolution that had done its job as "not needed".** It judged whether a recorded decision was still required by looking at the conflicts *surviving* the replay — but a resolution that works leaves none behind, so every working one was reported as unnecessary. That is the reading a maintainer would act on by deleting the decision holding the merge together. It now compares against what would conflict *without* the recorded resolutions, and reports replayed, unused and genuinely-new conflicts separately.
+
+- **A section overview and its generated package page shared a URL, and the collision was silently dropping API docs.** `graflo/rdf/__init__.py` generates `reference/rdf.md`, which under `use_directory_urls` builds to `site/reference/rdf/index.html` — the same output as the hand-written `reference/rdf/index.md`. Two source paths, one URL, no MkDocs warning, and the winner decided by `mkdocs-gen-files`' file ordering. It went unnoticed because `rdf/index.md` happens to carry `::: graflo.rdf` and so lost nothing; `data_source/index.md` carries no directive at all, so `graflo.data_source`'s own docstring and members were documented **nowhere** while 256 lines of hand-maintained prose stood in their place.
+
+  `gen_pages.py` now skips a package whose `reference/<pkg>/index.md` exists on disk, making the override a decision recorded in one place rather than a consequence of write order, and `data_source/index.md` gained the `::: graflo.data_source` block it was missing.
+
+- **Every mkdocstrings option was nested under `extra:` and therefore inert.** `extra` is a free-form passthrough for custom templates, not a container for options, so `show_if_no_docstring`, `show_category_heading`, `show_root_toc_entry` and the rest were carried into the render context and never applied — the whole API reference had been rendering on defaults since the config was written. The visible cost was `show_if_no_docstring`, whose default is `False`: **every member without a docstring was omitted from its page**, which is why the reference read as incomplete. Unnested, one page under `architecture/evolution` goes from 16 rendered objects to 41. Category headings ("Attributes", "Classes", "Functions") appear for the first time. Dropped two keys that are not real: `show_docstring`, and `setup_commands` with its `sys.path` hack — no longer a handler key in mkdocstrings-python 2.x, and unnecessary since the package is installed in the environment the build runs in.
+
+- **A package page whose `__init__` re-exports nothing rendered as a dead end.** `reference/cli/` showed the package docstring and nothing else: `graflo.cli` has nine submodules and no members of its own, and package pages set `show_submodules: false` so a parent does not inline its whole subtree. Package pages now also emit a `summary` table, so each one indexes its submodules with their one-line docstring summaries. The sidebar already links them; the table is what says what they are.
+
+- **`gen_pages.py` built a navigation object it never used.** It populated an `mkdocs_gen_files.Nav()` on every iteration and never wrote it to a `SUMMARY.md`, so `literate-nav` was inferring the reference section from the file tree the whole time — correctly, but not for the reason the code implied. Removed; the inferred nav is what ships, and it is the one that includes the hand-written overviews.
+
+### Removed
+
+- **The committed `docs/reference/` tree**, 216 of its 219 files. Every module page under `reference/` is generated at build time by `docs/_build/gen_pages.py`, which opens each path in `"w"` mode — so `mkdocs-gen-files` replaces the committed file in the MkDocs `Files` collection before anything renders. The committed copies were never read, which is why their staleness produced no symptom: 22 of them named modules deleted in the 1.10.0 reorg, and roughly 45 live modules (`hashing`, `compose`, `autogenerate`, `canonical`, `codec`, `alignment`, `naming`, `semantics`, `projection`, `traversal`, …) had no page on disk at all while rendering perfectly in the built site. A tree that can rot arbitrarily far without a symptom is not documentation; it is an invitation to hand-write stubs that do nothing.
+
+  The 20 `(moved)` / `(removed)` redirect notes from the 1.10.0 reorg went with them. Six live docs linked into those notes — `guides/tigergraph_bulk_load.md`, `examples/example-10.md`, `concepts/operations/object_storage.md` and `reference/index.md` — landing a reader on "this module was deleted, go here" instead of the API page they clicked for; those now point at the current modules directly. The full old→new path table remains in [Importing and layering](docs/guides/importing.md).
+
+  Kept: `reference/index.md` and the `data_source/` and `rdf/` section overviews. The generator's own docstring and `reference/index.md` now say that module pages are generated and that a hand-written stub at a generated path is inert.
+
 ## [1.12.0]
 
 ### Added

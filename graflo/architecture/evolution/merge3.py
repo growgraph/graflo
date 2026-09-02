@@ -714,23 +714,35 @@ def re_merge(
     Returns:
         ``(merged_or_None, result)``, as :func:`merge_three_way`.
     """
+    # What *would* conflict this time, before any recorded decision is applied.
+    # Comparing against the conflicts that survive the replay instead would
+    # report every resolution that did its job as "not needed" -- precisely
+    # backwards, and the reading a maintainer would act on by deleting it.
+    _unresolved, dry = merge_three_way(base, left, right, hints=hints)
+    contested = {conflict.slot_key for conflict in dry.conflicts}
+
     merged, result = merge_three_way(
         base, left, right, resolutions=recipe.resolutions, hints=hints
     )
 
     recorded = {resolution.slot_key for resolution in recipe.resolutions}
-    still_conflicting = {conflict.slot_key for conflict in result.conflicts}
-    unused = sorted(recorded - still_conflicting)
+    replayed = sorted(recorded & contested)
+    if replayed:
+        result.warnings.append(
+            f"{len(replayed)} recorded resolution(s) replayed: "
+            + ", ".join(describe_slot(slot) for slot in replayed)
+        )
+    unused = sorted(recorded - contested)
     if unused:
         result.warnings.append(
             f"{len(unused)} recorded resolution(s) were not needed this time: "
-            + ", ".join("/".join(slot) for slot in unused)
+            + ", ".join(describe_slot(slot) for slot in unused)
         )
-    genuinely_new = sorted(still_conflicting - recorded)
+    genuinely_new = sorted(contested - recorded)
     if genuinely_new:
         result.warnings.append(
             f"{len(genuinely_new)} conflict(s) are new since the recorded merge: "
-            + ", ".join("/".join(slot) for slot in genuinely_new)
+            + ", ".join(describe_slot(slot) for slot in genuinely_new)
         )
     return merged, result
 

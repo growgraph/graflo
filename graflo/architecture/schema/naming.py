@@ -25,11 +25,22 @@ in identity, storage naming or ingestion consults it. It records the intent that
 produced the names; it does not rewrite them.
 
 **Merging schemas across conventions** is the failure this module exists to
-prevent. Composition matches vertices and edges by name, so a manifest written
-in PascalCase merged with one written in snake_case yields a graph carrying both
-``Customer`` and ``customer`` as unrelated types with the data split between
-them, and nothing raises. :func:`canonical_key` and :func:`same_concept` are
-what a merge should compare on.
+prevent. Matching vertices and edges by raw name means a manifest written in
+PascalCase combined with one written in snake_case yields a graph carrying both
+``Customer`` and ``customer`` as unrelated types, with the data split between
+them and nothing raising.
+
+Both combining paths now compare on :func:`canonical_key`:
+``compose_manifests`` treats two spellings of one concept as a name collision
+and applies its ``name_conflict`` policy to them, and three-way merge keys every
+slot on the canonical form so the two sides conflict rather than diverging.
+
+The scope is deliberately narrow — **type names only**. Property names are not
+folded: a field name binds to a key in the source document, so treating
+``customer_email`` and ``customerEmail`` as one property would fuse two columns
+fed by two different keys. Resource, connector and transform names are not
+folded either; those are addresses looked up exactly, where two similar names
+split nothing.
 """
 
 from __future__ import annotations
@@ -281,6 +292,15 @@ def canonical_key(name: str) -> tuple[str, ...]:
     return (*words[:-1], singularize(words[-1]))
 
 
+def canonical_slug(name: str) -> str:
+    """:func:`canonical_key` as one string, for dict keys and messages.
+
+    Falls back to the lowercased name when the words cannot be recovered, so
+    the result is always a usable key.
+    """
+    return "/".join(canonical_key(name)) or name.lower()
+
+
 def same_concept(left: str, right: str) -> bool:
     """Whether two identifiers denote the same concept under any convention."""
     return canonical_key(left) == canonical_key(right)
@@ -295,6 +315,7 @@ __all__ = [
     "NamingConvention",
     "apply_case",
     "canonical_key",
+    "canonical_slug",
     "convert",
     "same_concept",
     "singularize",

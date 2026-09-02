@@ -293,3 +293,71 @@ class TestValidateComposeAgainstCanonicalMap:
                 right=self._right_two_orgs(),
                 allow_implicit_merge=True,
             )
+
+
+class TestTheTwoChecksDoNotOverlap:
+    """`CanonicalMap` validation and compose's own check are disjoint.
+
+    The validator compares an op against a *declared* map — stale names, a
+    wrong `into`, retired properties. Compose's check fires on the residue no
+    equivalence covers. A name that trips one cannot trip the other, and this
+    pins that they never double-report the same pair.
+    """
+
+    @staticmethod
+    def _one_vertex(name: str, resource: str) -> GraphManifest:
+        schema = Schema(
+            metadata=GraphMetadata(name=f"m-{name}", version="1.0.0"),
+            core_schema=CoreSchema(
+                vertex_config=VertexConfig(
+                    vertices=[
+                        Vertex(
+                            name=name,
+                            properties=[Field(name="id", type=FieldType.STRING)],
+                            identity=["id"],
+                        )
+                    ],
+                    force_types={},
+                ),
+                edge_config=EdgeConfig(edges=[]),
+            ),
+        )
+        manifest = GraphManifest.from_config(
+            {
+                "schema": schema.to_dict(skip_defaults=False),
+                "ingestion_model": {
+                    "resources": [{"name": resource, "apply": [{"vertex": name}]}],
+                    "transforms": [],
+                },
+            }
+        )
+        manifest.finish_init()
+        return manifest
+
+    def test_an_undeclared_near_collision_raises_only_compose_error(self) -> None:
+        from graflo.architecture.evolution import (
+            ComposeNameConflictError,
+            compose_manifests,
+        )
+
+        with pytest.raises(ComposeNameConflictError) as excinfo:
+            compose_manifests(
+                self._one_vertex("OrderLine", "r_left"),
+                self._one_vertex("order_line", "r_right"),
+                ComposeManifestsOp(),
+            )
+        # Not the declared-map error: nothing was declared to contradict.
+        assert not isinstance(excinfo.value, ComposeCanonicalConflictError)
+
+    def test_a_stale_declared_name_keys_differently_so_only_the_validator_sees_it(
+        self,
+    ) -> None:
+        """`Firm` and `Company` do not key alike, so compose's check is silent.
+
+        That is what keeps the two checks from ever reporting the same problem:
+        one is about vocabulary the author declared, the other about spellings
+        nobody reconciled.
+        """
+        from graflo.architecture.schema.naming import canonical_slug
+
+        assert canonical_slug("Firm") != canonical_slug("Company")

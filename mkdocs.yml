@@ -36,18 +36,12 @@ plugins:
         handlers:
             python:
                 options:
-                    extra:
-                        show_root_full_path: true
-                        show_docstring: true
-                        show_source: true
-                        show_root_toc_entry: false
-                        docstring_style: google
-                        show_submodules: true
-                        show_category_heading: true
-                        show_if_no_docstring: true
-                        setup_commands:
-                        -   import sys
-                        -   sys.path.append('.')
+                    show_root_full_path: true
+                    show_source: true
+                    show_root_toc_entry: false
+                    docstring_style: google
+                    show_category_heading: true
+                    show_if_no_docstring: true
 nav:
 -   Home: index.md
 -   Getting Started:
@@ -66,6 +60,7 @@ nav:
         -   Cross-resource identity discovery: concepts/schema/cross_resource_identity.md
         -   Backend indexes: concepts/schema/backend_indexes.md
         -   Manifest evolution: concepts/schema/manifest_evolution.md
+        -   Version control: concepts/schema/versioning.md
         -   GraFlo ontology: concepts/schema/ontology.md
     -   Ingestion:
         -   Transforms: concepts/ingestion/transforms.md
@@ -112,6 +107,7 @@ nav:
     -   17 - Identity funnel across two sources: examples/example-17.md
     -   18 - Cross-resource identity discovery: examples/example-18.md
     -   19 - Union of manifests with conditional equivalence: examples/example-19.md
+    -   "20 - Version control: fork, conflict, resolve, merge": examples/example-20.md
 -   API Reference: reference/
 -   Contributing: contributing.md
 markdown_extensions:

@@ -14,6 +14,7 @@ Runnable walkthroughs with sample data under `examples/` in the repository.
 | TigerGraph / S3 | [10](example-10.md) | [TigerGraph bulk load guide](../guides/tigergraph_bulk_load.md) |
 | Graph export / file backend | [13](example-13.md) | [Graph export guide](../guides/graph_export_and_replay.md) |
 | Graph DB migration (Neo4j/Arango → any target) | — | [Graph DB migration guide](../guides/graph_db_migration.md), [Quick start](../getting_started/quickstart.md#graph-export-and-migration) |
+| Evolution / versioning | [17](example-17.md), [18](example-18.md), [19](example-19.md), [20](example-20.md) | [Version control](../concepts/schema/versioning.md), [Manifest evolution](../concepts/schema/manifest_evolution.md) |
 | Connectors / proxy wiring | [9](example-9.md) | [Runtime connector updates](../concepts/connectors/runtime_updates.md) |
 
 ## Full list
@@ -37,3 +38,4 @@ Runnable walkthroughs with sample data under `examples/` in the repository.
 17. **[Identity funnel across two sources](example-17.md)** — ordered fallback branches key each row by the strongest evidence it carries.
 18. **[Cross-resource identity discovery](example-18.md)** — propose a shared identity policy from sampled documents; apply after review.
 19. **[Union of manifests with conditional equivalence](example-19.md)** — canonicalize, validate against a `CanonicalMap`, compose, and fuse equivalent entities behind a gated match key.
+20. **[Version control: fork, conflict, resolve, merge](example-20.md)** — record commits over a manifest, fork it, reconcile the conflict, and replay the recorded decision after one side moves on.

@@ -7,7 +7,7 @@ GraFlo uses **S3-compatible object storage** (MinIO, AWS S3, etc.) in one primar
 When `TigergraphConfig.bulk_load` uploads staged CSVs:
 
 1. The manifest can declare **`bindings.staging_proxy`**: logical names (e.g. `bulk_s3`) map to **`conn_proxy`** keys (non-secret).
-2. At runtime, [`InMemoryConnectionProvider`](../../reference/hq/connection_provider.md) registers [`S3GeneralizedConnConfig`](../../reference/hq/connection_provider.md) for that proxy.
+2. At runtime, [`InMemoryConnectionProvider`](../../reference/connections/provider.md) registers [`S3GeneralizedConnConfig`](../../reference/connections/provider.md) for that proxy.
 3. **`graflo.object_storage.upload_staged_csvs`** uploads files with boto3; GSQL uses the returned `s3://bucket/key` paths behind a **`CREATE DATA_SOURCE`** so TigerGraph can read MinIO (not bare `s3://` against AWS). Optional **`MINIO_LOADER_ENDPOINT`** in `docker/minio/.env` sets the endpoint as seen from the TigerGraph server when it differs from the host URL used by boto3.
 
 Secrets stay out of YAML; credentials come from environment / `docker/minio/.env` via `MinioConfig.from_docker_env()`.

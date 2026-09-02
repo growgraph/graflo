@@ -476,3 +476,27 @@ def test_a_resolution_takes_the_place_of_the_ops_it_replaces() -> None:
     vertex = _core(merged).vertex_config.vertices[0]
     assert vertex.identity == ["ssn"]
     assert [s.fields for s in vertex.secondary_identities] == [["id"]]
+
+
+def test_a_replayed_resolution_is_reported_as_replayed_not_unused() -> None:
+    """The warning has to describe what happened, not the opposite.
+
+    A recorded resolution that *did its job* leaves no conflict behind. Judging
+    "was it needed" by what survives the replay therefore reports every working
+    resolution as unnecessary — and a maintainer acting on that reading deletes
+    the decision that was holding the merge together.
+    """
+    base = _person(["id", "ssn", "email"], ["id"])
+    left = _person(["id", "ssn", "email"], ["ssn"])
+    right = _person(["id", "ssn", "email"], ["email"])
+
+    _none, result = merge_three_way(base, left, right)
+    recipe = build_recipe(
+        base, left, right, resolutions=[take_left(result.conflicts[0])]
+    )
+
+    merged, replayed = re_merge(recipe, base, left, right)
+    assert replayed.clean
+    assert merged is not None
+    assert any("replayed" in warning for warning in replayed.warnings)
+    assert not any("not needed" in warning for warning in replayed.warnings)
