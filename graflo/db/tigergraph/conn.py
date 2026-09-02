@@ -33,9 +33,6 @@ from graflo.db.tigergraph.document_utils import clean_document, extract_id
 from graflo.db.tigergraph.graph_admin import GraphAdmin
 from graflo.db.tigergraph.gsql_client import TigerGraphGsqlClient
 from graflo.db.tigergraph.name_validation import (
-    load_tigergraph_name_rules as _load_tigergraph_name_rules,
-)
-from graflo.db.tigergraph.name_validation import (
     validate_tigergraph_schema_name as _validate_tigergraph_schema_name,
 )
 from graflo.db.tigergraph.rest_client import TigerGraphRestClient
@@ -51,6 +48,9 @@ from graflo.db.tigergraph.token_cache import (
 )
 from graflo.db.tigergraph.token_cache import (
     parse_tg_expiration as _parse_tg_expiration,
+)
+from graflo.db.util import (
+    load_tigergraph_identifier_rules as _load_tigergraph_identifier_rules,
 )
 from graflo.onto import DBType
 
@@ -650,7 +650,7 @@ __all__ = [
     "TokenCacheKey",
     "_CachedToken",
     "_TigerGraphTokenCache",
-    "_load_tigergraph_name_rules",
+    "_load_tigergraph_identifier_rules",
     "_make_token_cache_key",
     "_parse_tg_expiration",
     "_validate_tigergraph_schema_name",

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from importlib.resources import files
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -14,24 +16,60 @@ from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.schema.vertex import Field, FieldType, Vertex, VertexConfig
 from graflo.db.tigergraph.conn import (
     TigerGraphConnection,
-    _load_tigergraph_name_rules,
+    _load_tigergraph_identifier_rules,
     _validate_tigergraph_schema_name,
 )
 from graflo.onto import DBType
 
 
 def test_name_rules_cached() -> None:
-    _load_tigergraph_name_rules.cache_clear()
-    _load_tigergraph_name_rules()
-    info = _load_tigergraph_name_rules.cache_info()
+    _load_tigergraph_identifier_rules.cache_clear()
+    _load_tigergraph_identifier_rules()
+    info = _load_tigergraph_identifier_rules.cache_info()
     assert info.currsize == 1
-    _load_tigergraph_name_rules()
-    assert _load_tigergraph_name_rules.cache_info().hits >= 1
+    _load_tigergraph_identifier_rules()
+    assert _load_tigergraph_identifier_rules.cache_info().hits >= 1
 
 
 def test_reserved_word_rejected_for_vertex_property_label() -> None:
     with pytest.raises(ValueError, match="reserved"):
         _validate_tigergraph_schema_name("INT", "vertex property")
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "FILE",
+        "file",
+        "EDGE",
+        "GROUP",
+        "NAMESPACE",
+        "PACKAGE",
+        "NOW",
+        "HEADER",
+        "ROW",
+        "NULLABLE",
+        "DATETIME_DIFF",
+        "INT32",
+    ],
+)
+def test_ddl_reserved_words_rejected_case_insensitively(name: str) -> None:
+    """Words TigerGraph documents as DDL-reserved cannot name an attribute."""
+    with pytest.raises(ValueError, match="reserved"):
+        _validate_tigergraph_schema_name(name, "vertex property")
+
+
+def test_reserved_word_lists_are_uppercase_and_duplicate_free() -> None:
+    """Guard the hand-maintained word list against merge slips."""
+    raw = json.loads(
+        (files("graflo.db.tigergraph") / "reserved_words.json").read_text()
+    )
+    declared = raw["reserved_words"]
+    assert set(declared) == {"gsql_keywords", "cpp_keywords"}
+    for key, words in declared.items():
+        assert words == [w.upper() for w in words], f"{key} has non-uppercase entries"
+        duplicates = sorted({w for w in words if words.count(w) > 1})
+        assert not duplicates, f"{key} repeats {duplicates}"
 
 
 def test_validate_vertex_properties_helper() -> None:

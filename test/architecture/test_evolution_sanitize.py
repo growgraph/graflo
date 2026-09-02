@@ -680,6 +680,16 @@ def test_sanitize_tigergraph_identifier_uses_double_underscore_replacement():
         )
         == "a__b"
     )
+    # A DDL reserved word reaches the sanitizer, not only the DDL validator.
+    assert (
+        sanitize_tigergraph_identifier(
+            "file",
+            reserved,
+            rules.forbidden_prefixes,
+            rules.invalid_characters,
+        )
+        == "file_attr"
+    )
 
 
 def _build_tigergraph_manifest(
