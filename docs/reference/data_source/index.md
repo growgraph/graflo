@@ -14,6 +14,12 @@ Data sources handle data retrieval from various sources:
 
 Many data sources can map to the same Resource, allowing flexible data ingestion.
 
+## Package
+
+::: graflo.data_source
+    options:
+      show_submodules: false
+
 ## Core Classes
 
 ### AbstractDataSource

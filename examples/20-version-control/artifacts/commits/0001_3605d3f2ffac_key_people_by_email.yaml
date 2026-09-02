@@ -1,0 +1,21 @@
+created_at: '2026-01-01T00:00:00+00:00'
+id: 3605d3f2ffac
+label: key people by email
+ops:
+-   op: replace_identity
+    vertices:
+        person:
+            endpoints: follow_new
+            retire: keep
+            to:
+                identity:
+                -   email
+                mode: natural
+-   additions:
+        person:
+        -   email_verified
+    op: add_vertex_properties
+parents:
+-   97382d5d748c
+tree: 3ec44956d61fe281451ce530a817ada3bc5051c5d9eb8ffa43ce8f4d5862466e
+tree_before: d8374f8667830fc1c02c797fd3a83fb8b0aa3900b2fbf900e588b4741f6730f1

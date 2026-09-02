@@ -18,7 +18,7 @@ identities, and DB profile — then infer, validate, migrate, and load into any 
 | [Getting Started](getting_started/installation.md) | Install, quickstart, and your first manifest |
 | [Concepts](concepts/index.md) | Architecture, schema, ingestion pipeline, connectors |
 | [Guides](guides/index.md) | Task-oriented walkthroughs (export, API wiring, identity inference, …) |
-| [Examples](examples/index.md) | Fifteen runnable examples with sample data |
+| [Examples](examples/index.md) | Twenty runnable examples with sample data |
 | [API Reference](reference/index.md) | Auto-generated Python API docs |
 
 ## Highlights

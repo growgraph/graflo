@@ -1,3 +1,0 @@
-# `graflo.onto`
-
-::: graflo.onto

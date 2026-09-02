@@ -2,12 +2,20 @@
 description: "Documentation conventions"
 globs:
   - "docs/**/*.md"
-  - "mkdocs.yaml"
+  - "mkdocs.yml"
 alwaysApply: false
 ---
 
 # Documentation Rules
 - Write docs in Markdown with clear headings and code examples.
-- Update `mkdocs.yaml` navigation when adding new docs.
+- Update `mkdocs.yml` navigation when adding new docs (4-space, `-   ` list style — the yamlfix hook rewrites anything else).
 - Keep `README.md` concise, and move long explanations to `/docs`.
 - Use Python code fences (```python … ```) in examples.
+
+# API reference is generated — never hand-write it
+- `docs/reference/` module pages are produced at build time by `docs/_build/gen_pages.py` via `mkdocs-gen-files`, which walks `graflo/**/*.py`. To document a module, add docstrings to it.
+- A committed file at a generated path is **inert**: the generator opens each path in `"w"` mode, replacing the entry in the MkDocs `Files` collection before anything renders. It will also never show as stale, so it silently rots.
+- Two hand-written kinds are legitimate: `reference/index.md`, and a **section overview** at `reference/<pkg>/index.md` (`reference/rdf/index.md`, `reference/data_source/index.md`).
+- An overview is not a free path. A package `__init__.py` generates `reference/<pkg>.md`, and under `use_directory_urls` both build to `site/reference/<pkg>/index.html` — one URL from two sources, which MkDocs does not warn about. `gen_pages.py` therefore **skips** a package whose overview exists on disk, so the override is a decision rather than a matter of write order.
+- An overview that claims a package that way must include `::: graflo.<pkg>` itself, or the package docstring and members are documented nowhere.
+- Links may target generated pages that have no file on disk; `mkdocs build` resolves them.

@@ -8,6 +8,7 @@ from graflo.architecture.contract.bindings import FileConnector
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.evolution import (
     ComposeManifestsOp,
+    ComposeNameConflictError,
     PropertyEquivalence,
     RelationEquivalence,
     VertexEquivalence,
@@ -371,3 +372,233 @@ def test_apply_evolution_rejects_compose_op() -> None:
     )
     with pytest.raises(ValueError, match="compose_manifests is binary"):
         apply_evolution(m, [ComposeManifestsOp()], bump_version=False)
+
+
+# ── canonical near-collisions (CORE-MERGE-001) ──────────────────────────────
+#
+# Compose matched vertices and edges by raw name, so an overlay authored as
+# `order_line` beside a core `OrderLine` composed into two unrelated types with
+# the source data split between them and nothing raising. Names now collide
+# both exactly and when they key alike under `canonical_key`.
+
+
+def _named(
+    name: str, *, relation: str | None = None, resource: str | None = None
+) -> GraphManifest:
+    """A one-vertex manifest, optionally with a self-edge under *relation*."""
+    vertex = Vertex(
+        name=name,
+        properties=[Field(name="id", type=FieldType.STRING)],
+        identity=["id"],
+    )
+    edges = (
+        [Edge(source=name, target=name, relation=relation)]
+        if relation is not None
+        else []
+    )
+    return _manifest(
+        name=f"m-{name}",
+        vertices=[vertex],
+        edges=edges,
+        resources=[
+            {
+                "name": resource or f"r_{name.lower()}",
+                "apply": [{"vertex": name}],
+            }
+        ],
+    )
+
+
+def _vertex_names(manifest: GraphManifest) -> set[str]:
+    schema = manifest.graph_schema
+    assert schema is not None
+    return {v.name for v in schema.core_schema.vertex_config.vertices}
+
+
+def test_a_canonical_near_collision_raises_by_default() -> None:
+    """The defect itself: two spellings, no equivalence, previously silent."""
+    with pytest.raises(ComposeNameConflictError, match="same concept"):
+        compose_manifests(
+            _named("OrderLine"), _named("order_line"), ComposeManifestsOp()
+        )
+
+
+def test_a_trailing_plural_is_a_collision_too() -> None:
+    """`canonical_key` folds the plural, and so must the check."""
+    with pytest.raises(ComposeNameConflictError):
+        compose_manifests(_named("Customer"), _named("Customers"), ComposeManifestsOp())
+
+
+def test_the_message_names_both_spellings_and_the_ways_out() -> None:
+    with pytest.raises(ComposeNameConflictError) as excinfo:
+        compose_manifests(
+            _named("OrderLine"), _named("order_line"), ComposeManifestsOp()
+        )
+    message = str(excinfo.value)
+    assert "'OrderLine' / 'order_line'" in message
+    assert "VertexEquivalence" in message
+    assert "fuse_right" in message and "prefix_right" in message
+
+
+def test_a_declared_equivalence_exempts_a_near_collision() -> None:
+    """Raising is a prompt, not a wall.
+
+    This is the whole point: the author is told to say what they mean, and
+    saying it composes cleanly under the unchanged default policy.
+    """
+    composed = compose_manifests(
+        _named("OrderLine"),
+        _named("order_line"),
+        ComposeManifestsOp(
+            vertices=[
+                VertexEquivalence(
+                    left="OrderLine", right="order_line", into="OrderLine"
+                )
+            ]
+        ),
+    )
+    assert _vertex_names(composed) == {"OrderLine"}
+
+
+def test_prefix_right_keeps_a_near_collision_apart() -> None:
+    composed = compose_manifests(
+        _named("OrderLine"),
+        _named("order_line"),
+        ComposeManifestsOp(name_conflict="prefix_right"),
+    )
+    assert _vertex_names(composed) == {"OrderLine", "r_order_line"}
+
+
+def test_fuse_right_adopts_the_left_spelling() -> None:
+    composed = compose_manifests(
+        _named("OrderLine"),
+        _named("order_line"),
+        ComposeManifestsOp(name_conflict="fuse_right"),
+    )
+    assert _vertex_names(composed) == {"OrderLine"}
+
+
+def test_fuse_right_rewrites_ingestion_too() -> None:
+    """The rename has to reach the pipelines, not just the schema.
+
+    A rename that lands on the schema alone leaves every resource step pointing
+    at a vertex that no longer exists -- the same shape of silent breakage the
+    check exists to prevent.
+    """
+    composed = compose_manifests(
+        _named("OrderLine"),
+        _named("order_line"),
+        ComposeManifestsOp(name_conflict="fuse_right"),
+    )
+    assert composed.ingestion_model is not None
+    targets = {
+        step.get("vertex")
+        for resource in composed.ingestion_model.resources
+        for step in resource.pipeline
+        if isinstance(step, dict)
+    }
+    assert targets == {"OrderLine"}
+
+
+def test_relations_that_key_alike_collide() -> None:
+    with pytest.raises(ComposeNameConflictError, match="relation"):
+        compose_manifests(
+            _named("A", relation="placedBy"),
+            _named("B", relation="placed_by"),
+            ComposeManifestsOp(),
+        )
+
+
+def test_an_exact_collision_still_reports_the_old_way() -> None:
+    """Exact equality was already refused; that message must not change."""
+    with pytest.raises(ValueError, match="vertex name collision") as excinfo:
+        # Distinct resource names, so the vertex check is what fires: resources
+        # are checked first and would otherwise mask it.
+        compose_manifests(
+            _named("Order", resource="r_left"),
+            _named("Order", resource="r_right"),
+            ComposeManifestsOp(),
+        )
+    assert not isinstance(excinfo.value, ComposeNameConflictError)
+
+
+def test_resources_that_key_alike_still_compose() -> None:
+    """Deliberately exempt: a resource is an address, not a concept.
+
+    Two resources whose names key alike split nothing -- each keeps its name,
+    each is looked up by it, each targets its own vertex.
+    """
+    left = _manifest(
+        name="l",
+        vertices=[Vertex(name="A", properties=[Field(name="id")], identity=["id"])],
+        edges=[],
+        resources=[{"name": "orders", "apply": [{"vertex": "A"}]}],
+    )
+    right = _manifest(
+        name="r",
+        vertices=[Vertex(name="B", properties=[Field(name="id")], identity=["id"])],
+        edges=[],
+        resources=[{"name": "order", "apply": [{"vertex": "B"}]}],
+    )
+    composed = compose_manifests(left, right, ComposeManifestsOp())
+    assert composed.ingestion_model is not None
+    assert {r.name for r in composed.ingestion_model.resources} == {"orders", "order"}
+
+
+def test_properties_that_key_alike_are_not_fused() -> None:
+    """A field name binds to a key in the source document.
+
+    Fusing `customer_email` with `customerEmail` would fuse two columns fed by
+    two different document keys, so property matching stays exact.
+    """
+    left = _manifest(
+        name="l",
+        vertices=[
+            Vertex(
+                name="Party",
+                properties=[Field(name="id"), Field(name="customer_email")],
+                identity=["id"],
+            )
+        ],
+        edges=[],
+        resources=[{"name": "r_l", "apply": [{"vertex": "Party"}]}],
+    )
+    right = _manifest(
+        name="r",
+        vertices=[
+            Vertex(
+                name="Party",
+                properties=[Field(name="id"), Field(name="customerEmail")],
+                identity=["id"],
+            )
+        ],
+        edges=[],
+        resources=[{"name": "r_r", "apply": [{"vertex": "Party"}]}],
+    )
+    composed = compose_manifests(
+        left,
+        right,
+        ComposeManifestsOp(
+            vertices=[VertexEquivalence(left="Party", right="Party", into="Party")]
+        ),
+    )
+    schema = composed.graph_schema
+    assert schema is not None
+    names = {f.name for f in schema.core_schema.vertex_config.vertices[0].properties}
+    assert {"customer_email", "customerEmail"} <= names
+
+
+def test_an_equivalence_in_the_wrong_convention_says_what_to_use() -> None:
+    """The likeliest authoring mistake gets a way out, not a dead end."""
+    with pytest.raises(ValueError, match="denotes the same concept"):
+        compose_manifests(
+            _named("OrderLine"),
+            _named("order_line"),
+            ComposeManifestsOp(
+                vertices=[
+                    VertexEquivalence(
+                        left="order_line", right="order_line", into="order_line"
+                    )
+                ]
+            ),
+        )

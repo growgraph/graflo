@@ -9,6 +9,7 @@ from pydantic import field_validator
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.schema.naming import NamingConvention
+from graflo.architecture.schema.provenance import Provenance
 from graflo.architecture.schema.semantics import Semantics
 
 _SEMVER_RE = re.compile(
@@ -41,6 +42,14 @@ class GraphMetadata(ConfigBaseModel):
     semantics: Semantics | None = PydanticField(
         default=None,
         description="Optional external-vocabulary anchors for the schema as a whole.",
+    )
+    provenance: Provenance | None = PydanticField(
+        default=None,
+        description=(
+            "Content address and lineage of this schema. Written at commit "
+            "points, never by `apply_evolution`, and excluded from every "
+            "content hash -- identity has to be path-independent."
+        ),
     )
     naming: NamingConvention | None = PydanticField(
         default=None,

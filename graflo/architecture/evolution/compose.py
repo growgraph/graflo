@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any, Literal
 
 from graflo.architecture.contract.bindings import Bindings
@@ -12,6 +13,7 @@ from graflo.architecture.schema.core import CoreSchema
 from graflo.architecture.schema.database_features import DatabaseProfile
 from graflo.architecture.schema.document import Schema
 from graflo.architecture.schema.edge import Edge
+from graflo.architecture.schema.naming import canonical_slug
 from graflo.architecture.schema.vertex import Vertex, VertexConfig
 
 from .apply import (
@@ -95,17 +97,24 @@ def _resolve_name_collisions(
     occupied: set[str],
     candidates: list[str],
     *,
-    name_conflict: Literal["error", "prefix_right"],
+    name_conflict: Literal["error", "prefix_right", "fuse_right"],
     kind: str,
 ) -> dict[str, str]:
-    """Return rename map for *candidates* that collide with *occupied*."""
+    """Return rename map for *candidates* that collide with *occupied*.
+
+    Exact matching only, and deliberately so: resources and connectors are
+    *addresses*, not concepts. Two whose names key alike cause no split -- each
+    keeps its own name, each is looked up by that name, each targets its own
+    vertex -- so canonical matching here would be pure false positive.
+    ``fuse_right`` is meaningless for the same reason and behaves as ``error``.
+    """
     renames: dict[str, str] = {}
     taken = set(occupied)
     for name in candidates:
         if name not in taken:
             taken.add(name)
             continue
-        if name_conflict == "error":
+        if name_conflict in ("error", "fuse_right"):
             raise ValueError(
                 f"compose_manifests: {kind} name collision on {name!r}; "
                 "provide an equivalence / resource_renames, or set "
@@ -247,73 +256,211 @@ def _apply_right_resource_policy(
         apply_rename_resources(right, RenameResourcesOp(resources=collisions))
 
 
+class ComposeNameConflictError(ValueError):
+    """Two names denote one concept under different naming conventions.
+
+    Distinct from ``ComposeCanonicalConflictError`` in ``canonical.py``, which
+    reports a *declared* CanonicalMap contradicting the op. This one fires on
+    the residue neither side declared -- the undeclared path, where compose
+    would otherwise produce two unrelated types with the data split between
+    them and nothing raising.
+    """
+
+
+def _canonical_near_collisions(
+    left_names: Iterable[str],
+    right_names: Iterable[str],
+    *,
+    exempt: frozenset[str],
+) -> list[tuple[str, str]]:
+    """``(left, right)`` pairs that key alike but are spelled differently.
+
+    Exact matches are excluded: those are the pre-existing collision path, so
+    the two checks can never report the same pair twice.
+    """
+    by_key: dict[str, list[str]] = {}
+    for name in left_names:
+        by_key.setdefault(canonical_slug(name), []).append(name)
+
+    pairs: list[tuple[str, str]] = []
+    for right_name in right_names:
+        if right_name in exempt:
+            continue
+        for left_name in by_key.get(canonical_slug(right_name), []):
+            if left_name != right_name:
+                pairs.append((left_name, right_name))
+    return sorted(set(pairs))
+
+
+def _resolve_schema_collisions(
+    *,
+    left_names: set[str],
+    right_names: list[str],
+    exempt: frozenset[str],
+    name_conflict: str,
+    kind: str,
+    equivalence_hint: str,
+) -> dict[str, str]:
+    """The rename map to apply to the right side, or raise under ``error``.
+
+    Two kinds of collision are handled together because they are the same
+    question asked with different confidence. An **exact** collision
+    (``Customer`` on both sides) has always raised by default. A **canonical**
+    one (``Customer`` / ``customer``, or ``OrderLine`` / ``order_line``) is the
+    weaker signal, so it cannot trigger a *more* aggressive action than the
+    stronger one -- if exact equality refuses to fuse silently, a naming-
+    convention guess certainly must not.
+
+    Left the right names alone and they compose into two unrelated types with
+    the source data split between them and nothing raising, which is the whole
+    of ``CORE-MERGE-001``.
+    """
+    exact = [name for name in right_names if name in left_names and name not in exempt]
+    near = _canonical_near_collisions(left_names, right_names, exempt=exempt)
+
+    if name_conflict == "error":
+        if exact:
+            raise ValueError(
+                f"compose_manifests: {kind} name collision on "
+                f"{sorted(exact)!r}; provide a {equivalence_hint} or set "
+                "name_conflict='prefix_right'"
+            )
+        if near:
+            pairs = ", ".join(f"{left!r} / {right!r}" for left, right in near)
+            raise ComposeNameConflictError(
+                f"compose_manifests: {pairs} denote the same concept under "
+                f"different naming conventions, so they would compose into two "
+                f"unrelated {kind} types with the source data split between "
+                f"them. Declare a {equivalence_hint} (or a CanonicalMap) "
+                "to combine them, set name_conflict='fuse_right' to adopt the "
+                "left spelling, or name_conflict='prefix_right' to keep them "
+                "apart."
+            )
+        return {}
+
+    if name_conflict == "fuse_right":
+        if exact:
+            raise ValueError(
+                f"compose_manifests: {kind} name collision on "
+                f"{sorted(exact)!r}; provide a {equivalence_hint} or set "
+                "name_conflict='prefix_right'"
+            )
+        # Adopt the left spelling; the ordinary same-name union then merges
+        # them. The left side keeps its name because it is the side the
+        # canonical vocabulary is expected to live on.
+        return {right: left for left, right in near}
+
+    # prefix_right: keep both, explicitly, under distinguishable names.
+    renames: dict[str, str] = {}
+    taken = set(left_names) | set(right_names)
+    for name in [*exact, *(right for _left, right in near)]:
+        if name in renames:
+            continue
+        new_name = _prefixed(name)
+        while new_name in taken:
+            new_name = _prefixed(new_name)
+        renames[name] = new_name
+        taken.add(new_name)
+    return renames
+
+
+def _did_you_mean(name: str, candidates: Iterable[str]) -> str:
+    """A suffix naming a candidate that denotes the same concept, if any.
+
+    Authoring an equivalence in the wrong convention is the likeliest mistake
+    at this boundary, and "not in left manifest" alone is a dead end when the
+    vertex is right there under another spelling.
+    """
+    key = canonical_slug(name)
+    near = sorted(c for c in candidates if c != name and canonical_slug(c) == key)
+    if not near:
+        return ""
+    return (
+        f"; it has {near[0]!r}, which denotes the same concept — author the "
+        "equivalence in the manifest's own spelling"
+    )
+
+
+def _assert_no_canonical_split(schema: Schema) -> None:
+    """No two composed vertex types or relations may denote one concept.
+
+    The invariant ``CORE-MERGE-001`` is actually about, asserted on the result
+    rather than only at the sites that could violate it -- so a future path
+    into the union is covered without anyone remembering to add a check.
+    """
+    for kind, names in (
+        ("vertex", [v.name for v in schema.core_schema.vertex_config.vertices]),
+        (
+            "relation",
+            [
+                e.relation
+                for e in schema.core_schema.edge_config.edges
+                if e.relation is not None
+            ],
+        ),
+    ):
+        by_key: dict[str, set[str]] = {}
+        for name in names:
+            by_key.setdefault(canonical_slug(name), set()).add(name)
+        split = {key: sorted(group) for key, group in by_key.items() if len(group) > 1}
+        if split:
+            raise ComposeNameConflictError(
+                f"compose_manifests produced {kind} types that denote the same "
+                f"concept under different spellings: {split}. This is an "
+                "unhandled compose path, not an authoring error -- the result "
+                "would split data between them silently."
+            )
+
+
 def _apply_right_schema_collision_policy(
     left: GraphManifest,
     right: GraphManifest,
     op: ComposeManifestsOp,
 ) -> None:
-    """Prefix or error on non-equivalent right vertex/relation names that collide."""
+    """Prefix, fuse or error on non-equivalent right vertex/relation names.
+
+    Names are compared both exactly and by :func:`canonical_slug`, so two
+    spellings of one concept are a collision rather than two types.
+
+    Deliberately **not** applied to properties, resources, connectors or
+    transforms. A property name binds to a key in the source document, so
+    fusing ``customer_email`` with ``customerEmail`` would fuse two columns fed
+    by different keys; the rest are addresses looked up by exact name, where a
+    near-collision splits nothing and the check would be pure false positive.
+    """
     left_schema = _require_schema(left, "left")
     right_schema = _require_schema(right, "right")
 
-    boundary_intos = {veq.into for veq in op.vertices}
-    left_vertices = left_schema.core_schema.vertex_config.vertex_set
-    right_vertex_names = sorted(right_schema.core_schema.vertex_config.vertex_set)
-    candidates_v = [
-        name
-        for name in right_vertex_names
-        if name in left_vertices and name not in boundary_intos
-    ]
-    if candidates_v and op.name_conflict == "error":
-        raise ValueError(
-            f"compose_manifests: vertex name collision on "
-            f"{sorted(candidates_v)!r}; provide a VertexEquivalence or set "
-            "name_conflict='prefix_right'"
-        )
-    if candidates_v and op.name_conflict == "prefix_right":
-        v_renames: dict[str, str] = {}
-        taken = set(left_vertices) | set(right_vertex_names)
-        for name in candidates_v:
-            new_name = _prefixed(name)
-            while new_name in taken:
-                new_name = _prefixed(new_name)
-            v_renames[name] = new_name
-            taken.add(new_name)
+    v_renames = _resolve_schema_collisions(
+        left_names=set(left_schema.core_schema.vertex_config.vertex_set),
+        right_names=sorted(right_schema.core_schema.vertex_config.vertex_set),
+        exempt=frozenset({veq.into for veq in op.vertices}),
+        name_conflict=op.name_conflict,
+        kind="vertex",
+        equivalence_hint="VertexEquivalence",
+    )
+    if v_renames:
         apply_rename_vertices(right, RenameVerticesOp(vertices=v_renames))
 
-    left_relations = {
-        e.relation
-        for e in left_schema.core_schema.edge_config.edges
-        if e.relation is not None
-    }
-    boundary_rel_intos = {req.into for req in op.relations}
-    right_relations = sorted(
-        {
+    r_renames = _resolve_schema_collisions(
+        left_names={
             e.relation
-            for e in right_schema.core_schema.edge_config.edges
+            for e in left_schema.core_schema.edge_config.edges
             if e.relation is not None
-        }
+        },
+        right_names=sorted(
+            {
+                e.relation
+                for e in right_schema.core_schema.edge_config.edges
+                if e.relation is not None
+            }
+        ),
+        exempt=frozenset({req.into for req in op.relations}),
+        name_conflict=op.name_conflict,
+        kind="relation",
+        equivalence_hint="RelationEquivalence",
     )
-    candidates_r = [
-        name
-        for name in right_relations
-        if name in left_relations and name not in boundary_rel_intos
-    ]
-    if candidates_r and op.name_conflict == "error":
-        raise ValueError(
-            f"compose_manifests: relation name collision on "
-            f"{sorted(candidates_r)!r}; provide a RelationEquivalence or set "
-            "name_conflict='prefix_right'"
-        )
-    if candidates_r and op.name_conflict == "prefix_right":
-        r_renames: dict[str, str] = {}
-        taken_r = set(left_relations) | set(right_relations)
-        for name in candidates_r:
-            new_name = _prefixed(name)
-            while new_name in taken_r:
-                new_name = _prefixed(new_name)
-            r_renames[name] = new_name
-            taken_r.add(new_name)
+    if r_renames:
         apply_rename_relations(right, RenameRelationsOp(relations=r_renames))
 
 
@@ -490,7 +637,7 @@ def _union_bindings(
     left: Bindings | None,
     right: Bindings | None,
     *,
-    name_conflict: Literal["error", "prefix_right"],
+    name_conflict: Literal["error", "prefix_right", "fuse_right"],
 ) -> Bindings | None:
     if left is None and right is None:
         return None
@@ -615,11 +762,13 @@ def compose_manifests(
     for veq in op.vertices:
         if veq.left not in left_vertices:
             raise ValueError(
-                f"compose_manifests: left vertex {veq.left!r} not in left manifest"
+                f"compose_manifests: left vertex {veq.left!r} not in left "
+                f"manifest{_did_you_mean(veq.left, left_vertices)}"
             )
         if veq.right not in right_vertices:
             raise ValueError(
-                f"compose_manifests: right vertex {veq.right!r} not in right manifest"
+                f"compose_manifests: right vertex {veq.right!r} not in right "
+                f"manifest{_did_you_mean(veq.right, right_vertices)}"
             )
 
     _align_side(out_left, side="left", op=op)
@@ -636,6 +785,7 @@ def compose_manifests(
         _require_schema(out_right, "right"),
         op,
     )
+    _assert_no_canonical_split(composed_schema)
     composed_ingestion = _union_ingestion(
         out_left.ingestion_model, out_right.ingestion_model
     )

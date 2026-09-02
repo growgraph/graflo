@@ -82,7 +82,7 @@ _APPLY_EXPORTS = frozenset(
     }
 )
 
-_COMPOSE_EXPORTS = frozenset({"compose_manifests"})
+_COMPOSE_EXPORTS = frozenset({"ComposeNameConflictError", "compose_manifests"})
 
 _INGESTION_APPLY_EXPORTS = frozenset({"apply_add_resource_transforms"})
 
@@ -155,6 +155,16 @@ _HASHING_EXPORTS = frozenset(
     }
 )
 
+_CANONICALIZE_EXPORTS = frozenset(
+    {
+        "CANON_VERSION",
+        "LIST_ORDER",
+        "ListOrder",
+        "UnclassifiedListField",
+        "canonical_payload",
+    }
+)
+
 _AUTOGENERATE_EXPORTS = frozenset(
     {"RenameHints", "diff_manifests", "diff_manifests_verified"}
 )
@@ -163,22 +173,52 @@ _INVERSE_EXPORTS = frozenset(
     {"IRREVERSIBLE", "invert_op", "invert_ops", "irreversible_reason", "is_reversible"}
 )
 
-_REVISION_EXPORTS = frozenset(
+_COMMIT_EXPORTS = frozenset(
     {
-        "FileRevisionStore",
-        "Revision",
-        "RevisionChain",
-        "RevisionError",
-        "apply_revisions",
-        "build_revision",
-        "compute_revision_id",
-        "downgrade_to",
+        "COMMIT_KINDS",
+        "Commit",
+        "CommitError",
+        "MergeRecipeRef",
+        "build_commit",
+        "build_merge_commit",
+        "build_revert_commit",
+        "compute_commit_id",
+    }
+)
+
+_HISTORY_EXPORTS = frozenset(
+    {
+        "FileCommitStore",
+        "History",
+        "checkout",
+        "verify_history",
+    }
+)
+
+_MERGE3_EXPORTS = frozenset(
+    {
+        "ConflictResolution",
+        "MergeConflict",
+        "MergeError",
+        "MergeRecipe",
+        "MergeResult",
+        "build_recipe",
+        "describe_slot",
+        "find_merge_base",
+        "merge_three_way",
+        "op_slots",
+        "re_merge",
+        "take_left",
+        "take_right",
     }
 )
 
 __all__ = [
+    "CANON_VERSION",
+    "COMMIT_KINDS",
     "INGESTION_REWRITING_OPS",
     "IRREVERSIBLE",
+    "LIST_ORDER",
     "AddEdgeIndexesOp",
     "AddEdgePropertiesOp",
     "AddEdgesOp",
@@ -194,25 +234,36 @@ __all__ = [
     "BlankIdentityTarget",
     "CanonicalMap",
     "ChangeFieldTypesOp",
+    "Commit",
+    "CommitError",
     "ComposeCanonicalConflictError",
     "ComposeManifestsOp",
+    "ComposeNameConflictError",
+    "ConflictResolution",
     "DerivationSpec",
     "EdgeIdentitiesEntry",
     "EdgeIndexEntry",
     "EdgeRetargetEntry",
     "EdgeSelector",
     "FieldTypeSpec",
+    "FileCommitStore",
     # Revision layer
-    "FileRevisionStore",
     "FunnelIdentityTarget",
     "HashIdentityTarget",
+    "History",
     "IdentityAlignment",
     "IdentityReplacement",
     "IdentityTarget",
+    "ListOrder",
     "LocalKeySource",
     "LocalKeySpec",
     "ManifestOp",
+    "MergeConflict",
     "MergeEdgesOp",
+    "MergeError",
+    "MergeRecipe",
+    "MergeRecipeRef",
+    "MergeResult",
     "MergeVerticesOp",
     "NaturalIdentityTarget",
     "ProjectManifestOp",
@@ -234,12 +285,10 @@ __all__ = [
     "ReplaceEdgeIdentitiesOp",
     "ReplaceIdentityOp",
     "RetargetEdgesOp",
-    "Revision",
-    "RevisionChain",
-    "RevisionError",
     "RevisionOp",
     "SanitizeOp",
     "SetEdgeDirectedOp",
+    "UnclassifiedListField",
     "VertexEquivalence",
     "alignment_to_ops",
     "apply_add_edge_indexes",
@@ -272,16 +321,21 @@ __all__ = [
     "apply_replace_edge_identities",
     "apply_replace_identity",
     "apply_retarget_edges",
-    "apply_revisions",
     "apply_sanitize",
     "apply_set_edge_directed",
-    "build_revision",
+    "build_commit",
+    "build_merge_commit",
+    "build_recipe",
+    "build_revert_commit",
     "canonical_map_to_ops",
+    "canonical_payload",
+    "checkout",
     "compose_manifests",
-    "compute_revision_id",
+    "compute_commit_id",
+    "describe_slot",
     "diff_manifests",
     "diff_manifests_verified",
-    "downgrade_to",
+    "find_merge_base",
     "full_hash",
     "graph_hash",
     "ingestion_hash",
@@ -290,17 +344,23 @@ __all__ = [
     "irreversible_reason",
     "is_reversible",
     "manifest_hash",
+    "merge_three_way",
     "op_from_dict",
+    "op_slots",
     "op_to_dict",
     "ops_from_dicts",
     "ops_from_yaml",
     "ops_reaching_ingestion",
     "ops_to_dicts",
     "ops_to_yaml_str",
+    "re_merge",
     "schema_hash",
     "stable_hash",
+    "take_left",
+    "take_right",
     "validate_alignment",
     "validate_compose_against_canonical_map",
+    "verify_history",
 ]
 
 
@@ -345,6 +405,10 @@ def __getattr__(name: str) -> Any:
         from . import hashing as hashing_mod
 
         return getattr(hashing_mod, name)
+    if name in _CANONICALIZE_EXPORTS:
+        from . import canonicalize as canonicalize_mod
+
+        return getattr(canonicalize_mod, name)
     if name in _AUTOGENERATE_EXPORTS:
         from . import autogenerate as autogenerate_mod
 
@@ -353,10 +417,18 @@ def __getattr__(name: str) -> Any:
         from . import inverse as inverse_mod
 
         return getattr(inverse_mod, name)
-    if name in _REVISION_EXPORTS:
-        from . import revision as revision_mod
+    if name in _COMMIT_EXPORTS:
+        from . import commit as commit_mod
 
-        return getattr(revision_mod, name)
+        return getattr(commit_mod, name)
+    if name in _HISTORY_EXPORTS:
+        from . import history as history_mod
+
+        return getattr(history_mod, name)
+    if name in _MERGE3_EXPORTS:
+        from . import merge3 as merge3_mod
+
+        return getattr(merge3_mod, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

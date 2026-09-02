@@ -190,6 +190,11 @@ def validate_compose_against_canonical_map(
     Deliberately not re-checked here: everything compose already raises on —
     missing equivalence endpoints, name collisions under
     ``name_conflict="error"``, incompatible property types, divergent funnels.
+    That now includes **undeclared canonical near-collisions** between the two
+    vocabularies, which ``compose_manifests`` raises on directly with
+    ``ComposeNameConflictError``. The two are disjoint by construction: this
+    function only ever compares an op against a map the author *declared*,
+    while compose's check fires on the residue no equivalence covers.
     """
     stale_classes = cm.stale_class_names
 

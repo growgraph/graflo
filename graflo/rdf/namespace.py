@@ -22,7 +22,7 @@ from graflo.architecture.contract.bindings.connectors import (
 )
 
 GF_ONTOLOGY_IRI = "https://ontology.growgraph.dev/graflo"
-GF_VERSION = "1.5.0"
+GF_VERSION = "1.6.0"
 GF_VERSION_IRI = f"{GF_ONTOLOGY_IRI}/{GF_VERSION}"
 GF_BASE = "https://ontology.growgraph.dev/graflo/"
 GF = Namespace(GF_BASE)
@@ -136,6 +136,7 @@ propertyCase = GF.propertyCase
 singularVertexNames = GF.singularVertexNames
 enumValue = GF.enumValue
 fieldType = GF.fieldType
+itemType = GF.itemType
 dbFlavor = GF.dbFlavor
 targetNamespace = GF.targetNamespace
 identityName = GF.identityName
@@ -223,6 +224,8 @@ FIELD_TYPE_INDIVIDUALS: dict[str, object] = {
     "BOOL": GF.BOOL,
     "STRING": GF.STRING,
     "DATETIME": GF.DATETIME,
+    "UUID": GF.UUID,
+    "LIST": GF.LIST,
 }
 
 NAME_CASE_INDIVIDUALS: dict[str, object] = {

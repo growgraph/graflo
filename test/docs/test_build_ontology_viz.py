@@ -89,12 +89,21 @@ def test_committed_ontology_viz_contains_metadata() -> None:
     assert any(edge["kind"] == "subClassOf" for edge in payload["edges"])
 
 
-def test_build_ontology_viz_script_runs() -> None:
+def test_build_ontology_viz_script_runs(tmp_path: Path) -> None:
+    """Build into a temp dir: the script rmtree's its output, and the committed
+    assets are hook-formatted, so building over them dirties the working tree."""
     module = _load_module(BUILD_SCRIPT, "build_ontology_viz")
-    viz_id = module.build_ontology_viz()
+    output_dir = tmp_path / "graflo-ontology-viz"
+    viz_id = module.build_ontology_viz(output_dir=output_dir)
     assert viz_id == "hierarchical-graph"
-    assert INDEX_HTML.is_file()
-    assert EMBED_HTML.is_file()
+    assert (output_dir / "index.html").is_file()
+    assert (output_dir / "embed.html").is_file()
+    built = json.loads((output_dir / "graph-data.json").read_text(encoding="utf-8"))
+    committed = json.loads(GRAPH_JSON.read_text(encoding="utf-8"))
+    assert built == committed, (
+        "Committed ontology viz assets are stale — run "
+        "docs/_build/scripts/build_ontology_viz.py and commit the result"
+    )
 
 
 def test_extract_graph_has_subclass_and_property_edges() -> None:

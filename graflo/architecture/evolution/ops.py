@@ -1007,12 +1007,19 @@ class ComposeManifestsOp(ConfigBaseModel):
         default_factory=dict,
         description="Rename map applied to *right* resource names before union.",
     )
-    name_conflict: Literal["error", "prefix_right"] = PydanticField(
+    name_conflict: Literal["error", "prefix_right", "fuse_right"] = PydanticField(
         default="error",
         description=(
             "How to handle non-equivalent name collisions on the right side "
-            "(vertices, relations, resources, connectors). "
-            "``prefix_right`` prefixes colliding names with ``r_``."
+            "(vertices, relations, resources, connectors). Vertex and relation "
+            "names collide both exactly and when they key alike under "
+            "``canonical_key`` -- ``OrderLine`` and ``order_line`` are one "
+            "concept spelled two ways, and composing them into two unrelated "
+            "types splits the data silently. ``prefix_right`` prefixes "
+            "colliding names with ``r_``; ``fuse_right`` adopts the left "
+            "spelling for a canonical near-collision, and applies to vertices "
+            "and relations only (resources and connectors are addresses, not "
+            "concepts, so it behaves as ``error`` for them)."
         ),
     )
 

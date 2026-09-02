@@ -11,7 +11,7 @@ For TigerGraph targets, GraFlo can optionally bypass per-record REST++ JSON upse
 
 ### Target database (`TigergraphConfig`)
 
-Set a nested **`bulk_load`** block on [`TigergraphConfig`](../reference/db/connection/onto.md) (see `TigergraphBulkLoadConfig` in code):
+Set a nested **`bulk_load`** block on [`TigergraphConfig`](../reference/connections/onto.md) (see `TigergraphBulkLoadConfig` in code):
 
 | Field | Role |
 |-------|------|
@@ -34,7 +34,7 @@ bindings:
       conn_proxy: minio_bulk
 ```
 
-At runtime, `conn_proxy` must be registered on [`InMemoryConnectionProvider`](../reference/hq/connection_provider.md) as an [`S3GeneralizedConnConfig`](../reference/hq/connection_provider.md).
+At runtime, `conn_proxy` must be registered on [`InMemoryConnectionProvider`](../reference/connections/provider.md) as an [`S3GeneralizedConnConfig`](../reference/connections/provider.md).
 
 ### Runtime provider
 

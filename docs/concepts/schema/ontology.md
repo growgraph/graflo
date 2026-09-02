@@ -28,8 +28,8 @@ flowchart TB
 | Role | IRI |
 |------|-----|
 | Ontology document | `https://ontology.growgraph.dev/graflo` |
-| Version IRI | `https://ontology.growgraph.dev/graflo/1.5.0` |
-| Version info | `1.5.0` |
+| Version IRI | `https://ontology.growgraph.dev/graflo/1.6.0` |
+| Version info | `1.6.0` |
 | Vocabulary prefix `gf:` | `https://ontology.growgraph.dev/graflo/` |
 
 The Turtle source lives in the package at `graflo/rdf/ontology/graflo.ttl`. Constants are also exposed in Python as `graflo.rdf.namespace` (`GF_ONTOLOGY_IRI`, `GF_VERSION`, `GF_VERSION_IRI`, `GF_BASE`).
@@ -112,6 +112,19 @@ vertices:
 ```
 
 This maps to `gf:semanticIri`, `skos:exactMatch`, `skos:altLabel`, and — fields only — `gf:unit`. The block is purely descriptive: identity, storage naming and ingestion behave identically whether or not it is present. `unit` is rejected outside a field, where it would be meaningless.
+
+**List field types** (added in 1.6.0)
+
+`gf:FieldType` covers all nine `FieldType` members: `gf:UUID` and `gf:LIST` joined the seven scalars, and a list's element type rides on `gf:itemType` (domain `gf:Field`, range `gf:FieldType`).
+
+```yaml
+properties:
+    - name: tags
+      type: LIST
+      item_type: STRING
+```
+
+Before this, an unmapped enum value emitted no triple at all, so a `UUID` or `LIST<STRING>` property came back from RDF as an untyped field with nothing raised. A test exhaustive over `FieldType` now guards the mapping.
 
 **Naming convention** (optional, added in 1.5.0)
 

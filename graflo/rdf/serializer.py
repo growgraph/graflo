@@ -334,6 +334,16 @@ class ManifestRdfSerializer:
                 str(field_obj.type),
                 ns.ENUM_REGISTRIES["field_type"],
             )
+        # A `LIST` carries its element type in a second slot; without it the
+        # field round-trips to a list of nothing and fails its own validator.
+        if field_obj.item_type is not None:
+            add_enum_individual(
+                graph,
+                field_uri,
+                ns.itemType,
+                str(field_obj.item_type),
+                ns.ENUM_REGISTRIES["field_type"],
+            )
 
     def _emit_edge(
         self,

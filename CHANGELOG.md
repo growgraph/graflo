@@ -6,6 +6,124 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+
+### Added
+
+- **Compose matches type names by canonical form**, closing `CORE-MERGE-001`. Composition matched vertices and relations by *raw name*, so a manifest authored as `order_line` combined with one authored as `OrderLine` produced two unrelated types with the source data split between them and nothing raising. Names now collide both exactly and when they key alike under `canonical_key`, and the existing `name_conflict` policy decides what happens.
+
+  **Reusing that policy rather than adding a flag is the point.** An exact collision has always raised under the default `name_conflict="error"`, and exact equality is the *stronger* evidence that two types are one concept — so a weaker signal must not trigger a more aggressive action. `error` raises `ComposeNameConflictError` naming both spellings and the three ways out; `prefix_right` keeps them apart explicitly; and a new `fuse_right` adopts the left spelling, rewriting the right side's *pipelines* as well as its schema.
+
+  Scope is deliberately narrow: **type names only**. Property names are not folded — a field name binds to a key in the source document, so treating `customer_email` and `customerEmail` as one property would fuse two columns fed by two different keys. Resource, connector and transform names are not folded either; those are addresses looked up exactly, where two similar names split nothing and the check would be pure false positive.
+
+  Two further gaps closed while the area was open: a declared `into` that keys alike to an unrelated type is now caught before alignment runs, and `_assert_no_canonical_split` asserts the invariant on the *result*, so a future path into the union is covered without anyone remembering to add a check. An equivalence authored in the wrong convention now says which spelling the manifest actually has instead of only that the name is absent.
+
+- **`canonical_slug`** (`graflo.architecture.schema.naming`) — `canonical_key` as one string, with the fallback for wordless names in one place rather than open-coded at each of the seven call sites.
+
+- **Example 20 — version control** (`examples/20-version-control/`): record commits over a manifest, fork it, hit a real identity conflict, resolve it, record the merge commit, and replay the recorded decision after one branch advances. Database-free. Documented in the new "Version control" concepts page.
+
+- **The `docs` extra no longer carries `ruff`.** A linter declared as a documentation dependency, unpinned, and a second uncoordinated source of truth for the version beside `.pre-commit-config.yaml`'s `rev`. The pinned `ruff-pre-commit` hook owns it now, matching `graflo-server`, `schewea` and `decigent`, which declare it nowhere.
+
+### Changed
+
+- **The version-control documentation describes what ships.** `concepts/schema/manifest_evolution.md` had ~100 lines documenting `build_revision`, `RevisionChain`, `apply_revisions`, `downgrade_to` and `FileRevisionStore` — all deleted — plus a CLI block for a `revision` console script that no longer exists. That section is replaced by a pointer to the new **[Version control](docs/concepts/schema/versioning.md)** page, covering content addressing and the sorted-vs-preserved rule, provenance, the commit DAG, slots and three-way merge, tracked merges, and the `graflo` verbs. `naming.py`'s module docstring, which asserted that composition matches by name "and nothing raises", is rewritten to describe what both combining paths now do.
+
+### Fixed
+
+- **`from graflo.architecture.evolution import *` raised `AttributeError`.** Retiring `revision.py` removed the dispatch branch but left `Revision`, `RevisionChain`, `RevisionError`, `FileRevisionStore` and `downgrade_to` in `__all__` — an advertised name with nothing behind it. Ordinary imports could not catch this, because nobody imports the name that is gone. A test now asserts that every name in `__all__` resolves, and that `import *` succeeds, across all seven lazy façades.
+
+- **The TigerGraph reserved-word list was a partial snapshot and missed 45 words**, `FILE` among them. `reserved_words.json` is what both the DDL validator and the name sanitizer read, so a missing word means graflo happily emits `ADD VERTEX … (file STRING)` and TigerGraph rejects the generated GSQL at `CREATE SCHEMA_CHANGE` time, with a parser error naming a line number in a statement the caller never wrote. The list is now the union of the published **DDL reserved words** and **C++ reserved words** (214 → 259 words), adding `FILE`, `EDGE`, `GLOBAL`, `HEADER`, `ROW`, `NOW`, `NULLABLE`, `POLICY`, `DAY`/`HOUR`/`MINUTE`, the datetime helpers (`DATETIME_ADD`, `DATETIME_DIFF`, `DATETIME_TO_EPOCH`, `EPOCH_TO_DATETIME`, …), the sized integer types (`INT8`/`INT16`/`INT32`/`INT32_T`/`INT64_T`), the loading-job keywords (`IGNORE`, `INPUT_LINE_FILTER`, `LOADACCUM`, `KAFKA`, `S3`) and the accumulator types (`GROUPBYACCUM`, `HEAPACCUM`).
+
+  **The list is a superset across GSQL 4.1, 4.2 and 4.3**, so one file serves every supported server: those three DDL lists differ only by `NULLABLE`, added in 4.3, and nothing was ever removed; the C++ list is identical across them. The file records the range it covers and the doc URLs it was built from, so the next sync is a diff rather than an archaeology exercise.
+
+  Scope is deliberately the DDL list, not every GSQL word. Query-language-only reserved words (`API`, `RUN`, `SYNTAX`, `TAGS`, `MINUS`) and the non-reserved keywords (`ATTRIBUTE`, `DEFAULT`, `OWNER`, `STATUS`, `USER`, `YEAR`, …) are excluded: they do not block a type or attribute name, and adding them would rename ordinary fields for no documented reason.
+
+  **Consequence for an existing graph.** The same list drives sanitization, so a schema using one of the newly covered names now sanitizes to a different storage name than before — a field `file` becomes `file_attr`, a vertex `edge` becomes `Edge_vertex`. A graph already created under the old name is not migrated: re-create it, or pin the old name explicitly through `db_profile.vertex_storage_names` and the edge name spec.
+
+- **`test_build_ontology_viz_script_runs` rewrote the committed ontology-viz assets on every run.** It called `build_ontology_viz()` with its default `output_dir`, which is `docs/assets/graflo-ontology-viz/` — and the function `rmtree`s that directory before writing. The committed `graph-data.json` is hook-formatted (CI regenerates, runs the JSON formatter, then `git diff --exit-code`), while the script emits its own key order, so any `pytest test` left a 1450-line diff whose parsed content was identical — noise that trains a reader to ignore a dirty tree in exactly the directory a staleness gate is watching. The test now builds into `tmp_path` and *compares* the parsed payload against the committed one, so it still fails when the assets are genuinely stale, without writing to the repo.
+
+- **The TigerGraph identifier rules had two loaders over one file.** `graflo.db.util.load_tigergraph_identifier_rules` and `name_validation.load_tigergraph_name_rules` were near-identical bodies, each with its own `lru_cache`, parsing the same `reserved_words.json` into two structurally identical NamedTuples — so the validator and the sanitizer could disagree after any edit that landed in only one of them. `name_validation` now delegates to the single loader in `graflo.db.util` (which the evolution sanitizer already used), and `graflo.db.tigergraph.conn` re-exports that one under `_load_tigergraph_identifier_rules`. No new coupling: importing `name_validation` already pulled in `graflo.db.util` through the package `__init__`.
+
+- **`re_merge` reported a resolution that had done its job as "not needed".** It judged whether a recorded decision was still required by looking at the conflicts *surviving* the replay — but a resolution that works leaves none behind, so every working one was reported as unnecessary. That is the reading a maintainer would act on by deleting the decision holding the merge together. It now compares against what would conflict *without* the recorded resolutions, and reports replayed, unused and genuinely-new conflicts separately.
+
+- **A section overview and its generated package page shared a URL, and the collision was silently dropping API docs.** `graflo/rdf/__init__.py` generates `reference/rdf.md`, which under `use_directory_urls` builds to `site/reference/rdf/index.html` — the same output as the hand-written `reference/rdf/index.md`. Two source paths, one URL, no MkDocs warning, and the winner decided by `mkdocs-gen-files`' file ordering. It went unnoticed because `rdf/index.md` happens to carry `::: graflo.rdf` and so lost nothing; `data_source/index.md` carries no directive at all, so `graflo.data_source`'s own docstring and members were documented **nowhere** while 256 lines of hand-maintained prose stood in their place.
+
+  `gen_pages.py` now skips a package whose `reference/<pkg>/index.md` exists on disk, making the override a decision recorded in one place rather than a consequence of write order, and `data_source/index.md` gained the `::: graflo.data_source` block it was missing.
+
+- **Every mkdocstrings option was nested under `extra:` and therefore inert.** `extra` is a free-form passthrough for custom templates, not a container for options, so `show_if_no_docstring`, `show_category_heading`, `show_root_toc_entry` and the rest were carried into the render context and never applied — the whole API reference had been rendering on defaults since the config was written. The visible cost was `show_if_no_docstring`, whose default is `False`: **every member without a docstring was omitted from its page**, which is why the reference read as incomplete. Unnested, one page under `architecture/evolution` goes from 16 rendered objects to 41. Category headings ("Attributes", "Classes", "Functions") appear for the first time. Dropped two keys that are not real: `show_docstring`, and `setup_commands` with its `sys.path` hack — no longer a handler key in mkdocstrings-python 2.x, and unnecessary since the package is installed in the environment the build runs in.
+
+- **A package page whose `__init__` re-exports nothing rendered as a dead end.** `reference/cli/` showed the package docstring and nothing else: `graflo.cli` has nine submodules and no members of its own, and package pages set `show_submodules: false` so a parent does not inline its whole subtree. Package pages now also emit a `summary` table, so each one indexes its submodules with their one-line docstring summaries. The sidebar already links them; the table is what says what they are.
+
+- **`gen_pages.py` built a navigation object it never used.** It populated an `mkdocs_gen_files.Nav()` on every iteration and never wrote it to a `SUMMARY.md`, so `literate-nav` was inferring the reference section from the file tree the whole time — correctly, but not for the reason the code implied. Removed; the inferred nav is what ships, and it is the one that includes the hand-written overviews.
+
+### Removed
+
+- **The committed `docs/reference/` tree**, 216 of its 219 files. Every module page under `reference/` is generated at build time by `docs/_build/gen_pages.py`, which opens each path in `"w"` mode — so `mkdocs-gen-files` replaces the committed file in the MkDocs `Files` collection before anything renders. The committed copies were never read, which is why their staleness produced no symptom: 22 of them named modules deleted in the 1.10.0 reorg, and roughly 45 live modules (`hashing`, `compose`, `autogenerate`, `canonical`, `codec`, `alignment`, `naming`, `semantics`, `projection`, `traversal`, …) had no page on disk at all while rendering perfectly in the built site. A tree that can rot arbitrarily far without a symptom is not documentation; it is an invitation to hand-write stubs that do nothing.
+
+  The 20 `(moved)` / `(removed)` redirect notes from the 1.10.0 reorg went with them. Six live docs linked into those notes — `guides/tigergraph_bulk_load.md`, `examples/example-10.md`, `concepts/operations/object_storage.md` and `reference/index.md` — landing a reader on "this module was deleted, go here" instead of the API page they clicked for; those now point at the current modules directly. The full old→new path table remains in [Importing and layering](docs/guides/importing.md).
+
+  Kept: `reference/index.md` and the `data_source/` and `rdf/` section overviews. The generator's own docstring and `reference/index.md` now say that module pages are generated and that a hand-written stub at a generated path is inert.
+
+## [1.12.0]
+
+### Added
+
+- **Canonical form** (`graflo.architecture.evolution.canonicalize`) — the payload a content hash is taken over, and the first half of V0 of version control for world models. `to_minimal_canonical_dict()` already normalized defaults, `None`, aliases and key order; what it did not normalize is **list order**, so two identical schemas authored in different order — or one authored and one replayed, since `apply_add_vertices` appends — hashed differently. `canonical_payload()` adds exactly that one normalization.
+
+  It is driven by `LIST_ORDER`, a total classification of all 49 sequence-typed fields reachable from `GraphManifest` as `SORTED` or `PRESERVED`, keyed by `(model name, field name)` so the module imports no contract model and adds no layering edge. **The two mistakes are not symmetric**: marking an order-significant list `SORTED` makes two *different* models hash equal, which nothing downstream can detect; marking an order-insignificant one `PRESERVED` is a missed dedup. So doubt resolves to `PRESERVED`, and every `SORTED` entry carries the reason order does not matter there.
+
+  Vertices, edges, properties, registries, index sets and semantic term lists sort. Pipelines, `Vertex.identity`, funnel branches, compound-index columns, transform argument tuples, join and projection order, and filter operands are preserved. `Vertex.identity` is preserved because a backend's `vertex_address` resolves an endpoint through the *first* identity field and PostgreSQL's edge FK is `identity_fields[0]` — **not** because it feeds the identity digest, which sorts its own payload keys and is order-insensitive.
+
+  Sorting is by each element's canonical JSON rendering rather than a per-field key: total over heterogeneous unions, no tie-break rule, and no way for the result to depend on input order. Nesting is independent — `Edge.identities` sorts its alternative keys while each composite key keeps its own order. Classification stops at a mapping unless the field is listed in `CLASSIFIED_MAPPINGS`, since nearly every dict in the contract (`params`, `row_annotations`, `force_types`, weight maps) is free-form user payload whose ordering GraFlo may not assert.
+
+  Reaching an unclassified sequence raises `UnclassifiedListField` rather than guessing — a default of either kind would silently decide a hash question. Three test families pin it: exhaustiveness in both directions (nothing unclassified, nothing stale, and a new *typed* mapping is flagged), effect (reordering a `SORTED` field does not move the hash, reordering identity fields does), and stability (idempotent, non-mutating, and equal across `finish_init` — which replay depends on).
+
+- **The commit DAG** (`architecture/evolution/commit.py`, `history.py`). The linear `Revision` chain is replaced, not extended: it still spoke Alembic (`down_revision`) and it could only be a *line* — it **raised** when two commits shared a parent, which is the wrong answer. A fork is something that happened, and a history that refuses to represent it is not a record of what happened.
+
+  `Commit {id, parents, ops, tree, tree_before, kind}` carries a list of parents — empty for a root, one for an edit, two or more for a merge or compose — with the id derived from the ops *and* the parent order. Merge commits are **materialized against their first parent**, git-style: the stored ops are the diff from that parent to the result, so verified replay and hash checking work identically for edits and merges and nothing downstream needs a special case. `History` validates what is genuinely broken (duplicate ids, a parent that does not exist, a cycle, a first-parent edge whose trees do not line up) and represents everything else, forks included; `FileCommitStore` rebuilds the DAG from parent ids rather than from filenames. `checkout` replays first-parent edges from a base manifest, verifying every recorded tree. `build_revert_commit` replaces the old `downgrade`: history is append-only, so undoing a change moves forward.
+
+  What carries over unchanged is the property that made the chain worth having: a history that no longer describes the manifest it was generated from fails **loudly** rather than producing a plausible wrong answer.
+
+- **Three-way merge** (`architecture/evolution/merge3.py`). Reconciliation happens per **slot** — the addressable location an op touches. Disjoint slots auto-merge; the same change on both sides merges once; different changes to one slot become a `MergeConflict` carrying both sides and the ancestor's state. Three decisions make the slot the right unit: an order-significant sequence (a resource pipeline) is **one** slot, because half-merging an ordered program produces something neither author wrote; a rename occupies **both** its names; and an op touching several slots is **atomic**, held back whole if any one is contested. Slots nest, so `vertex/person` contains `vertex/person/field/age` — without that containment a rename and an edit to the renamed vertex merge cleanly and produce a change set whose second half addresses a vertex the first half renamed away.
+
+  Resolutions take the **place** of the ops they replace rather than being appended, because op order is a precondition: `diff_manifests` emits an identity change before the secondary-identity add that depends on it, and appending inverts that into an apply failure.
+
+  Dispatch is on the op *class*, not its `op` literal, so a type checker catches a field read against the wrong op model and a renamed literal cannot fall through to the catch-all. A test asserts every member of the union resolves to a real slot.
+
+  **`CORE-MERGE-001` is folded in**: slots key on `canonical_key`, so one side's `order_line` and the other's `OrderLine` occupy the same slot and *conflict* rather than silently becoming two unrelated types with the data split between them.
+
+- **Tracked merges.** `MergeRecipe` records how a merge was resolved, content-addressed with resolutions hashed in slot order so the same decisions always address the same recipe. `re_merge` replays those decisions when the left side advances and surfaces only genuinely new conflicts; a recorded resolution whose slot no longer conflicts is *reported as unused*, never force-applied — re-applying a stale decision to an uncontested slot is how a re-merge quietly reverts someone's work.
+
+- **Shipped provenance** — `Provenance {content_hash, canon, parents, commit, merge_recipe}` on `GraphMetadata` and on a new optional `GraphManifest.metadata`, so an artifact is self-describing outside any registry. Stamping is an explicit `stamp_provenance(...)` at a commit point and never something `apply_evolution` does: applying the same ops twice must not yield two artifacts that disagree about their own lineage. Provenance is excluded from every content hash by construction — identity has to be path-independent, or dedup could never recognise that two routes reached the same world model.
+
+- **`graflo`, an umbrella CLI.** The package shipped ten flat console scripts with no shared entry point, so a git-shaped verb had nowhere to live. `graflo commit / log / verify / checkout / merge / revert / stamp` are new; the pre-existing scripts are mounted as subcommands and keep working unchanged, including as their own entry points.
+
+- **Example 10 verifies itself** — `inspect_bulk.py` reports the staged CSVs beside what TigerGraph holds and exits non-zero on either gap. The `LOADING JOB` opens the staged files itself, so an unreachable `s3://` URL yields a clean run over an empty graph. `ingest.py` now preflights the bucket before ingesting and warns when a loopback endpoint would reach `CREATE DATA_SOURCE` unchanged.
+
+### Changed
+
+- **Content hashes are taken over the canonical payload**, and `CANON_VERSION` is part of the hashed bytes rather than a wrapper around them, so a future change to the canonicalization rules produces different hashes by construction instead of reinterpreting old ones. **All hash values change.** Nothing depends on the old values outside dev-local `revisions/` side-car stores, which should be discarded.
+
+- **`manifest_hash` no longer covers schema metadata.** It hashed the whole `Schema` — name, semver and description included — while `schema_hash` hashed only `core_schema` + `db_profile`, so bumping a schema's version changed the manifest's content address while leaving the schema's untouched. A content address that moves when the label moves cannot recognise that two versions carry identical content, which is what dedup and lineage rest on. Both now exclude metadata, and a manifest's hash covers its schema's by construction rather than storing a second hash beside it.
+
+### Removed
+
+- **`architecture/evolution/revision.py` and the `revision` console script**, with no compatibility shim: `Revision`, `RevisionChain`, `FileRevisionStore`, `apply_revisions`, `build_revision` and `downgrade_to` are gone, replaced by the commit DAG above. Dev-local `revisions/` stores are stale on two counts — the vocabulary and the hash values — and should be discarded rather than migrated.
+
+### Fixed
+
+- **Example 10's README linked `graflo/hq/connection_provider.py`**, which does not exist — `InMemoryConnectionProvider` is in `connections/provider.py`, `S3GeneralizedConnConfig` in `connections/sources.py`. Its four checked-in staging directories are gone too: each held `company.csv` and no `edge_relates.csv`, recording a run that staged no edges. `bulk_staging/` is now gitignored and the scripts chdir into the example, so they run from any directory.
+
+- **The example-10 docs page described a script that was never written** — hand-built `S3GeneralizedConnConfig`, an unpinned `docker run`, and no mention of `BULK_USE_S3`, `minio_init.py` or `MINIO_LOADER_ENDPOINT`. It now follows `ingest.py`.
+
+- **The RDF round trip no longer loses field types.** `FieldType` has nine members; the ontology declared seven — `UUID` and `LIST` had no individual, and `add_enum_individual` emits nothing for an unmapped value, so a `UUID` or `LIST<STRING>` property round-tripped to an *untyped* field with no error raised anywhere. `Field.item_type` was never emitted at all, so even a declared `LIST` came back with no element type and could not satisfy `Field`'s own validator.
+
+  `gf:UUID` and `gf:LIST` are now declared individuals, and the new `gf:itemType` object property (domain `gf:Field`, range `gf:FieldType`) carries a list's element type. A field bearing only an `item_type` no longer collapses to a bare string on the way back.
+
+  The durable half is a test that is **exhaustive over `FieldType`** rather than over the members someone remembered: every member must have an individual, that individual must be typed and carry its `gf:enumValue`, and a manifest holding a property of every type must round-trip canonically equal. Silent-drop bugs in this layer do not raise, so exhaustiveness is the only thing that catches the next one.
+
+  Ontology bumped to **1.6.0** (additive: two individuals, one property), with `graflo-context.jsonld` and the docs viz regenerated.
+
 ## [1.11.2]
 
 ### Added

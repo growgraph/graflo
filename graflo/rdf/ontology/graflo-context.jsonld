@@ -216,6 +216,10 @@
             "@id": "gf:fieldType",
             "@type": "@id"
         },
+        "itemType": {
+            "@id": "gf:itemType",
+            "@type": "@id"
+        },
         "dbFlavor": {
             "@id": "gf:dbFlavor",
             "@type": "@id"
