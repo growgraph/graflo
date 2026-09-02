@@ -20,11 +20,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   Reaching an unclassified sequence raises `UnclassifiedListField` rather than guessing — a default of either kind would silently decide a hash question. Three test families pin it: exhaustiveness in both directions (nothing unclassified, nothing stale, and a new *typed* mapping is flagged), effect (reordering a `SORTED` field does not move the hash, reordering identity fields does), and stability (idempotent, non-mutating, and equal across `finish_init` — which replay depends on).
 
+- **The commit DAG** (`architecture/evolution/commit.py`, `history.py`). The linear `Revision` chain is replaced, not extended: it still spoke Alembic (`down_revision`) and it could only be a *line* — it **raised** when two commits shared a parent, which is the wrong answer. A fork is something that happened, and a history that refuses to represent it is not a record of what happened.
+
+  `Commit {id, parents, ops, tree, tree_before, kind}` carries a list of parents — empty for a root, one for an edit, two or more for a merge or compose — with the id derived from the ops *and* the parent order. Merge commits are **materialized against their first parent**, git-style: the stored ops are the diff from that parent to the result, so verified replay and hash checking work identically for edits and merges and nothing downstream needs a special case. `History` validates what is genuinely broken (duplicate ids, a parent that does not exist, a cycle, a first-parent edge whose trees do not line up) and represents everything else, forks included; `FileCommitStore` rebuilds the DAG from parent ids rather than from filenames. `checkout` replays first-parent edges from a base manifest, verifying every recorded tree. `build_revert_commit` replaces the old `downgrade`: history is append-only, so undoing a change moves forward.
+
+  What carries over unchanged is the property that made the chain worth having: a history that no longer describes the manifest it was generated from fails **loudly** rather than producing a plausible wrong answer.
+
+- **Three-way merge** (`architecture/evolution/merge3.py`). Reconciliation happens per **slot** — the addressable location an op touches. Disjoint slots auto-merge; the same change on both sides merges once; different changes to one slot become a `MergeConflict` carrying both sides and the ancestor's state. Three decisions make the slot the right unit: an order-significant sequence (a resource pipeline) is **one** slot, because half-merging an ordered program produces something neither author wrote; a rename occupies **both** its names; and an op touching several slots is **atomic**, held back whole if any one is contested. Slots nest, so `vertex/person` contains `vertex/person/field/age` — without that containment a rename and an edit to the renamed vertex merge cleanly and produce a change set whose second half addresses a vertex the first half renamed away.
+
+  Resolutions take the **place** of the ops they replace rather than being appended, because op order is a precondition: `diff_manifests` emits an identity change before the secondary-identity add that depends on it, and appending inverts that into an apply failure.
+
+  Dispatch is on the op *class*, not its `op` literal, so a type checker catches a field read against the wrong op model and a renamed literal cannot fall through to the catch-all. A test asserts every member of the union resolves to a real slot.
+
+  **`CORE-MERGE-001` is folded in**: slots key on `canonical_key`, so one side's `order_line` and the other's `OrderLine` occupy the same slot and *conflict* rather than silently becoming two unrelated types with the data split between them.
+
+- **Tracked merges.** `MergeRecipe` records how a merge was resolved, content-addressed with resolutions hashed in slot order so the same decisions always address the same recipe. `re_merge` replays those decisions when the left side advances and surfaces only genuinely new conflicts; a recorded resolution whose slot no longer conflicts is *reported as unused*, never force-applied — re-applying a stale decision to an uncontested slot is how a re-merge quietly reverts someone's work.
+
+- **Shipped provenance** — `Provenance {content_hash, canon, parents, commit, merge_recipe}` on `GraphMetadata` and on a new optional `GraphManifest.metadata`, so an artifact is self-describing outside any registry. Stamping is an explicit `stamp_provenance(...)` at a commit point and never something `apply_evolution` does: applying the same ops twice must not yield two artifacts that disagree about their own lineage. Provenance is excluded from every content hash by construction — identity has to be path-independent, or dedup could never recognise that two routes reached the same world model.
+
+- **`graflo`, an umbrella CLI.** The package shipped ten flat console scripts with no shared entry point, so a git-shaped verb had nowhere to live. `graflo commit / log / verify / checkout / merge / revert / stamp` are new; the pre-existing scripts are mounted as subcommands and keep working unchanged, including as their own entry points.
+
 ### Changed
 
 - **Content hashes are taken over the canonical payload**, and `CANON_VERSION` is part of the hashed bytes rather than a wrapper around them, so a future change to the canonicalization rules produces different hashes by construction instead of reinterpreting old ones. **All hash values change.** Nothing depends on the old values outside dev-local `revisions/` side-car stores, which should be discarded.
 
 - **`manifest_hash` no longer covers schema metadata.** It hashed the whole `Schema` — name, semver and description included — while `schema_hash` hashed only `core_schema` + `db_profile`, so bumping a schema's version changed the manifest's content address while leaving the schema's untouched. A content address that moves when the label moves cannot recognise that two versions carry identical content, which is what dedup and lineage rest on. Both now exclude metadata, and a manifest's hash covers its schema's by construction rather than storing a second hash beside it.
+
+### Removed
+
+- **`architecture/evolution/revision.py` and the `revision` console script**, with no compatibility shim: `Revision`, `RevisionChain`, `FileRevisionStore`, `apply_revisions`, `build_revision` and `downgrade_to` are gone, replaced by the commit DAG above. Dev-local `revisions/` stores are stale on two counts — the vocabulary and the hash values — and should be discarded rather than migrated.
 
 ### Fixed
 

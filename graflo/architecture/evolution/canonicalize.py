@@ -144,6 +144,12 @@ LIST_ORDER: dict[tuple[str, str], ListOrder] = {
     ("ProtoTransform", "output"): PRESERVED,
     ("ProtoTransform", "input_groups"): PRESERVED,
     ("ProtoTransform", "output_groups"): PRESERVED,
+    # ── Provenance ──────────────────────────────────────────────────────────
+    # Parent commit ids, position-significant: the *first* parent is the one a
+    # merge's ops are materialized against. Excluded from every content hash
+    # anyway (identity is path-independent), but it still needs a decision --
+    # the classification is over the model tree, not over what gets hashed.
+    ("Provenance", "parents"): PRESERVED,
     # Which document keys a key-selection step includes or excludes: membership,
     # not order. The mode (`all` / `include` / `exclude`) is a separate field.
     ("KeySelectionConfig", "names"): SORTED,

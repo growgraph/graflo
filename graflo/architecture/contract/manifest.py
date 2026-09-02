@@ -12,6 +12,7 @@ from graflo.architecture.schema import Schema
 
 from .bindings import Bindings
 from .ingestion.model import IngestionModel
+from .provenance import ManifestMetadata
 
 
 class GraphManifest(ConfigBaseModel):
@@ -32,6 +33,15 @@ class GraphManifest(ConfigBaseModel):
     bindings: Bindings | None = PydanticField(
         default=None,
         description="Bindings mapping resources to concrete data sources.",
+    )
+    metadata: ManifestMetadata | None = PydanticField(
+        default=None,
+        description=(
+            "Manifest-level metadata, currently provenance only. Excluded from "
+            "this manifest's own content hash: a content address that covered "
+            "its lineage would not be path-independent, and two routes to the "
+            "same world model could never be recognised as equal."
+        ),
     )
 
     @classmethod
