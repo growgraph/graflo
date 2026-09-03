@@ -909,20 +909,157 @@ class SanitizeOp(ConfigBaseModel):
     )
 
 
-class PropertyEquivalence(ConfigBaseModel):
-    """Align a property from the left and/or right vertex onto a canonical name.
+class DerivationSpec(ConfigBaseModel):
+    """How one resource derives a canonical attribute from its raw doc fields."""
 
-    At least one of ``left`` / ``right`` must be set. When both are set, both fields
-    rename to ``into`` before the vertices are merged.
+    input: list[str] = PydanticField(
+        ...,
+        min_length=1,
+        description=(
+            "RAW source-doc field names fed to the function, in order. "
+            "Documents keep their original keys after property renames, so "
+            "canonical property names are usually wrong here."
+        ),
+    )
+    module: str = PydanticField(
+        default="graflo.util.transform",
+        description="Module holding the derivation function.",
+    )
+    foo: str = PydanticField(
+        default="gated_normalized_key",
+        description="Function name; called as ``foo(*values, **params)``.",
+    )
+    params: dict[str, Any] = PydanticField(
+        default_factory=dict,
+        description="Keyword parameters for the function (gate prefix, ...).",
+    )
+
+
+class AlignmentRow(ConfigBaseModel):
+    """One aligned canonical attribute; list position = funnel priority."""
+
+    into: str = PydanticField(
+        ...,
+        description="Canonical attribute name on the class; funnel branch id.",
+    )
+    sources: dict[str, DerivationSpec] = PydanticField(
+        ...,
+        min_length=1,
+        description="Per-resource derivation: ``{resource_name: spec}``.",
+    )
+
+
+class LocalKeySource(ConfigBaseModel):
+    """Where one resource's side-local key comes from, and its namespace tag."""
+
+    field: str = PydanticField(
+        ...,
+        description="RAW doc field carrying the side-local key.",
+    )
+    tag: str = PydanticField(
+        ...,
+        description="Namespace tag: tag 'a' turns 'f2' into 'a:f2'.",
+    )
+
+
+class LocalKeySpec(ConfigBaseModel):
+    """The canonical fallback identity attribute for non-aligned records."""
+
+    into: str = PydanticField(
+        default="local_key",
+        description="Canonical fallback property name on the class.",
+    )
+    sep: str = PydanticField(
+        default=":",
+        description="Separator between tag and key.",
+    )
+    sources: dict[str, LocalKeySource] = PydanticField(
+        ...,
+        min_length=1,
+        description="Per-resource local-key wiring: ``{resource_name: source}``.",
+    )
+
+
+class IdentityAlignment(ConfigBaseModel):
+    """Cross-source identity alignment for one canonical class.
+
+    ``rows`` order is funnel priority: a record keys by the highest-priority
+    aligned attribute it carries. Two records fuse when their strongest
+    present attribute coincides — a match on a lower-priority attribute does
+    NOT fuse records when one of them also carries a higher-priority one.
     """
 
-    left: str | None = PydanticField(
-        default=None,
-        description="Field name on the left vertex (omit to keep right-only).",
+    vertex: str = PydanticField(
+        ...,
+        description="The canonical class whose identity is being aligned.",
     )
-    right: str | None = PydanticField(
+    rows: list[AlignmentRow] = PydanticField(
+        default_factory=list,
+        description="Aligned canonical attributes, in priority order.",
+    )
+    local_key: LocalKeySpec | None = PydanticField(
         default=None,
-        description="Field name on the right vertex (omit to keep left-only).",
+        description=(
+            "Fallback identity for records carrying no aligned attribute. "
+            "Without it such records get no identity and are dropped."
+        ),
+    )
+    secondary_identities: dict[str, list[str]] = PydanticField(
+        default_factory=dict,
+        description=(
+            "Retired side keys kept as lookup-only secondary identities: "
+            "``{name: [field, ...]}``."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _validate_shape(self) -> IdentityAlignment:
+        if not self.rows and self.local_key is None:
+            raise ValueError(
+                "IdentityAlignment requires at least one row or a local_key"
+            )
+        into_names = [row.into for row in self.rows]
+        if self.local_key is not None:
+            into_names.append(self.local_key.into)
+        duplicates = {n for n in into_names if into_names.count(n) > 1}
+        if duplicates:
+            raise ValueError(
+                f"IdentityAlignment: duplicate target attributes {sorted(duplicates)}"
+            )
+        return self
+
+
+def _member_list(value: str | list[str]) -> list[str]:
+    """Normalize a ``str | list[str]`` equivalence side to a list of members."""
+    return [value] if isinstance(value, str) else list(value)
+
+
+class PropertyEquivalence(ConfigBaseModel):
+    """Align a property from the left and/or right member(s) onto a canonical name.
+
+    At least one of ``left`` / ``right`` must be set. A bare string applies to
+    every member declared on that side of the owning
+    :class:`VertexEquivalence`; a ``{member: field}`` dict maps per member,
+    for when members are not aligned under the same source field name.
+
+    Exact-name matches do **not** need a :class:`PropertyEquivalence`: after
+    boundary rename, ``merge_vertex_models`` unions fields by spelling, so a
+    property present under the same name on every member fuses for free.
+    Declare an equivalence only to rename, to pick a different ``into``, or to
+    flag ``identity=True``.
+    """
+
+    left: str | dict[str, str] | None = PydanticField(
+        default=None,
+        description=(
+            "Field name on the left member(s): a bare string applies to every "
+            "left member of the owning equivalence, a ``{member: field}`` dict "
+            "maps per member."
+        ),
+    )
+    right: str | dict[str, str] | None = PydanticField(
+        default=None,
+        description="Same shape as ``left``, for the right member(s).",
     )
     into: str = PydanticField(
         ...,
@@ -942,46 +1079,219 @@ class PropertyEquivalence(ConfigBaseModel):
             raise ValueError(
                 "PropertyEquivalence requires at least one of left or right"
             )
+        for side, spec in (("left", self.left), ("right", self.right)):
+            if isinstance(spec, dict) and not spec:
+                raise ValueError(
+                    f"PropertyEquivalence: {side} is an empty per-member map"
+                )
+        return self
+
+
+IdentityBranchSpec = str | list[str]
+
+
+class SideIdentity(ConfigBaseModel):
+    """Per-side/per-member shorthand for a cluster's composed identity funnel.
+
+    Each entry is one funnel branch: a single canonical attribute, or an
+    ordered composite (``list[str]``). ``left`` / ``right`` supply the default
+    branch chain for every member declared on that side; ``members`` overrides
+    it for specific member classes, keyed by the member's own (pre-canonical)
+    name. Every chain is merged into one global branch order — see
+    :func:`~graflo.architecture.evolution.compose.side_identity_to_funnel` —
+    so declaring the same relative order on every member is required; two
+    members disagreeing on the order of two branches raises.
+    """
+
+    left: list[IdentityBranchSpec] | None = PydanticField(
+        default=None,
+        description="Default ordered branch chain for every left member.",
+    )
+    right: list[IdentityBranchSpec] | None = PydanticField(
+        default=None,
+        description="Default ordered branch chain for every right member.",
+    )
+    members: dict[str, list[IdentityBranchSpec]] = PydanticField(
+        default_factory=dict,
+        description="Per-member branch chain, overriding the side default.",
+    )
+
+    @model_validator(mode="after")
+    def _validate_shape(self) -> SideIdentity:
+        if self.left is None and self.right is None and not self.members:
+            raise ValueError(
+                "SideIdentity requires at least one of left, right, or members"
+            )
         return self
 
 
 class VertexEquivalence(ConfigBaseModel):
-    """Collapse a left vertex and a right vertex into one composed type.
+    """Collapse one or more left classes and one or more right classes into one.
 
-    GraFlo applies this map deterministically; it does not infer semantic matches.
+    GraFlo applies this map deterministically; it does not infer semantic
+    matches. ``left`` / ``right`` accept a bare class name (a 1-1 equivalence)
+    or a list (an n-ary cluster): ``{Company, Shop} ~ {Org, Branch} ->
+    Company``. Declaring more than one member on a side is a merge and
+    requires ``ComposeManifestsOp.allow_merges=True``.
+
+    Properties with the same spelling on every member after alignment fuse by
+    exact name without an entry in ``properties`` — list only renames and
+    identity-flagged fields.
     """
 
-    left: str = PydanticField(..., description="Vertex type name in the left manifest.")
-    right: str = PydanticField(
-        ..., description="Vertex type name in the right manifest."
+    left: str | list[str] = PydanticField(
+        ..., description="One or more left-manifest vertex type names."
+    )
+    right: str | list[str] = PydanticField(
+        ..., description="One or more right-manifest vertex type names."
     )
     into: str = PydanticField(
         ...,
         description=(
             "Canonical vertex type name after compose "
-            "(may equal ``left``, ``right``, or a new name)."
+            "(may equal a member's name, or a new name)."
         ),
     )
     properties: list[PropertyEquivalence] = PydanticField(
         default_factory=list,
         description="Property alignment map applied before the vertex merge.",
     )
-    identity: list[str] | None = PydanticField(
+    identity: list[str] | IdentityFunnel | SideIdentity | None = PydanticField(
         default=None,
         description=(
-            "Optional explicit natural-key identity on ``into`` (property names after "
-            "alignment). When unset, identity is the merged union of both sides, "
-            "with any ``PropertyEquivalence.identity`` flags appended."
+            "Optional explicit composed identity, in canonical attribute names "
+            "(after alignment): a natural key, an explicit funnel, or a "
+            "`SideIdentity` shorthand lowered to one funnel. When unset, "
+            "identity is carried through only if every member agrees after "
+            "alignment (plus any `PropertyEquivalence.identity` flags); "
+            "disagreement with nothing declared raises `ComposeIdentityError`."
+        ),
+    )
+    retire: Literal["demote", "keep"] = PydanticField(
+        default="demote",
+        description=(
+            "What becomes of each member's pre-merge identity fields when "
+            "`identity` is declared. `demote` keeps them as lookup-only "
+            "secondary identities on `into`; `keep` drops them. Unused when "
+            "`identity` is unset."
         ),
     )
 
+    @property
+    def left_members(self) -> list[str]:
+        return _member_list(self.left)
+
+    @property
+    def right_members(self) -> list[str]:
+        return _member_list(self.right)
+
+    def members(self, side: Literal["left", "right"]) -> list[str]:
+        return self.left_members if side == "left" else self.right_members
+
+    def property_maps(
+        self, side: Literal["left", "right"]
+    ) -> dict[str, dict[str, str]]:
+        """``{member: {old_field: into_field}}`` for *side*, bare strings expanded."""
+        member_names = self.members(side)
+        out: dict[str, dict[str, str]] = {}
+        for pe in self.properties:
+            spec = pe.left if side == "left" else pe.right
+            if spec is None:
+                continue
+            per_member = (
+                dict.fromkeys(member_names, spec) if isinstance(spec, str) else spec
+            )
+            for member, old in per_member.items():
+                if old == pe.into:
+                    continue
+                bucket = out.setdefault(member, {})
+                existing = bucket.get(old)
+                if existing is not None and existing != pe.into:
+                    raise ValueError(
+                        f"VertexEquivalence: {side}:{member}.{old!r} would rename "
+                        f"to both {existing!r} and {pe.into!r}"
+                    )
+                bucket[old] = pe.into
+        return out
+
+    @model_validator(mode="after")
+    def _validate_members(self) -> VertexEquivalence:
+        for side, members in (
+            ("left", self.left_members),
+            ("right", self.right_members),
+        ):
+            if not members:
+                raise ValueError(
+                    f"VertexEquivalence: {side} must name at least one class"
+                )
+            if len(members) != len(set(members)):
+                raise ValueError(
+                    f"VertexEquivalence: {side} lists a class more than once: {members}"
+                )
+        for pe in self.properties:
+            for side, spec in (("left", pe.left), ("right", pe.right)):
+                if isinstance(spec, dict):
+                    unknown = sorted(set(spec) - set(self.members(side)))
+                    if unknown:
+                        raise ValueError(
+                            f"VertexEquivalence: property equivalence into "
+                            f"{pe.into!r} names {side} member(s) {unknown} not "
+                            f"in {side}={self.members(side)}"
+                        )
+        if self.identity is not None:
+            flagged = [pe.into for pe in self.properties if pe.identity]
+            if flagged:
+                raise ValueError(
+                    "VertexEquivalence: `identity` is declared on the cluster; "
+                    f"PropertyEquivalence.identity=True on {flagged} is "
+                    "redundant and conflicting — declare the composed key one "
+                    "way, not both"
+                )
+        return self
+
 
 class RelationEquivalence(ConfigBaseModel):
-    """Collapse a left relation and a right relation onto one canonical name."""
+    """Collapse one or more left relations and one or more right relations onto one name.
 
-    left: str = PydanticField(..., description="Relation name in the left manifest.")
-    right: str = PydanticField(..., description="Relation name in the right manifest.")
+    Shares the ``left`` / ``right`` n-ary shape of :class:`VertexEquivalence`:
+    a bare name is a 1-1 equivalence, a list is a merge and requires
+    ``ComposeManifestsOp.allow_merges=True``.
+    """
+
+    left: str | list[str] = PydanticField(
+        ..., description="One or more left relation names."
+    )
+    right: str | list[str] = PydanticField(
+        ..., description="One or more right relation names."
+    )
     into: str = PydanticField(..., description="Canonical relation name after compose.")
+
+    @property
+    def left_members(self) -> list[str]:
+        return _member_list(self.left)
+
+    @property
+    def right_members(self) -> list[str]:
+        return _member_list(self.right)
+
+    def members(self, side: Literal["left", "right"]) -> list[str]:
+        return self.left_members if side == "left" else self.right_members
+
+    @model_validator(mode="after")
+    def _validate_members(self) -> RelationEquivalence:
+        for side, members in (
+            ("left", self.left_members),
+            ("right", self.right_members),
+        ):
+            if not members:
+                raise ValueError(
+                    f"RelationEquivalence: {side} must name at least one relation"
+                )
+            if len(members) != len(set(members)):
+                raise ValueError(
+                    f"RelationEquivalence: {side} lists a relation more than once: {members}"
+                )
+        return self
 
 
 class ComposeManifestsOp(ConfigBaseModel):
@@ -992,6 +1302,10 @@ class ComposeManifestsOp(ConfigBaseModel):
 
     Empty ``vertices`` / ``relations`` yields a disjoint union (schema + resources +
     bindings), subject to ``name_conflict`` / ``resource_renames``.
+
+    ``identity_alignments`` are applied to the composed union before return
+    (canonical attributes → resource derivations → priority funnel → secondaries).
+    Each entry's ``vertex`` must be a declared cluster's ``into`` label.
     """
 
     op: Literal["compose_manifests"] = "compose_manifests"
@@ -1022,6 +1336,58 @@ class ComposeManifestsOp(ConfigBaseModel):
             "concepts, so it behaves as ``error`` for them)."
         ),
     )
+    allow_merges: bool = PydanticField(
+        default=False,
+        description=(
+            "Accept a vertex or relation equivalence that collapses more than "
+            "one class/relation on a side. A merge is a stated intent — it "
+            "fuses entities and can create self-relations — so it must be "
+            "acknowledged here rather than inferred from the equivalence list."
+        ),
+    )
+    allow_self_relations: bool = PydanticField(
+        default=False,
+        description=(
+            "Accept a merge whose sources are connected by an edge that "
+            "becomes a self-relation once both endpoints land on the same "
+            "composed vertex. Forwarded to the per-side ``MergeVerticesOp``."
+        ),
+    )
+    allow_row_fusion: bool = PydanticField(
+        default=False,
+        description=(
+            "Accept a merge whose sources are produced more than once at one "
+            "resource pipeline level. Forwarded to the per-side "
+            "``MergeVerticesOp``."
+        ),
+    )
+    identity_alignments: list[IdentityAlignment] = PydanticField(
+        default_factory=list,
+        description=(
+            "Optional identity alignments applied after the schema/resource "
+            "union, one per composed class."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _require_allow_merges_for_nary(self) -> ComposeManifestsOp:
+        if self.allow_merges:
+            return self
+        offending: set[str] = set()
+        for veq in self.vertices:
+            if len(veq.left_members) > 1 or len(veq.right_members) > 1:
+                offending.add(f"vertex equivalence into {veq.into!r}")
+        for req in self.relations:
+            if len(req.left_members) > 1 or len(req.right_members) > 1:
+                offending.add(f"relation equivalence into {req.into!r}")
+        if offending:
+            raise ValueError(
+                "compose_manifests: "
+                + "; ".join(sorted(offending))
+                + " collapses more than one class/relation on a side; a merge "
+                "is a stated intent — set allow_merges=True"
+            )
+        return self
 
 
 ManifestOp = Annotated[

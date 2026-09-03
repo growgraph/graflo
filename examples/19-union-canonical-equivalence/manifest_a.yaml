@@ -12,6 +12,13 @@ schema:
                 -   shared_raw
                 identity:
                 -   firm_id
+            -   name: Shop
+                properties:
+                -   shop_id
+                -   secondary_key
+                -   shared_raw
+                identity:
+                -   shop_id
         edge_config:
             edges: []
 ingestion_model:
@@ -19,4 +26,7 @@ ingestion_model:
     -   name: r_a
         pipeline:
         -   vertex: Firm
+    -   name: r_shop
+        pipeline:
+        -   vertex: Shop
     transforms: []

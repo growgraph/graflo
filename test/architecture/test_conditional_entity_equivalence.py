@@ -29,7 +29,6 @@ from graflo.architecture.evolution import (
     apply_evolution,
     canonical_map_to_ops,
     compose_manifests,
-    validate_compose_against_canonical_map,
 )
 from graflo.hq.document_caster import DocumentCaster
 from graflo.hq.ingestion_parameters import IngestionParams
@@ -133,22 +132,38 @@ _ALIGNMENT = IdentityAlignment(
 
 
 def _compose_union() -> GraphManifest:
+    """A composed union *without* the identity alignment applied yet.
+
+    Declares a throwaway ``identity=["company_id"]`` on the cluster: `Company`
+    and `Org` disagree on their raw identity field, and nothing here promises
+    to resolve it (callers that want the resolved identity use
+    :func:`_build_union` instead, which folds the alignment into the same
+    compose op), so an explicit placeholder is what this unaligned union
+    needs in order to compose at all.
+    """
     canonical_a = apply_evolution(_manifest_a(), canonical_map_to_ops(_CANONICAL))
     right = _manifest_b()
     op = ComposeManifestsOp(
-        vertices=[VertexEquivalence(left="Company", right="Org", into="Company")]
+        vertices=[
+            VertexEquivalence(
+                left="Company", right="Org", into="Company", identity=["company_id"]
+            )
+        ]
     )
-    validate_compose_against_canonical_map(
-        _CANONICAL, op, left=canonical_a, right=right
+    return compose_manifests(
+        canonical_a, right, op, canonical_maps=[("left", _CANONICAL)]
     )
-    return compose_manifests(canonical_a, right, op)
 
 
 def _build_union(alignment: IdentityAlignment = _ALIGNMENT) -> GraphManifest:
-    union = _compose_union()
-    return apply_evolution(
-        union,
-        alignment_to_ops(alignment, manifest=union, canonical_maps=[_CANONICAL]),
+    canonical_a = apply_evolution(_manifest_a(), canonical_map_to_ops(_CANONICAL))
+    right = _manifest_b()
+    op = ComposeManifestsOp(
+        vertices=[VertexEquivalence(left="Company", right="Org", into="Company")],
+        identity_alignments=[alignment],
+    )
+    return compose_manifests(
+        canonical_a, right, op, canonical_maps=[("left", _CANONICAL)]
     )
 
 

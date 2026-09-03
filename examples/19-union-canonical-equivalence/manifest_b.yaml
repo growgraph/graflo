@@ -11,6 +11,12 @@ schema:
                 -   shared_raw
                 identity:
                 -   org_id
+            -   name: Branch
+                properties:
+                -   branch_id
+                -   shared_raw
+                identity:
+                -   branch_id
         edge_config:
             edges: []
 ingestion_model:
@@ -18,4 +24,7 @@ ingestion_model:
     -   name: r_b
         pipeline:
         -   vertex: Org
+    -   name: r_branch
+        pipeline:
+        -   vertex: Branch
     transforms: []

@@ -26,10 +26,6 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from pydantic import Field as PydanticField
-from pydantic import model_validator
-
-from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.schema.identity_funnel import IdentityBranch, IdentityFunnel
 from graflo.architecture.schema.vertex import SecondaryIdentity
@@ -39,137 +35,33 @@ from .ops import (
     AddResourceTransformsOp,
     AddSecondaryIdentitiesOp,
     AddVertexPropertiesOp,
+    AlignmentRow,
+    DerivationSpec,
     FunnelIdentityTarget,
+    IdentityAlignment,
     IdentityReplacement,
+    LocalKeySource,
+    LocalKeySpec,
     ManifestOp,
     ReplaceIdentityOp,
 )
+
+__all__ = [
+    "AlignmentConflictError",
+    "AlignmentRow",
+    "DerivationSpec",
+    "IdentityAlignment",
+    "LocalKeySource",
+    "LocalKeySpec",
+    "alignment_to_ops",
+    "validate_alignment",
+]
 
 logger = logging.getLogger(__name__)
 
 
 class AlignmentConflictError(ValueError):
     """An identity alignment contradicts the union manifest or canonical maps."""
-
-
-class DerivationSpec(ConfigBaseModel):
-    """How one resource derives a canonical attribute from its raw doc fields."""
-
-    input: list[str] = PydanticField(
-        ...,
-        min_length=1,
-        description=(
-            "RAW source-doc field names fed to the function, in order. "
-            "Documents keep their original keys after property renames, so "
-            "canonical property names are usually wrong here."
-        ),
-    )
-    module: str = PydanticField(
-        default="graflo.util.transform",
-        description="Module holding the derivation function.",
-    )
-    foo: str = PydanticField(
-        default="gated_normalized_key",
-        description="Function name; called as ``foo(*values, **params)``.",
-    )
-    params: dict[str, Any] = PydanticField(
-        default_factory=dict,
-        description="Keyword parameters for the function (gate prefix, ...).",
-    )
-
-
-class AlignmentRow(ConfigBaseModel):
-    """One aligned canonical attribute; list position = funnel priority."""
-
-    into: str = PydanticField(
-        ...,
-        description="Canonical attribute name on the class; funnel branch id.",
-    )
-    sources: dict[str, DerivationSpec] = PydanticField(
-        ...,
-        min_length=1,
-        description="Per-resource derivation: ``{resource_name: spec}``.",
-    )
-
-
-class LocalKeySource(ConfigBaseModel):
-    """Where one resource's side-local key comes from, and its namespace tag."""
-
-    field: str = PydanticField(
-        ...,
-        description="RAW doc field carrying the side-local key.",
-    )
-    tag: str = PydanticField(
-        ...,
-        description="Namespace tag: tag 'a' turns 'f2' into 'a:f2'.",
-    )
-
-
-class LocalKeySpec(ConfigBaseModel):
-    """The canonical fallback identity attribute for non-aligned records."""
-
-    into: str = PydanticField(
-        default="local_key",
-        description="Canonical fallback property name on the class.",
-    )
-    sep: str = PydanticField(
-        default=":",
-        description="Separator between tag and key.",
-    )
-    sources: dict[str, LocalKeySource] = PydanticField(
-        ...,
-        min_length=1,
-        description="Per-resource local-key wiring: ``{resource_name: source}``.",
-    )
-
-
-class IdentityAlignment(ConfigBaseModel):
-    """Cross-source identity alignment for one canonical class.
-
-    ``rows`` order is funnel priority: a record keys by the highest-priority
-    aligned attribute it carries. Two records fuse when their strongest
-    present attribute coincides — a match on a lower-priority attribute does
-    NOT fuse records when one of them also carries a higher-priority one.
-    """
-
-    vertex: str = PydanticField(
-        ...,
-        description="The canonical class whose identity is being aligned.",
-    )
-    rows: list[AlignmentRow] = PydanticField(
-        default_factory=list,
-        description="Aligned canonical attributes, in priority order.",
-    )
-    local_key: LocalKeySpec | None = PydanticField(
-        default=None,
-        description=(
-            "Fallback identity for records carrying no aligned attribute. "
-            "Without it such records get no identity and are dropped."
-        ),
-    )
-    secondary_identities: dict[str, list[str]] = PydanticField(
-        default_factory=dict,
-        description=(
-            "Retired side keys kept as lookup-only secondary identities: "
-            "``{name: [field, ...]}``."
-        ),
-    )
-
-    @model_validator(mode="after")
-    def _validate_shape(self) -> IdentityAlignment:
-        if not self.rows and self.local_key is None:
-            raise ValueError(
-                "IdentityAlignment requires at least one row or a local_key"
-            )
-        into_names = [row.into for row in self.rows]
-        if self.local_key is not None:
-            into_names.append(self.local_key.into)
-        duplicates = {n for n in into_names if into_names.count(n) > 1}
-        if duplicates:
-            raise ValueError(
-                f"IdentityAlignment: duplicate target attributes {sorted(duplicates)}"
-            )
-        return self
 
 
 def _conflict(check: str, detail: str, hint: str) -> AlignmentConflictError:

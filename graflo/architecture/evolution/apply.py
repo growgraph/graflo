@@ -994,6 +994,23 @@ def apply_rename_relations(manifest: GraphManifest, op: RenameRelationsOp) -> No
         unknown = sorted(set(op.relations) - known_relations)
         if unknown:
             raise ValueError(f"rename_relations: unknown relations: {unknown}")
+        # A relation name is only unique per (source, target) pair, so the
+        # collision guard is at the edge-id level -- unlike vertices, a target
+        # relation name reused on a *different* pair is not a collision.
+        existing_ids = {edge.edge_id for edge in schema.core_schema.edge_config.edges}
+        collisions = sorted(
+            f"({edge.source}, {edge.target}, {edge.relation!r} -> "
+            f"{op.relations[edge.relation]!r})"
+            for edge in schema.core_schema.edge_config.edges
+            if edge.relation in op.relations
+            and (edge.source, edge.target, op.relations[edge.relation]) in existing_ids
+        )
+        if collisions:
+            raise ValueError(
+                f"rename_relations: renamed relations collide with an existing "
+                f"edge: {collisions}. Renaming cannot merge edges — merge them "
+                "explicitly instead."
+            )
     _rename_relations_inplace(manifest, op.relations)
 
 

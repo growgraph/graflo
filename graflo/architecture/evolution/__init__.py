@@ -55,6 +55,7 @@ from .ops import (
     RetargetEdgesOp,
     SanitizeOp,
     SetEdgeDirectedOp,
+    SideIdentity,
     VertexEquivalence,
     ops_reaching_ingestion,
 )
@@ -82,7 +83,9 @@ _APPLY_EXPORTS = frozenset(
     }
 )
 
-_COMPOSE_EXPORTS = frozenset({"ComposeNameConflictError", "compose_manifests"})
+_COMPOSE_EXPORTS = frozenset(
+    {"ComposeIdentityError", "ComposeNameConflictError", "compose_manifests"}
+)
 
 _INGESTION_APPLY_EXPORTS = frozenset({"apply_add_resource_transforms"})
 
@@ -103,8 +106,21 @@ _CANONICAL_EXPORTS = frozenset(
     {
         "CanonicalMap",
         "ComposeCanonicalConflictError",
+        "SideMaps",
         "canonical_map_to_ops",
-        "validate_compose_against_canonical_map",
+        "clusters_to_side_maps",
+        "merge_canonical_maps",
+        "validate_and_complete_canonical_map",
+    }
+)
+
+_EQUIVALENCE_EXPORTS = frozenset(
+    {
+        "Cluster",
+        "ClusterConflictError",
+        "ClusterIndex",
+        "RelationCluster",
+        "index_clusters",
     }
 )
 
@@ -234,9 +250,13 @@ __all__ = [
     "BlankIdentityTarget",
     "CanonicalMap",
     "ChangeFieldTypesOp",
+    "Cluster",
+    "ClusterConflictError",
+    "ClusterIndex",
     "Commit",
     "CommitError",
     "ComposeCanonicalConflictError",
+    "ComposeIdentityError",
     "ComposeManifestsOp",
     "ComposeNameConflictError",
     "ConflictResolution",
@@ -268,6 +288,7 @@ __all__ = [
     "NaturalIdentityTarget",
     "ProjectManifestOp",
     "PropertyEquivalence",
+    "RelationCluster",
     "RelationEquivalence",
     "RemoveEdgeIndexesOp",
     "RemoveEdgePropertiesOp",
@@ -288,6 +309,8 @@ __all__ = [
     "RevisionOp",
     "SanitizeOp",
     "SetEdgeDirectedOp",
+    "SideIdentity",
+    "SideMaps",
     "UnclassifiedListField",
     "VertexEquivalence",
     "alignment_to_ops",
@@ -330,6 +353,7 @@ __all__ = [
     "canonical_map_to_ops",
     "canonical_payload",
     "checkout",
+    "clusters_to_side_maps",
     "compose_manifests",
     "compute_commit_id",
     "describe_slot",
@@ -338,12 +362,14 @@ __all__ = [
     "find_merge_base",
     "full_hash",
     "graph_hash",
+    "index_clusters",
     "ingestion_hash",
     "invert_op",
     "invert_ops",
     "irreversible_reason",
     "is_reversible",
     "manifest_hash",
+    "merge_canonical_maps",
     "merge_three_way",
     "op_from_dict",
     "op_slots",
@@ -359,7 +385,7 @@ __all__ = [
     "take_left",
     "take_right",
     "validate_alignment",
-    "validate_compose_against_canonical_map",
+    "validate_and_complete_canonical_map",
     "verify_history",
 ]
 
@@ -385,6 +411,10 @@ def __getattr__(name: str) -> Any:
         from . import canonical as canonical_mod
 
         return getattr(canonical_mod, name)
+    if name in _EQUIVALENCE_EXPORTS:
+        from . import equivalence as equivalence_mod
+
+        return getattr(equivalence_mod, name)
     if name in _IDENTITY_EXPORTS:
         from . import identity as identity_mod
 

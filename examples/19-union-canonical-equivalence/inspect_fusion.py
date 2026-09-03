@@ -35,7 +35,12 @@ def main() -> None:
     caster = DocumentCaster(union.require_ingestion_model())
 
     emitted: list[tuple[str, dict]] = []
-    for resource, filename in (("r_a", "a.csv"), ("r_b", "b.csv")):
+    for resource, filename in (
+        ("r_a", "a.csv"),
+        ("r_shop", "shop.csv"),
+        ("r_b", "b.csv"),
+        ("r_branch", "branch.csv"),
+    ):
         result = asyncio.run(
             caster.cast_batch(_rows(filename), resource, params=IngestionParams())
         )
@@ -43,12 +48,12 @@ def main() -> None:
             (resource, doc) for doc in result.graph.vertices.get("Company", [])
         )
 
-    click.echo(f"{'resource':<10}{'local_key':<12}{'gate':<8}{'match_key':<12}id")
+    click.echo(f"{'resource':<10}{'local_key':<14}{'gate':<8}{'match_key':<12}id")
     for resource, doc in emitted:
         local_key = doc.get("local_key") or "-"
         gate = doc.get("secondary_key", "-")
         match_key = doc.get("match_key") or "-"
-        click.echo(f"{resource:<10}{local_key:<12}{gate:<8}{match_key:<12}{doc['id']}")
+        click.echo(f"{resource:<10}{local_key:<14}{gate:<8}{match_key:<12}{doc['id']}")
 
     ids = [doc["id"] for _, doc in emitted]
     fused = len(ids) - len(set(ids))

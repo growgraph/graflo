@@ -1,17 +1,18 @@
 """
-Build the union of two manifests in a canonical vocabulary, with a
-conditionally-equivalent boundary class — composed entirely from fundamental
-evolution ops.
+Build the union of two manifests in a canonical vocabulary, with a single
+n-ary boundary cluster — composed entirely from fundamental evolution ops.
 
 The recipe, in order:
 
 1. canonicalize A standalone (``canonical_map_to_ops`` + ``apply_evolution``)
-2. validate the compose op against the canonical map — fails loudly on stale
-   names, retargeted attributes, or unacknowledged merges
-3. ``compose_manifests`` with an explicit ``VertexEquivalence``
-4. apply the identity alignment: ``alignment_to_ops`` emits only fundamentals
-   (declare canonical attrs → per-resource derivation transforms → priority
-   funnel over canonical attrs → per-side secondary identities)
+2. validate + complete the canonical map against the compose op — fails loudly
+   on stale names, retargeted attributes, cluster conflicts (an equivalence
+   overlap, two declarations sharing one ``into``, or an ``into`` that would
+   silently occupy an existing non-member class), or an unacknowledged merge;
+   completes unmapped peers (e.g. ``Org → Company``) along the cluster
+3. ``compose_manifests`` with one n-ary ``VertexEquivalence`` naming every
+   member on each side *and* ``identity_alignments`` on the same op (schema
+   union + identity alignment)
 
 A primary identity is a property of the class: the funnel references only
 canonical attributes (``match_key``, ``local_key``). How each source populates
@@ -19,8 +20,9 @@ them — gating, normalization, namespacing — is resource knowledge, appended 
 the resource pipelines as ops. The source manifests stay pure.
 
     cd examples/19-union-canonical-equivalence
-    uv run python build_union.py                # → artifacts/manifest_union.yaml
-    uv run python build_union.py --stale-demo   # the validator failing loudly
+    uv run python build_union.py                      # → artifacts/manifest_union.yaml
+    uv run python build_union.py --stale-demo         # stale pre-canonical name
+    uv run python build_union.py --conflicting-cluster-demo
 """
 
 from __future__ import annotations
@@ -40,11 +42,10 @@ from graflo.architecture.evolution import (
     LocalKeySource,
     LocalKeySpec,
     VertexEquivalence,
-    alignment_to_ops,
     apply_evolution,
     canonical_map_to_ops,
     compose_manifests,
-    validate_compose_against_canonical_map,
+    validate_and_complete_canonical_map,
 )
 
 EXAMPLE_DIR = Path(__file__).resolve().parent
@@ -64,10 +65,18 @@ ALIGNMENT = IdentityAlignment(
                     input=["secondary_key", "shared_raw"],
                     params={"prefix": "abc_", "strip_prefix": "ABC-"},
                 ),
+                "r_shop": DerivationSpec(
+                    input=["secondary_key", "shared_raw"],
+                    params={"prefix": "abc_", "strip_prefix": "ABC-"},
+                ),
                 "r_b": DerivationSpec(
                     # Empty prefix = always-true gate: same normalization,
                     # one code path, no drift between the two sides.
                     input=["org_id", "shared_raw"],
+                    params={"prefix": "", "strip_prefix": "ABC-"},
+                ),
+                "r_branch": DerivationSpec(
+                    input=["branch_id", "shared_raw"],
                     params={"prefix": "", "strip_prefix": "ABC-"},
                 ),
             },
@@ -76,12 +85,16 @@ ALIGNMENT = IdentityAlignment(
     local_key=LocalKeySpec(
         sources={
             "r_a": LocalKeySource(field="firm_id", tag="a"),
+            "r_shop": LocalKeySource(field="shop_id", tag="shop"),
             "r_b": LocalKeySource(field="org_id", tag="b"),
+            "r_branch": LocalKeySource(field="branch_id", tag="br"),
         }
     ),
     secondary_identities={
         "by_company_id": ["company_id"],
+        "by_shop_id": ["shop_id"],
         "by_org_id": ["org_id"],
+        "by_branch_id": ["branch_id"],
     },
 )
 
@@ -92,40 +105,75 @@ def load_manifest(path: Path) -> GraphManifest:
     return manifest
 
 
-def build_union(*, stale_demo: bool = False) -> GraphManifest:
+def _boundary_op(*, stale_demo: bool, conflicting_cluster: bool) -> ComposeManifestsOp:
+    """One n-ary cluster: {Company, Shop} ~ {Org, Branch} → Company.
+
+    ``left`` / ``right`` name every member collapsing onto ``into`` in a
+    single declaration — the equivalence layer refuses two *separate*
+    declarations that overlap or disagree rather than silently picking one.
+    The conflicting-cluster demo authors exactly that mistake.
+    """
+    if conflicting_cluster:
+        return ComposeManifestsOp(
+            vertices=[
+                VertexEquivalence(
+                    left="Company", right=["Org", "Branch"], into="Company"
+                ),
+                # Shares right:Org with the declaration above but targets a
+                # different `into` — an overlap, not a second independent
+                # cluster.
+                VertexEquivalence(left="Shop", right="Org", into="Party"),
+            ],
+            allow_merges=True,
+        )
+
+    boundary = "Firm" if stale_demo else "Company"
+    return ComposeManifestsOp(
+        vertices=[
+            VertexEquivalence(
+                left=[boundary, "Shop"], right=["Org", "Branch"], into=boundary
+            )
+        ],
+        allow_merges=True,
+        identity_alignments=[] if stale_demo else [ALIGNMENT],
+    )
+
+
+def build_union(
+    *, stale_demo: bool = False, conflicting_cluster: bool = False
+) -> GraphManifest:
     canonical_map = CanonicalMap.model_validate(
         FileHandle.load(EXAMPLE_DIR / "canonical_map.yaml")
     )
 
-    # Step 1 — canonicalize A standalone: A now speaks the canonical vocabulary.
+    # Step 1 — canonicalize A standalone: Firm → Company; Shop stays Shop.
     canonical_a = apply_evolution(
         load_manifest(EXAMPLE_DIR / "manifest_a.yaml"),
         canonical_map_to_ops(canonical_map),
     )
     manifest_b = load_manifest(EXAMPLE_DIR / "manifest_b.yaml")
 
-    # Step 2 — declare the boundary equivalence in canonical names.
-    boundary_class = "Firm" if stale_demo else "Company"
-    op = ComposeManifestsOp(
-        vertices=[
-            VertexEquivalence(left=boundary_class, right="Org", into=boundary_class)
-        ]
+    # Step 2 — declare the n-ary boundary equivalence in canonical names.
+    op = _boundary_op(stale_demo=stale_demo, conflicting_cluster=conflicting_cluster)
+
+    # Step 3 — validate + complete against the canonical map BEFORE composing.
+    # Completes Org/Branch/Shop → Company along the cluster; --stale-demo
+    # raises ComposeCanonicalConflictError and --conflicting-cluster-demo
+    # raises ClusterConflictError (wrapped by the validator).
+    validate_and_complete_canonical_map(
+        op,
+        left=canonical_a,
+        right=manifest_b,
+        canonical_maps=[("left", canonical_map)],
     )
 
-    # Step 3 — cross-validate against the canonical map BEFORE composing.
-    # With --stale-demo the equivalence uses the retired name "Firm" and this
-    # raises ComposeCanonicalConflictError instead of composing a wrong union.
-    validate_compose_against_canonical_map(
-        canonical_map, op, left=canonical_a, right=manifest_b
-    )
-
-    # Step 4 — compose (loud on collisions: name_conflict defaults to "error").
-    union = compose_manifests(canonical_a, manifest_b, op)
-
-    # Step 5 — apply the identity alignment as fundamental ops.
-    return apply_evolution(
-        union,
-        alignment_to_ops(ALIGNMENT, manifest=union, canonical_maps=[canonical_map]),
+    # Step 4 — compose (loud on collisions) and apply identity_alignments
+    # declared on the op.
+    return compose_manifests(
+        canonical_a,
+        manifest_b,
+        op,
+        canonical_maps=[("left", canonical_map)],
     )
 
 
@@ -143,8 +191,20 @@ def build_union(*, stale_demo: bool = False) -> GraphManifest:
     help="Author the equivalence with a pre-canonical class name to see the "
     "validator fail loudly.",
 )
-def main(output: Path, stale_demo: bool) -> None:
-    union = build_union(stale_demo=stale_demo)
+@click.option(
+    "--conflicting-cluster-demo",
+    is_flag=True,
+    help="Declare overlapping equivalences with disagreeing `into` labels to "
+    "see the cluster-conflict detector fail loudly.",
+)
+def main(output: Path, stale_demo: bool, conflicting_cluster_demo: bool) -> None:
+    if stale_demo and conflicting_cluster_demo:
+        raise click.UsageError(
+            "pass at most one of --stale-demo / --conflicting-cluster-demo"
+        )
+    union = build_union(
+        stale_demo=stale_demo, conflicting_cluster=conflicting_cluster_demo
+    )
     output.parent.mkdir(parents=True, exist_ok=True)
     FileHandle.dump(union.to_dict(), output)
     click.echo(f"Union manifest → {output}")
