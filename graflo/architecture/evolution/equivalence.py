@@ -1,15 +1,22 @@
-"""Bipartite equivalence clusters over compose-time vertex mappings.
+"""Equivalence clusters over compose-time vertex/relation mappings.
 
-A :class:`~graflo.architecture.evolution.ops.VertexEquivalence` is an edge
-between a left-manifest class and a right-manifest class that collapses onto
-one ``into`` label. Several such edges form a bipartite graph; its connected
-components are the natural unit of consistency:
+A :class:`~graflo.architecture.evolution.ops.VertexEquivalence` (or
+:class:`~graflo.architecture.evolution.ops.RelationEquivalence`) declares one
+n-ary cluster directly: ``left`` / ``right`` name one or more members on each
+side, collapsing onto one ``into`` label. :func:`index_clusters` is the
+consistency check over the *declared* clusters of one
+:class:`~graflo.architecture.evolution.ops.ComposeManifestsOp` — there is no
+connected-component search left to do (one declaration *is* one cluster); it
+validates that the declarations do not overlap or collapse into each other by
+accident:
 
-* every edge in a component must agree on one ``into``;
-* a :class:`~graflo.architecture.evolution.canonical.CanonicalMap` label on any
-  member must agree with that ``into``;
-* members without an explicit canonical label inherit the resolved one
-  (completion).
+* no ``(side, name)`` may be claimed by two declarations — that is the
+  author's job to state as one cluster, not two;
+* two declarations must not share one ``into`` — sharing an `into` collapses
+  them into one composed class, which must be spelled as one n-ary cluster so
+  it is visible to review, not left implicit;
+* an ``into`` that already exists as a *different*, non-member class on a side
+  must not be silently merged into — add it to the cluster explicitly.
 
 Nodes are ``(side, name)`` pairs so a class named ``Org`` on the left is never
 confused with ``Org`` on the right.
@@ -17,196 +24,173 @@ confused with ``Org`` on the right.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Collection, Sequence
+from dataclasses import dataclass
 from typing import Literal
 
-from .ops import VertexEquivalence
+from .ops import ComposeManifestsOp, RelationEquivalence, VertexEquivalence
 
 Side = Literal["left", "right"]
-Node = tuple[Side, str]
 
 
 class ClusterConflictError(ValueError):
-    """A connected equivalence component disagrees on its target label."""
+    """Two or more equivalence declarations conflict over cluster membership."""
 
 
 @dataclass(frozen=True)
-class LabelContribution:
-    """One source of a candidate cluster label, with provenance."""
-
-    node: Node | None
-    label: str
-    source: Literal["into", "canonical"]
-
-
-@dataclass
 class Cluster:
-    """One connected component of the bipartite equivalence graph."""
+    """One declared n-ary vertex-equivalence cluster."""
 
-    members: frozenset[Node]
-    edges: list[VertexEquivalence] = field(default_factory=list)
+    left: tuple[str, ...]
+    right: tuple[str, ...]
+    into: str
+    declaration: VertexEquivalence
+
+    def members(self, side: Side) -> tuple[str, ...]:
+        return self.left if side == "left" else self.right
 
     @property
     def left_names(self) -> frozenset[str]:
-        return frozenset(name for side, name in self.members if side == "left")
+        return frozenset(self.left)
 
     @property
     def right_names(self) -> frozenset[str]:
-        return frozenset(name for side, name in self.members if side == "right")
+        return frozenset(self.right)
 
 
 @dataclass(frozen=True)
-class ResolvedCluster:
-    """A cluster whose edges and canonical labels agree on one target."""
+class RelationCluster:
+    """One declared n-ary relation-equivalence cluster."""
 
-    cluster: Cluster
-    label: str
-    unmapped: frozenset[Node]
-    """Members that inherit ``label`` by completion (no explicit map entry)."""
+    left: tuple[str, ...]
+    right: tuple[str, ...]
+    into: str
+    declaration: RelationEquivalence
 
-
-class _UnionFind:
-    def __init__(self) -> None:
-        self._parent: dict[Node, Node] = {}
-
-    def add(self, node: Node) -> None:
-        self._parent.setdefault(node, node)
-
-    def find(self, node: Node) -> Node:
-        parent = self._parent.setdefault(node, node)
-        if parent != node:
-            self._parent[node] = self.find(parent)
-        return self._parent[node]
-
-    def union(self, a: Node, b: Node) -> None:
-        ra, rb = self.find(a), self.find(b)
-        if ra != rb:
-            self._parent[rb] = ra
+    def members(self, side: Side) -> tuple[str, ...]:
+        return self.left if side == "left" else self.right
 
 
-def build_clusters(vertices: Sequence[VertexEquivalence]) -> list[Cluster]:
-    """Connected components of the bipartite graph induced by *vertices*."""
-    uf = _UnionFind()
-    edges_by_root: dict[Node, list[VertexEquivalence]] = {}
-    members_by_root: dict[Node, set[Node]] = {}
+@dataclass(frozen=True)
+class ClusterIndex:
+    """Every declared cluster of one compose op, validated for consistency."""
 
-    for veq in vertices:
-        left: Node = ("left", veq.left)
-        right: Node = ("right", veq.right)
-        uf.add(left)
-        uf.add(right)
-        uf.union(left, right)
+    vertices: tuple[Cluster, ...]
+    relations: tuple[RelationCluster, ...]
 
-    for veq in vertices:
-        left: Node = ("left", veq.left)
-        right: Node = ("right", veq.right)
-        root = uf.find(left)
-        members_by_root.setdefault(root, set()).update((left, right))
-        edges_by_root.setdefault(root, []).append(veq)
+    @property
+    def labels(self) -> frozenset[str]:
+        return frozenset(c.into for c in self.vertices)
 
-    clusters = [
-        Cluster(
-            members=frozenset(members),
-            edges=list(edges_by_root[root]),
-        )
-        for root, members in sorted(
-            members_by_root.items(),
-            key=lambda item: sorted(item[1]),
-        )
-    ]
-    return clusters
+    def relation_labels(self) -> frozenset[str]:
+        return frozenset(c.into for c in self.relations)
 
+    def vertex_members(self, side: Side) -> frozenset[str]:
+        out: set[str] = set()
+        for c in self.vertices:
+            out.update(c.members(side))
+        return frozenset(out)
 
-def _format_node(node: Node) -> str:
-    side, name = node
-    return f"{side}:{name}"
+    def relation_members(self, side: Side) -> frozenset[str]:
+        out: set[str] = set()
+        for c in self.relations:
+            out.update(c.members(side))
+        return frozenset(out)
+
+    def cluster_for(self, side: Side, name: str) -> Cluster | None:
+        for c in self.vertices:
+            if name in c.members(side):
+                return c
+        return None
 
 
-def _format_contribution(c: LabelContribution) -> str:
-    if c.node is None:
-        return f"{c.label!r} (declared into)"
-    return f"{_format_node(c.node)}→{c.label!r} ({c.source})"
-
-
-def resolve_cluster_labels(
-    clusters: Sequence[Cluster],
-    canonical_labels: Mapping[Node, str] | None = None,
-) -> list[ResolvedCluster]:
-    """Resolve each cluster to one label, or raise on disagreement.
-
-    Labels are collected from every edge's ``into`` and from *canonical_labels*
-    keyed by ``(side, name)``. A cluster with one distinct label is resolved;
-    members absent from *canonical_labels* are listed in
-    :attr:`ResolvedCluster.unmapped` for completion. Two or more distinct
-    labels raise :class:`ClusterConflictError` with full provenance.
-    """
-    label_map = dict(canonical_labels or ())
-    resolved: list[ResolvedCluster] = []
-
-    for cluster in clusters:
-        contributions: list[LabelContribution] = []
-        for veq in cluster.edges:
-            contributions.append(
-                LabelContribution(node=None, label=veq.into, source="into")
-            )
-        for node in sorted(cluster.members):
-            if node in label_map:
-                contributions.append(
-                    LabelContribution(
-                        node=node, label=label_map[node], source="canonical"
+def _check_declarations(
+    declarations: Sequence[tuple[tuple[str, ...], tuple[str, ...], str]],
+    *,
+    kind: str,
+    left_names: Collection[str],
+    right_names: Collection[str],
+) -> None:
+    """Shared overlap / shared-into / occupied-into checks for one declaration kind."""
+    claimed: dict[tuple[Side, str], int] = {}
+    into_owner: dict[str, int] = {}
+    for index, (left, right, into) in enumerate(declarations):
+        for side, members in (("left", left), ("right", right)):
+            for name in members:
+                key: tuple[Side, str] = (side, name)  # type: ignore[assignment]
+                prior = claimed.get(key)
+                if prior is not None and prior != index:
+                    raise ClusterConflictError(
+                        f"{kind}: {side}:{name} is claimed by two equivalence "
+                        f"declarations (into {declarations[prior][2]!r} and "
+                        f"into {into!r}); merge them into one declaration"
                     )
-                )
-
-        distinct = sorted({c.label for c in contributions})
-        if len(distinct) == 0:
-            # Unreachable while ``into`` is required on every VertexEquivalence.
+                claimed[key] = index
+        prior_owner = into_owner.get(into)
+        if prior_owner is not None and prior_owner != index:
             raise ClusterConflictError(
-                f"equivalence cluster {{{', '.join(_format_node(n) for n in sorted(cluster.members))}}} "
-                "has no declared into and no canonical label"
+                f"{kind}: two equivalence declarations both target into "
+                f"{into!r}; two declarations sharing one `into` collapse into "
+                "one composed class — spell it as one declaration naming "
+                "every member"
             )
-        if len(distinct) > 1:
-            members = ", ".join(_format_node(n) for n in sorted(cluster.members))
-            detail = ", ".join(_format_contribution(c) for c in contributions)
-            raise ClusterConflictError(
-                f"equivalence cluster {{{members}}} disagrees on target label: "
-                f"{detail}. Pick one `into`, or fix the canonical map."
-            )
-
-        label = distinct[0]
-        unmapped = frozenset(node for node in cluster.members if node not in label_map)
-        # Edges whose into already equals the resolved label still leave their
-        # endpoints "unmapped" for completion when the canonical map has no
-        # entry — that is intentional: completion fills the map, not the edges.
-        resolved.append(
-            ResolvedCluster(cluster=cluster, label=label, unmapped=unmapped)
-        )
-
-    return resolved
-
-
-def vertex_rename_maps(
-    resolved: Sequence[ResolvedCluster],
-) -> tuple[dict[str, str], dict[str, str]]:
-    """Per-side ``{source: into}`` maps from resolved clusters.
-
-    Unlike a plain dict built from the raw equivalence list, every source that
-    participates in a cluster is routed to the *same* resolved label — so a
-    class that appears in two edges can never silently take the last write.
-    """
-    left: dict[str, str] = {}
-    right: dict[str, str] = {}
-    for item in resolved:
-        for side, name in item.cluster.members:
-            if name == item.label:
-                continue
-            target_map = left if side == "left" else right
-            existing = target_map.get(name)
-            if existing is not None and existing != item.label:
-                # Defensive: resolve_cluster_labels already forbids this.
+        into_owner[into] = index
+        for side, members, names in (
+            ("left", left, left_names),
+            ("right", right, right_names),
+        ):
+            if into in names and into not in members:
                 raise ClusterConflictError(
-                    f"{side}:{name} would rename to both {existing!r} and "
-                    f"{item.label!r}"
+                    f"{kind}: into {into!r} already exists on the {side} side "
+                    f"but is not a member of its cluster "
+                    f"({side}={list(members)}); add it to `{side}` to merge "
+                    "into it, or pick a different `into`"
                 )
-            target_map[name] = item.label
-    return left, right
+
+
+def index_clusters(
+    op: ComposeManifestsOp,
+    *,
+    left_vertices: Collection[str] = (),
+    right_vertices: Collection[str] = (),
+    left_relations: Collection[str] = (),
+    right_relations: Collection[str] = (),
+) -> ClusterIndex:
+    """Validate and index the declared clusters of *op*.
+
+    Raises :class:`ClusterConflictError` on an overlapping declaration, two
+    declarations sharing one ``into``, or an ``into`` that would silently
+    occupy an existing non-member class on a side.
+    """
+    _check_declarations(
+        [(tuple(v.left_members), tuple(v.right_members), v.into) for v in op.vertices],
+        kind="vertex equivalence",
+        left_names=left_vertices,
+        right_names=right_vertices,
+    )
+    _check_declarations(
+        [(tuple(r.left_members), tuple(r.right_members), r.into) for r in op.relations],
+        kind="relation equivalence",
+        left_names=left_relations,
+        right_names=right_relations,
+    )
+    return ClusterIndex(
+        vertices=tuple(
+            Cluster(
+                left=tuple(v.left_members),
+                right=tuple(v.right_members),
+                into=v.into,
+                declaration=v,
+            )
+            for v in op.vertices
+        ),
+        relations=tuple(
+            RelationCluster(
+                left=tuple(r.left_members),
+                right=tuple(r.right_members),
+                into=r.into,
+                declaration=r,
+            )
+            for r in op.relations
+        ),
+    )

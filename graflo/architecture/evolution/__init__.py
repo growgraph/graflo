@@ -55,6 +55,7 @@ from .ops import (
     RetargetEdgesOp,
     SanitizeOp,
     SetEdgeDirectedOp,
+    SideIdentity,
     VertexEquivalence,
     ops_reaching_ingestion,
 )
@@ -82,7 +83,9 @@ _APPLY_EXPORTS = frozenset(
     }
 )
 
-_COMPOSE_EXPORTS = frozenset({"ComposeNameConflictError", "compose_manifests"})
+_COMPOSE_EXPORTS = frozenset(
+    {"ComposeIdentityError", "ComposeNameConflictError", "compose_manifests"}
+)
 
 _INGESTION_APPLY_EXPORTS = frozenset({"apply_add_resource_transforms"})
 
@@ -103,9 +106,11 @@ _CANONICAL_EXPORTS = frozenset(
     {
         "CanonicalMap",
         "ComposeCanonicalConflictError",
+        "SideMaps",
         "canonical_map_to_ops",
+        "clusters_to_side_maps",
+        "merge_canonical_maps",
         "validate_and_complete_canonical_map",
-        "validate_compose_against_canonical_map",
     }
 )
 
@@ -113,10 +118,9 @@ _EQUIVALENCE_EXPORTS = frozenset(
     {
         "Cluster",
         "ClusterConflictError",
-        "ResolvedCluster",
-        "build_clusters",
-        "resolve_cluster_labels",
-        "vertex_rename_maps",
+        "ClusterIndex",
+        "RelationCluster",
+        "index_clusters",
     }
 )
 
@@ -248,9 +252,11 @@ __all__ = [
     "ChangeFieldTypesOp",
     "Cluster",
     "ClusterConflictError",
+    "ClusterIndex",
     "Commit",
     "CommitError",
     "ComposeCanonicalConflictError",
+    "ComposeIdentityError",
     "ComposeManifestsOp",
     "ComposeNameConflictError",
     "ConflictResolution",
@@ -282,6 +288,7 @@ __all__ = [
     "NaturalIdentityTarget",
     "ProjectManifestOp",
     "PropertyEquivalence",
+    "RelationCluster",
     "RelationEquivalence",
     "RemoveEdgeIndexesOp",
     "RemoveEdgePropertiesOp",
@@ -298,11 +305,12 @@ __all__ = [
     "RenameVerticesOp",
     "ReplaceEdgeIdentitiesOp",
     "ReplaceIdentityOp",
-    "ResolvedCluster",
     "RetargetEdgesOp",
     "RevisionOp",
     "SanitizeOp",
     "SetEdgeDirectedOp",
+    "SideIdentity",
+    "SideMaps",
     "UnclassifiedListField",
     "VertexEquivalence",
     "alignment_to_ops",
@@ -338,7 +346,6 @@ __all__ = [
     "apply_retarget_edges",
     "apply_sanitize",
     "apply_set_edge_directed",
-    "build_clusters",
     "build_commit",
     "build_merge_commit",
     "build_recipe",
@@ -346,6 +353,7 @@ __all__ = [
     "canonical_map_to_ops",
     "canonical_payload",
     "checkout",
+    "clusters_to_side_maps",
     "compose_manifests",
     "compute_commit_id",
     "describe_slot",
@@ -354,12 +362,14 @@ __all__ = [
     "find_merge_base",
     "full_hash",
     "graph_hash",
+    "index_clusters",
     "ingestion_hash",
     "invert_op",
     "invert_ops",
     "irreversible_reason",
     "is_reversible",
     "manifest_hash",
+    "merge_canonical_maps",
     "merge_three_way",
     "op_from_dict",
     "op_slots",
@@ -370,16 +380,13 @@ __all__ = [
     "ops_to_dicts",
     "ops_to_yaml_str",
     "re_merge",
-    "resolve_cluster_labels",
     "schema_hash",
     "stable_hash",
     "take_left",
     "take_right",
     "validate_alignment",
     "validate_and_complete_canonical_map",
-    "validate_compose_against_canonical_map",
     "verify_history",
-    "vertex_rename_maps",
 ]
 
 

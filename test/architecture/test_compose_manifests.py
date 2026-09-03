@@ -7,10 +7,13 @@ import pytest
 from graflo.architecture.contract.bindings import FileConnector
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.evolution import (
+    ClusterConflictError,
+    ComposeIdentityError,
     ComposeManifestsOp,
     ComposeNameConflictError,
     PropertyEquivalence,
     RelationEquivalence,
+    SideIdentity,
     VertexEquivalence,
     apply_evolution,
     compose_manifests,
@@ -345,11 +348,10 @@ def test_relation_equivalence_and_self_loop_after_boundary() -> None:
         ],
     )
     op = ComposeManifestsOp(
-        vertices=[
-            VertexEquivalence(left="A", right="X", into="AB"),
-            VertexEquivalence(left="B", right="Y", into="AB"),
-        ],
+        vertices=[VertexEquivalence(left=["A", "B"], right=["X", "Y"], into="AB")],
         relations=[RelationEquivalence(left="link", right="link", into="link")],
+        allow_merges=True,
+        allow_self_relations=True,
     )
     out = compose_manifests(left, right, op, bump_version=False)
     assert out.graph_schema is not None
@@ -666,7 +668,7 @@ def test_disagreeing_into_on_shared_node_raises() -> None:
     )
     from graflo.architecture.evolution import ClusterConflictError
 
-    with pytest.raises(ClusterConflictError, match="disagrees"):
+    with pytest.raises(ClusterConflictError, match="claimed"):
         compose_manifests(
             left,
             right,
@@ -774,3 +776,383 @@ def test_an_equivalence_in_the_wrong_convention_says_what_to_use() -> None:
                 ]
             ),
         )
+
+
+def test_nary_cluster_composes_schema_and_ingestion() -> None:
+    """The example-19 shape: {Company, Shop} ~ {Org, Branch} -> Company."""
+    left = _manifest(
+        name="l",
+        vertices=[
+            Vertex(
+                name="Company",
+                properties=[Field(name="company_id"), Field(name="shared")],
+                identity=["company_id"],
+            ),
+            Vertex(
+                name="Shop",
+                properties=[Field(name="shop_id"), Field(name="shared")],
+                identity=["shop_id"],
+            ),
+        ],
+        edges=[],
+        resources=[
+            {"name": "r_company", "apply": [{"vertex": "Company"}]},
+            {"name": "r_shop", "apply": [{"vertex": "Shop"}]},
+        ],
+    )
+    right = _manifest(
+        name="r",
+        vertices=[
+            Vertex(
+                name="Org",
+                properties=[Field(name="org_id"), Field(name="shared")],
+                identity=["org_id"],
+            ),
+            Vertex(
+                name="Branch",
+                properties=[Field(name="branch_id"), Field(name="shared")],
+                identity=["branch_id"],
+            ),
+        ],
+        edges=[],
+        resources=[
+            {"name": "r_org", "apply": [{"vertex": "Org"}]},
+            {"name": "r_branch", "apply": [{"vertex": "Branch"}]},
+        ],
+    )
+    op = ComposeManifestsOp(
+        vertices=[
+            VertexEquivalence(
+                left=["Company", "Shop"],
+                right=["Org", "Branch"],
+                into="Company",
+                identity=["company_id"],
+            )
+        ],
+        allow_merges=True,
+    )
+    out = compose_manifests(left, right, op, bump_version=False)
+    schema = out.graph_schema
+    assert schema is not None
+    assert schema.core_schema.vertex_config.vertex_set == {"Company"}
+    company = next(
+        v for v in schema.core_schema.vertex_config.vertices if v.name == "Company"
+    )
+    assert company.identity == ["company_id"]
+    assert {f.name for f in company.properties} == {
+        "company_id",
+        "shop_id",
+        "org_id",
+        "branch_id",
+        "shared",
+    }
+    # `by_company_id` is skipped: it would restate the new primary as a secondary.
+    assert {s.name for s in company.secondary_identities} == {
+        "by_shop_id",
+        "by_org_id",
+        "by_branch_id",
+    }
+    assert out.ingestion_model is not None
+    assert {r.name for r in out.ingestion_model.resources} == {
+        "r_company",
+        "r_shop",
+        "r_org",
+        "r_branch",
+    }
+
+
+def test_per_member_property_equivalence_maps() -> None:
+    """E1 regression: two members on one side need different old-field maps."""
+    left = _manifest(
+        name="l",
+        vertices=[
+            Vertex(
+                name="Company",
+                properties=[Field(name="company_key")],
+                identity=["company_key"],
+            ),
+            Vertex(
+                name="Shop", properties=[Field(name="shop_key")], identity=["shop_key"]
+            ),
+        ],
+        edges=[],
+        resources=[
+            {"name": "r_company", "apply": [{"vertex": "Company"}]},
+            {"name": "r_shop", "apply": [{"vertex": "Shop"}]},
+        ],
+    )
+    right = _manifest(
+        name="r",
+        vertices=[
+            Vertex(name="Org", properties=[Field(name="org_key")], identity=["org_key"])
+        ],
+        edges=[],
+        resources=[{"name": "r_org", "apply": [{"vertex": "Org"}]}],
+    )
+    op = ComposeManifestsOp(
+        vertices=[
+            VertexEquivalence(
+                left=["Company", "Shop"],
+                right="Org",
+                into="Company",
+                properties=[
+                    PropertyEquivalence(
+                        left={"Company": "company_key", "Shop": "shop_key"},
+                        right="org_key",
+                        into="uid",
+                    )
+                ],
+                identity=["uid"],
+            )
+        ],
+        allow_merges=True,
+    )
+    out = compose_manifests(left, right, op, bump_version=False)
+    company = next(
+        v
+        for v in out.graph_schema.core_schema.vertex_config.vertices  # type: ignore[union-attr]
+        if v.name == "Company"
+    )
+    prop_names = {f.name for f in company.properties}
+    assert "uid" in prop_names
+    assert not {"company_key", "shop_key", "org_key"} & prop_names
+    assert company.identity == ["uid"]
+
+
+def test_relation_nary_collapse() -> None:
+    left = _manifest(
+        name="l",
+        vertices=[
+            Vertex(name="P", properties=[Field(name="id")], identity=["id"]),
+            Vertex(name="Q", properties=[Field(name="id")], identity=["id"]),
+        ],
+        edges=[
+            Edge(source="P", target="Q", relation="signs"),
+            Edge(source="P", target="Q", relation="owns"),
+        ],
+        resources=[
+            {"name": "r_p", "apply": [{"vertex": "P"}]},
+            {"name": "r_q", "apply": [{"vertex": "Q"}]},
+        ],
+    )
+    right = _manifest(
+        name="r",
+        vertices=[
+            Vertex(name="X", properties=[Field(name="id")], identity=["id"]),
+            Vertex(name="Y", properties=[Field(name="id")], identity=["id"]),
+        ],
+        edges=[Edge(source="X", target="Y", relation="has")],
+        resources=[
+            {"name": "r_x", "apply": [{"vertex": "X"}]},
+            {"name": "r_y", "apply": [{"vertex": "Y"}]},
+        ],
+    )
+    op = ComposeManifestsOp(
+        vertices=[
+            VertexEquivalence(left="P", right="X", into="P"),
+            VertexEquivalence(left="Q", right="Y", into="Q"),
+        ],
+        relations=[
+            RelationEquivalence(left=["signs", "owns"], right="has", into="signs")
+        ],
+        allow_merges=True,
+    )
+    out = compose_manifests(left, right, op, bump_version=False)
+    relations = {
+        e.relation
+        for e in out.graph_schema.core_schema.edge_config.edges  # type: ignore[union-attr]
+        if e.relation is not None
+    }
+    assert relations == {"signs"}
+
+
+def test_fuse_right_adopts_left_spelling_for_relations() -> None:
+    left = _manifest(
+        name="l",
+        vertices=[
+            Vertex(name="A", properties=[Field(name="id")], identity=["id"]),
+            Vertex(name="B", properties=[Field(name="id")], identity=["id"]),
+        ],
+        edges=[Edge(source="A", target="B", relation="placedBy")],
+        resources=[
+            {"name": "r_a", "apply": [{"vertex": "A"}]},
+            {"name": "r_b", "apply": [{"vertex": "B"}]},
+        ],
+    )
+    right = _manifest(
+        name="r",
+        vertices=[
+            Vertex(name="AR", properties=[Field(name="id")], identity=["id"]),
+            Vertex(name="BR", properties=[Field(name="id")], identity=["id"]),
+        ],
+        edges=[Edge(source="AR", target="BR", relation="placed_by")],
+        resources=[
+            {"name": "r_ar", "apply": [{"vertex": "AR"}]},
+            {"name": "r_br", "apply": [{"vertex": "BR"}]},
+        ],
+    )
+    op = ComposeManifestsOp(
+        vertices=[
+            VertexEquivalence(left="A", right="AR", into="A"),
+            VertexEquivalence(left="B", right="BR", into="B"),
+        ],
+        name_conflict="fuse_right",
+    )
+    out = compose_manifests(left, right, op, bump_version=False)
+    relations = {
+        e.relation
+        for e in out.graph_schema.core_schema.edge_config.edges  # type: ignore[union-attr]
+        if e.relation is not None
+    }
+    assert relations == {"placedBy"}
+
+
+def test_undeclared_identity_disagreement_raises() -> None:
+    left = _manifest(
+        name="l",
+        vertices=[
+            Vertex(
+                name="Company",
+                properties=[Field(name="company_id")],
+                identity=["company_id"],
+            )
+        ],
+        edges=[],
+        resources=[{"name": "r_l", "apply": [{"vertex": "Company"}]}],
+    )
+    right = _manifest(
+        name="r",
+        vertices=[
+            Vertex(name="Org", properties=[Field(name="org_id")], identity=["org_id"])
+        ],
+        edges=[],
+        resources=[{"name": "r_r", "apply": [{"vertex": "Org"}]}],
+    )
+    op = ComposeManifestsOp(
+        vertices=[VertexEquivalence(left="Company", right="Org", into="Company")]
+    )
+    with pytest.raises(ComposeIdentityError, match="disagree"):
+        compose_manifests(left, right, op, bump_version=False)
+
+
+def test_side_identity_shorthand_lowers_to_one_funnel() -> None:
+    left = _manifest(
+        name="l",
+        vertices=[
+            Vertex(
+                name="Company",
+                properties=[Field(name="tax_id"), Field(name="company_id")],
+                identity=["company_id"],
+            )
+        ],
+        edges=[],
+        resources=[{"name": "r_l", "apply": [{"vertex": "Company"}]}],
+    )
+    right = _manifest(
+        name="r",
+        vertices=[
+            Vertex(
+                name="Org",
+                properties=[Field(name="tax_id"), Field(name="org_id")],
+                identity=["org_id"],
+            )
+        ],
+        edges=[],
+        resources=[{"name": "r_r", "apply": [{"vertex": "Org"}]}],
+    )
+    op = ComposeManifestsOp(
+        vertices=[
+            VertexEquivalence(
+                left="Company",
+                right="Org",
+                into="Company",
+                identity=SideIdentity(
+                    left=[["tax_id"], ["company_id"]],
+                    right=[["tax_id"], ["org_id"]],
+                ),
+            )
+        ]
+    )
+    out = compose_manifests(left, right, op, bump_version=False)
+    company = next(
+        v
+        for v in out.graph_schema.core_schema.vertex_config.vertices  # type: ignore[union-attr]
+        if v.name == "Company"
+    )
+    assert company.identity == ["id"]
+    assert company.identity_funnel is not None
+    assert [b.fields for b in company.identity_funnel.branches] == [
+        ["tax_id"],
+        ["company_id"],
+        ["org_id"],
+    ]
+    assert {s.name for s in company.secondary_identities} == {
+        "by_company_id",
+        "by_org_id",
+    }
+
+
+def test_side_identity_order_inversion_raises() -> None:
+    left = _manifest(
+        name="l",
+        vertices=[
+            Vertex(
+                name="Company",
+                properties=[Field(name="a"), Field(name="b")],
+                identity=["a"],
+            )
+        ],
+        edges=[],
+        resources=[{"name": "r_l", "apply": [{"vertex": "Company"}]}],
+    )
+    right = _manifest(
+        name="r",
+        vertices=[
+            Vertex(
+                name="Org",
+                properties=[Field(name="a"), Field(name="b")],
+                identity=["b"],
+            )
+        ],
+        edges=[],
+        resources=[{"name": "r_r", "apply": [{"vertex": "Org"}]}],
+    )
+    op = ComposeManifestsOp(
+        vertices=[
+            VertexEquivalence(
+                left="Company",
+                right="Org",
+                into="Company",
+                identity=SideIdentity(left=[["a"], ["b"]], right=[["b"], ["a"]]),
+            )
+        ]
+    )
+    with pytest.raises(ComposeIdentityError, match="inconsistent"):
+        compose_manifests(left, right, op, bump_version=False)
+
+
+def test_occupied_into_raises_through_compose() -> None:
+    """E6 regression: a single source renaming onto an unrelated existing name."""
+    left = _manifest(
+        name="l",
+        vertices=[
+            Vertex(name="A", properties=[Field(name="id")], identity=["id"]),
+            Vertex(name="Person", properties=[Field(name="id")], identity=["id"]),
+        ],
+        edges=[],
+        resources=[
+            {"name": "r_a", "apply": [{"vertex": "A"}]},
+            {"name": "r_person", "apply": [{"vertex": "Person"}]},
+        ],
+    )
+    right = _manifest(
+        name="r",
+        vertices=[Vertex(name="B", properties=[Field(name="id")], identity=["id"])],
+        edges=[],
+        resources=[{"name": "r_b", "apply": [{"vertex": "B"}]}],
+    )
+    op = ComposeManifestsOp(
+        vertices=[VertexEquivalence(left="A", right="B", into="Person")]
+    )
+    with pytest.raises(ClusterConflictError, match="not a member"):
+        compose_manifests(left, right, op, bump_version=False)

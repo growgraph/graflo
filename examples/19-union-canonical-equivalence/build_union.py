@@ -1,17 +1,18 @@
 """
-Build the union of two manifests in a canonical vocabulary, with a
-conditionally-equivalent n-ary boundary cluster — composed entirely from
-fundamental evolution ops.
+Build the union of two manifests in a canonical vocabulary, with a single
+n-ary boundary cluster — composed entirely from fundamental evolution ops.
 
 The recipe, in order:
 
 1. canonicalize A standalone (``canonical_map_to_ops`` + ``apply_evolution``)
 2. validate + complete the canonical map against the compose op — fails loudly
-   on stale names, retargeted attributes, cluster conflicts, or unacknowledged
-   merges; completes unmapped peers (e.g. ``Org → Company``) along equivalence
-   edges
-3. ``compose_manifests`` with explicit ``VertexEquivalence`` edges *and*
-   ``identity_alignments`` on the same op (schema union + identity alignment)
+   on stale names, retargeted attributes, cluster conflicts (an equivalence
+   overlap, two declarations sharing one ``into``, or an ``into`` that would
+   silently occupy an existing non-member class), or an unacknowledged merge;
+   completes unmapped peers (e.g. ``Org → Company``) along the cluster
+3. ``compose_manifests`` with one n-ary ``VertexEquivalence`` naming every
+   member on each side *and* ``identity_alignments`` on the same op (schema
+   union + identity alignment)
 
 A primary identity is a property of the class: the funnel references only
 canonical attributes (``match_key``, ``local_key``). How each source populates
@@ -105,30 +106,35 @@ def load_manifest(path: Path) -> GraphManifest:
 
 
 def _boundary_op(*, stale_demo: bool, conflicting_cluster: bool) -> ComposeManifestsOp:
-    """N-ary cluster: {Company, Shop} ~ {Org, Branch} → Company.
+    """One n-ary cluster: {Company, Shop} ~ {Org, Branch} → Company.
 
-    Three edges share nodes so they form one connected component; all must
-    agree on ``into``. The conflicting-cluster demo deliberately disagrees.
+    ``left`` / ``right`` name every member collapsing onto ``into`` in a
+    single declaration — the equivalence layer refuses two *separate*
+    declarations that overlap or disagree rather than silently picking one.
+    The conflicting-cluster demo authors exactly that mistake.
     """
     if conflicting_cluster:
         return ComposeManifestsOp(
             vertices=[
-                VertexEquivalence(left="Company", right="Org", into="Company"),
-                VertexEquivalence(left="Company", right="Branch", into="Company"),
-                # Shares Org with the first edge but declares a different into —
-                # one connected component, disagreeing labels.
+                VertexEquivalence(
+                    left="Company", right=["Org", "Branch"], into="Company"
+                ),
+                # Shares right:Org with the declaration above but targets a
+                # different `into` — an overlap, not a second independent
+                # cluster.
                 VertexEquivalence(left="Shop", right="Org", into="Party"),
-            ]
+            ],
+            allow_merges=True,
         )
 
     boundary = "Firm" if stale_demo else "Company"
-    shop = "Shop"
     return ComposeManifestsOp(
         vertices=[
-            VertexEquivalence(left=boundary, right="Org", into=boundary),
-            VertexEquivalence(left=boundary, right="Branch", into=boundary),
-            VertexEquivalence(left=shop, right="Org", into=boundary),
+            VertexEquivalence(
+                left=[boundary, "Shop"], right=["Org", "Branch"], into=boundary
+            )
         ],
+        allow_merges=True,
         identity_alignments=[] if stale_demo else [ALIGNMENT],
     )
 
@@ -151,14 +157,14 @@ def build_union(
     op = _boundary_op(stale_demo=stale_demo, conflicting_cluster=conflicting_cluster)
 
     # Step 3 — validate + complete against the canonical map BEFORE composing.
-    # Completes Org/Branch/Shop → Company along the cluster; --stale-demo and
-    # --conflicting-cluster-demo raise ComposeCanonicalConflictError.
+    # Completes Org/Branch/Shop → Company along the cluster; --stale-demo
+    # raises ComposeCanonicalConflictError and --conflicting-cluster-demo
+    # raises ClusterConflictError (wrapped by the validator).
     validate_and_complete_canonical_map(
         op,
         left=canonical_a,
         right=manifest_b,
         canonical_maps=[("left", canonical_map)],
-        allow_implicit_merge=not conflicting_cluster and not stale_demo,
     )
 
     # Step 4 — compose (loud on collisions) and apply identity_alignments
@@ -167,7 +173,7 @@ def build_union(
         canonical_a,
         manifest_b,
         op,
-        canonical_maps=[canonical_map],
+        canonical_maps=[("left", canonical_map)],
     )
 
 

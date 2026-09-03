@@ -36,7 +36,7 @@ GraFlo provides **contract-level** operations that transform a validated `GraphM
 | **Set edge directed** | Sets `Edge.directed` on selected triples. Load-bearing for replay: `directed` decides what **add inverse edges** may duplicate. |
 | **Sanitize** | Target-`DBType` policy: reserved-word-safe names on `DatabaseProfile`, reserved vertex field renames, and (for TigerGraph) consistent identity tuples per edge relation. This is the same work **`graflo.hq.sanitizer.Sanitizer`** applies by building a single **`SanitizeOp`**. |
 | **Add resource transforms** | Appends transform steps to named resources' pipelines (root level; actor type-priority ordering runs them before vertex extraction at that level) and optionally registers named transforms (loud on same-name/different-body, mirroring compose). The only op whose primary effect is ingestion; requires `ingestion_model` and raises otherwise. Steps may reference the registry via `call.use` or carry a fully inline `call` (collision-free). Irreversible. |
-| **Compose manifests** | Binary union of two full `GraphManifest`s (schema **and** resources/bindings) via `ComposeManifestsOp` + `compose_manifests(left, right, op)`. Consumes **explicit** equivalence maps only (no semantic inference): vertex→vertex (bipartite clusters must agree on one `into`), property alignment, optional `identity_alignments`, relation equivalences, resource renames / `name_conflict`. Distinct from unary `MergeVerticesOp`. Rejected by unary `apply_evolution`. |
+| **Compose manifests** | Binary union of two full `GraphManifest`s (schema **and** resources/bindings) via `ComposeManifestsOp` + `compose_manifests(left, right, op)`. Consumes **explicit** equivalence maps only (no semantic inference): n-ary vertex clusters (`left` / `right` each name one or more classes collapsing onto one `into`), property alignment, optional composed `identity`, optional `identity_alignments`, relation equivalences, resource renames / `name_conflict`. Distinct from unary `MergeVerticesOp`. Rejected by unary `apply_evolution`. |
 
 ## Compose two manifests
 
@@ -68,23 +68,41 @@ composed = compose_manifests(
                         left="email", right="email_addr", into="email", identity=True
                     ),
                 ],
-                identity=["email"],  # optional explicit natural key; else merge + flags
+                identity=["email"],  # optional explicit key; else merge + flags
             )
         ],
         relations=[RelationEquivalence(left="places", right="billed", into="activity")],
         resource_renames={},  # right resource name -> composed name
-        name_conflict="error",  # or "prefix_right"
+        name_conflict="error",  # or "prefix_right" / "fuse_right"
     ),
+)
+```
+
+`left` / `right` also take a **list**, which is how an n-ary cluster is
+spelled — one declaration naming every member that collapses onto `into`:
+
+```python
+ComposeManifestsOp(
+    vertices=[
+        VertexEquivalence(
+            left=["Company", "Shop"], right=["Org", "Branch"], into="Company"
+        )
+    ],
+    allow_merges=True,          # >1 member on a side is a stated intent
+    allow_self_relations=False,  # forwarded to the per-side MergeVerticesOp
+    allow_row_fusion=False,
 )
 ```
 
 Empty `vertices` / `relations` yields a **disjoint union** (both resource sets and bindings retained), subject to collision policy.
 
-`VertexEquivalence` edges form a bipartite graph between the two manifests. Connected components must agree on one `into` — overlapping declarations that share a node but disagree on the target raise `ClusterConflictError` (compose refuses them before any rename). Properties with the **same spelling** on both sides after boundary rename fuse for free; list a `PropertyEquivalence` only to rename or to flag identity.
+A `VertexEquivalence` declaration *is* one cluster. `ClusterConflictError` (raised before any rename) covers the three ways declarations can contradict each other: a class **claimed by two** declarations, two declarations **sharing one `into`** (that collapse is one n-ary cluster and must be spelled as one), and an `into` that already names an **existing non-member class** on a side (which would silently merge into an unrelated type). Properties with the **same spelling** on both sides after alignment fuse for free; list a `PropertyEquivalence` only to rename, to map per member (`left={"Company": "company_key", "Shop": "shop_key"}`), or to flag identity.
+
+Compose refuses to guess the composed **identity** too: when members disagree on their identity field-set after alignment and nothing resolves it, `ComposeIdentityError` names each member's key. Resolve it with `identity` on the cluster (a natural key, an `IdentityFunnel`, or a `SideIdentity` shorthand lowered to one funnel), a `PropertyEquivalence(identity=True)` flag, or an `identity_alignments` entry. A declared `identity` demotes each member's retired key to a lookup-only secondary identity unless the cluster sets `retire="keep"`.
 
 ## Canonical maps
 
-When one side of a compose is first translated into a target vocabulary, the translation and the compose op are two declarations that can silently contradict each other — most dangerously via a *stale name*: an equivalence written against a class or attribute the translation retired still passes compose's existence checks and composes into the wrong union. `CanonicalMap` makes the translation a single source of truth serving both moments, and can be **completed** along declared equivalence edges (an unmapped peer in a resolved cluster inherits the cluster label).
+When one side of a compose is first translated into a target vocabulary, the translation and the compose op are two declarations that can silently contradict each other — most dangerously via a *stale name*: an equivalence written against a class or attribute the translation retired still passes compose's existence checks and composes into the wrong union. `CanonicalMap` makes the translation a single source of truth serving both moments, and is **completed** along the declared cluster (an unmapped member inherits the cluster's `into` label). It maps `vertices`, `properties` **and** `relations`.
 
 ```python
 from graflo.architecture.evolution import (
@@ -102,28 +120,30 @@ cm = CanonicalMap(
 canonical_left = apply_evolution(left, canonical_map_to_ops(cm))
 
 # Multi-side maps are allowed: canonical_maps=[("left", cm), ("right", cm_b)]
-completed = validate_and_complete_canonical_map(
+side_maps = validate_and_complete_canonical_map(
     op,
     left=canonical_left,
     right=right,
     canonical_maps=[("left", cm)],
-    allow_implicit_merge=False,
 )
-# completed.vertices may include peers inferred from the cluster, e.g. Org → Company
+# side_maps.left / .right are the per-side maps the clusters lower to,
+# e.g. side_maps.right.vertices == {"Org": "Company"}
 composed = compose_manifests(
-    canonical_left, right, op, canonical_maps=[cm]
+    canonical_left, right, op, canonical_maps=[("left", cm)]
 )
 ```
 
-`canonical_map_to_ops` emits property renames first (keyed by the *source* class names), then class merges (only with `allow_merges=True` — collapsing two classes is a stated intent, not a rename) and renames.
+`canonical_map_to_ops` emits property renames first (keyed by the *source* class names), then class merges (only with `allow_merges=True` — collapsing two classes is a stated intent, not a rename) and renames, then the same pair for relations. It is the **one lowering** both moments share: compose lowers each declared cluster to a per-side `CanonicalMap` and applies it through this function, rather than re-implementing rename/merge resolution of its own.
 
-`validate_and_complete_canonical_map` resolves the bipartite equivalence graph and raises `ComposeCanonicalConflictError` (wrapping `ClusterConflictError` when labels disagree) on: a stale pre-canonical class name used as an equivalence endpoint; an `into` that differs from the **resolved cluster label** (every edge in a connected component must agree); a property equivalence that uses a retired attribute name or re-targets an attribute the map already routed; and equivalences that collapse several classes onto one `into` without `allow_implicit_merge=True`. On success it returns a `CanonicalMap` that includes labels **inferred** for unmapped cluster members. It also warns when an acknowledged collapse will turn an existing edge into a self-relation, since compose bypasses the unary self-relation guard. It deliberately re-checks nothing compose already raises on (collisions, incompatible types, divergent funnels).
+`merge_canonical_maps(base, extension)` is the single conflict primitive underneath: a partial-function union where every source maps to one target and a **target of `base` is a fixed point** the extension may not re-map. Two author maps for one side reconcile through it, and so does an author map against the lowered cluster map.
 
-`validate_compose_against_canonical_map(cm, op, left=..., right=...)` remains as a left-only back-compat wrapper that discards the completed return — prefer `validate_and_complete_canonical_map` for new code.
+`validate_and_complete_canonical_map` indexes the declared clusters and raises `ComposeCanonicalConflictError` (wrapping `ClusterConflictError` for a cluster contradiction) on: a stale pre-canonical class or relation name referenced by an equivalence; an `into` that re-targets a class the canonical map already fixed; a property equivalence that uses a retired attribute name, re-targets an attribute the map already routed, renames an undeclared property, or renames onto one that already exists. On success it returns `SideMaps` — the per-side maps the clusters lower to, ready for `canonical_map_to_ops`. It deliberately re-checks nothing compose already raises on (collisions, incompatible types, divergent funnels).
+
+Self-relations are no longer merely warned about: compose forwards `allow_self_relations` / `allow_row_fusion` from the op to the per-side `MergeVerticesOp`, so the unary guards fire unless the author acknowledges them.
 
 ### Identity alignment
 
-When the composed class should deduplicate entities across its sources, the identity question splits along a principle: **a primary identity is a property of the class**, so the class declares one identity over canonical attributes only — while *how* each source populates those attributes is resource knowledge, expressed as pipeline steps. `IdentityAlignment` states both halves declaratively; put it on `ComposeManifestsOp.identity_alignments` so `compose_manifests` applies it after the schema/resource union (each entry's `vertex` must be a resolved cluster label). Under the hood `alignment_to_ops` still emits only fundamentals:
+When the composed class should deduplicate entities across its sources, the identity question splits along a principle: **a primary identity is a property of the class**, so the class declares one identity over canonical attributes only — while *how* each source populates those attributes is resource knowledge, expressed as pipeline steps. `IdentityAlignment` states both halves declaratively; put it on `ComposeManifestsOp.identity_alignments` so `compose_manifests` applies it after the schema/resource union (each entry's `vertex` must be a declared cluster's `into` label). Under the hood `alignment_to_ops` still emits only fundamentals:
 
 ```python
 from graflo.architecture.evolution import (
@@ -153,7 +173,7 @@ op = ComposeManifestsOp(
     ],
     identity_alignments=[alignment],
 )
-union = compose_manifests(canonical_left, right, op, canonical_maps=[cm])
+union = compose_manifests(canonical_left, right, op, canonical_maps=[("left", cm)])
 ```
 
 The emitted op sequence: `AddVertexPropertiesOp` (declare the canonical attributes), `AddResourceTransformsOp` (per-resource derivation steps, inline calls), `ReplaceIdentityOp` (a priority funnel — one branch per row in order, then the `local_key` fallback; `retire: keep`), and `AddSecondaryIdentitiesOp` (the retired side keys as lookup-only secondaries). Row order is funnel priority: a record keys by the highest-priority attribute it carries, so two records fuse when their strongest present attribute coincides — a match on a lower-priority attribute does not fuse records when one side also carries a stronger one. The `local_key` values are namespaced per resource (`a:f2` vs `b:o1`), so non-aligned records stay ingested without cross-source collisions.

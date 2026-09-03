@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import logging
-
 import pytest
 
 from graflo.architecture.contract.manifest import GraphManifest
@@ -11,16 +9,18 @@ from graflo.architecture.evolution import (
     CanonicalMap,
     ComposeCanonicalConflictError,
     ComposeManifestsOp,
+    MergeEdgesOp,
     MergeVerticesOp,
     PropertyEquivalence,
+    RenameRelationsOp,
     RenameVertexPropertiesOp,
     RenameVerticesOp,
     VertexEquivalence,
     apply_evolution,
     canonical_map_to_ops,
     compose_manifests,
+    merge_canonical_maps,
     validate_and_complete_canonical_map,
-    validate_compose_against_canonical_map,
 )
 from graflo.architecture.schema.core import CoreSchema
 from graflo.architecture.schema.document import Schema
@@ -107,6 +107,26 @@ class TestCanonicalMapModel:
         )
         assert cm.canonical_class("Firm") == "Company"
 
+    def test_identity_entry_alongside_a_merge_is_not_a_false_collision(self) -> None:
+        """A lowered cluster map carries `into: into` for every member.
+
+        That self entry must not read as a second source colliding with the
+        real merge -- it is the mechanism that turns a member-equal-to-`into`
+        into a `MergeVerticesOp` group instead of a colliding rename.
+        """
+        cm = CanonicalMap(
+            vertices={"Company": "Company", "Shop": "Company"}, allow_merges=True
+        )
+        assert cm.canonical_class("Shop") == "Company"
+
+    def test_non_injective_relation_map_rejected(self) -> None:
+        with pytest.raises(ValueError, match="not injective"):
+            CanonicalMap(relations={"signs": "has", "owns": "has"})
+
+    def test_non_injective_relation_map_allowed_with_flag(self) -> None:
+        cm = CanonicalMap(relations={"signs": "has", "owns": "has"}, allow_merges=True)
+        assert cm.canonical_relation("signs") == "has"
+
     def test_non_injective_property_map_rejected(self) -> None:
         with pytest.raises(ValueError, match="not injective"):
             CanonicalMap(properties={"Firm": {"a": "x", "b": "x"}})
@@ -116,9 +136,54 @@ class TestCanonicalMapModel:
         assert _CANONICAL.stale_property_names("Company") == {"firm_id", "firm_label"}
         assert _CANONICAL.canonical_property_names("Company") == {"company_id", "label"}
 
+    def test_stale_relation_names(self) -> None:
+        cm = CanonicalMap(relations={"signs": "has"})
+        assert cm.stale_relation_names == {"signs"}
+        assert cm.canonical_relation("signs") == "has"
+
     def test_identity_mapped_class_is_not_stale(self) -> None:
         cm = CanonicalMap(vertices={"Deal": "Deal", "Firm": "Company"})
         assert cm.stale_class_names == {"Firm"}
+
+
+class TestMergeCanonicalMaps:
+    def test_agreement_unions_cleanly(self) -> None:
+        base = CanonicalMap(vertices={"Firm": "Company"})
+        extension = CanonicalMap(vertices={"Firm": "Company", "Deal": "Deal"})
+        merged = merge_canonical_maps(base, extension)
+        assert merged.vertices == {"Firm": "Company", "Deal": "Deal"}
+
+    def test_source_disagreement_raises(self) -> None:
+        base = CanonicalMap(vertices={"Firm": "Company"})
+        extension = CanonicalMap(vertices={"Firm": "Party"})
+        with pytest.raises(
+            ComposeCanonicalConflictError, match="canonical vertex clash"
+        ):
+            merge_canonical_maps(base, extension)
+
+    def test_base_target_is_a_fixed_point(self) -> None:
+        base = CanonicalMap(vertices={"Firm": "Company"})
+        extension = CanonicalMap(vertices={"Company": "Party"})
+        with pytest.raises(
+            ComposeCanonicalConflictError, match="canonical vertex re-target"
+        ):
+            merge_canonical_maps(base, extension)
+
+    def test_relation_fixed_point(self) -> None:
+        base = CanonicalMap(relations={"signs": "has"})
+        extension = CanonicalMap(relations={"has": "owns"})
+        with pytest.raises(
+            ComposeCanonicalConflictError, match="canonical relation re-target"
+        ):
+            merge_canonical_maps(base, extension)
+
+    def test_property_disagreement_raises(self) -> None:
+        base = CanonicalMap(properties={"Firm": {"a": "x"}})
+        extension = CanonicalMap(properties={"Firm": {"a": "y"}})
+        with pytest.raises(
+            ComposeCanonicalConflictError, match="canonical property clash"
+        ):
+            merge_canonical_maps(base, extension)
 
 
 class TestCanonicalMapToOps:
@@ -150,17 +215,33 @@ class TestCanonicalMapToOps:
         assert merge.sources == ["Firm", "Shop"]
         assert merge.into == "Company"
 
+    def test_collapsed_group_without_allow_merges_raises(self) -> None:
+        cm = CanonicalMap(vertices={"Company": "Company", "Shop": "Company"})
+        with pytest.raises(ValueError, match="allow_merges"):
+            canonical_map_to_ops(cm)
 
-class TestValidateComposeAgainstCanonicalMap:
+    def test_relations_round_trip(self) -> None:
+        cm = CanonicalMap(relations={"a": "r", "b": "r", "c": "d"}, allow_merges=True)
+        ops = canonical_map_to_ops(cm)
+        assert [type(o) for o in ops] == [MergeEdgesOp, RenameRelationsOp]
+        merge, rename = ops
+        assert isinstance(merge, MergeEdgesOp)
+        assert merge.sources == ["a", "b"]
+        assert merge.into == "r"
+        assert isinstance(rename, RenameRelationsOp)
+        assert rename.relations == {"c": "d"}
+
+
+class TestValidateAndCompleteCanonicalMap:
     def _canonical_a(self) -> GraphManifest:
         return apply_evolution(_source_a_manifest(), canonical_map_to_ops(_CANONICAL))
 
-    def _validate(self, op: ComposeManifestsOp, **kwargs) -> None:
-        validate_compose_against_canonical_map(
-            _CANONICAL,
+    def _validate(self, op: ComposeManifestsOp, **kwargs):
+        return validate_and_complete_canonical_map(
             op,
             left=self._canonical_a(),
             right=_right_b_manifest(),
+            canonical_maps=[("left", _CANONICAL)],
             **kwargs,
         )
 
@@ -178,8 +259,15 @@ class TestValidateComposeAgainstCanonicalMap:
                 )
             ]
         )
-        self._validate(op)
-        out = compose_manifests(self._canonical_a(), _right_b_manifest(), op)
+        side_maps = self._validate(op)
+        assert side_maps.left.vertices == {"Company": "Company"}
+        assert side_maps.right.vertices == {"Org": "Company"}
+        out = compose_manifests(
+            self._canonical_a(),
+            _right_b_manifest(),
+            op,
+            canonical_maps=[("left", _CANONICAL)],
+        )
         assert out.graph_schema is not None
         assert out.graph_schema.core_schema.vertex_config.vertex_set == {
             "Company",
@@ -193,11 +281,13 @@ class TestValidateComposeAgainstCanonicalMap:
         with pytest.raises(ComposeCanonicalConflictError, match="stale class name"):
             self._validate(op)
 
-    def test_into_differs_from_left_raises(self) -> None:
+    def test_into_re_targets_canonical_class_raises(self) -> None:
         op = ComposeManifestsOp(
             vertices=[VertexEquivalence(left="Company", right="Org", into="Party")]
         )
-        with pytest.raises(ComposeCanonicalConflictError, match="cluster conflict"):
+        with pytest.raises(
+            ComposeCanonicalConflictError, match="canonical vertex re-target"
+        ):
             self._validate(op)
 
     def test_stale_property_name_raises(self) -> None:
@@ -244,89 +334,112 @@ class TestValidateComposeAgainstCanonicalMap:
             edges=[Edge(source="Org", target="Branch", relation="owns")],
         )
 
-    def _right_collapse_op(self) -> ComposeManifestsOp:
-        # Two right classes onto one canonical left class = implicit merge.
+    def _right_collapse_op(
+        self, *, allow_merges: bool = True, allow_self_relations: bool = False
+    ) -> ComposeManifestsOp:
+        # One right-side n-ary cluster: {Org, Branch} ~ {Company} -> Company.
+        # Declares the composed identity explicitly so this fixture isn't
+        # also exercising the (separately tested) identity-disagreement check.
         return ComposeManifestsOp(
             vertices=[
-                VertexEquivalence(left="Company", right="Org", into="Company"),
-                VertexEquivalence(left="Company", right="Branch", into="Company"),
-            ]
+                VertexEquivalence(
+                    left="Company",
+                    right=["Org", "Branch"],
+                    into="Company",
+                    identity=["company_id"],
+                )
+            ],
+            allow_merges=allow_merges,
+            allow_self_relations=allow_self_relations,
         )
 
-    def test_implicit_merge_requires_ack(self) -> None:
-        with pytest.raises(ComposeCanonicalConflictError, match="implicit merge"):
-            validate_compose_against_canonical_map(
-                _CANONICAL,
-                self._right_collapse_op(),
-                left=self._canonical_a(),
-                right=self._right_two_orgs(),
-            )
+    def test_nary_cluster_without_allow_merges_raises_at_construction(self) -> None:
+        with pytest.raises(ValueError, match="allow_merges"):
+            self._right_collapse_op(allow_merges=False)
 
-    def test_implicit_merge_ack_accepted_and_warns_on_self_relation(
-        self, caplog
-    ) -> None:
-        # The right edge Org -> Branch lands on Company at both ends after the
-        # collapse; the validator accepts the acknowledged merge but warns.
-        with caplog.at_level(logging.WARNING):
-            validate_compose_against_canonical_map(
-                _CANONICAL,
-                self._right_collapse_op(),
-                left=self._canonical_a(),
-                right=self._right_two_orgs(),
-                allow_implicit_merge=True,
-            )
-        assert any("self-relation" in r.getMessage() for r in caplog.records)
-
-    def test_left_collapse_completes_with_ack(self) -> None:
-        # Two left classes in one cluster: Company (canonical target) and Deal
-        # (unmapped). With allow_implicit_merge, Deal is completed onto Company.
-        op = ComposeManifestsOp(
-            vertices=[
-                VertexEquivalence(left="Company", right="Org", into="Company"),
-                VertexEquivalence(left="Deal", right="Branch", into="Company"),
-            ]
-        )
-        completed = validate_and_complete_canonical_map(
+    def test_right_collapse_lowers_and_validates(self) -> None:
+        op = self._right_collapse_op()
+        side_maps = validate_and_complete_canonical_map(
             op,
             left=self._canonical_a(),
             right=self._right_two_orgs(),
             canonical_maps=[("left", _CANONICAL)],
-            allow_implicit_merge=True,
         )
-        assert completed.vertices["Deal"] == "Company"
-        assert completed.vertices["Org"] == "Company"
-        assert completed.vertices["Branch"] == "Company"
+        assert side_maps.right.vertices == {"Org": "Company", "Branch": "Company"}
 
-    def test_left_collapse_without_ack_still_raises(self) -> None:
+    def test_self_relation_merge_raises_without_flag(self) -> None:
+        # The right edge Org -> Branch lands on Company at both ends once
+        # merged; the unary self-relation guard fires because
+        # allow_self_relations was not set on the op.
+        op = self._right_collapse_op()
+        with pytest.raises(ValueError, match="self-relation"):
+            compose_manifests(
+                self._canonical_a(),
+                self._right_two_orgs(),
+                op,
+                canonical_maps=[("left", _CANONICAL)],
+            )
+
+    def test_self_relation_merge_succeeds_with_flag(self) -> None:
+        op = self._right_collapse_op(allow_self_relations=True)
+        out = compose_manifests(
+            self._canonical_a(),
+            self._right_two_orgs(),
+            op,
+            canonical_maps=[("left", _CANONICAL)],
+        )
+        assert out.graph_schema is not None
+        assert out.graph_schema.core_schema.vertex_config.vertex_set == {
+            "Company",
+            "Deal",
+        }
+
+    def test_left_collapse_completes_with_ack(self) -> None:
+        # One n-ary cluster: {Company, Deal} ~ {Org, Branch} -> Company.
         op = ComposeManifestsOp(
             vertices=[
-                VertexEquivalence(left="Company", right="Org", into="Company"),
-                VertexEquivalence(left="Deal", right="Branch", into="Company"),
-            ]
+                VertexEquivalence(
+                    left=["Company", "Deal"], right=["Org", "Branch"], into="Company"
+                )
+            ],
+            allow_merges=True,
         )
-        with pytest.raises(ComposeCanonicalConflictError, match="implicit merge"):
-            validate_compose_against_canonical_map(
-                _CANONICAL,
-                op,
-                left=self._canonical_a(),
-                right=self._right_two_orgs(),
+        side_maps = validate_and_complete_canonical_map(
+            op,
+            left=self._canonical_a(),
+            right=self._right_two_orgs(),
+            canonical_maps=[("left", _CANONICAL)],
+        )
+        assert side_maps.left.vertices == {"Company": "Company", "Deal": "Company"}
+        assert side_maps.right.vertices == {"Org": "Company", "Branch": "Company"}
+
+    def test_left_collapse_without_ack_raises_at_construction(self) -> None:
+        with pytest.raises(ValueError, match="allow_merges"):
+            ComposeManifestsOp(
+                vertices=[
+                    VertexEquivalence(
+                        left=["Company", "Deal"],
+                        right=["Org", "Branch"],
+                        into="Company",
+                    )
+                ]
             )
 
     def test_completion_infers_right_peer(self) -> None:
         op = ComposeManifestsOp(
             vertices=[VertexEquivalence(left="Company", right="Org", into="Company")]
         )
-        completed = validate_and_complete_canonical_map(
+        side_maps = validate_and_complete_canonical_map(
             op,
             left=self._canonical_a(),
             right=_right_b_manifest(),
             canonical_maps=[("left", _CANONICAL)],
         )
-        assert completed.vertices["Firm"] == "Company"
-        assert completed.vertices["Org"] == "Company"
+        assert side_maps.left.vertices == {"Company": "Company"}
+        assert side_maps.right.vertices == {"Org": "Company"}
 
     def test_right_side_canonical_map_and_completion(self) -> None:
-        """A right-side map seeds labels; the left peer is completed."""
+        """A right-side map seeds a label; the left peer is completed by the cluster."""
         right_cm = CanonicalMap(vertices={"Org": "Company"})
         # Right already speaks Company; left still has Firm — compose after
         # renaming right, with an equivalence Firm ≡ Company into Company.
@@ -335,23 +448,55 @@ class TestValidateComposeAgainstCanonicalMap:
         op = ComposeManifestsOp(
             vertices=[VertexEquivalence(left="Firm", right="Company", into="Company")]
         )
-        completed = validate_and_complete_canonical_map(
+        side_maps = validate_and_complete_canonical_map(
             op,
             left=left,
             right=right,
             canonical_maps=[("right", right_cm)],
         )
-        assert completed.vertices["Org"] == "Company"
-        assert completed.vertices["Firm"] == "Company"
+        assert side_maps.left.vertices == {"Firm": "Company"}
+        assert side_maps.right.vertices == {"Company": "Company"}
+
+    def test_both_side_canonical_maps(self) -> None:
+        """Author maps on both sides are checked together, not last-write-wins."""
+        right_cm = CanonicalMap(vertices={"Org": "Company"})
+        right = apply_evolution(_right_b_manifest(), canonical_map_to_ops(right_cm))
+        left = self._canonical_a()
+        op = ComposeManifestsOp(
+            vertices=[
+                VertexEquivalence(
+                    left="Company",
+                    right="Company",
+                    into="Company",
+                    identity=["company_id"],
+                )
+            ]
+        )
+        side_maps = validate_and_complete_canonical_map(
+            op,
+            left=left,
+            right=right,
+            canonical_maps=[("left", _CANONICAL), ("right", right_cm)],
+        )
+        assert side_maps.left.vertices == {"Company": "Company"}
+        assert side_maps.right.vertices == {"Company": "Company"}
+        out = compose_manifests(
+            left, right, op, canonical_maps=[("left", _CANONICAL), ("right", right_cm)]
+        )
+        assert out.graph_schema is not None
+        assert out.graph_schema.core_schema.vertex_config.vertex_set == {
+            "Company",
+            "Deal",
+        }
 
 
 class TestTheTwoChecksDoNotOverlap:
     """`CanonicalMap` validation and compose's own check are disjoint.
 
     The validator compares an op against a *declared* map — stale names, a
-    wrong `into`, retired properties. Compose's check fires on the residue no
-    equivalence covers. A name that trips one cannot trip the other, and this
-    pins that they never double-report the same pair.
+    re-targeted canonical class, retired properties. Compose's check fires on
+    the residue no equivalence covers. A name that trips one cannot trip the
+    other, and this pins that they never double-report the same pair.
     """
 
     @staticmethod

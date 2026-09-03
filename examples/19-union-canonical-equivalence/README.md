@@ -1,10 +1,11 @@
-# 19 — Union of manifests: canonical vocabulary + conditional equivalence
+# 19 — Union of manifests: canonical vocabulary + n-ary equivalence
 
 Two independent manifests describe overlapping entities. Source A speaks its
 own vocabulary (`Firm` / `Shop`, `firm_id` / `shop_id`); a **canonical map**
 translates `Firm` into the target model (`Company`, `company_id`). Source B's
-`Org` and `Branch`, and A's remaining `Shop`, sit in one **n-ary equivalence
-cluster** with `Company` — collapsing onto the same composed class.
+`Org` and `Branch`, and A's remaining `Shop`, are declared as one **n-ary
+equivalence cluster** with `Company` — one `VertexEquivalence` naming every
+member on each side, collapsing onto the same composed class.
 
 The guiding principle: **a primary identity is a property of the class.** The
 merged `Company` gets ONE identity definition referencing only canonical
@@ -18,13 +19,15 @@ gating, normalization, namespacing — is resource knowledge, carried as
 # 1. canonicalize A standalone — Firm → Company; Shop stays for now
 canonical_a = apply_evolution(A, canonical_map_to_ops(canonical_map))
 
-# 2. author the n-ary boundary cluster in canonical names
+# 2. author the n-ary boundary cluster in canonical names — one declaration
+#    naming every member collapsing onto Company
 op = ComposeManifestsOp(
     vertices=[
-        VertexEquivalence(left="Company", right="Org", into="Company"),
-        VertexEquivalence(left="Company", right="Branch", into="Company"),
-        VertexEquivalence(left="Shop", right="Org", into="Company"),
+        VertexEquivalence(
+            left=["Company", "Shop"], right=["Org", "Branch"], into="Company"
+        ),
     ],
+    allow_merges=True,             # a stated intent: >1 member on a side
     identity_alignments=[ALIGNMENT],  # applied inside compose
 )
 
@@ -33,11 +36,12 @@ op = ComposeManifestsOp(
 validate_and_complete_canonical_map(
     op, left=canonical_a, right=B,
     canonical_maps=[("left", canonical_map)],
-    allow_implicit_merge=True,
 )
 
 # 4. compose (name_conflict defaults to "error"); identity_alignments run here
-union = compose_manifests(canonical_a, B, op, canonical_maps=[canonical_map])
+union = compose_manifests(
+    canonical_a, B, op, canonical_maps=[("left", canonical_map)]
+)
 ```
 
 `identity_alignments` on the compose op still emit only fundamentals:
@@ -51,14 +55,25 @@ union = compose_manifests(canonical_a, B, op, canonical_maps=[canonical_map])
 
 ## Cluster consistency
 
-`VertexEquivalence` edges are a bipartite graph. Connected components must
-agree on one `into`. Overlapping "clusters" that share a node but disagree on
-the target — e.g. `{Company}~{Org, Branch}→Company` plus `{Shop, Company}~{Org}→Party`
-— raise `ClusterConflictError` (wrapped as `ComposeCanonicalConflictError` by
-the validator) instead of silently last-write-winning in a rename dict.
+A `VertexEquivalence` declaration *is* one cluster: `left` / `right` each
+accept a bare class name (a 1-1 equivalence) or a list (an n-ary merge,
+requiring `allow_merges=True`). The equivalence layer refuses three ways an
+author could contradict themselves across declarations rather than silently
+picking one:
 
-The same primitive completes the canonical map: an unmapped peer in a resolved
-cluster inherits the cluster label (`Org → Company`).
+- a class claimed by **two** declarations — e.g. `right:Org` named in both
+  `{Company}~{Org, Branch}→Company` and `{Shop}~{Org}→Party` — raises
+  `ClusterConflictError` ("claimed by two equivalence declarations");
+- two declarations sharing one `into` — that collapses them into one composed
+  class, which must be spelled as one n-ary declaration instead;
+- an `into` that already names an existing, non-member class on a side —
+  that would silently merge into an unrelated type.
+
+`ClusterConflictError` is wrapped as `ComposeCanonicalConflictError` when it
+surfaces through `validate_and_complete_canonical_map`.
+
+The same declaration completes the canonical map: an unmapped member (`Org`,
+`Branch`, `Shop`) inherits the cluster's `into` label (`Company`).
 
 ## How the condition works
 
@@ -104,22 +119,26 @@ cd examples/19-union-canonical-equivalence
 uv run python build_union.py                         # → artifacts/manifest_union.yaml
 uv run python inspect_fusion.py                      # which records fuse, and to what
 uv run python build_union.py --stale-demo            # pre-canonical name → conflict
-uv run python build_union.py --conflicting-cluster-demo  # disagreeing into → conflict
+uv run python build_union.py --conflicting-cluster-demo  # overlapping declarations → conflict
 ```
 
-`inspect_fusion.py` prints one row per emitted vertex doc for the gated A/B
-pair (shop/branch resources participate in the schema but are optional in the
-demo cast).
+`inspect_fusion.py` prints one row per emitted vertex doc across the four
+resources feeding `Company`: five records collapse to three vertices, one
+fused pair per aligned key.
 
 ## Notes
 
 - **Equivalence is declared, never inferred.** The canonical map, the
-  `VertexEquivalence` edges, and the `IdentityAlignment` are author-supplied;
+  `VertexEquivalence` cluster, and the `IdentityAlignment` are author-supplied;
   validation only cross-checks the declarations against each other and
-  completes missing canonical labels along declared edges.
+  completes missing canonical labels along the declared cluster.
 - **A merge is a stated intent.** A canonical map that collapses two classes
-  requires `allow_merges: true`; a compose cluster that collapses several
-  classes onto one target requires `allow_implicit_merge=True`.
+  requires `allow_merges: true`, and so does a compose op whose cluster names
+  more than one member on a side — `ComposeManifestsOp(allow_merges=True)`.
+  A merge that would turn an edge into a self-relation, or make one pipeline
+  level produce the composed class twice, needs `allow_self_relations` /
+  `allow_row_fusion` on the same op: compose forwards both to the per-side
+  `MergeVerticesOp` instead of bypassing the unary guards.
 - **Changing the funnel rekeys the graph** — branch order, ids, and field sets
   all feed the digest (see example 17).
 
