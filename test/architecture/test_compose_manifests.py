@@ -588,6 +588,178 @@ def test_properties_that_key_alike_are_not_fused() -> None:
     assert {"customer_email", "customerEmail"} <= names
 
 
+def test_exact_name_properties_fuse_without_equivalence() -> None:
+    """Same spelling on both sides merges for free — no PropertyEquivalence."""
+    left = _manifest(
+        name="l",
+        vertices=[
+            Vertex(
+                name="A",
+                properties=[
+                    Field(name="id", type=FieldType.STRING),
+                    Field(name="email", type=FieldType.STRING),
+                ],
+                identity=["id"],
+            )
+        ],
+        edges=[],
+        resources=[{"name": "r_l", "apply": [{"vertex": "A"}]}],
+    )
+    right = _manifest(
+        name="r",
+        vertices=[
+            Vertex(
+                name="B",
+                properties=[
+                    Field(name="id", type=FieldType.STRING),
+                    Field(name="email", type=FieldType.STRING),
+                ],
+                identity=["id"],
+            )
+        ],
+        edges=[],
+        resources=[{"name": "r_r", "apply": [{"vertex": "B"}]}],
+    )
+    composed = compose_manifests(
+        left,
+        right,
+        ComposeManifestsOp(
+            vertices=[VertexEquivalence(left="A", right="B", into="Person")]
+        ),
+        bump_version=False,
+    )
+    schema = composed.graph_schema
+    assert schema is not None
+    person = next(
+        v for v in schema.core_schema.vertex_config.vertices if v.name == "Person"
+    )
+    names = [f.name for f in person.properties]
+    assert names.count("email") == 1
+    assert names.count("id") == 1
+
+
+def test_disagreeing_into_on_shared_node_raises() -> None:
+    """Overlapping equivalences with different into must not last-write-wins."""
+    left = _manifest(
+        name="l",
+        vertices=[
+            Vertex(name="CA1", properties=[Field(name="id")], identity=["id"]),
+            Vertex(name="CA2", properties=[Field(name="id")], identity=["id"]),
+        ],
+        edges=[],
+        resources=[
+            {"name": "r_a1", "apply": [{"vertex": "CA1"}]},
+            {"name": "r_a2", "apply": [{"vertex": "CA2"}]},
+        ],
+    )
+    right = _manifest(
+        name="r",
+        vertices=[
+            Vertex(name="CB1", properties=[Field(name="id")], identity=["id"]),
+            Vertex(name="CB2", properties=[Field(name="id")], identity=["id"]),
+        ],
+        edges=[],
+        resources=[
+            {"name": "r_b1", "apply": [{"vertex": "CB1"}]},
+            {"name": "r_b2", "apply": [{"vertex": "CB2"}]},
+        ],
+    )
+    from graflo.architecture.evolution import ClusterConflictError
+
+    with pytest.raises(ClusterConflictError, match="disagrees"):
+        compose_manifests(
+            left,
+            right,
+            ComposeManifestsOp(
+                vertices=[
+                    VertexEquivalence(left="CA1", right="CB1", into="X"),
+                    VertexEquivalence(left="CA1", right="CB2", into="X"),
+                    VertexEquivalence(left="CA2", right="CB1", into="Y"),
+                ]
+            ),
+        )
+
+
+def test_identity_alignments_apply_inside_compose() -> None:
+    from graflo.architecture.evolution import (
+        AlignmentRow,
+        DerivationSpec,
+        IdentityAlignment,
+        LocalKeySource,
+        LocalKeySpec,
+    )
+
+    left = _manifest(
+        name="l",
+        vertices=[
+            Vertex(
+                name="Company",
+                properties=[
+                    Field(name="company_id", type=FieldType.STRING),
+                    Field(name="shared_raw", type=FieldType.STRING),
+                ],
+                identity=["company_id"],
+            )
+        ],
+        edges=[],
+        resources=[{"name": "r_a", "apply": [{"vertex": "Company"}]}],
+    )
+    right = _manifest(
+        name="r",
+        vertices=[
+            Vertex(
+                name="Org",
+                properties=[
+                    Field(name="org_id", type=FieldType.STRING),
+                    Field(name="shared_raw", type=FieldType.STRING),
+                ],
+                identity=["org_id"],
+            )
+        ],
+        edges=[],
+        resources=[{"name": "r_b", "apply": [{"vertex": "Org"}]}],
+    )
+    alignment = IdentityAlignment(
+        vertex="Company",
+        rows=[
+            AlignmentRow(
+                into="match_key",
+                sources={
+                    "r_a": DerivationSpec(input=["shared_raw"]),
+                    "r_b": DerivationSpec(input=["shared_raw"]),
+                },
+            )
+        ],
+        local_key=LocalKeySpec(
+            sources={
+                "r_a": LocalKeySource(field="company_id", tag="a"),
+                "r_b": LocalKeySource(field="org_id", tag="b"),
+            }
+        ),
+        secondary_identities={
+            "by_company_id": ["company_id"],
+            "by_org_id": ["org_id"],
+        },
+    )
+    composed = compose_manifests(
+        left,
+        right,
+        ComposeManifestsOp(
+            vertices=[VertexEquivalence(left="Company", right="Org", into="Company")],
+            identity_alignments=[alignment],
+        ),
+        bump_version=False,
+    )
+    assert composed.graph_schema is not None
+    vc = composed.graph_schema.core_schema.vertex_config
+    assert {"match_key", "local_key"} <= set(vc.property_names("Company"))
+    assert vc.identity_fields("Company") == ["id"]
+    assert {s.name for s in vc.secondary_identities("Company")} == {
+        "by_company_id",
+        "by_org_id",
+    }
+
+
 def test_an_equivalence_in_the_wrong_convention_says_what_to_use() -> None:
     """The likeliest authoring mistake gets a way out, not a dead end."""
     with pytest.raises(ValueError, match="denotes the same concept"):

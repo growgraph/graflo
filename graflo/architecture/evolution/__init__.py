@@ -104,7 +104,19 @@ _CANONICAL_EXPORTS = frozenset(
         "CanonicalMap",
         "ComposeCanonicalConflictError",
         "canonical_map_to_ops",
+        "validate_and_complete_canonical_map",
         "validate_compose_against_canonical_map",
+    }
+)
+
+_EQUIVALENCE_EXPORTS = frozenset(
+    {
+        "Cluster",
+        "ClusterConflictError",
+        "ResolvedCluster",
+        "build_clusters",
+        "resolve_cluster_labels",
+        "vertex_rename_maps",
     }
 )
 
@@ -234,6 +246,8 @@ __all__ = [
     "BlankIdentityTarget",
     "CanonicalMap",
     "ChangeFieldTypesOp",
+    "Cluster",
+    "ClusterConflictError",
     "Commit",
     "CommitError",
     "ComposeCanonicalConflictError",
@@ -284,6 +298,7 @@ __all__ = [
     "RenameVerticesOp",
     "ReplaceEdgeIdentitiesOp",
     "ReplaceIdentityOp",
+    "ResolvedCluster",
     "RetargetEdgesOp",
     "RevisionOp",
     "SanitizeOp",
@@ -323,6 +338,7 @@ __all__ = [
     "apply_retarget_edges",
     "apply_sanitize",
     "apply_set_edge_directed",
+    "build_clusters",
     "build_commit",
     "build_merge_commit",
     "build_recipe",
@@ -354,13 +370,16 @@ __all__ = [
     "ops_to_dicts",
     "ops_to_yaml_str",
     "re_merge",
+    "resolve_cluster_labels",
     "schema_hash",
     "stable_hash",
     "take_left",
     "take_right",
     "validate_alignment",
+    "validate_and_complete_canonical_map",
     "validate_compose_against_canonical_map",
     "verify_history",
+    "vertex_rename_maps",
 ]
 
 
@@ -385,6 +404,10 @@ def __getattr__(name: str) -> Any:
         from . import canonical as canonical_mod
 
         return getattr(canonical_mod, name)
+    if name in _EQUIVALENCE_EXPORTS:
+        from . import equivalence as equivalence_mod
+
+        return getattr(equivalence_mod, name)
     if name in _IDENTITY_EXPORTS:
         from . import identity as identity_mod
 

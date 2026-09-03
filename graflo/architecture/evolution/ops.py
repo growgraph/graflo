@@ -914,6 +914,12 @@ class PropertyEquivalence(ConfigBaseModel):
 
     At least one of ``left`` / ``right`` must be set. When both are set, both fields
     rename to ``into`` before the vertices are merged.
+
+    Exact-name matches do **not** need a :class:`PropertyEquivalence`: after
+    boundary rename, ``merge_vertex_models`` unions fields by spelling, so a
+    property present under the same name on both sides fuses for free. Declare
+    an equivalence only to rename, to pick a different ``into``, or to flag
+    ``identity=True``.
     """
 
     left: str | None = PydanticField(
@@ -949,6 +955,12 @@ class VertexEquivalence(ConfigBaseModel):
     """Collapse a left vertex and a right vertex into one composed type.
 
     GraFlo applies this map deterministically; it does not infer semantic matches.
+    Several equivalences form a bipartite graph; connected components must agree
+    on one ``into`` (see :mod:`~graflo.architecture.evolution.equivalence`).
+
+    Properties with the same spelling on both sides after alignment fuse by
+    exact name without an entry in ``properties`` — list only renames and
+    identity-flagged fields.
     """
 
     left: str = PydanticField(..., description="Vertex type name in the left manifest.")
@@ -992,6 +1004,10 @@ class ComposeManifestsOp(ConfigBaseModel):
 
     Empty ``vertices`` / ``relations`` yields a disjoint union (schema + resources +
     bindings), subject to ``name_conflict`` / ``resource_renames``.
+
+    ``identity_alignments`` are applied to the composed union before return
+    (canonical attributes → resource derivations → priority funnel → secondaries).
+    Each entry's ``vertex`` must be a resolved cluster label from ``vertices``.
     """
 
     op: Literal["compose_manifests"] = "compose_manifests"
@@ -1022,6 +1038,33 @@ class ComposeManifestsOp(ConfigBaseModel):
             "concepts, so it behaves as ``error`` for them)."
         ),
     )
+    identity_alignments: list[Any] = PydanticField(
+        default_factory=list,
+        description=(
+            "Optional :class:`~graflo.architecture.evolution.alignment.IdentityAlignment` "
+            "entries applied after the schema/resource union. Accepted as models or "
+            "dicts; validated at compose time."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _validate_identity_alignments(self) -> ComposeManifestsOp:
+        if not self.identity_alignments:
+            return self
+        # Deferred import: IdentityAlignment lives in alignment.py, which imports
+        # ManifestOp from this module.
+        from .alignment import IdentityAlignment
+
+        validated: list[IdentityAlignment] = []
+        for entry in self.identity_alignments:
+            if isinstance(entry, IdentityAlignment):
+                validated.append(entry)
+            else:
+                validated.append(IdentityAlignment.model_validate(entry))
+        # Bypass validate_assignment — writing the field would re-enter this
+        # validator and recurse forever.
+        object.__setattr__(self, "identity_alignments", validated)
+        return self
 
 
 ManifestOp = Annotated[

@@ -19,6 +19,7 @@ from graflo.architecture.evolution import (
     apply_evolution,
     canonical_map_to_ops,
     compose_manifests,
+    validate_and_complete_canonical_map,
     validate_compose_against_canonical_map,
 )
 from graflo.architecture.schema.core import CoreSchema
@@ -196,7 +197,7 @@ class TestValidateComposeAgainstCanonicalMap:
         op = ComposeManifestsOp(
             vertices=[VertexEquivalence(left="Company", right="Org", into="Party")]
         )
-        with pytest.raises(ComposeCanonicalConflictError, match="into != left"):
+        with pytest.raises(ComposeCanonicalConflictError, match="cluster conflict"):
             self._validate(op)
 
     def test_stale_property_name_raises(self) -> None:
@@ -276,23 +277,72 @@ class TestValidateComposeAgainstCanonicalMap:
             )
         assert any("self-relation" in r.getMessage() for r in caplog.records)
 
-    def test_left_collapse_is_caught_as_into_conflict(self) -> None:
-        # Collapsing two canonical left classes at compose time is wrong even
-        # with the ack — canonical-class merges belong in the CanonicalMap.
+    def test_left_collapse_completes_with_ack(self) -> None:
+        # Two left classes in one cluster: Company (canonical target) and Deal
+        # (unmapped). With allow_implicit_merge, Deal is completed onto Company.
         op = ComposeManifestsOp(
             vertices=[
                 VertexEquivalence(left="Company", right="Org", into="Company"),
                 VertexEquivalence(left="Deal", right="Branch", into="Company"),
             ]
         )
-        with pytest.raises(ComposeCanonicalConflictError, match="into != left"):
+        completed = validate_and_complete_canonical_map(
+            op,
+            left=self._canonical_a(),
+            right=self._right_two_orgs(),
+            canonical_maps=[("left", _CANONICAL)],
+            allow_implicit_merge=True,
+        )
+        assert completed.vertices["Deal"] == "Company"
+        assert completed.vertices["Org"] == "Company"
+        assert completed.vertices["Branch"] == "Company"
+
+    def test_left_collapse_without_ack_still_raises(self) -> None:
+        op = ComposeManifestsOp(
+            vertices=[
+                VertexEquivalence(left="Company", right="Org", into="Company"),
+                VertexEquivalence(left="Deal", right="Branch", into="Company"),
+            ]
+        )
+        with pytest.raises(ComposeCanonicalConflictError, match="implicit merge"):
             validate_compose_against_canonical_map(
                 _CANONICAL,
                 op,
                 left=self._canonical_a(),
                 right=self._right_two_orgs(),
-                allow_implicit_merge=True,
             )
+
+    def test_completion_infers_right_peer(self) -> None:
+        op = ComposeManifestsOp(
+            vertices=[VertexEquivalence(left="Company", right="Org", into="Company")]
+        )
+        completed = validate_and_complete_canonical_map(
+            op,
+            left=self._canonical_a(),
+            right=_right_b_manifest(),
+            canonical_maps=[("left", _CANONICAL)],
+        )
+        assert completed.vertices["Firm"] == "Company"
+        assert completed.vertices["Org"] == "Company"
+
+    def test_right_side_canonical_map_and_completion(self) -> None:
+        """A right-side map seeds labels; the left peer is completed."""
+        right_cm = CanonicalMap(vertices={"Org": "Company"})
+        # Right already speaks Company; left still has Firm — compose after
+        # renaming right, with an equivalence Firm ≡ Company into Company.
+        right = apply_evolution(_right_b_manifest(), canonical_map_to_ops(right_cm))
+        left = _source_a_manifest()
+        op = ComposeManifestsOp(
+            vertices=[VertexEquivalence(left="Firm", right="Company", into="Company")]
+        )
+        completed = validate_and_complete_canonical_map(
+            op,
+            left=left,
+            right=right,
+            canonical_maps=[("right", right_cm)],
+        )
+        assert completed.vertices["Org"] == "Company"
+        assert completed.vertices["Firm"] == "Company"
 
 
 class TestTheTwoChecksDoNotOverlap:

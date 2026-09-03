@@ -49,9 +49,47 @@ ingestion_model:
         infer_edge_only: []
         infer_edges: true
         merge_collections: []
+        name: r_shop
+        pipeline:
+        -   type: vertex
+            vertex: Company
+        -   transform:
+                call:
+                    foo: gated_normalized_key
+                    input:
+                    -   secondary_key
+                    -   shared_raw
+                    module: graflo.util.transform
+                    output:
+                    -   match_key
+                    params:
+                        prefix: abc_
+                        strip_prefix: ABC-
+        -   transform:
+                call:
+                    foo: tagged_key
+                    input:
+                    -   shop_id
+                    module: graflo.util.transform
+                    output:
+                    -   local_key
+                    params:
+                        sep: ':'
+                        tag: shop
+        tolerate_transform_errors: true
+        types: {}
+    -   drop_trivial_input_fields: false
+        encoding: utf-8
+        extra_weights: []
+        fail_fast: false
+        infer_edge_except: []
+        infer_edge_only: []
+        infer_edges: true
+        merge_collections: []
         name: r_b
         pipeline:
-        -   vertex: Company
+        -   type: vertex
+            vertex: Company
         -   transform:
                 call:
                     foo: gated_normalized_key
@@ -75,6 +113,43 @@ ingestion_model:
                     params:
                         sep: ':'
                         tag: b
+        tolerate_transform_errors: true
+        types: {}
+    -   drop_trivial_input_fields: false
+        encoding: utf-8
+        extra_weights: []
+        fail_fast: false
+        infer_edge_except: []
+        infer_edge_only: []
+        infer_edges: true
+        merge_collections: []
+        name: r_branch
+        pipeline:
+        -   type: vertex
+            vertex: Company
+        -   transform:
+                call:
+                    foo: gated_normalized_key
+                    input:
+                    -   branch_id
+                    -   shared_raw
+                    module: graflo.util.transform
+                    output:
+                    -   match_key
+                    params:
+                        prefix: ''
+                        strip_prefix: ABC-
+        -   transform:
+                call:
+                    foo: tagged_key
+                    input:
+                    -   branch_id
+                    module: graflo.util.transform
+                    output:
+                    -   local_key
+                    params:
+                        sep: ':'
+                        tag: br
         tolerate_transform_errors: true
         types: {}
     transforms: []
@@ -107,22 +182,37 @@ schema:
                 -   name: company_id
                 -   name: secondary_key
                 -   name: shared_raw
+                -   name: shop_id
+                -   name: branch_id
                 -   name: org_id
                 -   name: match_key
                 -   name: local_key
                 -   name: id
                 secondary_identities:
                 -   fields:
+                    -   branch_id
+                    name: by_branch_id
+                -   fields:
                     -   company_id
                     name: by_company_id
                 -   fields:
                     -   org_id
                     name: by_org_id
+                -   fields:
+                    -   shop_id
+                    name: by_shop_id
     db_profile:
         db_flavor: arango
         edge_specs: []
         vertex_indexes:
             Company:
+            -   deduplicate: true
+                exclude_edge_endpoints: false
+                fields:
+                -   branch_id
+                sparse: false
+                type: persistent
+                unique: false
             -   deduplicate: true
                 exclude_edge_endpoints: false
                 fields:
@@ -137,7 +227,14 @@ schema:
                 sparse: false
                 type: persistent
                 unique: false
+            -   deduplicate: true
+                exclude_edge_endpoints: false
+                fields:
+                -   shop_id
+                sparse: false
+                type: persistent
+                unique: false
         vertex_storage_names: {}
     metadata:
         name: source-a+source-b
-        version: 1.3.0
+        version: 1.2.0

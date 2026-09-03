@@ -1,27 +1,30 @@
 """Canonical vocabulary maps: derive rename ops and validate compose against them.
 
-A :class:`CanonicalMap` is the author-declared translation of one manifest's
-vocabulary (classes and properties) into a canonical target vocabulary. It is a
-single source of truth serving two moments of a union build:
+A :class:`CanonicalMap` is the author-declared translation of class and property
+names into a canonical target vocabulary. It is a *partial function*
+``{C1, C2, ...} → C_canon`` — sources may come from either side of a compose.
+Two moments of a union build consume it:
 
 1. :func:`canonical_map_to_ops` turns the map into unary evolution ops that
-   canonicalize the source manifest standalone (property renames first, then
+   canonicalize one source manifest standalone (property renames first, then
    class merges/renames), ready for
    :func:`~graflo.architecture.evolution.apply.apply_evolution`.
-2. :func:`validate_compose_against_canonical_map` cross-checks a
-   :class:`~graflo.architecture.evolution.ops.ComposeManifestsOp` against the
-   same map *before* :func:`~graflo.architecture.evolution.compose.compose_manifests`
-   runs, failing loudly on conflicts compose itself cannot see — most notably a
-   stale pre-canonical name that would otherwise compose silently into the
-   wrong union.
+2. :func:`validate_and_complete_canonical_map` cross-checks a
+   :class:`~graflo.architecture.evolution.ops.ComposeManifestsOp` against maps
+   from either side *before*
+   :func:`~graflo.architecture.evolution.compose.compose_manifests` runs, and
+   **completes** the map: a class that sits in an equivalence cluster with a
+   canonically labelled peer inherits that label when it has none of its own.
 
 Like compose itself, this module applies declared maps deterministically; it
-never infers semantic matches.
+never infers semantic matches beyond completing labels along declared
+equivalence edges.
 """
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 
 from pydantic import Field as PydanticField
 from pydantic import model_validator
@@ -29,6 +32,13 @@ from pydantic import model_validator
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.contract.manifest import GraphManifest
 
+from .equivalence import (
+    ClusterConflictError,
+    Node,
+    Side,
+    build_clusters,
+    resolve_cluster_labels,
+)
 from .ops import (
     ComposeManifestsOp,
     ManifestOp,
@@ -53,6 +63,10 @@ class CanonicalMap(ConfigBaseModel):
     absent from the map keeps its name (identity mapping). ``properties`` maps,
     per *source* class name, source attribute names to canonical attribute
     names — including for classes whose name does not change.
+
+    When used with compose validation, source names may come from either
+    manifest side; the side is supplied separately as
+    ``(side, CanonicalMap)`` pairs to :func:`validate_and_complete_canonical_map`.
     """
 
     vertices: dict[str, str] = PydanticField(
@@ -171,44 +185,170 @@ def _conflict(check: str, detail: str, hint: str) -> ComposeCanonicalConflictErr
     )
 
 
-def validate_compose_against_canonical_map(
-    cm: CanonicalMap,
+def _explicit_canonical_labels(
+    canonical_maps: Sequence[tuple[Side, CanonicalMap]],
+) -> dict[Node, str]:
+    """``(side, name) → label`` for every *explicit* (non-identity) map entry.
+
+    Identity entries (``source == target``) are omitted so they do not force a
+    cluster label when a peer contributes a real rename.
+    """
+    labels: dict[Node, str] = {}
+    for side, cm in canonical_maps:
+        for source, target in cm.vertices.items():
+            if source == target:
+                continue
+            node: Node = (side, source)
+            existing = labels.get(node)
+            if existing is not None and existing != target:
+                raise _conflict(
+                    "canonical label clash",
+                    f"{side}:{source} maps to both {existing!r} and {target!r}",
+                    "Supply at most one non-identity canonical label per "
+                    "(side, class).",
+                )
+            labels[node] = target
+        # Also record identity-mapped sources that appear only as property keys
+        # so stale-property checks still find them — but not as cluster labels.
+    return labels
+
+
+def _merged_input_map(
+    canonical_maps: Sequence[tuple[Side, CanonicalMap]],
+) -> CanonicalMap:
+    """Union of all supplied maps (vertices + properties) before completion."""
+    vertices: dict[str, str] = {}
+    properties: dict[str, dict[str, str]] = {}
+    allow_merges = False
+    for _side, cm in canonical_maps:
+        allow_merges = allow_merges or cm.allow_merges
+        for source, target in cm.vertices.items():
+            existing = vertices.get(source)
+            if existing is not None and existing != target:
+                raise _conflict(
+                    "canonical label clash",
+                    f"{source!r} maps to both {existing!r} and {target!r} "
+                    "across supplied maps",
+                    "Reconcile the canonical maps before compose.",
+                )
+            vertices[source] = target
+        for source_class, attr_map in cm.properties.items():
+            bucket = properties.setdefault(source_class, {})
+            for old, new in attr_map.items():
+                existing = bucket.get(old)
+                if existing is not None and existing != new:
+                    raise _conflict(
+                        "canonical property clash",
+                        f"{source_class}.{old} maps to both {existing!r} and {new!r}",
+                        "Reconcile the canonical maps before compose.",
+                    )
+                bucket[old] = new
+    return CanonicalMap(
+        vertices=vertices, properties=properties, allow_merges=allow_merges
+    )
+
+
+def validate_and_complete_canonical_map(
     op: ComposeManifestsOp,
     *,
     left: GraphManifest,
     right: GraphManifest,
+    canonical_maps: Sequence[tuple[Side, CanonicalMap]] = (),
     allow_implicit_merge: bool = False,
-) -> None:
-    """Fail loudly when *op* contradicts the canonical map *left* was built with.
+) -> CanonicalMap:
+    """Validate *op* against canonical maps and return a completed map.
 
-    *left* is the already-canonicalized manifest (the output of applying
-    :func:`canonical_map_to_ops`); *right* is the other side of the compose.
-    Raises :class:`ComposeCanonicalConflictError` on the first conflict; emits
-    a warning for compose merges that will create self-relations (compose
-    bypasses the unary self-relation guard).
+    *canonical_maps* is a sequence of ``(side, map)`` pairs — ``side`` says
+    which manifest the map's source names belong to. *left* / *right* are the
+    manifests about to be composed (typically already canonicalized on the
+    side that supplied a map).
+
+    Raises :class:`ComposeCanonicalConflictError` (or wraps
+    :class:`~graflo.architecture.evolution.equivalence.ClusterConflictError`)
+    when cluster labels disagree, a stale pre-canonical name appears in the
+    op, or an unacknowledged multi-source merge is declared. On success,
+    returns a :class:`CanonicalMap` that includes labels *inferred* for
+    unmapped cluster members (completion along equivalence edges).
 
     Deliberately not re-checked here: everything compose already raises on —
     missing equivalence endpoints, name collisions under
     ``name_conflict="error"``, incompatible property types, divergent funnels.
-    That now includes **undeclared canonical near-collisions** between the two
-    vocabularies, which ``compose_manifests`` raises on directly with
-    ``ComposeNameConflictError``. The two are disjoint by construction: this
-    function only ever compares an op against a map the author *declared*,
-    while compose's check fires on the residue no equivalence covers.
+    That includes **undeclared canonical near-collisions** between the two
+    vocabularies (``ComposeNameConflictError``).
     """
-    stale_classes = cm.stale_class_names
+    maps = list(canonical_maps)
+    base = _merged_input_map(maps)
+    stale_classes = base.stale_class_names
 
-    into_by_left: dict[str, set[str]] = {}
-    into_by_right: dict[str, set[str]] = {}
     for veq in op.vertices:
-        into_by_left.setdefault(veq.into, set()).add(veq.left)
-        into_by_right.setdefault(veq.into, set()).add(veq.right)
+        _check_stale_class(veq, stale_classes, base)
+        _check_properties(veq, base)
 
-        _check_stale_class(veq, stale_classes, cm)
-        _check_into_is_left(veq)
-        _check_properties(veq, cm)
+    clusters = build_clusters(op.vertices)
+    explicit_labels = _explicit_canonical_labels(maps)
+
+    # A side that supplied a map already speaks the canonical vocabulary for
+    # classes the map named as *targets* (and identity-mapped sources). Those
+    # contribute ``(side, name) → name`` so an ``into`` that disagrees with an
+    # already-canonical left class conflicts. Classes absent from the map are
+    # deliberately free to join a cluster and be completed (e.g. Shop → Company).
+    for side, cm in maps:
+        targets = set(cm.vertices.values())
+        identity_sources = {
+            source for source, target in cm.vertices.items() if source == target
+        }
+        for name in targets | identity_sources:
+            node: Node = (side, name)
+            explicit_labels.setdefault(node, name)
+
+    try:
+        resolved = resolve_cluster_labels(clusters, explicit_labels)
+    except ClusterConflictError as exc:
+        raise ComposeCanonicalConflictError(
+            f"compose contradicts the canonical map (cluster conflict): {exc}"
+        ) from exc
+
+    # Completions: unmapped members inherit the resolved cluster label.
+    # Recompute unmapped against the *author-supplied* explicit entries only
+    # (not identity seeds), so a right-side peer of a left-canonical class is
+    # still completed.
+    author_labels = _explicit_canonical_labels(maps)
+    completed_vertices = dict(base.vertices)
+    for item in resolved:
+        for side, name in item.cluster.members:
+            if (side, name) in author_labels:
+                continue
+            if name == item.label:
+                continue
+            existing = completed_vertices.get(name)
+            if existing is not None and existing != item.label:
+                raise _conflict(
+                    "completion clash",
+                    f"{side}:{name} would complete to {item.label!r} but the "
+                    f"map already has {existing!r}",
+                    "Reconcile the canonical map with the equivalence cluster.",
+                )
+            completed_vertices[name] = item.label
+
+        for veq in item.cluster.edges:
+            if veq.into != item.label:
+                raise _conflict(
+                    "into != cluster label",
+                    f"equivalence maps {veq.left!r} ≡ {veq.right!r} into "
+                    f"{veq.into!r}, but the cluster resolves to {item.label!r}",
+                    "Set `into` to the resolved cluster label, or fix the "
+                    "canonical map.",
+                )
 
     if not allow_implicit_merge:
+        # Aggregation is by declared ``into``, not by connected component:
+        # two disjoint edges that both name the same ``into`` still collapse
+        # those classes onto one composed type.
+        into_by_left: dict[str, set[str]] = {}
+        into_by_right: dict[str, set[str]] = {}
+        for veq in op.vertices:
+            into_by_left.setdefault(veq.into, set()).add(veq.left)
+            into_by_right.setdefault(veq.into, set()).add(veq.right)
         for into, lefts in sorted(into_by_left.items()):
             if len(lefts) > 1:
                 raise _conflict(
@@ -222,7 +362,8 @@ def validate_compose_against_canonical_map(
             if len(rights) > 1:
                 raise _conflict(
                     "implicit merge",
-                    f"equivalences collapse right classes {sorted(rights)} into {into!r}",
+                    f"equivalences collapse right classes {sorted(rights)} into "
+                    f"{into!r}",
                     "Compose treats a shared `into` as a merge with the unary "
                     "guards bypassed; pass allow_implicit_merge=True to state "
                     "the intent.",
@@ -230,11 +371,52 @@ def validate_compose_against_canonical_map(
 
     _warn_on_composed_self_relations(op, left=left, right=right)
 
+    # Completing peers onto one label is a stated merge across sources — the
+    # returned map must accept non-injective vertices.
+    allow_merges = base.allow_merges
+    by_target: dict[str, list[str]] = {}
+    for source, target in completed_vertices.items():
+        by_target.setdefault(target, []).append(source)
+    if any(len(sources) > 1 for sources in by_target.values()):
+        allow_merges = True
+    if any(
+        len(item.cluster.left_names) > 1 or len(item.cluster.right_names) > 1
+        for item in resolved
+    ):
+        allow_merges = True
+
+    return CanonicalMap(
+        vertices=completed_vertices,
+        properties=dict(base.properties),
+        allow_merges=allow_merges,
+    )
+
+
+def validate_compose_against_canonical_map(
+    cm: CanonicalMap,
+    op: ComposeManifestsOp,
+    *,
+    left: GraphManifest,
+    right: GraphManifest,
+    allow_implicit_merge: bool = False,
+) -> None:
+    """Back-compat wrapper: left-side map only, discard the completed return.
+
+    Prefer :func:`validate_and_complete_canonical_map` for new code.
+    """
+    validate_and_complete_canonical_map(
+        op,
+        left=left,
+        right=right,
+        canonical_maps=[("left", cm)],
+        allow_implicit_merge=allow_implicit_merge,
+    )
+
 
 def _check_stale_class(
     veq: VertexEquivalence, stale_classes: set[str], cm: CanonicalMap
 ) -> None:
-    for role, name in (("left", veq.left), ("into", veq.into)):
+    for role, name in (("left", veq.left), ("into", veq.into), ("right", veq.right)):
         if name in stale_classes:
             raise _conflict(
                 "stale class name",
@@ -244,39 +426,34 @@ def _check_stale_class(
             )
 
 
-def _check_into_is_left(veq: VertexEquivalence) -> None:
-    if veq.into != veq.left:
-        raise _conflict(
-            "into != left",
-            f"equivalence maps {veq.left!r} ≡ {veq.right!r} into {veq.into!r}, "
-            f"but the left side already speaks the canonical vocabulary",
-            "The union is expressed in canonical names: set "
-            "`into` to the (canonical) left class name, or fix the canonical "
-            "map if the target class is wrong.",
-        )
-
-
 def _check_properties(veq: VertexEquivalence, cm: CanonicalMap) -> None:
-    stale_attrs = cm.stale_property_names(veq.left)
-    canonical_attrs = cm.canonical_property_names(veq.left)
-    for pe in veq.properties:
-        for role, name in (("left", pe.left), ("into", pe.into)):
-            if name is not None and name in stale_attrs:
+    # Property stale/retarget checks are keyed by the composed class name
+    # (``into`` / left after canonicalization).
+    for anchor in {veq.left, veq.into}:
+        stale_attrs = cm.stale_property_names(anchor)
+        canonical_attrs = cm.canonical_property_names(anchor)
+        for pe in veq.properties:
+            for role, name in (("left", pe.left), ("into", pe.into)):
+                if name is not None and name in stale_attrs:
+                    raise _conflict(
+                        "stale property name",
+                        f"property equivalence {role} {name!r} on {anchor!r} is a "
+                        "pre-canonical attribute name",
+                        "Author property equivalences in the canonical vocabulary.",
+                    )
+            if (
+                pe.left is not None
+                and pe.left in canonical_attrs
+                and pe.into != pe.left
+            ):
                 raise _conflict(
-                    "stale property name",
-                    f"property equivalence {role} {name!r} on {veq.left!r} is a "
-                    "pre-canonical attribute name",
-                    "Author property equivalences in the canonical vocabulary.",
+                    "property re-target",
+                    f"the canonical map routes an attribute of {anchor!r} onto "
+                    f"{pe.left!r}, but the equivalence renames it to {pe.into!r}",
+                    "Keep canonical attributes stable on the composed class: "
+                    "align the right attribute onto the canonical name, or fix "
+                    "the canonical map.",
                 )
-        if pe.left is not None and pe.left in canonical_attrs and pe.into != pe.left:
-            raise _conflict(
-                "property re-target",
-                f"the canonical map routes an attribute of {veq.left!r} onto "
-                f"{pe.left!r}, but the equivalence renames it to {pe.into!r}",
-                "Keep canonical attributes stable on the left side: align the "
-                "right attribute onto the canonical name, or fix the "
-                "canonical map.",
-            )
 
 
 def _warn_on_composed_self_relations(

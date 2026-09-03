@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from typing import Any, Literal
 
 from graflo.architecture.contract.bindings import Bindings
@@ -74,12 +74,22 @@ def _property_rename_maps(
 def _vertex_rename_map(
     equivalences: list[VertexEquivalence], *, side: Literal["left", "right"]
 ) -> dict[str, str]:
-    mapping: dict[str, str] = {}
-    for veq in equivalences:
-        source = veq.left if side == "left" else veq.right
-        if source != veq.into:
-            mapping[source] = veq.into
-    return mapping
+    """Build a per-side rename map via cluster resolution (no last-write-wins)."""
+    from .equivalence import build_clusters, resolve_cluster_labels, vertex_rename_maps
+
+    if not equivalences:
+        return {}
+    resolved = resolve_cluster_labels(build_clusters(equivalences))
+    left_map, right_map = vertex_rename_maps(resolved)
+    return left_map if side == "left" else right_map
+
+
+def _resolved_cluster_labels(equivalences: list[VertexEquivalence]) -> set[str]:
+    from .equivalence import build_clusters, resolve_cluster_labels
+
+    if not equivalences:
+        return set()
+    return {item.label for item in resolve_cluster_labels(build_clusters(equivalences))}
 
 
 def _relation_rename_map(
@@ -181,20 +191,29 @@ def _apply_vertex_alignment(manifest: GraphManifest, vmap: dict[str, str]) -> No
     is a merge, not a rename, so it goes through the merge machinery — which unions
     properties and identity and redirects edges — rather than leaving the schema
     transiently holding two definitions under one name.
+
+    A single source renaming onto a name that *already exists* on this side (e.g.
+    ``Shop → Company`` when ``Company`` is already present from a prior
+    canonicalization) is likewise a merge: a plain rename would collide.
     """
+    schema = _require_schema(manifest, "aligned")
+    existing = set(schema.core_schema.vertex_config.vertex_set)
+
     groups: dict[str, list[str]] = {}
     for source, target in vmap.items():
         groups.setdefault(target, []).append(source)
 
     injective: dict[str, str] = {}
     for target, sources in sorted(groups.items()):
-        if len(sources) == 1:
-            injective[sources[0]] = target
-            continue
         merge_sources = sorted(name for name in sources if name != target)
-        # Composition is where merging two types onto one boundary name is the whole
-        # point, and the caller stated the equivalence explicitly, so the merge
-        # guards do not apply here.
+        if not merge_sources:
+            continue
+        target_occupied = target in existing and target not in merge_sources
+        if len(merge_sources) == 1 and not target_occupied:
+            injective[merge_sources[0]] = target
+            existing.discard(merge_sources[0])
+            existing.add(target)
+            continue
         apply_merge_vertices(
             manifest,
             MergeVerticesOp(
@@ -204,6 +223,8 @@ def _apply_vertex_alignment(manifest: GraphManifest, vmap: dict[str, str]) -> No
                 allow_row_fusion=True,
             ),
         )
+        existing -= set(merge_sources)
+        existing.add(target)
     if injective:
         _rename_vertices_inplace(manifest, injective)
 
@@ -739,12 +760,19 @@ def compose_manifests(
     finish_init: bool = True,
     strict_references: bool = False,
     dynamic_edge_feedback: bool = False,
+    canonical_maps: Sequence[Any] = (),
 ) -> GraphManifest:
     """Return a new manifest that is the deterministic compose of *left* and *right*.
 
     Applies explicit equivalences in *op* (property alignment → boundary rename →
     union of schema / resources / bindings → merge equivalent types). Does not
     invent semantic matches.
+
+    When ``op.identity_alignments`` is non-empty, the composed union is further
+    rewritten by the fundamental ops emitted from each alignment (see
+    :func:`~graflo.architecture.evolution.alignment.alignment_to_ops`). Pass
+    *canonical_maps* so derivation inputs written in canonical vocabulary fail
+    loudly rather than silently deriving nothing.
     """
     if not isinstance(op, ComposeManifestsOp):
         raise TypeError(
@@ -770,6 +798,13 @@ def compose_manifests(
                 f"compose_manifests: right vertex {veq.right!r} not in right "
                 f"manifest{_did_you_mean(veq.right, right_vertices)}"
             )
+
+    # Resolve clusters up front so disagreeing ``into`` labels fail before any
+    # rename mutates either side (closes the last-write-wins dict bug).
+    if op.vertices:
+        from .equivalence import build_clusters, resolve_cluster_labels
+
+        resolve_cluster_labels(build_clusters(op.vertices))
 
     _align_side(out_left, side="left", op=op)
     _align_side(out_right, side="right", op=op)
@@ -800,9 +835,64 @@ def compose_manifests(
     )
     _bump_schema_version(result, bump_version)
 
+    if op.identity_alignments:
+        result = _apply_identity_alignments(
+            result,
+            op,
+            canonical_maps=canonical_maps,
+            finish_init=False,
+            strict_references=strict_references,
+            dynamic_edge_feedback=dynamic_edge_feedback,
+        )
+
     if finish_init:
         result.finish_init(
             strict_references=strict_references,
             dynamic_edge_feedback=dynamic_edge_feedback,
         )
     return result
+
+
+def _apply_identity_alignments(
+    manifest: GraphManifest,
+    op: ComposeManifestsOp,
+    *,
+    canonical_maps: Sequence[Any],
+    finish_init: bool,
+    strict_references: bool,
+    dynamic_edge_feedback: bool,
+) -> GraphManifest:
+    from .alignment import IdentityAlignment, alignment_to_ops
+    from .apply import apply_evolution
+
+    cluster_labels = _resolved_cluster_labels(op.vertices)
+    # Alignments may also target a class that was already named ``into`` and
+    # needed no rename — those labels are still in the resolved set. When the
+    # op has no vertex equivalences, refuse alignments (nowhere to hang them).
+    if not cluster_labels and op.vertices:
+        cluster_labels = {veq.into for veq in op.vertices}
+
+    maps = list(canonical_maps)
+    out = manifest
+    for raw in op.identity_alignments:
+        alignment = (
+            raw
+            if isinstance(raw, IdentityAlignment)
+            else IdentityAlignment.model_validate(raw)
+        )
+        if alignment.vertex not in cluster_labels and op.vertices:
+            raise ValueError(
+                f"compose_manifests: identity alignment vertex "
+                f"{alignment.vertex!r} is not a resolved cluster label "
+                f"{sorted(cluster_labels)}"
+            )
+        ops = alignment_to_ops(alignment, manifest=out, canonical_maps=maps)
+        out = apply_evolution(
+            out,
+            ops,
+            bump_version=False,
+            finish_init=finish_init,
+            strict_references=strict_references,
+            dynamic_edge_feedback=dynamic_edge_feedback,
+        )
+    return out
