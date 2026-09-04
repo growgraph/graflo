@@ -9,13 +9,16 @@ from typing import Any, Literal
 from graflo.architecture.contract.bindings import Bindings
 from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.contract.manifest import GraphManifest
+from graflo.architecture.contract.provenance import ManifestMetadata
 from graflo.architecture.graph_types import EdgeId
 from graflo.architecture.schema.core import CoreSchema
 from graflo.architecture.schema.database_features import DatabaseProfile
 from graflo.architecture.schema.document import Schema
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.identity_funnel import IdentityBranch, IdentityFunnel
-from graflo.architecture.schema.naming import canonical_slug
+from graflo.architecture.schema.metadata import GraphMetadata
+from graflo.architecture.schema.naming import NamingConvention, canonical_slug
+from graflo.architecture.schema.semantics import Semantics
 from graflo.architecture.schema.vertex import SecondaryIdentity, Vertex, VertexConfig
 
 from .apply import (
@@ -624,6 +627,114 @@ def _cluster_retire_ops(
     ]
 
 
+def _union_strings(values: Iterable[str]) -> list[str]:
+    """Order-preserving de-duplication, for the list-valued metadata fields."""
+    out: list[str] = []
+    for value in values:
+        if value and value not in out:
+            out.append(value)
+    return out
+
+
+def _fold_name(left: str | None, right: str | None) -> str | None:
+    """The shared name when the two sides agree, ``left+right`` when they differ."""
+    if left and right and left != right:
+        return f"{left}+{right}"
+    return left or right
+
+
+def _fold_description(left: str | None, right: str | None) -> str | None:
+    """Both descriptions, in side order — neither side's prose is authoritative."""
+    if left and right and left != right:
+        return f"{left}\n\n{right}"
+    return left or right
+
+
+def _merge_semantics(
+    left: Semantics | None, right: Semantics | None
+) -> Semantics | None:
+    """Union two semantic anchor blocks.
+
+    ``exact_match`` and ``synonyms`` are sets of claims and simply union.
+    ``iri`` is single-valued and cannot: a schema composed from one denoting
+    ``schema.org/Person`` and one denoting ``foaf:Agent`` denotes neither
+    exactly, so a disagreement clears it rather than silently electing the left
+    side's concept as the composed schema's meaning.
+    """
+    if left is None or right is None:
+        source = left if right is None else right
+        return source.model_copy(deep=True) if source is not None else None
+    return Semantics(
+        iri=left.iri if left.iri == right.iri else None,
+        exact_match=_union_strings(list(left.exact_match) + list(right.exact_match)),
+        synonyms=_union_strings(list(left.synonyms) + list(right.synonyms)),
+    )
+
+
+def _merge_naming(
+    left: NamingConvention | None, right: NamingConvention | None
+) -> NamingConvention | None:
+    """Keep a declared convention only while both sides declare the same one.
+
+    Unlike the other descriptive blocks this one has consequences —
+    :meth:`NamingConvention.rename_map` is computed from it — so asserting the
+    left side's style over a union that also contains the right side's names
+    would be a false claim about identifiers that are demonstrably not in it.
+    Two conventions compose to no declared convention.
+    """
+    if left is None or right is None:
+        source = left if right is None else right
+        return source.model_copy(deep=True) if source is not None else None
+    return left.model_copy(deep=True) if left == right else None
+
+
+def _merge_graph_metadata(left: GraphMetadata, right: GraphMetadata) -> GraphMetadata:
+    """Fold both sides' schema metadata into the composed schema's.
+
+    Every descriptive field is folded rather than inherited from the left: the
+    composed schema contains both sides' types, so describing it with only one
+    side's prose, anchors and convention is wrong in the same way carrying only
+    one side's vertices would be.
+
+    Two fields are deliberately not folded. ``version`` stays the left side's
+    because it is the base :func:`_bump_schema_version` bumps from, and
+    ``provenance`` is dropped because the composed schema is a new artifact
+    with a new content address — stamping it is a commit point's job, not
+    compose's.
+    """
+    return GraphMetadata(
+        name=_fold_name(left.name, right.name) or left.name,
+        version=left.version,
+        description=_fold_description(left.description, right.description),
+        semantics=_merge_semantics(left.semantics, right.semantics),
+        naming=_merge_naming(left.naming, right.naming),
+        provenance=None,
+    )
+
+
+def _merge_manifest_metadata(
+    left: ManifestMetadata | None, right: ManifestMetadata | None
+) -> ManifestMetadata | None:
+    """Fold both manifests' own name and description into the composed one.
+
+    Manifest-level identity is separate from the schema's: a manifest carrying
+    only bindings has no schema to borrow a name from. Provenance is dropped
+    for the reason given in :func:`_merge_graph_metadata`, so a fold that would
+    carry nothing but provenance yields no metadata block at all.
+    """
+    name = _fold_name(
+        left.name if left else None,
+        right.name if right else None,
+    )
+    description = _fold_description(
+        left.description if left else None,
+        right.description if right else None,
+    )
+    if name is None and description is None:
+        return None
+    return ManifestMetadata(name=name, description=description)
+
+
 def _merge_db_profiles(
     left: DatabaseProfile, right: DatabaseProfile
 ) -> DatabaseProfile:
@@ -727,11 +838,7 @@ def _union_schema(
         else:
             by_id[eid] = edge
 
-    meta = left.metadata.model_copy(deep=True)
-    if right.metadata.name and meta.name and right.metadata.name != meta.name:
-        meta.name = f"{meta.name}+{right.metadata.name}"
-    elif right.metadata.name and not meta.name:
-        meta.name = right.metadata.name
+    meta = _merge_graph_metadata(left.metadata, right.metadata)
 
     db_profile = _merge_db_profiles(left.db_profile, right.db_profile)
 
@@ -1062,6 +1169,7 @@ def compose_manifests(
         graph_schema=composed_schema,
         ingestion_model=composed_ingestion,
         bindings=composed_bindings,
+        metadata=_merge_manifest_metadata(left.metadata, right.metadata),
     )
     _bump_schema_version(result, bump_version)
 

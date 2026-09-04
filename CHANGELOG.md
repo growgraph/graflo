@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **A manifest can carry its own name and description.** `ManifestMetadata` gains `name` and `description` alongside `provenance`. Until now a `GraphManifest` had no name of its own: the displayed one was smuggled through `Schema.metadata.name`, so a manifest carrying only `bindings` — a legal manifest — was literally unnameable, and anything rendering it fell back to an identifier. Both fields sit outside the content hash for the same reason provenance does: `manifest_hash` covers the three blocks and nothing else, so renaming a manifest cannot move its content address and two routes to the same world model still compare equal.
+
+### Fixed
+
+- **`compose_manifests` no longer discards the right side's metadata.** The fold copied the left side's `GraphMetadata` wholesale and adjusted only `name`, so the right side's `description`, `semantics` and `naming` vanished into a composed schema that demonstrably contained the right side's types. Each is now folded on its own terms: descriptions are concatenated in side order (neither side's prose is authoritative); `semantics.exact_match` and `semantics.synonyms` union, while a disagreeing single-valued `semantics.iri` **clears** rather than electing the left side's concept as the composed schema's meaning; and a `NamingConvention` survives only while both sides declare the same one, because `rename_map` is computed from it and asserting the left side's style over names that are not in it would be a false claim. Manifest-level `metadata.name` and `.description` fold the same way.
+
+  The same fold also carried the left side's `provenance` into the composed schema, so a composed artifact claimed a content address belonging to one of its inputs. It is now dropped: a compose produces a new artifact, and stamping one is a commit point's job.
+
 
 ## [1.12.2]
 

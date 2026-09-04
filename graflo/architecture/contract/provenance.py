@@ -1,9 +1,10 @@
-"""Manifest-level provenance, and the stamping that writes it.
+"""Manifest-level metadata, and the provenance stamping that writes part of it.
 
 :class:`~graflo.architecture.schema.provenance.Provenance` itself lives at L2,
 beside the schema metadata that carries it. What lives here is the manifest's
 own metadata block -- ``Schema.metadata`` describes the *schema*, and a manifest
-is a larger object that may carry no schema at all -- and the stamping helper.
+is a larger object that may carry no schema at all, so it needs its own name,
+description and content address -- plus the stamping helper.
 
 Stamping is a free function on purpose. It is something a **commit point** (the
 CLI, a server route) does to an artifact, not something the artifact does to
@@ -25,11 +26,33 @@ from graflo.architecture.schema.provenance import Provenance
 class ManifestMetadata(ConfigBaseModel):
     """Metadata about a manifest as a whole.
 
-    Provenance is the first thing that genuinely belongs at this level: a
-    content address covers all three blocks together, so it cannot hang off the
-    schema's metadata without lying about what it addresses.
+    Two kinds of thing live here, and both are properties of the manifest
+    rather than of any one block. **Provenance** is a content address covering
+    all three blocks together, so it cannot hang off the schema's metadata
+    without lying about what it addresses. **Name and description** are the
+    manifest's own identity: a manifest that carries only bindings has no
+    schema to borrow a name from, and was literally unnameable before this
+    block held one.
+
+    Every field here is excluded from the manifest's content hash --
+    :func:`~graflo.architecture.evolution.hashing.manifest_hash` covers the
+    three blocks and nothing else. A content address that moved when a manifest
+    was renamed could not recognise that two routes reach the same world model.
+
+    What does **not** belong here is presentation: display wording for a type
+    is a property of the type (``Vertex.description``, ``Semantics``), and
+    display wording for a deployment is resolved outside the contract
+    entirely.
     """
 
+    name: str | None = PydanticField(
+        default=None,
+        description="Name of this manifest as a whole.",
+    )
+    description: str | None = PydanticField(
+        default=None,
+        description="Optional human-readable description of this manifest.",
+    )
     provenance: Provenance | None = PydanticField(
         default=None,
         description="Content address and lineage of this manifest.",
