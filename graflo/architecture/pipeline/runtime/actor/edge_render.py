@@ -258,7 +258,7 @@ def render_edge(
     """Create edges between source and target vertices.
 
     Args:
-        relation_input_field: Document/ctx field for per-row relationship labels when
+        relation_input_field: Document/ctx field for per-document relationship labels when
             ``edge.relation`` is unset (e.g. TigerGraph default column).
         derivation: Ingestion-only location / field wiring (edge pipeline step).
         source_match_fields: Fields the source endpoint is matched on. Defaults to

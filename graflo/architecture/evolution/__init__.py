@@ -26,6 +26,8 @@ from .ops import (
     EdgeIndexEntry,
     EdgeRetargetEntry,
     EdgeSelector,
+    EnsureExtractedFields,
+    EnsureExtractedFieldsOp,
     FieldTypeSpec,
     FunnelIdentityTarget,
     HashIdentityTarget,
@@ -62,6 +64,7 @@ from .ops import (
 
 _APPLY_EXPORTS = frozenset(
     {
+        "apply_ensure_extracted_fields",
         "apply_evolution",
         "apply_add_edge_properties",
         "apply_add_inverse_edges",
@@ -87,10 +90,13 @@ _COMPOSE_EXPORTS = frozenset(
     {"ComposeIdentityError", "ComposeNameConflictError", "compose_manifests"}
 )
 
-_INGESTION_APPLY_EXPORTS = frozenset({"apply_add_resource_transforms"})
+_INGESTION_APPLY_EXPORTS = frozenset(
+    {"apply_add_resource_transforms", "apply_ensure_extracted_fields"}
+)
 
 _ALIGNMENT_EXPORTS = frozenset(
     {
+        "AlignmentAttribute",
         "AlignmentConflictError",
         "AlignmentRow",
         "DerivationSpec",
@@ -244,6 +250,7 @@ __all__ = [
     "AddVertexIndexesOp",
     "AddVertexPropertiesOp",
     "AddVerticesOp",
+    "AlignmentAttribute",
     "AlignmentConflictError",
     "AlignmentRow",
     "AssignedIdentityTarget",
@@ -265,6 +272,8 @@ __all__ = [
     "EdgeIndexEntry",
     "EdgeRetargetEntry",
     "EdgeSelector",
+    "EnsureExtractedFields",
+    "EnsureExtractedFieldsOp",
     "FieldTypeSpec",
     "FileCommitStore",
     # Revision layer

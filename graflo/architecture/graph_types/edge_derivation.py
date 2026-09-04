@@ -31,7 +31,7 @@ from graflo.onto import (
 
 
 class EdgeDerivation(ConfigBaseModel):
-    """How this edge step selects vertex locations and reads per-row relation from data."""
+    """How this edge step selects vertex locations and reads per-document relation from data."""
 
     match_source: str | None = Field(
         default=None,
@@ -55,11 +55,11 @@ class EdgeDerivation(ConfigBaseModel):
     )
     relation_field: str | None = Field(
         default=None,
-        description="Document/ctx field name for per-row relationship label when schema relation is unset.",
+        description="Document/ctx field name for per-document relationship label when schema relation is unset.",
     )
     relation_from_key: bool = Field(
         default=False,
-        description="If True, derive the per-row relation label from the location key during assembly.",
+        description="If True, derive the per-document relation label from the location key during assembly.",
     )
     source_match: str | list[str] | None = Field(
         default=None,

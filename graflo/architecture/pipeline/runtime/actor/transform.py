@@ -105,7 +105,7 @@ class TransformActor(Actor):
 
     @staticmethod
     def _extract_observation(nargs: tuple[Any, ...], **kwargs: Any) -> Any:
-        """Return the observation slice: dict row or scalar/list positional value."""
+        """Return the observation slice: dict observation or scalar/list positional value."""
         if kwargs:
             observation: Any | None = kwargs.get("doc")
         elif nargs:

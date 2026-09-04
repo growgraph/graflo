@@ -183,12 +183,12 @@ def merge_edge_pair(a: Edge, b: Edge) -> Edge:
             props[f.name] = merge_field_pair(props[f.name], f)
 
     identities_out: list[list[str]] = []
-    seen_rows: set[tuple[str, ...]] = set()
-    for row in a.identities + b.identities:
-        t = tuple(row)
-        if t not in seen_rows:
-            seen_rows.add(t)
-            identities_out.append(list(row))
+    seen_identities: set[tuple[str, ...]] = set()
+    for identity in a.identities + b.identities:
+        t = tuple(identity)
+        if t not in seen_identities:
+            seen_identities.add(t)
+            identities_out.append(list(identity))
 
     descriptions = [a.description, b.description]
     descriptions = [d for d in descriptions if d]

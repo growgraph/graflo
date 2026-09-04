@@ -34,7 +34,7 @@ from suthing import FileHandle
 
 from graflo import GraphManifest
 from graflo.architecture.evolution import (
-    AlignmentRow,
+    AlignmentAttribute,
     CanonicalMap,
     ComposeManifestsOp,
     DerivationSpec,
@@ -50,15 +50,15 @@ from graflo.architecture.evolution import (
 
 EXAMPLE_DIR = Path(__file__).resolve().parent
 
-# The identity alignment: rows are canonical attributes in priority order;
+# The identity alignment: attributes are canonical attributes in priority order;
 # derivation inputs are RAW source-doc field names (renamed documents still
 # carry their original keys). The local_key fallback keeps non-gated records
 # ingested as their own entities, namespaced per resource so cross-side
 # collisions are impossible.
 ALIGNMENT = IdentityAlignment(
     vertex="Company",
-    rows=[
-        AlignmentRow(
+    attributes=[
+        AlignmentAttribute(
             into="match_key",
             sources={
                 "r_a": DerivationSpec(

@@ -22,7 +22,7 @@ gating, normalization, namespacing — is resource knowledge, carried as
 
 ```python
 from graflo.architecture.evolution import (
-    AlignmentRow,
+    AlignmentAttribute,
     CanonicalMap,
     ComposeManifestsOp,
     DerivationSpec,
@@ -105,7 +105,7 @@ normalized shared key only when the gate matches, and `None` otherwise:
 ```python
 ALIGNMENT = IdentityAlignment(
     vertex="Company",
-    rows=[AlignmentRow(into="match_key", sources={
+    attributes=[AlignmentAttribute(into="match_key", sources={
         "r_a": DerivationSpec(input=["secondary_key", "shared_raw"],
                               params={"prefix": "abc_", "strip_prefix": "ABC-"}),
         "r_b": DerivationSpec(input=["org_id", "shared_raw"],
@@ -137,7 +137,7 @@ only to rename or to flag identity.
 
 ## Priority semantics
 
-With several alignment rows, row order is funnel priority: a record keys by
+With several alignment attributes, their order is funnel priority: a record keys by
 the **highest-priority attribute it carries**. Two records fuse when their
 strongest present attribute coincides. A match on a lower-priority attribute
 does *not* fuse records when one of them also carries a higher-priority one —
@@ -169,7 +169,7 @@ resources feeding `Company`.
   more than one member on a side — `ComposeManifestsOp(allow_merges=True)`.
   A merge that would turn an edge into a self-relation, or make one pipeline
   level produce the composed class twice, additionally needs
-  `allow_self_relations` / `allow_row_fusion` on the same op, which compose
+  `allow_self_relations` / `allow_observation_fusion` on the same op, which compose
   forwards to the per-side `MergeVerticesOp` rather than bypassing the guards.
 - **Changing the funnel rekeys the graph** — branch order, ids, and field sets
   all feed the digest (see [Example 17](example-17.md)).

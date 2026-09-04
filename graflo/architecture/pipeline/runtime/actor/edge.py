@@ -73,8 +73,8 @@ class EdgeActor(Actor):
     ``(source_type, target_type, relation)`` triple encountered.
 
     **Multi-link mode** (``links`` list set): each item in ``links`` becomes a
-    dedicated sub-``EdgeActor`` that runs in sequence per row, emitting one edge
-    intent each.  Use when one flat row encodes multiple distinct relationships.
+    dedicated sub-``EdgeActor`` that runs in sequence per document, emitting one edge
+    intent each.  Use when one flat document encodes multiple distinct relationships.
     """
 
     def __init__(self, config: EdgeActorConfig):
@@ -205,7 +205,7 @@ class EdgeActor(Actor):
             self._register_endpoint_match(init_ctx, edge_id)
             self.edge = init_ctx.edge_config.edge_for(edge_id)
         else:
-            # Dynamic mode: cache will be populated per-row.
+            # Dynamic mode: cache will be populated per-document.
             self._edge_cache.clear()
 
     def _register_endpoint_match(

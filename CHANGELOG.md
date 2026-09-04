@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.12.2]
+
+### Added
+
+- **Identity alignment works on a routed source, without splitting the router.** A `vertex_router` is how a single heterogeneous stream — an SQL view, one API feed — becomes several classes. When an equivalence collapses two of its branches onto one class, an `IdentityAlignment` on that class used to derive nothing, silently, and every routed record fell out of the graph: derivations were appended at the **root** of the resource pipeline, an actor reads its transform buffer at its own `LocationIndex` with no ancestor fallback, a `descend` subtree runs *before* its own level's transforms, and a transform whose declared inputs are missing skips without recording a failure. The manifest looked right; the emitted graph had no identities.
+
+  **Derivations now land at the level that produces the class.** `AddResourceTransformsOp` gained `at` — a per-resource path of `descend` step indices, root by default, so nothing existing moves — and `alignment_to_ops` resolves it from `IdentityAlignment.vertex` through the new `find_vertex_producing_levels`. What it cannot resolve, it refuses: a resource that never produces the class, one producing it at several levels with no `IdentityAlignment.at` override, an `at` that does not address a `descend` level, and — the case the whole resolution exists for — an `at` pointing at a level that produces nothing.
+
+  **A resource may derive one attribute several ways.** `AlignmentAttribute.sources[resource]` and `LocalKeySpec.sources[resource]` each accept a list, for when the branches collapsing onto the class carry different key columns; `LocalKeySource` gained `gate` / `gate_prefix` for branches that differ only by discriminator. The lowering is not simply two steps writing the same key: that works on a plain `vertex` step, whose buffer extraction skips `None`, but **not** behind a router, which merges the transform buffer into one observation dict where a later `None` overwrites an earlier real value. So a multi-source attribute becomes one gated step per branch writing a scratch field plus one `coalesce_fields` step (`strategy: all`, so an absent branch column does not take the coalesce down with it) as the single writer. A single spec still lowers to exactly one direct step.
+
+  **Delivery through the router is repaired too.** A router builds its child `VertexActor` at `lindex.extend((role, 0))`, where the transform buffer is empty, so derived attributes arrive only through the merged observation — subject to `keep_fields` and `extraction_scope`, which a plain `vertex` step bypasses entirely. New fundamental `EnsureExtractedFieldsOp` widens a restrictive router: `keep_fields` gains the canonical attributes, and under `mapped_only` so does `vertex_from_map[<class>]`, **seeded from the router-level `from`** — creating that entry from scratch would replace the author's projection rather than extend it. Only the aligned class's entry is touched, so the router keeps serving its other types unchanged. A sibling class routed at the same level that already declares one of the canonical attribute names now raises: it would silently absorb the derived value.
+
+  Also: `graflo.util.transform` gained `coalesce_fields` and `gated_tagged_key`. **Example 21** (`examples/21-router-union-alignment/`) works it end to end — five records from a nested router and two plain resources collapsing to three vertices, with the unaligned branch still flowing through the same router, unpolluted.
+
+- **`normalize_actor_step` descends into an already-typed `descend`.** A `descend` written in its own typed form could not carry the shorthand sub-steps its `{descend: {...}}` spelling accepts, because `pipeline` is a union discriminated on `type` and the normalizer returned early whenever `type` was present. The same early return left every structural pipeline scan — referenced vertices, renames, level lookup — blind to a `vertex_router` authored in its flat `type_field` form, which `VertexRouterActorConfig` accepts. Both are fixed at the normalizer, so all of them agree.
+
+- **Arango connection: drop redundant `cast(dict[str, Any], …)` after `isinstance(..., dict)`.** `ty` already narrows those values; the casts were noise. It kept its correct meaning — a tabular result row — in `db/`, `data_source/sql.py`, `query/` and `filter/select.py`, while also naming the ingestion data unit (which is a nested observation at a `LocationIndex`, not a row) and a line in a declaration table. The `merge_row_doc_with_transform_buffer` → `merge_observation_with_transform_buffer` rename had already picked the vocabulary; this finishes it.
+
+  `MergeVerticesOp.allow_row_fusion` and `ComposeManifestsOp.allow_row_fusion` are now **`allow_observation_fusion`** — what fuses is two vertex observations sharing one accumulator slot, which is what the guard's own message half-said already (*"one source **document** yielded both types, so the merged **rows** fuse"*). `AlignmentRow` is **`AlignmentAttribute`** and `IdentityAlignment.rows` is **`attributes`**: each entry is one canonical attribute that lowers to one `IdentityBranch`, so "attributes, in priority order" says what it is. Both renamed fields accept their old spelling as a validation alias, so recorded revisions and authored YAML keep loading and serialize out under the new name; `AlignmentRow` remains exported as a deprecated alias. Docstrings that said "per-row relation" now say "per-document"; "flat row" survives where the sentence is genuinely about a tabular encoding.
+
+### Removed
+
+- **`merge_row_doc_with_transform_buffer`.** Not backward compatibility — it was introduced as an alias alongside the canonical name and never called anywhere in graflo.
+
+
 ## [1.12.1]
 
 ### Added

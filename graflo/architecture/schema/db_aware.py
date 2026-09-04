@@ -294,7 +294,7 @@ class EdgeConfigDBAware:
         if self.db_profile.db_flavor != DBType.TIGERGRAPH:
             return _as_weight_config()
 
-        # Typed TigerGraph edge: per-row relation label stored under a stable attribute.
+        # Typed TigerGraph edge: per-document relation label stored under a stable attribute.
         needs_relation_attr = edge.relation is None or self._uses_relation_from_key(
             edge.edge_id
         )

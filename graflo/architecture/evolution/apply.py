@@ -56,6 +56,7 @@ from .ops import (
     AddVerticesOp,
     ChangeFieldTypesOp,
     ComposeManifestsOp,
+    EnsureExtractedFieldsOp,
     ManifestOp,
     MergeEdgesOp,
     MergeVerticesOp,
@@ -410,8 +411,8 @@ def _describe_merge_impact(
             if len(identity) > 1:
                 advisories.append(
                     f"merged identity for {merged!r} is the union {identity}; if no "
-                    "source row carries all of these, rows will not collide and the "
-                    "types merge without the entities merging"
+                    "source document carries all of these, observations will not "
+                    "collide and the types merge without the entities merging"
                 )
         pairs: dict[tuple[str, str], list[str | None]] = {}
         for edge in schema.core_schema.edge_config.edges:
@@ -470,17 +471,18 @@ def apply_merge_vertices(
         raise ValueError(
             f"merge_vertices: merging {sorted(sset)} into {into!r} turns edges into "
             f"self-relations: {self_relations}. Both endpoints then share one "
-            "accumulator slot, so assembly merges rows that were separate nodes. "
+            "accumulator slot, so assembly merges observations that were separate "
+            "nodes. "
             "Remove or retarget those edges first, or set allow_self_relations=true "
             "to accept the self-relation."
         )
-    if fused_levels and not op.allow_row_fusion:
+    if fused_levels and not op.allow_observation_fusion:
         raise ValueError(
             f"merge_vertices: merging {sorted(sset)} into {into!r} leaves pipeline "
             f"levels producing {into!r} more than once: {fused_levels}. One source "
-            "document yielded both types, so the merged rows fuse into a single "
-            "node. Split the resource, or set allow_row_fusion=true if fusing them "
-            "is the intent."
+            "document yielded both types, so the merged observations fuse into a "
+            "single node. Split the resource, or set allow_observation_fusion=true "
+            "if fusing them is the intent."
         )
     for advisory in advisories:
         logger.warning("merge_vertices: %s", advisory)
@@ -1533,6 +1535,10 @@ def _dispatch_op(manifest: GraphManifest, op: Any) -> None:
         from .ingestion import apply_add_resource_transforms
 
         apply_add_resource_transforms(manifest, op)
+    elif isinstance(op, EnsureExtractedFieldsOp):
+        from .ingestion import apply_ensure_extracted_fields
+
+        apply_ensure_extracted_fields(manifest, op)
     else:
         raise TypeError(f"Unsupported evolution op: {type(op)!r}")
 

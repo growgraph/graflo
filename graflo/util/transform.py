@@ -25,7 +25,7 @@ import time
 from collections import defaultdict
 from datetime import datetime
 from functools import lru_cache
-from typing import TypeVar
+from typing import Any, TypeVar
 
 ORDINAL_SUFFIX = ["st", "nd", "rd", "th"]
 _CAMEL_TO_SNAKE_STEP1_RE = re.compile(r"(.)([A-Z][a-z]+)")
@@ -582,3 +582,71 @@ def tagged_key(value: object, *, tag: str, sep: str = ":") -> str | None:
         return None
     key = str(value).strip()
     return f"{tag}{sep}{key}" if key else None
+
+
+def coalesce_fields(doc: dict[str, Any], *, fields: list[str]) -> Any:
+    """First non-empty value among *fields* on *doc*, or ``None``.
+
+    The branch selector for a routed source. When one resource derives a
+    canonical attribute several ways — one per class its ``vertex_router``
+    collapses onto the aligned class — each derivation writes its own scratch
+    field and returns ``None`` for the branches it does not serve. This picks
+    the one that fired.
+
+    A single writer per canonical attribute is the point. Two steps writing the
+    same key work on a plain ``vertex`` step, whose buffer extraction skips
+    ``None``, but not behind a ``vertex_router``: the router merges the buffer
+    into one observation dict, where a later ``None`` overwrites an earlier
+    real value.
+
+    Called with ``strategy: all``, so a branch whose own columns are absent
+    from the document skips without taking the coalesce down with it.
+
+    Args:
+        doc: The merged observation.
+        fields: Scratch field names, in priority order.
+
+    Returns:
+        The first present, non-empty value, or ``None`` when none fired.
+    """
+    for field in fields:
+        value = doc.get(field)
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        return value
+    return None
+
+
+def gated_tagged_key(
+    gate: str | None,
+    value: object,
+    *,
+    tag: str,
+    sep: str = ":",
+    prefix: str = "",
+) -> str | None:
+    """:func:`tagged_key` behind a gate, for a routed source.
+
+    When one resource contributes several side-local keys — one per class its
+    ``vertex_router`` collapses onto the aligned class — the router's
+    discriminator selects which one applies. ``None`` when the gate does not
+    match, which is an empty value to identity digests.
+
+    Args:
+        gate: Field deciding which branch this document is (the discriminator).
+        value: The side-local key material.
+        tag: Namespace prefix identifying the branch.
+        sep: Separator between *tag* and the key.
+        prefix: Required prefix of *gate*; ``""`` always passes.
+
+    Returns:
+        ``f"{tag}{sep}{key}"``, or ``None`` when the gate fails or *value* is
+        missing or empty.
+    """
+    if gate is None:
+        return None
+    if not str(gate).startswith(prefix):
+        return None
+    return tagged_key(value, tag=tag, sep=sep)

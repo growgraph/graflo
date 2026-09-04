@@ -1031,7 +1031,7 @@ def compose_manifests(
             canonical_map_to_ops(
                 side_maps[side],
                 allow_self_relations=op.allow_self_relations,
-                allow_row_fusion=op.allow_row_fusion,
+                allow_observation_fusion=op.allow_observation_fusion,
             ),
         )
 

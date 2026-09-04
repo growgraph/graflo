@@ -35,17 +35,17 @@ class EndpointResolutionStats:
     failures, so they are counted and reported instead of raising.
     """
 
-    rows: int = 0
+    documents: int = 0
     unresolvable: int = 0
-    """Rows whose key was absent or incomplete, so no lookup was possible."""
+    """Documents whose key was absent or incomplete, so no lookup was possible."""
     unmatched: int = 0
-    """Rows whose key matched no vertex."""
+    """Documents whose key matched no vertex."""
     ambiguous: int = 0
-    """Rows whose key matched more than one vertex."""
+    """Documents whose key matched more than one vertex."""
     dropped: int = 0
-    """Rows that produced no edge."""
+    """Documents that produced no edge."""
     written: int = 0
-    """Edge documents produced, which exceeds rows when fanning out."""
+    """Edge documents produced, which exceeds ``documents`` when fanning out."""
     endpoints: list[str] = field(default_factory=list)
 
     def has_findings(self) -> bool:
@@ -53,7 +53,8 @@ class EndpointResolutionStats:
 
     def summary(self) -> str:
         return (
-            f"endpoints={'+'.join(self.endpoints) or 'none'} rows={self.rows} "
+            f"endpoints={'+'.join(self.endpoints) or 'none'} "
+            f"documents={self.documents} "
             f"written={self.written} dropped={self.dropped} "
             f"unresolvable={self.unresolvable} unmatched={self.unmatched} "
             f"ambiguous={self.ambiguous}"
@@ -101,7 +102,7 @@ def resolve_edge_endpoints(
     Raises:
         AmbiguousEndpointError: on multiple matches under the ``error`` policy.
     """
-    stats = EndpointResolutionStats(rows=len(docs))
+    stats = EndpointResolutionStats(documents=len(docs))
     if resolve_source:
         stats.endpoints.append("source")
     if resolve_target:
@@ -179,7 +180,7 @@ def _candidates_for(
     source_class: str,
     policy: EndpointAmbiguityPolicy,
 ) -> list[dict[str, Any]]:
-    """Endpoint documents to attach for one row, after applying *policy*."""
+    """Endpoint documents to attach for one document, after applying *policy*."""
     if not resolve:
         return [projection]
 

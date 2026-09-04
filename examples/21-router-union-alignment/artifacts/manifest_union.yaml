@@ -1,0 +1,275 @@
+ingestion_model:
+    edges_on_duplicate: ignore
+    endpoints_on_ambiguous: all
+    resources:
+    -   drop_trivial_input_fields: false
+        encoding: utf-8
+        extra_weights: []
+        fail_fast: false
+        infer_edge_except: []
+        infer_edge_only: []
+        infer_edges: true
+        merge_collections: []
+        name: r_view
+        pipeline:
+        -   key: records
+            pipeline:
+            -   keep_fields:
+                -   firm_id
+                -   shop_id
+                -   person_id
+                -   secondary_key
+                -   match_key
+                -   local_key
+                type: vertex_router
+                type_field: kind
+                type_map:
+                    firm: Company
+                    person: Person
+                    shop: Company
+            -   call:
+                    foo: gated_normalized_key
+                    input:
+                    -   secondary_key
+                    -   firm_ref
+                    module: graflo.util.transform
+                    output:
+                    -   _match_key__0
+                    params:
+                        prefix: abc_
+                        strip_prefix: ABC-
+                type: transform
+            -   call:
+                    foo: gated_normalized_key
+                    input:
+                    -   secondary_key
+                    -   shop_ref
+                    module: graflo.util.transform
+                    output:
+                    -   _match_key__1
+                    params:
+                        prefix: abc_
+                        strip_prefix: ABC-
+                type: transform
+            -   call:
+                    foo: coalesce_fields
+                    module: graflo.util.transform
+                    output:
+                    -   match_key
+                    params:
+                        fields:
+                        -   _match_key__0
+                        -   _match_key__1
+                    strategy: all
+                type: transform
+            -   call:
+                    foo: gated_tagged_key
+                    input:
+                    -   kind
+                    -   firm_id
+                    module: graflo.util.transform
+                    output:
+                    -   _local_key__0
+                    params:
+                        prefix: firm
+                        sep: ':'
+                        tag: firm
+                type: transform
+            -   call:
+                    foo: gated_tagged_key
+                    input:
+                    -   kind
+                    -   shop_id
+                    module: graflo.util.transform
+                    output:
+                    -   _local_key__1
+                    params:
+                        prefix: shop
+                        sep: ':'
+                        tag: shop
+                type: transform
+            -   call:
+                    foo: coalesce_fields
+                    module: graflo.util.transform
+                    output:
+                    -   local_key
+                    params:
+                        fields:
+                        -   _local_key__0
+                        -   _local_key__1
+                    strategy: all
+                type: transform
+            type: descend
+        tolerate_transform_errors: true
+        types: {}
+    -   drop_trivial_input_fields: false
+        encoding: utf-8
+        extra_weights: []
+        fail_fast: false
+        infer_edge_except: []
+        infer_edge_only: []
+        infer_edges: true
+        merge_collections: []
+        name: r_b
+        pipeline:
+        -   type: vertex
+            vertex: Company
+        -   transform:
+                call:
+                    foo: gated_normalized_key
+                    input:
+                    -   org_id
+                    -   shared_raw
+                    module: graflo.util.transform
+                    output:
+                    -   match_key
+                    params:
+                        prefix: ''
+                        strip_prefix: ABC-
+        -   transform:
+                call:
+                    foo: tagged_key
+                    input:
+                    -   org_id
+                    module: graflo.util.transform
+                    output:
+                    -   local_key
+                    params:
+                        sep: ':'
+                        tag: b
+        tolerate_transform_errors: true
+        types: {}
+    -   drop_trivial_input_fields: false
+        encoding: utf-8
+        extra_weights: []
+        fail_fast: false
+        infer_edge_except: []
+        infer_edge_only: []
+        infer_edges: true
+        merge_collections: []
+        name: r_branch
+        pipeline:
+        -   type: vertex
+            vertex: Company
+        -   transform:
+                call:
+                    foo: gated_normalized_key
+                    input:
+                    -   branch_id
+                    -   shared_raw
+                    module: graflo.util.transform
+                    output:
+                    -   match_key
+                    params:
+                        prefix: ''
+                        strip_prefix: ABC-
+        -   transform:
+                call:
+                    foo: tagged_key
+                    input:
+                    -   branch_id
+                    module: graflo.util.transform
+                    output:
+                    -   local_key
+                    params:
+                        sep: ':'
+                        tag: br
+        tolerate_transform_errors: true
+        types: {}
+    transforms: []
+schema:
+    core_schema:
+        edge_config:
+            edges: []
+        vertex_config:
+            force_types: {}
+            identity_from_all_properties: true
+            vertices:
+            -   assigned: false
+                blank: false
+                filters: []
+                hash_identity_properties: []
+                identity:
+                -   id
+                identity_funnel:
+                    branches:
+                    -   fields:
+                        -   match_key
+                        id: match_key
+                    -   fields:
+                        -   local_key
+                        id: local_key
+                    digest: sha256
+                    include_branch_id: true
+                name: Company
+                properties:
+                -   name: company_id
+                -   name: secondary_key
+                -   name: shop_id
+                -   name: branch_id
+                -   name: shared_raw
+                -   name: org_id
+                -   name: match_key
+                -   name: local_key
+                -   name: id
+                secondary_identities:
+                -   fields:
+                    -   branch_id
+                    name: by_branch_id
+                -   fields:
+                    -   company_id
+                    name: by_company_id
+                -   fields:
+                    -   org_id
+                    name: by_org_id
+                -   fields:
+                    -   shop_id
+                    name: by_shop_id
+            -   assigned: false
+                blank: false
+                filters: []
+                hash_identity_properties: []
+                identity:
+                -   person_id
+                name: Person
+                properties:
+                -   name: person_id
+                -   name: secondary_key
+                secondary_identities: []
+    db_profile:
+        db_flavor: arango
+        edge_specs: []
+        vertex_indexes:
+            Company:
+            -   deduplicate: true
+                exclude_edge_endpoints: false
+                fields:
+                -   branch_id
+                sparse: false
+                type: persistent
+                unique: false
+            -   deduplicate: true
+                exclude_edge_endpoints: false
+                fields:
+                -   company_id
+                sparse: false
+                type: persistent
+                unique: false
+            -   deduplicate: true
+                exclude_edge_endpoints: false
+                fields:
+                -   org_id
+                sparse: false
+                type: persistent
+                unique: false
+            -   deduplicate: true
+                exclude_edge_endpoints: false
+                fields:
+                -   shop_id
+                sparse: false
+                type: persistent
+                unique: false
+        vertex_storage_names: {}
+    metadata:
+        name: source-a-view+source-b
+        version: 1.1.0

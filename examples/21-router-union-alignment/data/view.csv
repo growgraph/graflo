@@ -1,0 +1,5 @@
+kind,firm_id,shop_id,person_id,secondary_key,firm_ref,shop_ref
+firm,f1,,,abc_7,ABC-Alpha,
+firm,f2,,,zz9,ABC-Alpha,
+shop,,s1,,abc_1,,ABC-Beta
+person,,,p1,abc_9,,

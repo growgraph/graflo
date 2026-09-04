@@ -60,6 +60,105 @@ def collect_vertex_names_from_pipeline(steps: list[Any]) -> set[str]:
     return names
 
 
+def step_produces_vertices(step: dict[str, Any]) -> set[str]:
+    """Vertex names a single (non-recursive) actor step *produces*.
+
+    Production, not reference: an ``edge`` step names endpoints it looks up, so
+    it is not counted. A ``vertex_router`` produces every type its ``type_map``
+    can select and every type its ``vertex_from_map`` projects.
+    """
+    normalized = normalize_actor_step(dict(step))
+    step_type = normalized.get("type")
+    if step_type == "vertex" and isinstance(normalized.get("vertex"), str):
+        return {normalized["vertex"]}
+    if step_type == "vertex_router":
+        names: set[str] = set()
+        type_map = normalized.get("type_map")
+        if isinstance(type_map, dict):
+            names |= {v for v in type_map.values() if isinstance(v, str)}
+        vertex_from_map = normalized.get("vertex_from_map")
+        if isinstance(vertex_from_map, dict):
+            names |= {k for k in vertex_from_map if isinstance(k, str)}
+        return names
+    return set()
+
+
+def find_vertex_producing_levels(steps: list[Any], vertex: str) -> list[list[int]]:
+    """Index paths of every pipeline level with a step producing *vertex*.
+
+    A path indexes one level's steps per element, descending through ``descend``
+    steps: ``[]`` is the root level, ``[2]`` the level inside the root's third
+    step, ``[2, 0]`` one further down. Paths are returned outermost-first.
+
+    This is how a level-targeted op finds where to act. The level matters
+    because an actor reads its transform buffer at its own ``LocationIndex``
+    with no ancestor fallback, so a derivation appended at the root is invisible
+    to a vertex produced under a ``descend``.
+    """
+    found: list[list[int]] = []
+
+    def walk(level: list[Any], path: list[int]) -> None:
+        if any(
+            isinstance(step, dict) and vertex in step_produces_vertices(step)
+            for step in level
+        ):
+            found.append(list(path))
+        for index, step in enumerate(level):
+            if not isinstance(step, dict):
+                continue
+            normalized = normalize_actor_step(dict(step))
+            if normalized.get("type") != "descend":
+                continue
+            sub_pipeline = normalized.get("pipeline")
+            if isinstance(sub_pipeline, list):
+                walk(sub_pipeline, [*path, index])
+
+    walk(steps, [])
+    return found
+
+
+def resolve_pipeline_level(steps: list[Any], path: list[int]) -> list[Any]:
+    """Return the live step list *path* addresses inside *steps*.
+
+    Mutating the returned list mutates *steps*. Getting that guarantee requires
+    rewriting each walked ``descend`` step into its normalized form and storing
+    it back: the shorthand spellings (``{descend: {apply: [...]}}``, a bare
+    ``{key, apply}``) keep their sub-steps under a different key, so returning
+    whatever ``normalize_actor_step`` built would hand back a list nothing
+    holds — and an append into it would vanish without a word. Steps off the
+    path, and the root level itself, are left exactly as authored.
+
+    Raises when the path does not resolve. Every index on the way must address
+    a ``descend`` step; those are the only steps that own a nested level.
+    """
+    level = steps
+    for depth, index in enumerate(path):
+        walked = path[:depth] or "root"
+        if not 0 <= index < len(level):
+            raise ValueError(
+                f"pipeline path {path} does not resolve: index {index} is out of "
+                f"range at level {walked}"
+            )
+        step = level[index]
+        if not isinstance(step, dict):
+            raise ValueError(
+                f"pipeline path {path} does not resolve: step {index} at level "
+                f"{walked} is not an actor step"
+            )
+        normalized = normalize_actor_step(dict(step))
+        if normalized.get("type") != "descend":
+            raise ValueError(
+                f"pipeline path {path} does not resolve: step {index} at level "
+                f"{walked} is a {normalized.get('type')!r} step, not a descend — "
+                "only a descend owns a nested level"
+            )
+        sub_pipeline = normalized.get("pipeline")
+        normalized["pipeline"] = sub_pipeline if isinstance(sub_pipeline, list) else []
+        level[index] = normalized
+        level = normalized["pipeline"]
+    return level
+
+
 class EdgeInferSpec(ConfigBaseModel):
     """Selector for controlling inferred edge emission."""
 

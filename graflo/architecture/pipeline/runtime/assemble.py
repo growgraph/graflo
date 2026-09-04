@@ -27,7 +27,7 @@ def _resolved_relation_input_field(
     derivation: EdgeDerivation | None,
     target_db_flavor: DBType | None,
 ) -> str | None:
-    """Document/ctx field used to read per-row relation when schema relation is unset."""
+    """Document/ctx field used to read per-document relation when schema relation is unset."""
     if edge.relation is not None:
         return None
     if derivation is not None and derivation.relation_field is not None:

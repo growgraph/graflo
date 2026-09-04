@@ -125,8 +125,8 @@ class DBWriter:
         resource = self.ingestion_model.fetch_resource(resource_name)
 
         await self._push_vertices(gc, conn_conf)
-        # O(blank vertices x edges x rows) of pure Python. Called straight from the
-        # event loop it stalled every other coroutine — including the batch prefetch
+        # O(blank vertices x edges x documents) of pure Python. Called straight from
+        # the event loop it stalled every other coroutine — including the prefetch
         # that is supposed to overlap with the write.
         await asyncio.to_thread(self._resolve_blank_edges, gc, conn_conf)
         await self._enrich_extra_weights(gc, conn_conf, resource)

@@ -686,7 +686,7 @@ class APIConnector(ResourceConnector):
         method: HTTP method (default ``GET``).
         params: Static query parameters.
         pagination: Pagination strategy and response path configuration.
-        row_annotations: Constant fields merged into every fetched row (doc wins).
+        row_annotations: Constant fields merged into every fetched document (doc wins).
         headers: Non-secret HTTP headers.
         timeout: Request timeout in seconds.
         retries: Number of retry attempts.
@@ -781,7 +781,7 @@ class KafkaConnector(ResourceConnector):
         idle_ms: Stop after this many milliseconds with no messages.
         max_wait_ms: Hard wall-clock cap for a single ``iter_batches`` run.
         poll_timeout_ms: Per-poll timeout passed to the Kafka client.
-        row_annotations: Constant fields merged into every decoded row (doc wins).
+        row_annotations: Constant fields merged into every decoded document (doc wins).
     """
 
     topics: list[str] = Field(..., min_length=1, description="Kafka topics to consume")

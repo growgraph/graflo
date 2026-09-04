@@ -1,0 +1,30 @@
+schema:
+    metadata:
+        name: source-b
+        version: 1.0.0
+    graph:
+        vertex_config:
+            vertices:
+            -   name: Org
+                properties:
+                -   org_id
+                -   shared_raw
+                identity:
+                -   org_id
+            -   name: Branch
+                properties:
+                -   branch_id
+                -   shared_raw
+                identity:
+                -   branch_id
+        edge_config:
+            edges: []
+ingestion_model:
+    resources:
+    -   name: r_b
+        pipeline:
+        -   vertex: Org
+    -   name: r_branch
+        pipeline:
+        -   vertex: Branch
+    transforms: []

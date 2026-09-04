@@ -17,7 +17,7 @@ import pytest
 
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.evolution import (
-    AlignmentRow,
+    AlignmentAttribute,
     CanonicalMap,
     ComposeManifestsOp,
     DerivationSpec,
@@ -102,8 +102,8 @@ _CANONICAL = CanonicalMap(
 
 _ALIGNMENT = IdentityAlignment(
     vertex="Company",
-    rows=[
-        AlignmentRow(
+    attributes=[
+        AlignmentAttribute(
             into="match_key",
             sources={
                 "r_a": DerivationSpec(
@@ -242,11 +242,11 @@ class TestConditionalFusion:
 class TestPriorityFunnel:
     """Two aligned attributes: priority semantics, including the known trap."""
 
-    def _two_row_alignment(self) -> IdentityAlignment:
+    def _two_attribute_alignment(self) -> IdentityAlignment:
         return IdentityAlignment(
             vertex="Company",
-            rows=[
-                AlignmentRow(
+            attributes=[
+                AlignmentAttribute(
                     into="c1",
                     sources={
                         "r_a": DerivationSpec(
@@ -259,7 +259,7 @@ class TestPriorityFunnel:
                         ),
                     },
                 ),
-                AlignmentRow(
+                AlignmentAttribute(
                     into="c2",
                     sources={
                         "r_a": DerivationSpec(
@@ -280,7 +280,7 @@ class TestPriorityFunnel:
         )
 
     def test_same_top_priority_attribute_fuses(self) -> None:
-        union = _build_union(self._two_row_alignment())
+        union = _build_union(self._two_attribute_alignment())
         a = _cast(
             union,
             "r_a",
@@ -308,7 +308,7 @@ class TestPriorityFunnel:
         fusion. Equivalence holds by ONE attribute only when that attribute
         is the strongest evidence both records carry.
         """
-        union = _build_union(self._two_row_alignment())
+        union = _build_union(self._two_attribute_alignment())
         x = _cast(
             union,
             "r_a",
@@ -347,3 +347,218 @@ class TestOrderingRationale:
                 canonical_a,
                 alignment_to_ops(_ALIGNMENT, manifest=canonical_a),
             )
+
+
+# --------------------------------------------------------------------------- #
+# A routed source: one vertex_router, nested, two branches collapsing onto the
+# aligned class. This is the shape that silently dropped every routed record
+# before derivations became level-aware — the manifest looked right while the
+# emitted graph had no identities at all.
+# --------------------------------------------------------------------------- #
+
+_ROUTED_CANONICAL = CanonicalMap(
+    vertices={"Firm": "Company"},
+    properties={"Firm": {"firm_id": "company_id"}},
+)
+
+_ROUTED_ALIGNMENT = IdentityAlignment(
+    vertex="Company",
+    attributes=[
+        AlignmentAttribute(
+            into="match_key",
+            sources={
+                # Each branch of the view carries the shared key in its own
+                # column; the other is empty, which is what selects.
+                "r_view": [
+                    DerivationSpec(
+                        input=["secondary_key", "firm_ref"],
+                        params={"prefix": "abc_", "strip_prefix": "ABC-"},
+                    ),
+                    DerivationSpec(
+                        input=["secondary_key", "shop_ref"],
+                        params={"prefix": "abc_", "strip_prefix": "ABC-"},
+                    ),
+                ],
+                "r_b": DerivationSpec(
+                    input=["org_id", "shared_raw"],
+                    params={"prefix": "", "strip_prefix": "ABC-"},
+                ),
+            },
+        )
+    ],
+    local_key=LocalKeySpec(
+        sources={
+            "r_view": [
+                LocalKeySource(
+                    field="firm_id", tag="firm", gate="kind", gate_prefix="firm"
+                ),
+                LocalKeySource(
+                    field="shop_id", tag="shop", gate="kind", gate_prefix="shop"
+                ),
+            ],
+            "r_b": LocalKeySource(field="org_id", tag="b"),
+        }
+    ),
+    secondary_identities={"by_company_id": ["company_id"], "by_org_id": ["org_id"]},
+)
+
+
+def _routed_manifest_a() -> GraphManifest:
+    manifest = GraphManifest.from_config(
+        {
+            "schema": {
+                "metadata": {"name": "a", "version": "1.0.0"},
+                "graph": {
+                    "vertex_config": {
+                        "vertices": [
+                            {
+                                "name": "Firm",
+                                "properties": ["firm_id", "secondary_key"],
+                                "identity": ["firm_id"],
+                            },
+                            {
+                                "name": "Shop",
+                                "properties": ["shop_id", "secondary_key"],
+                                "identity": ["shop_id"],
+                            },
+                            {
+                                "name": "Person",
+                                "properties": ["person_id"],
+                                "identity": ["person_id"],
+                            },
+                        ]
+                    },
+                    "edge_config": {"edges": []},
+                },
+            },
+            "ingestion_model": {
+                "resources": [
+                    {
+                        "name": "r_view",
+                        "pipeline": [
+                            {
+                                "descend": {
+                                    "key": "records",
+                                    "apply": [
+                                        {
+                                            "vertex_router": {
+                                                "type_field": "kind",
+                                                "keep_fields": [
+                                                    "firm_id",
+                                                    "shop_id",
+                                                    "person_id",
+                                                    "secondary_key",
+                                                ],
+                                                "type_map": {
+                                                    "firm": "Firm",
+                                                    "shop": "Shop",
+                                                    "person": "Person",
+                                                },
+                                            }
+                                        }
+                                    ],
+                                }
+                            }
+                        ],
+                    }
+                ],
+                "transforms": [],
+            },
+        }
+    )
+    manifest.finish_init()
+    return manifest
+
+
+def _build_routed_union() -> GraphManifest:
+    left = apply_evolution(
+        _routed_manifest_a(), canonical_map_to_ops(_ROUTED_CANONICAL)
+    )
+    op = ComposeManifestsOp(
+        vertices=[
+            VertexEquivalence(left=["Company", "Shop"], right="Org", into="Company")
+        ],
+        allow_merges=True,
+        identity_alignments=[_ROUTED_ALIGNMENT],
+    )
+    return compose_manifests(
+        left, _manifest_b(), op, canonical_maps=[("left", _ROUTED_CANONICAL)]
+    )
+
+
+_VIEW = [
+    {
+        "records": [
+            {
+                "kind": "firm",
+                "firm_id": "f1",
+                "secondary_key": "abc_7",
+                "firm_ref": "ABC-Alpha",
+            },
+            {
+                "kind": "firm",
+                "firm_id": "f2",
+                "secondary_key": "zz9",
+                "firm_ref": "ABC-Alpha",
+            },
+            {
+                "kind": "shop",
+                "shop_id": "s1",
+                "secondary_key": "abc_1",
+                "shop_ref": "ABC-Beta",
+            },
+            {"kind": "person", "person_id": "p1", "secondary_key": "abc_9"},
+        ]
+    }
+]
+
+
+class TestRoutedSourceFusion:
+    def test_both_router_branches_fuse_with_their_b_side_peers(self) -> None:
+        union = _build_routed_union()
+
+        view = _cast(union, "r_view", _VIEW)
+        b = _cast(union, "r_b", [{"org_id": "o1", "shared_raw": "ABC-ALPHA"}])
+
+        by_local = {doc["local_key"]: doc for doc in view}
+        assert set(by_local) == {"firm:f1", "firm:f2", "shop:s1"}
+        # The gated firm row and B's row key alike on the shared match_key.
+        assert by_local["firm:f1"]["match_key"] == "alpha"
+        assert by_local["firm:f1"]["id"] == b[0]["id"]
+        # The non-gated firm row carries the same raw value but no match_key,
+        # so it falls through to its namespaced local key and stays separate.
+        assert by_local["firm:f2"].get("match_key") is None
+        assert by_local["firm:f2"]["id"] != b[0]["id"]
+
+    def test_the_shop_branch_derives_from_its_own_column(self) -> None:
+        union = _build_routed_union()
+
+        view = _cast(union, "r_view", _VIEW)
+        branch = _cast(union, "r_b", [{"org_id": "br1", "shared_raw": "ABC-BETA"}])
+
+        shop = next(d for d in view if d["local_key"] == "shop:s1")
+        assert shop["match_key"] == "beta"
+        assert shop["id"] == branch[0]["id"]
+
+    def test_the_unaligned_branch_still_flows_through_the_same_router(self) -> None:
+        """The router is never split: `person` keeps being routed, unpolluted."""
+        union = _build_routed_union()
+        caster = DocumentCaster(union.require_ingestion_model())
+
+        result = asyncio.run(
+            caster.cast_batch(_VIEW, "r_view", params=IngestionParams())
+        )
+
+        people = result.graph.vertices["Person"]
+        assert [p["person_id"] for p in people] == ["p1"]
+        assert "match_key" not in people[0]
+        assert "local_key" not in people[0]
+
+    def test_every_routed_record_gets_an_identity(self) -> None:
+        """The regression: root-level derivations left all of these keyless."""
+        union = _build_routed_union()
+
+        view = _cast(union, "r_view", _VIEW)
+
+        assert len(view) == 3
+        assert all(doc.get("id") for doc in view)

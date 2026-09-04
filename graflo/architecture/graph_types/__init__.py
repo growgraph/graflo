@@ -64,7 +64,6 @@ from graflo.architecture.graph_types.transform import (
     VertexRep,
     context_dict_from_transform_buffer_item,
     merge_observation_with_transform_buffer,
-    merge_row_doc_with_transform_buffer,
 )
 
 __all__ = [
@@ -99,6 +98,5 @@ __all__ = [
     "context_dict_from_transform_buffer_item",
     "deserialize_edge_key",
     "merge_observation_with_transform_buffer",
-    "merge_row_doc_with_transform_buffer",
     "serialize_edge_key",
 ]

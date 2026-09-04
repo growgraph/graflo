@@ -323,7 +323,7 @@ def canonical_map_to_ops(
     cm: CanonicalMap,
     *,
     allow_self_relations: bool = False,
-    allow_row_fusion: bool = False,
+    allow_observation_fusion: bool = False,
 ) -> list[ManifestOp]:
     """Turn a canonical map into unary evolution ops.
 
@@ -361,7 +361,7 @@ def canonical_map_to_ops(
                     sources=merged_away,
                     into=target,
                     allow_self_relations=allow_self_relations,
-                    allow_row_fusion=allow_row_fusion,
+                    allow_observation_fusion=allow_observation_fusion,
                 )
             )
         elif merged_away:

@@ -35,7 +35,8 @@ GraFlo provides **contract-level** operations that transform a validated `GraphM
 | **Add / remove vertex & edge indexes** | Authors `db_profile.vertex_indexes` and `edge_specs[].indexes` directly. Indexes derived from `secondary_identities` cannot be removed this way — they would be re-registered by the next `finish_init`, so the op points at **remove secondary identities** instead. |
 | **Set edge directed** | Sets `Edge.directed` on selected triples. Load-bearing for replay: `directed` decides what **add inverse edges** may duplicate. |
 | **Sanitize** | Target-`DBType` policy: reserved-word-safe names on `DatabaseProfile`, reserved vertex field renames, and (for TigerGraph) consistent identity tuples per edge relation. This is the same work **`graflo.hq.sanitizer.Sanitizer`** applies by building a single **`SanitizeOp`**. |
-| **Add resource transforms** | Appends transform steps to named resources' pipelines (root level; actor type-priority ordering runs them before vertex extraction at that level) and optionally registers named transforms (loud on same-name/different-body, mirroring compose). The only op whose primary effect is ingestion; requires `ingestion_model` and raises otherwise. Steps may reference the registry via `call.use` or carry a fully inline `call` (collision-free). Irreversible. |
+| **Ensure extracted fields** | Widens a producing step's projection so named fields survive extraction (`keep_fields` gains them; under `extraction_scope: mapped_only` so does `vertex_from_map[<class>]`, seeded from the router-level `from`). Only `vertex_router` steps need it — a plain `vertex` step reads the transform buffer directly, bypassing both knobs. A no-op on an unrestricted step. Requires `ingestion_model`. |
+| **Add resource transforms** | Appends transform steps to a named level of named resources' pipelines (`at`, as `descend` step indices; root by default — actor type-priority ordering runs them before vertex extraction at that level) and optionally registers named transforms (loud on same-name/different-body, mirroring compose). The only op whose primary effect is ingestion; requires `ingestion_model` and raises otherwise. Steps may reference the registry via `call.use` or carry a fully inline `call` (collision-free). Irreversible. |
 | **Compose manifests** | Binary union of two full `GraphManifest`s (schema **and** resources/bindings) via `ComposeManifestsOp` + `compose_manifests(left, right, op)`. Consumes **explicit** equivalence maps only (no semantic inference): n-ary vertex clusters (`left` / `right` each name one or more classes collapsing onto one `into`), property alignment, optional composed `identity`, optional `identity_alignments`, relation equivalences, resource renames / `name_conflict`. Distinct from unary `MergeVerticesOp`. Rejected by unary `apply_evolution`. |
 
 ## Compose two manifests
@@ -90,7 +91,7 @@ ComposeManifestsOp(
     ],
     allow_merges=True,          # >1 member on a side is a stated intent
     allow_self_relations=False,  # forwarded to the per-side MergeVerticesOp
-    allow_row_fusion=False,
+    allow_observation_fusion=False,
 )
 ```
 
@@ -139,7 +140,7 @@ composed = compose_manifests(
 
 `validate_and_complete_canonical_map` indexes the declared clusters and raises `ComposeCanonicalConflictError` (wrapping `ClusterConflictError` for a cluster contradiction) on: a stale pre-canonical class or relation name referenced by an equivalence; an `into` that re-targets a class the canonical map already fixed; a property equivalence that uses a retired attribute name, re-targets an attribute the map already routed, renames an undeclared property, or renames onto one that already exists. On success it returns `SideMaps` — the per-side maps the clusters lower to, ready for `canonical_map_to_ops`. It deliberately re-checks nothing compose already raises on (collisions, incompatible types, divergent funnels).
 
-Self-relations are no longer merely warned about: compose forwards `allow_self_relations` / `allow_row_fusion` from the op to the per-side `MergeVerticesOp`, so the unary guards fire unless the author acknowledges them.
+Self-relations are no longer merely warned about: compose forwards `allow_self_relations` / `allow_observation_fusion` from the op to the per-side `MergeVerticesOp`, so the unary guards fire unless the author acknowledges them.
 
 ### Identity alignment
 
@@ -147,14 +148,14 @@ When the composed class should deduplicate entities across its sources, the iden
 
 ```python
 from graflo.architecture.evolution import (
-    AlignmentRow, ComposeManifestsOp, DerivationSpec, IdentityAlignment,
+    AlignmentAttribute, ComposeManifestsOp, DerivationSpec, IdentityAlignment,
     LocalKeySource, LocalKeySpec, VertexEquivalence,
     compose_manifests,
 )
 
 alignment = IdentityAlignment(
     vertex="Company",
-    rows=[AlignmentRow(into="match_key", sources={     # priority order
+    attributes=[AlignmentAttribute(into="match_key", sources={  # priority order
         "r_a": DerivationSpec(input=["secondary_key", "shared_raw"],
                               params={"prefix": "abc_", "strip_prefix": "ABC-"}),
         "r_b": DerivationSpec(input=["org_id", "shared_raw"],
@@ -176,11 +177,21 @@ op = ComposeManifestsOp(
 union = compose_manifests(canonical_left, right, op, canonical_maps=[("left", cm)])
 ```
 
-The emitted op sequence: `AddVertexPropertiesOp` (declare the canonical attributes), `AddResourceTransformsOp` (per-resource derivation steps, inline calls), `ReplaceIdentityOp` (a priority funnel — one branch per row in order, then the `local_key` fallback; `retire: keep`), and `AddSecondaryIdentitiesOp` (the retired side keys as lookup-only secondaries). Row order is funnel priority: a record keys by the highest-priority attribute it carries, so two records fuse when their strongest present attribute coincides — a match on a lower-priority attribute does not fuse records when one side also carries a stronger one. The `local_key` values are namespaced per resource (`a:f2` vs `b:o1`), so non-aligned records stay ingested without cross-source collisions.
+The emitted op sequence: `AddVertexPropertiesOp` (declare the canonical attributes), `AddResourceTransformsOp` (per-resource derivation steps, inline calls), `ReplaceIdentityOp` (a priority funnel — one branch per attribute in order, then the `local_key` fallback; `retire: keep`), and `AddSecondaryIdentitiesOp` (the retired side keys as lookup-only secondaries). Attribute order is funnel priority: a record keys by the highest-priority attribute it carries, so two records fuse when their strongest present attribute coincides — a match on a lower-priority attribute does not fuse records when one side also carries a stronger one. The `local_key` values are namespaced per resource (`a:f2` vs `b:o1`), so non-aligned records stay ingested without cross-source collisions.
 
-Two rules the validator enforces (`validate_alignment`, raising `AlignmentConflictError`): derivation inputs are **raw source-doc field names** — property renames rewrite `vertex.from` maps so documents keep their original keys, and transform inputs are never rewritten (pass `canonical_maps` to catch canonical names used by mistake); and alignment targets must not collide with the class's current primary-identity fields.
+Rules the validator enforces (`validate_alignment`, raising `AlignmentConflictError`): derivation inputs are **raw source-doc field names** — property renames rewrite `vertex.from` maps so documents keep their original keys, and transform inputs are never rewritten (pass `canonical_maps` to catch canonical names used by mistake); alignment targets must not collide with the class's current primary-identity fields; and every referenced resource must produce the aligned class at exactly one resolvable pipeline level.
 
-Worked end-to-end in [Example 19](../../examples/example-19.md).
+### Routed sources
+
+When the aligned class is produced by a `vertex_router` — one heterogeneous stream whose branches the equivalence collapses — three things follow, and the router is never split to accommodate them.
+
+**Derivations land at the producing level.** `alignment_to_ops` resolves it and sets `AddResourceTransformsOp.at`. Placement is not cosmetic: an actor reads its transform buffer at its own `LocationIndex` with no ancestor fallback, a `descend` subtree runs *before* its own level's transforms, and a transform whose declared inputs are missing skips silently by default — so a derivation appended at the root of a nested pipeline derives nothing, quietly. A resource producing the class at several levels raises unless `IdentityAlignment.at` picks one, and an `at` that resolves to a level producing nothing raises too.
+
+**A resource may derive one attribute several ways.** `AlignmentAttribute.sources[resource]` and `LocalKeySpec.sources[resource]` each accept a list — one entry per class the router collapses onto the aligned one, when those branches carry different key columns. Such an attribute lowers to one gated step per branch writing a scratch field plus one `coalesce_fields` step (`strategy: all`) reducing them, because two steps writing the same key clobber behind a router: the router merges the transform buffer into one observation dict, where a later `None` overwrites an earlier real value. A single spec still lowers to one direct step. `LocalKeySource` gains an optional `gate` / `gate_prefix` for the case where only the discriminator distinguishes the branches.
+
+**Delivery goes through the merged observation.** A router builds its child `VertexActor` at `lindex.extend((role, 0))`, where the transform buffer is empty, so derived attributes arrive by passthrough or `from` — subject to `keep_fields` and `extraction_scope`. The alignment emits `EnsureExtractedFieldsOp` when the producing router restricts either. A sibling class routed at the same level that already declares one of the canonical attribute names raises: it would absorb the derived value.
+
+Worked end-to-end in [Example 19](../../examples/example-19.md), and for a routed source in [Example 21](../../examples/example-21.md).
 
 ## API
 

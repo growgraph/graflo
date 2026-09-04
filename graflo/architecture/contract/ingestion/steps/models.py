@@ -60,7 +60,7 @@ class VertexActorConfig(VertexExtractionOptionsConfig):
         description=(
             "When true the extracted documents are used to locate existing vertices "
             "for edge endpoints but are never written. Set this on edge-only "
-            "resources, which reference a vertex without owning it — their rows "
+            "resources, which reference a vertex without owning it — their documents "
             "typically carry a secondary identity and no primary key, so upserting "
             "them would create keyless duplicates."
         ),
@@ -380,7 +380,7 @@ class EdgeLinkConfig(EdgeEndpointMatchOptionsConfig):
     """One intent in a multi-link edge step.
 
     Each item in an ``EdgeActorConfig.links`` list describes one source→target→relation
-    binding to emit per row. Equivalent to a single-intent ``edge`` step without the
+    binding to emit per document. Equivalent to a single-intent ``edge`` step without the
     ``links`` field itself.
 
     Slot resolution uses role-first semantics (``source_role`` / ``target_role``).
@@ -436,7 +436,7 @@ class EdgeLinkConfig(EdgeEndpointMatchOptionsConfig):
     )
     relation_field: str | None = PydanticField(
         default=None,
-        description="Document field name for per-row relationship type.",
+        description="Document field name for per-document relationship type.",
     )
     match_source: str | None = PydanticField(
         default=None,
@@ -516,10 +516,10 @@ class EdgeActorConfig(EdgeEndpointMatchOptionsConfig):
     **Single-intent mode** (default): declare source/target via ``from``/``to`` (static
     vertex type names) or ``source_role``/``target_role`` (slot-based dynamic
     resolution; ``source_type_field``/``target_type_field`` remain accepted aliases).
-    One edge intent is emitted per row.
+    One edge intent is emitted per document.
 
     **Multi-link mode** (``links`` list): declare a list of :class:`EdgeLinkConfig` items.
-    Each item emits one edge intent per row, allowing a single pipeline step to produce
+    Each item emits one edge intent per document, allowing a single pipeline step to produce
     multiple relationship types from one flat row.  Mutually exclusive with all top-level
     source/target fields.
     """
@@ -571,7 +571,7 @@ class EdgeActorConfig(EdgeEndpointMatchOptionsConfig):
     links: list[EdgeLinkConfig] | None = PydanticField(
         default=None,
         description=(
-            "Multi-intent list. When set, each item emits one edge intent per row. "
+            "Multi-intent list. When set, each item emits one edge intent per document. "
             "Mutually exclusive with all top-level source/target/role fields. "
             "Use when a single flat row encodes multiple relationships."
         ),
@@ -583,7 +583,7 @@ class EdgeActorConfig(EdgeEndpointMatchOptionsConfig):
     strict_edge_types: bool = PydanticField(
         default=False,
         description=(
-            "When True, skip rows whose resolved (source_type, target_type) pair "
+            "When True, skip documents whose resolved (source_type, target_type) pair "
             "is not pre-declared in the resource edge_config at init. "
             "When False (default), dynamic pairs are registered at runtime."
         ),
@@ -594,7 +594,7 @@ class EdgeActorConfig(EdgeEndpointMatchOptionsConfig):
     )
     relation_from_key: bool = PydanticField(
         default=False,
-        description="Ingestion: derive per-row relation label from the location key during assembly.",
+        description="Ingestion: derive per-document relation label from the location key during assembly.",
     )
     description: str | None = PydanticField(
         default=None,
@@ -602,7 +602,7 @@ class EdgeActorConfig(EdgeEndpointMatchOptionsConfig):
     )
     relation_field: str | None = PydanticField(
         default=None,
-        description="Ingestion: document field name for per-row relationship type.",
+        description="Ingestion: document field name for per-document relationship type.",
     )
     match_source: str | None = PydanticField(
         default=None,

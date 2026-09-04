@@ -83,7 +83,7 @@ still be ingested. `gated_normalized_key` emits the normalized shared key only
 when the gate matches, and `None` otherwise:
 
 ```python
-AlignmentRow(into="match_key", sources={
+AlignmentAttribute(into="match_key", sources={
     "r_a": DerivationSpec(input=["secondary_key", "shared_raw"],
                           params={"prefix": "abc_", "strip_prefix": "ABC-"}),
     "r_b": DerivationSpec(input=["org_id", "shared_raw"],
@@ -106,7 +106,7 @@ only to rename or to flag identity.
 
 ## Priority semantics
 
-With several alignment rows, row order is funnel priority: a record keys by
+With several alignment attributes, their order is funnel priority: a record keys by
 the **highest-priority attribute it carries**. Two records fuse when their
 strongest present attribute coincides.
 
@@ -137,7 +137,7 @@ fused pair per aligned key.
   more than one member on a side — `ComposeManifestsOp(allow_merges=True)`.
   A merge that would turn an edge into a self-relation, or make one pipeline
   level produce the composed class twice, needs `allow_self_relations` /
-  `allow_row_fusion` on the same op: compose forwards both to the per-side
+  `allow_observation_fusion` on the same op: compose forwards both to the per-side
   `MergeVerticesOp` instead of bypassing the unary guards.
 - **Changing the funnel rekeys the graph** — branch order, ids, and field sets
   all feed the digest (see example 17).
