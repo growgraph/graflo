@@ -5,11 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.12.2]
 
 ### Added
 
-- **A manifest can carry its own name and description.** `ManifestMetadata` gains `name` and `description` alongside `provenance`. Until now a `GraphManifest` had no name of its own: the displayed one was smuggled through `Schema.metadata.name`, so a manifest carrying only `bindings` — a legal manifest — was literally unnameable, and anything rendering it fell back to an identifier. Both fields sit outside the content hash for the same reason provenance does: `manifest_hash` covers the three blocks and nothing else, so renaming a manifest cannot move its content address and two routes to the same world model still compare equal.
+- **A manifest can carry its own name and description.** `ManifestMetadata` gains `name` and `description` alongside `provenance`. Until now a `GraphManifest` had no name of its own: the displayed one was smuggled through `Schema.metadata.name`, so a manifest carrying only `bindings` — a legal manifest — was literally unnameable, and anything rendering it fell back to an identifier. Both fields sit outside the content hash for the same reason provenance does: `manifest_hash` covers the three blocks and nothing else, so renaming a manifest cannot move its content address and two routes to the same
+a world model still compare equal.
 
 ### Fixed
 
@@ -18,7 +19,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The same fold also carried the left side's `provenance` into the composed schema, so a composed artifact claimed a content address belonging to one of its inputs. It is now dropped: a compose produces a new artifact, and stamping one is a commit point's job.
 
 
-## [1.12.2]
 
 ### Added
 
