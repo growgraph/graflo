@@ -239,6 +239,57 @@ class TestConditionalFusion:
         assert b_doc["local_key"] == "b:o1"
 
 
+class TestPrefixMarkerAdmission:
+    """The marker on the value admits it; an unmarked value falls through.
+
+    Contrast the gated idiom above, whose ``strip_prefix`` is a silent no-op
+    when the prefix is absent — there, a marked and an unmarked spelling of the
+    same name normalize alike and fuse.
+    """
+
+    def _marker_alignment(self) -> IdentityAlignment:
+        spec = DerivationSpec(
+            input=["shared_raw"], foo="affix_gated_key", params={"prefix": "ABC-"}
+        )
+        return IdentityAlignment(
+            vertex="Company",
+            attributes=[
+                AlignmentAttribute(
+                    into="match_key",
+                    # Literally the same call on both sides: one normal form.
+                    sources={"r_a": spec, "r_b": spec},
+                )
+            ],
+            local_key=LocalKeySpec(
+                sources={
+                    "r_a": LocalKeySource(field="firm_id", tag="a"),
+                    "r_b": LocalKeySource(field="org_id", tag="b"),
+                }
+            ),
+        )
+
+    def test_marked_values_fuse_across_sources(self) -> None:
+        union = _build_union(self._marker_alignment())
+
+        a = _cast(union, "r_a", [{"firm_id": "f1", "shared_raw": "ABC-Alpha"}])
+        b = _cast(union, "r_b", [{"org_id": "o1", "shared_raw": "ABC-ALPHA"}])
+
+        assert a[0]["match_key"] == "alpha"
+        assert b[0]["match_key"] == "alpha"
+        assert a[0]["id"] == b[0]["id"]
+
+    def test_an_unmarked_value_falls_through_instead_of_fusing(self) -> None:
+        """Same business name, no marker: not admitted, and not dropped."""
+        union = _build_union(self._marker_alignment())
+
+        a = _cast(union, "r_a", [{"firm_id": "f2", "shared_raw": "Alpha"}])
+        b = _cast(union, "r_b", [{"org_id": "o1", "shared_raw": "ABC-ALPHA"}])
+
+        assert a[0].get("match_key") is None
+        assert a[0]["local_key"] == "a:f2"
+        assert a[0]["id"] != b[0]["id"]
+
+
 class TestPriorityFunnel:
     """Two aligned attributes: priority semantics, including the known trap."""
 

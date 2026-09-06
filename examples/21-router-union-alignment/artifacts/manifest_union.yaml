@@ -28,28 +28,24 @@ ingestion_model:
                     person: Person
                     shop: Company
             -   call:
-                    foo: gated_normalized_key
+                    foo: affix_gated_key
                     input:
-                    -   secondary_key
                     -   firm_ref
                     module: graflo.util.transform
                     output:
                     -   _match_key__0
                     params:
-                        prefix: abc_
-                        strip_prefix: ABC-
+                        prefix: ABC-
                 type: transform
             -   call:
-                    foo: gated_normalized_key
+                    foo: affix_gated_key
                     input:
-                    -   secondary_key
                     -   shop_ref
                     module: graflo.util.transform
                     output:
                     -   _match_key__1
                     params:
-                        prefix: abc_
-                        strip_prefix: ABC-
+                        prefix: ABC-
                 type: transform
             -   call:
                     foo: coalesce_fields
@@ -116,16 +112,14 @@ ingestion_model:
             vertex: Company
         -   transform:
                 call:
-                    foo: gated_normalized_key
+                    foo: affix_gated_key
                     input:
-                    -   org_id
                     -   shared_raw
                     module: graflo.util.transform
                     output:
                     -   match_key
                     params:
-                        prefix: ''
-                        strip_prefix: ABC-
+                        prefix: ABC-
         -   transform:
                 call:
                     foo: tagged_key
@@ -153,16 +147,14 @@ ingestion_model:
             vertex: Company
         -   transform:
                 call:
-                    foo: gated_normalized_key
+                    foo: affix_gated_key
                     input:
-                    -   branch_id
                     -   shared_raw
                     module: graflo.util.transform
                     output:
                     -   match_key
                     params:
-                        prefix: ''
-                        strip_prefix: ABC-
+                        prefix: ABC-
         -   transform:
                 call:
                     foo: tagged_key

@@ -16,14 +16,21 @@ Two things make that work, and neither is optional here:
    ``LocationIndex`` with no ancestor fallback, and a ``descend`` subtree runs
    before its own level's transforms.
 2. **Each collapsing branch derives its own way.** ``firm`` rows carry
-   ``firm_id``, ``shop`` rows carry ``shop_id``. One ``DerivationSpec`` per
+   ``firm_ref``, ``shop`` rows carry ``shop_ref``. One ``DerivationSpec`` per
    resource cannot say that, so the resource supplies a list; the lowering gives
    each branch a scratch field and coalesces them into one writer.
 
-Branch selection needs no gate for ``match_key``: a union view leaves the other
-branch's column empty, and the derivation functions return ``None`` for an empty
-value. ``local_key`` does gate — both branches would otherwise be namespaced the
-same — so its sources read the router's own discriminator.
+``match_key`` is derived by ``affix_gated_key``: the ``ABC-`` marker on the
+value is the admission test, so a value carrying it is stripped and accepted as
+canonical key material and an unmarked one yields ``None``. That ``None`` is a
+fall-through, not a drop — the record still ingests, on its side-local key,
+outside the cross-source cluster. Every side uses the same one-field call, so
+there is no normalization to drift.
+
+Branch selection needs no extra gate: a union view leaves the other branch's
+column empty, and an empty value carries no marker. ``local_key`` does gate —
+both branches would otherwise be namespaced the same — so its sources read the
+router's own discriminator.
 
     cd examples/21-router-union-alignment
     uv run python build_union.py            # → artifacts/manifest_union.yaml
@@ -57,9 +64,9 @@ from graflo.architecture.evolution import (
 
 EXAMPLE_DIR = Path(__file__).resolve().parent
 
-# Derivation inputs are RAW view columns. `firm_id` and `shop_id` are never both
-# populated, so at most one spec yields a value per document and the lowering's
-# coalesce picks it — no discriminator gate needed.
+# Derivation inputs are RAW view columns. `firm_ref` and `shop_ref` are never
+# both populated, so at most one spec yields a value per document and the
+# lowering's coalesce picks it — no discriminator gate needed.
 ALIGNMENT = IdentityAlignment(
     vertex="Company",
     attributes=[
@@ -68,25 +75,31 @@ ALIGNMENT = IdentityAlignment(
             sources={
                 # Each branch of the view carries the shared business key in
                 # its own column; the other is empty, which is what selects.
+                # The `ABC-` marker decides participation: carry it and you are
+                # stripped into the cluster, omit it and you fall through.
                 "r_view": [
                     DerivationSpec(
-                        input=["secondary_key", "firm_ref"],
-                        params={"prefix": "abc_", "strip_prefix": "ABC-"},
+                        input=["firm_ref"],
+                        foo="affix_gated_key",
+                        params={"prefix": "ABC-"},
                     ),
                     DerivationSpec(
-                        input=["secondary_key", "shop_ref"],
-                        params={"prefix": "abc_", "strip_prefix": "ABC-"},
+                        input=["shop_ref"],
+                        foo="affix_gated_key",
+                        params={"prefix": "ABC-"},
                     ),
                 ],
-                # Empty prefix = always-true gate: same normalization, one code
-                # path, no drift between the sides.
+                # Literally the same call on the other side: one code path, so
+                # the two normal forms cannot drift apart.
                 "r_b": DerivationSpec(
-                    input=["org_id", "shared_raw"],
-                    params={"prefix": "", "strip_prefix": "ABC-"},
+                    input=["shared_raw"],
+                    foo="affix_gated_key",
+                    params={"prefix": "ABC-"},
                 ),
                 "r_branch": DerivationSpec(
-                    input=["branch_id", "shared_raw"],
-                    params={"prefix": "", "strip_prefix": "ABC-"},
+                    input=["shared_raw"],
+                    foo="affix_gated_key",
+                    params={"prefix": "ABC-"},
                 ),
             },
         )

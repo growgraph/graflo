@@ -44,22 +44,53 @@ produces the class, a resource producing it at several levels with no
 per resource cannot say that, so the resource supplies a **list**:
 
 ```python
+marker = DerivationSpec(input=["shared_raw"], foo="affix_gated_key",
+                        params={"prefix": "ABC-"})
+
 AlignmentAttribute(into="match_key", sources={
     "r_view": [
-        DerivationSpec(input=["secondary_key", "firm_ref"],
-                       params={"prefix": "abc_", "strip_prefix": "ABC-"}),
-        DerivationSpec(input=["secondary_key", "shop_ref"],
-                       params={"prefix": "abc_", "strip_prefix": "ABC-"}),
+        DerivationSpec(input=["firm_ref"], foo="affix_gated_key",
+                       params={"prefix": "ABC-"}),
+        DerivationSpec(input=["shop_ref"], foo="affix_gated_key",
+                       params={"prefix": "ABC-"}),
     ],
-    "r_b": DerivationSpec(input=["org_id", "shared_raw"], params={"prefix": ""}),
+    "r_b": marker,
+    "r_branch": marker,
 })
 ```
 
-Branch selection needs no gate for `match_key`: the union view leaves the other
-branch's column empty, and the derivation functions return `None` for an empty
-value. `local_key` *does* gate — both branches would otherwise be namespaced the
-same — so its `LocalKeySource`s read the router's own discriminator through
-`gate="kind"`.
+## The marker is a filter, not a cleanup
+
+`affix_gated_key` reads **one** field, and the `ABC-` marker on that value *is*
+the admission test: carry it and you are stripped and accepted as canonical key
+material, omit it and you get `None`.
+
+The marker is an affix *pair* — `prefix` and `suffix`, each defaulting to `""`,
+which every string carries. So a marker can lead (`ext_42`), trail
+(`42-legacy`), or bracket the key, and naming neither admits everything while
+stripping nothing. This example only needs the leading half.
+
+That `None` is a fall-through, not a drop. It is an empty value to identity
+digests, so the funnel branch listing `match_key` is skipped and the record
+lands on its side-local key — still ingested, just outside the cross-source
+cluster. `data/view.csv` makes the difference visible: two `firm` rows carry the
+same business name, one as `ABC-Alpha` and one as bare `Alpha`. Only the first
+fuses with source B's `ABC-ALPHA`.
+
+The contrast is with `gated_normalized_key`, which gates on a *sibling* field
+and whose `strip_prefix` is `str.removeprefix` — a silent no-op when the prefix
+is absent. Under it both spellings normalize to `alpha` and fuse, and the marker
+carries no authority. [Example 19](example-19.md) keeps that idiom, which is the
+right one when participation is decided by a different column than the key
+itself.
+
+Because the test lives on the value, every side runs the identical one-field
+call, so the two normal forms cannot drift apart.
+
+Branch selection needs no extra gate for `match_key`: the union view leaves the
+other branch's column empty, and an empty value carries no marker. `local_key`
+*does* gate — both branches would otherwise be namespaced the same — so its
+`LocalKeySource`s read the router's own discriminator through `gate="kind"`.
 
 ### Why a list is not just two steps
 
@@ -67,13 +98,13 @@ Two steps writing `match_key` directly work on a plain `vertex` step, whose
 buffer extraction skips `None`. Behind a router they do not: the router merges
 the transform buffer into **one observation dict**, where a later `None`
 overwrites an earlier real value. So a multi-source attribute lowers to one
-gated step per branch writing a scratch field, plus one `coalesce_fields` step —
-a single writer — reducing them:
+step per branch writing a scratch field, plus one `coalesce_fields` step — a
+single writer — reducing them:
 
 ```yaml
-- transform: {call: {foo: gated_normalized_key, input: [secondary_key, firm_ref],
+- transform: {call: {foo: affix_gated_key, input: [firm_ref],
                      output: [_match_key__0], ...}}
-- transform: {call: {foo: gated_normalized_key, input: [secondary_key, shop_ref],
+- transform: {call: {foo: affix_gated_key, input: [shop_ref],
                      output: [_match_key__1], ...}}
 - transform: {call: {foo: coalesce_fields, strategy: all,
                      params: {fields: [_match_key__0, _match_key__1]},
@@ -111,8 +142,8 @@ uv run python build_union.py --root-demo   # derive at the root → conflict
 ```
 
 `inspect_fusion.py` shows five records collapsing to three vertices — one fused
-pair per aligned key — and `Person`, emitted by the same router, carrying none
-of the canonical attributes.
+pair per aligned key, plus the unmarked `firm` row keeping its own — and
+`Person`, emitted by the same router, carrying none of the canonical attributes.
 
 See [Example 19](example-19.md) for the canonical-map / n-ary-cluster recipe this
 builds on, [Example 17](example-17.md) for identity funnels on a single manifest,

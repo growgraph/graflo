@@ -10,6 +10,7 @@ from graflo.architecture.contract.ingestion.transform import (
     Transform,
 )
 from graflo.util.transform import (
+    affix_gated_key,
     camel_to_snake,
     gated_normalized_key,
     parse_multi_item,
@@ -462,6 +463,78 @@ def test_gated_normalized_key_empty_result_is_none():
         gated_normalized_key("abc_1", "ABC-", prefix="abc_", strip_prefix="ABC-")
         is None
     )
+
+
+def test_affix_gated_key_marked_value_is_stripped():
+    assert affix_gated_key(" ABC-Alpha ", prefix="ABC-") == "alpha"
+
+
+def test_affix_gated_key_suffix_marker_is_symmetric():
+    assert affix_gated_key("Alpha-LEGACY", suffix="-LEGACY") == "alpha"
+    assert affix_gated_key("Alpha", suffix="-LEGACY") is None
+
+
+def test_affix_gated_key_both_affixes_bracket_the_key():
+    assert affix_gated_key("ABC-Alpha-X", prefix="ABC-", suffix="-X") == "alpha"
+
+
+def test_affix_gated_key_requires_both_affixes_when_given():
+    """Half a marker is not a marker."""
+    assert affix_gated_key("ABC-Alpha", prefix="ABC-", suffix="-X") is None
+    assert affix_gated_key("Alpha-X", prefix="ABC-", suffix="-X") is None
+
+
+def test_affix_gated_key_unmarked_value_returns_none():
+    """The marker is the admission test, not a best-effort cleanup."""
+    assert affix_gated_key("Alpha", prefix="ABC-") is None
+    assert affix_gated_key("XYZ-Alpha", prefix="ABC-") is None
+
+
+def test_affix_gated_key_marker_test_is_case_sensitive():
+    """Casefolding applies to the surviving key, not to the marker test."""
+    assert affix_gated_key("abc-Alpha", prefix="ABC-") is None
+
+
+def test_affix_gated_key_none_and_empty_return_none():
+    assert affix_gated_key(None, prefix="ABC-") is None
+    assert affix_gated_key("", prefix="ABC-") is None
+    assert affix_gated_key("   ", prefix="ABC-") is None
+
+
+def test_affix_gated_key_bare_marker_is_none():
+    assert affix_gated_key("ABC-", prefix="ABC-") is None
+    assert affix_gated_key("ABC--X", prefix="ABC-", suffix="-X") is None
+
+
+def test_affix_gated_key_overlapping_affixes_are_rejected():
+    """Both ends "match" without bracketing: removing them would double-count."""
+    assert affix_gated_key("ABCX", prefix="ABC", suffix="BCX") is None
+
+
+def test_affix_gated_key_no_affixes_admit_everything():
+    assert affix_gated_key("Alpha") == "alpha"
+    assert affix_gated_key("Alpha", prefix="", suffix="") == "alpha"
+
+
+def test_affix_gated_key_no_casefold_keeps_case():
+    assert affix_gated_key("ABC-Alpha", prefix="ABC-", casefold=False) == "Alpha"
+
+
+def test_affix_gated_key_custom_strip_chars():
+    assert affix_gated_key("**ABC-Alpha**", prefix="ABC-", strip_chars="*") == "alpha"
+
+
+def test_affix_gated_key_as_manifest_transform():
+    """Registry-style usage: one input, the marker both selects and is removed."""
+    t = Transform(
+        module="graflo.util.transform",
+        foo="affix_gated_key",
+        input=("shared_raw",),
+        output=("match_key",),
+        params={"prefix": "ABC-"},
+    )
+    assert t({"shared_raw": "ABC-Alpha"}) == {"match_key": "alpha"}
+    assert t({"shared_raw": "Alpha"}) == {"match_key": None}
 
 
 def test_gated_normalized_key_as_manifest_transform():

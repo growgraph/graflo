@@ -496,6 +496,45 @@ class TestMultiSourceLowering:
         ]
         assert [c["params"]["prefix"] for c in gated] == ["firm", "shop"]
 
+    def test_an_affix_gated_spec_lowers_to_a_single_input_call(self) -> None:
+        """The marker idiom reads one field: the value gates itself."""
+        alignment = _routed_alignment(
+            attributes=[
+                AlignmentAttribute(
+                    into="match_key",
+                    sources={
+                        "r_view": [
+                            DerivationSpec(
+                                input=["firm_ref"],
+                                foo="affix_gated_key",
+                                params={"prefix": "ABC-"},
+                            ),
+                            DerivationSpec(
+                                input=["shop_ref"],
+                                foo="affix_gated_key",
+                                params={"prefix": "ABC-"},
+                            ),
+                        ],
+                        "r_b": DerivationSpec(
+                            input=["shared_raw"],
+                            foo="affix_gated_key",
+                            params={"prefix": "ABC-"},
+                        ),
+                    },
+                )
+            ]
+        )
+        calls = self._calls(
+            alignment_to_ops(alignment, manifest=_routed_manifest()), "r_view"
+        )
+        marker = [c for c in calls if c["foo"] == "affix_gated_key"]
+
+        assert [c["input"] for c in marker] == [["firm_ref"], ["shop_ref"]]
+        assert all(c["params"] == {"prefix": "ABC-"} for c in marker)
+        # Still scratch-then-coalesce: the branch count drives that, not arity.
+        assert [c["output"] for c in marker] == [["_match_key__0"], ["_match_key__1"]]
+        assert calls[2]["foo"] == "coalesce_fields"
+
     def test_a_scratch_name_colliding_with_a_property_is_rejected(self) -> None:
         with pytest.raises(AlignmentConflictError, match="scratch name collision"):
             alignment_to_ops(

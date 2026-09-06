@@ -11,6 +11,7 @@ Key Functions:
     - clear_first_level_nones: Clean dictionaries by removing None values
     - parse_multi_item: Parse complex multi-item strings
     - pick_unique_dict: Remove duplicate structures by content hash
+    - affix_gated_key: Admit a value only when it carries its marker affixes
 
 Example:
     >>> name = standardize("John. Doe, Smith")
@@ -555,6 +556,66 @@ def gated_normalized_key(
     key = str(value).strip(strip_chars)
     if strip_prefix:
         key = key.removeprefix(strip_prefix)
+    if casefold:
+        key = key.casefold()
+    return key or None
+
+
+def affix_gated_key(
+    value: str | None,
+    *,
+    prefix: str = "",
+    suffix: str = "",
+    casefold: bool = True,
+    strip_chars: str | None = None,
+) -> str | None:
+    """Return *value* stripped of its marker affixes, or ``None`` if unmarked.
+
+    The affixes are the admission test, not a best-effort cleanup: a value
+    carrying them is stripped and accepted as canonical key material, and a
+    value missing either one yields ``None``. Contrast
+    :func:`gated_normalized_key`, which gates on a *sibling* field and whose
+    ``strip_prefix`` is a silent no-op when absent — there, marked and unmarked
+    values normalize to the same key and fuse.
+
+    Both affixes are required when given: a marker can be a prefix (``ext_``), a
+    suffix (``-legacy``), or the pair that brackets a key. Each defaults to
+    ``""``, which every string carries, so naming one leaves the other
+    unconstrained and naming neither admits everything while stripping nothing —
+    the convention that lets a source participating unconditionally reuse the
+    same function, and thus the same normal form, as one that is filtered.
+
+    ``None`` is a fall-through, not a drop. It is an empty value to identity
+    digests, so an identity-funnel branch listing the output field is skipped
+    and the record lands on its side-local branch — still ingested, just not
+    into the cross-source cluster.
+
+    The marker test is case-sensitive even when *casefold* is set: casefolding
+    applies to the surviving key, after the affixes have been removed.
+
+    Args:
+        value: Raw key material, expected to carry the affixes.
+        prefix: Leading marker admitting *value*; removed from it.
+        suffix: Trailing marker admitting *value*; removed from it.
+        casefold: Casefold the surviving key.
+        strip_chars: Characters stripped from both ends of *value* before the
+            affixes are tested (``None`` strips whitespace).
+
+    Returns:
+        The normalized key, or ``None`` when *value* is missing, lacks either
+        affix, or is empty once both are removed.
+    """
+    if value is None:
+        return None
+    key = str(value).strip(strip_chars)
+    if not (key.startswith(prefix) and key.endswith(suffix)):
+        return None
+    # Overlapping affixes both "match" a short value without bracketing it:
+    # ``"ABCX"`` starts with ``"ABC"`` and ends with ``"BCX"``, and removing
+    # both would consume characters twice.
+    if len(prefix) + len(suffix) > len(key):
+        return None
+    key = key[len(prefix) : len(key) - len(suffix)]
     if casefold:
         key = key.casefold()
     return key or None
