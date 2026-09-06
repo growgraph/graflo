@@ -160,9 +160,9 @@ class VertexActor(VertexProducingActor):
         vertex_keys: tuple[str, ...] = tuple(vertex_keys_list)
 
         # When a role is set the vertex is stored at a named sub-slot so that
-        # multiple vertices of the same type in the same row (e.g. buyer/seller)
+        # multiple vertices of the same type in one observation (e.g. buyer/seller)
         # occupy distinct accumulator locations. Transforms are always read from
-        # the bare row lindex; only storage moves to the role slot.
+        # the bare observation lindex; only storage moves to the role slot.
         effective_lindex = lindex.extend((self.role, 0)) if self.role else lindex
 
         agg = []

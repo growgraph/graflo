@@ -30,6 +30,7 @@ from .ops import (
     AddVertexPropertiesOp,
     AddVerticesOp,
     ChangeFieldTypesOp,
+    EnsureExtractedFieldsOp,
     ManifestOp,
     MergeEdgesOp,
     MergeVerticesOp,
@@ -58,6 +59,7 @@ from .ops import (
 RevisionOp = Annotated[
     RemoveVerticesOp
     | AddResourceTransformsOp
+    | EnsureExtractedFieldsOp
     | AddVerticesOp
     | AddEdgesOp
     | RetargetEdgesOp

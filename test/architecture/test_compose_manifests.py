@@ -684,7 +684,7 @@ def test_disagreeing_into_on_shared_node_raises() -> None:
 
 def test_identity_alignments_apply_inside_compose() -> None:
     from graflo.architecture.evolution import (
-        AlignmentRow,
+        AlignmentAttribute,
         DerivationSpec,
         IdentityAlignment,
         LocalKeySource,
@@ -723,8 +723,8 @@ def test_identity_alignments_apply_inside_compose() -> None:
     )
     alignment = IdentityAlignment(
         vertex="Company",
-        rows=[
-            AlignmentRow(
+        attributes=[
+            AlignmentAttribute(
                 into="match_key",
                 sources={
                     "r_a": DerivationSpec(input=["shared_raw"]),

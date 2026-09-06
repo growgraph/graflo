@@ -89,6 +89,10 @@ OP_PAYLOADS: dict[str, dict] = {
                 }
             ]
         },
+        "at": {"crm": [1]},
+    },
+    "ensure_extracted_fields": {
+        "additions": {"crm": [{"vertex": "party", "fields": ["local_key"], "at": [1]}]}
     },
     "project_manifest": {"keep_vertices": ["party"]},
     "replace_identity": {
@@ -170,15 +174,15 @@ class TestUnionCoverage:
             "INGESTION_REWRITING_OPS or to schema_only here"
         )
 
-    def test_the_vocabulary_is_thirty_one_ops(self) -> None:
+    def test_the_vocabulary_is_thirty_two_ops(self) -> None:
         exported = {
             name
             for name in dir(ops_module)
             if name.endswith("Op")
             and hasattr(getattr(ops_module, name), "model_fields")
         }
-        assert len(exported) == 31
-        assert len(_union_members()) == 30  # 31 minus the binary compose op
+        assert len(exported) == 32
+        assert len(_union_members()) == 31  # 32 minus the binary compose op
 
 
 class TestRoundTrip:
@@ -293,3 +297,40 @@ class TestComposeExclusion:
     def test_is_revision_op_screens_the_binary_op(self) -> None:
         assert is_revision_op(_all_ops()[0]) is True
         assert is_revision_op(ComposeManifestsOp()) is False
+
+
+class TestLegacyFieldAliases:
+    """Recorded revisions predate the ``row`` → ``observation`` rename.
+
+    ``allow_row_fusion`` named the wrong unit — a pipeline level produces
+    *observations* at a ``LocationIndex``, not rows — but a stored change set
+    written before the rename must still load, and must round-trip out under
+    the new spelling.
+    """
+
+    def test_merge_vertices_accepts_allow_row_fusion(self) -> None:
+        (op,) = ops_from_dicts(
+            [
+                {
+                    "op": "merge_vertices",
+                    "sources": ["shop"],
+                    "into": "company",
+                    "allow_row_fusion": True,
+                }
+            ]
+        )
+        assert op.allow_observation_fusion is True
+        payload = ops_to_dicts([op])[0]
+        assert payload["allow_observation_fusion"] is True
+        assert "allow_row_fusion" not in payload
+
+    def test_compose_manifests_accepts_allow_row_fusion(self) -> None:
+        op = ComposeManifestsOp.model_validate(
+            {"op": "compose_manifests", "allow_row_fusion": True}
+        )
+        assert op.allow_observation_fusion is True
+        assert "allow_row_fusion" not in op.to_dict()
+
+    def test_the_new_spelling_is_the_one_that_serializes(self) -> None:
+        op = ComposeManifestsOp(allow_observation_fusion=True)
+        assert op.to_dict()["allow_observation_fusion"] is True

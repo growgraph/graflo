@@ -79,11 +79,3 @@ def merge_observation_with_transform_buffer(
             for k in item.removed_keys:
                 merged.pop(k, None)
     return merged
-
-
-def merge_row_doc_with_transform_buffer(
-    doc: dict[str, Any],
-    buffer_items: list[Any],
-) -> dict[str, Any]:
-    """Backward-compatible alias for :func:`merge_observation_with_transform_buffer`."""
-    return merge_observation_with_transform_buffer(doc, buffer_items)

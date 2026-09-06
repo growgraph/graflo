@@ -173,7 +173,7 @@ class TestMergeGuardsProtectTheEmittedGraph:
                     sources=["B"],
                     into="A",
                     allow_self_relations=True,
-                    allow_row_fusion=True,
+                    allow_observation_fusion=True,
                 )
             ],
             bump_version=False,

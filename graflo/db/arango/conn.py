@@ -373,7 +373,7 @@ class ArangoConnection(Connection):
         if isinstance(collections_result, list):
             for c in collections_result:
                 if isinstance(c, dict):
-                    name_value = cast(dict[str, Any], c).get("name")
+                    name_value = c.get("name")
                     if isinstance(name_value, str) and name_value[0] != "_":
                         non_system.append(name_value)
         return has_graphs or len(non_system) > 0
@@ -619,8 +619,7 @@ class ArangoConnection(Connection):
             if isinstance(ixs, list):
                 for ix in ixs:
                     if isinstance(ix, dict):
-                        ix_dict = cast(dict[str, Any], ix)
-                        fields_value = ix_dict.get("fields")
+                        fields_value = ix.get("fields")
                         if isinstance(fields_value, (list, tuple)):
                             field_combinations.append(tuple(fields_value))
             index_list = (
@@ -749,10 +748,9 @@ class ArangoConnection(Connection):
             filtered_collections: list[dict[str, Any]] = []
             for c in collections_result:
                 if isinstance(c, dict):
-                    c_dict = cast(dict[str, Any], c)
-                    name_value = c_dict.get("name")
+                    name_value = c.get("name")
                     if isinstance(name_value, str) and name_value[0] != "_":
-                        filtered_collections.append(c_dict)
+                        filtered_collections.append(c)
             logger.info(filtered_collections)
         else:
             logger.info([])
@@ -764,8 +762,7 @@ class ArangoConnection(Connection):
             if isinstance(collections_result, list):
                 for c in collections_result:
                     if isinstance(c, dict):
-                        c_dict = cast(dict[str, Any], c)
-                        name_value = c_dict.get("name")
+                        name_value = c.get("name")
                         if isinstance(name_value, str) and name_value[0] != "_":
                             cnames.append(name_value)
             gnames = []
@@ -827,8 +824,7 @@ class ArangoConnection(Connection):
             collection_names: list[str] = []
             for c in collections_result:
                 if isinstance(c, dict):
-                    c_dict = cast(dict[str, Any], c)
-                    name_value = c_dict.get("name")
+                    name_value = c.get("name")
                     if isinstance(name_value, str) and name_value[0] != "_":
                         collection_names.append(name_value)
             logger.info(collection_names)
@@ -846,10 +842,7 @@ class ArangoConnection(Connection):
         """
         result = self.conn.collections()
         if isinstance(result, list):
-            return [
-                cast(dict[str, Any], item) if isinstance(item, dict) else {}
-                for item in result
-            ]
+            return [item if isinstance(item, dict) else {} for item in result]
         return []
 
     def upsert_docs_batch(

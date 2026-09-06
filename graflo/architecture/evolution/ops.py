@@ -5,8 +5,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Annotated, Any, Literal
 
+from pydantic import AliasChoices, model_validator
 from pydantic import Field as PydanticField
-from pydantic import model_validator
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.contract.ingestion.transform import ProtoTransform
@@ -82,16 +82,18 @@ class MergeVerticesOp(ConfigBaseModel):
         default=False,
         description=(
             "Accept edges whose endpoints both land on ``into``. A self-relation makes "
-            "both endpoints share one accumulator slot, so assembly merges rows that "
-            "were previously separate nodes. Rejected unless set."
+            "both endpoints share one accumulator slot, so assembly merges observations "
+            "that were previously separate nodes. Rejected unless set."
         ),
     )
-    allow_row_fusion: bool = PydanticField(
+    allow_observation_fusion: bool = PydanticField(
         default=False,
+        validation_alias=AliasChoices("allow_observation_fusion", "allow_row_fusion"),
         description=(
             "Accept resource pipelines that produce ``into`` more than once at the same "
-            "level. Those steps then write to one accumulator slot, fusing what a single "
-            "source document emitted as two entities. Rejected unless set."
+            "level. Those steps then write to one accumulator slot, fusing into one node "
+            "what a single source document emitted as two vertex observations. Rejected "
+            "unless set. ``allow_row_fusion`` is accepted as a legacy alias."
         ),
     )
 
@@ -495,10 +497,17 @@ class AddResourceTransformsOp(ConfigBaseModel):
     """Append transform steps to named resources' pipelines.
 
     The first op whose primary effect is ingestion: ``graph_schema`` is
-    untouched. Steps are appended at the ROOT level of each pipeline; actor
-    type-priority sorting (transform runs before vertex extraction at the same
-    level) makes the position safe. Nested ``descend`` levels are not
-    targetable in this form.
+    untouched. Steps land at the root level of each pipeline unless ``at``
+    names a deeper one; at whichever level they land, actor type-priority
+    sorting (transform runs before vertex extraction at the same level) makes
+    the position safe.
+
+    The level is load-bearing rather than cosmetic. An actor reads its
+    transform buffer at its own ``LocationIndex`` with no ancestor fallback,
+    and a ``descend`` subtree runs *before* its own level's transforms, so a
+    step appended at the root is invisible to a vertex produced under a
+    ``descend`` — and a transform whose declared inputs are missing skips
+    silently by default. Target the level that produces the vertex.
 
     Steps may reference a registry transform via ``call.use`` (resolved
     against the manifest's existing ``ingestion_model.transforms`` union the
@@ -514,6 +523,15 @@ class AddResourceTransformsOp(ConfigBaseModel):
             "``{resource_name: [step_dict, ...]}``."
         ),
         min_length=1,
+    )
+    at: dict[str, list[int]] = PydanticField(
+        default_factory=dict,
+        description=(
+            "Per-resource pipeline level to append into: "
+            "``{resource_name: [step_index, ...]}``. Each index must address a "
+            "``descend`` step, descending one level per element; an omitted or "
+            "empty path means the root level."
+        ),
     )
     transforms: list[ProtoTransform] = PydanticField(
         default_factory=list,
@@ -550,12 +568,94 @@ class AddResourceTransformsOp(ConfigBaseModel):
                         f"{resource_name!r} is not a transform step: {step!r}"
                     )
                 TransformActorConfig.model_validate(normalized)
+        stray = sorted(set(self.at) - set(self.additions))
+        if stray:
+            raise ValueError(
+                f"add_resource_transforms: `at` names resources {stray} with no "
+                "steps to append"
+            )
+        for resource_name, path in self.at.items():
+            if any(index < 0 for index in path):
+                raise ValueError(
+                    f"add_resource_transforms: `at` path for resource "
+                    f"{resource_name!r} has a negative index: {path}"
+                )
         for proto in self.transforms:
             if not proto.name:
                 raise ValueError(
                     "add_resource_transforms: registry transforms must define "
                     "a non-empty name"
                 )
+        return self
+
+
+class EnsureExtractedFields(ConfigBaseModel):
+    """Fields that must survive extraction for one vertex type at one level."""
+
+    vertex: str = PydanticField(
+        ...,
+        description="The vertex type whose extraction must keep ``fields``.",
+    )
+    fields: list[str] = PydanticField(
+        ...,
+        min_length=1,
+        description="Property names that must reach the extracted vertex document.",
+    )
+    at: list[int] = PydanticField(
+        default_factory=list,
+        description=(
+            "Pipeline level holding the producing step, as ``descend`` step "
+            "indices. Empty means the root level."
+        ),
+    )
+
+
+class EnsureExtractedFieldsOp(ConfigBaseModel):
+    """Widen a producing step's projection so named fields are not dropped.
+
+    Needed because a ``vertex_router`` delivers differently from a ``vertex``
+    step. The router builds its child ``VertexActor`` at
+    ``lindex.extend((role, 0))``, where the transform buffer is empty, so
+    derived fields reach the child only through the merged observation — that
+    is, through passthrough or ``from``. A plain ``vertex`` step instead reads
+    the buffer directly, which bypasses ``keep_fields`` and
+    ``extraction_scope`` entirely.
+
+    So on a router, ``extraction_scope: mapped_only`` or a ``keep_fields`` list
+    that does not name the fields drops them silently. This op restores them:
+    ``keep_fields`` gains the names, and under ``mapped_only`` the per-type
+    ``vertex_from_map`` entry gains identity mappings — seeded from the
+    router-level ``from`` when the entry does not exist yet, since creating it
+    otherwise replaces the author's projection rather than extending it.
+
+    A plain ``vertex`` step, or a router that restricts nothing, is a no-op:
+    the fields already survive.
+    """
+
+    op: Literal["ensure_extracted_fields"] = "ensure_extracted_fields"
+    additions: dict[str, list[EnsureExtractedFields]] = PydanticField(
+        ...,
+        description=(
+            "Per-resource extraction guarantees: "
+            "``{resource_name: [{vertex, fields, at}, ...]}``."
+        ),
+        min_length=1,
+    )
+
+    @model_validator(mode="after")
+    def _validate_entries(self) -> EnsureExtractedFieldsOp:
+        for resource_name, entries in self.additions.items():
+            if not entries:
+                raise ValueError(
+                    f"ensure_extracted_fields: empty entry list for resource "
+                    f"{resource_name!r}"
+                )
+            for entry in entries:
+                if any(index < 0 for index in entry.at):
+                    raise ValueError(
+                        f"ensure_extracted_fields: `at` path for resource "
+                        f"{resource_name!r} has a negative index: {entry.at}"
+                    )
         return self
 
 
@@ -935,18 +1035,35 @@ class DerivationSpec(ConfigBaseModel):
     )
 
 
-class AlignmentRow(ConfigBaseModel):
-    """One aligned canonical attribute; list position = funnel priority."""
+class AlignmentAttribute(ConfigBaseModel):
+    """One aligned canonical attribute; list position = funnel priority.
+
+    Each entry lowers to one
+    :class:`~graflo.architecture.schema.identity_funnel.IdentityBranch` over
+    ``into``, so the list order *is* the funnel order.
+    """
 
     into: str = PydanticField(
         ...,
         description="Canonical attribute name on the class; funnel branch id.",
     )
-    sources: dict[str, DerivationSpec] = PydanticField(
+    sources: dict[str, DerivationSpec | list[DerivationSpec]] = PydanticField(
         ...,
         min_length=1,
-        description="Per-resource derivation: ``{resource_name: spec}``.",
+        description=(
+            "Per-resource derivation: ``{resource_name: spec}``, or a list of "
+            "specs when one resource derives the attribute several ways — one "
+            "per class its ``vertex_router`` collapses onto the aligned class. "
+            "At most one spec in a list yields a value for any document."
+        ),
     )
+
+    def specs_for(self, resource: str) -> list[DerivationSpec]:
+        """Derivations *resource* contributes to this attribute, in order."""
+        spec = self.sources.get(resource)
+        if spec is None:
+            return []
+        return [spec] if isinstance(spec, DerivationSpec) else list(spec)
 
 
 class LocalKeySource(ConfigBaseModel):
@@ -960,6 +1077,30 @@ class LocalKeySource(ConfigBaseModel):
         ...,
         description="Namespace tag: tag 'a' turns 'f2' into 'a:f2'.",
     )
+    gate: str | None = PydanticField(
+        default=None,
+        description=(
+            "Optional RAW doc field deciding whether this source applies — the "
+            "router's discriminator when one resource contributes several "
+            "local keys. Omit when ``field`` is empty for the other branches, "
+            "which already selects."
+        ),
+    )
+    gate_prefix: str = PydanticField(
+        default="",
+        description=(
+            'Required prefix of the ``gate`` value; ``""`` always passes. '
+            "Meaningless without ``gate``."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _validate_gate(self) -> LocalKeySource:
+        if self.gate is None and self.gate_prefix:
+            raise ValueError(
+                "LocalKeySource: gate_prefix is meaningless without a gate field"
+            )
+        return self
 
 
 class LocalKeySpec(ConfigBaseModel):
@@ -973,17 +1114,28 @@ class LocalKeySpec(ConfigBaseModel):
         default=":",
         description="Separator between tag and key.",
     )
-    sources: dict[str, LocalKeySource] = PydanticField(
+    sources: dict[str, LocalKeySource | list[LocalKeySource]] = PydanticField(
         ...,
         min_length=1,
-        description="Per-resource local-key wiring: ``{resource_name: source}``.",
+        description=(
+            "Per-resource local-key wiring: ``{resource_name: source}``, or a "
+            "list when one resource carries several side-local keys — one per "
+            "class its ``vertex_router`` collapses onto the aligned class."
+        ),
     )
+
+    def sources_for(self, resource: str) -> list[LocalKeySource]:
+        """Local-key sources *resource* contributes, in order."""
+        source = self.sources.get(resource)
+        if source is None:
+            return []
+        return [source] if isinstance(source, LocalKeySource) else list(source)
 
 
 class IdentityAlignment(ConfigBaseModel):
     """Cross-source identity alignment for one canonical class.
 
-    ``rows`` order is funnel priority: a record keys by the highest-priority
+    ``attributes`` order is funnel priority: a record keys by the highest-priority
     aligned attribute it carries. Two records fuse when their strongest
     present attribute coincides — a match on a lower-priority attribute does
     NOT fuse records when one of them also carries a higher-priority one.
@@ -993,9 +1145,13 @@ class IdentityAlignment(ConfigBaseModel):
         ...,
         description="The canonical class whose identity is being aligned.",
     )
-    rows: list[AlignmentRow] = PydanticField(
+    attributes: list[AlignmentAttribute] = PydanticField(
         default_factory=list,
-        description="Aligned canonical attributes, in priority order.",
+        validation_alias=AliasChoices("attributes", "rows"),
+        description=(
+            "Aligned canonical attributes, in priority order. ``rows`` is "
+            "accepted as a legacy alias."
+        ),
     )
     local_key: LocalKeySpec | None = PydanticField(
         default=None,
@@ -1011,14 +1167,23 @@ class IdentityAlignment(ConfigBaseModel):
             "``{name: [field, ...]}``."
         ),
     )
+    at: dict[str, list[int]] = PydanticField(
+        default_factory=dict,
+        description=(
+            "Per-resource pipeline level to derive at, as ``descend`` step "
+            "indices. Omitted resources resolve to the single level producing "
+            "``vertex``; supply a path only when a resource produces it at "
+            "more than one level."
+        ),
+    )
 
     @model_validator(mode="after")
     def _validate_shape(self) -> IdentityAlignment:
-        if not self.rows and self.local_key is None:
+        if not self.attributes and self.local_key is None:
             raise ValueError(
-                "IdentityAlignment requires at least one row or a local_key"
+                "IdentityAlignment requires at least one attribute or a local_key"
             )
-        into_names = [row.into for row in self.rows]
+        into_names = [attribute.into for attribute in self.attributes]
         if self.local_key is not None:
             into_names.append(self.local_key.into)
         duplicates = {n for n in into_names if into_names.count(n) > 1}
@@ -1353,12 +1518,13 @@ class ComposeManifestsOp(ConfigBaseModel):
             "composed vertex. Forwarded to the per-side ``MergeVerticesOp``."
         ),
     )
-    allow_row_fusion: bool = PydanticField(
+    allow_observation_fusion: bool = PydanticField(
         default=False,
+        validation_alias=AliasChoices("allow_observation_fusion", "allow_row_fusion"),
         description=(
             "Accept a merge whose sources are produced more than once at one "
             "resource pipeline level. Forwarded to the per-side "
-            "``MergeVerticesOp``."
+            "``MergeVerticesOp``. ``allow_row_fusion`` is accepted as a legacy alias."
         ),
     )
     identity_alignments: list[IdentityAlignment] = PydanticField(
@@ -1393,6 +1559,7 @@ class ComposeManifestsOp(ConfigBaseModel):
 ManifestOp = Annotated[
     RemoveVerticesOp
     | AddResourceTransformsOp
+    | EnsureExtractedFieldsOp
     | AddVerticesOp
     | AddEdgesOp
     | RetargetEdgesOp
@@ -1436,6 +1603,7 @@ INGESTION_REWRITING_OPS: frozenset[str] = frozenset(
     {
         "add_inverse_edges",
         "add_resource_transforms",
+        "ensure_extracted_fields",
         "merge_edges",
         "merge_vertices",
         "project_manifest",

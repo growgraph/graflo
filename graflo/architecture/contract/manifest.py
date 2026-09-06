@@ -37,10 +37,11 @@ class GraphManifest(ConfigBaseModel):
     metadata: ManifestMetadata | None = PydanticField(
         default=None,
         description=(
-            "Manifest-level metadata, currently provenance only. Excluded from "
-            "this manifest's own content hash: a content address that covered "
-            "its lineage would not be path-independent, and two routes to the "
-            "same world model could never be recognised as equal."
+            "Manifest-level identity: name, description and provenance. "
+            "Excluded from this manifest's own content hash — a content "
+            "address that covered its name or its lineage would not be "
+            "path-independent, and two routes to the same world model could "
+            "never be recognised as equal."
         ),
     )
 

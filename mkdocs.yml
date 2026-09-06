@@ -109,6 +109,7 @@ nav:
     -   18 - Cross-resource identity discovery: examples/example-18.md
     -   19 - Union of manifests with conditional equivalence: examples/example-19.md
     -   "20 - Version control: fork, conflict, resolve, merge": examples/example-20.md
+    -   21 - Identity alignment on a routed source: examples/example-21.md
 -   API Reference: reference/
 -   Contributing: contributing.md
 markdown_extensions:

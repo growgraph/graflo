@@ -11,6 +11,7 @@ Key Functions:
     - clear_first_level_nones: Clean dictionaries by removing None values
     - parse_multi_item: Parse complex multi-item strings
     - pick_unique_dict: Remove duplicate structures by content hash
+    - affix_gated_key: Admit a value only when it carries its marker affixes
 
 Example:
     >>> name = standardize("John. Doe, Smith")
@@ -25,7 +26,7 @@ import time
 from collections import defaultdict
 from datetime import datetime
 from functools import lru_cache
-from typing import TypeVar
+from typing import Any, TypeVar
 
 ORDINAL_SUFFIX = ["st", "nd", "rd", "th"]
 _CAMEL_TO_SNAKE_STEP1_RE = re.compile(r"(.)([A-Z][a-z]+)")
@@ -560,6 +561,66 @@ def gated_normalized_key(
     return key or None
 
 
+def affix_gated_key(
+    value: str | None,
+    *,
+    prefix: str = "",
+    suffix: str = "",
+    casefold: bool = True,
+    strip_chars: str | None = None,
+) -> str | None:
+    """Return *value* stripped of its marker affixes, or ``None`` if unmarked.
+
+    The affixes are the admission test, not a best-effort cleanup: a value
+    carrying them is stripped and accepted as canonical key material, and a
+    value missing either one yields ``None``. Contrast
+    :func:`gated_normalized_key`, which gates on a *sibling* field and whose
+    ``strip_prefix`` is a silent no-op when absent — there, marked and unmarked
+    values normalize to the same key and fuse.
+
+    Both affixes are required when given: a marker can be a prefix (``ext_``), a
+    suffix (``-legacy``), or the pair that brackets a key. Each defaults to
+    ``""``, which every string carries, so naming one leaves the other
+    unconstrained and naming neither admits everything while stripping nothing —
+    the convention that lets a source participating unconditionally reuse the
+    same function, and thus the same normal form, as one that is filtered.
+
+    ``None`` is a fall-through, not a drop. It is an empty value to identity
+    digests, so an identity-funnel branch listing the output field is skipped
+    and the record lands on its side-local branch — still ingested, just not
+    into the cross-source cluster.
+
+    The marker test is case-sensitive even when *casefold* is set: casefolding
+    applies to the surviving key, after the affixes have been removed.
+
+    Args:
+        value: Raw key material, expected to carry the affixes.
+        prefix: Leading marker admitting *value*; removed from it.
+        suffix: Trailing marker admitting *value*; removed from it.
+        casefold: Casefold the surviving key.
+        strip_chars: Characters stripped from both ends of *value* before the
+            affixes are tested (``None`` strips whitespace).
+
+    Returns:
+        The normalized key, or ``None`` when *value* is missing, lacks either
+        affix, or is empty once both are removed.
+    """
+    if value is None:
+        return None
+    key = str(value).strip(strip_chars)
+    if not (key.startswith(prefix) and key.endswith(suffix)):
+        return None
+    # Overlapping affixes both "match" a short value without bracketing it:
+    # ``"ABCX"`` starts with ``"ABC"`` and ends with ``"BCX"``, and removing
+    # both would consume characters twice.
+    if len(prefix) + len(suffix) > len(key):
+        return None
+    key = key[len(prefix) : len(key) - len(suffix)]
+    if casefold:
+        key = key.casefold()
+    return key or None
+
+
 def tagged_key(value: object, *, tag: str, sep: str = ":") -> str | None:
     """Namespace a side-local key: tag ``"a"`` turns ``"f2"`` into ``"a:f2"``.
 
@@ -582,3 +643,71 @@ def tagged_key(value: object, *, tag: str, sep: str = ":") -> str | None:
         return None
     key = str(value).strip()
     return f"{tag}{sep}{key}" if key else None
+
+
+def coalesce_fields(doc: dict[str, Any], *, fields: list[str]) -> Any:
+    """First non-empty value among *fields* on *doc*, or ``None``.
+
+    The branch selector for a routed source. When one resource derives a
+    canonical attribute several ways — one per class its ``vertex_router``
+    collapses onto the aligned class — each derivation writes its own scratch
+    field and returns ``None`` for the branches it does not serve. This picks
+    the one that fired.
+
+    A single writer per canonical attribute is the point. Two steps writing the
+    same key work on a plain ``vertex`` step, whose buffer extraction skips
+    ``None``, but not behind a ``vertex_router``: the router merges the buffer
+    into one observation dict, where a later ``None`` overwrites an earlier
+    real value.
+
+    Called with ``strategy: all``, so a branch whose own columns are absent
+    from the document skips without taking the coalesce down with it.
+
+    Args:
+        doc: The merged observation.
+        fields: Scratch field names, in priority order.
+
+    Returns:
+        The first present, non-empty value, or ``None`` when none fired.
+    """
+    for field in fields:
+        value = doc.get(field)
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        return value
+    return None
+
+
+def gated_tagged_key(
+    gate: str | None,
+    value: object,
+    *,
+    tag: str,
+    sep: str = ":",
+    prefix: str = "",
+) -> str | None:
+    """:func:`tagged_key` behind a gate, for a routed source.
+
+    When one resource contributes several side-local keys — one per class its
+    ``vertex_router`` collapses onto the aligned class — the router's
+    discriminator selects which one applies. ``None`` when the gate does not
+    match, which is an empty value to identity digests.
+
+    Args:
+        gate: Field deciding which branch this document is (the discriminator).
+        value: The side-local key material.
+        tag: Namespace prefix identifying the branch.
+        sep: Separator between *tag* and the key.
+        prefix: Required prefix of *gate*; ``""`` always passes.
+
+    Returns:
+        ``f"{tag}{sep}{key}"``, or ``None`` when the gate fails or *value* is
+        missing or empty.
+    """
+    if gate is None:
+        return None
+    if not str(gate).startswith(prefix):
+        return None
+    return tagged_key(value, tag=tag, sep=sep)

@@ -16,6 +16,16 @@ def normalize_actor_step(data: dict[str, Any]) -> dict[str, Any]:
         return data
     data = dict(data)
     if "type" in data:
+        # An already-typed step still owns its children. Returning here without
+        # descending left a `descend` written in its own typed form unable to
+        # carry the shorthand sub-steps its `{descend: {...}}` spelling accepts,
+        # because `pipeline` is a union discriminated on `type`.
+        if data["type"] == "descend":
+            sub = (
+                data.pop("apply", None) if "pipeline" not in data else data["pipeline"]
+            )
+            if sub is not None:
+                data["pipeline"] = [normalize_actor_step(s) for s in _steps_list(sub)]
         return data
 
     if "vertex" in data:
@@ -64,6 +74,15 @@ def normalize_actor_step(data: dict[str, Any]) -> dict[str, Any]:
         inner = data.pop("vertex_router")
         if isinstance(inner, dict):
             data.update(inner)
+        data["type"] = "vertex_router"
+        return data
+
+    # Flat router form. ``VertexRouterActorConfig`` infers the discriminator from a
+    # bare ``type_field`` too, so a normalizer that did not would hand every
+    # structural pipeline scan (referenced vertices, renames, level lookup) a step
+    # with no ``type`` — and those scans would silently skip a real router. The edge
+    # branches above already claimed ``source_type_field`` / ``target_type_field``.
+    if "type_field" in data:
         data["type"] = "vertex_router"
         return data
 

@@ -1,0 +1,46 @@
+schema:
+    metadata:
+        name: source-a-view
+        version: 1.0.0
+    graph:
+        vertex_config:
+            vertices:
+            -   name: Firm
+                properties:
+                -   firm_id
+                -   secondary_key
+                identity:
+                -   firm_id
+            -   name: Shop
+                properties:
+                -   shop_id
+                -   secondary_key
+                identity:
+                -   shop_id
+            -   name: Person
+                properties:
+                -   person_id
+                -   secondary_key
+                identity:
+                -   person_id
+        edge_config:
+            edges: []
+ingestion_model:
+    resources:
+    -   name: r_view
+        pipeline:
+        -   descend:
+                key: records
+                apply:
+                -   vertex_router:
+                        type_field: kind
+                        keep_fields:
+                        -   firm_id
+                        -   shop_id
+                        -   person_id
+                        -   secondary_key
+                        type_map:
+                            firm: Firm
+                            shop: Shop
+                            person: Person
+    transforms: []
