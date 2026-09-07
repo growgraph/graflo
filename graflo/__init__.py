@@ -52,6 +52,10 @@ _EXPORTS: dict[str, str] = {
     "FieldType": "graflo.architecture",
     "FileConnector": "graflo.architecture",
     "GraphManifest": "graflo.architecture",
+    "ProfileReport": "graflo.architecture",
+    "ProfileWaivers": "graflo.architecture",
+    "check_manifest": "graflo.architecture",
+    "check_manifest_config": "graflo.architecture",
     "GraphMetadata": "graflo.architecture",
     "GraphModel": "graflo.architecture",
     "Index": "graflo.architecture",
@@ -141,6 +145,8 @@ __all__ = [
     "KafkaDataSource",
     "LogicalOperator",
     "PaginationConfig",
+    "ProfileReport",
+    "ProfileWaivers",
     "Resource",
     "ResourceConnector",
     "SQLConfig",
@@ -151,6 +157,8 @@ __all__ = [
     "TableFileDataSource",
     "Vertex",
     "VertexConfig",
+    "check_manifest",
+    "check_manifest_config",
 ]
 
 

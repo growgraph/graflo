@@ -164,8 +164,8 @@ def op_slots(op: ManifestOp) -> set[Slot]:
 
     # ── vertex properties ───────────────────────────────────────────────────
     elif isinstance(op, ops.AddVertexPropertiesOp):
-        for vertex, fields in op.additions.items():
-            slots |= {_field_slot(vertex, field) for field in fields}
+        for vertex in op.additions:
+            slots |= {_field_slot(vertex, name) for name in op.field_names(vertex)}
     elif isinstance(op, ops.RemoveVertexPropertiesOp):
         for vertex, fields in op.removals.items():
             slots |= {_field_slot(vertex, field) for field in fields}
@@ -199,6 +199,23 @@ def op_slots(op: ManifestOp) -> set[Slot]:
         slots |= {_edge_slot(*_edge_key_of(entry)) for entry in op.edges}
     elif isinstance(op, ops.SetEdgeDirectedOp):
         slots |= {(*_edge_slot(*_edge_key_of(entry)), "directed") for entry in op.edges}
+    elif isinstance(op, ops.SetEdgeSemanticsOp):
+        slots |= {
+            (*_edge_slot(*_edge_key_of(entry)), "semantics") for entry in op.edges
+        }
+
+    # ── grounding ───────────────────────────────────────────────────────────
+    #
+    # A narrower slot than the element itself: grounding a type and renaming a
+    # property of it are independent edits, and merging them is the ordinary
+    # case rather than a conflict.
+    elif isinstance(op, ops.SetVertexSemanticsOp):
+        slots |= {(*_vertex_slot(name), "semantics") for name in op.semantics}
+    elif isinstance(op, ops.SetFieldSemanticsOp):
+        slots |= {
+            (*_field_slot(target.vertex, target.field), "semantics")
+            for target in op.targets
+        }
 
     # ── edges, addressed by relation name ───────────────────────────────────
     elif isinstance(op, ops.RemoveEdgesOp):

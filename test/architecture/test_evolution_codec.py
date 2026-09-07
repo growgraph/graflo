@@ -60,6 +60,22 @@ OP_PAYLOADS: dict[str, dict] = {
         "edges": [{"source": "party", "target": "order"}],
         "directed": False,
     },
+    "set_vertex_semantics": {
+        "semantics": {"party": {"iri": "https://schema.org/Organization"}},
+    },
+    "set_edge_semantics": {
+        "edges": [{"source": "party", "target": "order"}],
+        "semantics": {"iri": "https://schema.org/seller"},
+    },
+    "set_field_semantics": {
+        "targets": [
+            {
+                "vertex": "party",
+                "field": "mail",
+                "semantics": {"iri": "https://schema.org/email"},
+            }
+        ],
+    },
     "merge_vertices": {"sources": ["person"], "into": "party"},
     "rename_vertex_properties": {"renames": {"party": {"mail": "email"}}},
     "remove_vertex_properties": {"removals": {"party": ["scratch"]}},
@@ -165,6 +181,9 @@ class TestUnionCoverage:
             "replace_edge_identities",
             "retarget_edges",
             "set_edge_directed",
+            "set_edge_semantics",
+            "set_field_semantics",
+            "set_vertex_semantics",
         }
         unclassified = sorted(
             declared - ops_module.INGESTION_REWRITING_OPS - schema_only
@@ -174,15 +193,15 @@ class TestUnionCoverage:
             "INGESTION_REWRITING_OPS or to schema_only here"
         )
 
-    def test_the_vocabulary_is_thirty_two_ops(self) -> None:
+    def test_the_vocabulary_is_thirty_five_ops(self) -> None:
         exported = {
             name
             for name in dir(ops_module)
             if name.endswith("Op")
             and hasattr(getattr(ops_module, name), "model_fields")
         }
-        assert len(exported) == 32
-        assert len(_union_members()) == 31  # 32 minus the binary compose op
+        assert len(exported) == 35
+        assert len(_union_members()) == 34  # 35 minus the binary compose op
 
 
 class TestRoundTrip:

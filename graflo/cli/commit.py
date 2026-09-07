@@ -50,6 +50,7 @@ from graflo.architecture.evolution.merge3 import (
     take_left,
     take_right,
 )
+from graflo.cli.io import dump_manifest, load_manifest
 
 logger = logging.getLogger(__name__)
 
@@ -65,9 +66,7 @@ _store_option = click.option(
 
 
 def _load(path: str | Path) -> GraphManifest:
-    manifest = GraphManifest.from_config(FileHandle.load(path))
-    manifest.finish_init()
-    return manifest
+    return load_manifest(path)
 
 
 def _hints(path: Path | None) -> RenameHints:
@@ -96,10 +95,7 @@ def _append(store: Path, entry) -> Path:
 
 
 def _write(manifest: GraphManifest, path: Path | None) -> None:
-    if path is None:
-        return
-    FileHandle.dump(manifest.to_dict(skip_defaults=True), path)
-    click.echo(f"written: {path}")
+    dump_manifest(manifest, path)
 
 
 # ── commit ──────────────────────────────────────────────────────────────────

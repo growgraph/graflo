@@ -14,7 +14,10 @@ from __future__ import annotations
 
 import click
 
+from graflo.cli.check import check as check_cmd
 from graflo.cli.commit import commit_group
+from graflo.cli.compose import compose as compose_cmd
+from graflo.cli.lift import lift as lift_cmd
 
 
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
@@ -28,6 +31,20 @@ def graflo() -> None:
 # the `--store` option and one help page.
 for _name, _command in commit_group().items():
     graflo.add_command(_command, name=_name)
+
+# Conformance profiles over a manifest. One verb rather than a group: the
+# profile is an option, so a new profile grows no new command.
+graflo.add_command(check_cmd, name="check")
+
+# Binary compose of two manifests. Mounted here rather than in
+# `_mount_existing`, whose defensive try/except exists for verbs behind
+# optional extras -- this one has no extra to be missing.
+graflo.add_command(compose_cmd, name="compose")
+
+# Lifting a manifest into a twin-ready schema. A planner over the same op
+# vocabulary `graflo evolve` applies, so the conversion is reviewable before it
+# runs and invertible after.
+graflo.add_command(lift_cmd, name="lift")
 
 
 def _mount_existing() -> None:

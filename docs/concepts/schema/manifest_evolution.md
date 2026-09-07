@@ -101,6 +101,22 @@ A `VertexEquivalence` declaration *is* one cluster. `ClusterConflictError` (rais
 
 Compose refuses to guess the composed **identity** too: when members disagree on their identity field-set after alignment and nothing resolves it, `ComposeIdentityError` names each member's key. Resolve it with `identity` on the cluster (a natural key, an `IdentityFunnel`, or a `SideIdentity` shorthand lowered to one funnel), a `PropertyEquivalence(identity=True)` flag, or an `identity_alignments` entry. A declared `identity` demotes each member's retired key to a lookup-only secondary identity unless the cluster sets `retire="keep"`.
 
+### Either side may carry no schema
+
+A manifest needs only one block, so an overlay carrying just an `ingestion_model` and/or `bindings` — a new source wired onto an existing type vocabulary — is a valid compose input. The composed schema is the other side's, copied verbatim: physical profile, target namespace, secondary indexes and schema version all survive. With neither side carrying one, the composed manifest has no schema block and the version bump is a no-op.
+
+Verbatim rather than "merged with an empty schema" on purpose. `DatabaseProfile.db_flavor` defaults to Arango and the profile fold takes every scalar from the left, so filling a missing left with an empty `Schema` would silently retarget the composed manifest and drop the right's namespace and version — a wrong answer with nothing raising.
+
+### From the shell
+
+```bash
+graflo compose LEFT.yaml RIGHT.yaml --op OP.yaml -o OUT.yaml \
+  [--canonical-map SIDE=PATH]... [--name-conflict error|prefix_right|fuse_right] \
+  [--bump-version minor|none] [--strict-references] [--dry-run] [--check-profile NAME]
+```
+
+The verb runs the whole recipe in order: canonicalize each mapped side standalone, validate and complete the map against the op, then compose. Omitting `--op` composes a disjoint union. Exit `0` composed, `1` compose refused (the refusal message names what to declare), `2` the command could not run.
+
 ## Canonical maps
 
 When one side of a compose is first translated into a target vocabulary, the translation and the compose op are two declarations that can silently contradict each other — most dangerously via a *stale name*: an equivalence written against a class or attribute the translation retired still passes compose's existence checks and composes into the wrong union. `CanonicalMap` makes the translation a single source of truth serving both moments, and is **completed** along the declared cluster (an unmapped member inherits the cluster's `into` label). It maps `vertices`, `properties` **and** `relations`.

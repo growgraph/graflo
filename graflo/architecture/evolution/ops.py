@@ -13,7 +13,13 @@ from graflo.architecture.contract.ingestion.transform import ProtoTransform
 from graflo.architecture.graph_types import Index
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.identity_funnel import IdentityFunnel
-from graflo.architecture.schema.vertex import FieldType, SecondaryIdentity, Vertex
+from graflo.architecture.schema.semantics import FieldSemantics, Semantics
+from graflo.architecture.schema.vertex import (
+    Field,
+    FieldType,
+    SecondaryIdentity,
+    Vertex,
+)
 from graflo.onto import DBType
 
 
@@ -133,15 +139,29 @@ class RemoveVertexPropertiesOp(ConfigBaseModel):
 
 
 class AddVertexPropertiesOp(ConfigBaseModel):
-    """Add vertex properties to existing logical vertex types."""
+    """Add vertex properties to existing logical vertex types.
+
+    An entry may be a bare name or a full :class:`~graflo.architecture.schema.vertex.Field`.
+    Bare names were the original shape and still mean what they meant -- an
+    untyped property -- but they cannot express a property that arrives with a
+    type and a grounding, which is what any op stream that adds a *measured* or
+    *temporal* property has to say in one replayable step.
+    """
 
     op: Literal["add_vertex_properties"] = "add_vertex_properties"
-    additions: dict[str, list[str]] = PydanticField(
+    additions: dict[str, list[str | Field]] = PydanticField(
         ...,
         description=(
-            "Per-vertex property additions: ``{vertex_name: [field_name, ...]}``."
+            "Per-vertex property additions: ``{vertex_name: [field_name | Field, ...]}``."
         ),
     )
+
+    def field_names(self, vertex: str) -> list[str]:
+        """The names added to *vertex*, whichever shape they were written in."""
+        return [
+            entry if isinstance(entry, str) else entry.name
+            for entry in self.additions.get(vertex, [])
+        ]
 
 
 class NaturalIdentityTarget(ConfigBaseModel):
@@ -930,6 +950,93 @@ class SetEdgeDirectedOp(ConfigBaseModel):
     )
 
 
+class SetVertexSemanticsOp(ConfigBaseModel):
+    """Ground vertex types in an external vocabulary.
+
+    Semantics were authorable only when a type was first written: no operation
+    could attach an ``iri`` to a type that already existed, so a manifest that
+    arrived ungrounded — an inferred one, or anything predating the block — could
+    never be grounded through the op system, only rewritten by hand.
+
+    Grounding is purely additive and never consulted at execution time, so this
+    op cannot change how anything ingests or stores. What it changes is whether a
+    reader who did not author the schema can tell what a type denotes.
+    """
+
+    op: Literal["set_vertex_semantics"] = "set_vertex_semantics"
+    semantics: dict[str, Semantics | None] = PydanticField(
+        ...,
+        description=(
+            "Per-vertex grounding: ``{vertex_name: Semantics}``. ``None`` clears "
+            "the block, which is what makes the op invertible."
+        ),
+        min_length=1,
+    )
+
+
+class SetEdgeSemanticsOp(ConfigBaseModel):
+    """Ground edge relations in an external vocabulary.
+
+    The vertex op's counterpart. Relations carry as much meaning as types --
+    ``wasDerivedFrom`` and ``dependsOn`` are not interchangeable -- and a
+    conformance profile that asks whether types are grounded has to be able to
+    ask it of edges too.
+    """
+
+    op: Literal["set_edge_semantics"] = "set_edge_semantics"
+    edges: list[EdgeSelector] = PydanticField(
+        ...,
+        description="Edge triples whose grounding changes.",
+        min_length=1,
+    )
+    semantics: Semantics | None = PydanticField(
+        default=None,
+        description=(
+            "Grounding applied to every selected edge; ``None`` clears it. Not "
+            "``FieldSemantics``: a unit on an edge is meaningless, and the model "
+            "split is what makes ``unit:`` here a validation error."
+        ),
+    )
+
+
+class FieldSemanticsTarget(ConfigBaseModel):
+    """One property of one vertex, and the grounding to put on it."""
+
+    vertex: str = PydanticField(..., description="Vertex type name.")
+    field: str = PydanticField(..., description="Property name on that vertex.")
+    semantics: FieldSemantics | None = PydanticField(
+        default=None,
+        description="Grounding for the property; ``None`` clears it.",
+    )
+
+
+class SetFieldSemanticsOp(ConfigBaseModel):
+    """Ground vertex properties, including their unit of measure.
+
+    Takes :class:`~graflo.architecture.schema.semantics.FieldSemantics` rather
+    than :class:`~graflo.architecture.schema.semantics.Semantics`, which is the
+    entire reason this is a third op rather than a mode of the vertex one: only
+    a property may carry ``unit``, and the two models are kept apart so that
+    ``unit:`` on a type is a validation error rather than a silent no-op.
+    """
+
+    op: Literal["set_field_semantics"] = "set_field_semantics"
+    targets: list[FieldSemanticsTarget] = PydanticField(
+        ...,
+        description="Properties whose grounding changes.",
+        min_length=1,
+    )
+
+    @model_validator(mode="after")
+    def _validate_unique_targets(self) -> SetFieldSemanticsOp:
+        keys = [(t.vertex, t.field) for t in self.targets]
+        if len(keys) != len(set(keys)):
+            raise ValueError(
+                "set_field_semantics targets must be unique by (vertex, field)"
+            )
+        return self
+
+
 class ProjectManifestOp(ConfigBaseModel):
     """Project a manifest to a vertex/edge subgraph with consistent cascade.
 
@@ -1572,6 +1679,9 @@ ManifestOp = Annotated[
     | AddEdgeIndexesOp
     | RemoveEdgeIndexesOp
     | SetEdgeDirectedOp
+    | SetVertexSemanticsOp
+    | SetEdgeSemanticsOp
+    | SetFieldSemanticsOp
     | MergeVerticesOp
     | RenameVertexPropertiesOp
     | RemoveVertexPropertiesOp

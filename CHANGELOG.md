@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [12.2.3]
+
+### Added
+
+- **Conformance profiles, and `graflo check`.** A profile is a named, versioned list of mechanically checkable assertions about a manifest. `finish_init()` already refuses a manifest that is *broken*; a profile asks the other question — the manifest is valid, but is the model usable by someone who did not write it? The first profile, `world-model` v0.1, asserts six things: every type is grounded by IRI, every vertex declares an identity mode, every edge declares its directionality, every measured property carries a unit, temporal validity is declared or waived, and provenance is expressible. `graflo check --profile world-model <manifest>` renders the report, `--json` emits it, and the exit codes are `0` conformant, `1` non-conformant, `2` the check could not run — the last kept separate so a CI job can tell a bad model from a bad file.
+
+  It introduces no semantics and touches no backend: every assertion reads fields the contract already has. That is what lets it run against manifests this package did not author, which is the point — a profile is as useful pointed at an inferred model as at a hand-written one. `graflo.architecture.profile` is declared at layer 3 so a conformance check can never reach a driver.
+
+  **The check takes the manifest as authored, not as parsed.** Two assertions ask what the author *declared*, and the model has already lost that: `VertexConfig` fills an unset `identity` from every property under `identity_from_all_properties`, and `Edge.directed` defaults to `True`. So "identity was not declared" and "identity was declared as every property" are the same model, as are "directed was declared" and "directed was defaulted". `check_manifest_config` takes the authored mapping and is the entry point to prefer; `check_manifest` accepts a parsed manifest but downgrades those two assertions to warnings, saying so, rather than passing them on evidence it does not have.
+
+  Three outcomes are deliberately not passes. `not_applicable` means the assertion had nothing to look at — a question that was not asked has not been answered. `waived` means an operator excused it through a sidecar document that *requires* a reason, and the reason is printed. `warn` is advisory: an IRI in an unrecognised namespace warns rather than failing, because "we have not heard of this vocabulary" is a weaker claim than "this vocabulary is dead".
+
+  Waivers live in their own document rather than on the manifest, and the cost is stated rather than hidden: a waiver is a statement about a deployment, so putting it on the contract would make two manifests describing the same world compare unequal — but it therefore travels out of band, invisible to a registry holding the manifest and uncovered by its content address.
+
+- **`state-core`: lifting any manifest into a twin-ready schema, through Operations.** Most manifests are not twin-ready -- types with no grounding, edges whose direction nobody stated, floats with no unit, and facts that change over time stored flat on the thing they are about, so "what was this asset's status last March, and how do we know" has no answer in the schema. Every manifest an inference pass produces looks like this. `graflo lift MANIFEST --spec SPEC` converts one: mutable properties move onto a `<Type>State` carrying a validity interval, measured types gain a `<Type>Observation` whose unit travels per row, and `Evidence` / `Agent` make lineage expressible.
+
+  **It emits operations rather than performing a transform**, and that is the design rather than an implementation detail. A transform is a black box that either did the right thing or did not; an op list is reviewable before it runs (`--emit-ops`), replays to exactly the same manifest, and inverts back to the original. `plan_lift` applies nothing at all.
+
+  The spec is required, and the split it encodes is the point: a lift can see *structure* -- which edges leave `directed` unstated, which types carry no grounding, where a float has no unit -- but not *meaning*. Nothing in a schema says `ConfigurationItem` denotes a `sosa:FeatureOfInterest`, that `operating_temp` is Celsius, or that `status` changes over time while `ci_id` does not. Where a declaration is missing the lift refuses and names it, rather than guessing: moving an identity property, minting a type name already taken, or adopting an `identity_from_all_properties` fallback as though it were a decision.
+
+  A property named `stateful` is **moved** by default -- a fact that changes over time does not belong on the thing it is about -- and that is the single destructive op, emitted last, so `retire: keep` is a shorter op list rather than a different one. The lift changes the *contract*, not the data flow: nothing populates the new types, and a manifest with an `ingestion_model` still reports that provenance is not materialised at ingest, correctly.
+
+- **`examples/22-state-core`** -- the lift as a runnable example: a plain CMDB-shaped manifest that fails every assertion, a spec, and a lifted result that passes `graflo check --profile world-model` on its own. `reference.yaml` keeps the hand-authored target shape beside it -- six abstract types (Asset, State, Observation, Event, Agent, Evidence) plus the Asset-to-Asset topology edge set, which is a pair of relations rather than a seventh type.
+
+  Two conventions the vocabulary commits to. Units are UCUM tokens, carried **per row** on an observation, because an abstract observation type serving temperature and pressure cannot name one unit in its contract without lying (currency falls back to ISO-4217, which UCUM lacks). And time is grounded in PROV-O and SOSA rather than OWL-Time: `time:hasBeginning` ranges over a `time:Instant`, not a literal, so grounding a `DATETIME` column in it is a claim that becomes false the moment the schema is projected to OWL. `prov:generatedAtTime`, `prov:invalidatedAtTime` and `sosa:resultTime` are literal-ranged and say the same thing truthfully.
+
+- **Three operations that ground an existing manifest.** `set_vertex_semantics`, `set_edge_semantics` and `set_field_semantics`. The schema models have carried `semantics` blocks for a while, but nothing could attach one to an element that already existed -- grounding was authorable only at the moment a type was first written, so a manifest that arrived ungrounded could never be grounded through the op system at all, only rewritten by hand. Three ops rather than one polymorphic op because only a *property* may carry `unit`, and `Semantics` / `FieldSemantics` are kept apart precisely so that `unit:` on a type is a validation error rather than a silently ignored key.
+
+  All three are cleanly reversible: the payload value is optional, so the inverse of "ground it" is "put back what was there", which for a previously ungrounded element is nothing. The studio picks them up with no front-end change, because `GET /evolution/op-schemas` derives from the pydantic union and the op composer renders generatively.
+
+- **`add_vertex_properties` accepts a full `Field`**, not only a bare name. Backward compatible -- a string still means an untyped property -- but a property that arrives with a type *and* a grounding is now one replayable op instead of an unexpressible one, which is what any op stream adding a measured or temporal property needs to say.
+
+- **`graflo compose`** — the binary compose of two manifests, from the shell. The verb is `examples/19-union-canonical-equivalence/build_union.py` generalised: it runs the recipe compose actually requires, in order — canonicalize each side its map names, validate and complete that map *against the op*, then compose — so an equivalence written in a stale pre-canonical name fails loudly instead of silently matching nothing. Every caller needed those three steps and each was writing them again. Exit codes separate "compose looked at your manifests and refused" (`1`) from "the command could not run" (`2`); `--dry-run` composes and reports without writing, and `--check-profile` runs a conformance profile over the result.
+
+### Changed
+
+- **Compose no longer requires a schema on both sides.** A manifest needs only one block, so an overlay carrying just an `ingestion_model` and/or `bindings` — a new source wired onto an existing type vocabulary — has always been a legal `GraphManifest`, and composing one is the ordinary way to extend a model without touching its types. The composed schema is now the other side's, copied verbatim.
+
+  Verbatim rather than "unioned with an empty `Schema`", because an empty `Schema` is not neutral and its failure is silent: `DatabaseProfile.db_flavor` defaults to Arango, the profile fold takes every scalar from the left, and the metadata fold takes the left's version — so a fabricated empty *left* would have retargeted the composed manifest to a database nobody asked for and dropped the right's namespace and schema version, with nothing raising. With neither side carrying a schema the composed manifest has none, and the version bump is a no-op.
+
+- **`RestApiConnConfig` gains `proxy_name`**, mirroring `DBConfig.proxy_name`: the non-secret label that a manifest's `conn_proxy` resolves against. An API source's connection had no such handle, so it could not be looked up the way a database connection is.
+
+### Fixed
+
+- **`compose_manifests` could hang instead of resolving a name collision.** Under `name_conflict="prefix_right"`, a taken candidate was re-prefixed until free — but `_prefixed` is idempotent by design (it will not build `r_r_x`), so re-prefixing a taken name returns the same string and the loop never terminates. Any right-hand name already starting with `r_` triggered it, which composing a manifest with itself does immediately. Disambiguation is now an ordinal (`r_x`, `r_x_2`, …), which always terminates.
+
 ## [1.12.2]
 
 ### Added

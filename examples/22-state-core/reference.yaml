@@ -1,0 +1,255 @@
+# state-core reference 0.1 -- the target shape a lift converts towards, written
+# out by hand.
+#
+# Six types -- Asset, State, Observation, Event, Agent, Evidence -- plus the
+# Asset-to-Asset topology edge set, which is a pair of relations rather than a
+# seventh type. Grounded in PROV-O, SOSA/SSN and QUDT.
+#
+# This is not what `graflo lift` produces: a lift scaffolds only what the input
+# manifest calls for, and names its types after the subject it lifted
+# (`DeviceState`, not `State`). The file is here because it is the fully
+# realised shape, and because a profile that only ever passed on generated
+# output would not have shown that the assertions are satisfiable by an author.
+#
+# Known limit: `GraphMetadata.base_iri` does not exist, so this aligns to
+# external vocabularies through `exact_match` and mints no IRIs of its own. It
+# cannot yet be published as an ontology.
+metadata:
+    name: state-core-reference
+    description: >-
+        Six abstract types -- Asset, State, Observation, Event, Agent and
+        Evidence -- plus the Asset-to-Asset topology edges, grounded in PROV-O,
+        SOSA/SSN and QUDT.
+schema:
+    metadata:
+        name: state-core-reference
+        version: "0.1.0"
+        description: >-
+            Abstract vocabulary for entities whose facts are qualified by when
+            they held and where they came from. No ingestion, no bindings.
+        semantics:
+            exact_match: ["http://www.w3.org/ns/prov#"]
+    graph:
+        vertex_config:
+            vertices:
+            -   name: Asset
+                description: >-
+                    A thing the model is about: a machine, a site, a circuit, a
+                    contract. Everything else in this model hangs off one.
+                semantics:
+                    iri: http://www.w3.org/ns/prov#Entity
+                    exact_match:
+                    -   http://www.w3.org/ns/prov#Entity
+                    -   http://www.w3.org/ns/sosa/FeatureOfInterest
+                properties:
+                -   {name: asset_id, type: STRING}
+                -   {name: label, type: STRING}
+                -   {name: asset_type, type: STRING}
+                identity: [asset_id]
+
+            -   name: State
+                description: >-
+                    One property of one Asset holding one value over one
+                    interval. Closing `valid_to` rather than overwriting is what
+                    makes history queryable.
+                semantics:
+                    iri: http://www.w3.org/ns/prov#Entity
+                    exact_match:
+                    -   http://www.w3.org/ns/prov#Entity
+                    -   http://www.w3.org/2006/time#ProperInterval
+                properties:
+                -   {name: asset_id, type: STRING}
+                -   name: property
+                    type: STRING
+                    semantics:
+                        exact_match: ["http://www.w3.org/ns/ssn/Property"]
+                -   {name: value, type: STRING}
+                -   name: valid_from
+                    type: DATETIME
+                    semantics:
+                        iri: http://www.w3.org/ns/prov#generatedAtTime
+                -   name: valid_to
+                    type: DATETIME
+                    semantics:
+                        iri: http://www.w3.org/ns/prov#invalidatedAtTime
+                # The interval start is part of the key: the same property of
+                # the same asset holds many values over time, and they are
+                # different facts rather than revisions of one.
+                hash_identity_properties: [asset_id, property, valid_from]
+
+            -   name: Observation
+                description: >-
+                    A measurement of an Asset at a time. The unit travels with
+                    the row because this type is abstract -- an overlay
+                    measuring temperature and one measuring pressure are the
+                    same type here.
+                semantics:
+                    iri: http://www.w3.org/ns/sosa/Observation
+                    exact_match: ["http://www.w3.org/ns/sosa/Observation"]
+                properties:
+                -   {name: asset_id, type: STRING}
+                -   name: observed_property
+                    type: STRING
+                    semantics:
+                        exact_match: ["http://www.w3.org/ns/sosa/observedProperty"]
+                -   name: result_value
+                    type: FLOAT
+                    semantics:
+                        exact_match: ["http://www.w3.org/ns/sosa/hasSimpleResult"]
+                -   name: result_unit
+                    type: STRING
+                    semantics:
+                        iri: http://qudt.org/schema/qudt/ucumCode
+                -   name: result_time
+                    type: DATETIME
+                    semantics:
+                        iri: http://www.w3.org/ns/sosa/resultTime
+                hash_identity_properties: [asset_id, observed_property, result_time]
+
+            -   name: Event
+                description: >-
+                    Something that happened to an Asset over an interval: a
+                    maintenance job, an outage, a shipment.
+                semantics:
+                    iri: http://www.w3.org/ns/prov#Activity
+                    exact_match: ["http://www.w3.org/ns/prov#Activity"]
+                properties:
+                -   {name: event_id, type: STRING}
+                -   {name: event_type, type: STRING}
+                -   name: started_at
+                    type: DATETIME
+                    semantics:
+                        iri: http://www.w3.org/ns/prov#startedAtTime
+                -   name: ended_at
+                    type: DATETIME
+                    semantics:
+                        iri: http://www.w3.org/ns/prov#endedAtTime
+                identity: [event_id]
+
+            -   name: Agent
+                description: >-
+                    Who or what acted or measured: a person, a team, a sensor,
+                    a system of record.
+                semantics:
+                    iri: http://www.w3.org/ns/prov#Agent
+                    exact_match:
+                    -   http://www.w3.org/ns/prov#Agent
+                    -   http://www.w3.org/ns/sosa/Sensor
+                properties:
+                -   {name: agent_id, type: STRING}
+                -   {name: label, type: STRING}
+                -   {name: agent_kind, type: STRING}
+                identity: [agent_id]
+
+            -   name: Evidence
+                description: >-
+                    What a fact was read from: a document, an API response, a
+                    table row. The attachment point for anything extracted from
+                    unstructured sources.
+                semantics:
+                    iri: http://www.w3.org/ns/prov#Entity
+                    exact_match: ["http://www.w3.org/ns/prov#Entity"]
+                properties:
+                -   {name: evidence_id, type: STRING}
+                -   {name: source_uri, type: STRING}
+                -   {name: media_type, type: STRING}
+                -   name: retrieved_at
+                    type: DATETIME
+                    semantics:
+                        iri: http://www.w3.org/ns/prov#generatedAtTime
+                identity: [evidence_id]
+
+        edge_config:
+            edges:
+            # -- Topology. Only the two relations every domain has; anything
+            #    more specific belongs to the overlay.
+            -   source: Asset
+                target: Asset
+                relation: partOf
+                directed: true
+                description: Containment. An asset is part of at most one whole at a time.
+                semantics:
+                    iri: http://purl.org/dc/terms/isPartOf
+                    exact_match: ["http://purl.org/dc/terms/isPartOf"]
+
+            -   source: Asset
+                target: Asset
+                relation: dependsOn
+                directed: true
+                description: >-
+                    Functional dependence. Directed because "A depends on B" and
+                    "B depends on A" are different facts, and blast radius is
+                    computed by following it one way.
+                semantics:
+                    iri: http://www.w3.org/ns/prov#wasInfluencedBy
+                    exact_match: ["http://www.w3.org/ns/prov#wasInfluencedBy"]
+
+            # -- What a fact is about.
+            -   source: State
+                target: Asset
+                relation: specializationOf
+                directed: true
+                semantics:
+                    iri: http://www.w3.org/ns/prov#specializationOf
+                    exact_match: ["http://www.w3.org/ns/prov#specializationOf"]
+
+            -   source: Observation
+                target: Asset
+                relation: hasFeatureOfInterest
+                directed: true
+                semantics:
+                    iri: http://www.w3.org/ns/sosa/hasFeatureOfInterest
+                    exact_match: ["http://www.w3.org/ns/sosa/hasFeatureOfInterest"]
+
+            -   source: Event
+                target: Asset
+                relation: used
+                directed: true
+                semantics:
+                    iri: http://www.w3.org/ns/prov#used
+                    exact_match: ["http://www.w3.org/ns/prov#used"]
+
+            # -- Who did it.
+            -   source: Observation
+                target: Agent
+                relation: madeBySensor
+                directed: true
+                semantics:
+                    iri: http://www.w3.org/ns/sosa/madeBySensor
+                    exact_match: ["http://www.w3.org/ns/sosa/madeBySensor"]
+
+            -   source: Event
+                target: Agent
+                relation: wasAssociatedWith
+                directed: true
+                semantics:
+                    iri: http://www.w3.org/ns/prov#wasAssociatedWith
+                    exact_match: ["http://www.w3.org/ns/prov#wasAssociatedWith"]
+
+            # -- Where it came from. Without these the model holds assertions
+            #    with no accountable source, which is the whole point of the
+            #    provenance assertion in the world-model profile.
+            -   source: State
+                target: Evidence
+                relation: wasDerivedFrom
+                directed: true
+                semantics:
+                    iri: http://www.w3.org/ns/prov#wasDerivedFrom
+                    exact_match: ["http://www.w3.org/ns/prov#wasDerivedFrom"]
+
+            -   source: Observation
+                target: Evidence
+                relation: wasDerivedFrom
+                directed: true
+                semantics:
+                    iri: http://www.w3.org/ns/prov#wasDerivedFrom
+                    exact_match: ["http://www.w3.org/ns/prov#wasDerivedFrom"]
+
+            -   source: Evidence
+                target: Agent
+                relation: wasAttributedTo
+                directed: true
+                semantics:
+                    iri: http://www.w3.org/ns/prov#wasAttributedTo
+                    exact_match: ["http://www.w3.org/ns/prov#wasAttributedTo"]
+    db_profile: {}

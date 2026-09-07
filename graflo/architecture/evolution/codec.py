@@ -52,6 +52,9 @@ from .ops import (
     RetargetEdgesOp,
     SanitizeOp,
     SetEdgeDirectedOp,
+    SetEdgeSemanticsOp,
+    SetFieldSemanticsOp,
+    SetVertexSemanticsOp,
 )
 
 #: Every op that can appear in a revision: the full vocabulary except the
@@ -72,6 +75,9 @@ RevisionOp = Annotated[
     | AddEdgeIndexesOp
     | RemoveEdgeIndexesOp
     | SetEdgeDirectedOp
+    | SetVertexSemanticsOp
+    | SetEdgeSemanticsOp
+    | SetFieldSemanticsOp
     | MergeVerticesOp
     | RenameVertexPropertiesOp
     | RemoveVertexPropertiesOp
