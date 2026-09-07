@@ -126,6 +126,20 @@ uv run python build_union.py --conflicting-cluster-demo  # overlapping declarati
 resources feeding `Company`: five records collapse to three vertices, one
 fused pair per aligned key.
 
+`build_union.py` stays because it shows the recipe as Python. The same three
+steps are a verb — `graflo compose` canonicalizes each mapped side standalone,
+validates the map against the op, then composes:
+
+```bash
+graflo compose manifest_a.yaml manifest_b.yaml \
+  --op boundary_op.yaml --canonical-map left=canonical_map.yaml \
+  -o artifacts/manifest_union.yaml
+```
+
+where `boundary_op.yaml` is `_boundary_op()`'s `ComposeManifestsOp` written as
+YAML. Drop `--canonical-map` and the same op is refused: the equivalence names
+`Company`, which `manifest_a` does not have until the map renames `Firm`.
+
 ## Notes
 
 - **Equivalence is declared, never inferred.** The canonical map, the

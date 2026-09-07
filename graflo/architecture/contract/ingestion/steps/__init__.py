@@ -6,6 +6,7 @@ from .models import (
     EdgeActorConfig,
     EdgeLinkConfig,
     TransformActorConfig,
+    TransformGuardConfig,
     VertexActorConfig,
     VertexRouterActorConfig,
 )
@@ -21,6 +22,7 @@ __all__ = [
     "EdgeActorConfig",
     "EdgeLinkConfig",
     "TransformActorConfig",
+    "TransformGuardConfig",
     "VertexActorConfig",
     "VertexRouterActorConfig",
     "normalize_actor_step",

@@ -160,6 +160,38 @@ value: 17.9
 - requires exactly one input field
 - sets output field names to `(dress.key, dress.value)`
 
+## Conditional steps (`when`)
+
+A transform step may carry a **guard**: the step runs only when one field of the
+observation holds one of the listed values, compared exactly — the same test a
+`vertex_router` applies to its `type_map` keys.
+
+```yaml
+- transform:
+    when: {field: kind, in: [shop]}
+    call:
+      module: graflo.util.transform
+      foo: affix_gated_key
+      input: [secondary_key]
+      output: [match_key]
+      params: {prefix: def_}
+```
+
+The one behavior that matters: **a step whose guard fails writes nothing** — no
+output field, no `None`. That is different from a function that *returns*
+`None`, and the difference is visible behind a router. A `vertex_router` merges
+the transform buffer into one observation dict, so a later step writing `None`
+overwrites an earlier step's real value. Two guarded steps writing the same
+output field cannot do that: on any one document at most one of them runs, and
+the other leaves the field alone. A missing `field` fails the guard.
+
+This is the primitive a discriminated stream needs when different kinds of
+document derive the same field differently — for instance one derivation per
+class a router collapses onto a composed class, which is how identity
+alignment lowers member-keyed sources (see manifest evolution). Reach for it
+when *which document this is* decides the derivation; when the deciding fact
+lives in the value itself, a function that declines with `None` is enough.
+
 ## Multi-field transforms
 
 ### Grouped calls (`input_groups` / `output_groups`)
@@ -325,6 +357,12 @@ Example with include:
 - Type: `dict[str, str]`
 - Meaning: `{source_field: target_field}`
 
+### `transform.when`
+
+- `field: str` - observation field the guard reads (raw document key)
+- `in: list[str]` - values of `field` that let the step run; exact match, at least one
+- Applies to both `transform.rename` and `transform.call`; a failed guard writes nothing.
+
 ### `transform.call`
 
 - `use: str | null` - named transform from `ingestion_model.transforms`
@@ -366,6 +404,7 @@ When the effective target is `keys` (from the call or the named proto), `call.in
   `call.output_groups` (full per-group output tuples), not both.
 - `call.output_groups` must have the same number of groups as `call.input_groups`.
 - Passthrough (no `output` / `output_groups`) requires every group to contain exactly one input field.
+- `when.in` must list at least one value; a guarded step that does not run writes nothing, so several guarded steps may share one output field.
 - Legacy `switch` is not supported.
 - List-style `dress` is not supported (`dress` must be a dict with `key` and `value`).
 

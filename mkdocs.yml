@@ -62,6 +62,7 @@ nav:
         -   Backend indexes: concepts/schema/backend_indexes.md
         -   Manifest evolution: concepts/schema/manifest_evolution.md
         -   Version control: concepts/schema/versioning.md
+        -   Conformance profiles: concepts/schema/world_model_profile.md
         -   GraFlo ontology: concepts/schema/ontology.md
     -   Ingestion:
         -   Transforms: concepts/ingestion/transforms.md
@@ -110,6 +111,7 @@ nav:
     -   19 - Union of manifests with conditional equivalence: examples/example-19.md
     -   "20 - Version control: fork, conflict, resolve, merge": examples/example-20.md
     -   21 - Identity alignment on a routed source: examples/example-21.md
+    -   "22 - state-core: lifting a manifest": examples/example-22.md
 -   API Reference: reference/
 -   Contributing: contributing.md
 markdown_extensions:

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Annotated, Any, Literal
 
-from pydantic import AliasChoices, model_validator
+from pydantic import AliasChoices, field_validator, model_validator
 from pydantic import Field as PydanticField
 
 from graflo.architecture.base import ConfigBaseModel
@@ -13,7 +13,13 @@ from graflo.architecture.contract.ingestion.transform import ProtoTransform
 from graflo.architecture.graph_types import Index
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.identity_funnel import IdentityFunnel
-from graflo.architecture.schema.vertex import FieldType, SecondaryIdentity, Vertex
+from graflo.architecture.schema.semantics import FieldSemantics, Semantics
+from graflo.architecture.schema.vertex import (
+    Field,
+    FieldType,
+    SecondaryIdentity,
+    Vertex,
+)
 from graflo.onto import DBType
 
 
@@ -133,15 +139,29 @@ class RemoveVertexPropertiesOp(ConfigBaseModel):
 
 
 class AddVertexPropertiesOp(ConfigBaseModel):
-    """Add vertex properties to existing logical vertex types."""
+    """Add vertex properties to existing logical vertex types.
+
+    An entry may be a bare name or a full :class:`~graflo.architecture.schema.vertex.Field`.
+    Bare names were the original shape and still mean what they meant -- an
+    untyped property -- but they cannot express a property that arrives with a
+    type and a grounding, which is what any op stream that adds a *measured* or
+    *temporal* property has to say in one replayable step.
+    """
 
     op: Literal["add_vertex_properties"] = "add_vertex_properties"
-    additions: dict[str, list[str]] = PydanticField(
+    additions: dict[str, list[str | Field]] = PydanticField(
         ...,
         description=(
-            "Per-vertex property additions: ``{vertex_name: [field_name, ...]}``."
+            "Per-vertex property additions: ``{vertex_name: [field_name | Field, ...]}``."
         ),
     )
+
+    def field_names(self, vertex: str) -> list[str]:
+        """The names added to *vertex*, whichever shape they were written in."""
+        return [
+            entry if isinstance(entry, str) else entry.name
+            for entry in self.additions.get(vertex, [])
+        ]
 
 
 class NaturalIdentityTarget(ConfigBaseModel):
@@ -930,6 +950,93 @@ class SetEdgeDirectedOp(ConfigBaseModel):
     )
 
 
+class SetVertexSemanticsOp(ConfigBaseModel):
+    """Ground vertex types in an external vocabulary.
+
+    Semantics were authorable only when a type was first written: no operation
+    could attach an ``iri`` to a type that already existed, so a manifest that
+    arrived ungrounded — an inferred one, or anything predating the block — could
+    never be grounded through the op system, only rewritten by hand.
+
+    Grounding is purely additive and never consulted at execution time, so this
+    op cannot change how anything ingests or stores. What it changes is whether a
+    reader who did not author the schema can tell what a type denotes.
+    """
+
+    op: Literal["set_vertex_semantics"] = "set_vertex_semantics"
+    semantics: dict[str, Semantics | None] = PydanticField(
+        ...,
+        description=(
+            "Per-vertex grounding: ``{vertex_name: Semantics}``. ``None`` clears "
+            "the block, which is what makes the op invertible."
+        ),
+        min_length=1,
+    )
+
+
+class SetEdgeSemanticsOp(ConfigBaseModel):
+    """Ground edge relations in an external vocabulary.
+
+    The vertex op's counterpart. Relations carry as much meaning as types --
+    ``wasDerivedFrom`` and ``dependsOn`` are not interchangeable -- and a
+    conformance profile that asks whether types are grounded has to be able to
+    ask it of edges too.
+    """
+
+    op: Literal["set_edge_semantics"] = "set_edge_semantics"
+    edges: list[EdgeSelector] = PydanticField(
+        ...,
+        description="Edge triples whose grounding changes.",
+        min_length=1,
+    )
+    semantics: Semantics | None = PydanticField(
+        default=None,
+        description=(
+            "Grounding applied to every selected edge; ``None`` clears it. Not "
+            "``FieldSemantics``: a unit on an edge is meaningless, and the model "
+            "split is what makes ``unit:`` here a validation error."
+        ),
+    )
+
+
+class FieldSemanticsTarget(ConfigBaseModel):
+    """One property of one vertex, and the grounding to put on it."""
+
+    vertex: str = PydanticField(..., description="Vertex type name.")
+    field: str = PydanticField(..., description="Property name on that vertex.")
+    semantics: FieldSemantics | None = PydanticField(
+        default=None,
+        description="Grounding for the property; ``None`` clears it.",
+    )
+
+
+class SetFieldSemanticsOp(ConfigBaseModel):
+    """Ground vertex properties, including their unit of measure.
+
+    Takes :class:`~graflo.architecture.schema.semantics.FieldSemantics` rather
+    than :class:`~graflo.architecture.schema.semantics.Semantics`, which is the
+    entire reason this is a third op rather than a mode of the vertex one: only
+    a property may carry ``unit``, and the two models are kept apart so that
+    ``unit:`` on a type is a validation error rather than a silent no-op.
+    """
+
+    op: Literal["set_field_semantics"] = "set_field_semantics"
+    targets: list[FieldSemanticsTarget] = PydanticField(
+        ...,
+        description="Properties whose grounding changes.",
+        min_length=1,
+    )
+
+    @model_validator(mode="after")
+    def _validate_unique_targets(self) -> SetFieldSemanticsOp:
+        keys = [(t.vertex, t.field) for t in self.targets]
+        if len(keys) != len(set(keys)):
+            raise ValueError(
+                "set_field_semantics targets must be unique by (vertex, field)"
+            )
+        return self
+
+
 class ProjectManifestOp(ConfigBaseModel):
     """Project a manifest to a vertex/edge subgraph with consistent cascade.
 
@@ -1035,39 +1142,140 @@ class DerivationSpec(ConfigBaseModel):
     )
 
 
+class SharedDerivation(ConfigBaseModel):
+    """One derivation shared by several members, varying only in parameters.
+
+    The compact spelling of the member-keyed form for the common case: the
+    call is the same for every member and only a parameter changes — a marker
+    prefix per class — or nothing does. ``members`` is a list of member
+    classes, or a dict from member to the parameters that differ; each
+    member's derivation is ``spec`` with those parameters laid over
+    ``spec.params``. Anything else that differs between members — the input
+    columns, the function — is a different derivation: spell it with the
+    explicit ``{member: spec}`` dict.
+
+    Expands to that dict; the lowering never sees this model.
+    """
+
+    spec: DerivationSpec = PydanticField(
+        ...,
+        description="The derivation every member shares.",
+    )
+    members: list[str] | dict[str, dict[str, Any]] = PydanticField(
+        ...,
+        description=(
+            "Member classes sharing ``spec``: a list when nothing varies, or "
+            "``{member: {param: value}}`` naming what does."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _validate_members(self) -> SharedDerivation:
+        if not self.members:
+            raise ValueError("SharedDerivation: members must name at least one class")
+        if isinstance(self.members, list) and len(set(self.members)) != len(
+            self.members
+        ):
+            raise ValueError("SharedDerivation: members lists a class twice")
+        return self
+
+    def expand(self) -> dict[str, DerivationSpec]:
+        """The explicit ``{member: spec}`` dict this stands for."""
+        if isinstance(self.members, list):
+            return {member: self.spec for member in self.members}
+        return {
+            member: self.spec.model_copy(
+                update={"params": {**self.spec.params, **overrides}}
+            )
+            for member, overrides in self.members.items()
+        }
+
+
 class AlignmentAttribute(ConfigBaseModel):
     """One aligned canonical attribute; list position = funnel priority.
 
     Each entry lowers to one
     :class:`~graflo.architecture.schema.identity_funnel.IdentityBranch` over
     ``into``, so the list order *is* the funnel order.
+
+    ``sources`` is keyed by resource because derivation inputs are that
+    resource's raw column names. An entry takes one of three shapes:
+
+    * a single :class:`DerivationSpec` — the resource produces one member of
+      the cluster, or all its members share the key column;
+    * a **list** of specs — the resource produces several members, each with
+      its **own key column**, and at most one spec yields a value for any
+      document (the others read an empty column). Lowers to scratch fields
+      plus a ``coalesce_fields`` step;
+    * a **dict keyed by member class** — the resource produces several members
+      and which one a document *is* must decide the derivation (the members
+      share a column, or each carries its own marker). The lowering asks the
+      side manifest how the resource produces each member and guards the step
+      accordingly (``when`` on the router's discriminator, or nothing for a
+      plain ``vertex`` step). Member names are the classes the
+      :class:`VertexEquivalence` names on that side, after canonical maps;
+    * a :class:`SharedDerivation` — the same dict, spelled once: one call
+      shared by the listed members, with only the parameters that differ.
     """
 
     into: str = PydanticField(
         ...,
         description="Canonical attribute name on the class; funnel branch id.",
     )
-    sources: dict[str, DerivationSpec | list[DerivationSpec]] = PydanticField(
+    sources: dict[
+        str,
+        DerivationSpec
+        | SharedDerivation
+        | list[DerivationSpec]
+        | dict[str, DerivationSpec],
+    ] = PydanticField(
         ...,
         min_length=1,
         description=(
-            "Per-resource derivation: ``{resource_name: spec}``, or a list of "
-            "specs when one resource derives the attribute several ways — one "
-            "per class its ``vertex_router`` collapses onto the aligned class. "
-            "At most one spec in a list yields a value for any document."
+            "Per-resource derivation: ``{resource: spec}``; ``{resource: "
+            "[spec, ...]}`` when the members the resource produces carry "
+            "different key columns; ``{resource: {member_class: spec}}`` when "
+            "the member a document is must decide the derivation, or a "
+            "``SharedDerivation`` spelling that dict once."
         ),
     )
+
+    def _by_member(self, resource: str) -> dict[str, DerivationSpec] | None:
+        spec = self.sources.get(resource)
+        if isinstance(spec, SharedDerivation):
+            return spec.expand()
+        return spec if isinstance(spec, dict) else None
 
     def specs_for(self, resource: str) -> list[DerivationSpec]:
         """Derivations *resource* contributes to this attribute, in order."""
         spec = self.sources.get(resource)
         if spec is None:
             return []
-        return [spec] if isinstance(spec, DerivationSpec) else list(spec)
+        if isinstance(spec, DerivationSpec):
+            return [spec]
+        if isinstance(spec, list):
+            return list(spec)
+        by_member = spec.expand() if isinstance(spec, SharedDerivation) else spec
+        return list(by_member.values())
+
+    def members_for(self, resource: str) -> list[str] | None:
+        """Member classes keying *resource*'s specs, or ``None`` if unkeyed."""
+        by_member = self._by_member(resource)
+        return list(by_member) if by_member is not None else None
 
 
 class LocalKeySource(ConfigBaseModel):
-    """Where one resource's side-local key comes from, and its namespace tag."""
+    """Where one resource's side-local key comes from, and its namespace tag.
+
+    The tag is what keeps records of different sources apart once they fail to
+    fuse: ``f2`` from one source and ``f2`` from another are different
+    entities, and ``a:f2`` / ``b:f2`` say so. It is required so that opting
+    out is a statement, not an omission: ``tag=None`` (stored as ``""``, the
+    neutral element, so it survives serialization) keeps the raw value as the
+    local key with no separator — the author's claim that the values are
+    already unique across every source of the class (UUIDs, IRIs, ids the
+    source itself prefixes).
+    """
 
     field: str = PydanticField(
         ...,
@@ -1075,8 +1283,18 @@ class LocalKeySource(ConfigBaseModel):
     )
     tag: str = PydanticField(
         ...,
-        description="Namespace tag: tag 'a' turns 'f2' into 'a:f2'.",
+        description=(
+            "Namespace tag: tag 'a' turns 'f2' into 'a:f2'. ``None`` or ``\"\"`` "
+            "keeps the raw value, no separator — only for values already "
+            "unique across every source of the class."
+        ),
     )
+
+    @field_validator("tag", mode="before")
+    @classmethod
+    def _none_is_the_empty_tag(cls, value: Any) -> Any:
+        return "" if value is None else value
+
     gate: str | None = PydanticField(
         default=None,
         description=(
@@ -1104,7 +1322,14 @@ class LocalKeySource(ConfigBaseModel):
 
 
 class LocalKeySpec(ConfigBaseModel):
-    """The canonical fallback identity attribute for non-aligned records."""
+    """The canonical fallback identity attribute for non-aligned records.
+
+    ``sources`` takes the same three shapes as
+    :attr:`AlignmentAttribute.sources`: one source, a list (one per member,
+    each reading its own column), or a dict keyed by member class (the member
+    decides; the gate is derived from how the resource produces it, so a
+    member-keyed source must not set ``gate``).
+    """
 
     into: str = PydanticField(
         default="local_key",
@@ -1114,22 +1339,45 @@ class LocalKeySpec(ConfigBaseModel):
         default=":",
         description="Separator between tag and key.",
     )
-    sources: dict[str, LocalKeySource | list[LocalKeySource]] = PydanticField(
+    sources: dict[
+        str, LocalKeySource | list[LocalKeySource] | dict[str, LocalKeySource]
+    ] = PydanticField(
         ...,
         min_length=1,
         description=(
-            "Per-resource local-key wiring: ``{resource_name: source}``, or a "
-            "list when one resource carries several side-local keys — one per "
-            "class its ``vertex_router`` collapses onto the aligned class."
+            "Per-resource local-key wiring: ``{resource: source}``; ``{resource: "
+            "[source, ...]}`` when the members carry different key columns; "
+            "``{resource: {member_class: source}}`` when the member decides."
         ),
     )
+
+    @model_validator(mode="after")
+    def _validate_member_sources(self) -> LocalKeySpec:
+        for resource, entry in self.sources.items():
+            if not isinstance(entry, dict):
+                continue
+            gated = sorted(m for m, src in entry.items() if src.gate is not None)
+            if gated:
+                raise ValueError(
+                    f"LocalKeySpec: member-keyed sources for resource {resource!r} "
+                    f"set a gate on {gated}; the member already decides, and the "
+                    "gate is derived from how the resource produces it"
+                )
+        return self
 
     def sources_for(self, resource: str) -> list[LocalKeySource]:
         """Local-key sources *resource* contributes, in order."""
         source = self.sources.get(resource)
         if source is None:
             return []
-        return [source] if isinstance(source, LocalKeySource) else list(source)
+        if isinstance(source, LocalKeySource):
+            return [source]
+        return list(source.values()) if isinstance(source, dict) else list(source)
+
+    def members_for(self, resource: str) -> list[str] | None:
+        """Member classes keying *resource*'s sources, or ``None`` if unkeyed."""
+        source = self.sources.get(resource)
+        return list(source) if isinstance(source, dict) else None
 
 
 class IdentityAlignment(ConfigBaseModel):
@@ -1172,8 +1420,9 @@ class IdentityAlignment(ConfigBaseModel):
         description=(
             "Per-resource pipeline level to derive at, as ``descend`` step "
             "indices. Omitted resources resolve to the single level producing "
-            "``vertex``; supply a path only when a resource produces it at "
-            "more than one level."
+            "``vertex`` (for member-keyed sources: the level producing the "
+            "member on its side); supply a path only when a resource produces "
+            "it at more than one level."
         ),
     )
 
@@ -1572,6 +1821,9 @@ ManifestOp = Annotated[
     | AddEdgeIndexesOp
     | RemoveEdgeIndexesOp
     | SetEdgeDirectedOp
+    | SetVertexSemanticsOp
+    | SetEdgeSemanticsOp
+    | SetFieldSemanticsOp
     | MergeVerticesOp
     | RenameVertexPropertiesOp
     | RemoveVertexPropertiesOp

@@ -78,6 +78,9 @@ from .ops import (
     RetargetEdgesOp,
     SanitizeOp,
     SetEdgeDirectedOp,
+    SetEdgeSemanticsOp,
+    SetFieldSemanticsOp,
+    SetVertexSemanticsOp,
 )
 from .project import compute_projection
 from .rewrite import (
@@ -1291,11 +1294,14 @@ def apply_add_vertex_properties(
         if not additions:
             continue
         existing = {field.name for field in vertex.properties}
-        for name in additions:
-            if name in existing:
+        for entry in additions:
+            # A bare name keeps its original meaning (untyped property); a Field
+            # is appended as authored, carrying its type and grounding.
+            field = Field(name=entry, type=None) if isinstance(entry, str) else entry
+            if field.name in existing:
                 continue
-            vertex.properties.append(Field(name=name, type=None))
-            existing.add(name)
+            vertex.properties.append(field.model_copy(deep=True))
+            existing.add(field.name)
     schema.finish_init()
 
 
@@ -1529,6 +1535,18 @@ def _dispatch_op(manifest: GraphManifest, op: Any) -> None:
         from .physical import apply_set_edge_directed
 
         apply_set_edge_directed(manifest, op)
+    elif isinstance(op, SetVertexSemanticsOp):
+        from .semantics import apply_set_vertex_semantics
+
+        apply_set_vertex_semantics(manifest, op)
+    elif isinstance(op, SetEdgeSemanticsOp):
+        from .semantics import apply_set_edge_semantics
+
+        apply_set_edge_semantics(manifest, op)
+    elif isinstance(op, SetFieldSemanticsOp):
+        from .semantics import apply_set_field_semantics
+
+        apply_set_field_semantics(manifest, op)
     elif isinstance(op, SanitizeOp):
         apply_sanitize(manifest, op)
     elif isinstance(op, AddResourceTransformsOp):

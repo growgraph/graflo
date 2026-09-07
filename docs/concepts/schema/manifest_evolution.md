@@ -101,6 +101,22 @@ A `VertexEquivalence` declaration *is* one cluster. `ClusterConflictError` (rais
 
 Compose refuses to guess the composed **identity** too: when members disagree on their identity field-set after alignment and nothing resolves it, `ComposeIdentityError` names each member's key. Resolve it with `identity` on the cluster (a natural key, an `IdentityFunnel`, or a `SideIdentity` shorthand lowered to one funnel), a `PropertyEquivalence(identity=True)` flag, or an `identity_alignments` entry. A declared `identity` demotes each member's retired key to a lookup-only secondary identity unless the cluster sets `retire="keep"`.
 
+### Either side may carry no schema
+
+A manifest needs only one block, so an overlay carrying just an `ingestion_model` and/or `bindings` — a new source wired onto an existing type vocabulary — is a valid compose input. The composed schema is the other side's, copied verbatim: physical profile, target namespace, secondary indexes and schema version all survive. With neither side carrying one, the composed manifest has no schema block and the version bump is a no-op.
+
+Verbatim rather than "merged with an empty schema" on purpose. `DatabaseProfile.db_flavor` defaults to Arango and the profile fold takes every scalar from the left, so filling a missing left with an empty `Schema` would silently retarget the composed manifest and drop the right's namespace and version — a wrong answer with nothing raising.
+
+### From the shell
+
+```bash
+graflo compose LEFT.yaml RIGHT.yaml --op OP.yaml -o OUT.yaml \
+  [--canonical-map SIDE=PATH]... [--name-conflict error|prefix_right|fuse_right] \
+  [--bump-version minor|none] [--strict-references] [--dry-run] [--check-profile NAME]
+```
+
+The verb runs the whole recipe in order: canonicalize each mapped side standalone, validate and complete the map against the op, then compose. Omitting `--op` composes a disjoint union. Exit `0` composed, `1` compose refused (the refusal message names what to declare), `2` the command could not run.
+
 ## Canonical maps
 
 When one side of a compose is first translated into a target vocabulary, the translation and the compose op are two declarations that can silently contradict each other — most dangerously via a *stale name*: an equivalence written against a class or attribute the translation retired still passes compose's existence checks and composes into the wrong union. `CanonicalMap` makes the translation a single source of truth serving both moments, and is **completed** along the declared cluster (an unmapped member inherits the cluster's `into` label). It maps `vertices`, `properties` **and** `relations`.
@@ -177,23 +193,64 @@ op = ComposeManifestsOp(
 union = compose_manifests(canonical_left, right, op, canonical_maps=[("left", cm)])
 ```
 
-The emitted op sequence: `AddVertexPropertiesOp` (declare the canonical attributes), `AddResourceTransformsOp` (per-resource derivation steps, inline calls), `ReplaceIdentityOp` (a priority funnel — one branch per attribute in order, then the `local_key` fallback; `retire: keep`), and `AddSecondaryIdentitiesOp` (the retired side keys as lookup-only secondaries). Attribute order is funnel priority: a record keys by the highest-priority attribute it carries, so two records fuse when their strongest present attribute coincides — a match on a lower-priority attribute does not fuse records when one side also carries a stronger one. The `local_key` values are namespaced per resource (`a:f2` vs `b:o1`), so non-aligned records stay ingested without cross-source collisions.
+The emitted op sequence: `AddVertexPropertiesOp` (declare the canonical attributes), `AddResourceTransformsOp` (per-resource derivation steps, inline calls), `ReplaceIdentityOp` (a priority funnel — one branch per attribute in order, then the `local_key` fallback; `retire: keep`), and `AddSecondaryIdentitiesOp` (the retired side keys as lookup-only secondaries). Attribute order is funnel priority: a record keys by the highest-priority attribute it carries, so two records fuse when their strongest present attribute coincides — a match on a lower-priority attribute does not fuse records when one side also carries a stronger one. The `local_key` values are namespaced per resource (`a:f2` vs `b:o1`), so non-aligned records stay ingested without cross-source collisions. The tag is required so that opting out is a statement: `tag=None` keeps the raw value as the local key, no separator — the author's claim that the values are already unique across every source of the class (UUIDs, IRIs, ids the source itself prefixes), where a namespace would only be noise. It is stored as the empty tag `""`, the neutral element, which is what survives serialization.
 
 Two idioms decide *which* records participate, and `DerivationSpec.foo` selects between them. `gated_normalized_key` gates on a **sibling** field — participation is decided by one column, the key material comes from another — and its `strip_prefix` is `str.removeprefix`, a best-effort cleanup that is a silent no-op when the prefix is absent. `affix_gated_key` puts the test on the **value itself**: it reads one field, and a marker on that value is the admission test, so `company_A42` is stripped and accepted while a bare `A42` yields `None`. The marker is an affix pair — `prefix` and `suffix`, each defaulting to `""`, which every string carries — so it can lead, trail, or bracket the key, both halves are required when both are named, and naming neither admits everything while stripping nothing. Both return `None` to decline, which is a fall-through rather than a drop — an empty value skips the funnel branch listing that attribute, and the record keys on its `local_key` instead, ingested but outside the cluster. Reach for the marker form when the key column is self-describing, and for the gated form when a different column decides.
 
 Rules the validator enforces (`validate_alignment`, raising `AlignmentConflictError`): derivation inputs are **raw source-doc field names** — property renames rewrite `vertex.from` maps so documents keep their original keys, and transform inputs are never rewritten (pass `canonical_maps` to catch canonical names used by mistake); alignment targets must not collide with the class's current primary-identity fields; and every referenced resource must produce the aligned class at exactly one resolvable pipeline level.
 
+### The member is the unit of derivation
+
+A cluster names its **members** — the classes it collapses, per side: `VertexEquivalence(left=["Company", "Shop"], right=["Org", "Branch"], into="Company")`. Every record that becomes `Company` was produced *as one member* by *one resource*: by a `vertex: Shop` step, or by a `vertex_router` key whose value was `Shop`. Canonical attributes are therefore derived **per member**. `sources` is keyed by resource because derivation inputs are that resource's raw column names; a resource that produces one member needs nothing more, and a resource that produces several says how, with one of three shapes:
+
+| `sources[resource]` | When | Lowers to |
+|---|---|---|
+| one `DerivationSpec` | the resource produces one member, or its members share the key column *and* the marker convention | one step writing the attribute |
+| a **list** of specs | several members, each carrying its key in its **own column** — the other column is empty, which already selects | one scratch field per spec + a `coalesce_fields` step as the single writer |
+| a **dict keyed by member class** | several members, and *which member a document is* must decide — they share a column, or each has its own marker | one guarded step per member, each the single writer for its own documents |
+| a `SharedDerivation` | the dict above, when the call is the same for every member and only a parameter differs (or nothing does) | expands to the dict; lowers the same way |
+
+Member names are the classes the equivalence names on that side, after canonical maps (so `Company`, not `Firm`, when a map renamed it). The list form needs no member names because column presence selects; the dict form is the general one, and `SharedDerivation` spells it once for the common case — one call, the members sharing it, and per member only what varies:
+
+```python
+AlignmentAttribute(into="match_key", sources={
+    "r_view": SharedDerivation(                                  # the member decides
+        spec=DerivationSpec(input=["secondary_key"], foo="affix_gated_key"),
+        members={"Company": {"prefix": "abc_"}, "Shop": {"prefix": "def_"}},
+    ),
+    "r_b": DerivationSpec(input=["shared_raw"], foo="affix_gated_key",
+                          params={"prefix": "abc_"}),                # one member: no key
+})
+# twenty members, nothing varying:  SharedDerivation(spec=..., members=[...20 names...])
+# a different column or function per member: write the {member: spec} dict
+local_key = LocalKeySpec(sources={
+    "r_view": {"Company": LocalKeySource(field="firm_id", tag="firm"),
+               "Shop":    LocalKeySource(field="shop_id", tag="shop")},
+    "r_b":    LocalKeySource(field="org_id", tag="b"),
+})
+```
+
+**The gate is derived, never written.** The merge has already rewritten the router's `type_map` values to the canonical name, so the union cannot say which key produced which member — but the pre-merge *sides* can, and `compose_manifests` hands them to the alignment. For each `(resource, member)` the lowering reads how the side produces it: a plain `vertex` step needs no gate (the level *is* the member); a router yields a `when` guard on its discriminator, exact match, listing the keys that mapped to the member:
+
+```yaml
+- transform:
+    when: {field: kind, in: [shop]}
+    call: {foo: affix_gated_key, input: [secondary_key], output: [match_key], params: {prefix: def_}}
+```
+
+A guarded step that does not fire **writes nothing**, so each member's step is the single writer of the attribute for its own documents and nothing clobbers — no scratch fields, no coalesce. Documents of other members never run it: a `person` row through the same router is not "derived and dropped", it is never derived. This is also why the gate cannot be a function returning `None`: behind a router a later `None` overwrites an earlier real value.
+
+Rules the validator adds for member keys: the resource must produce the member on its side (the error lists what it does produce); the member must belong to the aligned cluster on that side; all members a resource keys must resolve to one pipeline level; and member-keyed sources cannot be lowered without the sides (call through `compose_manifests`, or pass `sides=` to `alignment_to_ops`). A resource that routes several members onto the class but derives with a single un-keyed spec is warned about — right when the members share a column and a marker, wrong otherwise — and so is a member dict that covers only some of the members the resource produces. `LocalKeySource.gate` / `gate_prefix` remain for an alignment applied outside a compose, where no side exists to derive the gate from; a member-keyed source may not set them.
+
 ### Routed sources
 
-When the aligned class is produced by a `vertex_router` — one heterogeneous stream whose branches the equivalence collapses — three things follow, and the router is never split to accommodate them.
+When the aligned class is produced by a `vertex_router` — one heterogeneous stream whose branches the equivalence collapses — two more things follow, and the router is never split to accommodate them.
 
-**Derivations land at the producing level.** `alignment_to_ops` resolves it and sets `AddResourceTransformsOp.at`. Placement is not cosmetic: an actor reads its transform buffer at its own `LocationIndex` with no ancestor fallback, a `descend` subtree runs *before* its own level's transforms, and a transform whose declared inputs are missing skips silently by default — so a derivation appended at the root of a nested pipeline derives nothing, quietly. A resource producing the class at several levels raises unless `IdentityAlignment.at` picks one, and an `at` that resolves to a level producing nothing raises too.
-
-**A resource may derive one attribute several ways.** `AlignmentAttribute.sources[resource]` and `LocalKeySpec.sources[resource]` each accept a list — one entry per class the router collapses onto the aligned one, when those branches carry different key columns. Such an attribute lowers to one step per branch writing a scratch field plus one `coalesce_fields` step (`strategy: all`) reducing them, because two steps writing the same key clobber behind a router: the router merges the transform buffer into one observation dict, where a later `None` overwrites an earlier real value. A single spec still lowers to one direct step. `LocalKeySource` gains an optional `gate` / `gate_prefix` for the case where only the discriminator distinguishes the branches.
+**Derivations land at the producing level.** `alignment_to_ops` resolves it and sets `AddResourceTransformsOp.at`. Placement is not cosmetic: an actor reads its transform buffer at its own `LocationIndex` with no ancestor fallback, a `descend` subtree runs *before* its own level's transforms, and a transform whose declared inputs are missing skips silently by default — so a derivation appended at the root of a nested pipeline derives nothing, quietly. A resource producing the class at several levels raises unless `IdentityAlignment.at` picks one, and an `at` that resolves to a level producing nothing raises too. For member-keyed sources the level is the one producing the member on its side.
 
 **Delivery goes through the merged observation.** A router builds its child `VertexActor` at `lindex.extend((role, 0))`, where the transform buffer is empty, so derived attributes arrive by passthrough or `from` — subject to `keep_fields` and `extraction_scope`. The alignment emits `EnsureExtractedFieldsOp` when the producing router restricts either. A sibling class routed at the same level that already declares one of the canonical attribute names raises: it would absorb the derived value.
 
-Worked end-to-end in [Example 19](../../examples/example-19.md), and for a routed source in [Example 21](../../examples/example-21.md).
+Worked end-to-end in [Example 19](../../examples/example-19.md), and for a routed source with member-keyed derivations in [Example 21](../../examples/example-21.md).
 
 ## API
 

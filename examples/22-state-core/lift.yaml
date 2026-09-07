@@ -1,0 +1,41 @@
+# What the lift cannot work out for itself.
+#
+# A lift sees structure -- which edges leave `directed` unstated, which types
+# carry no grounding, where a float has no unit. It cannot see meaning: nothing
+# in the schema says a ConfigurationItem denotes a sosa:FeatureOfInterest, that
+# `operating_temp` is degrees Celsius, or that `status` changes over time while
+# `ci_id` does not. Those four things are this file.
+
+grounding:
+    ConfigurationItem:
+        iri: http://www.w3.org/ns/prov#Entity
+        exact_match:
+        -   http://www.w3.org/ns/prov#Entity
+        -   http://www.w3.org/ns/sosa/FeatureOfInterest
+    BusinessService:
+        iri: http://www.w3.org/ns/prov#Entity
+        synonyms: [Service, ApplicationService]
+
+edge_grounding:
+-   source: ConfigurationItem
+    target: BusinessService
+    relation: supports
+    iri: http://www.w3.org/ns/prov#wasInfluencedBy
+-   source: ConfigurationItem
+    target: ConfigurationItem
+    relation: dependsOn
+    iri: http://www.w3.org/ns/prov#wasInfluencedBy
+
+# Facts that change over time. They move off the entity onto
+# `ConfigurationItemState`, which holds each value over an interval -- closing
+# `valid_to` rather than overwriting is what makes history queryable.
+stateful:
+    ConfigurationItem: [status]
+    BusinessService: [criticality]
+
+# Types that get measured at a time.
+observed: [ConfigurationItem]
+
+# UCUM tokens. UCUM has no currency, so currency would use ISO-4217 (USD).
+measured:
+    ConfigurationItem.operating_temp: Cel

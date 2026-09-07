@@ -37,6 +37,7 @@ from .ops import (
     EdgeIndexEntry,
     EdgeRetargetEntry,
     EdgeSelector,
+    FieldSemanticsTarget,
     ManifestOp,
     RemoveEdgeIndexesOp,
     RemoveEdgePropertiesOp,
@@ -53,6 +54,9 @@ from .ops import (
     ReplaceIdentityOp,
     RetargetEdgesOp,
     SetEdgeDirectedOp,
+    SetEdgeSemanticsOp,
+    SetFieldSemanticsOp,
+    SetVertexSemanticsOp,
 )
 
 logger = logging.getLogger(__name__)
@@ -173,7 +177,7 @@ def _invert_add_vertex_properties(
     op: AddVertexPropertiesOp, _manifest: GraphManifest
 ) -> ManifestOp:
     return RemoveVertexPropertiesOp(
-        removals={name: list(fields) for name, fields in op.additions.items()}
+        removals={name: op.field_names(name) for name in op.additions}
     )
 
 
@@ -406,6 +410,76 @@ def _invert_replace_identity(
     return ReplaceIdentityOp(vertices=restored) if restored else None
 
 
+def _invert_set_vertex_semantics(
+    op: SetVertexSemanticsOp, manifest: GraphManifest
+) -> ManifestOp | None:
+    """Restore each vertex's prior grounding, ``None`` included.
+
+    Clearing is expressible (the payload value is optional), so grounding is
+    cleanly reversible: the inverse of "ground it" is "put back whatever was
+    there", which for a previously ungrounded type is nothing.
+    """
+    schema = manifest.graph_schema
+    if schema is None:
+        return None
+    by_name = {v.name: v for v in schema.core_schema.vertex_config.vertices}
+    prior: dict[str, Any] = {}
+    for name in op.semantics:
+        vertex = by_name.get(name)
+        if vertex is None:
+            return None
+        prior[name] = vertex.semantics
+    return SetVertexSemanticsOp(semantics=prior)
+
+
+def _invert_set_edge_semantics(
+    op: SetEdgeSemanticsOp, manifest: GraphManifest
+) -> ManifestOp | None:
+    """Restore the prior grounding, but only when every selected edge shared it.
+
+    The payload carries one value for the whole selection, so a selection whose
+    edges were grounded differently has no single inverse expressible as one op.
+    Returning ``None`` says "not invertible" rather than inventing a value that
+    would silently flatten them.
+    """
+    existing = {(e.source, e.target, e.relation): e for e in _edges(manifest)}
+    priors: list[Any] = []
+    for selector in op.edges:
+        edge = existing.get((selector.source, selector.target, selector.relation))
+        if edge is None:
+            return None
+        priors.append(edge.semantics)
+
+    first = priors[0]
+    if any(prior != first for prior in priors[1:]):
+        return None
+    return SetEdgeSemanticsOp(edges=list(op.edges), semantics=first)
+
+
+def _invert_set_field_semantics(
+    op: SetFieldSemanticsOp, manifest: GraphManifest
+) -> ManifestOp | None:
+    """Restore each property's prior grounding. Per-target, so always expressible."""
+    schema = manifest.graph_schema
+    if schema is None:
+        return None
+    by_name = {v.name: v for v in schema.core_schema.vertex_config.vertices}
+    targets: list[FieldSemanticsTarget] = []
+    for target in op.targets:
+        vertex = by_name.get(target.vertex)
+        if vertex is None:
+            return None
+        field = next((f for f in vertex.properties if f.name == target.field), None)
+        if field is None:
+            return None
+        targets.append(
+            FieldSemanticsTarget(
+                vertex=target.vertex, field=target.field, semantics=field.semantics
+            )
+        )
+    return SetFieldSemanticsOp(targets=targets)
+
+
 _HANDLERS: dict[str, Any] = {
     "add_vertices": _invert_add_vertices,
     "remove_vertices": _invert_remove_vertices,
@@ -425,6 +499,9 @@ _HANDLERS: dict[str, Any] = {
     "add_edge_indexes": _invert_add_edge_indexes,
     "remove_edge_indexes": _invert_remove_edge_indexes,
     "set_edge_directed": _invert_set_edge_directed,
+    "set_vertex_semantics": _invert_set_vertex_semantics,
+    "set_edge_semantics": _invert_set_edge_semantics,
+    "set_field_semantics": _invert_set_field_semantics,
     "add_secondary_identities": _invert_add_secondary_identities,
     "remove_secondary_identities": _invert_remove_secondary_identities,
     "retarget_edges": _invert_retarget_edges,

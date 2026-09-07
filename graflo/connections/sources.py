@@ -42,6 +42,15 @@ class RestApiConnConfig(BaseModel):
     base_url: str
     auth: ApiAuth | None = None
     default_headers: dict[str, str] = Field(default_factory=dict)
+    proxy_name: str | None = Field(
+        default=None,
+        description=(
+            "Non-secret runtime handle. Matches conn_proxy in manifest bindings. "
+            "Must be unique per registry instance. Mirrors DBConfig.proxy_name: "
+            "an API source's connector is looked up by the same label a "
+            "database connector is."
+        ),
+    )
 
     @classmethod
     def from_env(cls, env_prefix: str) -> RestApiConnConfig:

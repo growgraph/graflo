@@ -6,7 +6,10 @@ import logging
 import traceback
 from typing import Any
 
-from graflo.architecture.contract.ingestion.steps import TransformActorConfig
+from graflo.architecture.contract.ingestion.steps import (
+    TransformActorConfig,
+    TransformGuardConfig,
+)
 from graflo.architecture.contract.ingestion.transform import (
     KeySelectionConfig,
     ProtoTransform,
@@ -35,6 +38,7 @@ class TransformActor(Actor):
         self._tolerate_transform_errors = True
         self._declared_input_keys: frozenset[str] = frozenset()
         self._rename_map: dict[str, str] | None = None
+        self._guard: TransformGuardConfig | None = config.when
 
         if config.rename is not None:
             self.t = Transform(rename=config.rename)
@@ -265,6 +269,10 @@ class TransformActor(Actor):
     ) -> ExtractionContext:
         logger.debug("transforms : %s %s", id(self.transforms), len(self.transforms))
         observation = self._extract_observation(nargs, **kwargs)
+        # A failed guard is a skip, not an error: the step writes nothing, which
+        # is the property a guarded derivation behind a router relies on.
+        if self._guard is not None and not self._guard.passes(observation):
+            return ctx
         missing = self._missing_declared_keys(observation)
         if missing:
             if self._fail_fast:

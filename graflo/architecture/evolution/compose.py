@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+import logging
+from collections.abc import Iterable, Mapping, Sequence
 from itertools import pairwise
 from typing import Any, Literal
 
@@ -52,6 +53,8 @@ from .ops import (
     SideIdentity,
 )
 
+logger = logging.getLogger(__name__)
+
 _RIGHT_PREFIX = "r_"
 
 
@@ -59,6 +62,24 @@ def _prefixed(name: str) -> str:
     if name.startswith(_RIGHT_PREFIX):
         return name
     return f"{_RIGHT_PREFIX}{name}"
+
+
+def _free_prefixed_name(name: str, taken: set[str]) -> str:
+    """``r_<name>``, disambiguated by an ordinal until it is free.
+
+    The ordinal is not decoration. ``_prefixed`` is idempotent -- it refuses to
+    build ``r_r_x`` -- so re-prefixing a taken name returns the same string,
+    and a loop that re-prefixed until free would never terminate on a right
+    side whose own names already start with ``r_``. Composing a manifest with
+    itself is exactly that case.
+    """
+    candidate = _prefixed(name)
+    if candidate not in taken:
+        return candidate
+    ordinal = 2
+    while f"{candidate}_{ordinal}" in taken:
+        ordinal += 1
+    return f"{candidate}_{ordinal}"
 
 
 def _resolve_name_collisions(
@@ -88,9 +109,7 @@ def _resolve_name_collisions(
                 "provide an equivalence / resource_renames, or set "
                 "name_conflict='prefix_right'"
             )
-        new_name = _prefixed(name)
-        while new_name in taken:
-            new_name = _prefixed(new_name)
+        new_name = _free_prefixed_name(name, taken)
         renames[name] = new_name
         taken.add(new_name)
     return renames
@@ -104,12 +123,32 @@ def _require_schema(manifest: GraphManifest, side: str) -> Schema:
     return manifest.graph_schema
 
 
-def _relation_names(schema: Schema) -> set[str]:
+def _schema_of(manifest: GraphManifest) -> Schema | None:
+    """The manifest's schema, or ``None`` when it carries no schema block.
+
+    The counterpart to :func:`_require_schema`, which stays for the paths that
+    genuinely cannot proceed without one. A manifest with only an
+    ``ingestion_model`` and/or ``bindings`` -- a new source wired onto an
+    existing type vocabulary -- is a legitimate compose input, so the union
+    treats a missing side as contributing nothing rather than as an error.
+    """
+    return manifest.graph_schema
+
+
+def _relation_names(schema: Schema | None) -> set[str]:
+    if schema is None:
+        return set()
     return {
         edge.relation
         for edge in schema.core_schema.edge_config.edges
         if edge.relation is not None
     }
+
+
+def _vertex_names(schema: Schema | None) -> set[str]:
+    if schema is None:
+        return set()
+    return set(schema.core_schema.vertex_config.vertex_set)
 
 
 def _apply_right_resource_policy(
@@ -249,9 +288,7 @@ def _resolve_schema_collisions(
     for name in [*exact, *(right for _left, right in near)]:
         if name in renames:
             continue
-        new_name = _prefixed(name)
-        while new_name in taken:
-            new_name = _prefixed(new_name)
+        new_name = _free_prefixed_name(name, taken)
         renames[name] = new_name
         taken.add(new_name)
     return renames
@@ -320,9 +357,14 @@ def _apply_right_schema_collision_policy(
     fusing ``customer_email`` with ``customerEmail`` would fuse two columns fed
     by different keys; the rest are addresses looked up by exact name, where a
     near-collision splits nothing and the check would be pure false positive.
+
+    A side with no schema block declares no types, so nothing can collide:
+    return without renaming anything.
     """
-    left_schema = _require_schema(left, "left")
-    right_schema = _require_schema(right, "right")
+    left_schema = _schema_of(left)
+    right_schema = _schema_of(right)
+    if left_schema is None or right_schema is None:
+        return
 
     v_renames = _resolve_schema_collisions(
         left_names=set(left_schema.core_schema.vertex_config.vertex_set),
@@ -398,7 +440,10 @@ def _member_state(
 
 
 def _capture_all_member_state(
-    index: ClusterIndex, left_schema: Schema, right_schema: Schema, side_maps: SideMaps
+    index: ClusterIndex,
+    left_schema: Schema | None,
+    right_schema: Schema | None,
+    side_maps: SideMaps,
 ) -> tuple[
     dict[tuple[Side, str], tuple[str, ...] | None],
     dict[tuple[Side, str], set[str]],
@@ -407,6 +452,8 @@ def _capture_all_member_state(
     member_property_names: dict[tuple[Side, str], set[str]] = {}
     for cluster in index.vertices:
         for side, schema in (("left", left_schema), ("right", right_schema)):
+            if schema is None:
+                continue
             k, n = _member_state(schema, cluster, side, side_maps[side].properties)
             member_keys.update(k)
             member_property_names.update(n)
@@ -1099,11 +1146,18 @@ def compose_manifests(
     out_left = left.model_copy(deep=True)
     out_right = right.model_copy(deep=True)
 
-    left_schema = _require_schema(out_left, "left")
-    right_schema = _require_schema(out_right, "right")
+    left_schema = _schema_of(out_left)
+    right_schema = _schema_of(out_right)
+    for side, schema in (("left", left_schema), ("right", right_schema)):
+        if schema is None:
+            logger.info(
+                "compose_manifests: %s manifest carries no schema block; "
+                "the composed schema comes from the other side alone",
+                side,
+            )
 
-    left_vertex_names = set(left_schema.core_schema.vertex_config.vertex_set)
-    right_vertex_names = set(right_schema.core_schema.vertex_config.vertex_set)
+    left_vertex_names = _vertex_names(left_schema)
+    right_vertex_names = _vertex_names(right_schema)
     left_relation_names = _relation_names(left_schema)
     right_relation_names = _relation_names(right_schema)
 
@@ -1132,6 +1186,20 @@ def compose_manifests(
         index, left_schema, right_schema, side_maps
     )
 
+    left_resource_names: set[str] = set()
+    if out_left.ingestion_model is not None:
+        left_resource_names = {r.name for r in out_left.ingestion_model.resources}
+    _apply_right_resource_policy(out_right, op, left_resource_names)
+
+    # The sides as the identity alignments see them: resources carry the names
+    # the union will use, and every cluster member still exists as its own
+    # class. The per-side lowering below merges the members in place, after
+    # which no manifest can say which router key produced which member.
+    sides = {
+        "left": out_left.model_copy(deep=True),
+        "right": out_right.model_copy(deep=True),
+    }
+
     for manifest, side in ((out_left, "left"), (out_right, "right")):
         apply_manifest_ops_inplace(
             manifest,
@@ -1142,22 +1210,35 @@ def compose_manifests(
             ),
         )
 
-    left_resource_names: set[str] = set()
-    if out_left.ingestion_model is not None:
-        left_resource_names = {r.name for r in out_left.ingestion_model.resources}
-    _apply_right_resource_policy(out_right, op, left_resource_names)
     _apply_right_schema_collision_policy(out_left, out_right, op)
 
     alignment_labels = {alignment.vertex for alignment in op.identity_alignments}
-    composed_schema, retire_ops = _union_schema(
-        _require_schema(out_left, "left"),
-        _require_schema(out_right, "right"),
-        index,
-        member_keys,
-        member_property_names,
-        alignment_labels,
-    )
-    _assert_no_canonical_split(composed_schema)
+    # Three-way, deliberately: a fabricated empty Schema would not be neutral.
+    # `_merge_db_profiles` takes every scalar from the left and
+    # `_merge_graph_metadata` takes the left's version, so an empty left would
+    # silently retarget the composed manifest to the `DatabaseProfile` default
+    # flavor and drop the right's namespace and schema version.
+    post_left = _schema_of(out_left)
+    post_right = _schema_of(out_right)
+    retire_ops: list[ManifestOp] = []
+    composed_schema: Schema | None
+    if post_left is not None and post_right is not None:
+        composed_schema, retire_ops = _union_schema(
+            post_left,
+            post_right,
+            index,
+            member_keys,
+            member_property_names,
+            alignment_labels,
+        )
+    elif post_left is not None:
+        composed_schema = post_left.model_copy(deep=True)
+    elif post_right is not None:
+        composed_schema = post_right.model_copy(deep=True)
+    else:
+        composed_schema = None
+    if composed_schema is not None:
+        _assert_no_canonical_split(composed_schema)
     composed_ingestion = _union_ingestion(
         out_left.ingestion_model, out_right.ingestion_model
     )
@@ -1181,6 +1262,7 @@ def compose_manifests(
             result,
             op,
             index=index,
+            sides=sides,
             side_maps=side_maps,
             canonical_maps=maps,
             finish_init=False,
@@ -1201,12 +1283,19 @@ def _apply_identity_alignments(
     op: ComposeManifestsOp,
     *,
     index: ClusterIndex,
+    sides: Mapping[str, GraphManifest],
     side_maps: SideMaps,
     canonical_maps: Sequence[tuple[Side, CanonicalMap]],
     finish_init: bool,
     strict_references: bool,
     dynamic_edge_feedback: bool,
 ) -> GraphManifest:
+    """Apply each alignment to the union.
+
+    *sides* are the pre-merge manifests (canonical maps and the resource
+    rename policy applied): member-keyed sources resolve against them, since
+    the merge has rewritten router ``type_map`` values to the canonical name.
+    """
     from .alignment import alignment_to_ops
     from .apply import apply_evolution
 
@@ -1232,7 +1321,19 @@ def _apply_identity_alignments(
                     f"compose_manifests: identity alignment vertex "
                     f"{alignment.vertex!r} is not in the composed union"
                 )
-        ops = alignment_to_ops(alignment, manifest=out, canonical_maps=all_maps)
+        cluster = next((c for c in index.vertices if c.into == alignment.vertex), None)
+        cluster_members = (
+            {"left": set(cluster.left), "right": set(cluster.right)}
+            if cluster is not None
+            else None
+        )
+        ops = alignment_to_ops(
+            alignment,
+            manifest=out,
+            canonical_maps=all_maps,
+            sides=sides,
+            cluster_members=cluster_members,
+        )
         out = apply_evolution(
             out,
             ops,

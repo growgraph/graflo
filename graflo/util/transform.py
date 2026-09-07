@@ -621,7 +621,7 @@ def affix_gated_key(
     return key or None
 
 
-def tagged_key(value: object, *, tag: str, sep: str = ":") -> str | None:
+def tagged_key(value: object, *, tag: str | None, sep: str = ":") -> str | None:
     """Namespace a side-local key: tag ``"a"`` turns ``"f2"`` into ``"a:f2"``.
 
     ``None``/empty *value* returns ``None``, which is an empty value to
@@ -631,28 +631,38 @@ def tagged_key(value: object, *, tag: str, sep: str = ":") -> str | None:
     cross-resource collisions become impossible. Normalization beyond a
     whitespace strip is a separate concern — compose another transform step.
 
+    An empty *tag* (``""`` or ``None``) is the neutral element: the key is
+    returned as-is, with no separator. That is for values already unique
+    across every source of the class — a UUID, an IRI, an id the source itself
+    prefixes — where a namespace would only be noise.
+
     Args:
         value: The side-local key material.
-        tag: Namespace prefix identifying the resource/side.
+        tag: Namespace prefix identifying the resource/side; empty for none.
         sep: Separator between *tag* and the key.
 
     Returns:
-        ``f"{tag}{sep}{key}"``, or ``None`` when *value* is missing or empty.
+        ``f"{tag}{sep}{key}"`` (or bare ``key`` under an empty tag), or
+        ``None`` when *value* is missing or empty.
     """
     if value is None:
         return None
     key = str(value).strip()
-    return f"{tag}{sep}{key}" if key else None
+    if not key:
+        return None
+    return f"{tag}{sep}{key}" if tag else key
 
 
 def coalesce_fields(doc: dict[str, Any], *, fields: list[str]) -> Any:
     """First non-empty value among *fields* on *doc*, or ``None``.
 
-    The branch selector for a routed source. When one resource derives a
-    canonical attribute several ways — one per class its ``vertex_router``
-    collapses onto the aligned class — each derivation writes its own scratch
-    field and returns ``None`` for the branches it does not serve. This picks
-    the one that fired.
+    The branch selector for the column-presence form of a routed derivation.
+    When one resource derives a canonical attribute several ways — one per
+    class its ``vertex_router`` collapses onto the aligned class, each keying
+    from its own column — each derivation writes its own scratch field and
+    returns ``None`` for the branches it does not serve. This picks the one
+    that fired. (A derivation keyed by *member* needs none of this: its step
+    carries a ``when`` guard and writes the attribute directly.)
 
     A single writer per canonical attribute is the point. Two steps writing the
     same key work on a plain ``vertex`` step, whose buffer extraction skips
@@ -684,7 +694,7 @@ def gated_tagged_key(
     gate: str | None,
     value: object,
     *,
-    tag: str,
+    tag: str | None,
     sep: str = ":",
     prefix: str = "",
 ) -> str | None:
@@ -693,12 +703,14 @@ def gated_tagged_key(
     When one resource contributes several side-local keys — one per class its
     ``vertex_router`` collapses onto the aligned class — the router's
     discriminator selects which one applies. ``None`` when the gate does not
-    match, which is an empty value to identity digests.
+    match, which is an empty value to identity digests. This is the explicit,
+    hand-written form (``LocalKeySource.gate``); a source keyed by member gets
+    its gate derived from the router as a ``when`` guard on the step instead.
 
     Args:
         gate: Field deciding which branch this document is (the discriminator).
         value: The side-local key material.
-        tag: Namespace prefix identifying the branch.
+        tag: Namespace prefix identifying the branch; empty for none.
         sep: Separator between *tag* and the key.
         prefix: Required prefix of *gate*; ``""`` always passes.
 

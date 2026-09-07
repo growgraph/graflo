@@ -55,6 +55,10 @@ LAYERS: dict[str, int] = {
     "graflo.connections": 3,
     "graflo.connections.provider": 4,
     "graflo.architecture.contract": 3,
+    # A contract validator: reads the manifest models and nothing else. Stated
+    # so prefix matching cannot fall through to the L4 `graflo.architecture`
+    # default and quietly let a conformance check reach a driver.
+    "graflo.architecture.profile": 3,
     "graflo.architecture.pipeline": 4,
     "graflo.architecture.backend": 4,
     "graflo.architecture.evolution": 4,

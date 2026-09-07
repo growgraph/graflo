@@ -28,6 +28,7 @@ from .ops import (
     EdgeSelector,
     EnsureExtractedFields,
     EnsureExtractedFieldsOp,
+    FieldSemanticsTarget,
     FieldTypeSpec,
     FunnelIdentityTarget,
     HashIdentityTarget,
@@ -57,6 +58,9 @@ from .ops import (
     RetargetEdgesOp,
     SanitizeOp,
     SetEdgeDirectedOp,
+    SetEdgeSemanticsOp,
+    SetFieldSemanticsOp,
+    SetVertexSemanticsOp,
     SideIdentity,
     VertexEquivalence,
     ops_reaching_ingestion,
@@ -103,6 +107,7 @@ _ALIGNMENT_EXPORTS = frozenset(
         "IdentityAlignment",
         "LocalKeySource",
         "LocalKeySpec",
+        "SharedDerivation",
         "alignment_to_ops",
         "validate_alignment",
     }
@@ -151,6 +156,14 @@ _PHYSICAL_EXPORTS = frozenset(
         "apply_remove_edge_indexes",
         "apply_remove_vertex_indexes",
         "apply_set_edge_directed",
+    }
+)
+
+_SEMANTICS_EXPORTS = frozenset(
+    {
+        "apply_set_edge_semantics",
+        "apply_set_field_semantics",
+        "apply_set_vertex_semantics",
     }
 )
 
@@ -274,6 +287,7 @@ __all__ = [
     "EdgeSelector",
     "EnsureExtractedFields",
     "EnsureExtractedFieldsOp",
+    "FieldSemanticsTarget",
     "FieldTypeSpec",
     "FileCommitStore",
     # Revision layer
@@ -318,6 +332,10 @@ __all__ = [
     "RevisionOp",
     "SanitizeOp",
     "SetEdgeDirectedOp",
+    "SetEdgeSemanticsOp",
+    "SetFieldSemanticsOp",
+    "SetVertexSemanticsOp",
+    "SharedDerivation",
     "SideIdentity",
     "SideMaps",
     "UnclassifiedListField",
@@ -355,6 +373,9 @@ __all__ = [
     "apply_retarget_edges",
     "apply_sanitize",
     "apply_set_edge_directed",
+    "apply_set_edge_semantics",
+    "apply_set_field_semantics",
+    "apply_set_vertex_semantics",
     "build_commit",
     "build_merge_commit",
     "build_recipe",
@@ -436,6 +457,10 @@ def __getattr__(name: str) -> Any:
         from . import physical as physical_mod
 
         return getattr(physical_mod, name)
+    if name in _SEMANTICS_EXPORTS:
+        from . import semantics as semantics_mod
+
+        return getattr(semantics_mod, name)
     if name in _CODEC_EXPORTS:
         from . import codec as codec_mod
 

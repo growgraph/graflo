@@ -5,44 +5,53 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.3]
+
+### Added
+
+- **Member-keyed identity derivation.** `AlignmentAttribute.sources` and `LocalKeySpec.sources` accept a dict keyed by member class, so a resource that routes several members onto one canonical class can key each member — including when they share a column and differ only by marker. Lowering uses pre-merge *sides* (after canonical maps, before cluster lowering): a plain `vertex` step gets no gate; a router member gets a derived `when` on the discriminator. `SharedDerivation` expands the common case (one spec, per-member params). `LocalKeySource.tag` may be `None` (stored as `""`) for values already unique across sources. Example 21.
+
+- **`when` on transform steps.** `when: {field: kind, in: [shop]}` skips the step entirely (writes nothing, not `None`), so several steps can share one output field without a later miss overwriting an earlier value behind a router.
+
+- **Conformance profiles and `graflo check`.** Named, versioned assertions a valid manifest may still fail. `world-model` v0.1 checks IRI grounding, identity, edge direction, units, temporal validity, and provenance. Exit `0` / `1` / `2` (conformant / not / could not run). Prefer `check_manifest_config`: parsed `identity` and `Edge.directed` have defaults that hide whether the author declared them. Outcomes include `not_applicable`, `waived` (sidecar, reason required), and `warn`. Waivers are not on the manifest.
+
+- **`graflo lift` (`state-core`).** Spec-driven ops that make a manifest twin-ready: stateful properties move onto `<Type>State`, measured types gain `<Type>Observation`, `Evidence` / `Agent` make lineage expressible. Emits ops (`--emit-ops`, `plan_lift`); refuses to guess missing meaning. Example 22.
+
+- **`set_vertex_semantics`, `set_edge_semantics`, `set_field_semantics`.** Attach a `semantics` block to an existing element. Reversible (optional payload). `add_vertex_properties` accepts a full `Field`, not only a name.
+
+- **`graflo compose`.** Shell entry for binary compose: canonicalize, validate the map against the op, then compose. `--dry-run`, `--check-profile`; exit `1` refused, `2` could not run.
+
+### Changed
+
+- **Compose no longer requires a schema on both sides.** An overlay with only `ingestion_model` and/or `bindings` takes the other side's schema verbatim — an empty `Schema` is not a no-op (it would default `db_flavor` to Arango). Neither side → no schema.
+
+- **`RestApiConnConfig.proxy_name`**, matching `DBConfig.proxy_name`.
+
+### Fixed
+
+- **`compose_manifests` hung under `name_conflict="prefix_right"`** when a name already started with `r_` (`_prefixed` is idempotent). Disambiguation is now ordinal (`r_x`, `r_x_2`, …).
+
 ## [1.12.2]
 
 ### Added
 
-- **A marker affix on the value can admit it, instead of merely being trimmed off it.** `graflo.util.transform` gains `affix_gated_key`. Identity alignment already had `gated_normalized_key`, which gates on a *sibling* field and cleans the key with `strip_prefix` — and `strip_prefix` is `str.removeprefix`, a silent no-op when the prefix is absent. So `ABC-Alpha` and a bare `Alpha` normalize to the same key and fuse: the marker carries no authority, and there was no way to say *"this affix is what makes the value a canonical id"*. `affix_gated_key` reads one field and makes the marker the admission test — carried, it is stripped and the value is accepted; absent, the result is `None`. The marker is a `prefix`/`suffix` pair rather than a prefix alone, since which end carries the convention is arbitrary: a marker may lead (`ext_42`), trail (`42-legacy`), or bracket the key, and both halves are required when both are named. Each defaults to `""`, which every string carries, so naming one leaves the other unconstrained and naming neither admits everything while stripping nothing — the convention that lets a source participating unconditionally reuse the same call, so the two normal forms cannot drift. Affixes that overlap on a short value are rejected rather than double-consumed. The returned `None` is a fall-through, not a drop: it is an empty value to identity digests, so the funnel branch listing the attribute is skipped and the record keys on its `local_key`, ingested but outside the cross-source cluster. The marker test stays case-sensitive even under `casefold`, which applies to the surviving key. `gated_normalized_key` is unchanged — it remains the right idiom when a different column decides participation. **Example 21** now demonstrates the marker form, with two `firm` rows carrying the same business name and only the marked one fusing.
+- **`affix_gated_key`.** The marker on the value itself is the admission test (`prefix`/`suffix`), not a sibling field plus silent `strip_prefix`. Present: strip and accept. Absent: `None`, a fall-through to `local_key`, not a drop. Overlapping affixes on a short value are rejected. Marker test stays case-sensitive even under `casefold`. `gated_normalized_key` is unchanged. Example 21.
 
-- **A manifest can carry its own name and description.** `ManifestMetadata` gains `name` and `description` alongside `provenance`. Until now a `GraphManifest` had no name of its own: the displayed one was smuggled through `Schema.metadata.name`, so a manifest carrying only `bindings` — a legal manifest — was literally unnameable, and anything rendering it fell back to an identifier. Both fields sit outside the content hash for the same reason provenance does: `manifest_hash` covers the three blocks and nothing else, so renaming a manifest cannot move its content address and two routes to the same
-a world model still compare equal.
+- **`ManifestMetadata.name` and `.description`.** A manifest can name itself without smuggling through `Schema.metadata` (a bindings-only manifest was otherwise unnameable). Both sit outside the content hash, like provenance.
+
+- **Identity alignment on a routed source.** Derivations land at the level that produces the class (`AddResourceTransformsOp.at`, via `find_vertex_producing_levels`) instead of the resource root, where a router never saw them. `sources[resource]` accepts a list (different key columns per branch); `LocalKeySource` gained `gate` / `gate_prefix`. Behind a router, multi-source attributes lower to gated scratch fields plus `coalesce_fields` — a later `None` would overwrite a real value. `EnsureExtractedFieldsOp` widens a restrictive router's `keep_fields` / `vertex_from_map` so derived attributes survive the merge. Also: `coalesce_fields`, `gated_tagged_key`. Example 21.
+
+- **`normalize_actor_step` descends into an already-typed `descend`.** Typed `descend` can carry shorthand sub-steps; structural scans now see a `vertex_router` authored in its flat `type_field` form.
+
+- **Observation vocabulary.** Dropped redundant `cast` after `isinstance(..., dict)` in the Arango connection. `allow_row_fusion` → `allow_observation_fusion`; `AlignmentRow` → `AlignmentAttribute` (`IdentityAlignment.rows` → `attributes`). Old spellings remain validation aliases.
 
 ### Fixed
 
-- **`compose_manifests` no longer discards the right side's metadata.** The fold copied the left side's `GraphMetadata` wholesale and adjusted only `name`, so the right side's `description`, `semantics` and `naming` vanished into a composed schema that demonstrably contained the right side's types. Each is now folded on its own terms: descriptions are concatenated in side order (neither side's prose is authoritative); `semantics.exact_match` and `semantics.synonyms` union, while a disagreeing single-valued `semantics.iri` **clears** rather than electing the left side's concept as the composed schema's meaning; and a `NamingConvention` survives only while both sides declare the same one, because `rename_map` is computed from it and asserting the left side's style over names that are not in it would be a false claim. Manifest-level `metadata.name` and `.description` fold the same way.
-
-  The same fold also carried the left side's `provenance` into the composed schema, so a composed artifact claimed a content address belonging to one of its inputs. It is now dropped: a compose produces a new artifact, and stamping one is a commit point's job.
-
-
-
-### Added
-
-- **Identity alignment works on a routed source, without splitting the router.** A `vertex_router` is how a single heterogeneous stream — an SQL view, one API feed — becomes several classes. When an equivalence collapses two of its branches onto one class, an `IdentityAlignment` on that class used to derive nothing, silently, and every routed record fell out of the graph: derivations were appended at the **root** of the resource pipeline, an actor reads its transform buffer at its own `LocationIndex` with no ancestor fallback, a `descend` subtree runs *before* its own level's transforms, and a transform whose declared inputs are missing skips without recording a failure. The manifest looked right; the emitted graph had no identities.
-
-  **Derivations now land at the level that produces the class.** `AddResourceTransformsOp` gained `at` — a per-resource path of `descend` step indices, root by default, so nothing existing moves — and `alignment_to_ops` resolves it from `IdentityAlignment.vertex` through the new `find_vertex_producing_levels`. What it cannot resolve, it refuses: a resource that never produces the class, one producing it at several levels with no `IdentityAlignment.at` override, an `at` that does not address a `descend` level, and — the case the whole resolution exists for — an `at` pointing at a level that produces nothing.
-
-  **A resource may derive one attribute several ways.** `AlignmentAttribute.sources[resource]` and `LocalKeySpec.sources[resource]` each accept a list, for when the branches collapsing onto the class carry different key columns; `LocalKeySource` gained `gate` / `gate_prefix` for branches that differ only by discriminator. The lowering is not simply two steps writing the same key: that works on a plain `vertex` step, whose buffer extraction skips `None`, but **not** behind a router, which merges the transform buffer into one observation dict where a later `None` overwrites an earlier real value. So a multi-source attribute becomes one gated step per branch writing a scratch field plus one `coalesce_fields` step (`strategy: all`, so an absent branch column does not take the coalesce down with it) as the single writer. A single spec still lowers to exactly one direct step.
-
-  **Delivery through the router is repaired too.** A router builds its child `VertexActor` at `lindex.extend((role, 0))`, where the transform buffer is empty, so derived attributes arrive only through the merged observation — subject to `keep_fields` and `extraction_scope`, which a plain `vertex` step bypasses entirely. New fundamental `EnsureExtractedFieldsOp` widens a restrictive router: `keep_fields` gains the canonical attributes, and under `mapped_only` so does `vertex_from_map[<class>]`, **seeded from the router-level `from`** — creating that entry from scratch would replace the author's projection rather than extend it. Only the aligned class's entry is touched, so the router keeps serving its other types unchanged. A sibling class routed at the same level that already declares one of the canonical attribute names now raises: it would silently absorb the derived value.
-
-  Also: `graflo.util.transform` gained `coalesce_fields` and `gated_tagged_key`. **Example 21** (`examples/21-router-union-alignment/`) works it end to end — five records from a nested router and two plain resources collapsing to three vertices, with the unaligned branch still flowing through the same router, unpolluted.
-
-- **`normalize_actor_step` descends into an already-typed `descend`.** A `descend` written in its own typed form could not carry the shorthand sub-steps its `{descend: {...}}` spelling accepts, because `pipeline` is a union discriminated on `type` and the normalizer returned early whenever `type` was present. The same early return left every structural pipeline scan — referenced vertices, renames, level lookup — blind to a `vertex_router` authored in its flat `type_field` form, which `VertexRouterActorConfig` accepts. Both are fixed at the normalizer, so all of them agree.
-
-- **Arango connection: drop redundant `cast(dict[str, Any], …)` after `isinstance(..., dict)`.** `ty` already narrows those values; the casts were noise. It kept its correct meaning — a tabular result row — in `db/`, `data_source/sql.py`, `query/` and `filter/select.py`, while also naming the ingestion data unit (which is a nested observation at a `LocationIndex`, not a row) and a line in a declaration table. The `merge_row_doc_with_transform_buffer` → `merge_observation_with_transform_buffer` rename had already picked the vocabulary; this finishes it.
-
-  `MergeVerticesOp.allow_row_fusion` and `ComposeManifestsOp.allow_row_fusion` are now **`allow_observation_fusion`** — what fuses is two vertex observations sharing one accumulator slot, which is what the guard's own message half-said already (*"one source **document** yielded both types, so the merged **rows** fuse"*). `AlignmentRow` is **`AlignmentAttribute`** and `IdentityAlignment.rows` is **`attributes`**: each entry is one canonical attribute that lowers to one `IdentityBranch`, so "attributes, in priority order" says what it is. Both renamed fields accept their old spelling as a validation alias, so recorded revisions and authored YAML keep loading and serialize out under the new name; `AlignmentRow` remains exported as a deprecated alias. Docstrings that said "per-row relation" now say "per-document"; "flat row" survives where the sentence is genuinely about a tabular encoding.
+- **`compose_manifests` no longer discards the right side's metadata.** Descriptions concatenate; `semantics.exact_match` / `.synonyms` union; a disagreeing `semantics.iri` **clears**; `NamingConvention` survives only if both sides agree. Provenance is dropped — compose produces a new artifact.
 
 ### Removed
 
-- **`merge_row_doc_with_transform_buffer`.** Not backward compatibility — it was introduced as an alias alongside the canonical name and never called anywhere in graflo.
+- **`merge_row_doc_with_transform_buffer`.** Alias introduced alongside the canonical name and never called.
 
 
 ## [1.12.1]

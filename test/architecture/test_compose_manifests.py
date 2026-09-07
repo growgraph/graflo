@@ -1156,3 +1156,28 @@ def test_occupied_into_raises_through_compose() -> None:
     )
     with pytest.raises(ClusterConflictError, match="not a member"):
         compose_manifests(left, right, op, bump_version=False)
+
+
+def test_prefix_right_terminates_when_the_right_name_is_already_prefixed() -> None:
+    """``_prefixed`` is idempotent, so re-prefixing cannot break a tie.
+
+    Composing a manifest with itself is the ordinary way to hit this: every
+    right-hand name collides, and any name already starting with ``r_``
+    prefixes to itself. The pre-fix loop spun forever on it.
+    """
+    left = _manifest(
+        name="a",
+        vertices=[Vertex(name="r_A", properties=[Field(name="id")], identity=["id"])],
+        edges=[],
+        resources=[{"name": "r_a", "apply": [{"vertex": "r_A"}]}],
+    )
+    out = compose_manifests(
+        left,
+        left,
+        ComposeManifestsOp(name_conflict="prefix_right"),
+        bump_version=False,
+    )
+    assert out.graph_schema is not None
+    assert out.graph_schema.core_schema.vertex_config.vertex_set == {"r_A", "r_A_2"}
+    assert out.ingestion_model is not None
+    assert {r.name for r in out.ingestion_model.resources} == {"r_a", "r_a_2"}

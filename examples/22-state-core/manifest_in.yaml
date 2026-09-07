@@ -1,0 +1,39 @@
+# A plain CMDB-shaped manifest: no grounding, no units, no temporal validity,
+# no provenance. It fails every assertion of the `world-model` profile, which
+# is the point -- this is what most manifests look like, including every one an
+# inference pass produces.
+metadata:
+    name: cmdb-plain
+    description: An ungrounded starting point, before the lift.
+schema:
+    metadata:
+        name: cmdb-plain
+        version: "1.0.0"
+    graph:
+        vertex_config:
+            vertices:
+            -   name: ConfigurationItem
+                description: A managed thing in the estate.
+                properties:
+                -   {name: ci_id, type: STRING}
+                -   {name: label, type: STRING}
+                -   {name: status, type: STRING}
+                -   {name: operating_temp, type: FLOAT}
+                identity: [ci_id]
+
+            -   name: BusinessService
+                description: Something the estate delivers.
+                properties:
+                -   {name: service_id, type: STRING}
+                -   {name: label, type: STRING}
+                -   {name: criticality, type: STRING}
+                identity: [service_id]
+
+        edge_config:
+            edges:
+            -   source: ConfigurationItem
+                target: BusinessService
+                relation: supports
+            -   source: ConfigurationItem
+                target: ConfigurationItem
+                relation: dependsOn

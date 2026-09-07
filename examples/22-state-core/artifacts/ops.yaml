@@ -1,0 +1,224 @@
+-   semantics:
+        BusinessService:
+            iri: http://www.w3.org/ns/prov#Entity
+            synonyms:
+            -   Service
+            -   ApplicationService
+        ConfigurationItem:
+            iri: http://www.w3.org/ns/prov#Entity
+            exact_match:
+            -   http://www.w3.org/ns/prov#Entity
+            -   http://www.w3.org/ns/sosa/FeatureOfInterest
+    op: set_vertex_semantics
+-   edges:
+    -   source: ConfigurationItem
+        target: BusinessService
+        relation: supports
+    semantics:
+        iri: http://www.w3.org/ns/prov#wasInfluencedBy
+    op: set_edge_semantics
+-   edges:
+    -   source: ConfigurationItem
+        target: ConfigurationItem
+        relation: dependsOn
+    semantics:
+        iri: http://www.w3.org/ns/prov#wasInfluencedBy
+    op: set_edge_semantics
+-   edges:
+    -   source: ConfigurationItem
+        target: BusinessService
+        relation: supports
+    -   source: ConfigurationItem
+        target: ConfigurationItem
+        relation: dependsOn
+    directed: true
+    op: set_edge_directed
+-   targets:
+    -   vertex: ConfigurationItem
+        field: operating_temp
+        semantics:
+            unit: Cel
+    op: set_field_semantics
+-   vertices:
+    -   name: BusinessServiceState
+        properties:
+        -   name: service_id
+            type: STRING
+        -   name: criticality
+            type: STRING
+        -   name: valid_from
+            type: DATETIME
+            semantics:
+                iri: http://www.w3.org/ns/prov#generatedAtTime
+        -   name: valid_to
+            type: DATETIME
+            semantics:
+                iri: http://www.w3.org/ns/prov#invalidatedAtTime
+        description: Mutable facts about a BusinessService, each holding over one interval. Closing `valid_to` rather than overwriting is what makes history queryable.
+        semantics:
+            iri: http://www.w3.org/ns/prov#Entity
+            exact_match:
+            -   http://www.w3.org/ns/prov#Entity
+            -   http://www.w3.org/2006/time#ProperInterval
+        hash_identity_properties:
+        -   service_id
+        -   valid_from
+    -   name: ConfigurationItemState
+        properties:
+        -   name: ci_id
+            type: STRING
+        -   name: status
+            type: STRING
+        -   name: valid_from
+            type: DATETIME
+            semantics:
+                iri: http://www.w3.org/ns/prov#generatedAtTime
+        -   name: valid_to
+            type: DATETIME
+            semantics:
+                iri: http://www.w3.org/ns/prov#invalidatedAtTime
+        description: Mutable facts about a ConfigurationItem, each holding over one interval. Closing `valid_to` rather than overwriting is what makes history queryable.
+        semantics:
+            iri: http://www.w3.org/ns/prov#Entity
+            exact_match:
+            -   http://www.w3.org/ns/prov#Entity
+            -   http://www.w3.org/2006/time#ProperInterval
+        hash_identity_properties:
+        -   ci_id
+        -   valid_from
+    -   name: ConfigurationItemObservation
+        properties:
+        -   name: ci_id
+            type: STRING
+        -   name: observed_property
+            type: STRING
+            semantics:
+                exact_match:
+                -   http://www.w3.org/ns/sosa/observedProperty
+                -   http://www.w3.org/ns/ssn/Property
+        -   name: result_value
+            type: FLOAT
+            semantics:
+                exact_match:
+                -   http://www.w3.org/ns/sosa/hasSimpleResult
+        -   name: result_unit
+            type: STRING
+            semantics:
+                iri: http://qudt.org/schema/qudt/ucumCode
+        -   name: result_time
+            type: DATETIME
+            semantics:
+                iri: http://www.w3.org/ns/sosa/resultTime
+        description: A measurement of a ConfigurationItem at a time.
+        semantics:
+            iri: http://www.w3.org/ns/sosa/Observation
+            exact_match:
+            -   http://www.w3.org/ns/sosa/Observation
+        hash_identity_properties:
+        -   ci_id
+        -   observed_property
+        -   result_time
+    op: add_vertices
+-   edges:
+    -   source: BusinessServiceState
+        target: BusinessService
+        relation: specializationOf
+        description: The BusinessService this state is a state of.
+        semantics:
+            iri: http://www.w3.org/ns/prov#specializationOf
+            exact_match:
+            -   http://www.w3.org/ns/prov#specializationOf
+    -   source: ConfigurationItemState
+        target: ConfigurationItem
+        relation: specializationOf
+        description: The ConfigurationItem this state is a state of.
+        semantics:
+            iri: http://www.w3.org/ns/prov#specializationOf
+            exact_match:
+            -   http://www.w3.org/ns/prov#specializationOf
+    -   source: ConfigurationItemObservation
+        target: ConfigurationItem
+        relation: hasFeatureOfInterest
+        description: The ConfigurationItem this observation measured.
+        semantics:
+            iri: http://www.w3.org/ns/sosa/hasFeatureOfInterest
+            exact_match:
+            -   http://www.w3.org/ns/sosa/hasFeatureOfInterest
+    op: add_edges
+-   vertices:
+    -   name: Evidence
+        properties:
+        -   name: evidence_id
+            type: STRING
+        -   name: source_uri
+            type: STRING
+        -   name: media_type
+            type: STRING
+        -   name: retrieved_at
+            type: DATETIME
+            semantics:
+                iri: http://www.w3.org/ns/prov#generatedAtTime
+        identity:
+        -   evidence_id
+        description: 'What a fact was read from: a document, an API response, a table row.'
+        semantics:
+            iri: http://www.w3.org/ns/prov#Entity
+            exact_match:
+            -   http://www.w3.org/ns/prov#Entity
+    -   name: Agent
+        properties:
+        -   name: agent_id
+            type: STRING
+        -   name: label
+            type: STRING
+        -   name: agent_kind
+            type: STRING
+        identity:
+        -   agent_id
+        description: Who or what acted or measured.
+        semantics:
+            iri: http://www.w3.org/ns/prov#Agent
+            exact_match:
+            -   http://www.w3.org/ns/prov#Agent
+            -   http://www.w3.org/ns/sosa/Sensor
+    op: add_vertices
+-   edges:
+    -   source: BusinessServiceState
+        target: Evidence
+        relation: wasDerivedFrom
+        description: What this fact was read from.
+        semantics:
+            iri: http://www.w3.org/ns/prov#wasDerivedFrom
+            exact_match:
+            -   http://www.w3.org/ns/prov#wasDerivedFrom
+    -   source: ConfigurationItemState
+        target: Evidence
+        relation: wasDerivedFrom
+        description: What this fact was read from.
+        semantics:
+            iri: http://www.w3.org/ns/prov#wasDerivedFrom
+            exact_match:
+            -   http://www.w3.org/ns/prov#wasDerivedFrom
+    -   source: ConfigurationItemObservation
+        target: Evidence
+        relation: wasDerivedFrom
+        description: What this fact was read from.
+        semantics:
+            iri: http://www.w3.org/ns/prov#wasDerivedFrom
+            exact_match:
+            -   http://www.w3.org/ns/prov#wasDerivedFrom
+    -   source: Evidence
+        target: Agent
+        relation: wasAttributedTo
+        description: Who or what produced this evidence.
+        semantics:
+            iri: http://www.w3.org/ns/prov#wasAttributedTo
+            exact_match:
+            -   http://www.w3.org/ns/prov#wasAttributedTo
+    op: add_edges
+-   removals:
+        BusinessService:
+        -   criticality
+        ConfigurationItem:
+        -   status
+    op: remove_vertex_properties
