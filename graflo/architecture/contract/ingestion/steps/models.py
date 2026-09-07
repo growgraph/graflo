@@ -75,11 +75,48 @@ class VertexActorConfig(VertexExtractionOptionsConfig):
         return data
 
 
+class TransformGuardConfig(ConfigBaseModel):
+    """A guard deciding whether a transform step runs on an observation.
+
+    The step runs only when ``field`` holds one of ``values`` (exact match —
+    the same test a ``vertex_router`` applies to its ``type_map`` keys). When
+    it does not, the step **writes nothing**: no output, no ``None``. That is
+    what makes a guard different from a function returning ``None`` — behind a
+    router, which merges the transform buffer into one observation dict, a
+    later ``None`` overwrites an earlier real value, whereas a step that did
+    not run leaves the value alone. A missing ``field`` fails the guard.
+    """
+
+    field: str = PydanticField(
+        ...,
+        description="Observation field the guard reads (raw document key).",
+    )
+    values: list[str] = PydanticField(
+        ...,
+        alias="in",
+        min_length=1,
+        description="Values of ``field`` that let the step run; exact match.",
+    )
+
+    def passes(self, observation: Any) -> bool:
+        """Whether *observation* satisfies the guard."""
+        if not isinstance(observation, dict):
+            return False
+        return observation.get(self.field) in self.values
+
+
 class TransformActorConfig(ConfigBaseModel):
     """Configuration for a TransformActor."""
 
     type: Literal["transform"] = PydanticField(
         default="transform", description="Actor type discriminator"
+    )
+    when: TransformGuardConfig | None = PydanticField(
+        default=None,
+        description=(
+            "Optional guard: the step runs only when the observation satisfies "
+            "it, and writes nothing otherwise. See TransformGuardConfig."
+        ),
     )
     rename: dict[str, str] | None = PydanticField(
         default=None,

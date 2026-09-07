@@ -613,3 +613,179 @@ class TestRoutedSourceFusion:
 
         assert len(view) == 3
         assert all(doc.get("id") for doc in view)
+
+
+# --------------------------------------------------------------------------- #
+# Member-keyed derivations: the members share one key column, each with its
+# own marker, and which member a document *is* decides the derivation.
+# --------------------------------------------------------------------------- #
+
+
+def _marker(prefix: str) -> DerivationSpec:
+    return DerivationSpec(
+        input=["secondary_key"], foo="affix_gated_key", params={"prefix": prefix}
+    )
+
+
+_MEMBER_ALIGNMENT = IdentityAlignment(
+    vertex="Company",
+    attributes=[
+        AlignmentAttribute(
+            into="match_key",
+            sources={
+                # One column for every kind; the member decides which marker
+                # admits a value. The left member is `Company` because the
+                # canonical map renamed `Firm` before the compose.
+                "r_view": {"Company": _marker("abc_"), "Shop": _marker("def_")},
+                "r_b": DerivationSpec(
+                    input=["shared_raw"], foo="affix_gated_key", params={"prefix": ""}
+                ),
+            },
+        )
+    ],
+    local_key=LocalKeySpec(
+        sources={
+            "r_view": {
+                "Company": LocalKeySource(field="firm_id", tag="firm"),
+                "Shop": LocalKeySource(field="shop_id", tag="shop"),
+            },
+            "r_b": LocalKeySource(field="org_id", tag="b"),
+        }
+    ),
+    secondary_identities={"by_company_id": ["company_id"], "by_org_id": ["org_id"]},
+)
+
+
+def _build_member_union() -> GraphManifest:
+    left = apply_evolution(
+        _routed_manifest_a(), canonical_map_to_ops(_ROUTED_CANONICAL)
+    )
+    op = ComposeManifestsOp(
+        vertices=[
+            VertexEquivalence(left=["Company", "Shop"], right="Org", into="Company")
+        ],
+        allow_merges=True,
+        identity_alignments=[_MEMBER_ALIGNMENT],
+    )
+    return compose_manifests(
+        left, _manifest_b(), op, canonical_maps=[("left", _ROUTED_CANONICAL)]
+    )
+
+
+_SHARED_COLUMN_VIEW = [
+    {
+        "records": [
+            {"kind": "firm", "firm_id": "f1", "secondary_key": "abc_alpha"},
+            {"kind": "firm", "firm_id": "f2", "secondary_key": "alpha"},
+            {"kind": "shop", "shop_id": "s1", "secondary_key": "def_beta"},
+            # A shop row carrying the *firm* marker: same bytes as f1's key.
+            {"kind": "shop", "shop_id": "s2", "secondary_key": "abc_alpha"},
+            {"kind": "person", "person_id": "p1", "secondary_key": "abc_9"},
+        ]
+    }
+]
+
+
+class TestMemberKeyedRoutedFusion:
+    def test_each_member_fuses_through_its_own_marker(self) -> None:
+        union = _build_member_union()
+
+        view = _cast(union, "r_view", _SHARED_COLUMN_VIEW)
+        orgs = _cast(
+            union,
+            "r_b",
+            [
+                {"org_id": "o1", "shared_raw": "alpha"},
+                {"org_id": "o2", "shared_raw": "beta"},
+            ],
+        )
+
+        by_local = {doc["local_key"]: doc for doc in view}
+        assert by_local["firm:f1"]["match_key"] == "alpha"
+        assert by_local["firm:f1"]["id"] == orgs[0]["id"]
+        assert by_local["shop:s1"]["match_key"] == "beta"
+        assert by_local["shop:s1"]["id"] == orgs[1]["id"]
+
+    def test_the_member_not_the_marker_decides(self) -> None:
+        """A shop row with the firm marker does not become that firm.
+
+        Under a value-only gate ``abc_alpha`` would admit it and strip the
+        marker, fusing s2 with f1 and o1. Keyed by member, the shop derivation
+        requires ``def_``, so s2 falls through to its own local key.
+        """
+        union = _build_member_union()
+
+        view = _cast(union, "r_view", _SHARED_COLUMN_VIEW)
+
+        by_local = {doc["local_key"]: doc for doc in view}
+        assert by_local["shop:s2"].get("match_key") is None
+        assert by_local["shop:s2"]["id"] != by_local["firm:f1"]["id"]
+
+    def test_an_unmarked_value_still_falls_through(self) -> None:
+        union = _build_member_union()
+
+        view = _cast(union, "r_view", _SHARED_COLUMN_VIEW)
+
+        by_local = {doc["local_key"]: doc for doc in view}
+        assert by_local["firm:f2"].get("match_key") is None
+        assert by_local["firm:f2"]["id"] != by_local["firm:f1"]["id"]
+
+    def test_the_unaligned_member_never_runs_the_derivations(self) -> None:
+        union = _build_member_union()
+        caster = DocumentCaster(union.require_ingestion_model())
+
+        result = asyncio.run(
+            caster.cast_batch(_SHARED_COLUMN_VIEW, "r_view", params=IngestionParams())
+        )
+
+        people = result.graph.vertices["Person"]
+        assert [p["person_id"] for p in people] == ["p1"]
+        assert "match_key" not in people[0]
+        assert "local_key" not in people[0]
+
+    def test_records_collapse_to_the_expected_vertices(self) -> None:
+        union = _build_member_union()
+
+        view = _cast(union, "r_view", _SHARED_COLUMN_VIEW)
+        orgs = _cast(
+            union,
+            "r_b",
+            [
+                {"org_id": "o1", "shared_raw": "alpha"},
+                {"org_id": "o2", "shared_raw": "beta"},
+            ],
+        )
+
+        ids = [doc["id"] for doc in [*view, *orgs]]
+        assert len(ids) == 6
+        assert len(set(ids)) == 4
+
+    def test_the_rename_policy_is_honoured_when_resolving_members(self) -> None:
+        """Member keys name resources as the union names them."""
+        left = apply_evolution(
+            _routed_manifest_a(), canonical_map_to_ops(_ROUTED_CANONICAL)
+        )
+        right = _manifest_b()
+        right.require_ingestion_model().resources[0].name = "r_view"
+        alignment = _MEMBER_ALIGNMENT.model_copy(deep=True)
+        for attribute in alignment.attributes:
+            attribute.sources["r_orgs"] = attribute.sources.pop("r_b")
+        assert alignment.local_key is not None
+        alignment.local_key.sources["r_orgs"] = alignment.local_key.sources.pop("r_b")
+        op = ComposeManifestsOp(
+            vertices=[
+                VertexEquivalence(left=["Company", "Shop"], right="Org", into="Company")
+            ],
+            allow_merges=True,
+            resource_renames={"r_view": "r_orgs"},
+            identity_alignments=[alignment],
+        )
+
+        union = compose_manifests(
+            left, right, op, canonical_maps=[("left", _ROUTED_CANONICAL)]
+        )
+
+        names = {r.name for r in union.require_ingestion_model().resources}
+        assert names == {"r_view", "r_orgs"}
+        view = _cast(union, "r_view", _SHARED_COLUMN_VIEW)
+        assert {doc["local_key"] for doc in view} >= {"firm:f1", "shop:s1"}

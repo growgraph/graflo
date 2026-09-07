@@ -4,33 +4,27 @@ splitting the router.
 
 Source A is a single view: one heterogeneous stream discriminated by ``kind``,
 routed by ONE ``vertex_router`` nested under a ``descend``. The equivalence
-collapses two of its branches (``Firm``, ``Shop``) onto ``Company`` while
-``Person`` keeps flowing through the same router — splitting the resource would
-mean scanning the view twice and duplicating a discriminator it already carries.
+collapses two of its members (``Company`` — ``Firm`` before the canonical map —
+and ``Shop``) onto ``Company`` while ``Person`` keeps flowing through the same
+router — splitting the resource would mean scanning the view twice and
+duplicating a discriminator it already carries.
 
-Two things make that work, and neither is optional here:
+**The member is the unit of derivation.** Every record that becomes ``Company``
+was produced *as one member* of the cluster by *one resource*: here the view
+produces ``Company`` for ``kind: firm`` rows and ``Shop`` for ``kind: shop``
+rows. All kinds carry the shared business key in ONE column, ``secondary_key``,
+each member under its own marker (``abc_`` for firms, ``def_`` for shops). So
+which member a document *is* must decide the derivation — which is what keying
+``sources["r_view"]`` by member says. The lowering asks the pre-merge side how
+the resource produces each member and guards the step with ``when`` on the
+router's discriminator; nothing here names ``kind`` or ``firm``.
 
-1. **The derivations land at the router's level.** ``alignment_to_ops`` resolves
-   the level that produces ``Company`` and targets it. Appended at the root they
-   would be invisible: an actor reads its transform buffer at its own
-   ``LocationIndex`` with no ancestor fallback, and a ``descend`` subtree runs
-   before its own level's transforms.
-2. **Each collapsing branch derives its own way.** ``firm`` rows carry
-   ``firm_ref``, ``shop`` rows carry ``shop_ref``. One ``DerivationSpec`` per
-   resource cannot say that, so the resource supplies a list; the lowering gives
-   each branch a scratch field and coalesces them into one writer.
-
-``match_key`` is derived by ``affix_gated_key``: the ``ABC-`` marker on the
-value is the admission test, so a value carrying it is stripped and accepted as
-canonical key material and an unmarked one yields ``None``. That ``None`` is a
+``match_key`` is derived by ``affix_gated_key``: the marker on the value is the
+admission test, so a value carrying it is stripped and accepted as canonical
+key material and an unmarked one yields ``None``. That ``None`` is a
 fall-through, not a drop — the record still ingests, on its side-local key,
-outside the cross-source cluster. Every side uses the same one-field call, so
-there is no normalization to drift.
-
-Branch selection needs no extra gate: a union view leaves the other branch's
-column empty, and an empty value carries no marker. ``local_key`` does gate —
-both branches would otherwise be namespaced the same — so its sources read the
-router's own discriminator.
+outside the cross-source cluster. A shop row carrying the *firm* marker falls
+through the same way: its member's derivation requires ``def_``.
 
     cd examples/21-router-union-alignment
     uv run python build_union.py            # → artifacts/manifest_union.yaml
@@ -64,58 +58,48 @@ from graflo.architecture.evolution import (
 
 EXAMPLE_DIR = Path(__file__).resolve().parent
 
-# Derivation inputs are RAW view columns. `firm_ref` and `shop_ref` are never
-# both populated, so at most one spec yields a value per document and the
-# lowering's coalesce picks it — no discriminator gate needed.
+
+def _marker(prefix: str) -> DerivationSpec:
+    """The same one-field call on every side, so no normal form can drift."""
+    return DerivationSpec(
+        input=["secondary_key"], foo="affix_gated_key", params={"prefix": prefix}
+    )
+
+
+# Derivation inputs are RAW view columns. Every kind carries `secondary_key`,
+# so column presence cannot select a member; the member key does.
 ALIGNMENT = IdentityAlignment(
     vertex="Company",
     attributes=[
         AlignmentAttribute(
             into="match_key",
             sources={
-                # Each branch of the view carries the shared business key in
-                # its own column; the other is empty, which is what selects.
-                # The `ABC-` marker decides participation: carry it and you are
-                # stripped into the cluster, omit it and you fall through.
-                "r_view": [
-                    DerivationSpec(
-                        input=["firm_ref"],
-                        foo="affix_gated_key",
-                        params={"prefix": "ABC-"},
-                    ),
-                    DerivationSpec(
-                        input=["shop_ref"],
-                        foo="affix_gated_key",
-                        params={"prefix": "ABC-"},
-                    ),
-                ],
-                # Literally the same call on the other side: one code path, so
-                # the two normal forms cannot drift apart.
+                # Keyed by member: the classes the equivalence names on this
+                # side. `Company` is the left member because the canonical
+                # map renamed `Firm` before the compose.
+                "r_view": {"Company": _marker("abc_"), "Shop": _marker("def_")},
+                # B's resources each produce one member — no key needed.
                 "r_b": DerivationSpec(
                     input=["shared_raw"],
                     foo="affix_gated_key",
-                    params={"prefix": "ABC-"},
+                    params={"prefix": "abc_"},
                 ),
                 "r_branch": DerivationSpec(
                     input=["shared_raw"],
                     foo="affix_gated_key",
-                    params={"prefix": "ABC-"},
+                    params={"prefix": "def_"},
                 ),
             },
         )
     ],
-    # One resource, two side-local namespaces: the branch a document came from
-    # decides its tag, so the gate is the router's own discriminator.
+    # One resource, two side-local namespaces: the member a document is
+    # decides its tag, and the guard comes from the router — not from here.
     local_key=LocalKeySpec(
         sources={
-            "r_view": [
-                LocalKeySource(
-                    field="firm_id", tag="firm", gate="kind", gate_prefix="firm"
-                ),
-                LocalKeySource(
-                    field="shop_id", tag="shop", gate="kind", gate_prefix="shop"
-                ),
-            ],
+            "r_view": {
+                "Company": LocalKeySource(field="firm_id", tag="firm"),
+                "Shop": LocalKeySource(field="shop_id", tag="shop"),
+            },
             "r_b": LocalKeySource(field="org_id", tag="b"),
             "r_branch": LocalKeySource(field="branch_id", tag="br"),
         }

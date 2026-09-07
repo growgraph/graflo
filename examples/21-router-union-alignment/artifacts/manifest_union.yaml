@@ -30,71 +30,61 @@ ingestion_model:
             -   call:
                     foo: affix_gated_key
                     input:
-                    -   firm_ref
-                    module: graflo.util.transform
-                    output:
-                    -   _match_key__0
-                    params:
-                        prefix: ABC-
-                type: transform
-            -   call:
-                    foo: affix_gated_key
-                    input:
-                    -   shop_ref
-                    module: graflo.util.transform
-                    output:
-                    -   _match_key__1
-                    params:
-                        prefix: ABC-
-                type: transform
-            -   call:
-                    foo: coalesce_fields
+                    -   secondary_key
                     module: graflo.util.transform
                     output:
                     -   match_key
                     params:
-                        fields:
-                        -   _match_key__0
-                        -   _match_key__1
-                    strategy: all
+                        prefix: abc_
                 type: transform
+                when:
+                    field: kind
+                    in:
+                    -   firm
             -   call:
-                    foo: gated_tagged_key
+                    foo: affix_gated_key
                     input:
-                    -   kind
+                    -   secondary_key
+                    module: graflo.util.transform
+                    output:
+                    -   match_key
+                    params:
+                        prefix: def_
+                type: transform
+                when:
+                    field: kind
+                    in:
+                    -   shop
+            -   call:
+                    foo: tagged_key
+                    input:
                     -   firm_id
-                    module: graflo.util.transform
-                    output:
-                    -   _local_key__0
-                    params:
-                        prefix: firm
-                        sep: ':'
-                        tag: firm
-                type: transform
-            -   call:
-                    foo: gated_tagged_key
-                    input:
-                    -   kind
-                    -   shop_id
-                    module: graflo.util.transform
-                    output:
-                    -   _local_key__1
-                    params:
-                        prefix: shop
-                        sep: ':'
-                        tag: shop
-                type: transform
-            -   call:
-                    foo: coalesce_fields
                     module: graflo.util.transform
                     output:
                     -   local_key
                     params:
-                        fields:
-                        -   _local_key__0
-                        -   _local_key__1
-                    strategy: all
+                        sep: ':'
+                        tag: firm
                 type: transform
+                when:
+                    field: kind
+                    in:
+                    -   firm
+            -   call:
+                    foo: tagged_key
+                    input:
+                    -   shop_id
+                    module: graflo.util.transform
+                    output:
+                    -   local_key
+                    params:
+                        sep: ':'
+                        tag: shop
+                type: transform
+                when:
+                    field: kind
+                    in:
+                    -   shop
             type: descend
         tolerate_transform_errors: true
         types: {}
@@ -119,7 +109,7 @@ ingestion_model:
                     output:
                     -   match_key
                     params:
-                        prefix: ABC-
+                        prefix: abc_
         -   transform:
                 call:
                     foo: tagged_key
@@ -154,7 +144,7 @@ ingestion_model:
                     output:
                     -   match_key
                     params:
-                        prefix: ABC-
+                        prefix: def_
         -   transform:
                 call:
                     foo: tagged_key

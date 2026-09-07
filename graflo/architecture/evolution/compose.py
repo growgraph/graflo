@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from itertools import pairwise
 from typing import Any, Literal
 
@@ -1186,6 +1186,20 @@ def compose_manifests(
         index, left_schema, right_schema, side_maps
     )
 
+    left_resource_names: set[str] = set()
+    if out_left.ingestion_model is not None:
+        left_resource_names = {r.name for r in out_left.ingestion_model.resources}
+    _apply_right_resource_policy(out_right, op, left_resource_names)
+
+    # The sides as the identity alignments see them: resources carry the names
+    # the union will use, and every cluster member still exists as its own
+    # class. The per-side lowering below merges the members in place, after
+    # which no manifest can say which router key produced which member.
+    sides = {
+        "left": out_left.model_copy(deep=True),
+        "right": out_right.model_copy(deep=True),
+    }
+
     for manifest, side in ((out_left, "left"), (out_right, "right")):
         apply_manifest_ops_inplace(
             manifest,
@@ -1196,10 +1210,6 @@ def compose_manifests(
             ),
         )
 
-    left_resource_names: set[str] = set()
-    if out_left.ingestion_model is not None:
-        left_resource_names = {r.name for r in out_left.ingestion_model.resources}
-    _apply_right_resource_policy(out_right, op, left_resource_names)
     _apply_right_schema_collision_policy(out_left, out_right, op)
 
     alignment_labels = {alignment.vertex for alignment in op.identity_alignments}
@@ -1252,6 +1262,7 @@ def compose_manifests(
             result,
             op,
             index=index,
+            sides=sides,
             side_maps=side_maps,
             canonical_maps=maps,
             finish_init=False,
@@ -1272,12 +1283,19 @@ def _apply_identity_alignments(
     op: ComposeManifestsOp,
     *,
     index: ClusterIndex,
+    sides: Mapping[str, GraphManifest],
     side_maps: SideMaps,
     canonical_maps: Sequence[tuple[Side, CanonicalMap]],
     finish_init: bool,
     strict_references: bool,
     dynamic_edge_feedback: bool,
 ) -> GraphManifest:
+    """Apply each alignment to the union.
+
+    *sides* are the pre-merge manifests (canonical maps and the resource
+    rename policy applied): member-keyed sources resolve against them, since
+    the merge has rewritten router ``type_map`` values to the canonical name.
+    """
     from .alignment import alignment_to_ops
     from .apply import apply_evolution
 
@@ -1303,7 +1321,19 @@ def _apply_identity_alignments(
                     f"compose_manifests: identity alignment vertex "
                     f"{alignment.vertex!r} is not in the composed union"
                 )
-        ops = alignment_to_ops(alignment, manifest=out, canonical_maps=all_maps)
+        cluster = next((c for c in index.vertices if c.into == alignment.vertex), None)
+        cluster_members = (
+            {"left": set(cluster.left), "right": set(cluster.right)}
+            if cluster is not None
+            else None
+        )
+        ops = alignment_to_ops(
+            alignment,
+            manifest=out,
+            canonical_maps=all_maps,
+            sides=sides,
+            cluster_members=cluster_members,
+        )
         out = apply_evolution(
             out,
             ops,

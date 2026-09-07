@@ -5,13 +5,16 @@ which records fuse.
     cd examples/21-router-union-alignment
     uv run python inspect_fusion.py
 
-Expected: the ``ABC-``-marked ``firm`` row and B's ``org`` row digest to one
-synthetic ``id``; the ``shop`` row and B's ``branch`` row likewise; the ``firm``
-row whose ``firm_ref`` is ``Alpha`` — the same business name, without the marker
-— derives no ``match_key`` and keeps a side-local identity. It is not dropped:
-falling through is how a record stays ingested outside the cluster. The
-``person`` row still flows through the SAME router and is emitted as its own
-class, carrying none of the canonical attributes.
+Expected: the ``abc_``-marked ``firm`` row and B's ``org`` row digest to one
+synthetic ``id``; the ``def_``-marked ``shop`` row and B's ``branch`` row
+likewise. Two rows fall through to a side-local identity instead: the ``firm``
+row whose key is a bare ``alpha`` (no marker), and the ``shop`` row whose key
+carries the *firm* marker ``abc_alpha`` — same bytes as the fused firm's, but
+its member's derivation requires ``def_``, so the member decides, not the
+marker. Neither is dropped: falling through is how a record stays ingested
+outside the cluster. The ``person`` row still flows through the SAME router and
+is emitted as its own class; its derivations never ran, so it carries none of
+the canonical attributes.
 """
 
 from __future__ import annotations
@@ -65,7 +68,8 @@ def main() -> None:
     for resource, doc in emitted:
         click.echo(
             f"{resource:<10}{doc.get('local_key') or '-':<14}"
-            f"{doc.get('secondary_key', '-'):<15}{doc.get('match_key') or '-':<12}"
+            f"{doc.get('secondary_key') or doc.get('shared_raw') or '-':<15}"
+            f"{doc.get('match_key') or '-':<12}"
             f"{doc['id']}"
         )
 

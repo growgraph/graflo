@@ -1148,20 +1148,39 @@ class AlignmentAttribute(ConfigBaseModel):
     Each entry lowers to one
     :class:`~graflo.architecture.schema.identity_funnel.IdentityBranch` over
     ``into``, so the list order *is* the funnel order.
+
+    ``sources`` is keyed by resource because derivation inputs are that
+    resource's raw column names. An entry takes one of three shapes:
+
+    * a single :class:`DerivationSpec` — the resource produces one member of
+      the cluster, or all its members share the key column;
+    * a **list** of specs — the resource produces several members, each with
+      its **own key column**, and at most one spec yields a value for any
+      document (the others read an empty column). Lowers to scratch fields
+      plus a ``coalesce_fields`` step;
+    * a **dict keyed by member class** — the resource produces several members
+      and which one a document *is* must decide the derivation (the members
+      share a column, or each carries its own marker). The lowering asks the
+      side manifest how the resource produces each member and guards the step
+      accordingly (``when`` on the router's discriminator, or nothing for a
+      plain ``vertex`` step). Member names are the classes the
+      :class:`VertexEquivalence` names on that side, after canonical maps.
     """
 
     into: str = PydanticField(
         ...,
         description="Canonical attribute name on the class; funnel branch id.",
     )
-    sources: dict[str, DerivationSpec | list[DerivationSpec]] = PydanticField(
+    sources: dict[
+        str, DerivationSpec | list[DerivationSpec] | dict[str, DerivationSpec]
+    ] = PydanticField(
         ...,
         min_length=1,
         description=(
-            "Per-resource derivation: ``{resource_name: spec}``, or a list of "
-            "specs when one resource derives the attribute several ways — one "
-            "per class its ``vertex_router`` collapses onto the aligned class. "
-            "At most one spec in a list yields a value for any document."
+            "Per-resource derivation: ``{resource: spec}``; ``{resource: "
+            "[spec, ...]}`` when the members the resource produces carry "
+            "different key columns; ``{resource: {member_class: spec}}`` when "
+            "the member a document is must decide the derivation."
         ),
     )
 
@@ -1170,7 +1189,14 @@ class AlignmentAttribute(ConfigBaseModel):
         spec = self.sources.get(resource)
         if spec is None:
             return []
-        return [spec] if isinstance(spec, DerivationSpec) else list(spec)
+        if isinstance(spec, DerivationSpec):
+            return [spec]
+        return list(spec.values()) if isinstance(spec, dict) else list(spec)
+
+    def members_for(self, resource: str) -> list[str] | None:
+        """Member classes keying *resource*'s specs, or ``None`` if unkeyed."""
+        spec = self.sources.get(resource)
+        return list(spec) if isinstance(spec, dict) else None
 
 
 class LocalKeySource(ConfigBaseModel):
@@ -1211,7 +1237,14 @@ class LocalKeySource(ConfigBaseModel):
 
 
 class LocalKeySpec(ConfigBaseModel):
-    """The canonical fallback identity attribute for non-aligned records."""
+    """The canonical fallback identity attribute for non-aligned records.
+
+    ``sources`` takes the same three shapes as
+    :attr:`AlignmentAttribute.sources`: one source, a list (one per member,
+    each reading its own column), or a dict keyed by member class (the member
+    decides; the gate is derived from how the resource produces it, so a
+    member-keyed source must not set ``gate``).
+    """
 
     into: str = PydanticField(
         default="local_key",
@@ -1221,22 +1254,45 @@ class LocalKeySpec(ConfigBaseModel):
         default=":",
         description="Separator between tag and key.",
     )
-    sources: dict[str, LocalKeySource | list[LocalKeySource]] = PydanticField(
+    sources: dict[
+        str, LocalKeySource | list[LocalKeySource] | dict[str, LocalKeySource]
+    ] = PydanticField(
         ...,
         min_length=1,
         description=(
-            "Per-resource local-key wiring: ``{resource_name: source}``, or a "
-            "list when one resource carries several side-local keys — one per "
-            "class its ``vertex_router`` collapses onto the aligned class."
+            "Per-resource local-key wiring: ``{resource: source}``; ``{resource: "
+            "[source, ...]}`` when the members carry different key columns; "
+            "``{resource: {member_class: source}}`` when the member decides."
         ),
     )
+
+    @model_validator(mode="after")
+    def _validate_member_sources(self) -> LocalKeySpec:
+        for resource, entry in self.sources.items():
+            if not isinstance(entry, dict):
+                continue
+            gated = sorted(m for m, src in entry.items() if src.gate is not None)
+            if gated:
+                raise ValueError(
+                    f"LocalKeySpec: member-keyed sources for resource {resource!r} "
+                    f"set a gate on {gated}; the member already decides, and the "
+                    "gate is derived from how the resource produces it"
+                )
+        return self
 
     def sources_for(self, resource: str) -> list[LocalKeySource]:
         """Local-key sources *resource* contributes, in order."""
         source = self.sources.get(resource)
         if source is None:
             return []
-        return [source] if isinstance(source, LocalKeySource) else list(source)
+        if isinstance(source, LocalKeySource):
+            return [source]
+        return list(source.values()) if isinstance(source, dict) else list(source)
+
+    def members_for(self, resource: str) -> list[str] | None:
+        """Member classes keying *resource*'s sources, or ``None`` if unkeyed."""
+        source = self.sources.get(resource)
+        return list(source) if isinstance(source, dict) else None
 
 
 class IdentityAlignment(ConfigBaseModel):
@@ -1279,8 +1335,9 @@ class IdentityAlignment(ConfigBaseModel):
         description=(
             "Per-resource pipeline level to derive at, as ``descend`` step "
             "indices. Omitted resources resolve to the single level producing "
-            "``vertex``; supply a path only when a resource produces it at "
-            "more than one level."
+            "``vertex`` (for member-keyed sources: the level producing the "
+            "member on its side); supply a path only when a resource produces "
+            "it at more than one level."
         ),
     )
 

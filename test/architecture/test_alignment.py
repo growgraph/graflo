@@ -6,6 +6,10 @@ import logging
 
 import pytest
 
+from graflo.architecture.contract.ingestion.resource import resolve_pipeline_level
+from graflo.architecture.contract.ingestion.steps.normalize import (
+    normalize_actor_step,
+)
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.evolution import (
     AddResourceTransformsOp,
@@ -651,3 +655,326 @@ class TestEnsureExtractedFieldsApplies:
             "match_key": "match_key",
             "local_key": "local_key",
         }
+
+
+# --------------------------------------------------------------------------- #
+# Member-keyed sources: the member decides, the side manifest supplies the gate.
+# --------------------------------------------------------------------------- #
+
+
+def _left_side(*, plain_shop: bool = False) -> GraphManifest:
+    """The pre-merge left side: one router producing Company, Shop, Person.
+
+    With ``plain_shop`` the resource produces ``Shop`` through a plain
+    ``vertex`` step at the same level instead of a router key.
+    """
+    type_map = {"firm": "Company", "person": "Person"}
+    apply: list[dict] = []
+    if plain_shop:
+        apply.append({"vertex": "Shop"})
+    else:
+        type_map["shop"] = "Shop"
+    apply.append(
+        {
+            "vertex_router": {
+                "type_field": "kind",
+                "keep_fields": ["firm_id", "shop_id", "person_id", "secondary_key"],
+                "type_map": type_map,
+            }
+        }
+    )
+    manifest = GraphManifest.from_config(
+        {
+            "schema": {
+                "metadata": {"name": "left", "version": "1.0.0"},
+                "graph": {
+                    "vertex_config": {
+                        "vertices": [
+                            {
+                                "name": "Company",
+                                "properties": ["company_id", "secondary_key"],
+                                "identity": ["company_id"],
+                            },
+                            {
+                                "name": "Shop",
+                                "properties": ["shop_id", "secondary_key"],
+                                "identity": ["shop_id"],
+                            },
+                            {
+                                "name": "Person",
+                                "properties": ["person_id"],
+                                "identity": ["person_id"],
+                            },
+                        ]
+                    },
+                    "edge_config": {"edges": []},
+                },
+            },
+            "ingestion_model": {
+                "resources": [
+                    {
+                        "name": "r_view",
+                        "pipeline": [{"descend": {"key": "records", "apply": apply}}],
+                    }
+                ],
+                "transforms": [],
+            },
+        }
+    )
+    manifest.finish_init()
+    return manifest
+
+
+def _right_side() -> GraphManifest:
+    manifest = GraphManifest.from_config(
+        {
+            "schema": {
+                "metadata": {"name": "right", "version": "1.0.0"},
+                "graph": {
+                    "vertex_config": {
+                        "vertices": [
+                            {
+                                "name": "Org",
+                                "properties": ["org_id", "shared_raw"],
+                                "identity": ["org_id"],
+                            }
+                        ]
+                    },
+                    "edge_config": {"edges": []},
+                },
+            },
+            "ingestion_model": {
+                "resources": [{"name": "r_b", "pipeline": [{"vertex": "Org"}]}],
+                "transforms": [],
+            },
+        }
+    )
+    manifest.finish_init()
+    return manifest
+
+
+def _sides(**left_kwargs) -> dict[str, GraphManifest]:
+    return {"left": _left_side(**left_kwargs), "right": _right_side()}
+
+
+_CLUSTER = {"left": {"Company", "Shop"}, "right": {"Org"}}
+
+
+def _member_spec(prefix: str) -> DerivationSpec:
+    return DerivationSpec(
+        input=["secondary_key"], foo="affix_gated_key", params={"prefix": prefix}
+    )
+
+
+def _member_alignment(**overrides) -> IdentityAlignment:
+    base: dict = {
+        "vertex": "Company",
+        "attributes": [
+            AlignmentAttribute(
+                into="match_key",
+                sources={
+                    "r_view": {
+                        "Company": _member_spec("abc_"),
+                        "Shop": _member_spec("def_"),
+                    },
+                    "r_b": DerivationSpec(
+                        input=["shared_raw"],
+                        foo="affix_gated_key",
+                        params={"prefix": ""},
+                    ),
+                },
+            )
+        ],
+        "local_key": LocalKeySpec(
+            sources={
+                "r_view": {
+                    "Company": LocalKeySource(field="firm_id", tag="firm"),
+                    "Shop": LocalKeySource(field="shop_id", tag="shop"),
+                },
+                "r_b": LocalKeySource(field="org_id", tag="b"),
+            }
+        ),
+    }
+    base.update(overrides)
+    return IdentityAlignment.model_validate(base)
+
+
+def _member_ops(alignment: IdentityAlignment | None = None, **kwargs):
+    return alignment_to_ops(
+        alignment or _member_alignment(),
+        manifest=_routed_manifest(company_props=["secondary_key"]),
+        sides=kwargs.pop("sides", _sides()),
+        cluster_members=kwargs.pop("cluster_members", _CLUSTER),
+        **kwargs,
+    )
+
+
+class TestMemberKeyedModel:
+    def test_a_member_dict_is_told_apart_from_a_spec(self) -> None:
+        """A spec is ``extra="forbid"``, so a dict of specs never parses as one."""
+        attribute = AlignmentAttribute.model_validate(
+            {
+                "into": "match_key",
+                "sources": {
+                    "r_view": {"Shop": {"input": ["secondary_key"]}},
+                    "r_b": {"input": ["shared_raw"]},
+                },
+            }
+        )
+
+        assert attribute.members_for("r_view") == ["Shop"]
+        assert attribute.members_for("r_b") is None
+        assert [s.input for s in attribute.specs_for("r_view")] == [["secondary_key"]]
+
+    def test_the_dict_form_round_trips_through_to_dict(self) -> None:
+        alignment = _member_alignment()
+
+        reloaded = IdentityAlignment.model_validate(alignment.to_dict())
+
+        assert reloaded == alignment
+        assert reloaded.attributes[0].members_for("r_view") == ["Company", "Shop"]
+
+    def test_a_member_keyed_local_key_may_not_set_a_gate(self) -> None:
+        with pytest.raises(ValueError, match="member already decides"):
+            LocalKeySpec(
+                sources={
+                    "r_view": {
+                        "Shop": LocalKeySource(
+                            field="shop_id", tag="shop", gate="kind", gate_prefix="shop"
+                        )
+                    }
+                }
+            )
+
+
+class TestMemberKeyedLowering:
+    def _calls(self, ops, resource: str) -> list[dict]:
+        return [step["transform"] for step in _transforms_op(ops).additions[resource]]
+
+    def test_each_member_writes_the_attribute_directly_under_a_guard(self) -> None:
+        steps = self._calls(_member_ops(), "r_view")
+
+        match = [s for s in steps if s["call"]["output"] == ["match_key"]]
+        assert [s["when"] for s in match] == [
+            {"field": "kind", "in": ["firm"]},
+            {"field": "kind", "in": ["shop"]},
+        ]
+        assert [s["call"]["params"]["prefix"] for s in match] == ["abc_", "def_"]
+        assert [s["call"]["input"] for s in match] == [["secondary_key"]] * 2
+        assert not any(s["call"]["foo"] == "coalesce_fields" for s in steps)
+
+    def test_the_local_key_is_guarded_the_same_way(self) -> None:
+        steps = self._calls(_member_ops(), "r_view")
+
+        local = [s for s in steps if s["call"]["output"] == ["local_key"]]
+        assert [s["call"]["foo"] for s in local] == ["tagged_key", "tagged_key"]
+        assert [s["when"]["in"] for s in local] == [["firm"], ["shop"]]
+
+    def test_an_unkeyed_resource_is_lowered_as_before(self) -> None:
+        steps = self._calls(_member_ops(), "r_b")
+
+        assert all("when" not in s for s in steps)
+
+    def test_the_level_comes_from_the_member(self) -> None:
+        assert _transforms_op(_member_ops()).at == {"r_view": [0]}
+
+    def test_a_plain_vertex_member_needs_no_guard(self) -> None:
+        steps = self._calls(_member_ops(sides=_sides(plain_shop=True)), "r_view")
+
+        by_prefix = {
+            s["call"]["params"].get("prefix"): s
+            for s in steps
+            if "prefix" in s["call"]["params"]
+        }
+        assert by_prefix["abc_"]["when"] == {"field": "kind", "in": ["firm"]}
+        assert "when" not in by_prefix["def_"]
+
+    def test_the_lowered_steps_are_valid_pipeline_steps(self) -> None:
+        manifest = apply_evolution(
+            _routed_manifest(company_props=["secondary_key"]), _member_ops()
+        )
+
+        pipeline = manifest.require_ingestion_model().resources[0].pipeline
+        level = resolve_pipeline_level(list(pipeline), [0])
+        guarded = [s for s in level if normalize_actor_step(dict(s)).get("when")]
+        assert len(guarded) == 4
+
+
+class TestMemberKeyedValidation:
+    def test_member_keyed_sources_need_the_sides(self) -> None:
+        with pytest.raises(AlignmentConflictError, match="without sides"):
+            alignment_to_ops(_member_alignment())
+
+    def test_an_unknown_member_is_rejected(self) -> None:
+        alignment = _member_alignment(
+            local_key=LocalKeySpec(
+                sources={
+                    "r_view": {"Ghost": LocalKeySource(field="x", tag="g")},
+                    "r_b": LocalKeySource(field="org_id", tag="b"),
+                }
+            )
+        )
+        with pytest.raises(
+            AlignmentConflictError, match="resource does not produce the member"
+        ) as excinfo:
+            _member_ops(alignment)
+
+        assert "'Company', 'Person', 'Shop'" in str(excinfo.value)
+
+    def test_a_member_outside_the_cluster_is_rejected(self) -> None:
+        """``Person`` is produced by the resource but is not being aligned."""
+        alignment = _member_alignment(
+            local_key=LocalKeySpec(
+                sources={
+                    "r_view": {"Person": LocalKeySource(field="person_id", tag="p")},
+                    "r_b": LocalKeySource(field="org_id", tag="b"),
+                }
+            )
+        )
+        with pytest.raises(AlignmentConflictError, match="member outside the cluster"):
+            _member_ops(alignment)
+
+    def test_a_resource_on_no_side_is_rejected(self) -> None:
+        with pytest.raises(AlignmentConflictError, match="resource on no side"):
+            _member_ops(sides={"right": _right_side()})
+
+    def test_an_at_that_misses_the_member_is_rejected(self) -> None:
+        with pytest.raises(AlignmentConflictError, match="level produces nothing"):
+            _member_ops(_member_alignment(at={"r_view": []}))
+
+    def test_partial_coverage_warns(self, caplog) -> None:
+        alignment = _member_alignment(
+            attributes=[
+                AlignmentAttribute(
+                    into="match_key",
+                    sources={
+                        "r_view": {"Company": _member_spec("abc_")},
+                        "r_b": DerivationSpec(
+                            input=["shared_raw"], foo="affix_gated_key"
+                        ),
+                    },
+                )
+            ]
+        )
+        with caplog.at_level(logging.WARNING):
+            _member_ops(alignment)
+
+        assert any(
+            "derives 'match_key' only for ['Company']" in r.getMessage()
+            for r in caplog.records
+        )
+
+    def test_full_coverage_is_silent(self, caplog) -> None:
+        with caplog.at_level(logging.WARNING):
+            _member_ops()
+
+        assert not any("only for" in r.getMessage() for r in caplog.records)
+        assert not any("one way" in r.getMessage() for r in caplog.records)
+
+    def test_the_discriminator_counts_as_a_raw_input(self) -> None:
+        """A canonical map renaming the router's type_field is caught."""
+        cm = CanonicalMap(vertices={}, properties={"Company": {"kind_raw": "kind"}})
+        with pytest.raises(
+            AlignmentConflictError, match="canonical name as derivation input"
+        ):
+            _member_ops(canonical_maps=[cm])

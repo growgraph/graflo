@@ -1,5 +1,6 @@
-kind,firm_id,shop_id,person_id,secondary_key,firm_ref,shop_ref
-firm,f1,,,abc_7,ABC-Alpha,
-firm,f2,,,abc_2,Alpha,
-shop,,s1,,abc_1,,ABC-Beta
-person,,,p1,abc_9,,
+kind,firm_id,shop_id,person_id,secondary_key
+firm,f1,,,abc_alpha
+firm,f2,,,alpha
+shop,,s1,,def_beta
+shop,,s2,,abc_alpha
+person,,,p1,abc_9

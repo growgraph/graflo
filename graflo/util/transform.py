@@ -648,11 +648,13 @@ def tagged_key(value: object, *, tag: str, sep: str = ":") -> str | None:
 def coalesce_fields(doc: dict[str, Any], *, fields: list[str]) -> Any:
     """First non-empty value among *fields* on *doc*, or ``None``.
 
-    The branch selector for a routed source. When one resource derives a
-    canonical attribute several ways — one per class its ``vertex_router``
-    collapses onto the aligned class — each derivation writes its own scratch
-    field and returns ``None`` for the branches it does not serve. This picks
-    the one that fired.
+    The branch selector for the column-presence form of a routed derivation.
+    When one resource derives a canonical attribute several ways — one per
+    class its ``vertex_router`` collapses onto the aligned class, each keying
+    from its own column — each derivation writes its own scratch field and
+    returns ``None`` for the branches it does not serve. This picks the one
+    that fired. (A derivation keyed by *member* needs none of this: its step
+    carries a ``when`` guard and writes the attribute directly.)
 
     A single writer per canonical attribute is the point. Two steps writing the
     same key work on a plain ``vertex`` step, whose buffer extraction skips
@@ -693,7 +695,9 @@ def gated_tagged_key(
     When one resource contributes several side-local keys — one per class its
     ``vertex_router`` collapses onto the aligned class — the router's
     discriminator selects which one applies. ``None`` when the gate does not
-    match, which is an empty value to identity digests.
+    match, which is an empty value to identity digests. This is the explicit,
+    hand-written form (``LocalKeySource.gate``); a source keyed by member gets
+    its gate derived from the router as a ``when`` guard on the step instead.
 
     Args:
         gate: Field deciding which branch this document is (the discriminator).
