@@ -621,7 +621,7 @@ def affix_gated_key(
     return key or None
 
 
-def tagged_key(value: object, *, tag: str, sep: str = ":") -> str | None:
+def tagged_key(value: object, *, tag: str | None, sep: str = ":") -> str | None:
     """Namespace a side-local key: tag ``"a"`` turns ``"f2"`` into ``"a:f2"``.
 
     ``None``/empty *value* returns ``None``, which is an empty value to
@@ -631,18 +631,26 @@ def tagged_key(value: object, *, tag: str, sep: str = ":") -> str | None:
     cross-resource collisions become impossible. Normalization beyond a
     whitespace strip is a separate concern — compose another transform step.
 
+    An empty *tag* (``""`` or ``None``) is the neutral element: the key is
+    returned as-is, with no separator. That is for values already unique
+    across every source of the class — a UUID, an IRI, an id the source itself
+    prefixes — where a namespace would only be noise.
+
     Args:
         value: The side-local key material.
-        tag: Namespace prefix identifying the resource/side.
+        tag: Namespace prefix identifying the resource/side; empty for none.
         sep: Separator between *tag* and the key.
 
     Returns:
-        ``f"{tag}{sep}{key}"``, or ``None`` when *value* is missing or empty.
+        ``f"{tag}{sep}{key}"`` (or bare ``key`` under an empty tag), or
+        ``None`` when *value* is missing or empty.
     """
     if value is None:
         return None
     key = str(value).strip()
-    return f"{tag}{sep}{key}" if key else None
+    if not key:
+        return None
+    return f"{tag}{sep}{key}" if tag else key
 
 
 def coalesce_fields(doc: dict[str, Any], *, fields: list[str]) -> Any:
@@ -686,7 +694,7 @@ def gated_tagged_key(
     gate: str | None,
     value: object,
     *,
-    tag: str,
+    tag: str | None,
     sep: str = ":",
     prefix: str = "",
 ) -> str | None:
@@ -702,7 +710,7 @@ def gated_tagged_key(
     Args:
         gate: Field deciding which branch this document is (the discriminator).
         value: The side-local key material.
-        tag: Namespace prefix identifying the branch.
+        tag: Namespace prefix identifying the branch; empty for none.
         sep: Separator between *tag* and the key.
         prefix: Required prefix of *gate*; ``""`` always passes.
 

@@ -68,6 +68,7 @@ from .ops import (
     LocalKeySpec,
     ManifestOp,
     ReplaceIdentityOp,
+    SharedDerivation,
 )
 
 __all__ = [
@@ -78,6 +79,7 @@ __all__ = [
     "IdentityAlignment",
     "LocalKeySource",
     "LocalKeySpec",
+    "SharedDerivation",
     "alignment_to_ops",
     "validate_alignment",
 ]

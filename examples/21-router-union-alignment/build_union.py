@@ -49,6 +49,7 @@ from graflo.architecture.evolution import (
     IdentityAlignment,
     LocalKeySource,
     LocalKeySpec,
+    SharedDerivation,
     VertexEquivalence,
     apply_evolution,
     canonical_map_to_ops,
@@ -57,14 +58,6 @@ from graflo.architecture.evolution import (
 )
 
 EXAMPLE_DIR = Path(__file__).resolve().parent
-
-
-def _marker(prefix: str) -> DerivationSpec:
-    """The same one-field call on every side, so no normal form can drift."""
-    return DerivationSpec(
-        input=["secondary_key"], foo="affix_gated_key", params={"prefix": prefix}
-    )
-
 
 # Derivation inputs are RAW view columns. Every kind carries `secondary_key`,
 # so column presence cannot select a member; the member key does.
@@ -75,9 +68,14 @@ ALIGNMENT = IdentityAlignment(
             into="match_key",
             sources={
                 # Keyed by member: the classes the equivalence names on this
-                # side. `Company` is the left member because the canonical
-                # map renamed `Firm` before the compose.
-                "r_view": {"Company": _marker("abc_"), "Shop": _marker("def_")},
+                # side (`Company` is the left member because the canonical map
+                # renamed `Firm` before the compose). One call shared by both,
+                # only the marker differs — the same one-field call runs on
+                # every side, so no normal form can drift.
+                "r_view": SharedDerivation(
+                    spec=DerivationSpec(input=["secondary_key"], foo="affix_gated_key"),
+                    members={"Company": {"prefix": "abc_"}, "Shop": {"prefix": "def_"}},
+                ),
                 # B's resources each produce one member — no key needed.
                 "r_b": DerivationSpec(
                     input=["shared_raw"],

@@ -193,7 +193,7 @@ op = ComposeManifestsOp(
 union = compose_manifests(canonical_left, right, op, canonical_maps=[("left", cm)])
 ```
 
-The emitted op sequence: `AddVertexPropertiesOp` (declare the canonical attributes), `AddResourceTransformsOp` (per-resource derivation steps, inline calls), `ReplaceIdentityOp` (a priority funnel — one branch per attribute in order, then the `local_key` fallback; `retire: keep`), and `AddSecondaryIdentitiesOp` (the retired side keys as lookup-only secondaries). Attribute order is funnel priority: a record keys by the highest-priority attribute it carries, so two records fuse when their strongest present attribute coincides — a match on a lower-priority attribute does not fuse records when one side also carries a stronger one. The `local_key` values are namespaced per resource (`a:f2` vs `b:o1`), so non-aligned records stay ingested without cross-source collisions.
+The emitted op sequence: `AddVertexPropertiesOp` (declare the canonical attributes), `AddResourceTransformsOp` (per-resource derivation steps, inline calls), `ReplaceIdentityOp` (a priority funnel — one branch per attribute in order, then the `local_key` fallback; `retire: keep`), and `AddSecondaryIdentitiesOp` (the retired side keys as lookup-only secondaries). Attribute order is funnel priority: a record keys by the highest-priority attribute it carries, so two records fuse when their strongest present attribute coincides — a match on a lower-priority attribute does not fuse records when one side also carries a stronger one. The `local_key` values are namespaced per resource (`a:f2` vs `b:o1`), so non-aligned records stay ingested without cross-source collisions. The tag is required so that opting out is a statement: `tag=None` keeps the raw value as the local key, no separator — the author's claim that the values are already unique across every source of the class (UUIDs, IRIs, ids the source itself prefixes), where a namespace would only be noise. It is stored as the empty tag `""`, the neutral element, which is what survives serialization.
 
 Two idioms decide *which* records participate, and `DerivationSpec.foo` selects between them. `gated_normalized_key` gates on a **sibling** field — participation is decided by one column, the key material comes from another — and its `strip_prefix` is `str.removeprefix`, a best-effort cleanup that is a silent no-op when the prefix is absent. `affix_gated_key` puts the test on the **value itself**: it reads one field, and a marker on that value is the admission test, so `company_A42` is stripped and accepted while a bare `A42` yields `None`. The marker is an affix pair — `prefix` and `suffix`, each defaulting to `""`, which every string carries — so it can lead, trail, or bracket the key, both halves are required when both are named, and naming neither admits everything while stripping nothing. Both return `None` to decline, which is a fall-through rather than a drop — an empty value skips the funnel branch listing that attribute, and the record keys on its `local_key` instead, ingested but outside the cluster. Reach for the marker form when the key column is self-describing, and for the gated form when a different column decides.
 
@@ -208,16 +208,21 @@ A cluster names its **members** — the classes it collapses, per side: `VertexE
 | one `DerivationSpec` | the resource produces one member, or its members share the key column *and* the marker convention | one step writing the attribute |
 | a **list** of specs | several members, each carrying its key in its **own column** — the other column is empty, which already selects | one scratch field per spec + a `coalesce_fields` step as the single writer |
 | a **dict keyed by member class** | several members, and *which member a document is* must decide — they share a column, or each has its own marker | one guarded step per member, each the single writer for its own documents |
+| a `SharedDerivation` | the dict above, when the call is the same for every member and only a parameter differs (or nothing does) | expands to the dict; lowers the same way |
 
-Member names are the classes the equivalence names on that side, after canonical maps (so `Company`, not `Firm`, when a map renamed it). The list form needs no member names because column presence selects; the dict form is the general one:
+Member names are the classes the equivalence names on that side, after canonical maps (so `Company`, not `Firm`, when a map renamed it). The list form needs no member names because column presence selects; the dict form is the general one, and `SharedDerivation` spells it once for the common case — one call, the members sharing it, and per member only what varies:
 
 ```python
-marker = lambda p: DerivationSpec(input=["secondary_key"], foo="affix_gated_key", params={"prefix": p})
-
 AlignmentAttribute(into="match_key", sources={
-    "r_view": {"Company": marker("abc_"), "Shop": marker("def_")},  # the member decides
-    "r_b":    marker("abc_"),                                        # one member: no key
+    "r_view": SharedDerivation(                                  # the member decides
+        spec=DerivationSpec(input=["secondary_key"], foo="affix_gated_key"),
+        members={"Company": {"prefix": "abc_"}, "Shop": {"prefix": "def_"}},
+    ),
+    "r_b": DerivationSpec(input=["shared_raw"], foo="affix_gated_key",
+                          params={"prefix": "abc_"}),                # one member: no key
 })
+# twenty members, nothing varying:  SharedDerivation(spec=..., members=[...20 names...])
+# a different column or function per member: write the {member: spec} dict
 local_key = LocalKeySpec(sources={
     "r_view": {"Company": LocalKeySource(field="firm_id", tag="firm"),
                "Shop":    LocalKeySource(field="shop_id", tag="shop")},

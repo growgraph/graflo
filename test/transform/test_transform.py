@@ -13,6 +13,7 @@ from graflo.util.transform import (
     affix_gated_key,
     camel_to_snake,
     gated_normalized_key,
+    gated_tagged_key,
     parse_multi_item,
     remove_prefix,
     remove_suffix,
@@ -418,6 +419,23 @@ def test_input_groups_rejects_dress():
             input_groups=(("value",),),
             dress=DressConfig(key="name", value="value"),
         )
+
+
+def test_tagged_key_namespaces_and_strips():
+    assert tagged_key(" f2 ", tag="a") == "a:f2"
+    assert tagged_key(" f2 ", tag="a", sep="/") == "a/f2"
+
+
+def test_tagged_key_empty_tag_is_the_neutral_element():
+    assert tagged_key("f2", tag="") == "f2"
+    assert tagged_key("f2", tag=None) == "f2"
+    assert gated_tagged_key("firm", "f2", tag=None, prefix="firm") == "f2"
+
+
+def test_tagged_key_declines_on_missing_or_blank_value():
+    assert tagged_key(None, tag="a") is None
+    assert tagged_key("  ", tag="a") is None
+    assert tagged_key("  ", tag=None) is None
 
 
 def test_gated_normalized_key_gate_hit_normalizes():

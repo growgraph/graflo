@@ -54,15 +54,28 @@ resource, because derivation inputs are that resource's raw columns, and the
 view's entry is keyed by **member**:
 
 ```python
-marker = lambda prefix: DerivationSpec(input=["secondary_key"],
-                                       foo="affix_gated_key", params={"prefix": prefix})
-
-AlignmentAttribute(into="match_key", sources={
-    "r_view":   {"Company": marker("abc_"), "Shop": marker("def_")},
-    "r_b":      DerivationSpec(input=["shared_raw"], foo="affix_gated_key", params={"prefix": "abc_"}),
-    "r_branch": DerivationSpec(input=["shared_raw"], foo="affix_gated_key", params={"prefix": "def_"}),
-})
+AlignmentAttribute(
+    into="match_key",
+    sources={
+        "r_view": SharedDerivation(
+            spec=DerivationSpec(input=["secondary_key"], foo="affix_gated_key"),
+            members={"Company": {"prefix": "abc_"}, "Shop": {"prefix": "def_"}},
+        ),
+        "r_b": DerivationSpec(
+            input=["shared_raw"], foo="affix_gated_key", params={"prefix": "abc_"}
+        ),
+        "r_branch": DerivationSpec(
+            input=["shared_raw"], foo="affix_gated_key", params={"prefix": "def_"}
+        ),
+    },
+)
 ```
+
+`SharedDerivation` is the compact spelling of a dict keyed by member — one
+call, the members that share it, and only the parameter that differs. It
+expands to `{"Company": DerivationSpec(..., params={"prefix": "abc_"}), "Shop":
+...}`, which is what you write when more than a parameter varies (a different
+column, a different function), or `members=["A", "B", ...]` when nothing does.
 
 Nothing names `kind`, `firm` or `shop`. The lowering asks the pre-merge left
 side how `r_view` produces `Shop` — a router over `kind`, key `shop` — and

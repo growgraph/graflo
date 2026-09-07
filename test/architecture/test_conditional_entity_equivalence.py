@@ -760,6 +760,39 @@ class TestMemberKeyedRoutedFusion:
         assert len(ids) == 6
         assert len(set(ids)) == 4
 
+    def test_an_untagged_local_key_is_the_raw_value(self) -> None:
+        """``tag=None``: the author claims the values are globally unique."""
+        alignment = _MEMBER_ALIGNMENT.model_copy(
+            update={
+                "local_key": LocalKeySpec(
+                    sources={
+                        "r_view": {
+                            "Company": LocalKeySource(field="firm_id", tag=None),
+                            "Shop": LocalKeySource(field="shop_id", tag="shop"),
+                        },
+                        "r_b": LocalKeySource(field="org_id", tag="b"),
+                    }
+                )
+            }
+        )
+        left = apply_evolution(
+            _routed_manifest_a(), canonical_map_to_ops(_ROUTED_CANONICAL)
+        )
+        op = ComposeManifestsOp(
+            vertices=[
+                VertexEquivalence(left=["Company", "Shop"], right="Org", into="Company")
+            ],
+            allow_merges=True,
+            identity_alignments=[alignment],
+        )
+        union = compose_manifests(
+            left, _manifest_b(), op, canonical_maps=[("left", _ROUTED_CANONICAL)]
+        )
+
+        view = _cast(union, "r_view", _SHARED_COLUMN_VIEW)
+
+        assert {doc["local_key"] for doc in view} == {"f1", "f2", "shop:s1", "shop:s2"}
+
     def test_the_rename_policy_is_honoured_when_resolving_members(self) -> None:
         """Member keys name resources as the union names them."""
         left = apply_evolution(

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Annotated, Any, Literal
 
-from pydantic import AliasChoices, model_validator
+from pydantic import AliasChoices, field_validator, model_validator
 from pydantic import Field as PydanticField
 
 from graflo.architecture.base import ConfigBaseModel
@@ -1142,6 +1142,55 @@ class DerivationSpec(ConfigBaseModel):
     )
 
 
+class SharedDerivation(ConfigBaseModel):
+    """One derivation shared by several members, varying only in parameters.
+
+    The compact spelling of the member-keyed form for the common case: the
+    call is the same for every member and only a parameter changes — a marker
+    prefix per class — or nothing does. ``members`` is a list of member
+    classes, or a dict from member to the parameters that differ; each
+    member's derivation is ``spec`` with those parameters laid over
+    ``spec.params``. Anything else that differs between members — the input
+    columns, the function — is a different derivation: spell it with the
+    explicit ``{member: spec}`` dict.
+
+    Expands to that dict; the lowering never sees this model.
+    """
+
+    spec: DerivationSpec = PydanticField(
+        ...,
+        description="The derivation every member shares.",
+    )
+    members: list[str] | dict[str, dict[str, Any]] = PydanticField(
+        ...,
+        description=(
+            "Member classes sharing ``spec``: a list when nothing varies, or "
+            "``{member: {param: value}}`` naming what does."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _validate_members(self) -> SharedDerivation:
+        if not self.members:
+            raise ValueError("SharedDerivation: members must name at least one class")
+        if isinstance(self.members, list) and len(set(self.members)) != len(
+            self.members
+        ):
+            raise ValueError("SharedDerivation: members lists a class twice")
+        return self
+
+    def expand(self) -> dict[str, DerivationSpec]:
+        """The explicit ``{member: spec}`` dict this stands for."""
+        if isinstance(self.members, list):
+            return {member: self.spec for member in self.members}
+        return {
+            member: self.spec.model_copy(
+                update={"params": {**self.spec.params, **overrides}}
+            )
+            for member, overrides in self.members.items()
+        }
+
+
 class AlignmentAttribute(ConfigBaseModel):
     """One aligned canonical attribute; list position = funnel priority.
 
@@ -1164,7 +1213,9 @@ class AlignmentAttribute(ConfigBaseModel):
       side manifest how the resource produces each member and guards the step
       accordingly (``when`` on the router's discriminator, or nothing for a
       plain ``vertex`` step). Member names are the classes the
-      :class:`VertexEquivalence` names on that side, after canonical maps.
+      :class:`VertexEquivalence` names on that side, after canonical maps;
+    * a :class:`SharedDerivation` — the same dict, spelled once: one call
+      shared by the listed members, with only the parameters that differ.
     """
 
     into: str = PydanticField(
@@ -1172,7 +1223,11 @@ class AlignmentAttribute(ConfigBaseModel):
         description="Canonical attribute name on the class; funnel branch id.",
     )
     sources: dict[
-        str, DerivationSpec | list[DerivationSpec] | dict[str, DerivationSpec]
+        str,
+        DerivationSpec
+        | SharedDerivation
+        | list[DerivationSpec]
+        | dict[str, DerivationSpec],
     ] = PydanticField(
         ...,
         min_length=1,
@@ -1180,9 +1235,16 @@ class AlignmentAttribute(ConfigBaseModel):
             "Per-resource derivation: ``{resource: spec}``; ``{resource: "
             "[spec, ...]}`` when the members the resource produces carry "
             "different key columns; ``{resource: {member_class: spec}}`` when "
-            "the member a document is must decide the derivation."
+            "the member a document is must decide the derivation, or a "
+            "``SharedDerivation`` spelling that dict once."
         ),
     )
+
+    def _by_member(self, resource: str) -> dict[str, DerivationSpec] | None:
+        spec = self.sources.get(resource)
+        if isinstance(spec, SharedDerivation):
+            return spec.expand()
+        return spec if isinstance(spec, dict) else None
 
     def specs_for(self, resource: str) -> list[DerivationSpec]:
         """Derivations *resource* contributes to this attribute, in order."""
@@ -1191,16 +1253,29 @@ class AlignmentAttribute(ConfigBaseModel):
             return []
         if isinstance(spec, DerivationSpec):
             return [spec]
-        return list(spec.values()) if isinstance(spec, dict) else list(spec)
+        if isinstance(spec, list):
+            return list(spec)
+        by_member = spec.expand() if isinstance(spec, SharedDerivation) else spec
+        return list(by_member.values())
 
     def members_for(self, resource: str) -> list[str] | None:
         """Member classes keying *resource*'s specs, or ``None`` if unkeyed."""
-        spec = self.sources.get(resource)
-        return list(spec) if isinstance(spec, dict) else None
+        by_member = self._by_member(resource)
+        return list(by_member) if by_member is not None else None
 
 
 class LocalKeySource(ConfigBaseModel):
-    """Where one resource's side-local key comes from, and its namespace tag."""
+    """Where one resource's side-local key comes from, and its namespace tag.
+
+    The tag is what keeps records of different sources apart once they fail to
+    fuse: ``f2`` from one source and ``f2`` from another are different
+    entities, and ``a:f2`` / ``b:f2`` say so. It is required so that opting
+    out is a statement, not an omission: ``tag=None`` (stored as ``""``, the
+    neutral element, so it survives serialization) keeps the raw value as the
+    local key with no separator — the author's claim that the values are
+    already unique across every source of the class (UUIDs, IRIs, ids the
+    source itself prefixes).
+    """
 
     field: str = PydanticField(
         ...,
@@ -1208,8 +1283,18 @@ class LocalKeySource(ConfigBaseModel):
     )
     tag: str = PydanticField(
         ...,
-        description="Namespace tag: tag 'a' turns 'f2' into 'a:f2'.",
+        description=(
+            "Namespace tag: tag 'a' turns 'f2' into 'a:f2'. ``None`` or ``\"\"`` "
+            "keeps the raw value, no separator — only for values already "
+            "unique across every source of the class."
+        ),
     )
+
+    @field_validator("tag", mode="before")
+    @classmethod
+    def _none_is_the_empty_tag(cls, value: Any) -> Any:
+        return "" if value is None else value
+
     gate: str | None = PydanticField(
         default=None,
         description=(

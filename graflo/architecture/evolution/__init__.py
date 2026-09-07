@@ -107,6 +107,7 @@ _ALIGNMENT_EXPORTS = frozenset(
         "IdentityAlignment",
         "LocalKeySource",
         "LocalKeySpec",
+        "SharedDerivation",
         "alignment_to_ops",
         "validate_alignment",
     }
@@ -334,6 +335,7 @@ __all__ = [
     "SetEdgeSemanticsOp",
     "SetFieldSemanticsOp",
     "SetVertexSemanticsOp",
+    "SharedDerivation",
     "SideIdentity",
     "SideMaps",
     "UnclassifiedListField",

@@ -23,6 +23,7 @@ from graflo.architecture.evolution import (
     LocalKeySource,
     LocalKeySpec,
     ReplaceIdentityOp,
+    SharedDerivation,
     alignment_to_ops,
     apply_evolution,
     validate_alignment,
@@ -833,6 +834,101 @@ class TestMemberKeyedModel:
 
         assert reloaded == alignment
         assert reloaded.attributes[0].members_for("r_view") == ["Company", "Shop"]
+
+    def test_a_shared_derivation_expands_to_the_explicit_dict(self) -> None:
+        shared = SharedDerivation(
+            spec=DerivationSpec(input=["secondary_key"], foo="affix_gated_key"),
+            members={"Company": {"prefix": "abc_"}, "Shop": {"prefix": "def_"}},
+        )
+
+        assert shared.expand() == {
+            "Company": _member_spec("abc_"),
+            "Shop": _member_spec("def_"),
+        }
+        # Overrides lay over the shared params without touching them.
+        assert shared.spec.params == {}
+
+    def test_a_shared_derivation_with_a_member_list_varies_nothing(self) -> None:
+        shared = SharedDerivation(
+            spec=_member_spec("abc_"), members=["Company", "Shop"]
+        )
+
+        assert shared.expand() == {
+            "Company": _member_spec("abc_"),
+            "Shop": _member_spec("abc_"),
+        }
+
+    def test_a_shared_derivation_needs_members(self) -> None:
+        with pytest.raises(ValueError, match="at least one class"):
+            SharedDerivation(spec=_member_spec("abc_"), members=[])
+        with pytest.raises(ValueError, match="twice"):
+            SharedDerivation(spec=_member_spec("abc_"), members=["Shop", "Shop"])
+
+    def test_the_shared_form_is_told_apart_and_lowers_identically(self) -> None:
+        explicit = _member_alignment()
+        shared = IdentityAlignment.model_validate(
+            {
+                **explicit.to_dict(),
+                "attributes": [
+                    {
+                        "into": "match_key",
+                        "sources": {
+                            "r_view": {
+                                "spec": {
+                                    "input": ["secondary_key"],
+                                    "foo": "affix_gated_key",
+                                },
+                                "members": {
+                                    "Company": {"prefix": "abc_"},
+                                    "Shop": {"prefix": "def_"},
+                                },
+                            },
+                            "r_b": {
+                                "input": ["shared_raw"],
+                                "foo": "affix_gated_key",
+                                "params": {"prefix": ""},
+                            },
+                        },
+                    }
+                ],
+            }
+        )
+        attribute = shared.attributes[0]
+        assert isinstance(attribute.sources["r_view"], SharedDerivation)
+        assert attribute.members_for("r_view") == ["Company", "Shop"]
+
+        assert _transforms_op(_member_ops(shared)).additions == (
+            _transforms_op(_member_ops(explicit)).additions
+        )
+        assert IdentityAlignment.model_validate(shared.to_dict()) == shared
+
+    def test_tag_none_is_the_empty_tag_and_round_trips(self) -> None:
+        """``to_dict`` drops ``None``; the empty tag is what survives."""
+        source = LocalKeySource(field="uuid", tag=None)
+
+        assert source.tag == ""
+        assert LocalKeySource.model_validate(source.to_dict()) == source
+        assert LocalKeySource.model_validate({"field": "uuid", "tag": None}).tag == ""
+
+    def test_an_untagged_local_key_lowers_with_the_empty_tag(self) -> None:
+        alignment = _member_alignment(
+            local_key=LocalKeySpec(
+                sources={
+                    "r_view": {
+                        "Company": LocalKeySource(field="firm_id", tag=None),
+                        "Shop": LocalKeySource(field="shop_id", tag="shop"),
+                    },
+                    "r_b": LocalKeySource(field="org_id", tag="b"),
+                }
+            )
+        )
+        steps = [
+            step["transform"]
+            for step in _transforms_op(_member_ops(alignment)).additions["r_view"]
+        ]
+        local = [s["call"] for s in steps if s["call"]["output"] == ["local_key"]]
+
+        assert [c["params"]["tag"] for c in local] == ["", "shop"]
 
     def test_a_member_keyed_local_key_may_not_set_a_gate(self) -> None:
         with pytest.raises(ValueError, match="member already decides"):
