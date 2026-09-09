@@ -273,3 +273,26 @@ Commits describe the contract.
 - [Manifest evolution](manifest_evolution.md) — the op vocabulary a commit records
 - [Example 20](../../examples/example-20.md) — fork, conflict, resolve, merge, end to end
 - [Example 19](../../examples/example-19.md) — composing unrelated manifests instead
+
+## Further reading
+
+The mechanisms on this page have prior art; the differences are stated here so a reader knows
+what to compare against.
+
+- Curino, Moon, Zaniolo — *Graceful Database Schema Evolution: the PRISM Workbench*, PVLDB 1(1),
+  2008. Schema-modification operators with per-operator inverses for relational schemas. GraFlo's
+  inverses are instead computed against the pre-state manifest and may be refused when that state
+  does not determine them.
+- Diskin, Xiong, Czarnecki — *From State- to Delta-Based Bidirectional Model Transformations*,
+  JOT 2011 / MODELS 2011. The delta-lens view in which an inverse needs the delta, not just the
+  end state — the shape of `invert_ops`.
+- Bernstein, Melnik — *Model Management 2.0*, SIGMOD 2007; Melnik, Rahm, Bernstein — *Rondo*,
+  SIGMOD 2003. Merge, Diff and Compose as generic operators over models. The merge / compose
+  distinction on this page is that vocabulary applied to manifests.
+- Pottinger, Bernstein — *Merging Models Based on Given Correspondences*, VLDB 2003, and
+  *Associativity and Commutativity in Generic Merge*, LNCS 5600, 2009. The latter defines the
+  properties this page's three-way merge does **not** yet claim: the same inputs merge
+  deterministically, but merging is not asserted to be commutative or associative.
+- Edwards, Petricek — *Baseline: Operation-Based Evolution and Versioning of Data*, 2025;
+  Deshpande — *Living Databases*, 2026. Contemporary operation-based versioning of data, where the
+  operations are the diff — the same design position, applied to instances rather than contracts.

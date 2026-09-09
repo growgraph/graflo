@@ -585,3 +585,17 @@ resolving conflicts, and replaying a recorded resolution are all covered in
 
 - [Creating a Manifest](../../getting_started/creating_manifest.md) — manifest structure
 - [Concepts overview](../index.md) — `GraphManifest` role in the pipeline
+
+## Further reading
+
+- Bonifati, Furniss, Green, Harmer, Oshurko, Voigt — *Schema Validation and Evolution for Graph
+  Databases*, ER 2019. Property-graph schema evolution expressed as graph rewriting; the closest
+  prior operation set for property-graph schemas.
+- Hausler, Klettke, Störl — *A language for graph database evolution and its implementation in
+  Neo4j*, ER Forum 2023. An evolution language bound to one backend; the op vocabulary here is
+  backend-independent and lowered per target by the physical plane.
+- Bonifati — *Versatile Property Graph Transformations*, PVLDB 18(12), 2025. Declarative
+  graph-to-graph transformations; the comparator for projection rather than for evolution.
+- Bernstein — *Applying Model Management to Classical Meta Data Problems*, CIDR 2003. The
+  operator vocabulary — Match, Merge, Diff, Compose, ModelGen — that `diff_manifests`,
+  `merge_three_way`, `compose_manifests` and `resolve_db_aware()` instantiate for manifests.

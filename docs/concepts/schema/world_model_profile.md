@@ -162,3 +162,18 @@ already normalized away the difference between a declared value and a default.
 - [GraFlo ontology](ontology.md) — how `semantics` is serialized to RDF.
 - [Example 22](../../examples/example-22.md) — `state-core`, the lift that
   satisfies every assertion.
+
+## Further reading
+
+A profile is a conformance level over a manifest, not a schema language for the graph. The
+languages that *do* constrain property-graph instances are the comparators:
+
+- Angles, Bonifati, Dumbrava, Fletcher et al. — *PG-Schema: Schemas for Property Graphs*, SIGMOD
+  2023, and *PG-Keys: Keys for Property Graphs*, SIGMOD 2021. Types, inheritance and key
+  constraints for property graphs. GraFlo's identity modes are the operational counterpart of
+  PG-Keys; the profile's `declared-identity` assertion checks only that one was chosen.
+- ISO/IEC 39075:2024 *Database languages — GQL*. Graph types as the standard's schema notion.
+- W3C SHACL. Shape-based validation of RDF instances; the profile's grounding and unit assertions
+  check the manifest, not the data, and a SHACL projection of the schema is the natural next step.
+- LinkML — *How to model property graphs*. A polyglot modelling language whose property-graph
+  guidance is the nearest neighbour to the `semantics` block.
