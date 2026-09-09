@@ -165,7 +165,9 @@ def test_equivalence_naming_a_vertex_on_the_schemaless_side_still_raises() -> No
             left,
             right,
             ComposeManifestsOp(
-                vertices=[VertexEquivalence(left="Asset", right="Device", into="Asset")]
+                vertex_equivalences=[
+                    VertexEquivalence(left="Asset", right="Device", into="Asset")
+                ]
             ),
             bump_version=False,
         )

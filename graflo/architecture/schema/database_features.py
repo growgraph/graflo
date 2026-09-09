@@ -99,6 +99,43 @@ class DefaultPropertyValues(ConfigBaseModel):
     )
 
 
+def index_identity(index: Index) -> tuple:
+    """Everything about an index except its cosmetic name.
+
+    Indexes are addressed by field list (``RemoveVertexIndexesOp``), so two
+    entries differing only by name are one index; two differing on uniqueness,
+    type or sparsity are two contradictory claims about one field-set.
+    """
+    return (
+        tuple(index.fields),
+        bool(index.unique),
+        str(index.type),
+        bool(index.deduplicate),
+        bool(index.sparse),
+        bool(index.exclude_edge_endpoints),
+    )
+
+
+def append_index(indexes: list[Index], index: Index, *, owner: str) -> None:
+    """Register *index* unless already present, refusing a contradictory restatement.
+
+    Idempotent on the full definition so repeated schema resolution does not
+    accumulate duplicates. Deduplicating on the field-set alone -- as this did
+    -- silently kept whichever ``unique`` arrived first for a field-set indexed
+    two ways, and which one that was depended on resolution order.
+    """
+    for existing in indexes:
+        if index_identity(existing) == index_identity(index):
+            return
+        if tuple(existing.fields) == tuple(index.fields):
+            raise ValueError(
+                f"Conflicting index on {owner} fields {list(index.fields)!r}: "
+                f"unique={existing.unique}/type={existing.type}/sparse={existing.sparse} "
+                f"vs unique={index.unique}/type={index.type}/sparse={index.sparse}"
+            )
+    indexes.append(index)
+
+
 class DatabaseProfile(ConfigBaseModel):
     """Container for DB-only physical features such as secondary indexes."""
 
@@ -171,6 +208,17 @@ class DatabaseProfile(ConfigBaseModel):
                 purpose=item.purpose,
             )
             if item.relation_name is not None:
+                # Refused rather than last-wins, for the reason reverse_edge
+                # below is: the physical name is what DDL emits, and two
+                # descriptions of one physical edge cannot both be it.
+                if (
+                    variant.relation_name is not None
+                    and variant.relation_name != item.relation_name
+                ):
+                    raise ValueError(
+                        f"Conflicting relation_name for edge spec {variant.physical_key!r}: "
+                        f"{variant.relation_name!r} vs {item.relation_name!r}"
+                    )
                 variant.relation_name = item.relation_name
             if item.reverse_edge is not None:
                 if (
@@ -182,10 +230,10 @@ class DatabaseProfile(ConfigBaseModel):
                         f"{variant.reverse_edge!r} vs {item.reverse_edge!r}"
                     )
                 variant.reverse_edge = item.reverse_edge
-            existing = {tuple(ix.fields) for ix in variant.indexes}
             for idx in item.indexes:
-                if tuple(idx.fields) not in existing:
-                    variant.indexes.append(idx)
+                append_index(
+                    variant.indexes, idx, owner=f"edge spec {variant.physical_key!r}"
+                )
             if item.indexes_mode != "inherit" or variant.indexes_mode == "inherit":
                 variant.indexes_mode = item.indexes_mode
 
@@ -383,12 +431,17 @@ class DatabaseProfile(ConfigBaseModel):
     def add_vertex_index(self, vertex_name: VertexName, index: Index) -> None:
         """Register a secondary index for *vertex_name* if not already present.
 
-        Idempotent on the field-set, so repeated schema resolution does not
-        accumulate duplicates.
+        Idempotent on the **field-set**, so repeated schema resolution does not
+        accumulate duplicates -- deliberately weaker than :func:`append_index`.
+        The caller here is a generator (`compile_secondary_identity_indexes`
+        derives a lookup index from a declared secondary identity), so an
+        authored unique index over the same fields is not a competing claim to
+        refuse but the stronger one to leave alone. Two *authored* profiles
+        meeting is the case that refuses, and that goes through
+        :func:`append_index`.
         """
         indexes = self.vertex_indexes.setdefault(vertex_name, [])
-        existing = {tuple(ix.fields) for ix in indexes}
-        if tuple(index.fields) not in existing:
+        if tuple(index.fields) not in {tuple(ix.fields) for ix in indexes}:
             indexes.append(index)
 
     def prune_empty_vertex_indexes(self) -> None:

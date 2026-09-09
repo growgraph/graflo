@@ -19,6 +19,8 @@ import logging
 from graflo.architecture.contract.manifest import GraphManifest
 
 from .ops import (
+    EdgeFieldSemanticsTarget,
+    FieldSemanticsTarget,
     SetEdgeSemanticsOp,
     SetFieldSemanticsOp,
     SetVertexSemanticsOp,
@@ -74,33 +76,50 @@ def apply_set_edge_semantics(manifest: GraphManifest, op: SetEdgeSemanticsOp) ->
 
 
 def apply_set_field_semantics(manifest: GraphManifest, op: SetFieldSemanticsOp) -> None:
-    """Attach, replace or clear the grounding on selected vertex properties."""
+    """Attach, replace or clear the grounding on selected vertex or edge properties."""
     schema = manifest.graph_schema
     if schema is None:
         raise ValueError("set_field_semantics requires graph_schema")
 
     vertex_config = schema.core_schema.vertex_config
+    vertex_targets = [t for t in op.targets if isinstance(t, FieldSemanticsTarget)]
+    edge_targets = [t for t in op.targets if isinstance(t, EdgeFieldSemanticsTarget)]
+
     unknown_vertices = sorted(
-        {target.vertex for target in op.targets} - vertex_config.vertex_set
+        {target.vertex for target in vertex_targets} - vertex_config.vertex_set
     )
     if unknown_vertices:
         raise ValueError(f"set_field_semantics: unknown vertices: {unknown_vertices}")
+    by_edge_id = {edge.edge_id: edge for edge in schema.core_schema.edge_config.edges}
+    unknown_edges = sorted(
+        str(target.edge_id())
+        for target in edge_targets
+        if target.edge_id() not in by_edge_id
+    )
+    if unknown_edges:
+        raise ValueError(f"set_field_semantics: unknown edges: {unknown_edges}")
 
     by_name = {vertex.name: vertex for vertex in vertex_config.vertices}
+    holders = [(target, by_name[target.vertex]) for target in vertex_targets] + [
+        (target, by_edge_id[target.edge_id()]) for target in edge_targets
+    ]
     missing: list[str] = []
-    for target in op.targets:
-        vertex = by_name[target.vertex]
-        if target.field not in {field.name for field in vertex.properties}:
-            missing.append(f"{target.vertex}.{target.field}")
+    for target, holder in holders:
+        if target.field not in {field.name for field in holder.properties}:
+            label = (
+                target.vertex
+                if isinstance(target, FieldSemanticsTarget)
+                else str(target.edge_id())
+            )
+            missing.append(f"{label}.{target.field}")
     if missing:
         # Naming the property rather than the vertex: the likely mistake is a
         # stale field name after a rename, and "unknown vertex" would send the
         # reader looking in the wrong place.
         raise ValueError(f"set_field_semantics: unknown properties: {sorted(missing)}")
 
-    for target in op.targets:
-        vertex = by_name[target.vertex]
-        for field in vertex.properties:
+    for target, holder in holders:
+        for field in holder.properties:
             if field.name != target.field:
                 continue
             field.semantics = (

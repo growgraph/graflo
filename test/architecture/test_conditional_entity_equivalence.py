@@ -144,7 +144,7 @@ def _compose_union() -> GraphManifest:
     canonical_a = apply_evolution(_manifest_a(), canonical_map_to_ops(_CANONICAL))
     right = _manifest_b()
     op = ComposeManifestsOp(
-        vertices=[
+        vertex_equivalences=[
             VertexEquivalence(
                 left="Company", right="Org", into="Company", identity=["company_id"]
             )
@@ -159,7 +159,9 @@ def _build_union(alignment: IdentityAlignment = _ALIGNMENT) -> GraphManifest:
     canonical_a = apply_evolution(_manifest_a(), canonical_map_to_ops(_CANONICAL))
     right = _manifest_b()
     op = ComposeManifestsOp(
-        vertices=[VertexEquivalence(left="Company", right="Org", into="Company")],
+        vertex_equivalences=[
+            VertexEquivalence(left="Company", right="Org", into="Company")
+        ],
         identity_alignments=[alignment],
     )
     return compose_manifests(
@@ -526,7 +528,7 @@ def _build_routed_union() -> GraphManifest:
         _routed_manifest_a(), canonical_map_to_ops(_ROUTED_CANONICAL)
     )
     op = ComposeManifestsOp(
-        vertices=[
+        vertex_equivalences=[
             VertexEquivalence(left=["Company", "Shop"], right="Org", into="Company")
         ],
         allow_merges=True,
@@ -661,7 +663,7 @@ def _build_member_union() -> GraphManifest:
         _routed_manifest_a(), canonical_map_to_ops(_ROUTED_CANONICAL)
     )
     op = ComposeManifestsOp(
-        vertices=[
+        vertex_equivalences=[
             VertexEquivalence(left=["Company", "Shop"], right="Org", into="Company")
         ],
         allow_merges=True,
@@ -779,7 +781,7 @@ class TestMemberKeyedRoutedFusion:
             _routed_manifest_a(), canonical_map_to_ops(_ROUTED_CANONICAL)
         )
         op = ComposeManifestsOp(
-            vertices=[
+            vertex_equivalences=[
                 VertexEquivalence(left=["Company", "Shop"], right="Org", into="Company")
             ],
             allow_merges=True,
@@ -806,7 +808,7 @@ class TestMemberKeyedRoutedFusion:
         assert alignment.local_key is not None
         alignment.local_key.sources["r_orgs"] = alignment.local_key.sources.pop("r_b")
         op = ComposeManifestsOp(
-            vertices=[
+            vertex_equivalences=[
                 VertexEquivalence(left=["Company", "Shop"], right="Org", into="Company")
             ],
             allow_merges=True,

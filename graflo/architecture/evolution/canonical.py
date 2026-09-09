@@ -367,7 +367,7 @@ def canonical_map_to_ops(
         elif merged_away:
             vertex_renames[merged_away[0]] = target
     if vertex_renames:
-        ops.append(RenameVerticesOp(vertices=vertex_renames))
+        ops.append(RenameVerticesOp(renames=vertex_renames))
 
     relation_groups: dict[str, list[str]] = {}
     for source, target in cm.relations.items():
@@ -386,7 +386,7 @@ def canonical_map_to_ops(
         elif merged_away:
             relation_renames[merged_away[0]] = target
     if relation_renames:
-        ops.append(RenameRelationsOp(relations=relation_renames))
+        ops.append(RenameRelationsOp(renames=relation_renames))
 
     return ops
 
@@ -501,6 +501,7 @@ def validate_and_complete_canonical_map(
     left: GraphManifest,
     right: GraphManifest,
     canonical_maps: Sequence[tuple[Side, CanonicalMap]] = (),
+    index: ClusterIndex | None = None,
 ) -> SideMaps:
     """Validate *op*'s declared clusters against *canonical_maps* and lower them.
 
@@ -508,12 +509,13 @@ def validate_and_complete_canonical_map(
     which manifest the map's source names belong to. *left* / *right* are the
     manifests about to be composed (typically already canonicalized on
     whichever side supplied a map — the map is used here for checking, not
-    for applying).
+    for applying). *index* is the already-validated cluster index when the
+    caller has one (compose does); when omitted the clusters are indexed here.
 
     Raises :class:`ComposeCanonicalConflictError` — wrapping
     :class:`~graflo.architecture.evolution.equivalence.ClusterConflictError`
     when the declared clusters themselves conflict (overlap, a shared
-    ``into``, an occupied ``into``) — on: a stale pre-canonical class,
+    ``into``, an occupied ``into``) and no *index* was supplied — on: a stale pre-canonical class,
     relation or attribute name referenced by an equivalence; an equivalence
     that re-targets a class or relation name the canonical map already fixed;
     a property equivalence that re-targets an attribute the map already
@@ -546,18 +548,19 @@ def validate_and_complete_canonical_map(
     left_relation_names = _relation_names(left)
     right_relation_names = _relation_names(right)
 
-    try:
-        index = index_clusters(
-            op,
-            left_vertices=left_vertex_names,
-            right_vertices=right_vertex_names,
-            left_relations=left_relation_names,
-            right_relations=right_relation_names,
-        )
-    except ClusterConflictError as exc:
-        raise ComposeCanonicalConflictError(
-            f"compose contradicts the canonical map (cluster conflict): {exc}"
-        ) from exc
+    if index is None:
+        try:
+            index = index_clusters(
+                op,
+                left_vertices=left_vertex_names,
+                right_vertices=right_vertex_names,
+                left_relations=left_relation_names,
+                right_relations=right_relation_names,
+            )
+        except ClusterConflictError as exc:
+            raise ComposeCanonicalConflictError(
+                f"compose contradicts the canonical map (cluster conflict): {exc}"
+            ) from exc
 
     author: dict[Side, CanonicalMap] = {"left": CanonicalMap(), "right": CanonicalMap()}
     for side, cm in canonical_maps:
@@ -566,7 +569,7 @@ def validate_and_complete_canonical_map(
     lowered = clusters_to_side_maps(index, allow_merges=op.allow_merges)
 
     vertex_intos = index.labels
-    relation_intos = index.relation_labels()
+    relation_intos = index.relation_labels
 
     for side, manifest in (("left", left), ("right", right)):
         a = author[side]

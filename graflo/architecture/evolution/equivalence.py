@@ -16,7 +16,11 @@ accident:
   them into one composed class, which must be spelled as one n-ary cluster so
   it is visible to review, not left implicit;
 * an ``into`` that already exists as a *different*, non-member class on a side
-  must not be silently merged into — add it to the cluster explicitly.
+  must not be silently merged into — add it to the cluster explicitly. The one
+  exception is a name that *another* declaration renames away: the lowered
+  rename map applies in one step, so a single-member side landing on it lands
+  on a free name. A multi-member side is a merge, and merges are lowered
+  before renames, so it would land on the old occupant and is still refused.
 
 Nodes are ``(side, name)`` pairs so a class named ``Org`` on the left is never
 confused with ``Org`` on the right.
@@ -26,11 +30,13 @@ from __future__ import annotations
 
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass
-from typing import Literal
+from typing import Generic, Literal, TypeVar
 
 from .ops import ComposeManifestsOp, RelationEquivalence, VertexEquivalence
 
 Side = Literal["left", "right"]
+
+DeclarationT = TypeVar("DeclarationT", VertexEquivalence, RelationEquivalence)
 
 
 class ClusterConflictError(ValueError):
@@ -38,50 +44,33 @@ class ClusterConflictError(ValueError):
 
 
 @dataclass(frozen=True)
-class Cluster:
-    """One declared n-ary vertex-equivalence cluster."""
+class Cluster(Generic[DeclarationT]):
+    """One declared n-ary equivalence cluster, over vertices or relations."""
 
     left: tuple[str, ...]
     right: tuple[str, ...]
     into: str
-    declaration: VertexEquivalence
+    declaration: DeclarationT
 
     def members(self, side: Side) -> tuple[str, ...]:
         return self.left if side == "left" else self.right
 
-    @property
-    def left_names(self) -> frozenset[str]:
-        return frozenset(self.left)
 
-    @property
-    def right_names(self) -> frozenset[str]:
-        return frozenset(self.right)
-
-
-@dataclass(frozen=True)
-class RelationCluster:
-    """One declared n-ary relation-equivalence cluster."""
-
-    left: tuple[str, ...]
-    right: tuple[str, ...]
-    into: str
-    declaration: RelationEquivalence
-
-    def members(self, side: Side) -> tuple[str, ...]:
-        return self.left if side == "left" else self.right
+RelationCluster = Cluster[RelationEquivalence]
 
 
 @dataclass(frozen=True)
 class ClusterIndex:
     """Every declared cluster of one compose op, validated for consistency."""
 
-    vertices: tuple[Cluster, ...]
-    relations: tuple[RelationCluster, ...]
+    vertices: tuple[Cluster[VertexEquivalence], ...]
+    relations: tuple[Cluster[RelationEquivalence], ...]
 
     @property
     def labels(self) -> frozenset[str]:
         return frozenset(c.into for c in self.vertices)
 
+    @property
     def relation_labels(self) -> frozenset[str]:
         return frozenset(c.into for c in self.relations)
 
@@ -97,11 +86,9 @@ class ClusterIndex:
             out.update(c.members(side))
         return frozenset(out)
 
-    def cluster_for(self, side: Side, name: str) -> Cluster | None:
-        for c in self.vertices:
-            if name in c.members(side):
-                return c
-        return None
+    def cluster_for_label(self, into: str) -> Cluster[VertexEquivalence] | None:
+        """The vertex cluster collapsing onto *into*, or ``None``."""
+        return next((c for c in self.vertices if c.into == into), None)
 
 
 def _check_declarations(
@@ -114,6 +101,11 @@ def _check_declarations(
     """Shared overlap / shared-into / occupied-into checks for one declaration kind."""
     claimed: dict[tuple[Side, str], int] = {}
     into_owner: dict[str, int] = {}
+    claimed_by_side: dict[Side, set[str]] = {"left": set(), "right": set()}
+    for left, right, _ in declarations:
+        claimed_by_side["left"].update(left)
+        claimed_by_side["right"].update(right)
+
     for index, (left, right, into) in enumerate(declarations):
         for side, members in (("left", left), ("right", right)):
             for name in members:
@@ -139,13 +131,28 @@ def _check_declarations(
             ("left", left, left_names),
             ("right", right, right_names),
         ):
-            if into in names and into not in members:
+            if into not in names or into in members:
+                continue
+            if into in claimed_by_side[side]:
+                if len(members) <= 1:
+                    # Another declaration renames the occupant away, and the
+                    # lowered rename map applies in one step, so this side's
+                    # own rename lands on a free name.
+                    continue
                 raise ClusterConflictError(
-                    f"{kind}: into {into!r} already exists on the {side} side "
-                    f"but is not a member of its cluster "
-                    f"({side}={list(members)}); add it to `{side}` to merge "
-                    "into it, or pick a different `into`"
+                    f"{kind}: into {into!r} on the {side} side is renamed away "
+                    f"by another declaration, but this one merges "
+                    f"{list(members)} and merges are lowered before renames, "
+                    "so it would land on the old occupant; pick a different "
+                    "`into`"
                 )
+            raise ClusterConflictError(
+                f"{kind}: into {into!r} already exists on the {side} side "
+                f"but is not a member of its cluster "
+                f"({side}={list(members)}); add it to this cluster's `{side}` "
+                "to merge into it, declare it in another cluster so it is "
+                "renamed away, or pick a different `into`"
+            )
 
 
 def index_clusters(
@@ -163,13 +170,19 @@ def index_clusters(
     occupy an existing non-member class on a side.
     """
     _check_declarations(
-        [(tuple(v.left_members), tuple(v.right_members), v.into) for v in op.vertices],
+        [
+            (tuple(v.left_members), tuple(v.right_members), v.into)
+            for v in op.vertex_equivalences
+        ],
         kind="vertex equivalence",
         left_names=left_vertices,
         right_names=right_vertices,
     )
     _check_declarations(
-        [(tuple(r.left_members), tuple(r.right_members), r.into) for r in op.relations],
+        [
+            (tuple(r.left_members), tuple(r.right_members), r.into)
+            for r in op.relation_equivalences
+        ],
         kind="relation equivalence",
         left_names=left_relations,
         right_names=right_relations,
@@ -182,15 +195,15 @@ def index_clusters(
                 into=v.into,
                 declaration=v,
             )
-            for v in op.vertices
+            for v in op.vertex_equivalences
         ),
         relations=tuple(
-            RelationCluster(
+            Cluster(
                 left=tuple(r.left_members),
                 right=tuple(r.right_members),
                 into=r.into,
                 declaration=r,
             )
-            for r in op.relations
+            for r in op.relation_equivalences
         ),
     )

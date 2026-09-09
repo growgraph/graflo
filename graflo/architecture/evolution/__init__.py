@@ -13,6 +13,7 @@ from .ops import (
     AddEdgePropertiesOp,
     AddEdgesOp,
     AddInverseEdgesOp,
+    AddResourcesOp,
     AddResourceTransformsOp,
     AddSecondaryIdentitiesOp,
     AddVertexIndexesOp,
@@ -22,6 +23,7 @@ from .ops import (
     BlankIdentityTarget,
     ChangeFieldTypesOp,
     ComposeManifestsOp,
+    EdgeFieldSemanticsTarget,
     EdgeIdentitiesEntry,
     EdgeIndexEntry,
     EdgeRetargetEntry,
@@ -44,6 +46,7 @@ from .ops import (
     RemoveEdgeIndexesOp,
     RemoveEdgePropertiesOp,
     RemoveEdgesOp,
+    RemoveResourcesOp,
     RemoveSecondaryIdentitiesOp,
     RemoveVertexIndexesOp,
     RemoveVertexPropertiesOp,
@@ -95,7 +98,12 @@ _COMPOSE_EXPORTS = frozenset(
 )
 
 _INGESTION_APPLY_EXPORTS = frozenset(
-    {"apply_add_resource_transforms", "apply_ensure_extracted_fields"}
+    {
+        "apply_add_resource_transforms",
+        "apply_add_resources",
+        "apply_ensure_extracted_fields",
+        "apply_remove_resources",
+    }
 )
 
 _ALIGNMENT_EXPORTS = frozenset(
@@ -259,6 +267,7 @@ __all__ = [
     "AddEdgesOp",
     "AddInverseEdgesOp",
     "AddResourceTransformsOp",
+    "AddResourcesOp",
     "AddSecondaryIdentitiesOp",
     "AddVertexIndexesOp",
     "AddVertexPropertiesOp",
@@ -281,6 +290,7 @@ __all__ = [
     "ComposeNameConflictError",
     "ConflictResolution",
     "DerivationSpec",
+    "EdgeFieldSemanticsTarget",
     "EdgeIdentitiesEntry",
     "EdgeIndexEntry",
     "EdgeRetargetEntry",
@@ -316,6 +326,7 @@ __all__ = [
     "RemoveEdgeIndexesOp",
     "RemoveEdgePropertiesOp",
     "RemoveEdgesOp",
+    "RemoveResourcesOp",
     "RemoveSecondaryIdentitiesOp",
     "RemoveVertexIndexesOp",
     "RemoveVertexPropertiesOp",
@@ -346,6 +357,7 @@ __all__ = [
     "apply_add_edges",
     "apply_add_inverse_edges",
     "apply_add_resource_transforms",
+    "apply_add_resources",
     "apply_add_secondary_identities",
     "apply_add_vertex_indexes",
     "apply_add_vertex_properties",
@@ -359,6 +371,7 @@ __all__ = [
     "apply_remove_edge_indexes",
     "apply_remove_edge_properties",
     "apply_remove_edges",
+    "apply_remove_resources",
     "apply_remove_secondary_identities",
     "apply_remove_vertex_indexes",
     "apply_remove_vertex_properties",

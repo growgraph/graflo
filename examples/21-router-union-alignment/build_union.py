@@ -134,7 +134,7 @@ def build_union(*, root_demo: bool = False) -> GraphManifest:
         alignment = ALIGNMENT.model_copy(update={"at": {"r_view": []}})
 
     op = ComposeManifestsOp(
-        vertices=[
+        vertex_equivalences=[
             VertexEquivalence(
                 left=["Company", "Shop"], right=["Org", "Branch"], into="Company"
             ),

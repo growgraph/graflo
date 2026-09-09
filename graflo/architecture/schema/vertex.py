@@ -21,6 +21,7 @@ import ast
 import json
 import logging
 from collections import Counter
+from collections.abc import Iterable
 from typing import Any, Literal, TypeAlias
 
 from pydantic import (
@@ -35,7 +36,11 @@ from pydantic import (
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.schema.identity_funnel import IdentityFunnel
-from graflo.architecture.schema.semantics import FieldSemantics, Semantics
+from graflo.architecture.schema.semantics import (
+    FieldSemantics,
+    Semantics,
+    merge_field_semantics,
+)
 from graflo.filter.onto import FilterExpression
 from graflo.onto import (
     PRIMARY_IDENTITY_SELECTOR,
@@ -112,10 +117,10 @@ def is_list_field_type(ft: FieldType | str | None) -> bool:
 
 
 def format_field_type_label(field: Field) -> str:
-    """Human-readable type label, e.g. ``LIST<STRING>`` or ``INT``."""
+    """Human-readable type label, e.g. ``LIST<STRING>``, ``INT`` or ``untyped``."""
     type_val = field_type_value(field.type)
     if type_val is None:
-        return "None"
+        return "untyped"
     if type_val == FieldType.LIST.value:
         item_val = field_type_value(field.item_type) or "?"
         return f"LIST<{item_val}>"
@@ -349,71 +354,130 @@ class SecondaryIdentity(ConfigBaseModel):
         return frozenset(self.fields)
 
 
-def _merge_duplicate_fields(vertex_name: str, fields: list[Field]) -> list[Field]:
-    """Merge duplicate fields by name while preserving stable order.
+class FieldMergeConflict(ValueError):
+    """One property that two declarations describe incompatibly.
 
-    Merge rules:
-    - Same non-null type (and item_type for LIST): keep one field.
-    - One type is None and the other is typed: keep typed field.
-    - Different non-null types or conflicting LIST item_types: raise.
+    The per-property clause and the remedy are kept apart from the rendered
+    message so :func:`merge_field_lists` can report every conflicting property
+    under one owner heading instead of one error per run.
     """
-    merged_by_name: dict[str, Field] = {}
-    ordered_names: list[str] = []
+
+    def __init__(self, owner: str, reason: str, remedy: str) -> None:
+        self.reason = reason
+        self.remedy = remedy
+        super().__init__(f"{_conflict_heading([reason], owner)}, {reason}. {remedy}")
+
+
+_RETYPE_REMEDY = "Retype one side with change_field_types before merging."
+_UNIT_REMEDY = (
+    "The merged property would hold numerically incomparable values -- "
+    "convert one side or drop the unit."
+)
+
+
+def _conflict_heading(reasons: list[str], owner: str) -> str:
+    """``types`` unless every conflict is about units, which are not types."""
+    kind = "units" if all("units " in reason for reason in reasons) else "types"
+    return f"Conflicting field {kind} for {owner}"
+
+
+def _fold_field_description(left: str | None, right: str | None) -> str | None:
+    """Both descriptions, in argument order -- neither side's prose is authoritative."""
+    if left and right and left != right:
+        return f"{left}\n\n{right}"
+    return left or right
+
+
+def merge_fields(a: Field, b: Field, *, owner: str) -> Field:
+    """Merge two same-named fields, refusing a genuine disagreement.
+
+    ``type`` and ``item_type`` are compared **and carried as a unit**: ``LIST``
+    is only half a type, so electing a ``type`` without the ``item_type`` that
+    came with it yields a field that cannot be constructed. One untyped side
+    gives way to the other's pair whole; two typed sides that disagree raise,
+    because widening (``INT`` + ``FLOAT`` -> ``DOUBLE``) would elect a type
+    neither author wrote.
+
+    Descriptions from both sides survive and grounding folds through
+    :func:`~graflo.architecture.schema.semantics.merge_field_semantics`. Nothing
+    here is decided by which side was seen first.
+
+    ``owner`` is a rendered label -- ``vertex 'party'``, ``edge ('order',
+    'invoice', 'places')`` -- so a merge kernel keyed by ``into`` name and a
+    model validator keyed by ``self.name`` raise the same sentence.
+    """
+    if (a.type, a.item_type) != (b.type, b.item_type):
+        if a.type is not None and b.type is not None:
+            raise FieldMergeConflict(
+                owner,
+                f"property {a.name!r}: {format_field_type_label(a)!r} vs "
+                f"{format_field_type_label(b)!r}",
+                _RETYPE_REMEDY,
+            )
+        # Exactly one side is typed: its (type, item_type) pair carries whole.
+        base, other = (a, b) if a.type is not None else (b, a)
+    else:
+        base, other = a, b
+
+    try:
+        semantics = merge_field_semantics(
+            base.semantics, other.semantics, owner=owner, field=a.name
+        )
+    except ValueError:
+        left_unit = a.semantics.unit if a.semantics else None
+        right_unit = b.semantics.unit if b.semantics else None
+        raise FieldMergeConflict(
+            owner,
+            f"property {a.name!r}: units {left_unit!r} vs {right_unit!r}",
+            _UNIT_REMEDY,
+        ) from None
+
+    # Rebuilt from the whole authored field rather than an enumerated
+    # constructor: every key Field grows is carried by construction, and
+    # ``validate_list_item_type`` re-runs here rather than three frames later.
+    return Field.model_validate(
+        {
+            **base.to_dict(skip_defaults=False),
+            "description": _fold_field_description(base.description, other.description),
+            "semantics": semantics,
+        }
+    )
+
+
+def merge_field_lists(fields: Iterable[Field], *, owner: str) -> list[Field]:
+    """Fold same-named fields into one, preserving first-declaration order.
+
+    Every conflicting property is reported together: composing two large schemas
+    one error per run makes the author re-run the merge to discover the next
+    disagreement, when the merge already knows all of them.
+    """
+    merged: dict[str, Field] = {}
+    order: list[str] = []
+    conflicts: list[FieldMergeConflict] = []
 
     for field in fields:
-        existing = merged_by_name.get(field.name)
+        existing = merged.get(field.name)
         if existing is None:
-            merged_by_name[field.name] = field
-            ordered_names.append(field.name)
+            merged[field.name] = field
+            order.append(field.name)
             continue
+        try:
+            merged[field.name] = merge_fields(existing, field, owner=owner)
+        except FieldMergeConflict as conflict:
+            # Collected, not raised: a clash on one property must not hide the
+            # next one from an author who has to fix them all anyway.
+            conflicts.append(conflict)
 
-        existing_type = existing.type
-        incoming_type = field.type
+    if conflicts:
+        reasons = [conflict.reason for conflict in conflicts]
+        heading = _conflict_heading(reasons, owner)
+        remedies = list(dict.fromkeys(conflict.remedy for conflict in conflicts))
+        if len(conflicts) == 1:
+            raise ValueError(f"{heading}, {reasons[0]}. {remedies[0]}")
+        listed = "\n".join(f"  {reason}" for reason in reasons)
+        raise ValueError(f"{heading}:\n{listed}\n" + " ".join(remedies))
 
-        if existing_type is not None and incoming_type is not None:
-            if existing_type != incoming_type:
-                raise ValueError(
-                    "Conflicting field types for vertex "
-                    f"'{vertex_name}', property '{field.name}': "
-                    f"'{existing_type}' vs '{incoming_type}'"
-                )
-            existing_item = existing.item_type
-            incoming_item = field.item_type
-            if (
-                existing_item is not None
-                and incoming_item is not None
-                and existing_item != incoming_item
-            ):
-                raise ValueError(
-                    "Conflicting LIST item_type for vertex "
-                    f"'{vertex_name}', property '{field.name}': "
-                    f"'{existing_item}' vs '{incoming_item}'"
-                )
-            updates: dict[str, Any] = {}
-            if existing.description is None and field.description is not None:
-                updates["description"] = field.description
-            if existing_item is None and incoming_item is not None:
-                updates["item_type"] = incoming_item
-            if updates:
-                merged_by_name[field.name] = existing.model_copy(update=updates)
-            continue
-
-        if existing_type is None and incoming_type is not None:
-            replacement = field
-            if replacement.description is None and existing.description is not None:
-                replacement = replacement.model_copy(
-                    update={"description": existing.description}
-                )
-            merged_by_name[field.name] = replacement
-            continue
-
-        # existing typed + incoming untyped OR both untyped
-        if existing.description is None and field.description is not None:
-            merged_by_name[field.name] = existing.model_copy(
-                update={"description": field.description}
-            )
-
-    return [merged_by_name[name] for name in ordered_names]
+    return [merged[name] for name in order]
 
 
 def _dedupe_ordered(values: list[str]) -> list[str]:
@@ -627,7 +691,9 @@ class Vertex(ConfigBaseModel):
                     f"Vertex '{self.name}': assigned and identity_funnel are "
                     "mutually exclusive"
                 )
-        merged_properties = _merge_duplicate_fields(self.name, list(self.properties))
+        merged_properties = merge_field_lists(
+            self.properties, owner=f"vertex {self.name!r}"
+        )
         identity_names = _dedupe_ordered(list(self.identity))
         hash_identity_names = _dedupe_ordered(list(self.hash_identity_properties))
         funnel_field_names = (

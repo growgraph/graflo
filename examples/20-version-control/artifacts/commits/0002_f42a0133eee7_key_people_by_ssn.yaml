@@ -1,9 +1,9 @@
 created_at: '2026-01-01T00:00:00+00:00'
-id: 7bf6139a6c5e
+id: f42a0133eee7
 label: key people by SSN
 ops:
 -   op: replace_identity
-    vertices:
+    replacements:
         person:
             endpoints: follow_new
             retire: keep

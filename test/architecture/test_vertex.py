@@ -6,6 +6,7 @@ import pytest
 
 from graflo.architecture.schema import VertexConfigDBAware
 from graflo.architecture.schema.database_features import DatabaseProfile
+from graflo.architecture.schema.semantics import FieldSemantics
 from graflo.architecture.schema.vertex import Field, FieldType, Vertex, VertexConfig
 from graflo.onto import DBType
 
@@ -555,3 +556,123 @@ def test_resource_runtime_vertex_config_excludes_unreferenced_blank_vertices():
     )
     assert resource.vertex_config.vertex_set == {"ticker"}
     assert resource.vertex_config.blank_vertices == []
+
+
+class TestDuplicatePropertyMerge:
+    """One property declared twice on one vertex: what fuses and what refuses.
+
+    ``merge_field_lists`` is the single policy behind both this validator and
+    the merge kernel, so these cases pin the behavior every compose inherits.
+    """
+
+    def test_identical_list_properties_fuse_and_keep_item_type(self) -> None:
+        vertex = Vertex(
+            name="user",
+            properties=[
+                Field(name="id"),
+                Field(name="tags", type="LIST", item_type="STRING"),
+                Field(name="tags", type="LIST", item_type="STRING"),
+            ],
+            identity=["id"],
+        )
+        tags = [f for f in vertex.properties if f.name == "tags"]
+        assert len(tags) == 1
+        assert tags[0].item_type == FieldType.STRING
+
+    def test_conflicting_list_item_types_raise_naming_both(self) -> None:
+        with pytest.raises(ValueError) as excinfo:
+            Vertex(
+                name="user",
+                properties=[
+                    Field(name="id"),
+                    Field(name="tags", type="LIST", item_type="STRING"),
+                    Field(name="tags", type="LIST", item_type="INT"),
+                ],
+                identity=["id"],
+            )
+        message = str(excinfo.value)
+        assert "LIST<STRING>" in message
+        assert "LIST<INT>" in message
+        assert "user" in message
+
+    def test_untyped_duplicate_yields_the_whole_typed_pair(self) -> None:
+        # The bug this guards: carrying `type` without the `item_type` that came
+        # with it yields a LIST that cannot be constructed.
+        vertex = Vertex(
+            name="user",
+            properties=[
+                Field(name="id"),
+                Field(name="tags"),
+                Field(name="tags", type="LIST", item_type="STRING"),
+            ],
+            identity=["id"],
+        )
+        tags = next(f for f in vertex.properties if f.name == "tags")
+        assert (tags.type, tags.item_type) == (FieldType.LIST, FieldType.STRING)
+
+    @pytest.mark.parametrize("grounded_first", [True, False])
+    @pytest.mark.parametrize("typed", [True, False])
+    def test_grounding_survives_a_duplicate_declaration(
+        self, grounded_first: bool, typed: bool
+    ) -> None:
+        # Parametrised over both axes because the loss was order-dependent
+        # *within* a branch, and which branch ran depended on typedness.
+        field_type = "STRING" if typed else None
+        grounded = Field(
+            name="email",
+            type=field_type,
+            semantics=FieldSemantics(iri="https://schema.org/email", unit=None),
+        )
+        plain = Field(name="email", type=field_type)
+        pair = [grounded, plain] if grounded_first else [plain, grounded]
+        vertex = Vertex(
+            name="user", properties=[Field(name="id"), *pair], identity=["id"]
+        )
+        email = next(f for f in vertex.properties if f.name == "email")
+        assert email.semantics is not None
+        assert email.semantics.iri == "https://schema.org/email"
+
+    def test_conflicting_units_refuse_the_declaration(self) -> None:
+        with pytest.raises(ValueError) as excinfo:
+            Vertex(
+                name="reading",
+                properties=[
+                    Field(name="id"),
+                    Field(name="speed", semantics=FieldSemantics(unit="m/s")),
+                    Field(name="speed", semantics=FieldSemantics(unit="km/h")),
+                ],
+                identity=["id"],
+            )
+        message = str(excinfo.value)
+        assert "units" in message
+        assert "'m/s'" in message and "'km/h'" in message
+
+    def test_every_conflicting_property_is_named_in_one_error(self) -> None:
+        with pytest.raises(ValueError) as excinfo:
+            Vertex(
+                name="user",
+                properties=[
+                    Field(name="id"),
+                    Field(name="age", type="INT"),
+                    Field(name="age", type="STRING"),
+                    Field(name="tags", type="LIST", item_type="STRING"),
+                    Field(name="tags", type="LIST", item_type="INT"),
+                ],
+                identity=["id"],
+            )
+        message = str(excinfo.value)
+        assert "property 'age'" in message
+        assert "property 'tags'" in message
+
+    def test_both_descriptions_survive(self) -> None:
+        vertex = Vertex(
+            name="user",
+            properties=[
+                Field(name="id"),
+                Field(name="email", description="Work address."),
+                Field(name="email", description="Login handle."),
+            ],
+            identity=["id"],
+        )
+        email = next(f for f in vertex.properties if f.name == "email")
+        assert email.description == "Work address.\n\nLogin handle."

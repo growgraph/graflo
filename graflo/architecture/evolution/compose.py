@@ -13,13 +13,16 @@ from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.contract.provenance import ManifestMetadata
 from graflo.architecture.graph_types import EdgeId
 from graflo.architecture.schema.core import CoreSchema
-from graflo.architecture.schema.database_features import DatabaseProfile
+from graflo.architecture.schema.database_features import (
+    DatabaseProfile,
+    append_index,
+)
 from graflo.architecture.schema.document import Schema
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.identity_funnel import IdentityBranch, IdentityFunnel
 from graflo.architecture.schema.metadata import GraphMetadata
 from graflo.architecture.schema.naming import NamingConvention, canonical_slug
-from graflo.architecture.schema.semantics import Semantics
+from graflo.architecture.schema.semantics import merge_semantics
 from graflo.architecture.schema.vertex import SecondaryIdentity, Vertex, VertexConfig
 
 from .apply import (
@@ -36,6 +39,7 @@ from .canonical import (
     canonical_map_to_ops,
     validate_and_complete_canonical_map,
 )
+from .db_profile import merge_default_property_values
 from .equivalence import Cluster, ClusterIndex, Side, index_clusters
 from .merge_core import (
     edge_config_from_edges,
@@ -88,6 +92,7 @@ def _resolve_name_collisions(
     *,
     name_conflict: Literal["error", "prefix_right", "fuse_right"],
     kind: str,
+    hint: str = "provide an equivalence / resource_renames",
 ) -> dict[str, str]:
     """Return rename map for *candidates* that collide with *occupied*.
 
@@ -106,8 +111,7 @@ def _resolve_name_collisions(
         if name_conflict in ("error", "fuse_right"):
             raise ValueError(
                 f"compose_manifests: {kind} name collision on {name!r}; "
-                "provide an equivalence / resource_renames, or set "
-                "name_conflict='prefix_right'"
+                f"{hint}, or set name_conflict='prefix_right'"
             )
         new_name = _free_prefixed_name(name, taken)
         renames[name] = new_name
@@ -158,7 +162,7 @@ def _apply_right_resource_policy(
 ) -> None:
     if op.resource_renames:
         apply_rename_resources(
-            right, RenameResourcesOp(resources=dict(op.resource_renames))
+            right, RenameResourcesOp(renames=dict(op.resource_renames))
         )
 
     if right.ingestion_model is None:
@@ -172,7 +176,7 @@ def _apply_right_resource_policy(
         kind="resource",
     )
     if collisions:
-        apply_rename_resources(right, RenameResourcesOp(resources=collisions))
+        apply_rename_resources(right, RenameResourcesOp(renames=collisions))
 
 
 class ComposeNameConflictError(ValueError):
@@ -369,13 +373,13 @@ def _apply_right_schema_collision_policy(
     v_renames = _resolve_schema_collisions(
         left_names=set(left_schema.core_schema.vertex_config.vertex_set),
         right_names=sorted(right_schema.core_schema.vertex_config.vertex_set),
-        exempt=frozenset({veq.into for veq in op.vertices}),
+        exempt=frozenset({veq.into for veq in op.vertex_equivalences}),
         name_conflict=op.name_conflict,
         kind="vertex",
         equivalence_hint="VertexEquivalence",
     )
     if v_renames:
-        apply_rename_vertices(right, RenameVerticesOp(vertices=v_renames))
+        apply_rename_vertices(right, RenameVerticesOp(renames=v_renames))
 
     r_renames = _resolve_schema_collisions(
         left_names={
@@ -390,13 +394,13 @@ def _apply_right_schema_collision_policy(
                 if e.relation is not None
             }
         ),
-        exempt=frozenset({req.into for req in op.relations}),
+        exempt=frozenset({req.into for req in op.relation_equivalences}),
         name_conflict=op.name_conflict,
         kind="relation",
         equivalence_hint="RelationEquivalence",
     )
     if r_renames:
-        apply_rename_relations(right, RenameRelationsOp(relations=r_renames))
+        apply_rename_relations(right, RenameRelationsOp(renames=r_renames))
 
 
 def _member_state(
@@ -433,9 +437,10 @@ def _member_state(
         ):
             keys[(side, member)] = None
         else:
-            keys[(side, member)] = tuple(
-                sorted(rename.get(f, f) for f in vertex.identity)
-            )
+            # Declared order, not sorted: a demoted key becomes a compound
+            # index whose column order is the author's. Comparisons across
+            # members are order-insensitive at the comparison site.
+            keys[(side, member)] = tuple(rename.get(f, f) for f in vertex.identity)
     return keys, names
 
 
@@ -599,7 +604,7 @@ def _composed_identity(
         for member in cluster.members(side)
         if (fields := member_keys.get((side, member))) is not None
     ]
-    plain_keys = {fields for _side, _member, fields in plain_members}
+    plain_keys = {frozenset(fields) for _side, _member, fields in plain_members}
     if len(plain_keys) > 1:
         detail = "; ".join(
             f"{side}:{member}={list(fields)}" for side, member, fields in plain_members
@@ -657,14 +662,15 @@ def _cluster_retire_ops(
     """
     if cluster.declaration.identity is None or cluster.declaration.retire != "demote":
         return []
-    secondary: dict[tuple[str, ...], SecondaryIdentity] = {}
+    secondary: dict[frozenset[str], SecondaryIdentity] = {}
     for side in ("left", "right"):
         for member in cluster.members(side):
             fields = member_keys.get((side, member))
             if not fields or frozenset(fields) == primary_fields:
                 continue
+            # First member to declare a field-set fixes its column order and name.
             secondary.setdefault(
-                fields,
+                frozenset(fields),
                 SecondaryIdentity(name=f"by_{'_'.join(fields)}", fields=list(fields)),
             )
     if not secondary:
@@ -672,15 +678,6 @@ def _cluster_retire_ops(
     return [
         AddSecondaryIdentitiesOp(additions={cluster.into: list(secondary.values())})
     ]
-
-
-def _union_strings(values: Iterable[str]) -> list[str]:
-    """Order-preserving de-duplication, for the list-valued metadata fields."""
-    out: list[str] = []
-    for value in values:
-        if value and value not in out:
-            out.append(value)
-    return out
 
 
 def _fold_name(left: str | None, right: str | None) -> str | None:
@@ -695,27 +692,6 @@ def _fold_description(left: str | None, right: str | None) -> str | None:
     if left and right and left != right:
         return f"{left}\n\n{right}"
     return left or right
-
-
-def _merge_semantics(
-    left: Semantics | None, right: Semantics | None
-) -> Semantics | None:
-    """Union two semantic anchor blocks.
-
-    ``exact_match`` and ``synonyms`` are sets of claims and simply union.
-    ``iri`` is single-valued and cannot: a schema composed from one denoting
-    ``schema.org/Person`` and one denoting ``foaf:Agent`` denotes neither
-    exactly, so a disagreement clears it rather than silently electing the left
-    side's concept as the composed schema's meaning.
-    """
-    if left is None or right is None:
-        source = left if right is None else right
-        return source.model_copy(deep=True) if source is not None else None
-    return Semantics(
-        iri=left.iri if left.iri == right.iri else None,
-        exact_match=_union_strings(list(left.exact_match) + list(right.exact_match)),
-        synonyms=_union_strings(list(left.synonyms) + list(right.synonyms)),
-    )
 
 
 def _merge_naming(
@@ -753,7 +729,7 @@ def _merge_graph_metadata(left: GraphMetadata, right: GraphMetadata) -> GraphMet
         name=_fold_name(left.name, right.name) or left.name,
         version=left.version,
         description=_fold_description(left.description, right.description),
-        semantics=_merge_semantics(left.semantics, right.semantics),
+        semantics=merge_semantics(left.semantics, right.semantics),
         naming=_merge_naming(left.naming, right.naming),
         provenance=None,
     )
@@ -782,11 +758,47 @@ def _merge_manifest_metadata(
     return ManifestMetadata(name=name, description=description)
 
 
+def _merge_declared_scalar(
+    left: DatabaseProfile,
+    right: DatabaseProfile,
+    field: str,
+) -> Any:
+    """The declared value of a single-valued profile key, refusing two of them.
+
+    Presence is read from ``skip_defaults=True`` rather than from the value:
+    ``db_flavor`` defaults to Arango, so a value-based fold cannot tell a side
+    that *declared* Arango from one that never spoke, and would let an
+    undeclared left silently retarget a right that named its backend.
+    """
+    left_declared = left.to_dict(skip_defaults=True)
+    right_declared = right.to_dict(skip_defaults=True)
+    if field not in left_declared:
+        return right_declared.get(field, getattr(left, field))
+    if field not in right_declared:
+        return left_declared[field]
+    if left_declared[field] != right_declared[field]:
+        raise ValueError(
+            f"compose_manifests: conflicting {field}: "
+            f"{left_declared[field]!r} vs {right_declared[field]!r}"
+        )
+    return left_declared[field]
+
+
 def _merge_db_profiles(
     left: DatabaseProfile, right: DatabaseProfile
 ) -> DatabaseProfile:
+    """Fold both sides' physical profile, electing neither.
+
+    Every key is folded on its own terms. The single-valued ones
+    (``db_flavor``, ``target_namespace``) refuse a declared disagreement rather
+    than inheriting the left's, because both decide what DDL is emitted against
+    which backend -- the composed manifest cannot target two.
+    """
     data = left.to_dict(skip_defaults=False)
     right_data = right.to_dict(skip_defaults=False)
+
+    data["db_flavor"] = _merge_declared_scalar(left, right, "db_flavor")
+    data["target_namespace"] = _merge_declared_scalar(left, right, "target_namespace")
 
     vs = dict(data.get("vertex_storage_names") or {})
     for k, v in (right_data.get("vertex_storage_names") or {}).items():
@@ -798,14 +810,25 @@ def _merge_db_profiles(
         vs[k] = v
     data["vertex_storage_names"] = vs
 
-    vi = {k: list(v) for k, v in (data.get("vertex_indexes") or {}).items()}
-    for k, vlist in (right_data.get("vertex_indexes") or {}).items():
-        vi.setdefault(k, []).extend(list(vlist))
-    data["vertex_indexes"] = vi
+    vi = {k: list(v) for k, v in (left.vertex_indexes or {}).items()}
+    for k, indexes in (right.vertex_indexes or {}).items():
+        merged_indexes = vi.setdefault(k, [])
+        for index in indexes:
+            append_index(merged_indexes, index, owner=f"vertex {k!r}")
+    data["vertex_indexes"] = {
+        k: [ix.to_dict(skip_defaults=False) for ix in v] for k, v in vi.items()
+    }
 
     edge_specs = list(data.get("edge_specs") or [])
     edge_specs.extend(list(right_data.get("edge_specs") or []))
     data["edge_specs"] = edge_specs
+
+    defaults = merge_default_property_values(
+        left.default_property_values, right.default_property_values
+    )
+    data["default_property_values"] = (
+        None if defaults is None else defaults.to_dict(skip_defaults=False)
+    )
 
     return _revalidate_db_profile(DatabaseProfile.model_validate(data))
 
@@ -977,28 +1000,16 @@ def _union_bindings(
     left_connectors = list(left_data.get("connectors") or [])
     right_connectors = list(right_data.get("connectors") or [])
     left_names = {n for c in left_connectors if (n := _connector_name(c)) is not None}
-    rename_connectors: dict[str, str] = {}
-    for connector in right_connectors:
-        name = _connector_name(connector)
-        if name is None or name not in left_names:
-            if name is not None:
-                left_names.add(name)
-            continue
-        if name_conflict == "error":
-            raise ValueError(
-                f"compose_manifests: connector name collision on {name!r}; "
-                "rename before compose or set name_conflict='prefix_right'"
-            )
-        new_name = _prefixed(name)
-        while new_name in left_names:
-            new_name = _prefixed(new_name)
-        rename_connectors[name] = new_name
-        left_names.add(new_name)
-        if isinstance(connector, dict):
-            connector["name"] = new_name
-        else:
-            # Re-serialize path: mutate via dict rebuild below
-            pass
+    right_names = [n for c in right_connectors if (n := _connector_name(c)) is not None]
+    # Connectors are addresses, like resources: the same exact-match policy,
+    # the same ordinal disambiguation, and ``fuse_right`` behaves as ``error``.
+    rename_connectors = _resolve_name_collisions(
+        left_names,
+        right_names,
+        name_conflict=name_conflict,
+        kind="connector",
+        hint="rename before compose",
+    )
 
     if rename_connectors:
         # Rebuild right connectors/bindings with renamed connector names.
@@ -1172,7 +1183,7 @@ def compose_manifests(
     )
 
     side_maps = validate_and_complete_canonical_map(
-        op, left=out_left, right=out_right, canonical_maps=maps
+        op, left=out_left, right=out_right, canonical_maps=maps, index=index
     )
     _check_member_existence(
         index,
@@ -1321,7 +1332,7 @@ def _apply_identity_alignments(
                     f"compose_manifests: identity alignment vertex "
                     f"{alignment.vertex!r} is not in the composed union"
                 )
-        cluster = next((c for c in index.vertices if c.into == alignment.vertex), None)
+        cluster = index.cluster_for_label(alignment.vertex)
         cluster_members = (
             {"left": set(cluster.left), "right": set(cluster.right)}
             if cluster is not None

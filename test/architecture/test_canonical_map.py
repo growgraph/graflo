@@ -229,7 +229,7 @@ class TestCanonicalMapToOps:
         assert merge.sources == ["a", "b"]
         assert merge.into == "r"
         assert isinstance(rename, RenameRelationsOp)
-        assert rename.relations == {"c": "d"}
+        assert rename.renames == {"c": "d"}
 
 
 class TestValidateAndCompleteCanonicalMap:
@@ -247,7 +247,7 @@ class TestValidateAndCompleteCanonicalMap:
 
     def test_valid_op_passes_and_composes(self) -> None:
         op = ComposeManifestsOp(
-            vertices=[
+            vertex_equivalences=[
                 VertexEquivalence(
                     left="Company",
                     right="Org",
@@ -276,14 +276,18 @@ class TestValidateAndCompleteCanonicalMap:
 
     def test_stale_class_name_raises(self) -> None:
         op = ComposeManifestsOp(
-            vertices=[VertexEquivalence(left="Firm", right="Org", into="Firm")]
+            vertex_equivalences=[
+                VertexEquivalence(left="Firm", right="Org", into="Firm")
+            ]
         )
         with pytest.raises(ComposeCanonicalConflictError, match="stale class name"):
             self._validate(op)
 
     def test_into_re_targets_canonical_class_raises(self) -> None:
         op = ComposeManifestsOp(
-            vertices=[VertexEquivalence(left="Company", right="Org", into="Party")]
+            vertex_equivalences=[
+                VertexEquivalence(left="Company", right="Org", into="Party")
+            ]
         )
         with pytest.raises(
             ComposeCanonicalConflictError, match="canonical vertex re-target"
@@ -292,7 +296,7 @@ class TestValidateAndCompleteCanonicalMap:
 
     def test_stale_property_name_raises(self) -> None:
         op = ComposeManifestsOp(
-            vertices=[
+            vertex_equivalences=[
                 VertexEquivalence(
                     left="Company",
                     right="Org",
@@ -308,7 +312,7 @@ class TestValidateAndCompleteCanonicalMap:
 
     def test_property_retarget_raises(self) -> None:
         op = ComposeManifestsOp(
-            vertices=[
+            vertex_equivalences=[
                 VertexEquivalence(
                     left="Company",
                     right="Org",
@@ -341,7 +345,7 @@ class TestValidateAndCompleteCanonicalMap:
         # Declares the composed identity explicitly so this fixture isn't
         # also exercising the (separately tested) identity-disagreement check.
         return ComposeManifestsOp(
-            vertices=[
+            vertex_equivalences=[
                 VertexEquivalence(
                     left="Company",
                     right=["Org", "Branch"],
@@ -397,7 +401,7 @@ class TestValidateAndCompleteCanonicalMap:
     def test_left_collapse_completes_with_ack(self) -> None:
         # One n-ary cluster: {Company, Deal} ~ {Org, Branch} -> Company.
         op = ComposeManifestsOp(
-            vertices=[
+            vertex_equivalences=[
                 VertexEquivalence(
                     left=["Company", "Deal"], right=["Org", "Branch"], into="Company"
                 )
@@ -416,7 +420,7 @@ class TestValidateAndCompleteCanonicalMap:
     def test_left_collapse_without_ack_raises_at_construction(self) -> None:
         with pytest.raises(ValueError, match="allow_merges"):
             ComposeManifestsOp(
-                vertices=[
+                vertex_equivalences=[
                     VertexEquivalence(
                         left=["Company", "Deal"],
                         right=["Org", "Branch"],
@@ -427,7 +431,9 @@ class TestValidateAndCompleteCanonicalMap:
 
     def test_completion_infers_right_peer(self) -> None:
         op = ComposeManifestsOp(
-            vertices=[VertexEquivalence(left="Company", right="Org", into="Company")]
+            vertex_equivalences=[
+                VertexEquivalence(left="Company", right="Org", into="Company")
+            ]
         )
         side_maps = validate_and_complete_canonical_map(
             op,
@@ -446,7 +452,9 @@ class TestValidateAndCompleteCanonicalMap:
         right = apply_evolution(_right_b_manifest(), canonical_map_to_ops(right_cm))
         left = _source_a_manifest()
         op = ComposeManifestsOp(
-            vertices=[VertexEquivalence(left="Firm", right="Company", into="Company")]
+            vertex_equivalences=[
+                VertexEquivalence(left="Firm", right="Company", into="Company")
+            ]
         )
         side_maps = validate_and_complete_canonical_map(
             op,
@@ -463,7 +471,7 @@ class TestValidateAndCompleteCanonicalMap:
         right = apply_evolution(_right_b_manifest(), canonical_map_to_ops(right_cm))
         left = self._canonical_a()
         op = ComposeManifestsOp(
-            vertices=[
+            vertex_equivalences=[
                 VertexEquivalence(
                     left="Company",
                     right="Company",

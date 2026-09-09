@@ -8,6 +8,8 @@ to the base must reproduce the target, verified by content hash.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from graflo.architecture.contract import GraphManifest
@@ -30,19 +32,24 @@ def _manifest(
     *,
     edges: list[dict] | None = None,
     vertex_indexes: dict | None = None,
+    edge_specs: list[dict] | None = None,
+    db_profile: dict | None = None,
     resources: list[dict] | None = None,
 ) -> GraphManifest:
-    payload: dict = {
-        "schema": {
-            "metadata": {"name": "autogen-demo", "version": "1.0.0"},
-            "graph": {
-                "vertex_config": {"vertices": vertices},
-                "edge_config": {"edges": edges or []},
-            },
-        }
+    schema: dict[str, Any] = {
+        "metadata": {"name": "autogen-demo", "version": "1.0.0"},
+        "graph": {
+            "vertex_config": {"vertices": vertices},
+            "edge_config": {"edges": edges or []},
+        },
     }
-    if vertex_indexes is not None:
-        payload["schema"]["db_profile"] = {"vertex_indexes": vertex_indexes}
+    if vertex_indexes is not None or edge_specs is not None or db_profile is not None:
+        schema["db_profile"] = {
+            "vertex_indexes": vertex_indexes or {},
+            "edge_specs": edge_specs or [],
+            **(db_profile or {}),
+        }
+    payload: dict[str, Any] = {"schema": schema}
     if resources is not None:
         payload["ingestion_model"] = {"resources": resources}
     return GraphManifest.model_validate(payload)
@@ -122,6 +129,34 @@ class TestReplayInvariant:
         )
         assert [op.op for op in ops] == ["remove_vertex_indexes"]
 
+    def test_an_edge_index_diff_replays(self) -> None:
+        """`edge_specs` is a list; the differ must read it as one."""
+        spec = {**PLACES, "indexes": [{"fields": ["when"]}]}
+        ops = _assert_replays(
+            _manifest([PARTY, ORDER], edges=[PLACES], edge_specs=[PLACES]),
+            _manifest([PARTY, ORDER], edges=[PLACES], edge_specs=[spec]),
+        )
+        assert [op.op for op in ops] == ["add_edge_indexes"]
+        ops = _assert_replays(
+            _manifest([PARTY, ORDER], edges=[PLACES], edge_specs=[spec]),
+            _manifest([PARTY, ORDER], edges=[PLACES], edge_specs=[PLACES]),
+        )
+        assert [op.op for op in ops] == ["remove_edge_indexes"]
+
+    def test_an_edge_index_diff_addresses_the_purpose_variant(self) -> None:
+        """A `purpose` variant is its own spec; the diff must not fold it onto the base."""
+        base_spec = {**PLACES, "indexes": [{"fields": ["when"]}]}
+        variant = {**PLACES, "purpose": "audit"}
+        indexed_variant = {**variant, "indexes": [{"fields": ["when"]}]}
+        ops = _assert_replays(
+            _manifest([PARTY, ORDER], edges=[PLACES], edge_specs=[base_spec, variant]),
+            _manifest(
+                [PARTY, ORDER], edges=[PLACES], edge_specs=[base_spec, indexed_variant]
+            ),
+        )
+        assert [op.op for op in ops] == ["add_edge_indexes"]
+        assert [entry.purpose for entry in ops[0].edges] == ["audit"]
+
     def test_a_compound_change_replays(self) -> None:
         base = _manifest([PARTY, ORDER], edges=[PLACES])
         target = _manifest(
@@ -144,6 +179,139 @@ class TestReplayInvariant:
 
         assert "add_vertices" in {op.op for op in ops}
         assert "remove_vertex_properties" in {op.op for op in ops}
+
+
+INVOICE = {"name": "invoice", "properties": ["inv"], "identity": ["inv"]}
+BILLS = {"source": "order", "target": "invoice", "relation": "places"}
+
+
+class TestEdgePropertiesAreAddressedPerRelation:
+    """`add/remove_edge_properties` apply to every edge on a relation."""
+
+    def test_a_gain_on_only_some_sibling_edges_is_reported_not_emitted(self) -> None:
+        base = _manifest([PARTY, ORDER, INVOICE], edges=[PLACES, BILLS])
+        target = _manifest(
+            [PARTY, ORDER, INVOICE],
+            edges=[{**PLACES, "properties": ["p1"]}, {**BILLS, "properties": ["p2"]}],
+        )
+        ops, warnings = diff_manifests(base, target)
+        assert not any(op.op == "add_edge_properties" for op in ops)
+        assert [w for w in warnings if "sibling" in w] == [
+            (
+                "relation 'places': property 'p1' differs between sibling edges; "
+                "add/remove_edge_properties address a relation, not one edge"
+            ),
+            (
+                "relation 'places': property 'p2' differs between sibling edges; "
+                "add/remove_edge_properties address a relation, not one edge"
+            ),
+        ]
+        _, verified = diff_manifests_verified(base, target)
+        assert any(
+            "not expressible" in w or "does not reproduce" in w for w in verified
+        )
+
+    def test_a_gain_on_every_sibling_edge_replays(self) -> None:
+        base = _manifest([PARTY, ORDER, INVOICE], edges=[PLACES, BILLS])
+        target = _manifest(
+            [PARTY, ORDER, INVOICE],
+            edges=[{**PLACES, "properties": ["p"]}, {**BILLS, "properties": ["p"]}],
+        )
+        ops = _assert_replays(base, target)
+        assert [op.op for op in ops] == ["add_edge_properties"]
+        assert ops[0].additions == {"places": ["p"]}
+
+    def test_a_relation_less_edge_change_is_reported(self) -> None:
+        bare = {"source": "party", "target": "order"}
+        base = _manifest([PARTY, ORDER], edges=[bare])
+        target = _manifest([PARTY, ORDER], edges=[{**bare, "properties": ["p"]}])
+        _, warnings = diff_manifests(base, target)
+        assert any("has no relation" in w for w in warnings)
+
+
+class TestTypedAndGroundedFieldsReplay:
+    def test_a_typed_new_vertex_property_replays_with_its_type(self) -> None:
+        widened = {
+            **PARTY,
+            "properties": ["id", "name", {"name": "amt", "type": "FLOAT"}],
+        }
+        ops = _assert_replays(_manifest([PARTY]), _manifest([widened]))
+        assert [op.op for op in ops] == ["add_vertex_properties"]
+        (entry,) = ops[0].additions["party"]
+        assert entry.name == "amt" and entry.type == "FLOAT"
+
+    def test_a_typed_new_edge_property_replays_with_its_type(self) -> None:
+        base = _manifest([PARTY, ORDER], edges=[PLACES])
+        target = _manifest(
+            [PARTY, ORDER],
+            edges=[{**PLACES, "properties": [{"name": "amt", "type": "FLOAT"}]}],
+        )
+        ops = _assert_replays(base, target)
+        assert [op.op for op in ops] == ["add_edge_properties"]
+
+    def test_an_edge_field_type_change_replays(self) -> None:
+        base = _manifest([PARTY, ORDER], edges=[{**PLACES, "properties": ["when"]}])
+        target = _manifest(
+            [PARTY, ORDER],
+            edges=[{**PLACES, "properties": [{"name": "when", "type": "INT"}]}],
+        )
+        ops = _assert_replays(base, target)
+        assert [op.op for op in ops] == ["change_field_types"]
+        assert ops[0].edges["places"]["when"].type == "INT"
+
+    def test_a_vertex_grounding_change_replays_and_clears(self) -> None:
+        grounded = {**PARTY, "semantics": {"iri": "https://schema.org/Organization"}}
+        ops = _assert_replays(_manifest([PARTY]), _manifest([grounded]))
+        assert [op.op for op in ops] == ["set_vertex_semantics"]
+        ops = _assert_replays(_manifest([grounded]), _manifest([PARTY]))
+        assert [op.op for op in ops] == ["set_vertex_semantics"]
+        assert ops[0].semantics == {"party": None}
+
+    def test_a_field_grounding_change_replays(self) -> None:
+        grounded = {
+            **PARTY,
+            "properties": [
+                "id",
+                {"name": "name", "semantics": {"iri": "https://schema.org/name"}},
+            ],
+        }
+        ops = _assert_replays(_manifest([PARTY]), _manifest([grounded]))
+        assert [op.op for op in ops] == ["set_field_semantics"]
+
+    def test_an_edge_property_grounding_change_replays(self) -> None:
+        base = _manifest([PARTY, ORDER], edges=[{**PLACES, "properties": ["when"]}])
+        target = _manifest(
+            [PARTY, ORDER],
+            edges=[
+                {
+                    **PLACES,
+                    "properties": [{"name": "when", "semantics": {"unit": "s"}}],
+                }
+            ],
+        )
+        ops = _assert_replays(base, target)
+        assert [op.op for op in ops] == ["set_field_semantics"]
+        assert ops[0].targets[0].edge_id() == ("party", "order", "places")
+
+    def test_edge_groundings_are_grouped_by_value(self) -> None:
+        base = _manifest([PARTY, ORDER, INVOICE], edges=[PLACES, BILLS])
+        target = _manifest(
+            [PARTY, ORDER, INVOICE],
+            edges=[
+                {**PLACES, "semantics": {"iri": "x:a"}},
+                {**BILLS, "semantics": {"iri": "x:b"}},
+            ],
+        )
+        ops = _assert_replays(base, target)
+        assert [op.op for op in ops] == ["set_edge_semantics", "set_edge_semantics"]
+        assert {op.semantics.iri for op in ops} == {"x:a", "x:b"}
+
+
+def test_a_profile_difference_no_op_expresses_is_reported() -> None:
+    base = _manifest([PARTY], db_profile={"vertex_storage_names": {"party": "p"}})
+    target = _manifest([PARTY], db_profile={"vertex_storage_names": {"party": "q"}})
+    _, warnings = diff_manifests(base, target)
+    assert any("db_profile differs in ['vertex_storage_names']" in w for w in warnings)
 
 
 class TestOrdering:
@@ -252,9 +420,27 @@ class TestVerification:
             ],
         )
 
-        _, warnings = diff_manifests_verified(base, target)
+        ops = _assert_replays(base, target)
+        assert [op.op for op in ops] == ["add_resources"]
+        assert [r.name for r in ops[0].resources] == ["extra"]
 
-        assert any("resources added" in w for w in warnings)
+        ops = _assert_replays(target, base)
+        assert [op.op for op in ops] == ["remove_resources"]
+        assert ops[0].names == ["extra"]
+
+    def test_a_pipeline_edit_is_reported_not_approximated(self) -> None:
+        base = _manifest(
+            [PARTY, ORDER],
+            resources=[{"name": "src", "pipeline": [{"vertex": "party"}]}],
+        )
+        target = _manifest(
+            [PARTY, ORDER],
+            resources=[
+                {"name": "src", "pipeline": [{"vertex": "party"}, {"vertex": "order"}]}
+            ],
+        )
+        _, warnings = diff_manifests(base, target)
+        assert any("resource 'src' differs" in w for w in warnings)
 
     def test_a_resource_rename_hint_replays(self) -> None:
         base = _manifest(
@@ -320,3 +506,67 @@ class TestSerializableOutput:
 )
 def test_replay_invariant_over_a_corpus(target_vertices: list[dict]) -> None:
     _assert_replays(_manifest([PARTY]), _manifest(target_vertices))
+
+
+class TestListItemTypeIsVisible:
+    """A LIST whose element type changed.
+
+    ``LIST<STRING>`` and ``LIST<INT>`` share a ``type``, so a detector keyed on
+    ``type`` alone reported no change for an edit that rewrites every stored
+    value -- the one change most in need of a migration.
+    """
+
+    @staticmethod
+    def _manifest(item_type: str, *, on_edge: bool = False) -> GraphManifest:
+        tags = {"name": "tags", "type": "LIST", "item_type": item_type}
+        return GraphManifest.model_validate(
+            {
+                "schema": {
+                    "metadata": {"name": "m", "version": "1.0.0"},
+                    "graph": {
+                        "vertex_config": {
+                            "vertices": [
+                                {
+                                    "name": "party",
+                                    "properties": ["id"] if on_edge else ["id", tags],
+                                    "identity": ["id"],
+                                },
+                                {
+                                    "name": "asset",
+                                    "properties": ["id"],
+                                    "identity": ["id"],
+                                },
+                            ]
+                        },
+                        "edge_config": {
+                            "edges": [
+                                {
+                                    "source": "party",
+                                    "target": "asset",
+                                    "relation": "holds",
+                                    "properties": [tags] if on_edge else [],
+                                }
+                            ]
+                        },
+                    },
+                }
+            }
+        )
+
+    def test_a_vertex_list_item_type_change_produces_an_op(self) -> None:
+        ops, _ = diff_manifests(self._manifest("STRING"), self._manifest("INT"))
+        specs = [o.to_dict(skip_defaults=True) for o in ops]
+        assert specs == [
+            {"vertices": {"party": {"tags": {"type": "LIST", "item_type": "INT"}}}}
+        ]
+
+    def test_an_edge_list_item_type_change_produces_an_op(self) -> None:
+        ops, _ = diff_manifests(
+            self._manifest("STRING", on_edge=True), self._manifest("INT", on_edge=True)
+        )
+        assert ops, "an edge LIST item_type change produced no op"
+        assert any("INT" in str(o.to_dict(skip_defaults=True)) for o in ops)
+
+    def test_no_change_produces_no_op(self) -> None:
+        ops, _ = diff_manifests(self._manifest("STRING"), self._manifest("STRING"))
+        assert ops == []

@@ -11,6 +11,7 @@ import typing
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from graflo.architecture.evolution import ops as ops_module
 from graflo.architecture.evolution.codec import (
@@ -80,15 +81,15 @@ OP_PAYLOADS: dict[str, dict] = {
     "rename_vertex_properties": {"renames": {"party": {"mail": "email"}}},
     "remove_vertex_properties": {"removals": {"party": ["scratch"]}},
     "add_vertex_properties": {"additions": {"party": ["nickname"]}},
-    "rename_vertices": {"vertices": {"person": "party"}},
-    "rename_relations": {"relations": {"buys": "purchases"}},
-    "rename_resources": {"resources": {"src": "crm"}},
+    "rename_vertices": {"renames": {"person": "party"}},
+    "rename_relations": {"renames": {"buys": "purchases"}},
+    "rename_resources": {"renames": {"src": "crm"}},
     "remove_edges": {"relations": ["obsolete"]},
     "merge_edges": {"sources": ["old"], "into": "new"},
     "rename_edge_properties": {"renames": {"purchases": {"amt": "amount"}}},
     "remove_edge_properties": {"removals": {"purchases": ["scratch"]}},
     "add_edge_properties": {"additions": {"purchases": ["note"]}},
-    "add_inverse_edges": {"relations": {"purchases": "purchased_by"}},
+    "add_inverse_edges": {"inverses": {"purchases": "purchased_by"}},
     "add_resource_transforms": {
         "additions": {
             "crm": [
@@ -110,11 +111,102 @@ OP_PAYLOADS: dict[str, dict] = {
     "ensure_extracted_fields": {
         "additions": {"crm": [{"vertex": "party", "fields": ["local_key"], "at": [1]}]}
     },
+    "add_resources": {
+        "resources": [{"name": "crm", "pipeline": [{"vertex": "party"}]}]
+    },
+    "remove_resources": {"names": ["crm"]},
     "project_manifest": {"keep_vertices": ["party"]},
     "replace_identity": {
-        "vertices": {"party": {"to": {"mode": "natural", "identity": ["email"]}}}
+        "replacements": {"party": {"to": {"mode": "natural", "identity": ["email"]}}}
     },
     "sanitize": {"db_flavor": "neo4j"},
+}
+
+
+#: A manifest carrying an ingestion block, against which every schema-only op
+#: in ``SCHEMA_ONLY_PAYLOADS`` applies cleanly.
+_PURCHASES = {"source": "party", "target": "order", "relation": "purchases"}
+SCHEMA_ONLY_FIXTURE: dict = {
+    "schema": {
+        "metadata": {"name": "codec-demo", "version": "1.0.0"},
+        "graph": {
+            "vertex_config": {
+                "vertices": [
+                    {
+                        "name": "party",
+                        "properties": ["id", "email", "amount"],
+                        "identity": ["id"],
+                        "secondary_identities": [
+                            {"name": "by_email", "fields": ["email"]}
+                        ],
+                    },
+                    {"name": "order", "properties": ["oid"], "identity": ["oid"]},
+                    {"name": "invoice", "properties": ["inv"], "identity": ["inv"]},
+                ]
+            },
+            "edge_config": {
+                "edges": [
+                    {**_PURCHASES, "properties": ["ref", "note"]},
+                    {"source": "order", "target": "invoice", "relation": "billed"},
+                ]
+            },
+        },
+        "db_profile": {
+            "vertex_indexes": {"party": [{"fields": ["amount"]}]},
+            "edge_specs": [{**_PURCHASES, "indexes": [{"fields": ["ref"]}]}],
+        },
+    },
+    "ingestion_model": {
+        "resources": [
+            {
+                "name": "crm",
+                "pipeline": [
+                    {"vertex": "party"},
+                    {"vertex": "order"},
+                    {"source": "party", "target": "order", "relation": "purchases"},
+                ],
+            }
+        ]
+    },
+}
+
+#: One applicable payload per op that ``INGESTION_REWRITING_OPS`` leaves out.
+SCHEMA_ONLY_PAYLOADS: dict[str, dict] = {
+    "add_edge_indexes": {"edges": [{**_PURCHASES, "indexes": [{"fields": ["note"]}]}]},
+    "add_edge_properties": {"additions": {"purchases": ["memo"]}},
+    "add_edges": {
+        "edges": [{"source": "party", "target": "invoice", "relation": "pays"}]
+    },
+    "add_secondary_identities": {
+        "additions": {"party": [{"name": "by_amount", "fields": ["amount"]}]}
+    },
+    "add_vertex_indexes": {"indexes": {"party": [{"fields": ["email", "amount"]}]}},
+    "add_vertex_properties": {"additions": {"party": ["nickname"]}},
+    "add_vertices": {
+        "vertices": [{"name": "audit", "properties": ["aid"], "identity": ["aid"]}]
+    },
+    "change_field_types": {"vertices": {"party": {"amount": {"type": "FLOAT"}}}},
+    "remove_edge_indexes": {"edges": [{**_PURCHASES, "fields": [["ref"]]}]},
+    "remove_secondary_identities": {"removals": {"party": ["by_email"]}},
+    "remove_vertex_indexes": {"indexes": {"party": [["amount"]]}},
+    "replace_edge_identities": {"edges": [{**_PURCHASES, "identities": [["ref"]]}]},
+    "set_edge_directed": {"edges": [_PURCHASES], "directed": False},
+    "set_edge_semantics": {
+        "edges": [_PURCHASES],
+        "semantics": {"iri": "https://schema.org/seller"},
+    },
+    "set_field_semantics": {
+        "targets": [
+            {
+                "vertex": "party",
+                "field": "email",
+                "semantics": {"iri": "https://schema.org/email"},
+            }
+        ]
+    },
+    "set_vertex_semantics": {
+        "semantics": {"party": {"iri": "https://schema.org/Organization"}}
+    },
 }
 
 
@@ -126,6 +218,123 @@ def _all_ops() -> list:
     return [
         op_from_dict({"op": name, **payload}) for name, payload in OP_PAYLOADS.items()
     ]
+
+
+#: Field names that changed to say what they hold; the old spelling still parses.
+LEGACY_FIELD_NAMES: list[tuple[str, str, str, Any]] = [
+    ("rename_vertices", "vertices", "renames", {"a": "b"}),
+    ("rename_relations", "relations", "renames", {"a": "b"}),
+    ("rename_resources", "resources", "renames", {"a": "b"}),
+    ("add_inverse_edges", "relations", "inverses", {"a": "b"}),
+    (
+        "replace_identity",
+        "vertices",
+        "replacements",
+        {"party": {"to": {"mode": "natural", "identity": ["email"]}}},
+    ),
+]
+
+
+class TestLegacyFieldNames:
+    @pytest.mark.parametrize(("op", "old", "new", "value"), LEGACY_FIELD_NAMES)
+    def test_the_old_key_parses_and_the_new_key_serializes(
+        self, op: str, old: str, new: str, value: Any
+    ) -> None:
+        legacy = op_from_dict({"op": op, old: value})
+        current = op_from_dict({"op": op, new: value})
+        assert legacy == current
+        assert new in ops_to_dicts([legacy])[0]
+        assert old not in ops_to_dicts([legacy])[0]
+
+    def test_compose_equivalence_lists_accept_their_old_names(self) -> None:
+        legacy = ComposeManifestsOp.model_validate(
+            {
+                "vertices": [{"left": "A", "right": "B", "into": "A"}],
+                "relations": [{"left": "r", "right": "s", "into": "r"}],
+            }
+        )
+        assert [v.into for v in legacy.vertex_equivalences] == ["A"]
+        assert [r.into for r in legacy.relation_equivalences] == ["r"]
+        assert set(legacy.to_dict(skip_defaults=True)) >= {
+            "vertex_equivalences",
+            "relation_equivalences",
+        }
+
+
+class TestParseTimeValidation:
+    """What a serialized change set is refused on read, not on replay."""
+
+    @pytest.mark.parametrize(
+        ("name", "field"),
+        [
+            ("rename_vertex_properties", "renames"),
+            ("remove_vertex_properties", "removals"),
+            ("add_vertex_properties", "additions"),
+            ("rename_edge_properties", "renames"),
+            ("remove_edge_properties", "removals"),
+            ("add_edge_properties", "additions"),
+            ("rename_vertices", "vertices"),
+            ("rename_relations", "relations"),
+            ("rename_resources", "resources"),
+            ("add_inverse_edges", "relations"),
+        ],
+    )
+    def test_an_empty_map_is_rejected(self, name: str, field: str) -> None:
+        """An empty op used to reach merge3's catch-all and conflict with everything."""
+        with pytest.raises(ValidationError):
+            op_from_dict({"op": name, field: {}})
+
+    @pytest.mark.parametrize("name", ["merge_vertices", "merge_edges"])
+    def test_a_merge_rejects_into_among_its_sources(self, name: str) -> None:
+        with pytest.raises(ValidationError, match="must not appear in `sources`"):
+            op_from_dict({"op": name, "sources": ["a", "b"], "into": "a"})
+        with pytest.raises(ValidationError, match="more than once"):
+            op_from_dict({"op": name, "sources": ["a", "a"], "into": "b"})
+
+    def test_add_inverse_edges_rejects_a_collapsing_or_self_map(self) -> None:
+        with pytest.raises(ValidationError, match="not injective"):
+            op_from_dict({"op": "add_inverse_edges", "inverses": {"a": "x", "b": "x"}})
+        with pytest.raises(ValidationError, match="its own inverse"):
+            op_from_dict({"op": "add_inverse_edges", "inverses": {"a": "a"}})
+
+    def test_index_lists_must_be_non_empty(self) -> None:
+        with pytest.raises(ValidationError):
+            op_from_dict({"op": "add_vertex_indexes", "indexes": {"party": []}})
+        with pytest.raises(ValidationError):
+            op_from_dict({"op": "remove_vertex_indexes", "indexes": {"party": [[]]}})
+
+    def test_edge_index_entries_are_unique_and_carry_their_field(self) -> None:
+        spec = {"source": "party", "target": "order"}
+        with pytest.raises(ValidationError, match="unique"):
+            op_from_dict(
+                {
+                    "op": "add_edge_indexes",
+                    "edges": [
+                        {**spec, "indexes": [{"fields": ["a"]}]},
+                        {**spec, "indexes": [{"fields": ["b"]}]},
+                    ],
+                }
+            )
+        with pytest.raises(ValidationError, match="list no `indexes`"):
+            op_from_dict(
+                {"op": "add_edge_indexes", "edges": [{**spec, "fields": [["a"]]}]}
+            )
+        with pytest.raises(ValidationError, match="list no `fields`"):
+            op_from_dict(
+                {
+                    "op": "remove_edge_indexes",
+                    "edges": [{**spec, "indexes": [{"fields": ["a"]}]}],
+                }
+            )
+
+    def test_edge_selections_are_unique(self) -> None:
+        spec = {"source": "party", "target": "order"}
+        with pytest.raises(ValidationError, match="unique"):
+            op_from_dict(
+                {"op": "set_edge_directed", "edges": [spec, spec], "directed": True}
+            )
+        with pytest.raises(ValidationError, match="unique"):
+            op_from_dict({"op": "set_edge_semantics", "edges": [spec, spec]})
 
 
 class TestUnionCoverage:
@@ -163,6 +372,11 @@ class TestUnionCoverage:
 
         # Ops that only ever touch schema/db_profile. Listed explicitly so adding an
         # op forces a decision rather than defaulting to "schema-only".
+        # ``test_schema_only_ops_leave_the_ingestion_block_untouched`` checks the
+        # claim behaviourally for every entry that unary apply accepts.
+        # ``compose_manifests`` unions resources and bindings, but it is binary
+        # and rejected by ``apply_evolution``, so it can never reach a
+        # schema-only artifact through the guard this set feeds.
         schema_only = {
             "add_edge_indexes",
             "add_edge_properties",
@@ -174,12 +388,9 @@ class TestUnionCoverage:
             "change_field_types",
             "compose_manifests",
             "remove_edge_indexes",
-            "remove_edge_properties",
             "remove_secondary_identities",
             "remove_vertex_indexes",
-            "rename_edge_properties",
             "replace_edge_identities",
-            "retarget_edges",
             "set_edge_directed",
             "set_edge_semantics",
             "set_field_semantics",
@@ -193,15 +404,44 @@ class TestUnionCoverage:
             "INGESTION_REWRITING_OPS or to schema_only here"
         )
 
-    def test_the_vocabulary_is_thirty_five_ops(self) -> None:
+    def test_schema_only_ops_leave_the_ingestion_block_untouched(self) -> None:
+        """The schema-only claim, checked by behaviour rather than by list."""
+        from graflo.architecture.contract import GraphManifest
+        from graflo.architecture.evolution import apply_evolution
+        from graflo.architecture.evolution.hashing import ingestion_hash
+
+        manifest = GraphManifest.model_validate(SCHEMA_ONLY_FIXTURE)
+        before = ingestion_hash(manifest.ingestion_model)
+        for name, payload in SCHEMA_ONLY_PAYLOADS.items():
+            assert name not in ops_module.INGESTION_REWRITING_OPS
+            out = apply_evolution(
+                manifest,
+                [op_from_dict({"op": name, **payload})],
+                bump_version=False,
+                finish_init=False,
+            )
+            assert ingestion_hash(out.ingestion_model) == before, (
+                f"{name} rewrote the ingestion block but is classified schema-only"
+            )
+
+    def test_every_schema_only_op_has_a_behavioural_check(self) -> None:
+        declared = {cls.model_fields["op"].default for cls in _union_members()}
+        schema_only = declared - ops_module.INGESTION_REWRITING_OPS
+        assert schema_only == set(SCHEMA_ONLY_PAYLOADS), (
+            "SCHEMA_ONLY_PAYLOADS must cover exactly the ops outside "
+            "INGESTION_REWRITING_OPS"
+        )
+
+    def test_the_vocabulary_size_is_pinned(self) -> None:
+        """Adding an op means updating this on purpose, with the docs table."""
         exported = {
             name
             for name in dir(ops_module)
             if name.endswith("Op")
             and hasattr(getattr(ops_module, name), "model_fields")
         }
-        assert len(exported) == 35
-        assert len(_union_members()) == 34  # 35 minus the binary compose op
+        assert len(exported) == 37
+        assert len(_union_members()) == 36  # 37 minus the binary compose op
 
 
 class TestRoundTrip:
@@ -237,7 +477,7 @@ class TestRoundTrip:
         original = op_from_dict(
             {
                 "op": "replace_identity",
-                "vertices": {
+                "replacements": {
                     "party": {"to": {"mode": "natural", "identity": ["email"]}}
                 },
             }
@@ -245,14 +485,14 @@ class TestRoundTrip:
 
         payload = ops_to_dicts([original])[0]
 
-        assert payload["vertices"]["party"]["to"]["mode"] == "natural"
+        assert payload["replacements"]["party"]["to"]["mode"] == "natural"
         assert ops_from_dicts([payload])[0] == original
 
     def test_a_funnel_identity_target_round_trips(self) -> None:
         original = op_from_dict(
             {
                 "op": "replace_identity",
-                "vertices": {
+                "replacements": {
                     "party": {
                         "to": {
                             "mode": "funnel",
@@ -275,7 +515,7 @@ class TestRoundTrip:
         restored = ops_from_yaml(ops_to_yaml_str([original]))[0]
 
         assert restored == original
-        assert restored.vertices["party"].to.funnel.branch_ids == ["email", "phone"]
+        assert restored.replacements["party"].to.funnel.branch_ids == ["email", "phone"]
 
     def test_ops_from_yaml_accepts_a_mapping_with_an_ops_key(self) -> None:
         body = "ops:\n" + "".join(

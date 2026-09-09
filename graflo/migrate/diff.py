@@ -6,7 +6,7 @@ from typing import Any
 
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.edge import Edge
-from graflo.architecture.schema.vertex import Field, Vertex
+from graflo.architecture.schema.vertex import Field, Vertex, field_type_value
 from graflo.migrate.models import (
     MigrationOperation,
     OperationType,
@@ -16,8 +16,22 @@ from graflo.migrate.models import (
 from graflo.migrate.risk import classify_operation, is_backward_compatible_operations
 
 
-def _field_map(fields: list[Field]) -> dict[str, str | None]:
-    return {field.name: field.type for field in fields}
+def _field_map(fields: list[Field]) -> dict[str, dict[str, str | None]]:
+    """Each field's full type spec, keyed by name.
+
+    ``item_type`` belongs in the key because ``LIST`` alone is half a type: a
+    comparison on ``type`` sees ``LIST<STRING>`` and ``LIST<INT>`` as equal and
+    emits no migration for a change that rewrites every stored value. The shape
+    matches ``evolution.autogenerate._type_spec`` so the two change detectors
+    and the op payload speak one vocabulary.
+    """
+    return {
+        field.name: {
+            "type": field_type_value(field.type),
+            "item_type": field_type_value(field.item_type),
+        }
+        for field in fields
+    }
 
 
 def _vertex_index_tuples(schema: Schema, vertex_name: str) -> set[tuple]:
@@ -152,7 +166,7 @@ class SchemaDiff:
                         OperationType.ADD_VERTEX_FIELD,
                         f"vertex:{name}:field:{field_name}",
                         None,
-                        {"name": field_name, "type": new_fields[field_name]},
+                        {"name": field_name, **new_fields[field_name]},
                     )
                 )
             for field_name in sorted(old_field_names - new_field_names):
@@ -160,7 +174,7 @@ class SchemaDiff:
                     self._op(
                         OperationType.REMOVE_VERTEX_FIELD,
                         f"vertex:{name}:field:{field_name}",
-                        {"name": field_name, "type": old_fields[field_name]},
+                        {"name": field_name, **old_fields[field_name]},
                         None,
                         reversible=False,
                     )
@@ -361,7 +375,7 @@ class SchemaDiff:
                         OperationType.ADD_EDGE_FIELD,
                         f"edge:{edge_id}:field:{field_name}",
                         None,
-                        {"name": field_name, "type": new_direct[field_name]},
+                        {"name": field_name, **new_direct[field_name]},
                     )
                 )
             for field_name in sorted(old_names - new_names):
@@ -369,7 +383,7 @@ class SchemaDiff:
                     self._op(
                         OperationType.REMOVE_EDGE_FIELD,
                         f"edge:{edge_id}:field:{field_name}",
-                        {"name": field_name, "type": old_direct[field_name]},
+                        {"name": field_name, **old_direct[field_name]},
                         None,
                         reversible=False,
                     )

@@ -66,7 +66,7 @@ def test_inverse_edges_dynamic_edge_actor() -> None:
     manifest = GraphManifest.from_dict(_dynamic_manifest())
     out = apply_evolution(
         manifest,
-        [AddInverseEdgesOp(relations={"employed_by": "employs"})],
+        [AddInverseEdgesOp(inverses={"employed_by": "employs"})],
         bump_version=False,
     )
     assert out.ingestion_model is not None
@@ -90,7 +90,7 @@ def test_inverse_edges_skips_undirected() -> None:
     manifest = GraphManifest.from_dict(payload)
     out = apply_evolution(
         manifest,
-        [AddInverseEdgesOp(relations={"employed_by": "employs"})],
+        [AddInverseEdgesOp(inverses={"employed_by": "employs"})],
         bump_version=False,
     )
     assert out.graph_schema is not None
@@ -117,7 +117,7 @@ def test_inverse_edges_skips_tigergraph_reverse_edge_spec() -> None:
     manifest = GraphManifest.from_dict(payload)
     out = apply_evolution(
         manifest,
-        [AddInverseEdgesOp(relations={"employed_by": "employs"})],
+        [AddInverseEdgesOp(inverses={"employed_by": "employs"})],
         bump_version=False,
     )
     assert out.graph_schema is not None

@@ -9,6 +9,7 @@ from graflo.architecture.graph_types import EdgeId, EdgePhysicalKey, Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.database_features import (
     DatabaseProfile,
+    DefaultPropertyValues,
     EdgePhysicalSpec,
     EdgePropertyDefaults,
 )
@@ -671,3 +672,50 @@ def apply_inverse_edges_to_db_profile(
         existing_default_ids.add(inverse_id)
 
     object.__setattr__(dpv, "edges", new_defaults)
+
+
+def merge_default_property_values(
+    left: DefaultPropertyValues | None, right: DefaultPropertyValues | None
+) -> DefaultPropertyValues | None:
+    """Union two default-value blocks, refusing two defaults for one property.
+
+    A default is a physical DDL claim about one attribute of one type, so two
+    sides supplying different ones is a contradiction rather than an ordering:
+    whichever the fold elected would silently decide what a column holds for
+    every row written without that attribute.
+    """
+    if left is None or right is None:
+        source = left if right is None else right
+        return source.model_copy(deep=True) if source is not None else None
+
+    vertices: dict[str, dict[str, Any]] = {
+        name: dict(values) for name, values in left.vertices.items()
+    }
+    for name, values in right.vertices.items():
+        if name not in vertices:
+            vertices[name] = dict(values)
+            continue
+        vertices[name] = _merge_vertex_default_maps(
+            vertices[name],
+            dict(values),
+            label=f"default_property_values on vertex {name!r}",
+        )
+
+    edges: dict[EdgeId, EdgePropertyDefaults] = {}
+    for entry in list(left.edges) + list(right.edges):
+        current = edges.get(entry.edge_id)
+        if current is None:
+            edges[entry.edge_id] = entry.model_copy(deep=True)
+            continue
+        edges[entry.edge_id] = current.model_copy(
+            update={
+                "values": _merge_vertex_default_maps(
+                    dict(current.values),
+                    dict(entry.values),
+                    label=f"default_property_values on edge {entry.edge_id!r}",
+                )
+            },
+            deep=True,
+        )
+
+    return DefaultPropertyValues(vertices=vertices, edges=list(edges.values()))

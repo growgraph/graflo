@@ -2,21 +2,20 @@
 
 from __future__ import annotations
 
+import json
+import re
+from functools import reduce
+
 from graflo.architecture.graph_types import EdgeId
 from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.schema.identity_funnel import IdentityFunnel
-from graflo.architecture.schema.vertex import Field, SecondaryIdentity, Vertex
-
-
-def merge_field_pair(a: Field, b: Field) -> Field:
-    """Merge two fields with the same name; fail on incompatible types."""
-    if a.type is not None and b.type is not None and a.type != b.type:
-        raise ValueError(
-            f"Cannot merge field {a.name!r}: incompatible types {a.type!r} vs {b.type!r}"
-        )
-    merged_type = a.type if a.type is not None else b.type
-    desc = a.description if a.description else b.description
-    return Field(name=a.name, type=merged_type, description=desc)
+from graflo.architecture.schema.semantics import merge_semantics
+from graflo.architecture.schema.vertex import (
+    SecondaryIdentity,
+    Vertex,
+    merge_field_lists,
+)
+from graflo.filter.onto import FilterExpression
 
 
 def _merge_identity_funnels(
@@ -44,6 +43,14 @@ def _merge_identity_funnels(
     return first
 
 
+_POSITIONAL_SECONDARY_NAME = re.compile(r"secondary_\d+")
+
+
+def _is_positional_name(name: str | None) -> bool:
+    """Whether *name* is the auto-name ``Vertex`` assigns by list position."""
+    return name is not None and _POSITIONAL_SECONDARY_NAME.fullmatch(name) is not None
+
+
 def _merge_secondary_identities(
     vertices: list[Vertex], into_name: str, primary: list[str]
 ) -> list[SecondaryIdentity]:
@@ -51,9 +58,13 @@ def _merge_secondary_identities(
 
     A set that equals the merged primary identity is dropped rather than kept: it is
     subsumed by the primary, and ``Vertex._validated_secondary_identities`` rejects a
-    restatement of the primary outright. A name reused for two different field-sets is
-    a real conflict — edge steps select by name, so the merged vertex cannot honour
-    both — and raises.
+    restatement of the primary outright. Names are a real constraint either way —
+    edge steps select by name — so a name reused for two different field-sets
+    raises, and so does one field-set carrying two different names: the merged
+    vertex can honour only one, and dropping the other breaks every step that
+    selected it. Positional auto-names (``secondary_<n>``) carry no such claim:
+    they are dropped here and re-derived by the merged vertex, and an authored
+    name wins over one for the same field-set.
     """
     primary_set = frozenset(primary)
     by_field_set: dict[frozenset[str], SecondaryIdentity] = {}
@@ -61,8 +72,11 @@ def _merge_secondary_identities(
 
     for vertex in vertices:
         for entry in vertex.secondary_identities:
-            if entry.field_set == primary_set or entry.field_set in by_field_set:
-                continue
+            if _is_positional_name(entry.name):
+                entry = entry.model_copy(update={"name": None})
+            # The name is claimed before any subsumption check: a name that
+            # disappears because its field-set equals the primary must still
+            # not be reused for a different field-set by another source.
             if entry.name is not None:
                 claimed = names.get(entry.name)
                 if claimed is not None and claimed != entry.field_set:
@@ -72,7 +86,22 @@ def _merge_secondary_identities(
                         f"{sorted(entry.field_set)} on different sources"
                     )
                 names[entry.name] = entry.field_set
-            by_field_set[entry.field_set] = entry
+            if entry.field_set == primary_set:
+                continue
+            prior = by_field_set.get(entry.field_set)
+            if prior is None or (prior.name is None and entry.name is not None):
+                by_field_set[entry.field_set] = entry
+            elif (
+                prior.name is not None
+                and entry.name is not None
+                and prior.name != entry.name
+            ):
+                raise ValueError(
+                    f"Cannot merge into vertex '{into_name}': secondary identity "
+                    f"{sorted(entry.field_set)} is named '{prior.name}' and "
+                    f"'{entry.name}' on different sources; edge steps select by "
+                    "name, so align the names before merging"
+                )
 
     return list(by_field_set.values())
 
@@ -88,13 +117,9 @@ def merge_vertex_models(vertices: list[Vertex], into_name: str) -> Vertex:
     if not vertices:
         raise ValueError("merge_vertex_models requires at least one vertex")
 
-    props: dict[str, Field] = {}
-    for v in vertices:
-        for f in v.properties:
-            if f.name not in props:
-                props[f.name] = f
-            else:
-                props[f.name] = merge_field_pair(props[f.name], f)
+    props = merge_field_lists(
+        (f for v in vertices for f in v.properties), owner=f"vertex {into_name!r}"
+    )
 
     identity_out: list[str] = []
     seen_id: set[str] = set()
@@ -104,9 +129,18 @@ def merge_vertex_models(vertices: list[Vertex], into_name: str) -> Vertex:
                 identity_out.append(x)
                 seen_id.add(x)
 
-    filters_out: list = []
+    # Deduplicated like every other list field; compose runs this merge twice
+    # (per side, then at union), so a repeated filter would otherwise compound.
+    filters_out: list[FilterExpression] = []
+    seen_filters: set[str] = set()
     for v in vertices:
-        filters_out.extend(list(v.filters))
+        for f in v.filters:
+            key = json.dumps(
+                f.to_dict(skip_defaults=False), sort_keys=True, default=str
+            )
+            if key not in seen_filters:
+                seen_filters.add(key)
+                filters_out.append(f)
 
     descriptions = [v.description for v in vertices if v.description]
     if not descriptions:
@@ -161,7 +195,7 @@ def merge_vertex_models(vertices: list[Vertex], into_name: str) -> Vertex:
 
     return Vertex(
         name=into_name,
-        properties=list(props.values()),
+        properties=props,
         identity=identity_out,
         filters=filters_out,
         description=desc_out,
@@ -170,17 +204,25 @@ def merge_vertex_models(vertices: list[Vertex], into_name: str) -> Vertex:
         hash_identity_properties=hash_out,
         identity_funnel=funnel_out,
         secondary_identities=secondary_out,
+        semantics=reduce(merge_semantics, (v.semantics for v in vertices), None),
     )
 
 
 def merge_edge_pair(a: Edge, b: Edge) -> Edge:
-    """Merge two edges with the same :attr:`~graflo.architecture.schema.edge.Edge.edge_id`."""
-    props: dict[str, Field] = {}
-    for f in a.properties + b.properties:
-        if f.name not in props:
-            props[f.name] = f
-        else:
-            props[f.name] = merge_field_pair(props[f.name], f)
+    """Merge two edges with the same :attr:`~graflo.architecture.schema.edge.Edge.edge_id`.
+
+    ``type`` / ``by`` must agree: ``edge_id`` leaves them out so two sources can
+    describe one logical edge, but a ``DIRECT`` edge and an ``INDIRECT`` one via
+    some vertex are different physical things with no weaker-wins ordering
+    between them (unlike ``directed``), so disagreement raises rather than
+    keeping one side's silently.
+    """
+    if (a.type, a.by) != (b.type, b.by):
+        raise ValueError(
+            f"Cannot merge edge {a.edge_id!r}: sources disagree on type/by "
+            f"({a.type!r}, {a.by!r}) vs ({b.type!r}, {b.by!r})"
+        )
+    props = merge_field_lists(a.properties + b.properties, owner=f"edge {a.edge_id!r}")
 
     identities_out: list[list[str]] = []
     seen_identities: set[tuple[str, ...]] = set()
@@ -204,13 +246,14 @@ def merge_edge_pair(a: Edge, b: Edge) -> Edge:
         relation=a.relation,
         description=desc_out,
         identities=identities_out,
-        properties=list(props.values()),
+        properties=props,
         type=a.type,
         by=a.by,
         # Undirected wins: it is the weaker assertion, and treating a merged
         # undirected edge as directed would let AddInverseEdgesOp synthesize an
         # inverse that duplicates it.
         directed=a.directed and b.directed,
+        semantics=merge_semantics(a.semantics, b.semantics),
     )
 
 

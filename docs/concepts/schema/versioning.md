@@ -196,6 +196,16 @@ keyed on the **canonical** name — `order_line` and `OrderLine` occupy the same
 slot and conflict, rather than merging into two unrelated types with the data
 split between them.
 
+Edges nest under their relation: `relation/knows` contains
+`relation/knows/edge/person/company`. Ops address edges two ways — by relation
+name (`remove_edges`, `rename_relations`, `merge_edges`) and by triple
+(`set_edge_directed`, `retarget_edges`, the index and identity ops) — and
+containment is what lets the two families see each other, so removing a
+relation on one side conflicts with flipping one of its edges on the other. A
+relation-wide property edit (`relation/knows/field`) and a per-edge edit stay
+disjoint, which is right: they compose. An edge with no relation keeps its own
+root (`edge/person/company`), since no relation-addressed op can reach it.
+
 ### Determinism
 
 The same inputs produce the same merged manifest, the same conflicts in the same

@@ -9,9 +9,11 @@ from graflo.architecture.evolution import (
     AddEdgePropertiesOp,
     AddInverseEdgesOp,
     AddVertexPropertiesOp,
+    ChangeFieldTypesOp,
     MergeEdgesOp,
     RemoveEdgePropertiesOp,
     RemoveEdgesOp,
+    RemoveVertexPropertiesOp,
     RenameEdgePropertiesOp,
     RenameRelationsOp,
     RenameResourcesOp,
@@ -146,9 +148,9 @@ def test_graph_manifest_rename_entities_updates_schema_ingestion_and_bindings() 
     renamed = apply_evolution(
         manifest,
         [
-            RenameVerticesOp(vertices={"person": "author", "company": "institution"}),
-            RenameRelationsOp(relations={"works_at": "rel_works_at"}),
-            RenameResourcesOp(resources={"employees": "staff"}),
+            RenameVerticesOp(renames={"person": "author", "company": "institution"}),
+            RenameRelationsOp(renames={"works_at": "rel_works_at"}),
+            RenameResourcesOp(renames={"employees": "staff"}),
         ],
         bump_version=False,
     )
@@ -198,8 +200,8 @@ def test_apply_rename_relations_updates_schema_vertices_and_edge_relations() -> 
     renamed = apply_evolution(
         manifest,
         [
-            RenameVerticesOp(vertices={"person": "author", "company": "institution"}),
-            RenameRelationsOp(relations={"works_at": "affiliated_with"}),
+            RenameVerticesOp(renames={"person": "author", "company": "institution"}),
+            RenameRelationsOp(renames={"works_at": "affiliated_with"}),
         ],
         bump_version=False,
     )
@@ -230,6 +232,166 @@ def test_remove_edges_prunes_schema_ingestion_and_profile() -> None:
     assert resource.infer_edge_only == []
     assert resource.extra_weights == []
     assert out.graph_schema.db_profile.edge_specs[0].relation == "employee_of"
+
+
+@pytest.mark.parametrize(
+    ("vertex", "plane"),
+    [
+        (
+            {
+                "name": "team",
+                "identity": ["id"],
+                "properties": ["id", "email"],
+                "secondary_identities": [{"name": "by_email", "fields": ["email"]}],
+            },
+            "secondary identity 'by_email'",
+        ),
+        (
+            {
+                "name": "team",
+                "properties": ["email"],
+                "hash_identity_properties": ["email"],
+            },
+            "hash identity",
+        ),
+        (
+            {
+                "name": "team",
+                "properties": ["email", "code"],
+                "identity_funnel": {
+                    "branches": [
+                        {"id": "e", "fields": ["email"]},
+                        {"id": "c", "fields": ["code"]},
+                    ]
+                },
+            },
+            "identity funnel",
+        ),
+    ],
+    ids=["secondary", "hash", "funnel"],
+)
+def test_remove_vertex_properties_guards_every_identity_plane(
+    vertex: dict, plane: str
+) -> None:
+    """A removed field must not leave a key that cannot be computed or selected."""
+    payload = _sample_manifest_payload()
+    payload["schema"]["graph"]["vertex_config"]["vertices"].append(vertex)
+    manifest = GraphManifest.from_dict(payload)
+    with pytest.raises(ValueError, match=f"cannot remove {plane} fields"):
+        apply_evolution(
+            manifest,
+            [RemoveVertexPropertiesOp(removals={"team": ["email"]})],
+            bump_version=False,
+        )
+
+
+def test_change_field_types_refuses_a_list_on_an_edge_identity_token() -> None:
+    manifest = GraphManifest.from_dict(_sample_manifest_payload())
+    with pytest.raises(ValueError, match="participates in an identity key"):
+        apply_evolution(
+            manifest,
+            [
+                ChangeFieldTypesOp(
+                    edges={
+                        "works_at": {"since": {"type": "LIST", "item_type": "STRING"}}
+                    }
+                )
+            ],
+            bump_version=False,
+        )
+
+
+def test_rename_relations_applies_a_chain_on_one_pair_in_one_step() -> None:
+    """{works_at: employee_of, employee_of: employed_by}: no false collision."""
+    manifest = GraphManifest.from_dict(_sample_manifest_payload())
+    out = apply_evolution(
+        manifest,
+        [
+            RenameRelationsOp(
+                renames={"works_at": "employee_of", "employee_of": "employed_by"}
+            )
+        ],
+        bump_version=False,
+    )
+    assert out.graph_schema is not None
+    assert [
+        edge.relation for edge in out.graph_schema.core_schema.edge_config.edges
+    ] == ["employee_of", "employed_by"]
+
+
+def test_remove_edges_by_triple_keeps_other_edges_on_the_relation() -> None:
+    """A triple removes one pair; a relation name would remove every pair."""
+    payload = _sample_manifest_payload()
+    payload["schema"]["graph"]["vertex_config"]["vertices"].append(
+        {"name": "team", "identity": ["id"], "properties": ["id"]}
+    )
+    payload["schema"]["graph"]["edge_config"]["edges"].append(
+        {"source": "person", "target": "team", "relation": "works_at"}
+    )
+    manifest = GraphManifest.from_dict(payload)
+    out = apply_evolution(
+        manifest,
+        [
+            RemoveEdgesOp(
+                edges=[
+                    {"source": "person", "target": "company", "relation": "works_at"}
+                ]
+            )
+        ],
+        bump_version=False,
+    )
+    assert out.graph_schema is not None
+    assert {
+        edge.edge_id for edge in out.graph_schema.core_schema.edge_config.edges
+    } == {("person", "company", "employee_of"), ("person", "team", "works_at")}
+    assert out.graph_schema.db_profile.edge_specs[0].relation == "employee_of"
+    assert out.ingestion_model is not None
+    assert out.ingestion_model.resources[0].infer_edge_only == []
+
+
+def test_remove_edges_by_triple_reaches_an_edge_with_no_relation() -> None:
+    payload = _sample_manifest_payload()
+    payload["schema"]["graph"]["edge_config"]["edges"].append(
+        {"source": "person", "target": "company"}
+    )
+    manifest = GraphManifest.from_dict(payload)
+    out = apply_evolution(
+        manifest,
+        [RemoveEdgesOp(edges=[{"source": "person", "target": "company"}])],
+        bump_version=False,
+    )
+    assert out.graph_schema is not None
+    assert {
+        edge.relation for edge in out.graph_schema.core_schema.edge_config.edges
+    } == {"works_at", "employee_of"}
+
+
+def test_remove_edges_rejects_an_unknown_triple() -> None:
+    manifest = GraphManifest.from_dict(_sample_manifest_payload())
+    with pytest.raises(ValueError, match="unknown edges"):
+        apply_evolution(
+            manifest,
+            [
+                RemoveEdgesOp(
+                    edges=[
+                        {"source": "person", "target": "company", "relation": "ghost"}
+                    ]
+                )
+            ],
+            bump_version=False,
+        )
+
+
+def test_remove_edges_requires_a_target() -> None:
+    with pytest.raises(ValueError, match="at least one of relations or edges"):
+        RemoveEdgesOp()
+    with pytest.raises(ValueError, match="unique"):
+        RemoveEdgesOp(
+            edges=[
+                {"source": "person", "target": "company"},
+                {"source": "person", "target": "company"},
+            ]
+        )
 
 
 def test_merge_edges_canonicalizes_relations() -> None:
@@ -335,7 +497,7 @@ def test_add_inverse_edges_updates_schema_and_ingestion_with_dedup() -> None:
 
     out = apply_evolution(
         manifest,
-        [AddInverseEdgesOp(relations={"works_at": "employs"})],
+        [AddInverseEdgesOp(inverses={"works_at": "employs"})],
         bump_version=False,
     )
 

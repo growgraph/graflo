@@ -821,7 +821,7 @@ def alignment_to_ops(
     branches = [IdentityBranch(id=name, fields=[name]) for name in into_names]
     ops.append(
         ReplaceIdentityOp(
-            vertices={
+            replacements={
                 alignment.vertex: IdentityReplacement(
                     to=FunnelIdentityTarget(funnel=IdentityFunnel(branches=branches)),
                     # The pre-alignment identity on a composed class is the

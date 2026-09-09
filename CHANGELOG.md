@@ -5,6 +5,70 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.13.0]
+
+### Fixed
+
+- `test_table_connector_sql_query_building` no longer branches on a where clause already asserted nonempty (ty `redundant-condition`).
+
+- **The merge kernel rebuilt every property from an enumerated constructor, dropping whatever it was not written for.** `item_type` was among them, so two *identical* `LIST<STRING>` properties could not be fused at all: any `compose_manifests` or `merge_vertices` touching a class that declared a LIST on both sides failed with a pydantic `type LIST requires item_type` naming neither side. `LIST<STRING>` against `LIST<INT>` passed the type check — both are `LIST` — and died with that same misleading error rather than reporting the element types. `semantics` was dropped the same way, silently, for every property declared on both sides.
+- **Every merge dropped class-level `semantics` outright.** `Vertex.semantics` and `Edge.semantics` were absent from both merge constructors, so a composed vertex or edge lost its grounding whether or not the sides agreed on it — while the schema's own metadata block was folded carefully one layer up. Compose runs the merge twice per class, so no composed type kept its anchors.
+- **One field-merge policy, where there were two and a half.** `Vertex` folded duplicate properties correctly but was bypassed on the merge path, which pre-collapsed them with a weaker rule; `Edge` had no such fold at all and accepted a bare name and a typed entry for one property as two attributes, both reaching DDL. All three now share `merge_fields` / `merge_field_lists`: `type` and `item_type` compare and travel as a unit, descriptions and grounding union, and a conflicting type, LIST element type, or `unit` raises — naming the owning class, the property, both values, and the remedy. Every conflicting property on one class is reported in one error instead of one per run.
+- **`compose_manifests` took three physical-profile keys from the left without asking.** A `db_flavor` declared on the right was silently replaced by an undeclared left's Arango default, retargeting every DDL emission; `target_namespace` and `default_property_values` were dropped the same way. Each is now folded on its own terms, with declaration read from what a side actually wrote rather than from the value. Vertex indexes union on their full definition, so two entries over one field-set disagreeing on `unique`, `type` or `sparse` raise instead of keeping the left's; the same rule reaches edge-spec indexes, and a conflicting `relation_name` on two specs for one physical edge now raises as `reverse_edge` already did.
+- **`LIST<STRING>` to `LIST<INT>` produced no migration and no op.** Both change detectors — `migrate.diff` and `evolution.autogenerate` — compared `type` alone, so an edit that rewrites every stored value came back as no change. They now compare the whole type spec, on vertices and on relations, and the emitted field payloads carry `item_type`.
+- **`add_vertex_properties` / `add_edge_properties` silently skipped a redeclaration.** Declaring `email: INT` over an existing `email: STRING` was a no-op with no diagnostic. An addition that restates a property is still a no-op; one that would change it now raises and names `change_field_types` / `set_field_semantics`. The op stays strictly additive on purpose — its inverse is a single op computed against the pre-state, so a retyping addition would leave revert unable to restore the old type.
+ 
+- **`diff_manifests` crashed on any manifest with edge physical specs.** `db_profile.edge_specs` is a list and the differ read it as a mapping, so `merge_three_way`, `build_merge_commit` and `invert_ops` inherited the crash. Edge index diffs now key on the full physical key, so a `purpose` variant is addressed as itself rather than collapsing onto the base spec.
+
+- **`compose_manifests` hung on a connector name collision under `prefix_right`** when the right-hand connector already started with `r_` — the 1.12.3 fix covered resources but not connectors. Connectors now take the same ordinal disambiguation, and `fuse_right` rejects the collision as documented instead of silently prefixing.
+
+- **Inverting `remove_secondary_identities` failed on a field-list selector** and ignored the `secondary` shorthand. The inverse now resolves selectors the way the forward op does.
+
+- **Inverses of the additive ops removed what was already there.** `add_vertex_properties`, `add_edge_properties` and `add_vertex_indexes` skip entries already present, but their inverses removed the whole declared list; `add_edges` and `add_inverse_edges` inverted to a relation-wide removal that took every edge on the relation with it. Each inverse now consults the pre-state and undoes only what its op added — by triple for edges — or refuses when a relation-wide removal would reach further than the addition did. An op that changed nothing no longer reports a missing inverse.
+
+- **Three-way merge missed relation-vs-edge collisions.** Relation-addressed ops (`remove_edges`, `rename_relations`, `merge_edges`) and triple-addressed ops (`set_edge_directed`, `retarget_edges`, the edge index and identity ops) lived in disjoint slot trees, so removing a relation on one branch and flipping one of its edges on the other merged cleanly and applied the flip to a deleted edge. Edge slots now nest under the relation slot, and the relation segment folds spelling like every other slot. Recorded `MergeRecipe` resolutions addressed by the old `edge/…` slot no longer match and are reported as not needed on re-merge.
+
+- **An equivalence `into` occupied by a class that another declaration renames away** no longer raises: the lowered rename map applies in one step, so a single-member side lands on a free name. A multi-member side still raises, with the reason (merges are lowered before renames). The message for a genuinely occupied `into` no longer suggests a remedy the overlap check refuses. `rename_relations` had the matching false collision on a chain over one endpoint pair; it now checks against surviving edge ids only, as the vertex guard already did.
+
+- **Compose and vertex merge no longer drop or duplicate silently.** Composing two sides that declare the same vertex index produced it twice; a demoted composite identity key came back with alphabetised columns and name rather than the author's order; a secondary-identity name reused for a different field-set escaped the documented conflict when one entry equalled the merged primary, and a field-set carrying two names lost the second (edge steps select by name); two edges with one id but different `type` / `by` merged to the left side's; duplicate filters compounded across the two merge passes. Each now deduplicates, keeps declared order, or raises with the reason.
+
+- **Edge property diffs accumulated across the sibling edges of one relation**, so replay applied every sibling's additions to every edge and a name could appear twice. The differ now emits a relation-level op only when the siblings agree and reports the rest; a relation-less edge's property change is reported rather than skipped.
+
+- **Edge properties lost `item_type` and `semantics` at parse.** `Edge` normalized a property dict through an enumerated constructor that copied only `name`, `type` and `description`; a `LIST` edge property or a grounded one came back bare, and the content hash could not see the difference. The dict now reaches `Field` whole.
+
+- **`replace_edge_identities` has an inverse** (restored from the pre-state keys, when the new keys add no property), and **`ensure_extracted_fields` is declared irreversible** with a reason. Both previously fell through as "no inverse could be derived".
+
+- **`retarget_edges`, `rename_edge_properties` and `remove_edge_properties` are classified as ingestion-rewriting.** All three rewrite resource pipelines and were listed as schema-only, so the schema-artifact guard let them through with the ingestion half of the change dropped.
+
+### Changed
+
+- **Relicensed from the Business Source License 1.1 to Apache License 2.0.** From this release the core library is open source under Apache-2.0 with no production-use conditions and no change date; releases published before it stay under the BSL terms they shipped with. A `NOTICE` file carries the copyright line and states that the licence grants no rights in the GraFlo and GrowGraph marks. Package metadata declares the licence as a PEP 639 SPDX expression and `CITATION.cff` follows.
+
+- **A property declared twice with two descriptions now keeps both**, joined by a blank line, as `compose_manifests` already did for schema-level prose — neither side's description is authoritative. Previously the first won. This is manifest-hash-visible for any manifest carrying such a duplicate.
+- **Edges fold duplicate properties**, as vertices already did. Manifest-hash-visible for any manifest that carries a property declared twice on one edge; such a manifest was already emitting duplicate attributes into DDL.
+
+- **Op fields are named for what they hold.** `vertices` meant five different shapes across the vocabulary and `relations` three. The action-shaped maps are renamed: `rename_vertices.vertices`, `rename_relations.relations` and `rename_resources.resources` → `renames`; `add_inverse_edges.relations` → `inverses`; `replace_identity.vertices` → `replacements`; `compose_manifests.vertices` / `.relations` → `vertex_equivalences` / `relation_equivalences`. The old keys still parse; the new keys are what serializes and what the JSON schema advertises. `vertices` / `edges` now only ever name definitions or per-element maps.
+
+  **Commit ids move with the serialization.** A commit id is derived from its ops as serialized, so a history carrying a renamed op re-hashes: `graflo rehash --store <dir>` walks a stored history in topological order, recomputes each id against its rehashed parents and rewrites the store (`--dry` reports first). Trees are untouched — the ops replay to the same manifests. Run it once on any history written before this release; `graflo verify` reports the mismatch until then.
+
+- **Slots for edges nest under their relation** (`relation/knows/edge/person/company`), so recorded `MergeRecipe` resolutions addressed by the old `edge/…` slot are reported as not needed on re-merge rather than applied.
+
+- `Cluster` is generic over its declaration (`RelationCluster` is an alias); `ClusterIndex.cluster_for` is removed and `relation_labels` is a property; `validate_and_complete_canonical_map` accepts a pre-built `ClusterIndex`, so compose validates the declarations once.
+
+### Added
+
+- **`diff_manifests` emits `set_vertex_semantics`, `set_edge_semantics`, `set_field_semantics` and edge-side `change_field_types`**, and warns on `db_profile` differences no op expresses. Newly added vertex and edge properties replay as authored, carrying their type and grounding, instead of as bare names. Before this a grounding-only or edge-type-only change on one branch was silently dropped by a three-way merge.
+
+- **`remove_edges` accepts edge triples** (`edges: [{source, target, relation}]`) alongside `relations`. A triple removes one endpoint pair where a relation name removed every pair, and is the only way to remove an edge with no relation set.
+
+- **`add_edge_properties` accepts a full `Field`** alongside a bare name, as `add_vertex_properties` does, and rejects an unknown relation.
+
+- **`add_resources` / `remove_resources`.** The ingestion block's own add and drop: full `ResourceConfig` definitions in, names out, with the `resource_connector` entries that wired a removed resource pruned. Inverses of each other (a removal that pruned a binding has none). `diff_manifests` emits them where it used to report an added or removed resource as inexpressible; a changed pipeline or transform registry is still reported.
+
+- **`set_field_semantics` reaches edge properties** through an `EdgeFieldSemanticsTarget` (`source` / `target` / `relation` + `field`), with the same `FieldSemantics` — and so the same `unit` — as a vertex property. Inverted, slotted and diffed like the vertex form.
+
+- **Op-level validation**: rename, removal, addition and inverse-relation maps must be non-empty (an empty op reached the merge's catch-all slot and conflicted with everything); `merge_vertices` / `merge_edges` reject `into` among `sources` and a repeated source at parse time rather than at replay; `add_inverse_edges` rejects a map that collapses two relations onto one inverse, or names a relation as its own; index lists must be non-empty; edge index entries must be unique and carry the field their op reads; edge selections must be unique. `remove_vertex_properties` guards every identity plane (hash properties, funnel branches, secondary identities), not only the primary key, and `change_field_types` refuses `LIST` on an edge identity token as it did on a vertex one.
+
 ## [1.12.3]
 
 ### Added

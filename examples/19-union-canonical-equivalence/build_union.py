@@ -115,7 +115,7 @@ def _boundary_op(*, stale_demo: bool, conflicting_cluster: bool) -> ComposeManif
     """
     if conflicting_cluster:
         return ComposeManifestsOp(
-            vertices=[
+            vertex_equivalences=[
                 VertexEquivalence(
                     left="Company", right=["Org", "Branch"], into="Company"
                 ),
@@ -129,7 +129,7 @@ def _boundary_op(*, stale_demo: bool, conflicting_cluster: bool) -> ComposeManif
 
     boundary = "Firm" if stale_demo else "Company"
     return ComposeManifestsOp(
-        vertices=[
+        vertex_equivalences=[
             VertexEquivalence(
                 left=[boundary, "Shop"], right=["Org", "Branch"], into=boundary
             )

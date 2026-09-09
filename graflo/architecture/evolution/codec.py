@@ -24,6 +24,7 @@ from .ops import (
     AddEdgePropertiesOp,
     AddEdgesOp,
     AddInverseEdgesOp,
+    AddResourcesOp,
     AddResourceTransformsOp,
     AddSecondaryIdentitiesOp,
     AddVertexIndexesOp,
@@ -38,6 +39,7 @@ from .ops import (
     RemoveEdgeIndexesOp,
     RemoveEdgePropertiesOp,
     RemoveEdgesOp,
+    RemoveResourcesOp,
     RemoveSecondaryIdentitiesOp,
     RemoveVertexIndexesOp,
     RemoveVertexPropertiesOp,
@@ -63,6 +65,8 @@ RevisionOp = Annotated[
     RemoveVerticesOp
     | AddResourceTransformsOp
     | EnsureExtractedFieldsOp
+    | AddResourcesOp
+    | RemoveResourcesOp
     | AddVerticesOp
     | AddEdgesOp
     | RetargetEdgesOp

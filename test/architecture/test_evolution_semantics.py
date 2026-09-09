@@ -15,7 +15,9 @@ import pytest
 
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.evolution import (
+    AddEdgePropertiesOp,
     AddVertexPropertiesOp,
+    EdgeFieldSemanticsTarget,
     FieldSemanticsTarget,
     SetEdgeSemanticsOp,
     SetFieldSemanticsOp,
@@ -160,6 +162,48 @@ def test_a_property_carries_a_unit_which_a_type_may_not() -> None:
 
     with pytest.raises(ValueError):
         SetVertexSemanticsOp.model_validate({"semantics": {"Asset": {"unit": "Cel"}}})
+
+
+def test_an_edge_property_can_be_grounded_and_inverted() -> None:
+    """Edge properties carry `FieldSemantics` too; the op now reaches them."""
+    manifest = apply_evolution(
+        _manifest(),
+        [AddEdgePropertiesOp(additions={"partOf": ["since"]})],
+        bump_version=False,
+    )
+    target = EdgeFieldSemanticsTarget(
+        source="Asset",
+        target="Site",
+        relation="partOf",
+        field="since",
+        semantics=FieldSemantics(iri=PROV_GENERATED, unit="s"),
+    )
+    op = SetFieldSemanticsOp(targets=[target])
+    out = apply_evolution(manifest, [op], bump_version=False)
+    edge = out.require_schema().core_schema.edge_config.edges[0]
+    since = next(f for f in edge.properties if f.name == "since")
+    assert since.semantics is not None and since.semantics.unit == "s"
+
+    inverses, blockers = invert_ops([op], manifest=manifest)
+    assert not blockers
+    restored = apply_evolution(out, inverses, bump_version=False)
+    edge = restored.require_schema().core_schema.edge_config.edges[0]
+    assert next(f for f in edge.properties if f.name == "since").semantics is None
+
+
+def test_grounding_an_unknown_edge_property_names_the_edge() -> None:
+    op = SetFieldSemanticsOp(
+        targets=[
+            EdgeFieldSemanticsTarget(
+                source="Asset", target="Site", relation="partOf", field="ghost"
+            )
+        ]
+    )
+    with pytest.raises(
+        ValueError,
+        match=r"unknown properties: \[\"\('Asset', 'Site', 'partOf'\).ghost\"\]",
+    ):
+        apply_evolution(_manifest(), [op], bump_version=False)
 
 
 def test_grounding_a_missing_property_names_the_property_not_the_vertex() -> None:

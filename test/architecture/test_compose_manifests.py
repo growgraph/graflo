@@ -18,10 +18,16 @@ from graflo.architecture.evolution import (
     apply_evolution,
     compose_manifests,
 )
+from graflo.architecture.graph_types import Index
 from graflo.architecture.schema.core import CoreSchema
+from graflo.architecture.schema.database_features import (
+    DatabaseProfile,
+    DefaultPropertyValues,
+)
 from graflo.architecture.schema.document import Schema
 from graflo.architecture.schema.edge import Edge, EdgeConfig
 from graflo.architecture.schema.metadata import GraphMetadata
+from graflo.architecture.schema.semantics import FieldSemantics, Semantics
 from graflo.architecture.schema.vertex import Field, FieldType, Vertex, VertexConfig
 from graflo.migrate.io import manifest_hash
 
@@ -165,7 +171,7 @@ def test_boundary_client_customer_with_explicit_identity() -> None:
     left = _left_client_manifest()
     right = _right_customer_manifest()
     op = ComposeManifestsOp(
-        vertices=[
+        vertex_equivalences=[
             VertexEquivalence(
                 left="Client",
                 right="Customer",
@@ -179,7 +185,7 @@ def test_boundary_client_customer_with_explicit_identity() -> None:
                 identity=["email"],
             )
         ],
-        relations=[
+        relation_equivalences=[
             RelationEquivalence(left="places", right="billed", into="activity"),
         ],
     )
@@ -208,7 +214,7 @@ def test_property_identity_flags_derive_identity() -> None:
     left = _left_client_manifest()
     right = _right_customer_manifest()
     op = ComposeManifestsOp(
-        vertices=[
+        vertex_equivalences=[
             VertexEquivalence(
                 left="Client",
                 right="Customer",
@@ -264,7 +270,7 @@ def test_incompatible_property_types_raise() -> None:
         resources=[{"name": "r_r", "apply": [{"vertex": "B"}]}],
     )
     op = ComposeManifestsOp(
-        vertices=[
+        vertex_equivalences=[
             VertexEquivalence(
                 left="A",
                 right="B",
@@ -275,8 +281,17 @@ def test_incompatible_property_types_raise() -> None:
             )
         ]
     )
-    with pytest.raises(ValueError, match="incompatible types"):
+    # The message names the *composed* vertex and property, not the source
+    # spellings: by the time the merge runs, both sides have been renamed onto
+    # the cluster's `into`, and pointing at 'A.x' would name something the
+    # composed manifest does not contain.
+    with pytest.raises(ValueError, match="Conflicting field types") as excinfo:
         compose_manifests(left, right, op, bump_version=False)
+    message = str(excinfo.value)
+    assert "vertex 'C'" in message
+    assert "property 'z'" in message
+    assert "'STRING' vs 'INT'" in message
+    assert "change_field_types" in message
 
 
 def test_resource_name_collision_error_and_rename() -> None:
@@ -348,8 +363,12 @@ def test_relation_equivalence_and_self_loop_after_boundary() -> None:
         ],
     )
     op = ComposeManifestsOp(
-        vertices=[VertexEquivalence(left=["A", "B"], right=["X", "Y"], into="AB")],
-        relations=[RelationEquivalence(left="link", right="link", into="link")],
+        vertex_equivalences=[
+            VertexEquivalence(left=["A", "B"], right=["X", "Y"], into="AB")
+        ],
+        relation_equivalences=[
+            RelationEquivalence(left="link", right="link", into="link")
+        ],
         allow_merges=True,
         allow_self_relations=True,
     )
@@ -452,7 +471,7 @@ def test_a_declared_equivalence_exempts_a_near_collision() -> None:
         _named("OrderLine"),
         _named("order_line"),
         ComposeManifestsOp(
-            vertices=[
+            vertex_equivalences=[
                 VertexEquivalence(
                     left="OrderLine", right="order_line", into="OrderLine"
                 )
@@ -581,7 +600,9 @@ def test_properties_that_key_alike_are_not_fused() -> None:
         left,
         right,
         ComposeManifestsOp(
-            vertices=[VertexEquivalence(left="Party", right="Party", into="Party")]
+            vertex_equivalences=[
+                VertexEquivalence(left="Party", right="Party", into="Party")
+            ]
         ),
     )
     schema = composed.graph_schema
@@ -626,7 +647,7 @@ def test_exact_name_properties_fuse_without_equivalence() -> None:
         left,
         right,
         ComposeManifestsOp(
-            vertices=[VertexEquivalence(left="A", right="B", into="Person")]
+            vertex_equivalences=[VertexEquivalence(left="A", right="B", into="Person")]
         ),
         bump_version=False,
     )
@@ -673,7 +694,7 @@ def test_disagreeing_into_on_shared_node_raises() -> None:
             left,
             right,
             ComposeManifestsOp(
-                vertices=[
+                vertex_equivalences=[
                     VertexEquivalence(left="CA1", right="CB1", into="X"),
                     VertexEquivalence(left="CA1", right="CB2", into="X"),
                     VertexEquivalence(left="CA2", right="CB1", into="Y"),
@@ -747,7 +768,9 @@ def test_identity_alignments_apply_inside_compose() -> None:
         left,
         right,
         ComposeManifestsOp(
-            vertices=[VertexEquivalence(left="Company", right="Org", into="Company")],
+            vertex_equivalences=[
+                VertexEquivalence(left="Company", right="Org", into="Company")
+            ],
             identity_alignments=[alignment],
         ),
         bump_version=False,
@@ -769,7 +792,7 @@ def test_an_equivalence_in_the_wrong_convention_says_what_to_use() -> None:
             _named("OrderLine"),
             _named("order_line"),
             ComposeManifestsOp(
-                vertices=[
+                vertex_equivalences=[
                     VertexEquivalence(
                         left="order_line", right="order_line", into="order_line"
                     )
@@ -821,7 +844,7 @@ def test_nary_cluster_composes_schema_and_ingestion() -> None:
         ],
     )
     op = ComposeManifestsOp(
-        vertices=[
+        vertex_equivalences=[
             VertexEquivalence(
                 left=["Company", "Shop"],
                 right=["Org", "Branch"],
@@ -890,7 +913,7 @@ def test_per_member_property_equivalence_maps() -> None:
         resources=[{"name": "r_org", "apply": [{"vertex": "Org"}]}],
     )
     op = ComposeManifestsOp(
-        vertices=[
+        vertex_equivalences=[
             VertexEquivalence(
                 left=["Company", "Shop"],
                 right="Org",
@@ -948,11 +971,11 @@ def test_relation_nary_collapse() -> None:
         ],
     )
     op = ComposeManifestsOp(
-        vertices=[
+        vertex_equivalences=[
             VertexEquivalence(left="P", right="X", into="P"),
             VertexEquivalence(left="Q", right="Y", into="Q"),
         ],
-        relations=[
+        relation_equivalences=[
             RelationEquivalence(left=["signs", "owns"], right="has", into="signs")
         ],
         allow_merges=True,
@@ -992,7 +1015,7 @@ def test_fuse_right_adopts_left_spelling_for_relations() -> None:
         ],
     )
     op = ComposeManifestsOp(
-        vertices=[
+        vertex_equivalences=[
             VertexEquivalence(left="A", right="AR", into="A"),
             VertexEquivalence(left="B", right="BR", into="B"),
         ],
@@ -1029,7 +1052,9 @@ def test_undeclared_identity_disagreement_raises() -> None:
         resources=[{"name": "r_r", "apply": [{"vertex": "Org"}]}],
     )
     op = ComposeManifestsOp(
-        vertices=[VertexEquivalence(left="Company", right="Org", into="Company")]
+        vertex_equivalences=[
+            VertexEquivalence(left="Company", right="Org", into="Company")
+        ]
     )
     with pytest.raises(ComposeIdentityError, match="disagree"):
         compose_manifests(left, right, op, bump_version=False)
@@ -1061,7 +1086,7 @@ def test_side_identity_shorthand_lowers_to_one_funnel() -> None:
         resources=[{"name": "r_r", "apply": [{"vertex": "Org"}]}],
     )
     op = ComposeManifestsOp(
-        vertices=[
+        vertex_equivalences=[
             VertexEquivalence(
                 left="Company",
                 right="Org",
@@ -1118,7 +1143,7 @@ def test_side_identity_order_inversion_raises() -> None:
         resources=[{"name": "r_r", "apply": [{"vertex": "Org"}]}],
     )
     op = ComposeManifestsOp(
-        vertices=[
+        vertex_equivalences=[
             VertexEquivalence(
                 left="Company",
                 right="Org",
@@ -1152,10 +1177,127 @@ def test_occupied_into_raises_through_compose() -> None:
         resources=[{"name": "r_b", "apply": [{"vertex": "B"}]}],
     )
     op = ComposeManifestsOp(
-        vertices=[VertexEquivalence(left="A", right="B", into="Person")]
+        vertex_equivalences=[VertexEquivalence(left="A", right="B", into="Person")]
     )
     with pytest.raises(ClusterConflictError, match="not a member"):
         compose_manifests(left, right, op, bump_version=False)
+
+
+def test_a_demoted_key_keeps_its_declared_field_order() -> None:
+    """A demoted composite key is a compound index; its column order is the author's."""
+    left = _manifest(
+        name="l",
+        vertices=[
+            Vertex(
+                name="Company",
+                properties=[Field(name="company_id"), Field(name="b"), Field(name="a")],
+                identity=["b", "a"],
+            )
+        ],
+        edges=[],
+        resources=[{"name": "r_company", "apply": [{"vertex": "Company"}]}],
+    )
+    right = _manifest(
+        name="r",
+        vertices=[
+            Vertex(
+                name="Org",
+                properties=[Field(name="company_id"), Field(name="org_id")],
+                identity=["org_id"],
+            )
+        ],
+        edges=[],
+        resources=[{"name": "r_org", "apply": [{"vertex": "Org"}]}],
+    )
+    op = ComposeManifestsOp(
+        vertex_equivalences=[
+            VertexEquivalence(
+                left="Company", right="Org", into="Company", identity=["company_id"]
+            )
+        ]
+    )
+    out = compose_manifests(left, right, op, bump_version=False)
+    assert out.graph_schema is not None
+    company = out.graph_schema.core_schema.vertex_config["Company"]
+    assert {(s.name, tuple(s.fields)) for s in company.secondary_identities} == {
+        ("by_b_a", ("b", "a")),
+        ("by_org_id", ("org_id",)),
+    }
+
+
+def test_compose_deduplicates_a_vertex_index_declared_on_both_sides() -> None:
+    from graflo.architecture.schema.database_features import DatabaseProfile
+
+    def _side(name: str, vertex: str) -> GraphManifest:
+        manifest = _manifest(
+            name=name,
+            vertices=[
+                Vertex(
+                    name=vertex,
+                    properties=[Field(name="id"), Field(name="label")],
+                    identity=["id"],
+                )
+            ],
+            edges=[],
+            resources=[{"name": f"r_{name}", "apply": [{"vertex": vertex}]}],
+        )
+        assert manifest.graph_schema is not None
+        manifest.graph_schema.db_profile = DatabaseProfile(
+            vertex_indexes={vertex: [{"fields": ["label"]}]}
+        )
+        return manifest
+
+    op = ComposeManifestsOp(
+        vertex_equivalences=[
+            VertexEquivalence(left="Company", right="Org", into="Company")
+        ]
+    )
+    out = compose_manifests(
+        _side("l", "Company"), _side("r", "Org"), op, bump_version=False
+    )
+    assert out.graph_schema is not None
+    assert [
+        list(ix.fields) for ix in out.graph_schema.db_profile.vertex_indexes["Company"]
+    ] == [["label"]]
+
+
+def test_a_rename_chain_through_an_occupied_into_composes() -> None:
+    """{X}~{Y} -> Z and {Z}~{W} -> Q, end to end: the map applies in one step."""
+
+    def _v(name: str) -> Vertex:
+        return Vertex(
+            name=name,
+            properties=[Field(name="id", type=FieldType.STRING)],
+            identity=["id"],
+        )
+
+    left = _manifest(
+        name="left",
+        vertices=[_v("X"), _v("Z")],
+        edges=[Edge(source="X", target="Z", relation="knows")],
+        resources=[{"name": "r_left", "apply": [{"vertex": "X"}, {"vertex": "Z"}]}],
+    )
+    right = _manifest(
+        name="right",
+        vertices=[_v("Y"), _v("W")],
+        edges=[Edge(source="Y", target="W", relation="likes")],
+        resources=[{"name": "r_right", "apply": [{"vertex": "Y"}, {"vertex": "W"}]}],
+    )
+    op = ComposeManifestsOp(
+        vertex_equivalences=[
+            VertexEquivalence(left="X", right="Y", into="Z"),
+            VertexEquivalence(left="Z", right="W", into="Q"),
+        ],
+        relation_equivalences=[
+            RelationEquivalence(left="knows", right="likes", into="knows")
+        ],
+    )
+    out = compose_manifests(left, right, op, bump_version=False)
+    assert out.graph_schema is not None
+    assert out.graph_schema.core_schema.vertex_config.vertex_set == {"Z", "Q"}
+    assert {e.edge_id for e in out.graph_schema.core_schema.edge_config.edges} == {
+        ("Z", "Q", "knows")
+    }
 
 
 def test_prefix_right_terminates_when_the_right_name_is_already_prefixed() -> None:
@@ -1181,3 +1323,297 @@ def test_prefix_right_terminates_when_the_right_name_is_already_prefixed() -> No
     assert out.graph_schema.core_schema.vertex_config.vertex_set == {"r_A", "r_A_2"}
     assert out.ingestion_model is not None
     assert {r.name for r in out.ingestion_model.resources} == {"r_a", "r_a_2"}
+
+
+def _with_connector(connector: str, *, side: str) -> GraphManifest:
+    """A side whose only collision with its twin is the connector *name*.
+
+    Connectors are content-hashed with the name left out, so the two sides
+    must differ in regex and resource for the registry to hold both.
+    """
+    vertex = f"A_{side}"
+    resource = f"r_{side}"
+    return _manifest(
+        name=side,
+        vertices=[Vertex(name=vertex, properties=[Field(name="id")], identity=["id"])],
+        edges=[],
+        resources=[{"name": resource, "apply": [{"vertex": vertex}]}],
+        bindings={
+            "connectors": [
+                FileConnector(
+                    name=connector, regex=f"{side}.*", resource_name=resource
+                ).to_dict(skip_defaults=False)
+            ],
+            "resource_connector": [{"resource": resource, "connector": connector}],
+        },
+    )
+
+
+def test_prefix_right_terminates_on_a_connector_already_prefixed() -> None:
+    """Connectors take the same ordinal disambiguation as resources.
+
+    The connector path re-prefixed until free, and ``_prefixed`` is idempotent,
+    so a right-hand connector already named ``r_…`` never became free.
+    """
+    out = compose_manifests(
+        _with_connector("r_c", side="left"),
+        _with_connector("r_c", side="right"),
+        ComposeManifestsOp(name_conflict="prefix_right"),
+        bump_version=False,
+    )
+    assert out.bindings is not None
+    assert {c.name for c in out.bindings.connectors} == {"r_c", "r_c_2"}
+    assert {(rc.resource, rc.connector) for rc in out.bindings.resource_connector} == {
+        ("r_left", "r_c"),
+        ("r_right", "r_c_2"),
+    }
+
+
+def test_fuse_right_rejects_a_connector_collision() -> None:
+    """A connector is an address, so ``fuse_right`` behaves as ``error`` for it."""
+    with pytest.raises(ValueError, match="connector name collision"):
+        compose_manifests(
+            _with_connector("c", side="left"),
+            _with_connector("c", side="right"),
+            ComposeManifestsOp(name_conflict="fuse_right"),
+            bump_version=False,
+        )
+
+
+class TestComposedPropertyAttributes:
+    """Attributes of a property that two sides both declare.
+
+    Equivalence unions properties by exact name after alignment; these pin what
+    that union does to the parts of a property that are not its name.
+    """
+
+    @staticmethod
+    def _side(name: str, vertex: str, field: Field) -> GraphManifest:
+        return _manifest(
+            name=name,
+            vertices=[
+                Vertex(
+                    name=vertex, properties=[Field(name="id"), field], identity=["id"]
+                )
+            ],
+            edges=[],
+            resources=[{"name": f"r_{name}", "apply": [{"vertex": vertex}]}],
+        )
+
+    @staticmethod
+    def _op() -> ComposeManifestsOp:
+        return ComposeManifestsOp(
+            vertex_equivalences=[VertexEquivalence(left="A", right="B", into="C")]
+        )
+
+    def test_a_list_property_declared_on_both_sides_composes(self) -> None:
+        tags = Field(name="tags", type=FieldType.LIST, item_type=FieldType.STRING)
+        composed = compose_manifests(
+            self._side("l", "A", tags),
+            self._side("r", "B", tags.model_copy(deep=True)),
+            self._op(),
+            bump_version=False,
+        )
+        vertex = next(
+            v
+            for v in composed.graph_schema.core_schema.vertex_config.vertices
+            if v.name == "C"
+        )
+        merged = next(f for f in vertex.properties if f.name == "tags")
+        assert (merged.type, merged.item_type) == (FieldType.LIST, FieldType.STRING)
+
+    @pytest.mark.parametrize("grounded_side", ["left", "right"])
+    def test_a_composed_property_keeps_its_grounding(self, grounded_side: str) -> None:
+        grounded = Field(
+            name="email",
+            type=FieldType.STRING,
+            semantics=FieldSemantics(iri="https://schema.org/email", unit=None),
+        )
+        plain = Field(name="email", type=FieldType.STRING)
+        left_field, right_field = (
+            (grounded, plain) if grounded_side == "left" else (plain, grounded)
+        )
+        composed = compose_manifests(
+            self._side("l", "A", left_field),
+            self._side("r", "B", right_field),
+            self._op(),
+            bump_version=False,
+        )
+        vertex = next(
+            v
+            for v in composed.graph_schema.core_schema.vertex_config.vertices
+            if v.name == "C"
+        )
+        email = next(f for f in vertex.properties if f.name == "email")
+        assert email.semantics is not None
+        assert email.semantics.iri == "https://schema.org/email"
+
+    def test_a_composed_vertex_keeps_its_class_grounding(self) -> None:
+        def _side(name: str, vertex: str, synonym: str) -> GraphManifest:
+            return _manifest(
+                name=name,
+                vertices=[
+                    Vertex(
+                        name=vertex,
+                        properties=[Field(name="id")],
+                        identity=["id"],
+                        semantics=Semantics(
+                            iri="https://schema.org/Person", synonyms=[synonym]
+                        ),
+                    )
+                ],
+                edges=[],
+                resources=[{"name": f"r_{name}", "apply": [{"vertex": vertex}]}],
+            )
+
+        composed = compose_manifests(
+            _side("l", "A", "person"),
+            _side("r", "B", "human"),
+            self._op(),
+            bump_version=False,
+        )
+        vertex = next(
+            v
+            for v in composed.graph_schema.core_schema.vertex_config.vertices
+            if v.name == "C"
+        )
+        assert vertex.semantics is not None
+        assert vertex.semantics.iri == "https://schema.org/Person"
+        assert vertex.semantics.synonyms == ["person", "human"]
+
+
+class TestComposedProfileFold:
+    """Physical-profile keys the fold used to take from the left without asking."""
+
+    @staticmethod
+    def _side(name: str, vertex: str, profile: DatabaseProfile) -> GraphManifest:
+        schema = Schema(
+            metadata=GraphMetadata(name=name, version="1.0.0"),
+            core_schema=CoreSchema(
+                vertex_config=VertexConfig(
+                    vertices=[
+                        Vertex(
+                            name=vertex,
+                            properties=[Field(name="id"), Field(name="email")],
+                            identity=["id"],
+                        )
+                    ],
+                    force_types={},
+                ),
+                edge_config=EdgeConfig(edges=[]),
+            ),
+            db_profile=profile,
+        )
+        m = GraphManifest.from_config(
+            {
+                "schema": schema.to_dict(skip_defaults=False),
+                "ingestion_model": {
+                    "resources": [{"name": f"r_{name}", "apply": [{"vertex": vertex}]}],
+                    "transforms": [],
+                },
+            }
+        )
+        m.finish_init()
+        return m
+
+    @staticmethod
+    def _op() -> ComposeManifestsOp:
+        return ComposeManifestsOp(
+            vertex_equivalences=[VertexEquivalence(left="A", right="B", into="C")]
+        )
+
+    def test_a_declared_flavor_on_the_right_survives_an_undeclared_left(self) -> None:
+        # An undeclared side defaults to Arango, and inheriting that default
+        # would retarget every DDL emission at the backend nobody named.
+        composed = compose_manifests(
+            self._side("l", "A", DatabaseProfile()),
+            self._side("r", "B", DatabaseProfile(db_flavor="neo4j")),
+            self._op(),
+            bump_version=False,
+        )
+        assert str(composed.graph_schema.db_profile.db_flavor) == "neo4j"
+
+    def test_two_declared_flavors_refuse_to_compose(self) -> None:
+        with pytest.raises(ValueError, match="conflicting db_flavor"):
+            compose_manifests(
+                self._side("l", "A", DatabaseProfile(db_flavor="neo4j")),
+                self._side("r", "B", DatabaseProfile(db_flavor="tigergraph")),
+                self._op(),
+                bump_version=False,
+            )
+
+    def test_conflicting_target_namespaces_refuse_to_compose(self) -> None:
+        with pytest.raises(ValueError, match="conflicting target_namespace"):
+            compose_manifests(
+                self._side("l", "A", DatabaseProfile(target_namespace="one")),
+                self._side("r", "B", DatabaseProfile(target_namespace="two")),
+                self._op(),
+                bump_version=False,
+            )
+
+    def test_right_side_default_property_values_survive(self) -> None:
+        composed = compose_manifests(
+            self._side("l", "A", DatabaseProfile()),
+            self._side(
+                "r",
+                "B",
+                DatabaseProfile(
+                    default_property_values=DefaultPropertyValues(
+                        vertices={"B": {"email": "unknown"}}
+                    )
+                ),
+            ),
+            self._op(),
+            bump_version=False,
+        )
+        defaults = composed.graph_schema.db_profile.default_property_values
+        assert defaults is not None
+        assert defaults.vertices.get("C", {}).get("email") == "unknown"
+
+    def test_two_defaults_for_one_property_refuse_to_compose(self) -> None:
+        with pytest.raises(ValueError, match="default_property_values"):
+            compose_manifests(
+                self._side(
+                    "l",
+                    "A",
+                    DatabaseProfile(
+                        default_property_values=DefaultPropertyValues(
+                            vertices={"A": {"email": "unknown"}}
+                        )
+                    ),
+                ),
+                self._side(
+                    "r",
+                    "B",
+                    DatabaseProfile(
+                        default_property_values=DefaultPropertyValues(
+                            vertices={"B": {"email": "n/a"}}
+                        )
+                    ),
+                ),
+                self._op(),
+                bump_version=False,
+            )
+
+    def test_two_indexes_over_one_field_set_disagreeing_on_unique_refuse(self) -> None:
+        # Keeping both is not an option: `add_vertex_index` collapses them on
+        # the next resolution, so which survived would depend on ordering.
+        with pytest.raises(ValueError, match="[Cc]onflicting index"):
+            compose_manifests(
+                self._side(
+                    "l",
+                    "A",
+                    DatabaseProfile(
+                        vertex_indexes={"A": [Index(fields=["email"], unique=True)]}
+                    ),
+                ),
+                self._side(
+                    "r",
+                    "B",
+                    DatabaseProfile(
+                        vertex_indexes={"B": [Index(fields=["email"], unique=False)]}
+                    ),
+                ),
+                self._op(),
+                bump_version=False,
+            )

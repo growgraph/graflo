@@ -11,7 +11,7 @@ authors:
   orcid: https://orcid.org/0000-0002-5649-0913  
 cff-version: 1.2.0
 date-released: '2025-05-16'
-license: "BUSL-1.1"
+license: "Apache-2.0"
 message: If you use this software, please cite it using the metadata from this file.
 title: GraFlo — Graph Schema & Transformation Language (GSTL)
 type: software

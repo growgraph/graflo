@@ -9,6 +9,7 @@ from pydantic import AliasChoices, field_validator, model_validator
 from pydantic import Field as PydanticField
 
 from graflo.architecture.base import ConfigBaseModel
+from graflo.architecture.contract.ingestion.resource import ResourceConfig
 from graflo.architecture.contract.ingestion.transform import ProtoTransform
 from graflo.architecture.graph_types import Index
 from graflo.architecture.schema.edge import Edge
@@ -52,6 +53,19 @@ def validate_rename_map_is_injective(
             f"{kind} rename map is not injective: {detail}. "
             f"Renaming cannot merge types — use {merge_hint}."
         )
+
+
+def validate_merge_sources(sources: Sequence[str], into: str, *, kind: str) -> None:
+    """Reject a merge whose sources repeat or include the target.
+
+    The docstrings promise both; enforcing them at parse time means a
+    serialized change set fails where it is read rather than where it is
+    replayed, after the ops before it have already been applied.
+    """
+    if len(set(sources)) != len(sources):
+        raise ValueError(f"{kind}: sources list a name more than once: {list(sources)}")
+    if into in sources:
+        raise ValueError(f"{kind}: `into` {into!r} must not appear in `sources`")
 
 
 class RemoveVerticesOp(ConfigBaseModel):
@@ -103,6 +117,11 @@ class MergeVerticesOp(ConfigBaseModel):
         ),
     )
 
+    @model_validator(mode="after")
+    def _validate_sources(self) -> MergeVerticesOp:
+        validate_merge_sources(self.sources, self.into, kind="merge_vertices")
+        return self
+
 
 class RenameVertexPropertiesOp(ConfigBaseModel):
     """Rename vertex properties (and identity references) and propagate to ingestion.
@@ -123,6 +142,7 @@ class RenameVertexPropertiesOp(ConfigBaseModel):
         description=(
             "Per-vertex field rename map: ``{vertex_name: {old_field: new_field}}``."
         ),
+        min_length=1,
     )
 
 
@@ -135,6 +155,7 @@ class RemoveVertexPropertiesOp(ConfigBaseModel):
         description=(
             "Per-vertex field removal map: ``{vertex_name: [field_name, ...]}``."
         ),
+        min_length=1,
     )
 
 
@@ -154,6 +175,7 @@ class AddVertexPropertiesOp(ConfigBaseModel):
         description=(
             "Per-vertex property additions: ``{vertex_name: [field_name | Field, ...]}``."
         ),
+        min_length=1,
     )
 
     def field_names(self, vertex: str) -> list[str]:
@@ -282,9 +304,13 @@ class ReplaceIdentityOp(ConfigBaseModel):
     """
 
     op: Literal["replace_identity"] = "replace_identity"
-    vertices: dict[str, IdentityReplacement] = PydanticField(
+    replacements: dict[str, IdentityReplacement] = PydanticField(
         ...,
-        description="Per-vertex identity replacement: ``{vertex_name: replacement}``.",
+        validation_alias=AliasChoices("replacements", "vertices"),
+        description=(
+            "Per-vertex identity replacement: ``{vertex_name: replacement}``. "
+            "``vertices`` is accepted as a legacy alias."
+        ),
         min_length=1,
     )
 
@@ -380,15 +406,20 @@ class RenameVerticesOp(ConfigBaseModel):
     """Rename logical vertex names across schema, ingestion, and bindings."""
 
     op: Literal["rename_vertices"] = "rename_vertices"
-    vertices: dict[str, str] = PydanticField(
+    renames: dict[str, str] = PydanticField(
         ...,
-        description="Vertex rename map: ``{old_vertex: new_vertex}``. Must be injective.",
+        validation_alias=AliasChoices("renames", "vertices"),
+        description=(
+            "Vertex rename map: ``{old_vertex: new_vertex}``. Must be injective. "
+            "``vertices`` is accepted as a legacy alias."
+        ),
+        min_length=1,
     )
 
     @model_validator(mode="after")
     def _reject_collapsing_map(self) -> RenameVerticesOp:
         validate_rename_map_is_injective(
-            self.vertices,
+            self.renames,
             kind="rename_vertices",
             merge_hint="MergeVerticesOp(sources=[...], into=...)",
         )
@@ -399,15 +430,20 @@ class RenameRelationsOp(ConfigBaseModel):
     """Rename logical edge relation names across schema and ingestion."""
 
     op: Literal["rename_relations"] = "rename_relations"
-    relations: dict[str, str] = PydanticField(
+    renames: dict[str, str] = PydanticField(
         ...,
-        description="Relation rename map: ``{old_relation: new_relation}``. Must be injective.",
+        validation_alias=AliasChoices("renames", "relations"),
+        description=(
+            "Relation rename map: ``{old_relation: new_relation}``. Must be "
+            "injective. ``relations`` is accepted as a legacy alias."
+        ),
+        min_length=1,
     )
 
     @model_validator(mode="after")
     def _reject_collapsing_map(self) -> RenameRelationsOp:
         validate_rename_map_is_injective(
-            self.relations,
+            self.renames,
             kind="rename_relations",
             merge_hint="MergeEdgesOp(sources=[...], into=...)",
         )
@@ -418,11 +454,14 @@ class RenameResourcesOp(ConfigBaseModel):
     """Rename ingestion resource names and bindings references."""
 
     op: Literal["rename_resources"] = "rename_resources"
-    resources: dict[str, str] = PydanticField(
+    renames: dict[str, str] = PydanticField(
         ...,
+        validation_alias=AliasChoices("renames", "resources"),
         description=(
-            "Ingestion resource rename map: ``{old_resource: new_resource}``. Must be injective."
+            "Ingestion resource rename map: ``{old_resource: new_resource}``. Must "
+            "be injective. ``resources`` is accepted as a legacy alias."
         ),
+        min_length=1,
     )
 
     @model_validator(mode="after")
@@ -431,22 +470,62 @@ class RenameResourcesOp(ConfigBaseModel):
         # map fails downstream anyway — but with a message about the model rather
         # than about the op the author actually wrote.
         validate_rename_map_is_injective(
-            self.resources,
+            self.renames,
             kind="rename_resources",
             merge_hint="ComposeManifestsOp with explicit resource_renames",
         )
         return self
 
 
+class EdgeSelector(ConfigBaseModel):
+    """Schema edge triple selector matching :data:`~graflo.architecture.graph_types.EdgeId`."""
+
+    source: str = PydanticField(..., description="Source vertex type name.")
+    target: str = PydanticField(..., description="Target vertex type name.")
+    relation: str | None = PydanticField(
+        default=None,
+        description="Relation name; ``None`` matches edges with no relation set.",
+    )
+
+    def edge_id(self) -> tuple[str, str, str | None]:
+        return self.source, self.target, self.relation
+
+
+def _validate_unique_edge_selectors(
+    selectors: Sequence[EdgeSelector], *, kind: str
+) -> None:
+    edge_ids = [selector.edge_id() for selector in selectors]
+    if len(edge_ids) != len(set(edge_ids)):
+        raise ValueError(
+            f"{kind} edges entries must be unique by (source, target, relation)"
+        )
+
+
 class RemoveEdgesOp(ConfigBaseModel):
-    """Remove logical edge relations from schema, profile, and ingestion selectors."""
+    """Remove logical edges from schema, profile, and ingestion selectors.
+
+    Two addressing forms, combinable in one op. ``relations`` removes a relation
+    on every endpoint pair it occurs on. ``edges`` removes exactly the named
+    triples, which is the only way to remove one pair of several sharing a
+    relation, or an edge with no relation set at all.
+    """
 
     op: Literal["remove_edges"] = "remove_edges"
     relations: list[str] = PydanticField(
-        ...,
+        default_factory=list,
         description="Relation names to remove from edge definitions and references.",
-        min_length=1,
     )
+    edges: list[EdgeSelector] = PydanticField(
+        default_factory=list,
+        description="Edge triples ``(source, target, relation)`` to remove.",
+    )
+
+    @model_validator(mode="after")
+    def _validate_targets(self) -> RemoveEdgesOp:
+        if not self.relations and not self.edges:
+            raise ValueError("remove_edges requires at least one of relations or edges")
+        _validate_unique_edge_selectors(self.edges, kind="remove_edges")
+        return self
 
 
 class MergeEdgesOp(ConfigBaseModel):
@@ -463,6 +542,11 @@ class MergeEdgesOp(ConfigBaseModel):
         description="Canonical relation name that receives all source relations.",
     )
 
+    @model_validator(mode="after")
+    def _validate_sources(self) -> MergeEdgesOp:
+        validate_merge_sources(self.sources, self.into, kind="merge_edges")
+        return self
+
 
 class RenameEdgePropertiesOp(ConfigBaseModel):
     """Rename edge properties for each relation across schema/profile/ingestion."""
@@ -474,6 +558,7 @@ class RenameEdgePropertiesOp(ConfigBaseModel):
             "Per-relation edge field rename map: "
             "``{relation_name: {old_field: new_field}}``."
         ),
+        min_length=1,
     )
 
 
@@ -486,31 +571,67 @@ class RemoveEdgePropertiesOp(ConfigBaseModel):
         description=(
             "Per-relation edge field removals: ``{relation_name: [field_name, ...]}``."
         ),
+        min_length=1,
     )
 
 
 class AddEdgePropertiesOp(ConfigBaseModel):
-    """Add edge properties for each relation in schema/profile defaults."""
+    """Add edge properties for each relation in schema/profile defaults.
+
+    An entry may be a bare name (an untyped property) or a full
+    :class:`~graflo.architecture.schema.vertex.Field`, as on
+    :class:`AddVertexPropertiesOp`, so a typed or grounded edge property is
+    one replayable step rather than an add followed by a type change.
+    """
 
     op: Literal["add_edge_properties"] = "add_edge_properties"
-    additions: dict[str, list[str]] = PydanticField(
+    additions: dict[str, list[str | Field]] = PydanticField(
         ...,
         description=(
-            "Per-relation edge field additions: ``{relation_name: [field_name, ...]}``."
+            "Per-relation edge property additions: "
+            "``{relation_name: [field_name | Field, ...]}``."
         ),
+        min_length=1,
     )
+
+    def field_names(self, relation: str) -> list[str]:
+        """The names added to *relation*, whichever shape they were written in."""
+        return [
+            entry if isinstance(entry, str) else entry.name
+            for entry in self.additions.get(relation, [])
+        ]
 
 
 class AddInverseEdgesOp(ConfigBaseModel):
     """Add inverse edge relations for matching relations across schema and ingestion."""
 
     op: Literal["add_inverse_edges"] = "add_inverse_edges"
-    relations: dict[str, str] = PydanticField(
+    inverses: dict[str, str] = PydanticField(
         ...,
+        validation_alias=AliasChoices("inverses", "relations"),
         description=(
-            "Relation inverse map: ``{relation_name: inverse_relation_name}``."
+            "Relation inverse map: ``{relation_name: inverse_relation_name}``. "
+            "Must be injective, and no relation may be its own inverse. "
+            "``relations`` is accepted as a legacy alias."
         ),
+        min_length=1,
     )
+
+    @model_validator(mode="after")
+    def _reject_collapsing_map(self) -> AddInverseEdgesOp:
+        # Two relations sharing one inverse name would create two edge types
+        # under it -- the collapse the rename ops refuse, reached sideways.
+        validate_rename_map_is_injective(
+            self.inverses,
+            kind="add_inverse_edges",
+            merge_hint="one inverse relation name per source relation",
+        )
+        self_inverse = sorted(r for r, inv in self.inverses.items() if r == inv)
+        if self_inverse:
+            raise ValueError(
+                f"add_inverse_edges: a relation cannot be its own inverse: {self_inverse}"
+            )
+        return self
 
 
 class AddResourceTransformsOp(ConfigBaseModel):
@@ -845,10 +966,12 @@ class AddVertexIndexesOp(ConfigBaseModel):
     """Author secondary indexes on vertices in the database profile."""
 
     op: Literal["add_vertex_indexes"] = "add_vertex_indexes"
-    indexes: dict[str, list[Index]] = PydanticField(
-        ...,
-        description="``{vertex_name: [Index, ...]}``.",
-        min_length=1,
+    indexes: dict[str, Annotated[list[Index], PydanticField(min_length=1)]] = (
+        PydanticField(
+            ...,
+            description="``{vertex_name: [Index, ...]}``.",
+            min_length=1,
+        )
     )
 
 
@@ -861,7 +984,13 @@ class RemoveVertexIndexesOp(ConfigBaseModel):
     """
 
     op: Literal["remove_vertex_indexes"] = "remove_vertex_indexes"
-    indexes: dict[str, list[list[str]]] = PydanticField(
+    indexes: dict[
+        str,
+        Annotated[
+            list[Annotated[list[str], PydanticField(min_length=1)]],
+            PydanticField(min_length=1),
+        ],
+    ] = PydanticField(
         ...,
         description="``{vertex_name: [[field, ...], ...]}``.",
         min_length=1,
@@ -894,6 +1023,29 @@ class EdgeIndexEntry(ConfigBaseModel):
         return self.source, self.target, self.relation, self.purpose
 
 
+def _validate_edge_index_entries(
+    entries: Sequence[EdgeIndexEntry],
+    *,
+    kind: str,
+    carries: Literal["indexes", "fields"],
+) -> None:
+    """Each entry addresses one spec, and carries the field the op reads.
+
+    ``EdgeIndexEntry`` serves both ops, so the wrong field is silently ignored
+    unless checked here.
+    """
+    keys = [entry.physical_key() for entry in entries]
+    if len(keys) != len(set(keys)):
+        raise ValueError(
+            f"{kind} entries must be unique by (source, target, relation, purpose)"
+        )
+    empty = sorted(
+        str(entry.physical_key()) for entry in entries if not getattr(entry, carries)
+    )
+    if empty:
+        raise ValueError(f"{kind}: entries list no `{carries}`: {empty}")
+
+
 class AddEdgeIndexesOp(ConfigBaseModel):
     """Author secondary indexes on edge physical specs."""
 
@@ -903,6 +1055,13 @@ class AddEdgeIndexesOp(ConfigBaseModel):
         description="Per-spec indexes to add (``indexes`` on each entry).",
         min_length=1,
     )
+
+    @model_validator(mode="after")
+    def _validate_entries(self) -> AddEdgeIndexesOp:
+        _validate_edge_index_entries(
+            self.edges, kind="add_edge_indexes", carries="indexes"
+        )
+        return self
 
 
 class RemoveEdgeIndexesOp(ConfigBaseModel):
@@ -915,19 +1074,12 @@ class RemoveEdgeIndexesOp(ConfigBaseModel):
         min_length=1,
     )
 
-
-class EdgeSelector(ConfigBaseModel):
-    """Schema edge triple selector matching :data:`~graflo.architecture.graph_types.EdgeId`."""
-
-    source: str = PydanticField(..., description="Source vertex type name.")
-    target: str = PydanticField(..., description="Target vertex type name.")
-    relation: str | None = PydanticField(
-        default=None,
-        description="Relation name; ``None`` matches edges with no relation set.",
-    )
-
-    def edge_id(self) -> tuple[str, str, str | None]:
-        return self.source, self.target, self.relation
+    @model_validator(mode="after")
+    def _validate_entries(self) -> RemoveEdgeIndexesOp:
+        _validate_edge_index_entries(
+            self.edges, kind="remove_edge_indexes", carries="fields"
+        )
+        return self
 
 
 class SetEdgeDirectedOp(ConfigBaseModel):
@@ -948,6 +1100,11 @@ class SetEdgeDirectedOp(ConfigBaseModel):
         ...,
         description="Value applied to every selected edge.",
     )
+
+    @model_validator(mode="after")
+    def _validate_unique_selectors(self) -> SetEdgeDirectedOp:
+        _validate_unique_edge_selectors(self.edges, kind="set_edge_directed")
+        return self
 
 
 class SetVertexSemanticsOp(ConfigBaseModel):
@@ -998,6 +1155,11 @@ class SetEdgeSemanticsOp(ConfigBaseModel):
         ),
     )
 
+    @model_validator(mode="after")
+    def _validate_unique_selectors(self) -> SetEdgeSemanticsOp:
+        _validate_unique_edge_selectors(self.edges, kind="set_edge_semantics")
+        return self
+
 
 class FieldSemanticsTarget(ConfigBaseModel):
     """One property of one vertex, and the grounding to put on it."""
@@ -1009,19 +1171,52 @@ class FieldSemanticsTarget(ConfigBaseModel):
         description="Grounding for the property; ``None`` clears it.",
     )
 
+    def key(self) -> tuple[Any, ...]:
+        return ("vertex", self.vertex, self.field)
+
+
+class EdgeFieldSemanticsTarget(ConfigBaseModel):
+    """One property of one edge triple, and the grounding to put on it.
+
+    Edge properties carry the same ``FieldSemantics`` as vertex properties --
+    a ``since`` on an edge has a unit as much as a ``temperature`` on a vertex
+    does -- but until this target existed no op could reach them.
+    """
+
+    source: str = PydanticField(..., description="Source vertex type name.")
+    target: str = PydanticField(..., description="Target vertex type name.")
+    relation: str | None = PydanticField(
+        default=None,
+        description="Relation name; ``None`` matches the edge with no relation set.",
+    )
+    field: str = PydanticField(..., description="Property name on that edge.")
+    semantics: FieldSemantics | None = PydanticField(
+        default=None,
+        description="Grounding for the property; ``None`` clears it.",
+    )
+
+    def edge_id(self) -> tuple[str, str, str | None]:
+        return self.source, self.target, self.relation
+
+    def key(self) -> tuple[Any, ...]:
+        return ("edge", self.source, self.target, self.relation, self.field)
+
 
 class SetFieldSemanticsOp(ConfigBaseModel):
-    """Ground vertex properties, including their unit of measure.
+    """Ground vertex and edge properties, including their unit of measure.
 
     Takes :class:`~graflo.architecture.schema.semantics.FieldSemantics` rather
     than :class:`~graflo.architecture.schema.semantics.Semantics`, which is the
     entire reason this is a third op rather than a mode of the vertex one: only
     a property may carry ``unit``, and the two models are kept apart so that
     ``unit:`` on a type is a validation error rather than a silent no-op.
+
+    A target names either a vertex property (``vertex`` + ``field``) or an
+    edge property (``source`` / ``target`` / ``relation`` + ``field``).
     """
 
     op: Literal["set_field_semantics"] = "set_field_semantics"
-    targets: list[FieldSemanticsTarget] = PydanticField(
+    targets: list[FieldSemanticsTarget | EdgeFieldSemanticsTarget] = PydanticField(
         ...,
         description="Properties whose grounding changes.",
         min_length=1,
@@ -1029,12 +1224,47 @@ class SetFieldSemanticsOp(ConfigBaseModel):
 
     @model_validator(mode="after")
     def _validate_unique_targets(self) -> SetFieldSemanticsOp:
-        keys = [(t.vertex, t.field) for t in self.targets]
+        keys = [t.key() for t in self.targets]
         if len(keys) != len(set(keys)):
             raise ValueError(
-                "set_field_semantics targets must be unique by (vertex, field)"
+                "set_field_semantics targets must be unique by (vertex, field) or "
+                "(source, target, relation, field)"
             )
         return self
+
+
+class AddResourcesOp(ConfigBaseModel):
+    """Introduce ingestion resources, in the shape the ingestion block accepts.
+
+    The unary way to grow ``ingestion_model``: without it a change set could
+    only ever rename or narrow the resources it started with, and the differ
+    had to report an added resource as inexpressible.
+    """
+
+    op: Literal["add_resources"] = "add_resources"
+    resources: list[ResourceConfig] = PydanticField(
+        ...,
+        description="Full resource definitions.",
+        min_length=1,
+    )
+
+    @model_validator(mode="after")
+    def _validate_unique_names(self) -> AddResourcesOp:
+        names = [resource.name for resource in self.resources]
+        if len(names) != len(set(names)):
+            raise ValueError("add_resources entries must be unique by name")
+        return self
+
+
+class RemoveResourcesOp(ConfigBaseModel):
+    """Remove ingestion resources and the bindings that wired them."""
+
+    op: Literal["remove_resources"] = "remove_resources"
+    names: list[str] = PydanticField(
+        ...,
+        description="Resource names to remove.",
+        min_length=1,
+    )
 
 
 class ProjectManifestOp(ConfigBaseModel):
@@ -1714,8 +1944,9 @@ class ComposeManifestsOp(ConfigBaseModel):
     Binary only — apply via :func:`~graflo.architecture.evolution.compose.compose_manifests`.
     Unary :func:`~graflo.architecture.evolution.apply.apply_evolution` rejects this op.
 
-    Empty ``vertices`` / ``relations`` yields a disjoint union (schema + resources +
-    bindings), subject to ``name_conflict`` / ``resource_renames``.
+    Empty ``vertex_equivalences`` / ``relation_equivalences`` yields a disjoint
+    union (schema + resources + bindings), subject to ``name_conflict`` /
+    ``resource_renames``.
 
     ``identity_alignments`` are applied to the composed union before return
     (canonical attributes → resource derivations → priority funnel → secondaries).
@@ -1723,13 +1954,21 @@ class ComposeManifestsOp(ConfigBaseModel):
     """
 
     op: Literal["compose_manifests"] = "compose_manifests"
-    vertices: list[VertexEquivalence] = PydanticField(
+    vertex_equivalences: list[VertexEquivalence] = PydanticField(
         default_factory=list,
-        description="Explicit vertex equivalences across the two input manifests.",
+        validation_alias=AliasChoices("vertex_equivalences", "vertices"),
+        description=(
+            "Explicit vertex equivalences across the two input manifests. "
+            "``vertices`` is accepted as a legacy alias."
+        ),
     )
-    relations: list[RelationEquivalence] = PydanticField(
+    relation_equivalences: list[RelationEquivalence] = PydanticField(
         default_factory=list,
-        description="Optional relation equivalences across the two input manifests.",
+        validation_alias=AliasChoices("relation_equivalences", "relations"),
+        description=(
+            "Optional relation equivalences across the two input manifests. "
+            "``relations`` is accepted as a legacy alias."
+        ),
     )
     resource_renames: dict[str, str] = PydanticField(
         default_factory=dict,
@@ -1789,10 +2028,10 @@ class ComposeManifestsOp(ConfigBaseModel):
         if self.allow_merges:
             return self
         offending: set[str] = set()
-        for veq in self.vertices:
+        for veq in self.vertex_equivalences:
             if len(veq.left_members) > 1 or len(veq.right_members) > 1:
                 offending.add(f"vertex equivalence into {veq.into!r}")
-        for req in self.relations:
+        for req in self.relation_equivalences:
             if len(req.left_members) > 1 or len(req.right_members) > 1:
                 offending.add(f"relation equivalence into {req.into!r}")
         if offending:
@@ -1809,6 +2048,8 @@ ManifestOp = Annotated[
     RemoveVerticesOp
     | AddResourceTransformsOp
     | EnsureExtractedFieldsOp
+    | AddResourcesOp
+    | RemoveResourcesOp
     | AddVerticesOp
     | AddEdgesOp
     | RetargetEdgesOp
@@ -1855,18 +2096,23 @@ INGESTION_REWRITING_OPS: frozenset[str] = frozenset(
     {
         "add_inverse_edges",
         "add_resource_transforms",
+        "add_resources",
+        "remove_resources",
         "ensure_extracted_fields",
         "merge_edges",
         "merge_vertices",
         "project_manifest",
+        "remove_edge_properties",
         "remove_edges",
         "remove_vertex_properties",
         "remove_vertices",
+        "rename_edge_properties",
         "rename_relations",
         "rename_resources",
         "rename_vertex_properties",
         "rename_vertices",
         "replace_identity",
+        "retarget_edges",
         "sanitize",
     }
 )

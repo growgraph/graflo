@@ -30,10 +30,12 @@ from graflo.architecture.evolution.autogenerate import (
 from graflo.architecture.evolution.canonicalize import CANON_VERSION
 from graflo.architecture.evolution.codec import ops_to_yaml_str
 from graflo.architecture.evolution.commit import (
+    Commit,
     CommitError,
     build_commit,
     build_merge_commit,
     build_revert_commit,
+    compute_commit_id,
 )
 from graflo.architecture.evolution.hashing import manifest_hash
 from graflo.architecture.evolution.history import (
@@ -534,6 +536,44 @@ def stamp_cmd(
     _write(manifest, output_path or manifest_path)
 
 
+# ── rehash ──────────────────────────────────────────────────────────────────
+
+
+@click.command("rehash")
+@_store_option
+@click.option("--dry", is_flag=True, default=False, help="Report without rewriting.")
+def rehash_cmd(store: Path, dry: bool) -> None:
+    """Recompute every commit id from the current op serialization.
+
+    A commit id is derived from its ops as serialized, so a release that renames
+    an op field changes the id of every commit carrying that op -- and, through
+    the parent chain, of every commit after it. This walks the history in
+    topological order, recomputes each id against its already-rehashed parents,
+    and rewrites the store. Trees are untouched: the ops still replay to the same
+    manifests, only their names on disk move.
+    """
+    history = FileCommitStore(store).load()
+    mapping: dict[str, str] = {}
+    rebuilt: list[Commit] = []
+    for commit in history.topological():
+        parents = [mapping.get(parent, parent) for parent in commit.parents]
+        new_id = compute_commit_id(list(commit.ops), parents)
+        mapping[commit.id] = new_id
+        rebuilt.append(commit.model_copy(update={"id": new_id, "parents": parents}))
+
+    changed = {old: new for old, new in mapping.items() if old != new}
+    if not changed:
+        click.echo(f"every commit id is current ({len(history.commits)} commit(s))")
+        return
+    for old, new in changed.items():
+        click.echo(f"{old} -> {new}")
+    if dry:
+        click.echo(f"{len(changed)} commit id(s) would change (dry run)")
+        return
+    FileCommitStore(store).save(History(commits=rebuilt))
+    click.echo(f"rewrote {len(changed)} commit id(s) in {store}")
+
+
 def commit_group() -> dict[str, click.Command]:
     """The verbs this module contributes to the ``graflo`` group."""
     return {
@@ -544,4 +584,5 @@ def commit_group() -> dict[str, click.Command]:
         "merge": merge_cmd,
         "revert": revert_cmd,
         "stamp": stamp_cmd,
+        "rehash": rehash_cmd,
     }

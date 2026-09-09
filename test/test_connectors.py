@@ -263,10 +263,7 @@ def test_table_connector_sql_query_building():
     assert where_clause == expected_where
 
     base_query = 'SELECT * FROM "public"."events"'
-    if where_clause:
-        full_query = f"{base_query} WHERE {where_clause}"
-    else:
-        full_query = base_query
+    full_query = f"{base_query} WHERE {where_clause}"
 
     assert "WHERE" in full_query
     assert "> '2020-10-10'" in full_query

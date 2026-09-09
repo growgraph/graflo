@@ -67,27 +67,27 @@ class TestRenameIsNotAMerge:
 
     def test_two_vertices_onto_one_name_is_rejected(self) -> None:
         with pytest.raises(ValidationError, match="not injective"):
-            RenameVerticesOp(vertices={"a": "c", "b": "c"})
+            RenameVerticesOp(renames={"a": "c", "b": "c"})
 
     def test_the_error_names_the_op_that_can_merge(self) -> None:
         with pytest.raises(ValidationError, match="MergeVerticesOp"):
-            RenameVerticesOp(vertices={"a": "c", "b": "c"})
+            RenameVerticesOp(renames={"a": "c", "b": "c"})
 
     def test_it_reports_every_collision_not_just_the_first(self) -> None:
         with pytest.raises(ValidationError) as excinfo:
-            RenameVerticesOp(vertices={"a": "x", "b": "x", "c": "y", "d": "y"})
+            RenameVerticesOp(renames={"a": "x", "b": "x", "c": "y", "d": "y"})
         message = str(excinfo.value)
         assert "'x' is the target of ['a', 'b']" in message
         assert "'y' is the target of ['c', 'd']" in message
 
     def test_relations_and_resources_are_guarded_too(self) -> None:
         with pytest.raises(ValidationError, match="MergeEdgesOp"):
-            RenameRelationsOp(relations={"r1": "r3", "r2": "r3"})
+            RenameRelationsOp(renames={"r1": "r3", "r2": "r3"})
         with pytest.raises(ValidationError, match="not injective"):
-            RenameResourcesOp(resources={"r1": "r3", "r2": "r3"})
+            RenameResourcesOp(renames={"r1": "r3", "r2": "r3"})
 
     def test_an_injective_map_is_still_accepted(self) -> None:
-        assert RenameVerticesOp(vertices={"a": "c", "b": "d"}).vertices == {
+        assert RenameVerticesOp(renames={"a": "c", "b": "d"}).renames == {
             "a": "c",
             "b": "d",
         }
@@ -104,7 +104,7 @@ class TestRenameTargetsMustExist:
         with pytest.raises(ValueError, match="unknown vertices"):
             apply_evolution(
                 _manifest(),
-                [RenameVerticesOp(vertices={"nope": "c"})],
+                [RenameVerticesOp(renames={"nope": "c"})],
                 bump_version=False,
             )
 
@@ -112,7 +112,7 @@ class TestRenameTargetsMustExist:
         with pytest.raises(ValueError, match="collide"):
             apply_evolution(
                 _manifest(),
-                [RenameVerticesOp(vertices={"a": "b"})],
+                [RenameVerticesOp(renames={"a": "b"})],
                 bump_version=False,
             )
 
@@ -120,7 +120,7 @@ class TestRenameTargetsMustExist:
         with pytest.raises(ValueError, match="unknown relations"):
             apply_evolution(
                 _manifest(),
-                [RenameRelationsOp(relations={"nope": "x"})],
+                [RenameRelationsOp(renames={"nope": "x"})],
                 bump_version=False,
             )
 
@@ -145,7 +145,7 @@ class TestRenameTargetsMustExist:
         )
         out = apply_evolution(
             manifest,
-            [RenameRelationsOp(relations={"r1": "r2", "r2": "r3"})],
+            [RenameRelationsOp(renames={"r1": "r2", "r2": "r3"})],
             bump_version=False,
         )
         schema = out.require_schema()
@@ -206,7 +206,7 @@ class TestReferencesThatUsedToBeLeftBehind:
     def test_rename_rewrites_merge_collections_and_vertex_weights(self) -> None:
         out = apply_evolution(
             _manifest(resources=self._resource_with_all_reference_kinds()),
-            [RenameVerticesOp(vertices={"a": "agent"})],
+            [RenameVerticesOp(renames={"a": "agent"})],
             bump_version=False,
         )
         resource = out.ingestion_model.resources[0]
@@ -227,7 +227,7 @@ class TestReferencesThatUsedToBeLeftBehind:
         """The rewrite is complete, so the strict check has nothing to complain about."""
         apply_evolution(
             _manifest(resources=self._resource_with_all_reference_kinds()),
-            [RenameVerticesOp(vertices={"a": "agent"})],
+            [RenameVerticesOp(renames={"a": "agent"})],
             bump_version=False,
             strict_references=True,
         )
