@@ -35,6 +35,7 @@ from .ops import (
     AddVertexIndexesOp,
     AddVertexPropertiesOp,
     AddVerticesOp,
+    CanonicalizeOp,
     EdgeFieldSemanticsTarget,
     EdgeIdentitiesEntry,
     EdgeIndexEntry,
@@ -90,11 +91,21 @@ IRREVERSIBLE: dict[str, str] = {
 
 def is_reversible(op: ManifestOp) -> bool:
     """Whether *op* has a total inverse."""
-    return getattr(op, "op", None) not in IRREVERSIBLE
+    return irreversible_reason(op) is None
 
 
 def irreversible_reason(op: ManifestOp) -> str | None:
-    """Why *op* cannot be inverted, or ``None`` when it can."""
+    """Why *op* cannot be inverted, or ``None`` when it can.
+
+    ``canonicalize`` is reversible exactly when it only renames: a group of
+    more than one class or relation is a merge, which discards where each
+    property and identity came from.
+    """
+    if isinstance(op, CanonicalizeOp) and op.merges:
+        return (
+            "canonicalize merges classes or relations, which discards which "
+            "source each property and identity came from"
+        )
     return IRREVERSIBLE.get(getattr(op, "op", ""))
 
 
@@ -645,6 +656,21 @@ def _bound_resource(entry: Any) -> str | None:
     return entry.resource
 
 
+def _invert_canonicalize(op: CanonicalizeOp, _manifest: GraphManifest) -> ManifestOp:
+    """Reverse every rename; attribute maps re-key onto the renamed class."""
+    return CanonicalizeOp(
+        vertices={new: old for old, new in op.vertices.items() if old != new},
+        relations={new: old for old, new in op.relations.items() if old != new},
+        properties={
+            op.vertices.get(vertex, vertex): {
+                new: old for old, new in renames.items() if old != new
+            }
+            for vertex, renames in op.properties.items()
+            if any(old != new for old, new in renames.items())
+        },
+    )
+
+
 _HANDLERS: dict[str, Any] = {
     "add_vertices": _invert_add_vertices,
     "remove_vertices": _invert_remove_vertices,
@@ -658,6 +684,7 @@ _HANDLERS: dict[str, Any] = {
     "rename_relations": _invert_rename_relations,
     "rename_resources": _invert_rename_resources,
     "rename_vertex_properties": _invert_rename_vertex_properties,
+    "canonicalize": _invert_canonicalize,
     "rename_edge_properties": _invert_rename_edge_properties,
     "add_vertex_indexes": _invert_add_vertex_indexes,
     "remove_vertex_indexes": _invert_remove_vertex_indexes,

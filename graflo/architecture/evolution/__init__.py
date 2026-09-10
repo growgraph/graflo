@@ -21,6 +21,7 @@ from .ops import (
     AddVerticesOp,
     AssignedIdentityTarget,
     BlankIdentityTarget,
+    CanonicalizeOp,
     ChangeFieldTypesOp,
     ComposeManifestsOp,
     EdgeFieldSemanticsTarget,
@@ -76,6 +77,7 @@ _APPLY_EXPORTS = frozenset(
         "apply_add_edge_properties",
         "apply_add_inverse_edges",
         "apply_add_vertex_properties",
+        "apply_canonicalize",
         "apply_merge_edges",
         "apply_merge_vertices",
         "apply_project_manifest",
@@ -124,11 +126,15 @@ _ALIGNMENT_EXPORTS = frozenset(
 _CANONICAL_EXPORTS = frozenset(
     {
         "CanonicalMap",
+        "ClusterResolution",
+        "ClusterSpec",
         "ComposeCanonicalConflictError",
         "SideMaps",
         "canonical_map_to_ops",
+        "check_member_existence",
         "clusters_to_side_maps",
         "merge_canonical_maps",
+        "resolve_clusters",
         "validate_and_complete_canonical_map",
     }
 )
@@ -138,7 +144,10 @@ _EQUIVALENCE_EXPORTS = frozenset(
         "Cluster",
         "ClusterConflictError",
         "ClusterIndex",
+        "ClusterResolution",
+        "ClusterSpec",
         "RelationCluster",
+        "check_member_existence",
         "index_clusters",
     }
 )
@@ -251,6 +260,7 @@ _MERGE3_EXPORTS = frozenset(
         "merge_three_way",
         "op_slots",
         "re_merge",
+        "resolve_clusters",
         "take_left",
         "take_right",
     }
@@ -278,6 +288,7 @@ __all__ = [
     "AssignedIdentityTarget",
     "BlankIdentityTarget",
     "CanonicalMap",
+    "CanonicalizeOp",
     "ChangeFieldTypesOp",
     "Cluster",
     "ClusterConflictError",
@@ -362,6 +373,7 @@ __all__ = [
     "apply_add_vertex_indexes",
     "apply_add_vertex_properties",
     "apply_add_vertices",
+    "apply_canonicalize",
     "apply_change_field_types",
     "apply_evolution",
     "apply_merge_edges",

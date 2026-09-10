@@ -133,9 +133,20 @@ def apply_vertex_merge_to_db_profile(
     into: str,
 ) -> None:
     """Remap logical vertex keys in *profile* when merging *from_vertices* into *into*."""
-    if not from_vertices:
-        return
-    m = {v: into for v in from_vertices if v != into}
+    remap_vertices_in_db_profile(profile, {v: into for v in from_vertices})
+
+
+def remap_vertices_in_db_profile(
+    profile: DatabaseProfile, mapping: dict[str, str]
+) -> None:
+    """Remap logical vertex keys in *profile* by *mapping*, in one pass.
+
+    Every key is looked up once against its original name, so a chain or a
+    swap resolves without an intermediate state; keys landing on one name
+    merge (index lists concatenate, default maps union, storage names must
+    agree).
+    """
+    m = {k: v for k, v in mapping.items() if k != v}
     if not m:
         return
 

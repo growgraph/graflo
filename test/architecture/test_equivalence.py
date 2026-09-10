@@ -133,8 +133,8 @@ def test_into_renamed_away_by_another_declaration_is_allowed() -> None:
     assert index.labels == frozenset({"Z", "Q"})
 
 
-def test_a_merge_into_a_name_another_declaration_renames_away_still_raises() -> None:
-    """Merges are lowered before renames, so a merge would land on the old occupant."""
+def test_a_merge_into_a_name_another_declaration_renames_away_is_allowed() -> None:
+    """The lowered map applies in one step, so a merge lands on the vacated name too."""
     op = ComposeManifestsOp(
         vertex_equivalences=[
             VertexEquivalence(left=["X", "X2"], right="Y", into="Z"),
@@ -142,8 +142,8 @@ def test_a_merge_into_a_name_another_declaration_renames_away_still_raises() -> 
         ],
         allow_merges=True,
     )
-    with pytest.raises(ClusterConflictError, match="lowered before renames"):
-        _index(op, left_vertices={"X", "X2", "Z"}, right_vertices={"Y", "W"})
+    index = _index(op, left_vertices={"X", "X2", "Z"}, right_vertices={"Y", "W"})
+    assert index.labels == frozenset({"Z", "Q"})
 
 
 def test_relation_overlapping_declarations_raise() -> None:

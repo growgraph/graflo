@@ -78,6 +78,7 @@ OP_PAYLOADS: dict[str, dict] = {
         ],
     },
     "merge_vertices": {"sources": ["person"], "into": "party"},
+    "canonicalize": {"vertices": {"person": "party"}},
     "rename_vertex_properties": {"renames": {"party": {"mail": "email"}}},
     "remove_vertex_properties": {"removals": {"party": ["scratch"]}},
     "add_vertex_properties": {"additions": {"party": ["nickname"]}},
@@ -440,8 +441,8 @@ class TestUnionCoverage:
             if name.endswith("Op")
             and hasattr(getattr(ops_module, name), "model_fields")
         }
-        assert len(exported) == 37
-        assert len(_union_members()) == 36  # 37 minus the binary compose op
+        assert len(exported) == 38
+        assert len(_union_members()) == 37  # 38 minus the binary compose op
 
 
 class TestRoundTrip:

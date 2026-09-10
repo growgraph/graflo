@@ -148,7 +148,7 @@ out the parent commit is always exact and is the better tool.
 | Reversible | Irreversible |
 |---|---|
 | add ↔ remove: vertices, edges, vertex/edge properties, indexes | `merge_vertices`, `merge_edges` |
-| rename: vertices, relations, resources, properties | `change_field_types` |
+| rename: vertices, relations, resources, properties; `canonicalize` that only renames | `change_field_types`, `canonicalize` that merges |
 | `set_edge_directed`, `add_inverse_edges`, `retarget_edges` | `sanitize`, `project_manifest` |
 | `replace_identity` (with `retire: keep`), secondary identities | `compose_manifests` (binary) |
 

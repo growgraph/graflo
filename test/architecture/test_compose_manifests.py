@@ -1261,6 +1261,49 @@ def test_compose_deduplicates_a_vertex_index_declared_on_both_sides() -> None:
     ] == [["label"]]
 
 
+def test_a_merge_chain_through_an_occupied_into_composes() -> None:
+    """{X, X2}~{Y} -> Z and {Z}~{W} -> Q: Q is the old Z alone, Z is the merge alone."""
+
+    def _v(name: str, key: str) -> Vertex:
+        return Vertex(
+            name=name,
+            properties=[Field(name=key, type=FieldType.STRING)],
+            identity=[key],
+        )
+
+    left = _manifest(
+        name="left",
+        vertices=[_v("X", "x_id"), _v("X2", "x2_id"), _v("Z", "z_id")],
+        edges=[],
+        resources=[
+            {
+                "name": "r_left",
+                "apply": [{"vertex": "X"}, {"vertex": "X2"}, {"vertex": "Z"}],
+            }
+        ],
+    )
+    right = _manifest(
+        name="right",
+        vertices=[_v("Y", "y_id"), _v("W", "w_id")],
+        edges=[],
+        resources=[{"name": "r_right", "apply": [{"vertex": "Y"}, {"vertex": "W"}]}],
+    )
+    op = ComposeManifestsOp(
+        vertex_equivalences=[
+            VertexEquivalence(left=["X", "X2"], right="Y", into="Z", identity=["x_id"]),
+            VertexEquivalence(left="Z", right="W", into="Q", identity=["z_id"]),
+        ],
+        allow_merges=True,
+        allow_observation_fusion=True,
+    )
+    out = compose_manifests(left, right, op, bump_version=False)
+    assert out.graph_schema is not None
+    vc = out.graph_schema.core_schema.vertex_config
+    assert vc.vertex_set == {"Z", "Q"}
+    assert set(vc.property_names("Q")) == {"z_id", "w_id"}
+    assert set(vc.property_names("Z")) == {"x_id", "x2_id", "y_id"}
+
+
 def test_a_rename_chain_through_an_occupied_into_composes() -> None:
     """{X}~{Y} -> Z and {Z}~{W} -> Q, end to end: the map applies in one step."""
 

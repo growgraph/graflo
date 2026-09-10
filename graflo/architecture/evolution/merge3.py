@@ -151,6 +151,15 @@ def op_slots(op: ManifestOp) -> set[Slot]:
     elif isinstance(op, ops.MergeVerticesOp):
         slots |= {_vertex_slot(name) for name in op.sources}
         slots.add(_vertex_slot(op.into))
+    elif isinstance(op, ops.CanonicalizeOp):
+        # Every name on either side of the map is occupied, as for a rename.
+        for old, new in op.vertices.items():
+            slots |= {_vertex_slot(old), _vertex_slot(new)}
+        for vertex, renames in op.properties.items():
+            for old, new in renames.items():
+                slots |= {_field_slot(vertex, old), _field_slot(vertex, new)}
+        for old, new in op.relations.items():
+            slots |= {_relation_slot(old), _relation_slot(new)}
 
     # ── vertex properties ───────────────────────────────────────────────────
     elif isinstance(op, ops.AddVertexPropertiesOp):

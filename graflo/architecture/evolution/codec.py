@@ -30,6 +30,7 @@ from .ops import (
     AddVertexIndexesOp,
     AddVertexPropertiesOp,
     AddVerticesOp,
+    CanonicalizeOp,
     ChangeFieldTypesOp,
     EnsureExtractedFieldsOp,
     ManifestOp,
@@ -83,6 +84,7 @@ RevisionOp = Annotated[
     | SetEdgeSemanticsOp
     | SetFieldSemanticsOp
     | MergeVerticesOp
+    | CanonicalizeOp
     | RenameVertexPropertiesOp
     | RemoveVertexPropertiesOp
     | AddVertexPropertiesOp

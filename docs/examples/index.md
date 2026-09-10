@@ -37,6 +37,6 @@ Runnable walkthroughs with sample data under `examples/` in the repository.
 16. **[Secondary identities for edge-only sources](example-16.md)** — relate vertices by ISIN/LEI via `secondary_identities`, `lookup_only`, and `source_match` / `target_match`.
 17. **[Identity funnel across two sources](example-17.md)** — ordered fallback branches key each row by the strongest evidence it carries.
 18. **[Cross-resource identity discovery](example-18.md)** — propose a shared identity policy from sampled documents; apply after review.
-19. **[Union of manifests with conditional equivalence](example-19.md)** — canonicalize, validate and complete a `CanonicalMap` along an n-ary equivalence cluster, compose with `identity_alignments`, and fuse entities behind a gated match key.
+19. **[Union of manifests with conditional equivalence](example-19.md)** — an n-ary equivalence cluster named by a `CanonicalMap` on the compose op, composed in one step with `identity_alignments`, and fuse entities behind a gated match key.
 20. **[Version control: fork, conflict, resolve, merge](example-20.md)** — record commits over a manifest, fork it, reconcile the conflict, and replay the recorded decision after one side moves on.
 21. **[Identity alignment on a routed source](example-21.md)** — align identity across a union whose side is one `vertex_router`, without splitting it: level-targeted derivations, one gated derivation per collapsing branch, and delivery through a restrictive router.

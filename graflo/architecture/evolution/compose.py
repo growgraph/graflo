@@ -37,10 +37,10 @@ from .canonical import (
     CanonicalMap,
     SideMaps,
     canonical_map_to_ops,
-    validate_and_complete_canonical_map,
+    resolve_clusters,
 )
 from .db_profile import merge_default_property_values
-from .equivalence import Cluster, ClusterIndex, Side, index_clusters
+from .equivalence import Cluster, ClusterIndex, Side
 from .merge_core import (
     edge_config_from_edges,
     merge_edge_pair,
@@ -298,23 +298,6 @@ def _resolve_schema_collisions(
     return renames
 
 
-def _did_you_mean(name: str, candidates: Iterable[str]) -> str:
-    """A suffix naming a candidate that denotes the same concept, if any.
-
-    Authoring an equivalence in the wrong convention is the likeliest mistake
-    at this boundary, and "not in left manifest" alone is a dead end when the
-    vertex is right there under another spelling.
-    """
-    key = canonical_slug(name)
-    near = sorted(c for c in candidates if c != name and canonical_slug(c) == key)
-    if not near:
-        return ""
-    return (
-        f"; it has {near[0]!r}, which denotes the same concept — author the "
-        "equivalence in the manifest's own spelling"
-    )
-
-
 def _assert_no_canonical_split(schema: Schema) -> None:
     """No two composed vertex types or relations may denote one concept.
 
@@ -350,6 +333,7 @@ def _apply_right_schema_collision_policy(
     left: GraphManifest,
     right: GraphManifest,
     op: ComposeManifestsOp,
+    index: ClusterIndex,
 ) -> None:
     """Prefix, fuse or error on non-equivalent right vertex/relation names.
 
@@ -373,7 +357,7 @@ def _apply_right_schema_collision_policy(
     v_renames = _resolve_schema_collisions(
         left_names=set(left_schema.core_schema.vertex_config.vertex_set),
         right_names=sorted(right_schema.core_schema.vertex_config.vertex_set),
-        exempt=frozenset({veq.into for veq in op.vertex_equivalences}),
+        exempt=index.labels,
         name_conflict=op.name_conflict,
         kind="vertex",
         equivalence_hint="VertexEquivalence",
@@ -394,7 +378,7 @@ def _apply_right_schema_collision_policy(
                 if e.relation is not None
             }
         ),
-        exempt=frozenset({req.into for req in op.relation_equivalences}),
+        exempt=index.relation_labels,
         name_conflict=op.name_conflict,
         kind="relation",
         equivalence_hint="RelationEquivalence",
@@ -489,8 +473,12 @@ def side_identity_to_funnel(
     chains: dict[tuple[Side, str], list[tuple[str, ...]]] = {}
     for side in ("left", "right"):
         default = side_identity.left if side == "left" else side_identity.right
+        overrides = {
+            cluster.resolved(side, declared): chain
+            for declared, chain in side_identity.members.items()
+        }
         for member in cluster.members(side):
-            raw = side_identity.members.get(member, default)
+            raw = overrides.get(member, default)
             if raw is None:
                 raise ComposeIdentityError(
                     f"compose_manifests: cluster into {cluster.into!r} has no "
@@ -1086,41 +1074,6 @@ def _coerce_side_maps(
     return coerced
 
 
-def _check_member_existence(
-    index: ClusterIndex,
-    *,
-    left_vertex_names: set[str],
-    right_vertex_names: set[str],
-    left_relation_names: set[str],
-    right_relation_names: set[str],
-) -> None:
-    for cluster in index.vertices:
-        for member in cluster.left:
-            if member not in left_vertex_names:
-                raise ValueError(
-                    f"compose_manifests: left vertex {member!r} not in left "
-                    f"manifest{_did_you_mean(member, left_vertex_names)}"
-                )
-        for member in cluster.right:
-            if member not in right_vertex_names:
-                raise ValueError(
-                    f"compose_manifests: right vertex {member!r} not in right "
-                    f"manifest{_did_you_mean(member, right_vertex_names)}"
-                )
-    for cluster in index.relations:
-        for member in cluster.left:
-            if member not in left_relation_names:
-                raise ValueError(
-                    f"compose_manifests: left relation {member!r} not in left manifest"
-                )
-        for member in cluster.right:
-            if member not in right_relation_names:
-                raise ValueError(
-                    f"compose_manifests: right relation {member!r} not in "
-                    "right manifest"
-                )
-
-
 def compose_manifests(
     left: GraphManifest,
     right: GraphManifest,
@@ -1134,19 +1087,21 @@ def compose_manifests(
 ) -> GraphManifest:
     """Return a new manifest that is the deterministic compose of *left* and *right*.
 
-    Each declared cluster (a :class:`~graflo.architecture.evolution.ops.VertexEquivalence`
+    The declared clusters (each a :class:`~graflo.architecture.evolution.ops.VertexEquivalence`
     or :class:`~graflo.architecture.evolution.ops.RelationEquivalence`, possibly
-    n-ary) is lowered to a per-side :class:`~graflo.architecture.evolution.canonical.CanonicalMap`
-    and applied to that side standalone (property alignment, then merge/rename)
-    before the two sides are unioned by name. Does not invent semantic matches.
+    n-ary) and ``op.canonical_maps`` are resolved together into one composite
+    :class:`~graflo.architecture.evolution.canonical.CanonicalMap` per side
+    (see :func:`~graflo.architecture.evolution.canonical.resolve_clusters`),
+    applied to that side in one step, before the two sides are unioned by
+    name. Does not invent semantic matches.
 
     When ``op.identity_alignments`` is non-empty, the composed union is further
     rewritten by the fundamental ops emitted from each alignment (see
-    :func:`~graflo.architecture.evolution.alignment.alignment_to_ops`). Pass
-    *canonical_maps* — ``(side, CanonicalMap)`` pairs — so derivation inputs
-    written in canonical vocabulary fail loudly rather than silently deriving
-    nothing, and so a class already canonicalized on one side is checked
-    against the other side's declared clusters.
+    :func:`~graflo.architecture.evolution.alignment.alignment_to_ops`);
+    member-keyed sources are resolved against the sides as handed in.
+    *canonical_maps* — ``(side, CanonicalMap)`` pairs — are folded into
+    ``op.canonical_maps``; putting the maps on the op itself keeps the whole
+    recipe in one document.
     """
     if not isinstance(op, ComposeManifestsOp):
         raise TypeError(
@@ -1167,31 +1122,13 @@ def compose_manifests(
                 side,
             )
 
-    left_vertex_names = _vertex_names(left_schema)
-    right_vertex_names = _vertex_names(right_schema)
-    left_relation_names = _relation_names(left_schema)
-    right_relation_names = _relation_names(right_schema)
-
     # Raw ClusterConflictError here (not wrapped): a compose op whose own
     # declarations conflict is broken regardless of any canonical map.
-    index = index_clusters(
-        op,
-        left_vertices=left_vertex_names,
-        right_vertices=right_vertex_names,
-        left_relations=left_relation_names,
-        right_relations=right_relation_names,
+    resolution = resolve_clusters(
+        op, left=out_left, right=out_right, canonical_maps=maps
     )
-
-    side_maps = validate_and_complete_canonical_map(
-        op, left=out_left, right=out_right, canonical_maps=maps, index=index
-    )
-    _check_member_existence(
-        index,
-        left_vertex_names=left_vertex_names,
-        right_vertex_names=right_vertex_names,
-        left_relation_names=left_relation_names,
-        right_relation_names=right_relation_names,
-    )
+    index = resolution.index
+    side_maps = resolution.side_maps
 
     member_keys, member_property_names = _capture_all_member_state(
         index, left_schema, right_schema, side_maps
@@ -1221,7 +1158,7 @@ def compose_manifests(
             ),
         )
 
-    _apply_right_schema_collision_policy(out_left, out_right, op)
+    _apply_right_schema_collision_policy(out_left, out_right, op, index)
 
     alignment_labels = {alignment.vertex for alignment in op.identity_alignments}
     # Three-way, deliberately: a fabricated empty Schema would not be neutral.
@@ -1275,7 +1212,10 @@ def compose_manifests(
             index=index,
             sides=sides,
             side_maps=side_maps,
-            canonical_maps=maps,
+            canonical_maps=[
+                ("left", resolution.author.left),
+                ("right", resolution.author.right),
+            ],
             finish_init=False,
             strict_references=strict_references,
             dynamic_edge_feedback=dynamic_edge_feedback,

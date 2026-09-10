@@ -379,6 +379,39 @@ class TestIrreversible:
         assert invert_op(op, manifest=_manifest()) is None
         assert "discards" in (irreversible_reason(op) or "")
 
+    def test_canonicalize_inverts_when_it_only_renames(self) -> None:
+        op = op_from_dict(
+            {
+                "op": "canonicalize",
+                "vertices": {"order": "purchase"},
+                "properties": {"order": {"oid": "purchase_id"}},
+                "relations": {"buys": "purchases"},
+            }
+        )
+
+        assert is_reversible(op) is True
+        inverse = invert_op(op, manifest=_manifest())
+        assert inverse is not None
+        assert inverse.op == "canonicalize"
+        assert inverse.vertices == {"purchase": "order"}
+        # Attribute maps re-key onto the renamed class, which is what the
+        # inverse sees when it runs.
+        assert inverse.properties == {"purchase": {"purchase_id": "oid"}}
+        assert inverse.relations == {"purchases": "buys"}
+
+    def test_canonicalize_has_no_inverse_when_it_merges(self) -> None:
+        op = op_from_dict(
+            {
+                "op": "canonicalize",
+                "vertices": {"order": "party", "party": "party"},
+                "allow_merges": True,
+            }
+        )
+
+        assert is_reversible(op) is False
+        assert invert_op(op, manifest=_manifest()) is None
+        assert "discards" in (irreversible_reason(op) or "")
+
     def test_change_field_types_has_no_inverse(self) -> None:
         op = op_from_dict(
             {

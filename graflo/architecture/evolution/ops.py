@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Annotated, Any, Literal
 
 from pydantic import AliasChoices, field_validator, model_validator
@@ -68,6 +68,56 @@ def validate_merge_sources(sources: Sequence[str], into: str, *, kind: str) -> N
         raise ValueError(f"{kind}: `into` {into!r} must not appear in `sources`")
 
 
+def vocabulary_groups(mapping: Mapping[str, str]) -> dict[str, list[str]]:
+    """``{target: [sources]}`` — the fibers of a vocabulary map, self entries included."""
+    groups: dict[str, list[str]] = {}
+    for source, target in mapping.items():
+        groups.setdefault(target, []).append(source)
+    return groups
+
+
+def validate_vocabulary_map(
+    vertices: Mapping[str, str],
+    relations: Mapping[str, str],
+    properties: Mapping[str, Mapping[str, str]],
+    *,
+    allow_merges: bool,
+    kind: str,
+    merge_hint: str,
+) -> None:
+    """Reject an unacknowledged collapse in a vocabulary map.
+
+    A vocabulary map is a function on names, so its groups are its fibers:
+    every source of one target, **including** a self entry ``t: t`` that
+    declares an existing ``t`` a member of its own group. A group of more than
+    one name is a merge — it fuses entities and can create self-relations — so
+    it must be acknowledged rather than inferred from the map. Per-class
+    attribute maps are plain renames and must be injective outright.
+    """
+    if not allow_merges:
+        for noun, mapping in (("class", vertices), ("relation", relations)):
+            collapsed = {
+                target: sorted(sources)
+                for target, sources in vocabulary_groups(mapping).items()
+                if len(sources) > 1
+            }
+            if collapsed:
+                detail = "; ".join(
+                    f"{target!r} is the target of {sources}"
+                    for target, sources in sorted(collapsed.items())
+                )
+                raise ValueError(
+                    f"{kind}: {noun} map collapses names: {detail}. A merge is a "
+                    f"stated intent — {merge_hint}."
+                )
+    for source_class, attr_map in properties.items():
+        validate_rename_map_is_injective(
+            dict(attr_map),
+            kind=f"{kind} property (class {source_class!r})",
+            merge_hint="a transform that combines the fields upstream",
+        )
+
+
 class RemoveVerticesOp(ConfigBaseModel):
     """Remove logical vertices and cascade: edges, ingestion resources, bindings."""
 
@@ -121,6 +171,188 @@ class MergeVerticesOp(ConfigBaseModel):
     def _validate_sources(self) -> MergeVerticesOp:
         validate_merge_sources(self.sources, self.into, kind="merge_vertices")
         return self
+
+
+class CanonicalMap(ConfigBaseModel):
+    """Declared translation of a source vocabulary into canonical names.
+
+    A partial function on names, identity where unmapped: ``vertices`` maps
+    source class names to canonical class names, ``relations`` does the same
+    for relation names, and ``properties`` maps, per *source* class name,
+    source attribute names to canonical attribute names — including for
+    classes whose name does not change. Two sources sharing a target is a
+    merge and must be acknowledged with ``allow_merges``.
+
+    Used on its own through :func:`~graflo.architecture.evolution.canonical.canonical_map_to_ops`,
+    and on :attr:`ComposeManifestsOp.canonical_maps` where it names the
+    composed classes and is checked against the declared equivalences.
+    """
+
+    vertices: dict[str, str] = PydanticField(
+        default_factory=dict,
+        description="Class rename map: ``{source_class: canonical_class}``.",
+    )
+    properties: dict[str, dict[str, str]] = PydanticField(
+        default_factory=dict,
+        description=(
+            "Per-source-class attribute rename map: "
+            "``{source_class: {source_attr: canonical_attr}}``."
+        ),
+    )
+    relations: dict[str, str] = PydanticField(
+        default_factory=dict,
+        description="Relation rename map: ``{source_relation: canonical_relation}``.",
+    )
+    allow_merges: bool = PydanticField(
+        default=False,
+        description=(
+            "Accept a non-injective ``vertices`` / ``relations`` map. Two "
+            "sources sharing a canonical target is a *merge*, not a rename; "
+            "it must be a stated intent because merging fuses entities and "
+            "can create self-relations."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _validate_maps(self) -> CanonicalMap:
+        if not self.allow_merges:
+            # Identity entries (source == target) are excluded: a lowered
+            # cluster map deliberately carries one for every member, including
+            # the composed name itself, to declare it a member of its own group
+            # -- that self entry must not read as a collision here. The op the
+            # map lowers to counts it, which is where the merge is acknowledged.
+            validate_rename_map_is_injective(
+                {s: t for s, t in self.vertices.items() if s != t},
+                kind="canonical vertex",
+                merge_hint="CanonicalMap(allow_merges=True)",
+            )
+            validate_rename_map_is_injective(
+                {s: t for s, t in self.relations.items() if s != t},
+                kind="canonical relation",
+                merge_hint="CanonicalMap(allow_merges=True)",
+            )
+        for source_class, attr_map in self.properties.items():
+            validate_rename_map_is_injective(
+                attr_map,
+                kind=f"canonical property (class {source_class!r})",
+                merge_hint="a transform that combines the fields upstream",
+            )
+        return self
+
+    def canonical_class(self, source_class: str) -> str:
+        """Canonical name of *source_class* (itself when unmapped)."""
+        return self.vertices.get(source_class, source_class)
+
+    def canonical_relation(self, source_relation: str) -> str:
+        """Canonical name of *source_relation* (itself when unmapped)."""
+        return self.relations.get(source_relation, source_relation)
+
+    @property
+    def vertex_targets(self) -> set[str]:
+        """Canonical class names this map establishes (targets of a real rename)."""
+        return {t for s, t in self.vertices.items() if s != t}
+
+    @property
+    def relation_targets(self) -> set[str]:
+        """Canonical relation names this map establishes."""
+        return {t for s, t in self.relations.items() if s != t}
+
+    def canonical_property_names(self, canonical_class: str) -> set[str]:
+        """Canonical attribute names the map establishes on *canonical_class*."""
+        names: set[str] = set()
+        for source_class, attr_map in self.properties.items():
+            if self.canonical_class(source_class) == canonical_class:
+                names.update(new for old, new in attr_map.items() if old != new)
+        return names
+
+
+class CanonicalizeOp(ConfigBaseModel):
+    """Relabel classes, attributes and relations by one vocabulary map, in one step.
+
+    The map is a partial function on names — identity where unmapped — applied
+    simultaneously over the original schema, so a chain (``{X: Z, Z: Q}``) and
+    a swap resolve without an intermediate state, and the fibers of the map
+    are exactly the groups that merge. A target that already exists and does
+    not move must be declared a member of its own group with a self entry
+    (``Company: Company``); otherwise the op refuses rather than merging into
+    it silently. ``properties`` is keyed by the *source* class name and is
+    applied before the class relabel.
+
+    This is the single lowering of a
+    :class:`~graflo.architecture.evolution.canonical.CanonicalMap`, and the
+    per-side step of
+    :func:`~graflo.architecture.evolution.compose.compose_manifests`.
+    """
+
+    op: Literal["canonicalize"] = "canonicalize"
+    vertices: dict[str, str] = PydanticField(
+        default_factory=dict,
+        description="Class map: ``{source_class: canonical_class}``.",
+    )
+    properties: dict[str, dict[str, str]] = PydanticField(
+        default_factory=dict,
+        description=(
+            "Per-source-class attribute map: "
+            "``{source_class: {source_attr: canonical_attr}}``."
+        ),
+    )
+    relations: dict[str, str] = PydanticField(
+        default_factory=dict,
+        description="Relation map: ``{source_relation: canonical_relation}``.",
+    )
+    allow_merges: bool = PydanticField(
+        default=False,
+        description=(
+            "Accept a group of more than one class or relation collapsing onto "
+            "one target. A merge fuses entities and can create self-relations, "
+            "so it is acknowledged here rather than inferred from the map."
+        ),
+    )
+    allow_self_relations: bool = PydanticField(
+        default=False,
+        description=(
+            "Accept a merge whose sources are connected by an edge that becomes "
+            "a self-relation once both endpoints land on the same class."
+        ),
+    )
+    allow_observation_fusion: bool = PydanticField(
+        default=False,
+        description=(
+            "Accept a merge whose sources are produced more than once at one "
+            "resource pipeline level, fusing those observations into one node."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _validate_map(self) -> CanonicalizeOp:
+        validate_vocabulary_map(
+            self.vertices,
+            self.relations,
+            self.properties,
+            allow_merges=self.allow_merges,
+            kind="canonicalize",
+            merge_hint="set allow_merges=true",
+        )
+        return self
+
+    @property
+    def vertex_groups(self) -> dict[str, list[str]]:
+        """``{target: [members]}`` over ``vertices``, self entries included."""
+        return vocabulary_groups(self.vertices)
+
+    @property
+    def relation_groups(self) -> dict[str, list[str]]:
+        """``{target: [members]}`` over ``relations``, self entries included."""
+        return vocabulary_groups(self.relations)
+
+    @property
+    def merges(self) -> bool:
+        """Whether any class or relation group has more than one member."""
+        return any(
+            len(members) > 1
+            for groups in (self.vertex_groups, self.relation_groups)
+            for members in groups.values()
+        )
 
 
 class RenameVertexPropertiesOp(ConfigBaseModel):
@@ -1789,11 +2021,12 @@ class VertexEquivalence(ConfigBaseModel):
     right: str | list[str] = PydanticField(
         ..., description="One or more right-manifest vertex type names."
     )
-    into: str = PydanticField(
-        ...,
+    into: str | None = PydanticField(
+        default=None,
         description=(
-            "Canonical vertex type name after compose "
-            "(may equal a member's name, or a new name)."
+            "Composed vertex type name (may equal a member's name, or be a "
+            "new name). Omitted, the name comes from the canonical map that "
+            "maps a member, or from the one spelling every member shares."
         ),
     )
     properties: list[PropertyEquivalence] = PydanticField(
@@ -1908,7 +2141,13 @@ class RelationEquivalence(ConfigBaseModel):
     right: str | list[str] = PydanticField(
         ..., description="One or more right relation names."
     )
-    into: str = PydanticField(..., description="Canonical relation name after compose.")
+    into: str | None = PydanticField(
+        default=None,
+        description=(
+            "Composed relation name. Omitted, the name comes from the canonical "
+            "map that maps a member, or from the one spelling every member shares."
+        ),
+    )
 
     @property
     def left_members(self) -> list[str]:
@@ -1938,6 +2177,12 @@ class RelationEquivalence(ConfigBaseModel):
         return self
 
 
+def _describe_cluster(declaration: VertexEquivalence | RelationEquivalence) -> str:
+    if declaration.into is not None:
+        return f"into {declaration.into!r}"
+    return f"{declaration.left_members} ~ {declaration.right_members}"
+
+
 class ComposeManifestsOp(ConfigBaseModel):
     """Union two full ``GraphManifest``s using explicit equivalence maps.
 
@@ -1950,7 +2195,12 @@ class ComposeManifestsOp(ConfigBaseModel):
 
     ``identity_alignments`` are applied to the composed union before return
     (canonical attributes → resource derivations → priority funnel → secondaries).
-    Each entry's ``vertex`` must be a declared cluster's ``into`` label.
+    Each entry's ``vertex`` must be a declared cluster's composed name.
+
+    Equivalences name members in the manifests' own vocabulary (a member may
+    also be spelled by its canonical name when ``canonical_maps`` establishes
+    it); a cluster's composed name is ``into``, else the canonical name its
+    members map to, else the one spelling they share.
     """
 
     op: Literal["compose_manifests"] = "compose_manifests"
@@ -2022,6 +2272,18 @@ class ComposeManifestsOp(ConfigBaseModel):
             "union, one per composed class."
         ),
     )
+    canonical_maps: dict[Literal["left", "right", "both"], CanonicalMap] = (
+        PydanticField(
+            default_factory=dict,
+            description=(
+                "Canonical vocabulary per side. ``left`` / ``right`` apply to "
+                "that manifest's own names; ``both`` applies to either side and "
+                "to composed names. Compose applies each side's map together "
+                "with its equivalences in one step, and refuses when the two "
+                "disagree on where a name goes."
+            ),
+        )
+    )
 
     @model_validator(mode="after")
     def _require_allow_merges_for_nary(self) -> ComposeManifestsOp:
@@ -2030,10 +2292,10 @@ class ComposeManifestsOp(ConfigBaseModel):
         offending: set[str] = set()
         for veq in self.vertex_equivalences:
             if len(veq.left_members) > 1 or len(veq.right_members) > 1:
-                offending.add(f"vertex equivalence into {veq.into!r}")
+                offending.add(f"vertex equivalence {_describe_cluster(veq)}")
         for req in self.relation_equivalences:
             if len(req.left_members) > 1 or len(req.right_members) > 1:
-                offending.add(f"relation equivalence into {req.into!r}")
+                offending.add(f"relation equivalence {_describe_cluster(req)}")
         if offending:
             raise ValueError(
                 "compose_manifests: "
@@ -2066,6 +2328,7 @@ ManifestOp = Annotated[
     | SetEdgeSemanticsOp
     | SetFieldSemanticsOp
     | MergeVerticesOp
+    | CanonicalizeOp
     | RenameVertexPropertiesOp
     | RemoveVertexPropertiesOp
     | AddVertexPropertiesOp
@@ -2097,6 +2360,7 @@ INGESTION_REWRITING_OPS: frozenset[str] = frozenset(
         "add_inverse_edges",
         "add_resource_transforms",
         "add_resources",
+        "canonicalize",
         "remove_resources",
         "ensure_extracted_fields",
         "merge_edges",
