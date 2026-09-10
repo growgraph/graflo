@@ -1243,11 +1243,13 @@ def _apply_identity_alignments(
 ) -> GraphManifest:
     """Apply each alignment to the union.
 
-    *sides* are the pre-merge manifests (canonical maps and the resource
-    rename policy applied): member-keyed sources resolve against them, since
-    the merge has rewritten router ``type_map`` values to the canonical name.
+    *sides* are the manifests as handed in, after the resource rename policy
+    and before the per-side relabel: member-keyed sources resolve against
+    them, since the relabel rewrites router ``type_map`` values to the
+    composed name. Member keys are first re-keyed through the aligned cluster,
+    so a member may be keyed by its own name or its canonical one.
     """
-    from .alignment import alignment_to_ops
+    from .alignment import alignment_to_ops, rekey_members
     from .apply import apply_evolution
 
     cluster_labels = index.labels
@@ -1258,8 +1260,8 @@ def _apply_identity_alignments(
             if alignment.vertex not in cluster_labels:
                 raise ValueError(
                     f"compose_manifests: identity alignment vertex "
-                    f"{alignment.vertex!r} is not a declared cluster's `into` "
-                    f"label {sorted(cluster_labels)}"
+                    f"{alignment.vertex!r} is not a declared cluster's composed "
+                    f"name {sorted(cluster_labels)}"
                 )
         else:
             union_vertices = (
@@ -1273,6 +1275,8 @@ def _apply_identity_alignments(
                     f"{alignment.vertex!r} is not in the composed union"
                 )
         cluster = index.cluster_for_label(alignment.vertex)
+        if cluster is not None:
+            alignment = rekey_members(alignment, sides=sides, resolve=cluster.resolved)
         cluster_members = (
             {"left": set(cluster.left), "right": set(cluster.right)}
             if cluster is not None

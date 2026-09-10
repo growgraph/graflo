@@ -330,6 +330,14 @@ def _resolve_cluster(
             if name != declared:
                 aliases.setdefault(side, {})[declared] = name
         members[side] = resolved
+        # A member may also be named by its canonical name wherever the
+        # declaration keys by member — unless that name is a real class on the
+        # side, or the canonical name of two members.
+        canonical = [mapping[side].get(m, m) for m in resolved]
+        for member, name in zip(resolved, canonical, strict=True):
+            if name == member or name in side_names[side] or canonical.count(name) > 1:
+                continue
+            aliases.setdefault(side, {}).setdefault(name, member)
 
     opinions: dict[str, list[str]] = {}
     for side in _SIDES:

@@ -4,14 +4,14 @@ splitting the router.
 
 Source A is a single view: one heterogeneous stream discriminated by ``kind``,
 routed by ONE ``vertex_router`` nested under a ``descend``. The equivalence
-collapses two of its members (``Company`` — ``Firm`` before the canonical map —
-and ``Shop``) onto ``Company`` while ``Person`` keeps flowing through the same
-router — splitting the resource would mean scanning the view twice and
+collapses two of its members (``Firm`` and ``Shop``) onto ``Company`` — the
+name the canonical map gives ``Firm`` — while ``Person`` keeps flowing through
+the same router; splitting the resource would mean scanning the view twice and
 duplicating a discriminator it already carries.
 
 **The member is the unit of derivation.** Every record that becomes ``Company``
 was produced *as one member* of the cluster by *one resource*: here the view
-produces ``Company`` for ``kind: firm`` rows and ``Shop`` for ``kind: shop``
+produces ``Firm`` for ``kind: firm`` rows and ``Shop`` for ``kind: shop``
 rows. All kinds carry the shared business key in ONE column, ``secondary_key``,
 each member under its own marker (``abc_`` for firms, ``def_`` for shops). So
 which member a document *is* must decide the derivation — which is what keying
@@ -51,10 +51,7 @@ from graflo.architecture.evolution import (
     LocalKeySpec,
     SharedDerivation,
     VertexEquivalence,
-    apply_evolution,
-    canonical_map_to_ops,
     compose_manifests,
-    validate_and_complete_canonical_map,
 )
 
 EXAMPLE_DIR = Path(__file__).resolve().parent
@@ -67,14 +64,13 @@ ALIGNMENT = IdentityAlignment(
         AlignmentAttribute(
             into="match_key",
             sources={
-                # Keyed by member: the classes the equivalence names on this
-                # side (`Company` is the left member because the canonical map
-                # renamed `Firm` before the compose). One call shared by both,
-                # only the marker differs — the same one-field call runs on
-                # every side, so no normal form can drift.
+                # Keyed by member, as the view's side names it — `Company`,
+                # the canonical name of `Firm`, would resolve alike. One call
+                # shared by both, only the marker differs — the same one-field
+                # call runs on every side, so no normal form can drift.
                 "r_view": SharedDerivation(
                     spec=DerivationSpec(input=["secondary_key"], foo="affix_gated_key"),
-                    members={"Company": {"prefix": "abc_"}, "Shop": {"prefix": "def_"}},
+                    members={"Firm": {"prefix": "abc_"}, "Shop": {"prefix": "def_"}},
                 ),
                 # B's resources each produce one member — no key needed.
                 "r_b": DerivationSpec(
@@ -95,7 +91,7 @@ ALIGNMENT = IdentityAlignment(
     local_key=LocalKeySpec(
         sources={
             "r_view": {
-                "Company": LocalKeySource(field="firm_id", tag="firm"),
+                "Firm": LocalKeySource(field="firm_id", tag="firm"),
                 "Shop": LocalKeySource(field="shop_id", tag="shop"),
             },
             "r_b": LocalKeySource(field="org_id", tag="b"),
@@ -121,11 +117,7 @@ def build_union(*, root_demo: bool = False) -> GraphManifest:
     canonical_map = CanonicalMap.model_validate(
         FileHandle.load(EXAMPLE_DIR / "canonical_map.yaml")
     )
-    left = apply_evolution(
-        load_manifest(EXAMPLE_DIR / "manifest_a.yaml"),
-        canonical_map_to_ops(canonical_map),
-        bump_version=False,
-    )
+    left = load_manifest(EXAMPLE_DIR / "manifest_a.yaml")
     right = load_manifest(EXAMPLE_DIR / "manifest_b.yaml")
 
     alignment = ALIGNMENT
@@ -133,19 +125,18 @@ def build_union(*, root_demo: bool = False) -> GraphManifest:
         # The router is nested under `descend`; the root level produces nothing.
         alignment = ALIGNMENT.model_copy(update={"at": {"r_view": []}})
 
+    # One recipe: the cluster in each side's own names, the canonical map
+    # naming it `Company`, and the alignment. Compose relabels each side in one
+    # step, unions, then aligns identity against the sides as handed in.
     op = ComposeManifestsOp(
         vertex_equivalences=[
-            VertexEquivalence(
-                left=["Company", "Shop"], right=["Org", "Branch"], into="Company"
-            ),
+            VertexEquivalence(left=["Firm", "Shop"], right=["Org", "Branch"]),
         ],
         allow_merges=True,
+        canonical_maps={"left": canonical_map},
         identity_alignments=[alignment],
     )
-    validate_and_complete_canonical_map(
-        op, left=left, right=right, canonical_maps=[("left", canonical_map)]
-    )
-    return compose_manifests(left, right, op, canonical_maps=[("left", canonical_map)])
+    return compose_manifests(left, right, op)
 
 
 @click.command()

@@ -52,10 +52,11 @@ class ClusterConflictError(ValueError):
 class ClusterSpec:
     """One declaration's resolved shape: members in the manifests' own names, and its composed name.
 
-    ``aliases`` records, per side, ``{declared spelling: resolved name}`` for
-    members the author spelled by their canonical name — the declaration's own
-    per-member maps (property equivalences, ``SideIdentity.members``) are keyed
-    by the spelling the author used.
+    ``aliases`` records, per side, every other name a member answers to —
+    the canonical name it was declared by, or the one the canonical map gives
+    it — so the per-member maps (property equivalences,
+    ``SideIdentity.members``, identity-alignment member keys) may be keyed by
+    either the member's own name or its canonical one.
     """
 
     left: tuple[str, ...]
@@ -78,7 +79,7 @@ class Cluster(Generic[DeclarationT]):
         return self.left if side == "left" else self.right
 
     def resolved(self, side: Side, declared: str) -> str:
-        """The resolved member name for a spelling the declaration used."""
+        """The member a spelling names on *side*: its own name, or its canonical one."""
         return self.aliases.get(side, {}).get(declared, declared)
 
     def property_maps(self, side: Side) -> dict[str, dict[str, str]]:

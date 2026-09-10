@@ -424,6 +424,25 @@ class TestValidateAndCompleteCanonicalMap:
         assert side_maps.left.vertices == {"Firm": "Company"}
         assert side_maps.right.vertices == {"Org": "Company"}
 
+    def test_a_member_answers_to_its_canonical_name(self) -> None:
+        """One alias table serves every per-member map of the declaration."""
+        from graflo.architecture.evolution.canonical import resolve_clusters
+
+        op = ComposeManifestsOp(
+            vertex_equivalences=[VertexEquivalence(left="Firm", right="Org")]
+        )
+        index = resolve_clusters(
+            op,
+            left=_source_a_manifest(),
+            right=_right_b_manifest(),
+            canonical_maps=[("left", _CANONICAL)],
+        ).index
+        (cluster,) = index.vertices
+        assert cluster.left == ("Firm",)
+        assert cluster.resolved("left", "Company") == "Firm"
+        assert cluster.resolved("left", "Firm") == "Firm"
+        assert cluster.resolved("right", "Company") == "Company"  # unmapped side
+
     def test_an_unnamed_cluster_raises(self) -> None:
         op = ComposeManifestsOp(
             vertex_equivalences=[VertexEquivalence(left="Deal", right="Org")]

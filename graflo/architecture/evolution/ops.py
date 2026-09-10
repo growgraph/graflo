@@ -1674,8 +1674,8 @@ class AlignmentAttribute(ConfigBaseModel):
       share a column, or each carries its own marker). The lowering asks the
       side manifest how the resource produces each member and guards the step
       accordingly (``when`` on the router's discriminator, or nothing for a
-      plain ``vertex`` step). Member names are the classes the
-      :class:`VertexEquivalence` names on that side, after canonical maps;
+      plain ``vertex`` step). A member is keyed by its own name on its
+      side or, through ``compose_manifests``, by its canonical name;
     * a :class:`SharedDerivation` — the same dict, spelled once: one call
       shared by the listed members, with only the parameters that differ.
     """
@@ -1972,7 +1972,7 @@ class SideIdentity(ConfigBaseModel):
     Each entry is one funnel branch: a single canonical attribute, or an
     ordered composite (``list[str]``). ``left`` / ``right`` supply the default
     branch chain for every member declared on that side; ``members`` overrides
-    it for specific member classes, keyed by the member's own (pre-canonical)
+    it for specific member classes, keyed by the member's own or canonical
     name. Every chain is merged into one global branch order — see
     :func:`~graflo.architecture.evolution.compose.side_identity_to_funnel` —
     so declaring the same relative order on every member is required; two

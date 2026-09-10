@@ -220,7 +220,7 @@ A cluster names its **members** — the classes it collapses, per side: `VertexE
 | a **dict keyed by member class** | several members, and *which member a document is* must decide — they share a column, or each has its own marker | one guarded step per member, each the single writer for its own documents |
 | a `SharedDerivation` | the dict above, when the call is the same for every member and only a parameter differs (or nothing does) | expands to the dict; lowers the same way |
 
-Member names are the classes the equivalence names on that side, after canonical maps (so `Company`, not `Firm`, when a map renamed it). The list form needs no member names because column presence selects; the dict form is the general one, and `SharedDerivation` spells it once for the common case — one call, the members sharing it, and per member only what varies:
+A member is keyed by its own name on its side or by its canonical name — `Firm` or `Company` when a map renames one to the other — as in the equivalence itself. The list form needs no member names because column presence selects; the dict form is the general one, and `SharedDerivation` spells it once for the common case — one call, the members sharing it, and per member only what varies:
 
 ```python
 AlignmentAttribute(into="match_key", sources={
