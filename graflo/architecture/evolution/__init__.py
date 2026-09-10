@@ -13,6 +13,7 @@ from .ops import (
     AddEdgePropertiesOp,
     AddEdgesOp,
     AddInverseEdgesOp,
+    AddResourcesOp,
     AddResourceTransformsOp,
     AddSecondaryIdentitiesOp,
     AddVertexIndexesOp,
@@ -20,8 +21,10 @@ from .ops import (
     AddVerticesOp,
     AssignedIdentityTarget,
     BlankIdentityTarget,
+    CanonicalizeOp,
     ChangeFieldTypesOp,
     ComposeManifestsOp,
+    EdgeFieldSemanticsTarget,
     EdgeIdentitiesEntry,
     EdgeIndexEntry,
     EdgeRetargetEntry,
@@ -44,6 +47,7 @@ from .ops import (
     RemoveEdgeIndexesOp,
     RemoveEdgePropertiesOp,
     RemoveEdgesOp,
+    RemoveResourcesOp,
     RemoveSecondaryIdentitiesOp,
     RemoveVertexIndexesOp,
     RemoveVertexPropertiesOp,
@@ -73,6 +77,7 @@ _APPLY_EXPORTS = frozenset(
         "apply_add_edge_properties",
         "apply_add_inverse_edges",
         "apply_add_vertex_properties",
+        "apply_canonicalize",
         "apply_merge_edges",
         "apply_merge_vertices",
         "apply_project_manifest",
@@ -95,7 +100,12 @@ _COMPOSE_EXPORTS = frozenset(
 )
 
 _INGESTION_APPLY_EXPORTS = frozenset(
-    {"apply_add_resource_transforms", "apply_ensure_extracted_fields"}
+    {
+        "apply_add_resource_transforms",
+        "apply_add_resources",
+        "apply_ensure_extracted_fields",
+        "apply_remove_resources",
+    }
 )
 
 _ALIGNMENT_EXPORTS = frozenset(
@@ -116,11 +126,15 @@ _ALIGNMENT_EXPORTS = frozenset(
 _CANONICAL_EXPORTS = frozenset(
     {
         "CanonicalMap",
+        "ClusterResolution",
+        "ClusterSpec",
         "ComposeCanonicalConflictError",
         "SideMaps",
         "canonical_map_to_ops",
+        "check_member_existence",
         "clusters_to_side_maps",
         "merge_canonical_maps",
+        "resolve_clusters",
         "validate_and_complete_canonical_map",
     }
 )
@@ -130,7 +144,10 @@ _EQUIVALENCE_EXPORTS = frozenset(
         "Cluster",
         "ClusterConflictError",
         "ClusterIndex",
+        "ClusterResolution",
+        "ClusterSpec",
         "RelationCluster",
+        "check_member_existence",
         "index_clusters",
     }
 )
@@ -243,6 +260,7 @@ _MERGE3_EXPORTS = frozenset(
         "merge_three_way",
         "op_slots",
         "re_merge",
+        "resolve_clusters",
         "take_left",
         "take_right",
     }
@@ -259,6 +277,7 @@ __all__ = [
     "AddEdgesOp",
     "AddInverseEdgesOp",
     "AddResourceTransformsOp",
+    "AddResourcesOp",
     "AddSecondaryIdentitiesOp",
     "AddVertexIndexesOp",
     "AddVertexPropertiesOp",
@@ -269,6 +288,7 @@ __all__ = [
     "AssignedIdentityTarget",
     "BlankIdentityTarget",
     "CanonicalMap",
+    "CanonicalizeOp",
     "ChangeFieldTypesOp",
     "Cluster",
     "ClusterConflictError",
@@ -281,6 +301,7 @@ __all__ = [
     "ComposeNameConflictError",
     "ConflictResolution",
     "DerivationSpec",
+    "EdgeFieldSemanticsTarget",
     "EdgeIdentitiesEntry",
     "EdgeIndexEntry",
     "EdgeRetargetEntry",
@@ -316,6 +337,7 @@ __all__ = [
     "RemoveEdgeIndexesOp",
     "RemoveEdgePropertiesOp",
     "RemoveEdgesOp",
+    "RemoveResourcesOp",
     "RemoveSecondaryIdentitiesOp",
     "RemoveVertexIndexesOp",
     "RemoveVertexPropertiesOp",
@@ -346,10 +368,12 @@ __all__ = [
     "apply_add_edges",
     "apply_add_inverse_edges",
     "apply_add_resource_transforms",
+    "apply_add_resources",
     "apply_add_secondary_identities",
     "apply_add_vertex_indexes",
     "apply_add_vertex_properties",
     "apply_add_vertices",
+    "apply_canonicalize",
     "apply_change_field_types",
     "apply_evolution",
     "apply_merge_edges",
@@ -359,6 +383,7 @@ __all__ = [
     "apply_remove_edge_indexes",
     "apply_remove_edge_properties",
     "apply_remove_edges",
+    "apply_remove_resources",
     "apply_remove_secondary_identities",
     "apply_remove_vertex_indexes",
     "apply_remove_vertex_properties",

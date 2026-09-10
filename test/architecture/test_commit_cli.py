@@ -99,7 +99,16 @@ def _record(workspace, target: str, label: str, *extra: str) -> Result:
 def test_the_umbrella_group_exposes_the_version_control_verbs() -> None:
     result = _run("--help")
     assert result.exit_code == 0
-    for verb in ("commit", "log", "verify", "checkout", "merge", "revert", "stamp"):
+    for verb in (
+        "commit",
+        "log",
+        "verify",
+        "checkout",
+        "merge",
+        "revert",
+        "stamp",
+        "rehash",
+    ):
         assert verb in result.output
 
 
@@ -203,6 +212,50 @@ def test_verify_replays_the_history_against_its_base(workspace) -> None:
     result = _run("verify", "--base", workspace["v1"], "--store", workspace["store"])
     assert result.exit_code == 0, result.output
     assert "replays cleanly" in result.output
+
+
+def test_rehash_restores_content_derived_ids(workspace) -> None:
+    """Ids move with the op serialization; rehash recomputes them in order.
+
+    Simulated here by tampering a stored id and its child's parent reference,
+    the way a history written under an older serialization looks after an
+    upgrade: the trees still replay, only the names on disk are stale.
+    """
+    _record(workspace, "age", "add age")
+    store = workspace["store"]
+    chained = _run(
+        "commit",
+        "--from-manifest",
+        workspace["age"],
+        "--to-manifest",
+        workspace["email"],
+        "-m",
+        "swap age for email",
+        "--store",
+        store,
+    )
+    assert chained.exit_code == 0, chained.output
+    first, second = sorted(store.glob("*.yaml"))
+    stale = "deadbeefcafe"
+    real = yaml.safe_load(first.read_text())["id"]
+    for path in (first, second):
+        path.write_text(path.read_text().replace(real, stale), encoding="utf-8")
+
+    dry = _run("rehash", "--store", store, "--dry")
+    assert dry.exit_code == 0, dry.output
+    assert f"{stale} -> {real}" in dry.output and "dry run" in dry.output
+    assert stale in yaml.safe_load(first.read_text())["id"]
+
+    result = _run("rehash", "--store", store)
+    assert result.exit_code == 0, result.output
+    assert "rewrote 1 commit id" in result.output
+    ids = [yaml.safe_load(p.read_text())["id"] for p in sorted(store.glob("*.yaml"))]
+    assert ids[0] == real
+    verify = _run("verify", "--base", workspace["v1"], "--store", store)
+    assert verify.exit_code == 0, verify.output
+
+    again = _run("rehash", "--store", store)
+    assert "every commit id is current" in again.output
 
 
 def test_verify_can_assert_the_result_matches_a_manifest(workspace) -> None:

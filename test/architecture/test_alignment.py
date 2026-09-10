@@ -157,7 +157,7 @@ class TestComposedOps:
 
         identity = ops[2]
         assert isinstance(identity, ReplaceIdentityOp)
-        replacement = identity.vertices["Company"]
+        replacement = identity.replacements["Company"]
         assert replacement.retire == "keep"
         funnel = replacement.to.funnel  # type: ignore[union-attr]
         assert [b.id for b in funnel.branches] == ["match_key", "local_key"]

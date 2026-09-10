@@ -55,7 +55,7 @@ def load_base() -> GraphManifest:
 def _rekey(field: str) -> ReplaceIdentityOp:
     """Make *field* the primary identity, keeping the old key as a property."""
     return ReplaceIdentityOp(
-        vertices={
+        replacements={
             "person": IdentityReplacement(
                 to=NaturalIdentityTarget(identity=[field]), retire="keep"
             )

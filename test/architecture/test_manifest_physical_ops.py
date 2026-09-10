@@ -5,7 +5,9 @@ import pytest
 from graflo.architecture.contract import GraphManifest
 from graflo.architecture.evolution import (
     AddEdgeIndexesOp,
+    AddEdgePropertiesOp,
     AddVertexIndexesOp,
+    AddVertexPropertiesOp,
     ChangeFieldTypesOp,
     RemoveEdgeIndexesOp,
     RemoveVertexIndexesOp,
@@ -373,3 +375,93 @@ class TestSetEdgeDirected:
                     )
                 ],
             )
+
+
+class TestAddPropertiesRedeclaration:
+    """An addition naming a property the type already declares.
+
+    Silently skipping it made a contradictory op a no-op with no diagnostic.
+    Applying it instead is not an option: the inverse of ``add_*_properties`` is
+    one op computed against the pre-state, so a retyping addition would leave
+    revert unable to restore the old type -- corrupting revert rather than one
+    apply.
+    """
+
+    @staticmethod
+    def _typed_manifest() -> GraphManifest:
+        return _manifest(
+            vertices=[
+                {
+                    "name": "party",
+                    "properties": ["id", {"name": "email", "type": "STRING"}],
+                    "identity": ["id"],
+                },
+                {"name": "asset", "properties": ["id"], "identity": ["id"]},
+            ]
+        )
+
+    def test_restating_an_existing_property_is_a_no_op(self):
+        out = apply_evolution(
+            self._typed_manifest(),
+            [
+                AddVertexPropertiesOp(
+                    additions={"party": [{"name": "email", "type": "STRING"}]}
+                )
+            ],
+            bump_version=False,
+        )
+        names = [f.name for f in _vertex(out, "party").properties]
+        assert names.count("email") == 1
+
+    def test_a_bare_name_over_a_typed_property_is_a_no_op(self):
+        out = apply_evolution(
+            self._typed_manifest(),
+            [AddVertexPropertiesOp(additions={"party": ["email"]})],
+            bump_version=False,
+        )
+        assert str(_field(out, "party", "email").type) == "STRING"
+
+    def test_redeclaring_with_another_type_raises_and_names_the_remedy(self):
+        with pytest.raises(ValueError) as excinfo:
+            apply_evolution(
+                self._typed_manifest(),
+                [
+                    AddVertexPropertiesOp(
+                        additions={"party": [{"name": "email", "type": "INT"}]}
+                    )
+                ],
+                bump_version=False,
+            )
+        message = str(excinfo.value)
+        assert "already declares property 'email'" in message
+        assert "change_field_types" in message
+
+    def test_redeclaring_an_edge_property_with_another_type_raises(self):
+        manifest = _manifest(
+            edges=[
+                {
+                    "source": "party",
+                    "target": "asset",
+                    "relation": "holds",
+                    "properties": [{"name": "qty", "type": "INT"}],
+                }
+            ]
+        )
+        with pytest.raises(ValueError, match="already declares property 'qty'"):
+            apply_evolution(
+                manifest,
+                [
+                    AddEdgePropertiesOp(
+                        additions={"holds": [{"name": "qty", "type": "STRING"}]}
+                    )
+                ],
+                bump_version=False,
+            )
+
+
+def _vertex(manifest: GraphManifest, name: str):
+    assert manifest.graph_schema is not None
+    for vertex in manifest.graph_schema.core_schema.vertex_config.vertices:
+        if vertex.name == name:
+            return vertex
+    raise AssertionError(f"no vertex {name}")

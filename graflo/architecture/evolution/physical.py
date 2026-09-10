@@ -103,6 +103,14 @@ def apply_change_field_types(manifest: GraphManifest, op: ChangeFieldTypesOp) ->
                     f"change_field_types: edge '{edge.relation}' does not declare "
                     f"{missing}"
                 )
+            identity_tokens = {token for key in edge.identities for token in key}
+            for field_name, spec in changes.items():
+                if spec.type == FieldType.LIST and field_name in identity_tokens:
+                    raise ValueError(
+                        f"change_field_types: edge '{edge.relation}' field "
+                        f"'{field_name}' participates in an identity key and "
+                        "cannot become a LIST"
+                    )
             new_properties = []
             for field in edge.properties:
                 spec = changes.get(field.name)

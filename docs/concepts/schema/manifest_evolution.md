@@ -12,21 +12,21 @@ GraFlo provides **contract-level** operations that transform a validated `GraphM
 | Operation | Summary |
 |-----------|---------|
 | **Remove vertices** | Drops named vertex types, removes incident edges, prunes ingestion resources that reference removed types (including `vertex_router` `type_map` / `vertex_from_map` via structured pipeline scan), trims `merge_collections`, filters `resource_connector` rows, and updates `db_profile`. Fails if ingestion would be left with no resources. |
-| **Merge vertices** | Merges one or more source vertex types into a target name (`into`). If `into` already exists, sources are merged into it; otherwise a new vertex type is built from all sources. Endpoints on edges are rewritten and duplicate `(source, target, relation)` edge kinds are merged. Resource pipelines, `infer_edge_only` / `infer_edge_except`, and `extra_weights` are rewritten; `db_profile` logical keys follow the merge. Conflicting field types or default-value maps raise an error. |
-| **Rename vertices** | Renames logical vertex type names across schema, edge endpoints, ingestion pipelines/selectors, and bindings resource references. |
-| **Rename relations** | Renames logical edge `relation` values across schema, ingestion selectors/pipelines, and `db_profile` edge metadata. |
-| **Rename resources** | Renames ingestion resource names and all bindings references (`connectors[].resource_name`, `resource_connector[].resource`). |
-| **Remove edges** | Removes edge types by relation name from schema, `db_profile.edge_specs`, `default_property_values.edges`, and ingestion relation selectors. |
+| **Merge vertices** | Merges one or more source vertex types into a target name (`into`). If `into` already exists, sources are merged into it; otherwise a new vertex type is built from all sources. Endpoints on edges are rewritten and duplicate `(source, target, relation)` edge kinds are merged. Resource pipelines, `infer_edge_only` / `infer_edge_except`, and `extra_weights` are rewritten; `db_profile` logical keys follow the merge. Properties fuse by exact name: `type` and `item_type` are compared as a unit, descriptions and grounding are unioned, and a conflicting type, LIST element type, or `unit` raises — naming every conflicting property at once, and naming the merge target rather than the source spellings. Conflicting default-value maps raise too. |
+| **Rename vertices** | `renames: {old: new}` (injective). Renames logical vertex type names across schema, edge endpoints, ingestion pipelines/selectors, and bindings resource references. |
+| **Rename relations** | `renames: {old: new}` (injective). Renames logical edge `relation` values across schema, ingestion selectors/pipelines, and `db_profile` edge metadata. |
+| **Rename resources** | `renames: {old: new}` (injective). Renames ingestion resource names and all bindings references (`connectors[].resource_name`, `resource_connector[].resource`). |
+| **Remove edges** | Removes edges from schema, `db_profile.edge_specs`, `default_property_values.edges`, and ingestion selectors. Two addressing forms, combinable: `relations` removes a relation on every endpoint pair; `edges` (`(source, target, relation)` triples) removes exactly those pairs, and is the only way to remove an edge with no relation set. |
 | **Merge edges** | Canonicalizes multiple relation names into one relation, then merges duplicate edge identities and deduplicates edge/profile defaults. |
 | **Rename vertex fields** | Per-vertex `{old_field: new_field}` maps: updates schema field names, identities, `db_profile` index specs, and ingestion (`vertex` `from`, `transform.rename` targets) so documents still use the **source** column names where a reverse map is injected. |
 | **Remove vertex fields** | Removes vertex properties, prunes vertex/edge index references, and rewrites ingestion references (`from`, `keep_fields`, `vertex_weights`). |
 | **Add vertex fields** | Adds properties to existing vertices for schema enrichment and migration planning. |
 | **Rename edge fields** | Per-relation edge property renames across schema edge properties/identities, `db_profile` edge indexes/defaults, and edge actor `properties` payloads. |
 | **Remove edge fields** | Removes per-relation edge properties, prunes edge index/default references, and rewrites edge actor `properties`. |
-| **Add edge fields** | Adds properties to existing relations for edge-schema enrichment. |
-| **Add inverse edges** | For each **directed** forward relation `R -> R_inv`, appends inverse schema edges and mirrors ingestion (`pipeline` EdgeActor steps including dynamic endpoints, `relation_field`, redefined `relation_map`, nested `descend`), `infer_edge_only` / `infer_edge_except`, `extra_weights`, and `db_profile`. Skips `directed: false`, TigerGraph `edge_specs[*].reverse_edge`, and existing inverse triples. |
+| **Add edge fields** | Adds properties to existing relations. An entry is a bare name (untyped) or a full `Field` carrying type and grounding, as for vertices. Rejects an unknown relation. |
+| **Add inverse edges** | `inverses: {R: R_inv}` (injective; no relation is its own inverse). For each **directed** forward relation `R -> R_inv`, appends inverse schema edges and mirrors ingestion (`pipeline` EdgeActor steps including dynamic endpoints, `relation_field`, redefined `relation_map`, nested `descend`), `infer_edge_only` / `infer_edge_except`, `extra_weights`, and `db_profile`. Skips `directed: false`, TigerGraph `edge_specs[*].reverse_edge`, and existing inverse triples. |
 | **Project manifest** | Keeps a logical subgraph by vertex names and/or edge triples `(source, target, relation)`. Prunes isolated vertex types from `keep_vertices` when they have no surviving edges (`connectivity: induced_prune`). Cascades to schema, `db_profile`, ingestion (pipeline steps, infer selectors, `extra_weights`), and bindings. Optional `keep_resources` filters ingestion resources. Inverse edges are not auto-kept. Fails if ingestion would be left empty. |
-| **Replace identity** | Per-vertex identity policy swap covering both field-set and **mode** changes (`natural` / `hash` / `assigned` / `blank`). `retire` decides what becomes of the old field-set — `demote` (default) turns it into a secondary identity, `keep` leaves it as plain properties, `drop` removes it. `endpoints` decides whether edge steps follow the new identity (`follow_new`, default) or stay pinned to the demoted one (`pin_to_retired`). Drops `db_profile` indexes that encoded the retired identity. See [Replacing a vertex identity](#replacing-a-vertex-identity). |
+| **Replace identity** | `replacements: {vertex: {to, retire, ...}}`. Per-vertex identity policy swap covering both field-set and **mode** changes (`natural` / `hash` / `assigned` / `blank`). `retire` decides what becomes of the old field-set — `demote` (default) turns it into a secondary identity, `keep` leaves it as plain properties, `drop` removes it. `endpoints` decides whether edge steps follow the new identity (`follow_new`, default) or stay pinned to the demoted one (`pin_to_retired`). Drops `db_profile` indexes that encoded the retired identity. See [Replacing a vertex identity](#replacing-a-vertex-identity). |
 | **Add / remove secondary identities** | Declares or withdraws alternate lookup keys on existing vertices. Each field-set's non-unique index is *derived* by `Schema.finish_init`, so adding one needs no index authoring; removing one drops the derived index explicitly. Removal is rejected while an edge step still selects the field-set. |
 | **Replace edge identities** | Replaces `Edge.identities` (uniqueness keys) per `(source, target, relation)`. No retire policy — edge identities have no lookup plane. Non-endpoint tokens are merged into edge `properties` by `Edge.finish_init`. |
 | **Add vertices / add edges** | Introduces new logical vertex types and edge relations unarily — the counterpart to what `ComposeManifestsOp` could previously only do binarily. Rejects existing names/triples and unknown endpoints. |
@@ -37,7 +37,9 @@ GraFlo provides **contract-level** operations that transform a validated `GraphM
 | **Sanitize** | Target-`DBType` policy: reserved-word-safe names on `DatabaseProfile`, reserved vertex field renames, and (for TigerGraph) consistent identity tuples per edge relation. This is the same work **`graflo.hq.sanitizer.Sanitizer`** applies by building a single **`SanitizeOp`**. |
 | **Ensure extracted fields** | Widens a producing step's projection so named fields survive extraction (`keep_fields` gains them; under `extraction_scope: mapped_only` so does `vertex_from_map[<class>]`, seeded from the router-level `from`). Only `vertex_router` steps need it — a plain `vertex` step reads the transform buffer directly, bypassing both knobs. A no-op on an unrestricted step. Requires `ingestion_model`. |
 | **Add resource transforms** | Appends transform steps to a named level of named resources' pipelines (`at`, as `descend` step indices; root by default — actor type-priority ordering runs them before vertex extraction at that level) and optionally registers named transforms (loud on same-name/different-body, mirroring compose). The only op whose primary effect is ingestion; requires `ingestion_model` and raises otherwise. Steps may reference the registry via `call.use` or carry a fully inline `call` (collision-free). Irreversible. |
-| **Compose manifests** | Binary union of two full `GraphManifest`s (schema **and** resources/bindings) via `ComposeManifestsOp` + `compose_manifests(left, right, op)`. Consumes **explicit** equivalence maps only (no semantic inference): n-ary vertex clusters (`left` / `right` each name one or more classes collapsing onto one `into`), property alignment, optional composed `identity`, optional `identity_alignments`, relation equivalences, resource renames / `name_conflict`. Distinct from unary `MergeVerticesOp`. Rejected by unary `apply_evolution`. |
+| **Add / remove resources** | `add_resources` takes full `ResourceConfig` definitions (creating `ingestion_model` if absent; an existing name is rejected); `remove_resources` takes names and prunes the `resource_connector` entries that wired them. Inverses of each other — a removal that pruned a binding has none. The differ emits both. |
+| **Set vertex / edge / field semantics** | Ground an existing element in an external vocabulary: `set_vertex_semantics` (`{vertex: Semantics \| null}`), `set_edge_semantics` (edge triples + one `Semantics`), `set_field_semantics` (per-target `FieldSemantics`, the only model carrying `unit`; a target is a vertex property `{vertex, field}` or an edge property `{source, target, relation, field}`). `null` clears, which is what makes each invertible. Never consulted at execution time. The differ emits all three. |
+| **Compose manifests** | Binary union of two full `GraphManifest`s (schema **and** resources/bindings) via `ComposeManifestsOp` + `compose_manifests(left, right, op)`. Consumes **explicit** equivalence maps only (no semantic inference): n-ary vertex clusters (`vertex_equivalences`: `left` / `right` each name one or more classes collapsing onto one `into`), property alignment, optional composed `identity`, optional `identity_alignments`, relation equivalences (`relation_equivalences`), resource renames / `name_conflict`. Distinct from unary `MergeVerticesOp`. Rejected by unary `apply_evolution`. |
 
 ## Compose two manifests
 
@@ -56,7 +58,7 @@ composed = compose_manifests(
     left,
     right,
     ComposeManifestsOp(
-        vertices=[
+        vertex_equivalences=[
             VertexEquivalence(
                 left="Client",
                 right="Customer",
@@ -84,20 +86,22 @@ spelled — one declaration naming every member that collapses onto `into`:
 
 ```python
 ComposeManifestsOp(
-    vertices=[
+    vertex_equivalences=[
         VertexEquivalence(
             left=["Company", "Shop"], right=["Org", "Branch"], into="Company"
         )
     ],
     allow_merges=True,          # >1 member on a side is a stated intent
-    allow_self_relations=False,  # forwarded to the per-side MergeVerticesOp
+    allow_self_relations=False,  # forwarded to the per-side CanonicalizeOp
     allow_observation_fusion=False,
 )
 ```
 
-Empty `vertices` / `relations` yields a **disjoint union** (both resource sets and bindings retained), subject to collision policy.
+Empty `vertex_equivalences` / `relation_equivalences` yields a **disjoint union** (both resource sets and bindings retained), subject to collision policy.
 
-A `VertexEquivalence` declaration *is* one cluster. `ClusterConflictError` (raised before any rename) covers the three ways declarations can contradict each other: a class **claimed by two** declarations, two declarations **sharing one `into`** (that collapse is one n-ary cluster and must be spelled as one), and an `into` that already names an **existing non-member class** on a side (which would silently merge into an unrelated type). Properties with the **same spelling** on both sides after alignment fuse for free; list a `PropertyEquivalence` only to rename, to map per member (`left={"Company": "company_key", "Shop": "shop_key"}`), or to flag identity.
+A `VertexEquivalence` declaration *is* one cluster. `into` is optional — see [Canonical maps](#canonical-maps) for how a composed name is found. `ClusterConflictError` (raised before any rename) covers the three ways declarations can contradict each other: a class **claimed by two** declarations, two declarations **sharing one composed name** (that collapse is one n-ary cluster and must be spelled as one), and a composed name that already names an **existing non-member class** on a side (which would silently merge into an unrelated type). Properties with the **same spelling** on both sides after alignment fuse for free; list a `PropertyEquivalence` only to rename, to map per member (`left={"Company": "company_key", "Shop": "shop_key"}`), or to flag identity.
+
+That fusion is a **union**, and it compares more than a name. `type` and `item_type` travel together, so `LIST<STRING>` and `LIST<INT>` are a conflict rather than a shared `LIST`; descriptions from both sides are kept; grounding blocks union their `exact_match` and `synonyms`, and a disputed `iri` clears rather than electing one side's concept. Two disagreements refuse the compose instead of resolving it: two declared **types** for one property, and two declared **units** — a property that is `m/s` on one side and `km/h` on the other would hold numerically incomparable values once fused. Neither is widened automatically, because the composed type would be one neither author wrote; retype one side with `change_field_types` first. Every conflicting property is named in one error rather than one per run.
 
 Compose refuses to guess the composed **identity** too: when members disagree on their identity field-set after alignment and nothing resolves it, `ComposeIdentityError` names each member's key. Resolve it with `identity` on the cluster (a natural key, an `IdentityFunnel`, or a `SideIdentity` shorthand lowered to one funnel), a `PropertyEquivalence(identity=True)` flag, or an `identity_alignments` entry. A declared `identity` demotes each member's retired key to a lookup-only secondary identity unless the cluster sets `retire="keep"`.
 
@@ -105,7 +109,9 @@ Compose refuses to guess the composed **identity** too: when members disagree on
 
 A manifest needs only one block, so an overlay carrying just an `ingestion_model` and/or `bindings` — a new source wired onto an existing type vocabulary — is a valid compose input. The composed schema is the other side's, copied verbatim: physical profile, target namespace, secondary indexes and schema version all survive. With neither side carrying one, the composed manifest has no schema block and the version bump is a no-op.
 
-Verbatim rather than "merged with an empty schema" on purpose. `DatabaseProfile.db_flavor` defaults to Arango and the profile fold takes every scalar from the left, so filling a missing left with an empty `Schema` would silently retarget the composed manifest and drop the right's namespace and version — a wrong answer with nothing raising.
+Verbatim rather than "merged with an empty schema" on purpose: filling a missing side with an empty `Schema` would compose against a profile nobody wrote, and drop that side's namespace and version — a wrong answer with nothing raising.
+
+When both sides *are* present the profile fold elects neither. `db_flavor` and `target_namespace` are single-valued and decide what DDL is emitted against which backend, so two **declared** values raise; a side that never declared one yields to the side that did. Declaration is read from what a side actually wrote, not from the value — `db_flavor` defaults to Arango, so a value-based fold could not tell a side that chose Arango from one that never spoke, and an undeclared left would silently retarget a right that named its backend. `default_property_values` union, refusing two defaults for one property. Vertex indexes union on their full definition: two entries over one field-set that disagree on `unique`, `type` or `sparse` raise rather than keeping the left's, since the next schema resolution collapses them on field-set alone and the survivor would depend on ordering.
 
 ### From the shell
 
@@ -115,52 +121,56 @@ graflo compose LEFT.yaml RIGHT.yaml --op OP.yaml -o OUT.yaml \
   [--bump-version minor|none] [--strict-references] [--dry-run] [--check-profile NAME]
 ```
 
-The verb runs the whole recipe in order: canonicalize each mapped side standalone, validate and complete the map against the op, then compose. Omitting `--op` composes a disjoint union. Exit `0` composed, `1` compose refused (the refusal message names what to declare), `2` the command could not run.
+The verb applies the op and its canonical maps together: `--canonical-map SIDE=PATH` (`SIDE` one of `left`, `right`, `both`) is folded into the op's `canonical_maps`, so the same document may carry the maps itself. Omitting `--op` composes a disjoint union. Exit `0` composed, `1` compose refused (the refusal message names what to declare), `2` the command could not run.
 
 ## Canonical maps
 
-When one side of a compose is first translated into a target vocabulary, the translation and the compose op are two declarations that can silently contradict each other — most dangerously via a *stale name*: an equivalence written against a class or attribute the translation retired still passes compose's existence checks and composes into the wrong union. `CanonicalMap` makes the translation a single source of truth serving both moments, and is **completed** along the declared cluster (an unmapped member inherits the cluster's `into` label). It maps `vertices`, `properties` **and** `relations`.
+A `CanonicalMap` is a translation of a source vocabulary into canonical names — a partial function on names, identity where unmapped, over `vertices`, `properties` (keyed by *source* class) **and** `relations`. Two sources sharing a target is a merge and must be acknowledged with `allow_merges`. It has two uses that are one mechanism.
+
+**On its own**, `canonical_map_to_ops(cm)` lowers it to a single `CanonicalizeOp`, which applies the whole map in one step over the original schema: attribute renames first (keyed by the source class), then classes and relations simultaneously. A chain (`{X: Z, Z: Q}`) and a swap resolve without an intermediate state, and the fibers of the map are exactly the groups that merge; a target that already exists and does not move must be declared a member of its own group with a self entry (`Company: Company`), or the op refuses rather than merging into it silently. No op order can leak into the result.
+
+**On a compose op**, `ComposeManifestsOp.canonical_maps` names the composed classes. An equivalence cluster says *which* classes are one; the map says *what they are called*, so `into` is optional. The composed name of a cluster is `into` (translated through the map when the map maps it), else the canonical name the map gives a member, else the one spelling every member shares. A member may be spelled by its own name or by its canonical name. Maps are scoped: `left` / `right` apply to that manifest's own names, `both` to either side's.
 
 ```python
 from graflo.architecture.evolution import (
     CanonicalMap,
-    apply_evolution,
-    canonical_map_to_ops,
+    ComposeManifestsOp,
+    VertexEquivalence,
     compose_manifests,
-    validate_and_complete_canonical_map,
 )
 
-cm = CanonicalMap(
-    vertices={"Firm": "Company"},
-    properties={"Firm": {"firm_id": "company_id"}},
+op = ComposeManifestsOp(
+    # {Firm} ~ {Org}: no `into` — the map names it Company
+    vertex_equivalences=[VertexEquivalence(left="Firm", right="Org")],
+    canonical_maps={
+        "left": CanonicalMap(
+            vertices={"Firm": "Company"},
+            properties={"Firm": {"firm_id": "company_id"}},
+        )
+    },
 )
-canonical_left = apply_evolution(left, canonical_map_to_ops(cm))
-
-# Multi-side maps are allowed: canonical_maps=[("left", cm), ("right", cm_b)]
-side_maps = validate_and_complete_canonical_map(
-    op,
-    left=canonical_left,
-    right=right,
-    canonical_maps=[("left", cm)],
-)
-# side_maps.left / .right are the per-side maps the clusters lower to,
-# e.g. side_maps.right.vertices == {"Org": "Company"}
-composed = compose_manifests(
-    canonical_left, right, op, canonical_maps=[("left", cm)]
-)
+composed = compose_manifests(left, right, op)
 ```
 
-`canonical_map_to_ops` emits property renames first (keyed by the *source* class names), then class merges (only with `allow_merges=True` — collapsing two classes is a stated intent, not a rename) and renames, then the same pair for relations. It is the **one lowering** both moments share: compose lowers each declared cluster to a per-side `CanonicalMap` and applies it through this function, rather than re-implementing rename/merge resolution of its own.
+Renames compose, so canonicalizing a side on its own first and then declaring the cluster in canonical names is the same function: `compose_manifests` accepts either, and a map entry whose source the caller already applied (source absent, target present) is a no-op. `resolve_clusters` — what compose runs; `validate_and_complete_canonical_map` returns just its per-side maps — folds the clusters and the maps into **one composite `CanonicalMap` per side**, lowered through the same `CanonicalizeOp` and applied before the schema/resource union.
 
-`merge_canonical_maps(base, extension)` is the single conflict primitive underneath: a partial-function union where every source maps to one target and a **target of `base` is a fixed point** the extension may not re-map. Two author maps for one side reconcile through it, and so does an author map against the lowered cluster map.
+One rule underlies every refusal: **the map and the equivalences must agree on where a name goes, and a canonical target is a fixed point neither may re-map.** `ComposeCanonicalConflictError` names both declarations:
 
-`validate_and_complete_canonical_map` indexes the declared clusters and raises `ComposeCanonicalConflictError` (wrapping `ClusterConflictError` for a cluster contradiction) on: a stale pre-canonical class or relation name referenced by an equivalence; an `into` that re-targets a class the canonical map already fixed; a property equivalence that uses a retired attribute name, re-targets an attribute the map already routed, renames an undeclared property, or renames onto one that already exists. On success it returns `SideMaps` — the per-side maps the clusters lower to, ready for `canonical_map_to_ops`. It deliberately re-checks nothing compose already raises on (collisions, incompatible types, divergent funnels).
+| refusal | when |
+|---|---|
+| disagreement | the map says `Firm → Company` but the cluster names the composed class `Party`; or a cluster renames a class the map established as canonical |
+| unnamed cluster | no `into`, no mapped member, no shared spelling |
+| merge into a composed class | a map entry sends a non-member onto a cluster's composed name — declare it in the cluster, whose identity and property maps govern it |
+| dangling entry | a map entry matching nothing on its side |
+| property re-target / disagreement / unknown | the same rule for attributes: a canonical attribute is a fixed point, and a property equivalence names fields as spelled on the member |
 
-Self-relations are no longer merely warned about: compose forwards `allow_self_relations` / `allow_observation_fusion` from the op to the per-side `MergeVerticesOp`, so the unary guards fire unless the author acknowledges them.
+The cluster-shape checks (`ClusterConflictError`, wrapped by `validate_and_complete_canonical_map`) stay: a class claimed by two declarations, two declarations sharing one composed name, a composed name occupying an existing non-member class. `merge_canonical_maps(base, extension)` is the union two author maps for one scope reconcile through — every source maps to one target and a target of `base` is a fixed point. Compose deliberately re-checks nothing it already raises on (collisions, incompatible types, divergent funnels).
+
+Self-relations and observation fusion are not merely warned about: compose forwards `allow_self_relations` / `allow_observation_fusion` from the op to the per-side `CanonicalizeOp`, so the merge guards fire unless the author acknowledges them.
 
 ### Identity alignment
 
-When the composed class should deduplicate entities across its sources, the identity question splits along a principle: **a primary identity is a property of the class**, so the class declares one identity over canonical attributes only — while *how* each source populates those attributes is resource knowledge, expressed as pipeline steps. `IdentityAlignment` states both halves declaratively; put it on `ComposeManifestsOp.identity_alignments` so `compose_manifests` applies it after the schema/resource union (each entry's `vertex` must be a declared cluster's `into` label). Under the hood `alignment_to_ops` still emits only fundamentals:
+When the composed class should deduplicate entities across its sources, the identity question splits along a principle: **a primary identity is a property of the class**, so the class declares one identity over canonical attributes only — while *how* each source populates those attributes is resource knowledge, expressed as pipeline steps. `IdentityAlignment` states both halves declaratively; put it on `ComposeManifestsOp.identity_alignments` so `compose_manifests` applies it after the schema/resource union (each entry's `vertex` must be a declared cluster's composed name). Under the hood `alignment_to_ops` still emits only fundamentals:
 
 ```python
 from graflo.architecture.evolution import (
@@ -185,7 +195,7 @@ alignment = IdentityAlignment(
                           "by_org_id": ["org_id"]},
 )
 op = ComposeManifestsOp(
-    vertices=[
+    vertex_equivalences=[
         VertexEquivalence(left="Company", right="Org", into="Company"),
     ],
     identity_alignments=[alignment],
@@ -210,7 +220,7 @@ A cluster names its **members** — the classes it collapses, per side: `VertexE
 | a **dict keyed by member class** | several members, and *which member a document is* must decide — they share a column, or each has its own marker | one guarded step per member, each the single writer for its own documents |
 | a `SharedDerivation` | the dict above, when the call is the same for every member and only a parameter differs (or nothing does) | expands to the dict; lowers the same way |
 
-Member names are the classes the equivalence names on that side, after canonical maps (so `Company`, not `Firm`, when a map renamed it). The list form needs no member names because column presence selects; the dict form is the general one, and `SharedDerivation` spells it once for the common case — one call, the members sharing it, and per member only what varies:
+A member is keyed by its own name on its side or by its canonical name — `Firm` or `Company` when a map renames one to the other — as in the equivalence itself. The list form needs no member names because column presence selects; the dict form is the general one, and `SharedDerivation` spells it once for the common case — one call, the members sharing it, and per member only what varies:
 
 ```python
 AlignmentAttribute(into="match_key", sources={
@@ -292,6 +302,8 @@ assert manifest_hash(a) != manifest_hash(b)
 # Or sanitize an existing GraphManifest (same op `Sanitizer` uses internally):
 apply_sanitize(manifest, SanitizeOp(db_flavor=DBType.TIGERGRAPH))
 ```
+
+`CanonicalizeOp` applies a whole vocabulary map — classes, per-class attributes, relations — in one step; see [Canonical maps](#canonical-maps).
 
 - **`bump_version`**: when `True` or `"minor"` (default), increments the numeric `MAJOR.MINOR.PATCH` prefix of `schema.metadata.version` if present (prerelease suffix preserved). Pass `bump_version=False` to leave the version string unchanged.
 - **Imports**: `graflo.architecture.evolution` re-exports the ops and apply helpers; lower-level functions such as `apply_remove_vertices`, `apply_merge_vertices`, `apply_rename_relations`, `apply_add_inverse_edges`, `apply_rename_vertex_properties`, and `apply_sanitize` mutate a manifest in place (used mainly internally and by `Sanitizer`). Cross-manifest compose uses `compose_manifests` (not unary `apply_evolution`).
@@ -579,3 +591,17 @@ resolving conflicts, and replaying a recorded resolution are all covered in
 
 - [Creating a Manifest](../../getting_started/creating_manifest.md) — manifest structure
 - [Concepts overview](../index.md) — `GraphManifest` role in the pipeline
+
+## Further reading
+
+- Bonifati, Furniss, Green, Harmer, Oshurko, Voigt — *Schema Validation and Evolution for Graph
+  Databases*, ER 2019. Property-graph schema evolution expressed as graph rewriting; the closest
+  prior operation set for property-graph schemas.
+- Hausler, Klettke, Störl — *A language for graph database evolution and its implementation in
+  Neo4j*, ER Forum 2023. An evolution language bound to one backend; the op vocabulary here is
+  backend-independent and lowered per target by the physical plane.
+- Bonifati — *Versatile Property Graph Transformations*, PVLDB 18(12), 2025. Declarative
+  graph-to-graph transformations; the comparator for projection rather than for evolution.
+- Bernstein — *Applying Model Management to Classical Meta Data Problems*, CIDR 2003. The
+  operator vocabulary — Match, Merge, Diff, Compose, ModelGen — that `diff_manifests`,
+  `merge_three_way`, `compose_manifests` and `resolve_db_aware()` instantiate for manifests.

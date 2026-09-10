@@ -88,12 +88,23 @@ def _vertex_slot(name: str) -> Slot:
 
 
 def _edge_slot(source: str, target: str, relation: str | None) -> Slot:
-    return (
-        "edge",
+    """An edge's slot, nested under its relation's.
+
+    Ops address edges two ways -- by relation name (``remove_edges``,
+    ``rename_relations``, ``merge_edges``) and by triple (``set_edge_directed``,
+    ``retarget_edges``, ...). Containment is what makes the two families see
+    each other: removing a relation covers every edge on it, so flipping one of
+    those edges on the other side is a conflict rather than a clean merge that
+    applies the flip to an edge the removal already deleted. An edge with no
+    relation is unreachable by any relation-addressed op and keeps its own root.
+    """
+    endpoints = (
         "/".join(canonical_key(source)) or source.lower(),
         "/".join(canonical_key(target)) or target.lower(),
-        (relation or "").lower(),
     )
+    if relation is None:
+        return ("edge", *endpoints)
+    return (*_relation_slot(relation), "edge", *endpoints)
 
 
 def _field_slot(vertex: str, field: str) -> Slot:
@@ -109,27 +120,6 @@ def _resource_slot(name: str) -> Slot:
     # A resource's pipeline is an ordered program: one slot for the whole
     # resource, never one per step.
     return ("resource", name)
-
-
-def _edge_key_of(entry: Any) -> tuple[str, str, str | None]:
-    """Endpoints of an edge-ish payload, whether model or mapping."""
-    if isinstance(entry, dict):
-        return (
-            str(entry.get("source", "")),
-            str(entry.get("target", "")),
-            entry.get("relation"),
-        )
-    return (
-        str(getattr(entry, "source", "")),
-        str(getattr(entry, "target", "")),
-        getattr(entry, "relation", None),
-    )
-
-
-def _name_of(entry: Any) -> str:
-    if isinstance(entry, dict):
-        return str(entry.get("name", ""))
-    return str(getattr(entry, "name", ""))
 
 
 def op_slots(op: ManifestOp) -> set[Slot]:
@@ -151,16 +141,25 @@ def op_slots(op: ManifestOp) -> set[Slot]:
 
     # ── vertices ────────────────────────────────────────────────────────────
     if isinstance(op, ops.AddVerticesOp):
-        slots |= {_vertex_slot(_name_of(v)) for v in op.vertices}
+        slots |= {_vertex_slot(v.name) for v in op.vertices}
     elif isinstance(op, ops.RemoveVerticesOp):
         slots |= {_vertex_slot(name) for name in op.names}
     elif isinstance(op, ops.RenameVerticesOp):
         # Both names: a rename collides with any edit to either side of it.
-        for old, new in op.vertices.items():
+        for old, new in op.renames.items():
             slots |= {_vertex_slot(old), _vertex_slot(new)}
     elif isinstance(op, ops.MergeVerticesOp):
         slots |= {_vertex_slot(name) for name in op.sources}
         slots.add(_vertex_slot(op.into))
+    elif isinstance(op, ops.CanonicalizeOp):
+        # Every name on either side of the map is occupied, as for a rename.
+        for old, new in op.vertices.items():
+            slots |= {_vertex_slot(old), _vertex_slot(new)}
+        for vertex, renames in op.properties.items():
+            for old, new in renames.items():
+                slots |= {_field_slot(vertex, old), _field_slot(vertex, new)}
+        for old, new in op.relations.items():
+            slots |= {_relation_slot(old), _relation_slot(new)}
 
     # ── vertex properties ───────────────────────────────────────────────────
     elif isinstance(op, ops.AddVertexPropertiesOp):
@@ -179,7 +178,7 @@ def op_slots(op: ManifestOp) -> set[Slot]:
         # Identity is a property of the vertex as a whole, not of one field, so
         # two sides re-keying the same vertex must collide even when they name
         # entirely different fields.
-        slots |= {(*_vertex_slot(vertex), "identity") for vertex in op.vertices}
+        slots |= {(*_vertex_slot(vertex), "identity") for vertex in op.replacements}
     elif isinstance(op, ops.AddSecondaryIdentitiesOp):
         slots |= {(*_vertex_slot(vertex), "secondary") for vertex in op.additions}
     elif isinstance(op, ops.RemoveSecondaryIdentitiesOp):
@@ -196,13 +195,15 @@ def op_slots(op: ManifestOp) -> set[Slot]:
             ops.RemoveEdgeIndexesOp,
         ),
     ):
-        slots |= {_edge_slot(*_edge_key_of(entry)) for entry in op.edges}
-    elif isinstance(op, ops.SetEdgeDirectedOp):
-        slots |= {(*_edge_slot(*_edge_key_of(entry)), "directed") for entry in op.edges}
-    elif isinstance(op, ops.SetEdgeSemanticsOp):
+        # `Edge.edge_id` is a property and the entry models' is a method, so
+        # read the triple itself, which every edge-ish model carries.
         slots |= {
-            (*_edge_slot(*_edge_key_of(entry)), "semantics") for entry in op.edges
+            _edge_slot(entry.source, entry.target, entry.relation) for entry in op.edges
         }
+    elif isinstance(op, ops.SetEdgeDirectedOp):
+        slots |= {(*_edge_slot(*entry.edge_id()), "directed") for entry in op.edges}
+    elif isinstance(op, ops.SetEdgeSemanticsOp):
+        slots |= {(*_edge_slot(*entry.edge_id()), "semantics") for entry in op.edges}
 
     # ── grounding ───────────────────────────────────────────────────────────
     #
@@ -212,20 +213,24 @@ def op_slots(op: ManifestOp) -> set[Slot]:
     elif isinstance(op, ops.SetVertexSemanticsOp):
         slots |= {(*_vertex_slot(name), "semantics") for name in op.semantics}
     elif isinstance(op, ops.SetFieldSemanticsOp):
-        slots |= {
-            (*_field_slot(target.vertex, target.field), "semantics")
-            for target in op.targets
-        }
+        for target in op.targets:
+            if isinstance(target, ops.FieldSemanticsTarget):
+                slots.add((*_field_slot(target.vertex, target.field), "semantics"))
+            else:
+                slots.add(
+                    (*_edge_slot(*target.edge_id()), "field", target.field, "semantics")
+                )
 
     # ── edges, addressed by relation name ───────────────────────────────────
     elif isinstance(op, ops.RemoveEdgesOp):
         slots |= {_relation_slot(relation) for relation in op.relations}
+        slots |= {_edge_slot(*selector.edge_id()) for selector in op.edges}
     elif isinstance(op, ops.RenameRelationsOp):
         # `{old: new}` -- both names are occupied.
-        for old, new in op.relations.items():
+        for old, new in op.renames.items():
             slots |= {_relation_slot(old), _relation_slot(new)}
     elif isinstance(op, ops.AddInverseEdgesOp):
-        for relation, inverse in op.relations.items():
+        for relation, inverse in op.inverses.items():
             slots |= {_relation_slot(relation), _relation_slot(inverse)}
     elif isinstance(op, ops.MergeEdgesOp):
         slots |= {_relation_slot(relation) for relation in op.sources}
@@ -259,8 +264,12 @@ def op_slots(op: ManifestOp) -> set[Slot]:
         # half-merged, so it conflicts as a unit or merges as a unit.
         slots |= {_resource_slot(name) for name in op.additions}
     elif isinstance(op, ops.RenameResourcesOp):
-        for old, new in op.resources.items():
+        for old, new in op.renames.items():
             slots |= {_resource_slot(old), _resource_slot(new)}
+    elif isinstance(op, ops.AddResourcesOp):
+        slots |= {_resource_slot(resource.name) for resource in op.resources}
+    elif isinstance(op, ops.RemoveResourcesOp):
+        slots |= {_resource_slot(name) for name in op.names}
 
     # ── whole-manifest ops ──────────────────────────────────────────────────
     elif isinstance(
@@ -476,6 +485,20 @@ def _base_excerpt(base: GraphManifest, slot: Slot) -> dict[str, Any]:
         for vertex in base.graph_schema.core_schema.vertex_config.vertices:
             if "/".join(canonical_key(vertex.name)) == target:
                 return vertex.to_minimal_canonical_dict()
+    if slot[0] == "relation":
+        edges = [
+            edge
+            for edge in base.graph_schema.core_schema.edge_config.edges
+            if edge.relation is not None
+            and _relation_slot(edge.relation) == slot[:2]
+            and (
+                len(slot) < 5
+                or slot[2] != "edge"
+                or _edge_slot(edge.source, edge.target, edge.relation) == slot[:5]
+            )
+        ]
+        if edges:
+            return {"edges": [edge.to_minimal_canonical_dict() for edge in edges]}
     if slot[0] == "resource" and base.ingestion_model is not None:
         for resource in base.ingestion_model.resources:
             if resource.name == slot[1]:

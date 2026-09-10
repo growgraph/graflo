@@ -24,6 +24,7 @@ intent is known; otherwise the pair is emitted as a drop and an add.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -31,26 +32,35 @@ from pydantic import Field as PydanticField
 from pydantic import model_validator
 
 from graflo.architecture.base import ConfigBaseModel
+from graflo.architecture.contract.ingestion.resource import ResourceConfig
 from graflo.architecture.contract.manifest import GraphManifest
-from graflo.architecture.graph_types import Index
+from graflo.architecture.graph_types import EdgePhysicalKey, Index
+from graflo.architecture.schema.database_features import (
+    DatabaseProfile,
+    EdgePhysicalSpec,
+)
 from graflo.architecture.schema.edge import Edge
-from graflo.architecture.schema.vertex import Vertex
+from graflo.architecture.schema.vertex import Field, Vertex
 
 from .ops import (
     AddEdgeIndexesOp,
     AddEdgePropertiesOp,
     AddEdgesOp,
+    AddResourcesOp,
     AddSecondaryIdentitiesOp,
     AddVertexIndexesOp,
     AddVertexPropertiesOp,
     AddVerticesOp,
     ChangeFieldTypesOp,
+    EdgeFieldSemanticsTarget,
     EdgeIndexEntry,
     EdgeSelector,
+    FieldSemanticsTarget,
     ManifestOp,
     RemoveEdgeIndexesOp,
     RemoveEdgePropertiesOp,
     RemoveEdgesOp,
+    RemoveResourcesOp,
     RemoveSecondaryIdentitiesOp,
     RemoveVertexIndexesOp,
     RemoveVertexPropertiesOp,
@@ -62,6 +72,9 @@ from .ops import (
     RenameVerticesOp,
     ReplaceIdentityOp,
     SetEdgeDirectedOp,
+    SetEdgeSemanticsOp,
+    SetFieldSemanticsOp,
+    SetVertexSemanticsOp,
     validate_rename_map_is_injective,
 )
 
@@ -152,9 +165,11 @@ def diff_manifests(
     ops += _vertex_structure_ops(base, target, hints, warnings)
     ops += _edge_structure_ops(base, target, hints, warnings)
     ops += _vertex_property_ops(base, target, hints)
-    ops += _edge_property_ops(base, target, hints)
+    ops += _edge_property_ops(base, target, hints, warnings)
     ops += _identity_ops(base, target, hints, warnings)
+    ops += _semantics_ops(base, target, hints)
     ops += _index_ops(base, target, hints)
+    ops += _resource_ops(base, target, hints, warnings)
     ops += _removal_ops(base, target, hints)
 
     _warn_unexpressed(base, target, warnings, hints)
@@ -207,11 +222,11 @@ def diff_manifests_verified(
 def _rename_ops(hints: RenameHints) -> list[ManifestOp]:
     ops: list[ManifestOp] = []
     if hints.vertices:
-        ops.append(RenameVerticesOp(vertices=dict(hints.vertices)))
+        ops.append(RenameVerticesOp(renames=dict(hints.vertices)))
     if hints.relations:
-        ops.append(RenameRelationsOp(relations=dict(hints.relations)))
+        ops.append(RenameRelationsOp(renames=dict(hints.relations)))
     if hints.resources:
-        ops.append(RenameResourcesOp(resources=dict(hints.resources)))
+        ops.append(RenameResourcesOp(renames=dict(hints.resources)))
     if hints.vertex_properties:
         ops.append(
             RenameVertexPropertiesOp(
@@ -274,7 +289,7 @@ def _vertex_property_ops(
     base_vertices = _vertices_after_renames(base, hints)
     target_vertices = _vertices(target)
 
-    additions: dict[str, list[str]] = {}
+    additions: dict[str, list[str | Field]] = {}
     removals: dict[str, list[str]] = {}
     type_changes: dict[str, dict[str, dict[str, Any]]] = {}
 
@@ -285,19 +300,18 @@ def _vertex_property_ops(
         old_fields = {f.name: f for f in old_vertex.properties}
         new_fields = {f.name: f for f in new_vertex.properties}
 
-        gained = [f for f in new_fields if f not in old_fields]
+        # A gained field is emitted as authored, so its type and grounding
+        # replay with it rather than being dropped to a bare name.
+        gained = [
+            _field_entry(new_fields[f]) for f in new_fields if f not in old_fields
+        ]
         lost = [f for f in old_fields if f not in new_fields]
         if gained:
             additions[name] = gained
         if lost:
             removals[name] = lost
 
-        changed = {
-            field: _type_spec(new_fields[field])
-            for field in new_fields
-            if field in old_fields
-            and _type_of(old_fields[field]) != _type_of(new_fields[field])
-        }
+        changed = _field_type_changes(old_fields, new_fields)
         if changed:
             type_changes[name] = changed
 
@@ -311,34 +325,248 @@ def _vertex_property_ops(
 
 
 def _edge_property_ops(
-    base: GraphManifest, target: GraphManifest, hints: RenameHints
+    base: GraphManifest,
+    target: GraphManifest,
+    hints: RenameHints,
+    warnings: list[str],
 ) -> list[ManifestOp]:
+    """Edge property additions, removals and retypes, per relation.
+
+    The edge property ops address a *relation* and apply to every edge on it,
+    while the diff sees each ``(source, target, relation)`` edge on its own.
+    A change is expressible only when the sibling edges of a relation agree on
+    it; a change that holds on some siblings and not others is reported rather
+    than emitted, since a relation-wide op would apply it to every sibling.
+    """
     ops: list[ManifestOp] = []
     base_edges = _edges_after_renames(base, hints)
     target_edges = _edges(target)
 
-    additions: dict[str, list[str]] = {}
-    removals: dict[str, list[str]] = {}
-
+    by_relation: dict[str, list[tuple[Edge, Edge]]] = {}
     for key, new_edge in target_edges.items():
         old_edge = base_edges.get(key)
-        relation = key[2]
-        if old_edge is None or relation is None:
+        if old_edge is None:
             continue
-        old_fields = {f.name for f in old_edge.properties}
-        new_fields = {f.name for f in new_edge.properties}
-        gained = sorted(new_fields - old_fields)
-        lost = sorted(old_fields - new_fields)
-        if gained:
-            additions.setdefault(relation, []).extend(gained)
-        if lost:
-            removals.setdefault(relation, []).extend(lost)
+        relation = key[2]
+        if relation is None:
+            if _edge_fields_differ(old_edge, new_edge):
+                warnings.append(
+                    f"edge {key[:2]} has no relation, and the edge property ops "
+                    "address a relation; its property changes are not expressed"
+                )
+            continue
+        by_relation.setdefault(relation, []).append((old_edge, new_edge))
+
+    additions: dict[str, list[str | Field]] = {}
+    removals: dict[str, list[str]] = {}
+    type_changes: dict[str, dict[str, dict[str, Any]]] = {}
+    for relation, pairs in sorted(by_relation.items()):
+        new_names = [{f.name for f in new.properties} for _, new in pairs]
+        gained: dict[str, Field] = {}
+        lost: set[str] = set()
+        for old, new in pairs:
+            old_names = {f.name for f in old.properties}
+            for field in new.properties:
+                if field.name not in old_names:
+                    gained.setdefault(field.name, field)
+            lost |= old_names - {f.name for f in new.properties}
+
+        # Present on some old sibling => not an addition for this relation:
+        # add_edge_properties addresses every edge under the relation, and
+        # applying it would redeclare the property on the edge that has it.
+        old_any = {f.name for old, _ in pairs for f in old.properties}
+        added = sorted(
+            n
+            for n in gained
+            if n not in old_any and all(n in names for names in new_names)
+        )
+        removed = sorted(n for n in lost if all(n not in names for names in new_names))
+        for name in sorted((set(gained) - set(added)) | (lost - set(removed))):
+            warnings.append(
+                f"relation {relation!r}: property {name!r} differs between sibling "
+                "edges; add/remove_edge_properties address a relation, not one edge"
+            )
+        if added:
+            additions[relation] = [_field_entry(gained[n]) for n in added]
+        if removed:
+            removals[relation] = removed
+
+        changed: dict[str, dict[str, Any]] = {}
+        disagreeing: set[str] = set()
+        for old, new in pairs:
+            per_pair = _field_type_changes(
+                {f.name: f for f in old.properties}, {f.name: f for f in new.properties}
+            )
+            for field, spec in per_pair.items():
+                prior = changed.get(field)
+                if prior is not None and prior != spec:
+                    disagreeing.add(field)
+                changed[field] = spec
+        for field in sorted(disagreeing):
+            warnings.append(
+                f"relation {relation!r}: property {field!r} changes to different "
+                "types on sibling edges; change_field_types addresses a relation"
+            )
+            changed.pop(field)
+        if changed:
+            type_changes[relation] = changed
 
     if additions:
         ops.append(AddEdgePropertiesOp(additions=additions))
+    if type_changes:
+        ops.append(ChangeFieldTypesOp(edges=type_changes))
     if removals:
         ops.append(RemoveEdgePropertiesOp(removals=removals))
     return ops
+
+
+def _edge_fields_differ(old: Edge, new: Edge) -> bool:
+    return {_field_key(f) for f in old.properties} != {
+        _field_key(f) for f in new.properties
+    }
+
+
+def _field_key(field: Field) -> tuple[str, str | None, str | None]:
+    """Name plus the whole type spec, for set comparison of property lists."""
+    spec = _type_spec(field)
+    return (field.name, spec["type"], spec["item_type"])
+
+
+def _field_entry(field: Field) -> str | Field:
+    """The field as authored when it carries more than a name, else the name."""
+    return field if set(field.to_dict(skip_defaults=True)) - {"name"} else field.name
+
+
+def _field_type_changes(
+    old_fields: dict[str, Field], new_fields: dict[str, Field]
+) -> dict[str, dict[str, Any]]:
+    """Type specs for the fields present on both sides whose type changed.
+
+    Compared on the whole spec rather than on ``type``: ``LIST<STRING>`` and
+    ``LIST<INT>`` share a ``type`` and rewrite every stored value, so a
+    ``type``-only comparison emits no op for the change that needs one most.
+    """
+    return {
+        field: _type_spec(new_fields[field])
+        for field in new_fields
+        if field in old_fields
+        and _type_spec(old_fields[field]) != _type_spec(new_fields[field])
+    }
+
+
+def _semantics_ops(
+    base: GraphManifest, target: GraphManifest, hints: RenameHints
+) -> list[ManifestOp]:
+    """Grounding changes on vertices, their properties, and edges.
+
+    Runs after the property stages so every property it addresses exists.
+    ``set_edge_semantics`` carries one value per selection, so edges are
+    grouped by their target grounding and one op is emitted per distinct value.
+    """
+    ops: list[ManifestOp] = []
+    base_vertices = _vertices_after_renames(base, hints)
+
+    vertex_semantics: dict[str, Any] = {}
+    field_targets: list[FieldSemanticsTarget | EdgeFieldSemanticsTarget] = []
+    for name, new_vertex in _vertices(target).items():
+        old_vertex = base_vertices.get(name)
+        if old_vertex is None:
+            continue
+        if old_vertex.semantics != new_vertex.semantics:
+            vertex_semantics[name] = new_vertex.semantics
+        old_fields = {f.name: f for f in old_vertex.properties}
+        for field in new_vertex.properties:
+            old_field = old_fields.get(field.name)
+            if old_field is not None and old_field.semantics != field.semantics:
+                field_targets.append(
+                    FieldSemanticsTarget(
+                        vertex=name, field=field.name, semantics=field.semantics
+                    )
+                )
+    if vertex_semantics:
+        ops.append(SetVertexSemanticsOp(semantics=vertex_semantics))
+
+    base_edges = _edges_after_renames(base, hints)
+    groups: dict[str, tuple[Any, list[EdgeSelector]]] = {}
+    for key, new_edge in _edges(target).items():
+        old_edge = base_edges.get(key)
+        if old_edge is None:
+            continue
+        old_fields = {f.name: f for f in old_edge.properties}
+        for field in new_edge.properties:
+            old_field = old_fields.get(field.name)
+            if old_field is not None and old_field.semantics != field.semantics:
+                field_targets.append(
+                    EdgeFieldSemanticsTarget(
+                        source=key[0],
+                        target=key[1],
+                        relation=key[2],
+                        field=field.name,
+                        semantics=field.semantics,
+                    )
+                )
+        if old_edge.semantics == new_edge.semantics:
+            continue
+        canon = (
+            ""
+            if new_edge.semantics is None
+            else json.dumps(
+                new_edge.semantics.to_dict(skip_defaults=False), sort_keys=True
+            )
+        )
+        groups.setdefault(canon, (new_edge.semantics, []))[1].append(
+            EdgeSelector(source=key[0], target=key[1], relation=key[2])
+        )
+    if field_targets:
+        ops.append(SetFieldSemanticsOp(targets=field_targets))
+    for canon in sorted(groups):
+        semantics, selectors = groups[canon]
+        ops.append(SetEdgeSemanticsOp(edges=selectors, semantics=semantics))
+    return ops
+
+
+def _resource_ops(
+    base: GraphManifest, target: GraphManifest, hints: RenameHints, warnings: list[str]
+) -> list[ManifestOp]:
+    """Added resources, plus a report for edits no op expresses.
+
+    A resource's pipeline is an ordered program, and the only op that edits one
+    (``add_resource_transforms``) appends; a changed pipeline is reported
+    rather than approximated. Removed resources are emitted by the removal
+    stage so earlier ops still find them.
+    """
+    base_ingestion, target_ingestion = base.ingestion_model, target.ingestion_model
+    if target_ingestion is None:
+        return []
+    base_resources = (
+        {hints.resources.get(r.name, r.name): r for r in base_ingestion.resources}
+        if base_ingestion is not None
+        else {}
+    )
+    added = [r for r in target_ingestion.resources if r.name not in base_resources]
+
+    def _body(resource: ResourceConfig) -> dict[str, Any]:
+        # The name is what the rename hint already accounts for.
+        return {
+            k: v for k, v in resource.to_minimal_canonical_dict().items() if k != "name"
+        }
+
+    for resource in target_ingestion.resources:
+        old = base_resources.get(resource.name)
+        if old is not None and _body(old) != _body(resource):
+            warnings.append(
+                f"resource {resource.name!r} differs; no op expresses a pipeline "
+                "edit beyond add_resource_transforms"
+            )
+    if base_ingestion is not None and (
+        [t.to_minimal_canonical_dict() for t in base_ingestion.transforms]
+        != [t.to_minimal_canonical_dict() for t in target_ingestion.transforms]
+    ):
+        warnings.append(
+            "the transform registry differs; no op expresses registry edits "
+            "beyond add_resource_transforms"
+        )
+    return [AddResourcesOp(resources=added)] if added else []
 
 
 def _identity_ops(
@@ -387,7 +615,7 @@ def _identity_ops(
             )
 
     if replacements:
-        ops.append(ReplaceIdentityOp(vertices=replacements))
+        ops.append(ReplaceIdentityOp(replacements=replacements))
     if secondary_add:
         ops.append(AddSecondaryIdentitiesOp(additions=secondary_add))
     if secondary_remove:
@@ -432,7 +660,9 @@ def _index_ops(
     return ops
 
 
-def _edge_index_ops(base_profile: Any, target_profile: Any) -> list[ManifestOp]:
+def _edge_index_ops(
+    base_profile: DatabaseProfile, target_profile: DatabaseProfile
+) -> list[ManifestOp]:
     added: list[EdgeIndexEntry] = []
     removed: list[EdgeIndexEntry] = []
     base_specs = _edge_specs(base_profile)
@@ -440,36 +670,18 @@ def _edge_index_ops(base_profile: Any, target_profile: Any) -> list[ManifestOp]:
 
     for key, spec in target_specs.items():
         old = base_specs.get(key)
-        old_fields = (
-            {tuple(ix.fields) for ix in getattr(old, "indexes", [])} if old else set()
-        )
-        new_ones = [
-            ix
-            for ix in getattr(spec, "indexes", [])
-            if tuple(ix.fields) not in old_fields
-        ]
+        old_fields = {tuple(ix.fields) for ix in old.indexes} if old else set()
+        new_ones = [ix for ix in spec.indexes if tuple(ix.fields) not in old_fields]
         if new_ones:
-            added.append(
-                EdgeIndexEntry(
-                    source=key[0], target=key[1], relation=key[2], indexes=new_ones
-                )
-            )
+            added.append(_edge_index_entry(key, indexes=new_ones))
     for key, spec in base_specs.items():
         new = target_specs.get(key)
-        new_fields = (
-            {tuple(ix.fields) for ix in getattr(new, "indexes", [])} if new else set()
-        )
+        new_fields = {tuple(ix.fields) for ix in new.indexes} if new else set()
         gone = [
-            list(ix.fields)
-            for ix in getattr(spec, "indexes", [])
-            if tuple(ix.fields) not in new_fields
+            list(ix.fields) for ix in spec.indexes if tuple(ix.fields) not in new_fields
         ]
         if gone:
-            removed.append(
-                EdgeIndexEntry(
-                    source=key[0], target=key[1], relation=key[2], fields=gone
-                )
-            )
+            removed.append(_edge_index_entry(key, fields=gone))
 
     ops: list[ManifestOp] = []
     if added:
@@ -497,6 +709,16 @@ def _removal_ops(
     gone_vertices = sorted(set(base_vertices) - set(_vertices(target)))
     if gone_vertices:
         ops.append(RemoveVerticesOp(names=gone_vertices))
+
+    base_ingestion, target_ingestion = base.ingestion_model, target.ingestion_model
+    if base_ingestion is not None and target_ingestion is not None:
+        target_names = {r.name for r in target_ingestion.resources}
+        gone_resources = sorted(
+            {hints.resources.get(r.name, r.name) for r in base_ingestion.resources}
+            - target_names
+        )
+        if gone_resources:
+            ops.append(RemoveResourcesOp(names=gone_resources))
     return ops
 
 
@@ -507,22 +729,20 @@ def _warn_unexpressed(
     hints: RenameHints,
 ) -> None:
     """Flag differences the op vocabulary cannot currently author."""
-    base_ingestion, target_ingestion = base.ingestion_model, target.ingestion_model
-    if base_ingestion is not None and target_ingestion is not None:
-        base_resources = {
-            hints.resources.get(r.name, r.name) for r in base_ingestion.resources
-        }
-        target_resources = {r.name for r in target_ingestion.resources}
-        if base_resources - target_resources:
+    if (base.ingestion_model is None) != (target.ingestion_model is None) and (
+        target.ingestion_model is None
+    ):
+        warnings.append("the ingestion block was removed; no op expresses that")
+
+    base_profile, target_profile = _profile(base), _profile(target)
+    if base_profile is not None and target_profile is not None:
+        differing = _profile_differences_outside_the_index_ops(
+            base_profile, target_profile
+        )
+        if differing:
             warnings.append(
-                f"resources removed ({sorted(base_resources - target_resources)}) — "
-                "there is no remove_resource op; supply a rename hint or edit the "
-                "ingestion block directly"
-            )
-        if target_resources - base_resources:
-            warnings.append(
-                f"resources added ({sorted(target_resources - base_resources)}) — "
-                "there is no add_resource op"
+                f"db_profile differs in {differing}; no op expresses that, and "
+                "it is part of the content hash"
             )
 
     if (base.bindings is None) != (target.bindings is None):
@@ -534,6 +754,34 @@ def _warn_unexpressed(
         != target.bindings.to_minimal_canonical_dict()
     ):
         warnings.append("the bindings block differs; no op expresses bindings edits")
+
+
+def _profile_differences_outside_the_index_ops(
+    base_profile: DatabaseProfile, target_profile: DatabaseProfile
+) -> list[str]:
+    """Profile keys that differ once the index-addressable parts are set aside.
+
+    ``vertex_indexes`` and the ``indexes`` of each edge spec are what the index
+    ops author; everything else on the profile has no op yet.
+    """
+
+    def _comparable(profile: DatabaseProfile) -> dict[str, Any]:
+        data = profile.to_dict(skip_defaults=False)
+        data.pop("vertex_indexes", None)
+        data["edge_specs"] = sorted(
+            (
+                json.dumps(
+                    {k: v for k, v in spec.items() if k != "indexes"}, sort_keys=True
+                )
+                for spec in data.get("edge_specs") or []
+            ),
+        )
+        return data
+
+    left, right = _comparable(base_profile), _comparable(target_profile)
+    return sorted(
+        key for key in set(left) | set(right) if left.get(key) != right.get(key)
+    )
 
 
 # -- accessors ----------------------------------------------------------
@@ -556,18 +804,35 @@ def _edges(manifest: GraphManifest) -> dict[tuple[str, str, str | None], Edge]:
     }
 
 
-def _profile(manifest: GraphManifest) -> Any:
+def _profile(manifest: GraphManifest) -> DatabaseProfile | None:
     schema = manifest.graph_schema
     return None if schema is None else schema.db_profile
 
 
-def _edge_specs(profile: Any) -> dict[tuple[str, str, str | None], Any]:
-    specs = getattr(profile, "edge_specs", None) or {}
-    out: dict[tuple[str, str, str | None], Any] = {}
-    for key, spec in specs.items():
-        if isinstance(key, tuple) and len(key) >= 3:
-            out[(key[0], key[1], key[2])] = spec
-    return out
+def _edge_specs(profile: DatabaseProfile) -> dict[EdgePhysicalKey, EdgePhysicalSpec]:
+    """Physical specs keyed by their full physical key, ``purpose`` included.
+
+    Keying on the full key is what keeps a ``purpose`` variant distinct from the
+    base spec of the same triple: an index diff addressed without the purpose
+    would be applied to the wrong spec on replay.
+    """
+    return {spec.physical_key: spec for spec in profile.edge_specs}
+
+
+def _edge_index_entry(
+    key: EdgePhysicalKey,
+    *,
+    indexes: list[Index] | None = None,
+    fields: list[list[str]] | None = None,
+) -> EdgeIndexEntry:
+    return EdgeIndexEntry(
+        source=key[0],
+        target=key[1],
+        relation=key[2],
+        purpose=key[3],
+        indexes=indexes or [],
+        fields=fields or [],
+    )
 
 
 def _renamed_vertex_names(manifest: GraphManifest, hints: RenameHints) -> set[str]:

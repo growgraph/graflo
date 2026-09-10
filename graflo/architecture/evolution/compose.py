@@ -13,13 +13,16 @@ from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.contract.provenance import ManifestMetadata
 from graflo.architecture.graph_types import EdgeId
 from graflo.architecture.schema.core import CoreSchema
-from graflo.architecture.schema.database_features import DatabaseProfile
+from graflo.architecture.schema.database_features import (
+    DatabaseProfile,
+    append_index,
+)
 from graflo.architecture.schema.document import Schema
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.identity_funnel import IdentityBranch, IdentityFunnel
 from graflo.architecture.schema.metadata import GraphMetadata
 from graflo.architecture.schema.naming import NamingConvention, canonical_slug
-from graflo.architecture.schema.semantics import Semantics
+from graflo.architecture.schema.semantics import merge_semantics
 from graflo.architecture.schema.vertex import SecondaryIdentity, Vertex, VertexConfig
 
 from .apply import (
@@ -34,9 +37,10 @@ from .canonical import (
     CanonicalMap,
     SideMaps,
     canonical_map_to_ops,
-    validate_and_complete_canonical_map,
+    resolve_clusters,
 )
-from .equivalence import Cluster, ClusterIndex, Side, index_clusters
+from .db_profile import merge_default_property_values
+from .equivalence import Cluster, ClusterIndex, Side
 from .merge_core import (
     edge_config_from_edges,
     merge_edge_pair,
@@ -88,6 +92,7 @@ def _resolve_name_collisions(
     *,
     name_conflict: Literal["error", "prefix_right", "fuse_right"],
     kind: str,
+    hint: str = "provide an equivalence / resource_renames",
 ) -> dict[str, str]:
     """Return rename map for *candidates* that collide with *occupied*.
 
@@ -106,8 +111,7 @@ def _resolve_name_collisions(
         if name_conflict in ("error", "fuse_right"):
             raise ValueError(
                 f"compose_manifests: {kind} name collision on {name!r}; "
-                "provide an equivalence / resource_renames, or set "
-                "name_conflict='prefix_right'"
+                f"{hint}, or set name_conflict='prefix_right'"
             )
         new_name = _free_prefixed_name(name, taken)
         renames[name] = new_name
@@ -158,7 +162,7 @@ def _apply_right_resource_policy(
 ) -> None:
     if op.resource_renames:
         apply_rename_resources(
-            right, RenameResourcesOp(resources=dict(op.resource_renames))
+            right, RenameResourcesOp(renames=dict(op.resource_renames))
         )
 
     if right.ingestion_model is None:
@@ -172,7 +176,7 @@ def _apply_right_resource_policy(
         kind="resource",
     )
     if collisions:
-        apply_rename_resources(right, RenameResourcesOp(resources=collisions))
+        apply_rename_resources(right, RenameResourcesOp(renames=collisions))
 
 
 class ComposeNameConflictError(ValueError):
@@ -294,23 +298,6 @@ def _resolve_schema_collisions(
     return renames
 
 
-def _did_you_mean(name: str, candidates: Iterable[str]) -> str:
-    """A suffix naming a candidate that denotes the same concept, if any.
-
-    Authoring an equivalence in the wrong convention is the likeliest mistake
-    at this boundary, and "not in left manifest" alone is a dead end when the
-    vertex is right there under another spelling.
-    """
-    key = canonical_slug(name)
-    near = sorted(c for c in candidates if c != name and canonical_slug(c) == key)
-    if not near:
-        return ""
-    return (
-        f"; it has {near[0]!r}, which denotes the same concept — author the "
-        "equivalence in the manifest's own spelling"
-    )
-
-
 def _assert_no_canonical_split(schema: Schema) -> None:
     """No two composed vertex types or relations may denote one concept.
 
@@ -346,6 +333,7 @@ def _apply_right_schema_collision_policy(
     left: GraphManifest,
     right: GraphManifest,
     op: ComposeManifestsOp,
+    index: ClusterIndex,
 ) -> None:
     """Prefix, fuse or error on non-equivalent right vertex/relation names.
 
@@ -369,13 +357,13 @@ def _apply_right_schema_collision_policy(
     v_renames = _resolve_schema_collisions(
         left_names=set(left_schema.core_schema.vertex_config.vertex_set),
         right_names=sorted(right_schema.core_schema.vertex_config.vertex_set),
-        exempt=frozenset({veq.into for veq in op.vertices}),
+        exempt=index.labels,
         name_conflict=op.name_conflict,
         kind="vertex",
         equivalence_hint="VertexEquivalence",
     )
     if v_renames:
-        apply_rename_vertices(right, RenameVerticesOp(vertices=v_renames))
+        apply_rename_vertices(right, RenameVerticesOp(renames=v_renames))
 
     r_renames = _resolve_schema_collisions(
         left_names={
@@ -390,13 +378,13 @@ def _apply_right_schema_collision_policy(
                 if e.relation is not None
             }
         ),
-        exempt=frozenset({req.into for req in op.relations}),
+        exempt=index.relation_labels,
         name_conflict=op.name_conflict,
         kind="relation",
         equivalence_hint="RelationEquivalence",
     )
     if r_renames:
-        apply_rename_relations(right, RenameRelationsOp(relations=r_renames))
+        apply_rename_relations(right, RenameRelationsOp(renames=r_renames))
 
 
 def _member_state(
@@ -433,9 +421,10 @@ def _member_state(
         ):
             keys[(side, member)] = None
         else:
-            keys[(side, member)] = tuple(
-                sorted(rename.get(f, f) for f in vertex.identity)
-            )
+            # Declared order, not sorted: a demoted key becomes a compound
+            # index whose column order is the author's. Comparisons across
+            # members are order-insensitive at the comparison site.
+            keys[(side, member)] = tuple(rename.get(f, f) for f in vertex.identity)
     return keys, names
 
 
@@ -484,8 +473,12 @@ def side_identity_to_funnel(
     chains: dict[tuple[Side, str], list[tuple[str, ...]]] = {}
     for side in ("left", "right"):
         default = side_identity.left if side == "left" else side_identity.right
+        overrides = {
+            cluster.resolved(side, declared): chain
+            for declared, chain in side_identity.members.items()
+        }
         for member in cluster.members(side):
-            raw = side_identity.members.get(member, default)
+            raw = overrides.get(member, default)
             if raw is None:
                 raise ComposeIdentityError(
                     f"compose_manifests: cluster into {cluster.into!r} has no "
@@ -599,7 +592,7 @@ def _composed_identity(
         for member in cluster.members(side)
         if (fields := member_keys.get((side, member))) is not None
     ]
-    plain_keys = {fields for _side, _member, fields in plain_members}
+    plain_keys = {frozenset(fields) for _side, _member, fields in plain_members}
     if len(plain_keys) > 1:
         detail = "; ".join(
             f"{side}:{member}={list(fields)}" for side, member, fields in plain_members
@@ -657,14 +650,15 @@ def _cluster_retire_ops(
     """
     if cluster.declaration.identity is None or cluster.declaration.retire != "demote":
         return []
-    secondary: dict[tuple[str, ...], SecondaryIdentity] = {}
+    secondary: dict[frozenset[str], SecondaryIdentity] = {}
     for side in ("left", "right"):
         for member in cluster.members(side):
             fields = member_keys.get((side, member))
             if not fields or frozenset(fields) == primary_fields:
                 continue
+            # First member to declare a field-set fixes its column order and name.
             secondary.setdefault(
-                fields,
+                frozenset(fields),
                 SecondaryIdentity(name=f"by_{'_'.join(fields)}", fields=list(fields)),
             )
     if not secondary:
@@ -672,15 +666,6 @@ def _cluster_retire_ops(
     return [
         AddSecondaryIdentitiesOp(additions={cluster.into: list(secondary.values())})
     ]
-
-
-def _union_strings(values: Iterable[str]) -> list[str]:
-    """Order-preserving de-duplication, for the list-valued metadata fields."""
-    out: list[str] = []
-    for value in values:
-        if value and value not in out:
-            out.append(value)
-    return out
 
 
 def _fold_name(left: str | None, right: str | None) -> str | None:
@@ -695,27 +680,6 @@ def _fold_description(left: str | None, right: str | None) -> str | None:
     if left and right and left != right:
         return f"{left}\n\n{right}"
     return left or right
-
-
-def _merge_semantics(
-    left: Semantics | None, right: Semantics | None
-) -> Semantics | None:
-    """Union two semantic anchor blocks.
-
-    ``exact_match`` and ``synonyms`` are sets of claims and simply union.
-    ``iri`` is single-valued and cannot: a schema composed from one denoting
-    ``schema.org/Person`` and one denoting ``foaf:Agent`` denotes neither
-    exactly, so a disagreement clears it rather than silently electing the left
-    side's concept as the composed schema's meaning.
-    """
-    if left is None or right is None:
-        source = left if right is None else right
-        return source.model_copy(deep=True) if source is not None else None
-    return Semantics(
-        iri=left.iri if left.iri == right.iri else None,
-        exact_match=_union_strings(list(left.exact_match) + list(right.exact_match)),
-        synonyms=_union_strings(list(left.synonyms) + list(right.synonyms)),
-    )
 
 
 def _merge_naming(
@@ -753,7 +717,7 @@ def _merge_graph_metadata(left: GraphMetadata, right: GraphMetadata) -> GraphMet
         name=_fold_name(left.name, right.name) or left.name,
         version=left.version,
         description=_fold_description(left.description, right.description),
-        semantics=_merge_semantics(left.semantics, right.semantics),
+        semantics=merge_semantics(left.semantics, right.semantics),
         naming=_merge_naming(left.naming, right.naming),
         provenance=None,
     )
@@ -782,11 +746,47 @@ def _merge_manifest_metadata(
     return ManifestMetadata(name=name, description=description)
 
 
+def _merge_declared_scalar(
+    left: DatabaseProfile,
+    right: DatabaseProfile,
+    field: str,
+) -> Any:
+    """The declared value of a single-valued profile key, refusing two of them.
+
+    Presence is read from ``skip_defaults=True`` rather than from the value:
+    ``db_flavor`` defaults to Arango, so a value-based fold cannot tell a side
+    that *declared* Arango from one that never spoke, and would let an
+    undeclared left silently retarget a right that named its backend.
+    """
+    left_declared = left.to_dict(skip_defaults=True)
+    right_declared = right.to_dict(skip_defaults=True)
+    if field not in left_declared:
+        return right_declared.get(field, getattr(left, field))
+    if field not in right_declared:
+        return left_declared[field]
+    if left_declared[field] != right_declared[field]:
+        raise ValueError(
+            f"compose_manifests: conflicting {field}: "
+            f"{left_declared[field]!r} vs {right_declared[field]!r}"
+        )
+    return left_declared[field]
+
+
 def _merge_db_profiles(
     left: DatabaseProfile, right: DatabaseProfile
 ) -> DatabaseProfile:
+    """Fold both sides' physical profile, electing neither.
+
+    Every key is folded on its own terms. The single-valued ones
+    (``db_flavor``, ``target_namespace``) refuse a declared disagreement rather
+    than inheriting the left's, because both decide what DDL is emitted against
+    which backend -- the composed manifest cannot target two.
+    """
     data = left.to_dict(skip_defaults=False)
     right_data = right.to_dict(skip_defaults=False)
+
+    data["db_flavor"] = _merge_declared_scalar(left, right, "db_flavor")
+    data["target_namespace"] = _merge_declared_scalar(left, right, "target_namespace")
 
     vs = dict(data.get("vertex_storage_names") or {})
     for k, v in (right_data.get("vertex_storage_names") or {}).items():
@@ -798,14 +798,25 @@ def _merge_db_profiles(
         vs[k] = v
     data["vertex_storage_names"] = vs
 
-    vi = {k: list(v) for k, v in (data.get("vertex_indexes") or {}).items()}
-    for k, vlist in (right_data.get("vertex_indexes") or {}).items():
-        vi.setdefault(k, []).extend(list(vlist))
-    data["vertex_indexes"] = vi
+    vi = {k: list(v) for k, v in (left.vertex_indexes or {}).items()}
+    for k, indexes in (right.vertex_indexes or {}).items():
+        merged_indexes = vi.setdefault(k, [])
+        for index in indexes:
+            append_index(merged_indexes, index, owner=f"vertex {k!r}")
+    data["vertex_indexes"] = {
+        k: [ix.to_dict(skip_defaults=False) for ix in v] for k, v in vi.items()
+    }
 
     edge_specs = list(data.get("edge_specs") or [])
     edge_specs.extend(list(right_data.get("edge_specs") or []))
     data["edge_specs"] = edge_specs
+
+    defaults = merge_default_property_values(
+        left.default_property_values, right.default_property_values
+    )
+    data["default_property_values"] = (
+        None if defaults is None else defaults.to_dict(skip_defaults=False)
+    )
 
     return _revalidate_db_profile(DatabaseProfile.model_validate(data))
 
@@ -977,28 +988,16 @@ def _union_bindings(
     left_connectors = list(left_data.get("connectors") or [])
     right_connectors = list(right_data.get("connectors") or [])
     left_names = {n for c in left_connectors if (n := _connector_name(c)) is not None}
-    rename_connectors: dict[str, str] = {}
-    for connector in right_connectors:
-        name = _connector_name(connector)
-        if name is None or name not in left_names:
-            if name is not None:
-                left_names.add(name)
-            continue
-        if name_conflict == "error":
-            raise ValueError(
-                f"compose_manifests: connector name collision on {name!r}; "
-                "rename before compose or set name_conflict='prefix_right'"
-            )
-        new_name = _prefixed(name)
-        while new_name in left_names:
-            new_name = _prefixed(new_name)
-        rename_connectors[name] = new_name
-        left_names.add(new_name)
-        if isinstance(connector, dict):
-            connector["name"] = new_name
-        else:
-            # Re-serialize path: mutate via dict rebuild below
-            pass
+    right_names = [n for c in right_connectors if (n := _connector_name(c)) is not None]
+    # Connectors are addresses, like resources: the same exact-match policy,
+    # the same ordinal disambiguation, and ``fuse_right`` behaves as ``error``.
+    rename_connectors = _resolve_name_collisions(
+        left_names,
+        right_names,
+        name_conflict=name_conflict,
+        kind="connector",
+        hint="rename before compose",
+    )
 
     if rename_connectors:
         # Rebuild right connectors/bindings with renamed connector names.
@@ -1075,41 +1074,6 @@ def _coerce_side_maps(
     return coerced
 
 
-def _check_member_existence(
-    index: ClusterIndex,
-    *,
-    left_vertex_names: set[str],
-    right_vertex_names: set[str],
-    left_relation_names: set[str],
-    right_relation_names: set[str],
-) -> None:
-    for cluster in index.vertices:
-        for member in cluster.left:
-            if member not in left_vertex_names:
-                raise ValueError(
-                    f"compose_manifests: left vertex {member!r} not in left "
-                    f"manifest{_did_you_mean(member, left_vertex_names)}"
-                )
-        for member in cluster.right:
-            if member not in right_vertex_names:
-                raise ValueError(
-                    f"compose_manifests: right vertex {member!r} not in right "
-                    f"manifest{_did_you_mean(member, right_vertex_names)}"
-                )
-    for cluster in index.relations:
-        for member in cluster.left:
-            if member not in left_relation_names:
-                raise ValueError(
-                    f"compose_manifests: left relation {member!r} not in left manifest"
-                )
-        for member in cluster.right:
-            if member not in right_relation_names:
-                raise ValueError(
-                    f"compose_manifests: right relation {member!r} not in "
-                    "right manifest"
-                )
-
-
 def compose_manifests(
     left: GraphManifest,
     right: GraphManifest,
@@ -1123,19 +1087,21 @@ def compose_manifests(
 ) -> GraphManifest:
     """Return a new manifest that is the deterministic compose of *left* and *right*.
 
-    Each declared cluster (a :class:`~graflo.architecture.evolution.ops.VertexEquivalence`
+    The declared clusters (each a :class:`~graflo.architecture.evolution.ops.VertexEquivalence`
     or :class:`~graflo.architecture.evolution.ops.RelationEquivalence`, possibly
-    n-ary) is lowered to a per-side :class:`~graflo.architecture.evolution.canonical.CanonicalMap`
-    and applied to that side standalone (property alignment, then merge/rename)
-    before the two sides are unioned by name. Does not invent semantic matches.
+    n-ary) and ``op.canonical_maps`` are resolved together into one composite
+    :class:`~graflo.architecture.evolution.canonical.CanonicalMap` per side
+    (see :func:`~graflo.architecture.evolution.canonical.resolve_clusters`),
+    applied to that side in one step, before the two sides are unioned by
+    name. Does not invent semantic matches.
 
     When ``op.identity_alignments`` is non-empty, the composed union is further
     rewritten by the fundamental ops emitted from each alignment (see
-    :func:`~graflo.architecture.evolution.alignment.alignment_to_ops`). Pass
-    *canonical_maps* — ``(side, CanonicalMap)`` pairs — so derivation inputs
-    written in canonical vocabulary fail loudly rather than silently deriving
-    nothing, and so a class already canonicalized on one side is checked
-    against the other side's declared clusters.
+    :func:`~graflo.architecture.evolution.alignment.alignment_to_ops`);
+    member-keyed sources are resolved against the sides as handed in.
+    *canonical_maps* — ``(side, CanonicalMap)`` pairs — are folded into
+    ``op.canonical_maps``; putting the maps on the op itself keeps the whole
+    recipe in one document.
     """
     if not isinstance(op, ComposeManifestsOp):
         raise TypeError(
@@ -1156,31 +1122,13 @@ def compose_manifests(
                 side,
             )
 
-    left_vertex_names = _vertex_names(left_schema)
-    right_vertex_names = _vertex_names(right_schema)
-    left_relation_names = _relation_names(left_schema)
-    right_relation_names = _relation_names(right_schema)
-
     # Raw ClusterConflictError here (not wrapped): a compose op whose own
     # declarations conflict is broken regardless of any canonical map.
-    index = index_clusters(
-        op,
-        left_vertices=left_vertex_names,
-        right_vertices=right_vertex_names,
-        left_relations=left_relation_names,
-        right_relations=right_relation_names,
-    )
-
-    side_maps = validate_and_complete_canonical_map(
+    resolution = resolve_clusters(
         op, left=out_left, right=out_right, canonical_maps=maps
     )
-    _check_member_existence(
-        index,
-        left_vertex_names=left_vertex_names,
-        right_vertex_names=right_vertex_names,
-        left_relation_names=left_relation_names,
-        right_relation_names=right_relation_names,
-    )
+    index = resolution.index
+    side_maps = resolution.side_maps
 
     member_keys, member_property_names = _capture_all_member_state(
         index, left_schema, right_schema, side_maps
@@ -1210,7 +1158,7 @@ def compose_manifests(
             ),
         )
 
-    _apply_right_schema_collision_policy(out_left, out_right, op)
+    _apply_right_schema_collision_policy(out_left, out_right, op, index)
 
     alignment_labels = {alignment.vertex for alignment in op.identity_alignments}
     # Three-way, deliberately: a fabricated empty Schema would not be neutral.
@@ -1264,7 +1212,10 @@ def compose_manifests(
             index=index,
             sides=sides,
             side_maps=side_maps,
-            canonical_maps=maps,
+            canonical_maps=[
+                ("left", resolution.author.left),
+                ("right", resolution.author.right),
+            ],
             finish_init=False,
             strict_references=strict_references,
             dynamic_edge_feedback=dynamic_edge_feedback,
@@ -1292,11 +1243,13 @@ def _apply_identity_alignments(
 ) -> GraphManifest:
     """Apply each alignment to the union.
 
-    *sides* are the pre-merge manifests (canonical maps and the resource
-    rename policy applied): member-keyed sources resolve against them, since
-    the merge has rewritten router ``type_map`` values to the canonical name.
+    *sides* are the manifests as handed in, after the resource rename policy
+    and before the per-side relabel: member-keyed sources resolve against
+    them, since the relabel rewrites router ``type_map`` values to the
+    composed name. Member keys are first re-keyed through the aligned cluster,
+    so a member may be keyed by its own name or its canonical one.
     """
-    from .alignment import alignment_to_ops
+    from .alignment import alignment_to_ops, rekey_members
     from .apply import apply_evolution
 
     cluster_labels = index.labels
@@ -1307,8 +1260,8 @@ def _apply_identity_alignments(
             if alignment.vertex not in cluster_labels:
                 raise ValueError(
                     f"compose_manifests: identity alignment vertex "
-                    f"{alignment.vertex!r} is not a declared cluster's `into` "
-                    f"label {sorted(cluster_labels)}"
+                    f"{alignment.vertex!r} is not a declared cluster's composed "
+                    f"name {sorted(cluster_labels)}"
                 )
         else:
             union_vertices = (
@@ -1321,7 +1274,9 @@ def _apply_identity_alignments(
                     f"compose_manifests: identity alignment vertex "
                     f"{alignment.vertex!r} is not in the composed union"
                 )
-        cluster = next((c for c in index.vertices if c.into == alignment.vertex), None)
+        cluster = index.cluster_for_label(alignment.vertex)
+        if cluster is not None:
+            alignment = rekey_members(alignment, sides=sides, resolve=cluster.resolved)
         cluster_members = (
             {"left": set(cluster.left), "right": set(cluster.right)}
             if cluster is not None

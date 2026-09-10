@@ -60,7 +60,12 @@ from graflo.architecture.graph_types import (
     EdgeType,
 )
 from graflo.architecture.schema.semantics import Semantics
-from graflo.architecture.schema.vertex import Field, VertexConfig, VertexName
+from graflo.architecture.schema.vertex import (
+    Field,
+    VertexConfig,
+    VertexName,
+    merge_field_lists,
+)
 
 # Default relation name for TigerGraph edges when relation is not specified
 DEFAULT_TIGERGRAPH_RELATION = "relates"
@@ -70,20 +75,21 @@ DEFAULT_TIGERGRAPH_RELATION_WEIGHTNAME = "relation"
 
 
 def _normalize_direct_item(item: str | Field | dict[str, Any]) -> Field:
-    """Convert a single direct field item (str, Field, or dict) to Field."""
+    """Convert a single direct field item (str, Field, or dict) to Field.
+
+    A dict is handed to the model whole rather than copied key by key: an
+    enumerated constructor silently drops every field it was not written for
+    (``item_type`` and ``semantics`` were lost that way), and ``extra="forbid"``
+    only protects what actually reaches validation.
+    """
     if isinstance(item, Field):
         return item
     if isinstance(item, str):
         return Field(name=item, type=None)
     if isinstance(item, dict):
-        name = item.get("name")
-        if name is None:
+        if item.get("name") is None:
             raise ValueError(f"Field dict must have 'name' key: {item}")
-        return Field(
-            name=name,
-            type=item.get("type"),
-            description=item.get("description"),
-        )
+        return Field.model_validate(item)
     raise TypeError(f"Field must be str, Field, or dict, got {type(item)}")
 
 
@@ -195,6 +201,27 @@ class Edge(ConfigBaseModel):
                 normalized.append(cast(list[str], item))
             return normalized
         raise ValueError("edge identities must be list[list[str]]")
+
+    @model_validator(mode="after")
+    def merge_duplicate_properties(self) -> Edge:
+        """Fold properties declared twice, refusing an incompatible redeclaration.
+
+        ``_normalize_direct_item`` maps each authored entry independently, so
+        ``properties: ["tags", {name: tags, type: LIST, item_type: STRING}]``
+        yields two fields of one name and nothing downstream collapses them --
+        they reach DDL emission as two attributes. Vertices have folded
+        duplicates since they gained typed properties; edges are brought to the
+        same rule here, with the same merge and the same refusals.
+        """
+        object.__setattr__(
+            self,
+            "properties",
+            merge_field_lists(
+                self.properties,
+                owner=f"edge ({self.source!r}, {self.target!r}, {self.relation!r})",
+            ),
+        )
+        return self
 
     @model_validator(mode="after")
     def normalize_identity_keys(self) -> Edge:

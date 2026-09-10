@@ -15,7 +15,14 @@ from graflo.architecture.schema import Schema
 from graflo.architecture.schema.core import CoreSchema
 from graflo.architecture.schema.database_features import DatabaseProfile
 from graflo.architecture.schema.edge import Edge, EdgeConfig
-from graflo.architecture.schema.vertex import Field, Vertex, VertexConfig
+from graflo.architecture.schema.vertex import (
+    Field,
+    FieldMergeConflict,
+    Vertex,
+    VertexConfig,
+    format_field_type_label,
+    merge_fields,
+)
 
 from .db_profile import (
     apply_edge_id_removal_to_db_profile,
@@ -30,6 +37,7 @@ from .db_profile import (
     apply_vertex_removal_to_db_profile,
     apply_vertex_rename_to_db_profile,
     merge_relation_entries_in_db_profile,
+    remap_vertices_in_db_profile,
 )
 from .inverse_edges import (
     _append_inverse_flat_specs,
@@ -49,11 +57,13 @@ from .ops import (
     AddEdgePropertiesOp,
     AddEdgesOp,
     AddInverseEdgesOp,
+    AddResourcesOp,
     AddResourceTransformsOp,
     AddSecondaryIdentitiesOp,
     AddVertexIndexesOp,
     AddVertexPropertiesOp,
     AddVerticesOp,
+    CanonicalizeOp,
     ChangeFieldTypesOp,
     ComposeManifestsOp,
     EnsureExtractedFieldsOp,
@@ -64,6 +74,7 @@ from .ops import (
     RemoveEdgeIndexesOp,
     RemoveEdgePropertiesOp,
     RemoveEdgesOp,
+    RemoveResourcesOp,
     RemoveSecondaryIdentitiesOp,
     RemoveVertexIndexesOp,
     RemoveVertexPropertiesOp,
@@ -491,6 +502,276 @@ def apply_merge_vertices(
         logger.warning("merge_vertices: %s", advisory)
 
 
+def _check_vocabulary_map(
+    mapping: dict[str, str], existing: set[str], *, noun: str
+) -> dict[str, list[str]]:
+    """Refuse unknown sources and undeclared occupied targets; return the groups.
+
+    An unknown source is a typo that would apply as a silent no-op. A target
+    that exists, stays put, and is not declared a member of its own group would
+    be merged into silently — the same collapse a plain rename refuses. A
+    target that exists but moves elsewhere is a chain: the map applies in one
+    step, so the group lands on a vacated name.
+    """
+    unknown = sorted(set(mapping) - existing)
+    if unknown:
+        raise ValueError(f"canonicalize: unknown {noun}: {unknown}")
+    moving = {source for source, target in mapping.items() if source != target}
+    groups: dict[str, list[str]] = {}
+    for source, target in mapping.items():
+        groups.setdefault(target, []).append(source)
+    occupied = sorted(
+        target
+        for target, members in groups.items()
+        if target in existing and target not in moving and target not in members
+    )
+    if occupied:
+        raise ValueError(
+            f"canonicalize: target {noun} {occupied} already exist and are not "
+            "declared members of their own group. Add a self entry "
+            "(`name: name`) to merge into an existing one, or pick a free name."
+        )
+    return groups
+
+
+def _ordered_members(target: str, members: list[str]) -> list[str]:
+    """The existing target first (it keeps its place), then the sources by name."""
+    return ([target] if target in members else []) + sorted(
+        member for member in members if member != target
+    )
+
+
+def _canonicalize_vertex_config(
+    vc: VertexConfig, mapping: dict[str, str], groups: dict[str, list[str]]
+) -> VertexConfig:
+    """Rebuild *vc* under *mapping* in one construction over the original models."""
+    moving = {source for source, target in mapping.items() if source != target}
+    by_name = {vertex.name: vertex for vertex in vc.vertices}
+    rebuilt = {
+        target
+        for target, members in groups.items()
+        if len(members) > 1 or members[0] != target
+    }
+
+    def _model(target: str) -> Vertex:
+        ordered = _ordered_members(target, groups[target])
+        if len(ordered) == 1:
+            payload = by_name[ordered[0]].to_dict(skip_defaults=False)
+            payload["name"] = target
+            return Vertex.model_validate(payload)
+        return merge_vertex_models([by_name[member] for member in ordered], target)
+
+    new_vertices: list[Vertex] = []
+    for vertex in vc.vertices:
+        if vertex.name in moving:
+            continue
+        new_vertices.append(_model(vertex.name) if vertex.name in rebuilt else vertex)
+    placed = {vertex.name for vertex in new_vertices}
+    new_vertices.extend(_model(target) for target in sorted(rebuilt - placed))
+
+    new_force: dict[str, Any] = {
+        name: value
+        for name, value in vc.force_types.items()
+        if name not in moving and name not in rebuilt
+    }
+    for target in sorted(rebuilt):
+        accumulated: list[Any] = []
+        for member in _ordered_members(target, groups[target]):
+            for entry in vc.force_types.get(member, []):
+                if entry not in accumulated:
+                    accumulated.append(entry)
+        if accumulated:
+            new_force[target] = accumulated
+    return VertexConfig(vertices=new_vertices, force_types=new_force)
+
+
+def _check_property_renames(
+    vc: VertexConfig, renames: dict[str, dict[str, str]]
+) -> None:
+    """Refuse an attribute rename whose source is absent or whose target collides.
+
+    ``apply_rename_vertex_properties`` keeps the first field on a collision and
+    drops the other, so this pre-check turns that into an error instead of a
+    quiet data loss.
+    """
+    unknown = sorted(set(renames) - vc.vertex_set)
+    if unknown:
+        raise ValueError(f"canonicalize: unknown vertices in properties: {unknown}")
+    for vertex, attr_map in renames.items():
+        existing = set(vc.property_names(vertex))
+        surviving = existing - set(attr_map)
+        for old, new in attr_map.items():
+            if old not in existing:
+                raise ValueError(
+                    f"canonicalize: {vertex}.{old!r} is not a declared property"
+                )
+            if new in surviving:
+                raise ValueError(
+                    f"canonicalize: {vertex}.{old!r} -> {new!r} collides with an "
+                    "existing property of that name. A rename cannot merge "
+                    "fields — combine them with a transform upstream instead."
+                )
+
+
+def _rewrite_relation_names_in_value(value: Any, relation_map: dict[str, str]) -> Any:
+    """Deep-rewrite ``relation`` keys (infer specs, extra_weights) by *relation_map*."""
+    if isinstance(value, list):
+        return [_rewrite_relation_names_in_value(item, relation_map) for item in value]
+    if isinstance(value, dict):
+        out = {
+            key: _rewrite_relation_names_in_value(item, relation_map)
+            for key, item in value.items()
+        }
+        relation = out.get("relation")
+        if isinstance(relation, str):
+            out["relation"] = relation_map.get(relation, relation)
+        return out
+    return value
+
+
+def _rewrite_ingestion_for_canonicalize(
+    im: IngestionModel, vertex_map: dict[str, str], relation_map: dict[str, str]
+) -> None:
+    """One pass over every name slot of the ingestion block, against original names."""
+    from graflo.architecture.contract.ingestion.resource import Resource
+
+    new_resources: list[Resource] = []
+    for resource in im.resources:
+        d = resource.to_dict(skip_defaults=False)
+        # The vertex rewriter unions colliding `vertex_from_map` entries, which
+        # a merge needs; relations live in disjoint slots and follow in a
+        # second pass that reads each slot once.
+        pipeline = rewrite_vertex_names_in_pipeline(resource.pipeline, vertex_map)
+        rewrite_entity_names_in_pipeline(pipeline, edges=relation_map)
+        d["pipeline"] = pipeline
+        d["merge_collections"] = [
+            vertex_map.get(name, name) for name in resource.merge_collections
+        ]
+        for key in ("infer_edge_only", "infer_edge_except", "extra_weights"):
+            if d.get(key):
+                d[key] = _rewrite_relation_names_in_value(
+                    rewrite_vertex_names_in_value(d[key], vertex_map), relation_map
+                )
+        new_resources.append(Resource.model_validate(d))
+    im.resources = new_resources
+
+
+def apply_canonicalize(manifest: GraphManifest, op: CanonicalizeOp) -> None:
+    """Mutate *manifest* in place: relabel by *op*'s vocabulary map in one step.
+
+    Every refusal — unknown names, an undeclared occupied target, an attribute
+    collision, an unacknowledged self-relation or observation fusion — leaves
+    *manifest* untouched: the work happens on a copy that is swapped in only
+    once it is accepted.
+    """
+    vertex_map = {s: t for s, t in op.vertices.items() if s != t}
+    relation_map = {s: t for s, t in op.relations.items() if s != t}
+    property_renames = {
+        cls: {old: new for old, new in attrs.items() if old != new}
+        for cls, attrs in op.properties.items()
+    }
+    property_renames = {cls: attrs for cls, attrs in property_renames.items() if attrs}
+
+    work = manifest.model_copy(deep=True)
+    schema = work.graph_schema
+    if schema is None:
+        if property_renames:
+            raise ValueError("canonicalize: properties require graph_schema")
+        if work.ingestion_model is not None and (vertex_map or relation_map):
+            _rewrite_ingestion_for_canonicalize(
+                work.ingestion_model, vertex_map, relation_map
+            )
+            manifest.ingestion_model = IngestionModel.model_validate(
+                work.ingestion_model.to_dict(skip_defaults=False)
+            )
+        return
+
+    core = schema.core_schema
+    _check_property_renames(core.vertex_config, property_renames)
+    vertex_groups = _check_vocabulary_map(
+        op.vertices, set(core.vertex_config.vertex_set), noun="vertices"
+    )
+    relation_groups = _check_vocabulary_map(
+        op.relations,
+        {edge.relation for edge in core.edge_config.edges if edge.relation is not None},
+        noun="relations",
+    )
+    merged_targets = sorted(
+        target for target, members in vertex_groups.items() if len(members) > 1
+    )
+
+    if property_renames:
+        apply_rename_vertex_properties(
+            work, RenameVertexPropertiesOp(renames=property_renames)
+        )
+        core = schema.core_schema
+
+    relabels = (
+        bool(vertex_map)
+        or bool(relation_map)
+        or bool(merged_targets)
+        or any(len(members) > 1 for members in relation_groups.values())
+    )
+    if relabels:
+        before_edges = list(core.edge_config.edges)
+        new_vc = _canonicalize_vertex_config(
+            core.vertex_config, op.vertices, vertex_groups
+        )
+        edges = redirect_and_merge_edges(core.edge_config.edges, vertex_map)
+        edges = remap_relation_and_merge_edges(edges, relation_map)
+
+        # The profile is remapped ahead of the assignment because assigning
+        # `core_schema` revalidates the profile against it.
+        remap_vertices_in_db_profile(schema.db_profile, vertex_map)
+        apply_relation_rename_to_db_profile(schema.db_profile, relation_map)
+        merge_relation_entries_in_db_profile(schema.db_profile)
+        schema.core_schema = CoreSchema(
+            vertex_config=new_vc, edge_config=edge_config_from_edges(edges)
+        )
+        schema.db_profile = _revalidate_db_profile(schema.db_profile)
+        schema.finish_init()
+
+        if work.ingestion_model is not None:
+            _rewrite_ingestion_for_canonicalize(
+                work.ingestion_model, vertex_map, relation_map
+            )
+            work.ingestion_model = IngestionModel.model_validate(
+                work.ingestion_model.to_dict(skip_defaults=False)
+            )
+
+        advisories: list[str] = []
+        for target in merged_targets:
+            self_relations, fused_levels, target_advisories = _describe_merge_impact(
+                work, before_edges=before_edges, merged=target, mapping=vertex_map
+            )
+            sources = sorted(m for m in vertex_groups[target] if m != target)
+            if self_relations and not op.allow_self_relations:
+                raise ValueError(
+                    f"canonicalize: merging {sources} into {target!r} turns edges "
+                    f"into self-relations: {self_relations}. Both endpoints then "
+                    "share one accumulator slot, so assembly merges observations "
+                    "that were separate nodes. Remove or retarget those edges "
+                    "first, or set allow_self_relations=true to accept the "
+                    "self-relation."
+                )
+            if fused_levels and not op.allow_observation_fusion:
+                raise ValueError(
+                    f"canonicalize: merging {sources} into {target!r} leaves "
+                    f"pipeline levels producing {target!r} more than once: "
+                    f"{fused_levels}. One source document yielded both types, so "
+                    "the merged observations fuse into a single node. Split the "
+                    "resource, or set allow_observation_fusion=true if fusing "
+                    "them is the intent."
+                )
+            advisories.extend(a for a in target_advisories if a not in advisories)
+        for advisory in advisories:
+            logger.warning("canonicalize: %s", advisory)
+
+    manifest.graph_schema = work.graph_schema
+    manifest.ingestion_model = work.ingestion_model
+    manifest.bindings = work.bindings
+
+
 def _rename_field_list(names: list[str], renames: dict[str, str]) -> list[str]:
     """Apply *renames* to *names*, preserving order and dropping duplicates."""
     out: list[str] = []
@@ -637,6 +918,28 @@ def apply_rename_vertex_properties(
     )
 
 
+def _identity_planes(vertex: Vertex) -> list[tuple[str, set[str]]]:
+    """Every field-set that keys *vertex*, named for the error it guards."""
+    planes: list[tuple[str, set[str]]] = [
+        ("identity", set(vertex.identity)),
+        ("hash identity", set(vertex.hash_identity_properties)),
+    ]
+    if vertex.identity_funnel is not None:
+        planes.append(
+            (
+                "identity funnel",
+                {
+                    field
+                    for branch in vertex.identity_funnel.branches
+                    for field in [*branch.fields, *(branch.when_all_present or [])]
+                },
+            )
+        )
+    for entry in vertex.secondary_identities:
+        planes.append((f"secondary identity {entry.name!r}", set(entry.fields)))
+    return planes
+
+
 def apply_remove_vertex_properties(
     manifest: GraphManifest, op: RemoveVertexPropertiesOp
 ) -> None:
@@ -655,23 +958,22 @@ def apply_remove_vertex_properties(
             f"remove_vertex_properties: unknown vertices in removals: {unknown_vertices}"
         )
 
-    removals = {
-        vertex_name: {field for field in fields if isinstance(field, str)}
-        for vertex_name, fields in op.removals.items()
-    }
-    if not removals:
-        return
+    removals = {vertex_name: set(fields) for vertex_name, fields in op.removals.items()}
 
     for vertex in schema.core_schema.vertex_config.vertices:
         remove_fields = removals.get(vertex.name, set())
         if not remove_fields:
             continue
-        identity_overlap = sorted(set(vertex.identity) & remove_fields)
-        if identity_overlap:
-            raise ValueError(
-                "remove_vertex_properties cannot remove identity fields "
-                f"for vertex {vertex.name}: {identity_overlap}"
-            )
+        # Every identity plane, not only the primary key: a hash property, a
+        # funnel branch field, or a secondary key that loses a field leaves a
+        # key that can no longer be computed or selected.
+        for plane, fields in _identity_planes(vertex):
+            overlap = sorted(fields & remove_fields)
+            if overlap:
+                raise ValueError(
+                    f"remove_vertex_properties cannot remove {plane} fields "
+                    f"for vertex {vertex.name}: {overlap}"
+                )
         vertex.properties = [
             field for field in vertex.properties if field.name not in remove_fields
         ]
@@ -944,10 +1246,10 @@ def _rename_vertices_inplace(
 ) -> None:
     """Apply a vertex rename map without the injectivity or collision guards.
 
-    Internal entry point for :mod:`~graflo.architecture.evolution.compose`, which
-    maps boundary-equivalent vertices onto a shared name on purpose and then calls
-    ``_collapse_duplicate_vertices`` to merge what the collapse duplicated. Callers
-    that do *not* follow up with a merge must use :func:`apply_rename_vertices`.
+    Internal entry point for callers that map several vertices onto one name on
+    purpose and merge the duplicates themselves. Callers that do *not* follow up
+    with a merge must use :func:`apply_rename_vertices`; a whole vocabulary map
+    applies atomically through :func:`apply_canonicalize`.
     """
     _apply_rename_entities(manifest, vertex_map=vertex_map)
 
@@ -957,12 +1259,12 @@ def apply_rename_vertices(manifest: GraphManifest, op: RenameVerticesOp) -> None
     schema = manifest.graph_schema
     if schema is not None:
         _validate_rename_against_existing(
-            op.vertices,
+            op.renames,
             set(schema.core_schema.vertex_config.vertex_set),
             kind="rename_vertices",
             noun="vertices",
         )
-    _rename_vertices_inplace(manifest, op.vertices)
+    _rename_vertices_inplace(manifest, op.renames)
 
 
 def _rename_relations_inplace(
@@ -996,19 +1298,24 @@ def apply_rename_relations(manifest: GraphManifest, op: RenameRelationsOp) -> No
             for edge in schema.core_schema.edge_config.edges
             if edge.relation is not None
         }
-        unknown = sorted(set(op.relations) - known_relations)
+        unknown = sorted(set(op.renames) - known_relations)
         if unknown:
             raise ValueError(f"rename_relations: unknown relations: {unknown}")
         # A relation name is only unique per (source, target) pair, so the
         # collision guard is at the edge-id level -- unlike vertices, a target
-        # relation name reused on a *different* pair is not a collision.
-        existing_ids = {edge.edge_id for edge in schema.core_schema.edge_config.edges}
+        # relation name reused on a *different* pair is not a collision. Only
+        # ids that survive the rename can be collided with: the map applies in
+        # one step, so a chain like ``{x: z, z: q}`` on one pair is legal.
+        edges = schema.core_schema.edge_config.edges
+        surviving_ids = {
+            edge.edge_id for edge in edges if edge.relation not in op.renames
+        }
         collisions = sorted(
             f"({edge.source}, {edge.target}, {edge.relation!r} -> "
-            f"{op.relations[edge.relation]!r})"
-            for edge in schema.core_schema.edge_config.edges
-            if edge.relation in op.relations
-            and (edge.source, edge.target, op.relations[edge.relation]) in existing_ids
+            f"{op.renames[edge.relation]!r})"
+            for edge in edges
+            if edge.relation in op.renames
+            and (edge.source, edge.target, op.renames[edge.relation]) in surviving_ids
         )
         if collisions:
             raise ValueError(
@@ -1016,29 +1323,36 @@ def apply_rename_relations(manifest: GraphManifest, op: RenameRelationsOp) -> No
                 f"edge: {collisions}. Renaming cannot merge edges — merge them "
                 "explicitly instead."
             )
-    _rename_relations_inplace(manifest, op.relations)
+    _rename_relations_inplace(manifest, op.renames)
 
 
 def apply_rename_resources(manifest: GraphManifest, op: RenameResourcesOp) -> None:
     """Rename ingestion resources and bindings references."""
     if manifest.ingestion_model is not None:
         _validate_rename_against_existing(
-            op.resources,
+            op.renames,
             {resource.name for resource in manifest.ingestion_model.resources},
             kind="rename_resources",
             noun="resources",
         )
-    _apply_rename_entities(manifest, resource_map=op.resources)
+    _apply_rename_entities(manifest, resource_map=op.renames)
 
 
 def apply_remove_edges(manifest: GraphManifest, op: RemoveEdgesOp) -> None:
-    """Remove edges by relation name and prune related references."""
-    removed = set(op.relations)
-    if not removed:
-        return
+    """Remove edges by relation name and/or by triple, pruning related references."""
     schema = manifest.graph_schema
     if schema is None:
         raise ValueError("remove_edges requires graph_schema")
+    if op.edges:
+        wanted = {selector.edge_id() for selector in op.edges}
+        existing = {edge.edge_id for edge in schema.core_schema.edge_config.edges}
+        unknown = sorted(wanted - existing, key=str)
+        if unknown:
+            raise ValueError(f"remove_edges: unknown edges: {unknown}")
+        apply_remove_edge_ids(manifest, wanted)
+    removed = set(op.relations)
+    if not removed:
+        return
     apply_relation_removal_to_db_profile(schema.db_profile, removed)
     schema.db_profile = _revalidate_db_profile(schema.db_profile)
     schema.core_schema = CoreSchema(
@@ -1243,10 +1557,7 @@ def apply_remove_edge_properties(
     schema = manifest.graph_schema
     if schema is None:
         raise ValueError("remove_edge_properties requires graph_schema")
-    removals = {
-        relation: {field for field in fields if isinstance(field, str)}
-        for relation, fields in op.removals.items()
-    }
+    removals = {relation: set(fields) for relation, fields in op.removals.items()}
     for edge in schema.core_schema.edge_config.edges:
         remove_fields = (
             removals.get(edge.relation, set()) if edge.relation is not None else set()
@@ -1279,6 +1590,42 @@ def apply_remove_edge_properties(
     )
 
 
+def _refuse_redeclaration(prior: Field, incoming: Field, *, owner: str) -> None:
+    """Accept an addition that restates an existing property, refuse one that changes it.
+
+    ``add_*_properties`` is additive by contract, and its inverse
+    (``_invert_add_vertex_properties``) is a single op computed against the
+    pre-state: it removes the names the addition introduced. Letting an addition
+    also *retype* or *reground* an existing property would need a second op to
+    restore the old value, so the inverse would silently stop reconstructing the
+    pre-state -- a worse failure than the silent skip this replaces, because it
+    corrupts revert rather than one apply. Retyping is ``change_field_types``
+    and regrounding is ``set_field_semantics``; both are inverted properly.
+
+    A bare name over an existing property stays a no-op: it declares nothing the
+    property does not already say.
+    """
+    try:
+        merged = merge_fields(prior, incoming, owner=owner)
+    except FieldMergeConflict as conflict:
+        # Re-raised in the caller's vocabulary: the author wrote an addition,
+        # not a merge, so "retype one side before merging" names a step they
+        # never took.
+        raise ValueError(
+            f"add_properties: {owner} already declares property {prior.name!r} as "
+            f"{format_field_type_label(prior)}, which the addition contradicts "
+            f"({conflict.reason}). Use change_field_types to retype it."
+        ) from None
+    if merged.to_dict(skip_defaults=False) == prior.to_dict(skip_defaults=False):
+        return
+    raise ValueError(
+        f"add_properties: {owner} already declares property {prior.name!r} as "
+        f"{format_field_type_label(prior)}; the addition would change it to "
+        f"{format_field_type_label(incoming)}. Use change_field_types to retype "
+        "it and set_field_semantics to reground it."
+    )
+
+
 def apply_add_vertex_properties(
     manifest: GraphManifest, op: AddVertexPropertiesOp
 ) -> None:
@@ -1293,15 +1640,17 @@ def apply_add_vertex_properties(
         additions = op.additions.get(vertex.name, [])
         if not additions:
             continue
-        existing = {field.name for field in vertex.properties}
+        existing = {field.name: field for field in vertex.properties}
         for entry in additions:
             # A bare name keeps its original meaning (untyped property); a Field
             # is appended as authored, carrying its type and grounding.
             field = Field(name=entry, type=None) if isinstance(entry, str) else entry
-            if field.name in existing:
+            prior = existing.get(field.name)
+            if prior is not None:
+                _refuse_redeclaration(prior, field, owner=f"vertex {vertex.name!r}")
                 continue
             vertex.properties.append(field.model_copy(deep=True))
-            existing.add(field.name)
+            existing[field.name] = field
     schema.finish_init()
 
 
@@ -1310,18 +1659,26 @@ def apply_add_edge_properties(manifest: GraphManifest, op: AddEdgePropertiesOp) 
     schema = manifest.graph_schema
     if schema is None:
         raise ValueError("add_edge_properties requires graph_schema")
-    for edge in schema.core_schema.edge_config.edges:
+    edges = schema.core_schema.edge_config.edges
+    known = {edge.relation for edge in edges if edge.relation is not None}
+    unknown = sorted(set(op.additions) - known)
+    if unknown:
+        raise ValueError(f"add_edge_properties: unknown relations: {unknown}")
+    for edge in edges:
         additions = (
             op.additions.get(edge.relation, []) if edge.relation is not None else []
         )
         if not additions:
             continue
-        existing = {field.name for field in edge.properties}
-        for name in additions:
-            if name in existing:
+        existing = {field.name: field for field in edge.properties}
+        for entry in additions:
+            field = Field(name=entry, type=None) if isinstance(entry, str) else entry
+            prior = existing.get(field.name)
+            if prior is not None:
+                _refuse_redeclaration(prior, field, owner=f"edge {edge.edge_id!r}")
                 continue
-            edge.properties.append(Field(name=name, type=None))
-            existing.add(name)
+            edge.properties.append(field.model_copy(deep=True))
+            existing[field.name] = field
     schema.finish_init()
 
 
@@ -1329,7 +1686,7 @@ def apply_add_inverse_edges(manifest: GraphManifest, op: AddInverseEdgesOp) -> N
     """Add inverse edges for mapped relations across schema and ingestion resources."""
     relation_map = {
         source: target
-        for source, target in op.relations.items()
+        for source, target in op.inverses.items()
         if isinstance(source, str) and isinstance(target, str)
     }
     if not relation_map:
@@ -1457,6 +1814,8 @@ def _dispatch_op(manifest: GraphManifest, op: Any) -> None:
         apply_remove_vertices(manifest, op)
     elif isinstance(op, MergeVerticesOp):
         apply_merge_vertices(manifest, op)
+    elif isinstance(op, CanonicalizeOp):
+        apply_canonicalize(manifest, op)
     elif isinstance(op, RenameVertexPropertiesOp):
         apply_rename_vertex_properties(manifest, op)
     elif isinstance(op, RemoveVertexPropertiesOp):
@@ -1557,6 +1916,14 @@ def _dispatch_op(manifest: GraphManifest, op: Any) -> None:
         from .ingestion import apply_ensure_extracted_fields
 
         apply_ensure_extracted_fields(manifest, op)
+    elif isinstance(op, AddResourcesOp):
+        from .ingestion import apply_add_resources
+
+        apply_add_resources(manifest, op)
+    elif isinstance(op, RemoveResourcesOp):
+        from .ingestion import apply_remove_resources
+
+        apply_remove_resources(manifest, op)
     else:
         raise TypeError(f"Unsupported evolution op: {type(op)!r}")
 

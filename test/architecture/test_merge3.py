@@ -117,7 +117,7 @@ def test_a_vertex_slot_is_convention_independent() -> None:
 
 
 def test_a_rename_occupies_both_of_its_names() -> None:
-    rename = RenameVerticesOp(vertices={"person": "customer"})
+    rename = RenameVerticesOp(renames={"person": "customer"})
     assert op_slots(rename) == {("vertex", "person"), ("vertex", "customer")}
 
 
@@ -148,6 +148,127 @@ def test_a_rename_collides_with_an_edit_to_the_thing_renamed() -> None:
         ("vertex", "customer"),
     }
     assert result.conflicts
+
+
+KNOWS = {"source": "person", "target": "company", "relation": "knows"}
+
+
+def _people_and_companies(edges: list[dict]) -> GraphManifest:
+    return _manifest(
+        [_vertex("person", ["id"], ["id"]), _vertex("company", ["id"], ["id"])],
+        edges,
+    )
+
+
+def test_an_edge_slot_nests_under_its_relation() -> None:
+    """Relation-addressed and triple-addressed ops must see each other."""
+    relation = merge3._relation_slot("knows")
+    edge = op_slots(ops_module.SetEdgeDirectedOp(edges=[KNOWS], directed=False))
+    assert edge == {(*relation, "edge", "person", "company", "directed")}
+    assert op_slots(ops_module.RemoveEdgesOp(relations=["knows"])) == {relation}
+    assert op_slots(ops_module.RemoveEdgesOp(edges=[KNOWS])) == {
+        (*relation, "edge", "person", "company")
+    }
+
+
+def test_an_edge_slot_is_convention_independent() -> None:
+    """The relation segment folds spelling the way the vertex slot does."""
+    lower = ops_module.SetEdgeDirectedOp(edges=[KNOWS], directed=False)
+    pascal = ops_module.SetEdgeDirectedOp(
+        edges=[{**KNOWS, "relation": "Knows"}], directed=False
+    )
+    assert op_slots(lower) == op_slots(pascal)
+
+
+def test_an_edge_with_no_relation_keeps_its_own_root() -> None:
+    bare = {"source": "person", "target": "company"}
+    assert op_slots(ops_module.SetEdgeDirectedOp(edges=[bare], directed=False)) == {
+        ("edge", "person", "company", "directed")
+    }
+
+
+def test_removing_a_relation_conflicts_with_flipping_an_edge_on_it() -> None:
+    """The blind spot: two disjoint slot trees merged this cleanly, then applied
+    the flip to an edge the removal had already deleted."""
+    base = _people_and_companies([KNOWS])
+    removed = _people_and_companies([])
+    flipped = _people_and_companies([{**KNOWS, "directed": False}])
+
+    merged, result = merge_three_way(base, removed, flipped)
+
+    assert merged is None
+    assert [tuple(c.slot) for c in result.conflicts] == [merge3._relation_slot("knows")]
+    assert result.conflicts[0].base_excerpt["edges"][0]["relation"] == "knows"
+
+
+def test_a_relation_wide_property_add_merges_with_an_edge_flip() -> None:
+    """Independent edits under one relation stay independent."""
+    base = _people_and_companies([KNOWS])
+    widened = _people_and_companies([{**KNOWS, "properties": ["since"]}])
+    flipped = _people_and_companies([{**KNOWS, "directed": False}])
+
+    merged, result = merge_three_way(base, widened, flipped)
+
+    assert merged is not None and not result.conflicts
+    edge = _core(merged).edge_config.edges[0]
+    assert [f.name for f in edge.properties] == ["since"]
+    assert edge.directed is False
+
+
+def test_a_grounding_only_change_survives_a_merge() -> None:
+    """The differ never emitted the semantics ops, so a merge dropped them."""
+    base = _person(["id"])
+    grounded = _manifest(
+        [{**_vertex("person", ["id"], ["id"]), "semantics": {"iri": "x:Person"}}]
+    )
+    widened = _person(["id", "age"])
+
+    merged, result = merge_three_way(base, grounded, widened)
+
+    assert merged is not None and not result.conflicts
+    person = _core(merged).vertex_config["person"]
+    assert person.semantics is not None and person.semantics.iri == "x:Person"
+    assert [f.name for f in person.properties] == ["id", "age"]
+
+
+def test_slot_values_for_the_edge_addressed_ops() -> None:
+    """29 of 35 ops had only the source-text meta-check; pin the edge family."""
+    relation = merge3._relation_slot("knows")
+    edge = (*relation, "edge", "person", "company")
+    assert op_slots(ops_module.AddEdgesOp(edges=[KNOWS])) == {edge}
+    assert op_slots(
+        ops_module.RetargetEdgesOp(edges=[{**KNOWS, "new_target": "person"}])
+    ) == {edge}
+    assert op_slots(
+        ops_module.ReplaceEdgeIdentitiesOp(edges=[{**KNOWS, "identities": [["x"]]}])
+    ) == {edge}
+    assert op_slots(
+        ops_module.AddEdgeIndexesOp(edges=[{**KNOWS, "indexes": [{"fields": ["x"]}]}])
+    ) == {edge}
+    assert op_slots(
+        ops_module.RemoveEdgeIndexesOp(edges=[{**KNOWS, "fields": [["x"]]}])
+    ) == {edge}
+    assert op_slots(
+        ops_module.SetEdgeSemanticsOp(edges=[KNOWS], semantics={"iri": "x:y"})
+    ) == {(*edge, "semantics")}
+    assert op_slots(
+        ops_module.ChangeFieldTypesOp(
+            vertices={"person": {"age": {"type": "INT"}}},
+            edges={"knows": {"since": {"type": "INT"}}},
+        )
+    ) == {
+        ("vertex", "person", "field", "age", "type"),
+        (*relation, "field", "since", "type"),
+    }
+    assert op_slots(
+        ops_module.SetFieldSemanticsOp(
+            targets=[{"vertex": "person", "field": "age", "semantics": {"iri": "x:y"}}]
+        )
+    ) == {("vertex", "person", "field", "age", "semantics")}
+    assert op_slots(ops_module.RenameResourcesOp(renames={"a": "b"})) == {
+        ("resource", "a"),
+        ("resource", "b"),
+    }
 
 
 def test_slots_are_renderable_for_a_human() -> None:
@@ -500,3 +621,30 @@ def test_a_replayed_resolution_is_reported_as_replayed_not_unused() -> None:
     assert merged is not None
     assert any("replayed" in warning for warning in replayed.warnings)
     assert not any("not needed" in warning for warning in replayed.warnings)
+
+
+def test_two_branches_retyping_one_field_conflict() -> None:
+    """A field's type is its own slot, so two branches retyping it must collide.
+
+    A regression guard rather than a fix: ``op_slots`` already narrows
+    ``ChangeFieldTypesOp`` to ``(vertex, field, "type")``. It is asserted here
+    because the field-merge policy now refuses this disagreement everywhere
+    else, and the three-way plane must keep refusing it too.
+    """
+    base = _manifest([_vertex("person", ["id", "age"], ["id"])])
+
+    def _aged(field_type: str) -> GraphManifest:
+        return _manifest(
+            [
+                {
+                    "name": "person",
+                    "properties": ["id", {"name": "age", "type": field_type}],
+                    "identity": ["id"],
+                }
+            ]
+        )
+
+    merged, result = merge_three_way(base, _aged("INT"), _aged("STRING"))
+    assert merged is None
+    assert len(result.conflicts) == 1
+    assert result.conflicts[0].slot_key[-1] == "type"

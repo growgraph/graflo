@@ -113,6 +113,8 @@ vertices:
 
 This maps to `gf:semanticIri`, `skos:exactMatch`, `skos:altLabel`, and — fields only — `gf:unit`. The block is purely descriptive: identity, storage naming and ingestion behave identically whether or not it is present. `unit` is rejected outside a field, where it would be meaningless.
 
+Grounding survives a fold. When two definitions of one type or property are combined — by `merge_vertices`, or by a `compose_manifests` equivalence — `exact_match` and `synonyms` union, since they are sets of claims. A single-valued `iri` cannot: two sides denoting different concepts denote neither exactly, so a disagreement clears it rather than electing one. `unit` is the exception that refuses outright — unlike an `iri`, two units mean the combined property would hold numerically incomparable values, which is a defect in the data rather than in its description.
+
 **List field types** (added in 1.6.0)
 
 `gf:FieldType` covers all nine `FieldType` members: `gf:UUID` and `gf:LIST` joined the seven scalars, and a list's element type rides on `gf:itemType` (domain `gf:Field`, range `gf:FieldType`).

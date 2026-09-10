@@ -1,11 +1,10 @@
 """``graflo compose`` -- the binary compose of two manifests, from the shell.
 
 This verb is ``examples/19-union-canonical-equivalence/build_union.py``
-generalised. That script spells out the recipe compose actually requires --
-validate and complete the canonical map *against the op* before composing, so
-an equivalence written in a stale pre-canonical name fails loudly instead of
-silently matching nothing -- and every caller needs the same three steps. They
-live here now, and the example points at the verb.
+generalised: the compose op and its canonical maps are one recipe, and compose
+applies them together -- an equivalence may name a class in the manifest's
+own vocabulary or in the canonical one, and the two declarations are checked
+for disagreement before anything is renamed.
 
 Either side may carry no ``schema`` block: a manifest with only an
 ``ingestion_model`` and/or ``bindings`` is a new source wired onto an existing
@@ -21,27 +20,29 @@ import click
 
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.evolution.alignment import AlignmentConflictError
-from graflo.architecture.evolution.apply import apply_evolution
 from graflo.architecture.evolution.canonical import (
     CanonicalMap,
     ComposeCanonicalConflictError,
-    canonical_map_to_ops,
-    validate_and_complete_canonical_map,
+    Scope,
+    merge_canonical_maps,
 )
 from graflo.architecture.evolution.compose import (
     ComposeIdentityError,
     ComposeNameConflictError,
     compose_manifests,
 )
-from graflo.architecture.evolution.equivalence import ClusterConflictError, Side
+from graflo.architecture.evolution.equivalence import ClusterConflictError
 from graflo.architecture.evolution.ops import ComposeManifestsOp
 from graflo.architecture.profile import check_manifest
 from graflo.cli.io import dump_manifest, load_manifest, load_mapping
 
-#: Compose refused the inputs -- a name collision, a cluster conflict, a stale
-#: canonical name. Distinct from 2 (bad invocation, unreadable file): the
-#: former is a statement about the manifests, the latter about the command.
+#: Compose refused the inputs -- a name collision, a cluster conflict, a
+#: canonical map disagreeing with an equivalence. Distinct from 2 (bad
+#: invocation, unreadable file): the former is a statement about the
+#: manifests, the latter about the command.
 EXIT_REFUSED = 1
+
+_SCOPES: tuple[Scope, ...] = ("left", "right", "both")
 
 
 class _ComposeSetupError(click.ClickException):
@@ -50,21 +51,41 @@ class _ComposeSetupError(click.ClickException):
     exit_code = 2
 
 
-def _parse_canonical_map_option(values: tuple[str, ...]) -> list[tuple[Side, Path]]:
+def _parse_canonical_map_option(values: tuple[str, ...]) -> list[tuple[Scope, Path]]:
     """``--canonical-map SIDE=PATH`` pairs, validated on the side token."""
-    parsed: list[tuple[Side, Path]] = []
+    parsed: list[tuple[Scope, Path]] = []
     for value in values:
         side, sep, raw_path = value.partition("=")
-        if not sep or side not in ("left", "right"):
+        if not sep or side not in _SCOPES:
             raise click.UsageError(
                 f"--canonical-map expects SIDE=PATH with SIDE in "
-                f"{{left, right}}, got {value!r}"
+                f"{{left, right, both}}, got {value!r}"
             )
         path = Path(raw_path)
         if not path.is_file():
             raise click.UsageError(f"--canonical-map {side}: no such file: {raw_path}")
-        parsed.append((side, path))
+        parsed.append((side, path))  # type: ignore[arg-type]
     return parsed
+
+
+def _fold_canonical_maps(
+    payload: dict[str, Any], canonical_map_paths: list[tuple[Scope, Path]]
+) -> None:
+    """Carry every ``--canonical-map`` into the op document, so the recipe is one file."""
+    if not canonical_map_paths:
+        return
+    folded: dict[str, CanonicalMap] = {
+        scope: CanonicalMap.model_validate(cm)
+        for scope, cm in (payload.get("canonical_maps") or {}).items()
+    }
+    for scope, path in canonical_map_paths:
+        loaded = CanonicalMap.model_validate(load_mapping(path))
+        folded[scope] = (
+            merge_canonical_maps(folded[scope], loaded) if scope in folded else loaded
+        )
+    payload["canonical_maps"] = {
+        scope: cm.to_dict(skip_defaults=True) for scope, cm in folded.items()
+    }
 
 
 @click.command("compose")
@@ -76,8 +97,9 @@ def _parse_canonical_map_option(values: tuple[str, ...]) -> list[tuple[Side, Pat
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
     default=None,
     help=(
-        "ComposeManifestsOp document: vertex/property/relation equivalences "
-        "and identity alignments. Omitted composes a disjoint union."
+        "ComposeManifestsOp document: vertex/property/relation equivalences, "
+        "canonical maps and identity alignments. Omitted composes a disjoint "
+        "union."
     ),
 )
 @click.option(
@@ -93,9 +115,9 @@ def _parse_canonical_map_option(values: tuple[str, ...]) -> list[tuple[Side, Pat
     multiple=True,
     metavar="SIDE=PATH",
     help=(
-        "Canonical map for one side, repeatable. Validated against the op "
-        "before composing, so an equivalence naming a pre-canonical class "
-        "fails rather than matching nothing."
+        "Canonical map for one side (or `both`), repeatable. Names the "
+        "composed classes and is checked for disagreement with the op; an "
+        "equivalence may then name a class by its own or its canonical name."
     ),
 )
 @click.option(
@@ -157,50 +179,20 @@ def compose(
     if name_conflict is not None:
         payload["name_conflict"] = name_conflict
     try:
+        _fold_canonical_maps(payload, canonical_map_paths)
         # `op` is a Literal with a default, so a document carrying
         # `op: compose_manifests` validates as written -- no key to strip.
         op = ComposeManifestsOp.model_validate(payload)
     except ValueError as exc:
         raise _ComposeSetupError(f"{op_path}: invalid compose op -- {exc}") from exc
 
-    canonical_maps = [
-        (side, CanonicalMap.model_validate(load_mapping(path)))
-        for side, path in canonical_map_paths
-    ]
-
     try:
-        # Step 1 -- canonicalize each mapped side standalone. The op is
-        # authored in canonical names, so the membership check inside compose
-        # is against post-canonical classes; skipping this makes an
-        # equivalence naming the canonical class fail as "not in manifest".
-        for side, canonical_map in canonical_maps:
-            ops = canonical_map_to_ops(
-                canonical_map,
-                allow_self_relations=op.allow_self_relations,
-                allow_observation_fusion=op.allow_observation_fusion,
-            )
-            if side == "left":
-                left_manifest = apply_evolution(left_manifest, ops)
-            else:
-                right_manifest = apply_evolution(right_manifest, ops)
-
-        # Step 2 -- validate and complete the map against the op, before
-        # composing: a stale pre-canonical name fails loudly here rather than
-        # matching nothing later.
-        if canonical_maps:
-            validate_and_complete_canonical_map(
-                op,
-                left=left_manifest,
-                right=right_manifest,
-                canonical_maps=canonical_maps,
-            )
         composed = compose_manifests(
             left_manifest,
             right_manifest,
             op,
             bump_version="minor" if bump_version == "minor" else False,
             strict_references=strict_references,
-            canonical_maps=canonical_maps,
         )
     except (
         AlignmentConflictError,
@@ -235,7 +227,8 @@ def compose(
     if dry_run:
         click.echo("dry run: nothing written")
         return
-    dump_manifest(composed, output)
+    if output is not None:
+        dump_manifest(composed, output)
 
 
 def _summary(manifest: GraphManifest) -> list[str]:

@@ -24,11 +24,11 @@ deployment of it.
 ## The shape
 
 ```
-                  3605d3f2  key people by email    ← head
+                  78397faf  key people by email    ← head
                  /
-97382d5d ───────┤                                    b5680f7a  merge
+97382d5d ───────┤                                    f26ae87f  merge
  created_at      \                                  /
-                  7bf6139a  key people by SSN  ─────┘  ← head
+                  f42a0133  key people by SSN  ─────┘  ← head
 ```
 
 The shared commit matters: without a common ancestor there is nothing to merge

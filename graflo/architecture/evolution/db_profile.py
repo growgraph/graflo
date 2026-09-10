@@ -9,6 +9,7 @@ from graflo.architecture.graph_types import EdgeId, EdgePhysicalKey, Index
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.database_features import (
     DatabaseProfile,
+    DefaultPropertyValues,
     EdgePhysicalSpec,
     EdgePropertyDefaults,
 )
@@ -132,9 +133,20 @@ def apply_vertex_merge_to_db_profile(
     into: str,
 ) -> None:
     """Remap logical vertex keys in *profile* when merging *from_vertices* into *into*."""
-    if not from_vertices:
-        return
-    m = {v: into for v in from_vertices if v != into}
+    remap_vertices_in_db_profile(profile, {v: into for v in from_vertices})
+
+
+def remap_vertices_in_db_profile(
+    profile: DatabaseProfile, mapping: dict[str, str]
+) -> None:
+    """Remap logical vertex keys in *profile* by *mapping*, in one pass.
+
+    Every key is looked up once against its original name, so a chain or a
+    swap resolves without an intermediate state; keys landing on one name
+    merge (index lists concatenate, default maps union, storage names must
+    agree).
+    """
+    m = {k: v for k, v in mapping.items() if k != v}
     if not m:
         return
 
@@ -671,3 +683,50 @@ def apply_inverse_edges_to_db_profile(
         existing_default_ids.add(inverse_id)
 
     object.__setattr__(dpv, "edges", new_defaults)
+
+
+def merge_default_property_values(
+    left: DefaultPropertyValues | None, right: DefaultPropertyValues | None
+) -> DefaultPropertyValues | None:
+    """Union two default-value blocks, refusing two defaults for one property.
+
+    A default is a physical DDL claim about one attribute of one type, so two
+    sides supplying different ones is a contradiction rather than an ordering:
+    whichever the fold elected would silently decide what a column holds for
+    every row written without that attribute.
+    """
+    if left is None or right is None:
+        source = left if right is None else right
+        return source.model_copy(deep=True) if source is not None else None
+
+    vertices: dict[str, dict[str, Any]] = {
+        name: dict(values) for name, values in left.vertices.items()
+    }
+    for name, values in right.vertices.items():
+        if name not in vertices:
+            vertices[name] = dict(values)
+            continue
+        vertices[name] = _merge_vertex_default_maps(
+            vertices[name],
+            dict(values),
+            label=f"default_property_values on vertex {name!r}",
+        )
+
+    edges: dict[EdgeId, EdgePropertyDefaults] = {}
+    for entry in list(left.edges) + list(right.edges):
+        current = edges.get(entry.edge_id)
+        if current is None:
+            edges[entry.edge_id] = entry.model_copy(deep=True)
+            continue
+        edges[entry.edge_id] = current.model_copy(
+            update={
+                "values": _merge_vertex_default_maps(
+                    dict(current.values),
+                    dict(entry.values),
+                    label=f"default_property_values on edge {entry.edge_id!r}",
+                )
+            },
+            deep=True,
+        )
+
+    return DefaultPropertyValues(vertices=vertices, edges=list(edges.values()))

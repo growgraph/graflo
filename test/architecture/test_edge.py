@@ -315,3 +315,58 @@ def test_relationship_merge_property_names_prefers_first_identity(
     vc_db = VertexConfigDBAware(vertex_config, profile)
     ec_db = EdgeConfigDBAware(EdgeConfig(edges=[edge]), vc_db, profile)
     assert ec_db.relationship_merge_property_names(edge) == ["relation", "pub_id"]
+
+
+def test_edge_property_dicts_keep_every_field_key():
+    """The dict must reach `Field` whole: an enumerated copy dropped the rest."""
+    edge = Edge.from_dict(
+        {
+            "source": "a",
+            "target": "b",
+            "relation": "r",
+            "properties": [
+                {"name": "tags", "type": "LIST", "item_type": "STRING"},
+                {"name": "since", "semantics": {"unit": "s"}},
+            ],
+        }
+    )
+    tags, since = edge.properties
+    assert tags.type == "LIST" and tags.item_type == "STRING"
+    assert since.semantics is not None and since.semantics.unit == "s"
+
+
+class TestDuplicateEdgeProperties:
+    """One property declared twice on one edge.
+
+    Authored entries are mapped independently, so a bare name and a typed entry
+    for the same property both survived into DDL as two attributes. Edges now
+    fold duplicates under the same policy vertices use.
+    """
+
+    def test_a_bare_name_and_a_typed_entry_fuse(self) -> None:
+        edge = Edge(
+            source="a",
+            target="b",
+            relation="r",
+            properties=[
+                "tags",
+                {"name": "tags", "type": "LIST", "item_type": "STRING"},
+            ],
+        )
+        assert len(edge.properties) == 1
+        assert str(edge.properties[0].item_type) == "STRING"
+
+    def test_a_contradictory_redeclaration_raises_naming_the_edge(self) -> None:
+        with pytest.raises(ValueError) as excinfo:
+            Edge(
+                source="a",
+                target="b",
+                relation="r",
+                properties=[
+                    {"name": "amount", "type": "INT"},
+                    {"name": "amount", "type": "STRING"},
+                ],
+            )
+        message = str(excinfo.value)
+        assert "'a', 'b', 'r'" in message
+        assert "property 'amount'" in message

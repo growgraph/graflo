@@ -53,7 +53,7 @@ def _vertex(manifest: GraphManifest, name: str) -> Vertex:
 
 
 def _replace(manifest: GraphManifest, **spec) -> GraphManifest:
-    return apply_evolution(manifest, [ReplaceIdentityOp(vertices={"party": spec})])
+    return apply_evolution(manifest, [ReplaceIdentityOp(replacements={"party": spec})])
 
 
 class TestTargetModes:
@@ -326,7 +326,7 @@ class TestEndpointCascade:
             self._edge_manifest(),
             [
                 ReplaceIdentityOp(
-                    vertices={
+                    replacements={
                         "party": {"to": {"mode": "natural", "identity": ["party_uid"]}}
                     }
                 )
@@ -340,7 +340,7 @@ class TestEndpointCascade:
             self._edge_manifest(),
             [
                 ReplaceIdentityOp(
-                    vertices={
+                    replacements={
                         "party": {
                             "to": {"mode": "natural", "identity": ["party_uid"]},
                             "retire_as": "by_legacy",
@@ -384,7 +384,7 @@ class TestEndpointCascade:
             manifest,
             [
                 ReplaceIdentityOp(
-                    vertices={
+                    replacements={
                         "party": {
                             "to": {"mode": "natural", "identity": ["party_uid"]},
                             "retire_as": "by_legacy",
@@ -400,7 +400,7 @@ class TestEndpointCascade:
     def test_pin_to_retired_requires_demotion(self):
         with pytest.raises(ValueError, match="requires retire: demote"):
             ReplaceIdentityOp(
-                vertices={
+                replacements={
                     "party": {
                         "to": {"mode": "natural", "identity": ["party_uid"]},
                         "retire": "keep",
@@ -417,7 +417,7 @@ class TestValidation:
                 _manifest(),
                 [
                     ReplaceIdentityOp(
-                        vertices={
+                        replacements={
                             "nope": {"to": {"mode": "natural", "identity": ["x"]}}
                         }
                     )
@@ -452,7 +452,7 @@ class TestValidation:
     def test_retire_as_without_demotion_is_rejected(self):
         with pytest.raises(ValueError, match="only meaningful with retire: demote"):
             ReplaceIdentityOp(
-                vertices={
+                replacements={
                     "party": {
                         "to": {"mode": "natural", "identity": ["x"]},
                         "retire": "keep",

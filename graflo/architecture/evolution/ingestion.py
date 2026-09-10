@@ -20,7 +20,54 @@ from graflo.architecture.contract.ingestion.steps.normalize import (
 from graflo.architecture.contract.ingestion.transform import ProtoTransform
 from graflo.architecture.contract.manifest import GraphManifest
 
-from .ops import AddResourceTransformsOp, EnsureExtractedFieldsOp
+from .ops import (
+    AddResourcesOp,
+    AddResourceTransformsOp,
+    EnsureExtractedFieldsOp,
+    RemoveResourcesOp,
+)
+
+
+def apply_add_resources(manifest: GraphManifest, op: AddResourcesOp) -> None:
+    """Append resources to ``ingestion_model``, creating the block if absent.
+
+    A name already present raises: two definitions under one name would
+    shadow each other in the name-keyed lookup, and ``rename_resources`` or
+    ``remove_resources`` exist to make room explicitly.
+    """
+    im = manifest.ingestion_model
+    existing = {resource.name for resource in im.resources} if im is not None else set()
+    collisions = sorted(existing & {resource.name for resource in op.resources})
+    if collisions:
+        raise ValueError(f"add_resources: resources already exist: {collisions}")
+    payload = im.to_dict(skip_defaults=False) if im is not None else {"resources": []}
+    payload["resources"] = [
+        *payload.get("resources", []),
+        *(resource.to_dict(skip_defaults=False) for resource in op.resources),
+    ]
+    manifest.ingestion_model = IngestionModel.model_validate(payload)
+
+
+def apply_remove_resources(manifest: GraphManifest, op: RemoveResourcesOp) -> None:
+    """Drop resources and the ``resource_connector`` entries that wired them."""
+    from .apply import _filter_bindings_for_resources
+
+    im = manifest.ingestion_model
+    if im is None:
+        raise ValueError("remove_resources requires ingestion_model")
+    existing = {resource.name for resource in im.resources}
+    unknown = sorted(set(op.names) - existing)
+    if unknown:
+        raise ValueError(f"remove_resources: unknown resources: {unknown}")
+    removed = set(op.names)
+    payload = im.to_dict(skip_defaults=False)
+    payload["resources"] = [
+        resource
+        for resource in payload.get("resources", [])
+        if resource.get("name") not in removed
+    ]
+    manifest.ingestion_model = IngestionModel.model_validate(payload)
+    _filter_bindings_for_resources(manifest, existing - removed)
 
 
 def _merged_registry(

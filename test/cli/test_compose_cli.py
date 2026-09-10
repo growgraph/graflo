@@ -2,9 +2,9 @@
 
 The verb is ``examples/19-union-canonical-equivalence/build_union.py``
 generalised, so the example's own fixtures are the fixtures here: if the CLI
-does not reproduce that script's recipe -- canonicalize each mapped side
-standalone, validate the map against the op, then compose -- it is not the
-same operation and the example's README points somewhere wrong.
+does not reproduce that script's recipe -- the op and its canonical maps
+applied together, in one step -- it is not the same operation and the
+example's README points somewhere wrong.
 
 Exit codes carry the load: 1 means compose looked at the manifests and
 refused, 2 means the command could not be run. A CI job that cannot tell those
@@ -54,15 +54,14 @@ def test_no_op_composes_a_disjoint_union(tmp_path: pathlib.Path) -> None:
     assert {v["name"] for v in vertices} == {"Firm", "Shop", "Org", "Branch"}
 
 
-def test_canonical_map_canonicalizes_the_side_before_the_membership_check(
+def test_a_canonical_map_lets_the_op_name_canonical_classes(
     tmp_path: pathlib.Path,
 ) -> None:
-    """``build_union.py``'s step 1, which is the whole reason the option exists.
+    """The op names ``Company``; ``manifest_a`` declares ``Firm``.
 
-    The op names ``Company``; ``manifest_a`` declares ``Firm``. Without the
-    standalone canonicalization the equivalence has no left member to bind to
-    and compose refuses on membership, so composing at all is the proof the
-    rename ran first.
+    The map establishes ``Company`` as ``Firm``'s canonical name, so the
+    equivalence binds to ``Firm`` and the composed class is ``Company``.
+    Without the map the same op has no left member to bind to.
     """
     op = dict(BOUNDARY_OP)
     # The four members disagree on their natural key; naming one resolves it,
@@ -91,6 +90,51 @@ def test_canonical_map_canonicalizes_the_side_before_the_membership_check(
         for v in composed["schema"]["core_schema"]["vertex_config"]["vertices"]
     }
     assert names == {"Company"}
+
+
+def test_the_example_op_document_composes_from_the_shell(
+    tmp_path: pathlib.Path,
+) -> None:
+    """``boundary_op.yaml`` names members in ``manifest_a``'s own vocabulary and
+    no ``into``; the map names the composed class."""
+    out = tmp_path / "union.yaml"
+    result = CliRunner().invoke(
+        graflo,
+        [
+            "compose",
+            str(MANIFEST_A),
+            str(MANIFEST_B),
+            "--op",
+            str(EX19 / "boundary_op.yaml"),
+            "--canonical-map",
+            f"left={CANONICAL_MAP}",
+            "-o",
+            str(out),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    composed = yaml.safe_load(out.read_text(encoding="utf-8"))
+    names = {
+        v["name"]
+        for v in composed["schema"]["core_schema"]["vertex_config"]["vertices"]
+    }
+    assert names == {"Company"}
+
+
+def test_without_a_map_an_unnamed_cluster_is_refused(tmp_path: pathlib.Path) -> None:
+    result = CliRunner().invoke(
+        graflo,
+        [
+            "compose",
+            str(MANIFEST_A),
+            str(MANIFEST_B),
+            "--op",
+            str(EX19 / "boundary_op.yaml"),
+            "--dry-run",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "unnamed" in result.output
 
 
 def test_without_the_canonical_map_the_same_op_is_refused_on_membership(

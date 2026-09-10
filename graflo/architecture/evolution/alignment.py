@@ -36,7 +36,7 @@ attribute for its own documents.
 from __future__ import annotations
 
 import logging
-from collections.abc import Collection, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -53,6 +53,7 @@ from graflo.architecture.schema.identity_funnel import IdentityBranch, IdentityF
 from graflo.architecture.schema.vertex import SecondaryIdentity
 
 from .canonical import CanonicalMap
+from .equivalence import Side
 from .ops import (
     AddResourceTransformsOp,
     AddSecondaryIdentitiesOp,
@@ -92,8 +93,8 @@ logger = logging.getLogger(__name__)
 AlignmentRow = AlignmentAttribute
 
 #: Pre-merge side manifests keyed by side (``"left"`` / ``"right"``), as
-#: ``compose_manifests`` holds them after canonical maps and the resource
-#: rename policy, before the merge.
+#: ``compose_manifests`` holds them: after its resource rename policy, before
+#: it relabels and merges the clusters.
 SideManifests = Mapping[str, GraphManifest]
 
 #: The aligned cluster's member classes per side.
@@ -232,8 +233,9 @@ def _resolve_member_production(
         raise _conflict(
             "resource does not produce the member",
             f"resource {resource!r} ({side}) has no pipeline step producing {member!r}",
-            "Member keys name the classes the resource produces on its side, "
-            f"after canonical maps: {sorted(_produced_vertices(pipeline))}.",
+            "A member key names a class the resource produces on its side — "
+            "through compose, by its own name or its canonical one: "
+            f"{sorted(_produced_vertices(pipeline))}.",
         )
     if resource in alignment.at:
         path = list(alignment.at[resource])
@@ -309,6 +311,81 @@ def resolve_member_productions(
             )
         out[resource] = per_member
     return out
+
+
+def rekey_members(
+    alignment: IdentityAlignment,
+    *,
+    sides: SideManifests,
+    resolve: Callable[[Side, str], str],
+) -> IdentityAlignment:
+    """Name every member key as its side names the member.
+
+    *resolve* maps ``(side, key)`` to the member it names — ``compose_manifests``
+    passes the aligned cluster's resolution, so a member may be keyed by its
+    own name or its canonical one. Unresolved keys pass through for the
+    validator to report. Two keys naming one member under one resource are
+    refused.
+    """
+
+    def _names(resource: str, keys: Iterable[str]) -> dict[str, str]:
+        side_name, _ = _side_of(resource, sides)
+        side: Side = "left" if side_name == "left" else "right"
+        out: dict[str, str] = {}
+        for key in keys:
+            member = resolve(side, key)
+            prior = next((k for k, m in out.items() if m == member), None)
+            if prior is not None:
+                raise _conflict(
+                    "member keyed twice",
+                    f"resource {resource!r} keys {side} member {member!r} as both "
+                    f"{prior!r} and {key!r}",
+                    "Key each member once.",
+                )
+            out[key] = member
+        return out
+
+    attributes: list[AlignmentAttribute] = []
+    for attribute in alignment.attributes:
+        sources: dict[
+            str,
+            DerivationSpec
+            | SharedDerivation
+            | list[DerivationSpec]
+            | dict[str, DerivationSpec],
+        ] = {}
+        for resource, spec in attribute.sources.items():
+            if isinstance(spec, SharedDerivation):
+                names = _names(resource, spec.members)
+                members: list[str] | dict[str, dict[str, Any]] = (
+                    [names[m] for m in spec.members]
+                    if isinstance(spec.members, list)
+                    else {names[m]: p for m, p in spec.members.items()}
+                )
+                sources[resource] = spec.model_copy(update={"members": members})
+            elif isinstance(spec, dict):
+                names = _names(resource, spec)
+                sources[resource] = {names[m]: v for m, v in spec.items()}
+            else:
+                sources[resource] = spec
+        attributes.append(attribute.model_copy(update={"sources": sources}))
+
+    local_key = alignment.local_key
+    if local_key is not None:
+        local_sources: dict[
+            str, LocalKeySource | list[LocalKeySource] | dict[str, LocalKeySource]
+        ] = {}
+        for resource, entry in local_key.sources.items():
+            if isinstance(entry, dict):
+                names = _names(resource, entry)
+                local_sources[resource] = {names[m]: v for m, v in entry.items()}
+            else:
+                local_sources[resource] = entry
+        local_key = local_key.model_copy(update={"sources": local_sources})
+
+    return alignment.model_copy(
+        update={"attributes": attributes, "local_key": local_key}
+    )
 
 
 def _require_sides(
@@ -821,7 +898,7 @@ def alignment_to_ops(
     branches = [IdentityBranch(id=name, fields=[name]) for name in into_names]
     ops.append(
         ReplaceIdentityOp(
-            vertices={
+            replacements={
                 alignment.vertex: IdentityReplacement(
                     to=FunnelIdentityTarget(funnel=IdentityFunnel(branches=branches)),
                     # The pre-alignment identity on a composed class is the

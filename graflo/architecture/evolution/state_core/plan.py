@@ -148,7 +148,7 @@ def _identity_ops(
 
     return [
         ReplaceIdentityOp(
-            vertices={
+            replacements={
                 name: {
                     "to": {"mode": "natural", "identity": fields},
                     # The old "identity" was the all-properties fallback, so

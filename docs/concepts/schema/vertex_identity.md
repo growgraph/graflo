@@ -92,7 +92,7 @@ Authoring it as an evolution op:
 
 ```yaml
 op: replace_identity
-vertices:
+replacements:
   party:
     to:
       mode: funnel

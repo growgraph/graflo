@@ -18,6 +18,7 @@ import pytest
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.evolution import (
     AlignmentAttribute,
+    AlignmentConflictError,
     CanonicalMap,
     ComposeManifestsOp,
     DerivationSpec,
@@ -144,7 +145,7 @@ def _compose_union() -> GraphManifest:
     canonical_a = apply_evolution(_manifest_a(), canonical_map_to_ops(_CANONICAL))
     right = _manifest_b()
     op = ComposeManifestsOp(
-        vertices=[
+        vertex_equivalences=[
             VertexEquivalence(
                 left="Company", right="Org", into="Company", identity=["company_id"]
             )
@@ -159,7 +160,9 @@ def _build_union(alignment: IdentityAlignment = _ALIGNMENT) -> GraphManifest:
     canonical_a = apply_evolution(_manifest_a(), canonical_map_to_ops(_CANONICAL))
     right = _manifest_b()
     op = ComposeManifestsOp(
-        vertices=[VertexEquivalence(left="Company", right="Org", into="Company")],
+        vertex_equivalences=[
+            VertexEquivalence(left="Company", right="Org", into="Company")
+        ],
         identity_alignments=[alignment],
     )
     return compose_manifests(
@@ -526,7 +529,7 @@ def _build_routed_union() -> GraphManifest:
         _routed_manifest_a(), canonical_map_to_ops(_ROUTED_CANONICAL)
     )
     op = ComposeManifestsOp(
-        vertices=[
+        vertex_equivalences=[
             VertexEquivalence(left=["Company", "Shop"], right="Org", into="Company")
         ],
         allow_merges=True,
@@ -661,7 +664,7 @@ def _build_member_union() -> GraphManifest:
         _routed_manifest_a(), canonical_map_to_ops(_ROUTED_CANONICAL)
     )
     op = ComposeManifestsOp(
-        vertices=[
+        vertex_equivalences=[
             VertexEquivalence(left=["Company", "Shop"], right="Org", into="Company")
         ],
         allow_merges=True,
@@ -779,7 +782,7 @@ class TestMemberKeyedRoutedFusion:
             _routed_manifest_a(), canonical_map_to_ops(_ROUTED_CANONICAL)
         )
         op = ComposeManifestsOp(
-            vertices=[
+            vertex_equivalences=[
                 VertexEquivalence(left=["Company", "Shop"], right="Org", into="Company")
             ],
             allow_merges=True,
@@ -806,7 +809,7 @@ class TestMemberKeyedRoutedFusion:
         assert alignment.local_key is not None
         alignment.local_key.sources["r_orgs"] = alignment.local_key.sources.pop("r_b")
         op = ComposeManifestsOp(
-            vertices=[
+            vertex_equivalences=[
                 VertexEquivalence(left=["Company", "Shop"], right="Org", into="Company")
             ],
             allow_merges=True,
@@ -822,3 +825,55 @@ class TestMemberKeyedRoutedFusion:
         assert names == {"r_view", "r_orgs"}
         view = _cast(union, "r_view", _SHARED_COLUMN_VIEW)
         assert {doc["local_key"] for doc in view} >= {"firm:f1", "shop:s1"}
+
+
+def _rekeyed(alignment: IdentityAlignment, key: str) -> IdentityAlignment:
+    """*alignment* with its ``Company`` member key spelled *key*."""
+    out = alignment.model_copy(deep=True)
+    for attribute in out.attributes:
+        entry = attribute.sources["r_view"]
+        assert isinstance(entry, dict)
+        attribute.sources["r_view"] = {
+            (key if member == "Company" else member): spec
+            for member, spec in entry.items()
+        }
+    assert out.local_key is not None
+    local = out.local_key.sources["r_view"]
+    assert isinstance(local, dict)
+    out.local_key.sources["r_view"] = {
+        (key if member == "Company" else member): source
+        for member, source in local.items()
+    }
+    return out
+
+
+def _raw_member_union(alignment: IdentityAlignment) -> GraphManifest:
+    """The member union authored against the raw left side: `Firm`, no `into`."""
+    op = ComposeManifestsOp(
+        vertex_equivalences=[VertexEquivalence(left=["Firm", "Shop"], right="Org")],
+        allow_merges=True,
+        canonical_maps={"left": _ROUTED_CANONICAL},
+        identity_alignments=[alignment],
+    )
+    return compose_manifests(_routed_manifest_a(), _manifest_b(), op)
+
+
+class TestMemberKeysResolveThroughTheMap:
+    """A member key is the member's own name on its side, or its canonical one."""
+
+    @pytest.mark.parametrize("key", ["Firm", "Company"])
+    def test_a_raw_side_takes_the_own_or_the_canonical_key(self, key: str) -> None:
+        union = _raw_member_union(_rekeyed(_MEMBER_ALIGNMENT, key))
+        reference = _build_member_union()
+        assert _cast(union, "r_view", _SHARED_COLUMN_VIEW) == _cast(
+            reference, "r_view", _SHARED_COLUMN_VIEW
+        )
+
+    def test_two_spellings_of_one_member_are_refused(self) -> None:
+        alignment = _rekeyed(_MEMBER_ALIGNMENT, "Firm")
+        attribute = alignment.attributes[0]
+        entry = attribute.sources["r_view"]
+        assert isinstance(entry, dict)
+        attribute.sources["r_view"] = {**entry, "Company": _marker("abc_")}
+        with pytest.raises(AlignmentConflictError, match="keyed twice"):
+            _raw_member_union(alignment)

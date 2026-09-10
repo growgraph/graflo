@@ -1,0 +1,13 @@
+# The n-ary boundary cluster of build_union.py, as a document for `graflo compose`.
+#
+# Members are named in each manifest's own vocabulary and the cluster has no
+# `into`: the canonical map (passed with --canonical-map left=canonical_map.yaml,
+# or declared here under `canonical_maps`) names the composed class Company.
+# The identity alignment build_union.py declares in Python is replaced by a
+# declared natural key, which is enough for the shell recipe.
+op: compose_manifests
+allow_merges: true
+vertex_equivalences:
+-   left: [Firm, Shop]
+    right: [Org, Branch]
+    identity: [company_id]

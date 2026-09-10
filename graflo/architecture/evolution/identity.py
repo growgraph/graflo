@@ -248,7 +248,7 @@ def apply_replace_identity(manifest: GraphManifest, op: ReplaceIdentityOp) -> No
         raise ValueError("replace_identity requires graph_schema")
 
     vertex_config = schema.core_schema.vertex_config
-    unknown = sorted(set(op.vertices) - vertex_config.vertex_set)
+    unknown = sorted(set(op.replacements) - vertex_config.vertex_set)
     if unknown:
         raise ValueError(f"replace_identity: unknown vertices: {unknown}")
 
@@ -258,7 +258,7 @@ def apply_replace_identity(manifest: GraphManifest, op: ReplaceIdentityOp) -> No
     retired_indexes: dict[str, list[str]] = {}
 
     for vertex in vertex_config.vertices:
-        spec = op.vertices.get(vertex.name)
+        spec = op.replacements.get(vertex.name)
         if spec is None:
             continue
 

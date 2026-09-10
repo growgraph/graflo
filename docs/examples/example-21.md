@@ -17,22 +17,25 @@ carries. Everything below exists so that one router keeps serving every
 An equivalence names its **members** — the classes it collapses, per side:
 
 ```python
-VertexEquivalence(left=["Company", "Shop"], right=["Org", "Branch"], into="Company")
+VertexEquivalence(left=["Firm", "Shop"], right=["Org", "Branch"])
 ```
 
-(`Company` is the left member, not `Firm`: `canonical_map.yaml` renames `Firm`
-before the compose, and member names are the classes the equivalence sees.)
+No `into`: `canonical_map.yaml`, carried on the same op as `canonical_maps`,
+renames `Firm` to `Company`, and that names the composed class. Members are
+named as the manifest names them — or by their canonical name, so `Company`
+would name `Firm` just as well, here and in the member keys below.
 
 Every record that becomes `Company` was produced *as one member* by *one
 resource*. B's resources each produce one member with a plain `vertex` step.
-The view produces two: `Company` for `kind: firm` rows and `Shop` for
+The view produces two: `Firm` for `kind: firm` rows and `Shop` for
 `kind: shop` rows, through the router. Canonical attributes are derived per
 member, and that is the whole idea of what follows.
 
 ## What the merge already does to the router
 
-Nothing here is new. `MergeVerticesOp` rewrites the router in place: `type_map`
-becomes `{firm: Company, shop: Company, person: Person}` and `vertex_from_map`
+Nothing here is new. The per-side relabel (`CanonicalizeOp`) rewrites the
+router in place: `type_map` becomes `{firm: Company, shop: Company, person:
+Person}` and `vertex_from_map`
 keys are remapped, with the merged types' column maps **unioned** — one vertex
 field reading two different columns raises rather than silently keeping the
 last. And `allow_observation_fusion` is *not* needed: a router emits at most one
@@ -41,8 +44,8 @@ observations. Only `allow_merges=True` is required, for naming two members on a
 side.
 
 Notice what the rewrite loses: after it, nothing in the union says that `shop`
-once meant `Shop`. That is why the alignment resolves against the pre-merge
-sides, below.
+once meant `Shop`. That is why the alignment resolves against the sides as
+handed to compose, below.
 
 ## Deriving per member
 
@@ -59,7 +62,7 @@ AlignmentAttribute(
     sources={
         "r_view": SharedDerivation(
             spec=DerivationSpec(input=["secondary_key"], foo="affix_gated_key"),
-            members={"Company": {"prefix": "abc_"}, "Shop": {"prefix": "def_"}},
+            members={"Firm": {"prefix": "abc_"}, "Shop": {"prefix": "def_"}},
         ),
         "r_b": DerivationSpec(
             input=["shared_raw"], foo="affix_gated_key", params={"prefix": "abc_"}
@@ -73,7 +76,7 @@ AlignmentAttribute(
 
 `SharedDerivation` is the compact spelling of a dict keyed by member — one
 call, the members that share it, and only the parameter that differs. It
-expands to `{"Company": DerivationSpec(..., params={"prefix": "abc_"}), "Shop":
+expands to `{"Firm": DerivationSpec(..., params={"prefix": "abc_"}), "Shop":
 ...}`, which is what you write when more than a parameter varies (a different
 column, a different function), or `members=["A", "B", ...]` when nothing does.
 
