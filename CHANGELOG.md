@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.13.1]
+
+### Added
+
+- **`ComposeIncompleteError`** (a `ComposeCanonicalConflictError`) with a typed `completion`: the declarations that would make an incomplete compose consistent, as `VertexEquivalence` / `RelationEquivalence` documents. Raised for a canonical map entry that sends a non-member onto a cluster's composed name (completion: that cluster extended with the member) and, under `name_conflict="error"`, for a name both sides carry that no cluster composes (completion: the `{n} ~ {n}` declarations). `graflo compose` prints the completion as YAML under the refusal.
+- **Synthesized clusters.** Under `name_conflict="fuse_right"` every name both sides carry after their composite maps, and every pair of spellings that key alike, becomes a 1-1 equivalence into the left spelling, so a union by name goes through the same identity and property reconciliation as a declared one. `Cluster.synthesized` marks them; `Cluster.declared_into` keeps the composed name as the author spelled it.
+- `canonicalize_ops`, `canonical_near_collisions`, `DeclaredMaps` and `Completion` on `graflo.architecture.evolution`.
+- The vocabulary compose resolution is described in — declared map, cluster, cluster map, composite map, fixed point, satisfied and dangling entry, synthesized cluster, completion — and the table of every case a declared map and the equivalences can stand in, in `canonical.py` and the evolution guide.
+
+### Changed
+
+- **`CanonicalMap` is a vocabulary and therefore idempotent.** A chain (`{X: Z, Z: Q}`) or a swap is refused at construction: a canonical name is a fixed point nothing maps away from. The relabel semantics stay on `CanonicalizeOp`, which is what a chain lowers to. `merge_canonical_maps` refuses a chain across two maps in either order, so its result no longer depends on which map is the base.
+- **`AlignmentAttribute.name` and `LocalKeySpec.name`** replace `into` on the alignment models; `into` still parses. `into` now means one thing across the op vocabulary — where existing names collapse — and `name` the other: what a derived attribute is called.
+- **`fuse_right` unions by name.** It previously fused a near collision (`Deal` / `deal`) but refused an exact one (`Deal` / `Deal`), inverting its own principle that a weaker signal must not act more aggressively than a stronger one. Both now become synthesized clusters.
+- **`both`-scoped canonical maps apply where they match.** An entry whose source is on one side only, or names a composed class as the author spelled `into`, is no longer refused as dangling on the other side.
+- The composite relabel compose applies per side is a `CanonicalizeOp` (`SideMaps`, `validate_and_complete_canonical_map`), not a `CanonicalMap`; `ClusterResolution.author` is `ClusterResolution.declared`. `resolve_clusters` and `validate_and_complete_canonical_map` refuse a shared name under `name_conflict="error"` as incomplete, as compose does.
+
+### Fixed
+
+- **`fuse_right` dropped the right vertex model.** After adopting the left spelling the right vertex was not a cluster, so the schema union skipped it: its properties and identity were lost and nothing raised. The union now refuses to skip any non-cluster vertex that shares a name with it.
+- A canonical map `properties` entry keyed by a composed or canonical class name was dropped silently; it is refused with a hint that the map is keyed by the source class.
+- A satisfied canonical map entry (source absent, target present) is logged at `INFO`; it is a heuristic that cannot tell an already-applied rename from a target that never had that source.
+
 ## [1.13.0]
 
 ### Added

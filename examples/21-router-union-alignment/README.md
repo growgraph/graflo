@@ -56,7 +56,7 @@ view's entry is keyed by **member**:
 
 ```python
 AlignmentAttribute(
-    into="match_key",
+    name="match_key",
     sources={
         "r_view": SharedDerivation(
             spec=DerivationSpec(input=["secondary_key"], foo="affix_gated_key"),

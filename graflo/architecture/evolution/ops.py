@@ -1,4 +1,13 @@
-"""Typed manifest evolution operations."""
+"""Typed manifest evolution operations.
+
+Two field names recur across the models and mean two different things:
+``into`` is *where existing names collapse* — the target of a merge, a
+rename, or an equivalence (``MergeVerticesOp``, ``MergeEdgesOp``,
+``VertexEquivalence``, ``RelationEquivalence``, ``PropertyEquivalence``);
+``name`` is *what a new thing is called* — an attribute an alignment derives
+(``AlignmentAttribute``, ``LocalKeySpec``). A model never uses one for the
+other.
+"""
 
 from __future__ import annotations
 
@@ -118,6 +127,27 @@ def validate_vocabulary_map(
         )
 
 
+def validate_vocabulary_is_idempotent(mapping: Mapping[str, str], *, kind: str) -> None:
+    """Reject a chain or a swap: a canonical vocabulary has fixed points.
+
+    A name that is both a source that moves and a target of another entry
+    (``{X: Z, Z: Q}``, ``{A: B, B: A}``) makes the map non-idempotent — applying
+    it twice is not applying it once — so it cannot be read as a vocabulary,
+    where a canonical name is by definition one nothing maps away from. Such a
+    map is a *relabel*, which :class:`CanonicalizeOp` expresses (simultaneous
+    application over the original schema).
+    """
+    moving = {source for source, target in mapping.items() if source != target}
+    targets = {target for source, target in mapping.items() if source != target}
+    chained = sorted(moving & targets)
+    if chained:
+        raise ValueError(
+            f"{kind}: {chained} are both a source that moves and a canonical "
+            "target. A canonical vocabulary has fixed points — a chain or a "
+            "swap is a relabel, which CanonicalizeOp expresses."
+        )
+
+
 class RemoveVerticesOp(ConfigBaseModel):
     """Remove logical vertices and cascade: edges, ingestion resources, bindings."""
 
@@ -183,6 +213,13 @@ class CanonicalMap(ConfigBaseModel):
     classes whose name does not change. Two sources sharing a target is a
     merge and must be acknowledged with ``allow_merges``.
 
+    It is a **vocabulary**, so it is idempotent: a canonical name is a fixed
+    point that no entry maps away from. A chain (``{X: Z, Z: Q}``) or a swap
+    is refused at construction — that shape is a relabel, which
+    :class:`CanonicalizeOp` expresses directly. The rule is what lets two
+    maps, or a map and an equivalence, be checked for agreement without
+    asking in which order they were written.
+
     Used on its own through :func:`~graflo.architecture.evolution.canonical.canonical_map_to_ops`,
     and on :attr:`ComposeManifestsOp.canonical_maps` where it names the
     composed classes and is checked against the declared equivalences.
@@ -231,11 +268,16 @@ class CanonicalMap(ConfigBaseModel):
                 kind="canonical relation",
                 merge_hint="CanonicalMap(allow_merges=True)",
             )
+        validate_vocabulary_is_idempotent(self.vertices, kind="canonical vertex")
+        validate_vocabulary_is_idempotent(self.relations, kind="canonical relation")
         for source_class, attr_map in self.properties.items():
             validate_rename_map_is_injective(
                 attr_map,
                 kind=f"canonical property (class {source_class!r})",
                 merge_hint="a transform that combines the fields upstream",
+            )
+            validate_vocabulary_is_idempotent(
+                attr_map, kind=f"canonical property (class {source_class!r})"
             )
         return self
 
@@ -1658,7 +1700,9 @@ class AlignmentAttribute(ConfigBaseModel):
 
     Each entry lowers to one
     :class:`~graflo.architecture.schema.identity_funnel.IdentityBranch` over
-    ``into``, so the list order *is* the funnel order.
+    ``name``, so the list order *is* the funnel order. ``name`` is what the
+    derived attribute is called — nothing collapses onto it, which is why it is
+    not ``into``; ``into`` is accepted as a legacy alias.
 
     ``sources`` is keyed by resource because derivation inputs are that
     resource's raw column names. An entry takes one of three shapes:
@@ -1680,9 +1724,13 @@ class AlignmentAttribute(ConfigBaseModel):
       shared by the listed members, with only the parameters that differ.
     """
 
-    into: str = PydanticField(
+    name: str = PydanticField(
         ...,
-        description="Canonical attribute name on the class; funnel branch id.",
+        validation_alias=AliasChoices("name", "into"),
+        description=(
+            "Canonical attribute name on the class; funnel branch id. ``into`` "
+            "is accepted as a legacy alias."
+        ),
     )
     sources: dict[
         str,
@@ -1793,9 +1841,13 @@ class LocalKeySpec(ConfigBaseModel):
     member-keyed source must not set ``gate``).
     """
 
-    into: str = PydanticField(
+    name: str = PydanticField(
         default="local_key",
-        description="Canonical fallback property name on the class.",
+        validation_alias=AliasChoices("name", "into"),
+        description=(
+            "Canonical fallback property name on the class. ``into`` is "
+            "accepted as a legacy alias."
+        ),
     )
     sep: str = PydanticField(
         default=":",
@@ -1894,9 +1946,9 @@ class IdentityAlignment(ConfigBaseModel):
             raise ValueError(
                 "IdentityAlignment requires at least one attribute or a local_key"
             )
-        into_names = [attribute.into for attribute in self.attributes]
+        into_names = [attribute.name for attribute in self.attributes]
         if self.local_key is not None:
-            into_names.append(self.local_key.into)
+            into_names.append(self.local_key.name)
         duplicates = {n for n in into_names if into_names.count(n) > 1}
         if duplicates:
             raise ValueError(
@@ -2227,16 +2279,19 @@ class ComposeManifestsOp(ConfigBaseModel):
     name_conflict: Literal["error", "prefix_right", "fuse_right"] = PydanticField(
         default="error",
         description=(
-            "How to handle non-equivalent name collisions on the right side "
-            "(vertices, relations, resources, connectors). Vertex and relation "
-            "names collide both exactly and when they key alike under "
-            "``canonical_key`` -- ``OrderLine`` and ``order_line`` are one "
-            "concept spelled two ways, and composing them into two unrelated "
-            "types splits the data silently. ``prefix_right`` prefixes "
-            "colliding names with ``r_``; ``fuse_right`` adopts the left "
-            "spelling for a canonical near-collision, and applies to vertices "
-            "and relations only (resources and connectors are addresses, not "
-            "concepts, so it behaves as ``error`` for them)."
+            "How to handle name collisions no equivalence covers, on the "
+            "right side (vertices, relations, resources, connectors). Vertex "
+            "and relation names collide both exactly and when they key alike "
+            "under ``canonical_key`` -- ``OrderLine`` and ``order_line`` are "
+            "one concept spelled two ways, and composing them into two "
+            "unrelated types splits the data silently. ``error`` refuses and "
+            "names the equivalences to declare; ``prefix_right`` keeps them "
+            "apart under ``r_`` names; ``fuse_right`` unions by name -- every "
+            "exact or near collision becomes a synthesized 1-1 equivalence "
+            "into the left spelling, so identity and property reconciliation "
+            "apply exactly as to a declared one. ``fuse_right`` applies to "
+            "vertices and relations only (resources and connectors are "
+            "addresses, not concepts, so it behaves as ``error`` for them)."
         ),
     )
     allow_merges: bool = PydanticField(

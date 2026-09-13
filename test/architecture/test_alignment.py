@@ -71,7 +71,7 @@ def _alignment(**overrides) -> IdentityAlignment:
         "vertex": "Company",
         "attributes": [
             AlignmentAttribute(
-                into="match_key",
+                name="match_key",
                 sources={
                     "r_a": DerivationSpec(
                         input=["secondary_key", "shared_raw"],
@@ -117,16 +117,19 @@ class TestModel:
                 ],
             }
         )
-        assert [a.into for a in alignment.attributes] == ["match_key"]
-        # Serialization moves to the new spelling.
-        assert "attributes" in alignment.to_dict()
-        assert "rows" not in alignment.to_dict()
+        assert [a.name for a in alignment.attributes] == ["match_key"]
+        # Serialization moves to the new spelling, for the list and the entry.
+        dumped = alignment.to_dict()
+        assert "attributes" in dumped
+        assert "rows" not in dumped
+        assert dumped["attributes"][0]["name"] == "match_key"
+        assert "into" not in dumped["attributes"][0]
 
     def test_duplicate_targets_rejected(self) -> None:
         with pytest.raises(ValueError, match="duplicate target attributes"):
             _alignment(
                 local_key=LocalKeySpec(
-                    into="match_key",
+                    name="match_key",
                     sources={"r_a": LocalKeySource(field="firm_id", tag="a")},
                 )
             )
@@ -209,7 +212,7 @@ class TestValidation:
         alignment = _alignment(
             attributes=[
                 AlignmentAttribute(
-                    into="company_id",
+                    name="company_id",
                     sources={"r_a": DerivationSpec(input=["firm_id"])},
                 )
             ]
@@ -318,7 +321,7 @@ def _routed_alignment(**overrides) -> IdentityAlignment:
         "vertex": "Company",
         "attributes": [
             AlignmentAttribute(
-                into="match_key",
+                name="match_key",
                 sources={
                     "r_view": [
                         DerivationSpec(input=["secondary_key", "firm_ref"]),
@@ -506,7 +509,7 @@ class TestMultiSourceLowering:
         alignment = _routed_alignment(
             attributes=[
                 AlignmentAttribute(
-                    into="match_key",
+                    name="match_key",
                     sources={
                         "r_view": [
                             DerivationSpec(
@@ -772,7 +775,7 @@ def _member_alignment(**overrides) -> IdentityAlignment:
         "vertex": "Company",
         "attributes": [
             AlignmentAttribute(
-                into="match_key",
+                name="match_key",
                 sources={
                     "r_view": {
                         "Company": _member_spec("abc_"),
@@ -1042,7 +1045,7 @@ class TestMemberKeyedValidation:
         alignment = _member_alignment(
             attributes=[
                 AlignmentAttribute(
-                    into="match_key",
+                    name="match_key",
                     sources={
                         "r_view": {"Company": _member_spec("abc_")},
                         "r_b": DerivationSpec(

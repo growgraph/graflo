@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from itertools import pairwise
 from typing import Any, Literal
 
@@ -36,7 +36,8 @@ from .apply import (
 from .canonical import (
     CanonicalMap,
     SideMaps,
-    canonical_map_to_ops,
+    canonical_near_collisions,
+    canonicalize_ops,
     resolve_clusters,
 )
 from .db_profile import merge_default_property_values
@@ -48,6 +49,7 @@ from .merge_core import (
 )
 from .ops import (
     AddSecondaryIdentitiesOp,
+    CanonicalizeOp,
     ComposeManifestsOp,
     IdentityBranchSpec,
     ManifestOp,
@@ -203,31 +205,6 @@ class ComposeIdentityError(ValueError):
     """
 
 
-def _canonical_near_collisions(
-    left_names: Iterable[str],
-    right_names: Iterable[str],
-    *,
-    exempt: frozenset[str],
-) -> list[tuple[str, str]]:
-    """``(left, right)`` pairs that key alike but are spelled differently.
-
-    Exact matches are excluded: those are the pre-existing collision path, so
-    the two checks can never report the same pair twice.
-    """
-    by_key: dict[str, list[str]] = {}
-    for name in left_names:
-        by_key.setdefault(canonical_slug(name), []).append(name)
-
-    pairs: list[tuple[str, str]] = []
-    for right_name in right_names:
-        if right_name in exempt:
-            continue
-        for left_name in by_key.get(canonical_slug(right_name), []):
-            if left_name != right_name:
-                pairs.append((left_name, right_name))
-    return sorted(set(pairs))
-
-
 def _resolve_schema_collisions(
     *,
     left_names: set[str],
@@ -239,20 +216,23 @@ def _resolve_schema_collisions(
 ) -> dict[str, str]:
     """The rename map to apply to the right side, or raise under ``error``.
 
-    Two kinds of collision are handled together because they are the same
-    question asked with different confidence. An **exact** collision
-    (``Customer`` on both sides) has always raised by default. A **canonical**
-    one (``Customer`` / ``customer``, or ``OrderLine`` / ``order_line``) is the
-    weaker signal, so it cannot trigger a *more* aggressive action than the
-    stronger one -- if exact equality refuses to fuse silently, a naming-
-    convention guess certainly must not.
+    The residue after cluster resolution. An **exact** collision (``Customer``
+    on both sides) is a name no cluster composes: under ``error`` it has
+    already been refused as incomplete by
+    :func:`~graflo.architecture.evolution.canonical.resolve_clusters`, and
+    under ``fuse_right`` it has already become a synthesized cluster -- so
+    reaching one here is an invariant breach, not an authoring error. A
+    **canonical** collision (``Customer`` / ``customer``, ``OrderLine`` /
+    ``order_line``) is the same question with less confidence: ``error``
+    refuses it naming both spellings, ``fuse_right`` has synthesized it under
+    the left spelling upstream, and ``prefix_right`` keeps both apart here.
 
-    Left the right names alone and they compose into two unrelated types with
-    the source data split between them and nothing raising, which is the whole
-    of ``CORE-MERGE-001``.
+    Left alone the right names compose into two unrelated types with the
+    source data split between them and nothing raising, which is the whole of
+    ``CORE-MERGE-001``.
     """
     exact = [name for name in right_names if name in left_names and name not in exempt]
-    near = _canonical_near_collisions(left_names, right_names, exempt=exempt)
+    near = canonical_near_collisions(left_names, right_names, exempt=exempt)
 
     if name_conflict == "error":
         if exact:
@@ -275,16 +255,14 @@ def _resolve_schema_collisions(
         return {}
 
     if name_conflict == "fuse_right":
-        if exact:
+        if exact or near:
             raise ValueError(
-                f"compose_manifests: {kind} name collision on "
-                f"{sorted(exact)!r}; provide a {equivalence_hint} or set "
-                "name_conflict='prefix_right'"
+                f"compose_manifests: unreachable -- {kind} names "
+                f"{sorted(exact) + [right for _left, right in near]!r} survived "
+                "cluster resolution under fuse_right; every same-name pair "
+                "should have been synthesized into a cluster"
             )
-        # Adopt the left spelling; the ordinary same-name union then merges
-        # them. The left side keeps its name because it is the side the
-        # canonical vocabulary is expected to live on.
-        return {right: left for left, right in near}
+        return {}
 
     # prefix_right: keep both, explicitly, under distinguishable names.
     renames: dict[str, str] = {}
@@ -874,7 +852,15 @@ def _union_schema(
 
     for v in right_vc.vertices:
         if v.name in seen:
-            continue
+            if v.name in index.labels:
+                continue  # a cluster member, merged above under its composed name
+            # Anything else sharing a name with the union is a collision the
+            # policy should have refused or prefixed. Skipping it would drop
+            # its model silently, which is the data loss CORE-MERGE-001 is about.
+            raise ValueError(
+                f"compose_manifests: unreachable -- right vertex {v.name!r} "
+                "shares a name with the union but no cluster composes it"
+            )
         out_vertices.append(v)
         seen.add(v.name)
 
@@ -1090,10 +1076,14 @@ def compose_manifests(
     The declared clusters (each a :class:`~graflo.architecture.evolution.ops.VertexEquivalence`
     or :class:`~graflo.architecture.evolution.ops.RelationEquivalence`, possibly
     n-ary) and ``op.canonical_maps`` are resolved together into one composite
-    :class:`~graflo.architecture.evolution.canonical.CanonicalMap` per side
+    :class:`~graflo.architecture.evolution.ops.CanonicalizeOp` per side
     (see :func:`~graflo.architecture.evolution.canonical.resolve_clusters`),
     applied to that side in one step, before the two sides are unioned by
-    name. Does not invent semantic matches.
+    name. Does not invent semantic matches: a name both sides carry and no
+    cluster composes is refused under ``name_conflict="error"`` (naming the
+    equivalences to declare), synthesized into a 1-1 cluster under
+    ``fuse_right`` so it reconciles exactly as a declared one, and kept apart
+    under ``prefix_right``.
 
     When ``op.identity_alignments`` is non-empty, the composed union is further
     rewritten by the fundamental ops emitted from each alignment (see
@@ -1149,14 +1139,7 @@ def compose_manifests(
     }
 
     for manifest, side in ((out_left, "left"), (out_right, "right")):
-        apply_manifest_ops_inplace(
-            manifest,
-            canonical_map_to_ops(
-                side_maps[side],
-                allow_self_relations=op.allow_self_relations,
-                allow_observation_fusion=op.allow_observation_fusion,
-            ),
-        )
+        apply_manifest_ops_inplace(manifest, canonicalize_ops(side_maps[side]))
 
     _apply_right_schema_collision_policy(out_left, out_right, op, index)
 
@@ -1213,8 +1196,8 @@ def compose_manifests(
             sides=sides,
             side_maps=side_maps,
             canonical_maps=[
-                ("left", resolution.author.left),
-                ("right", resolution.author.right),
+                ("left", resolution.declared.left),
+                ("right", resolution.declared.right),
             ],
             finish_init=False,
             strict_references=strict_references,
@@ -1253,7 +1236,8 @@ def _apply_identity_alignments(
     from .apply import apply_evolution
 
     cluster_labels = index.labels
-    all_maps = [cm for _side, cm in canonical_maps] + [side_maps.left, side_maps.right]
+    all_maps: list[CanonicalMap | CanonicalizeOp] = [cm for _side, cm in canonical_maps]
+    all_maps.extend((side_maps.left, side_maps.right))
     out = manifest
     for alignment in op.identity_alignments:
         if cluster_labels:

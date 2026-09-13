@@ -17,12 +17,14 @@ from pathlib import Path
 from typing import Any
 
 import click
+import yaml
 
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.evolution.alignment import AlignmentConflictError
 from graflo.architecture.evolution.canonical import (
     CanonicalMap,
     ComposeCanonicalConflictError,
+    ComposeIncompleteError,
     Scope,
     merge_canonical_maps,
 )
@@ -124,7 +126,13 @@ def _fold_canonical_maps(
     "--name-conflict",
     type=click.Choice(["error", "prefix_right", "fuse_right"]),
     default=None,
-    help="Override the op's name_conflict policy.",
+    help=(
+        "Override the op's name_conflict policy: error refuses a name both "
+        "sides carry and prints the equivalences to declare; fuse_right "
+        "unions by name (each shared or alike-spelled name becomes a 1-1 "
+        "equivalence into the left spelling); prefix_right keeps them apart "
+        "under r_ names."
+    ),
 )
 @click.option(
     "--bump-version",
@@ -194,6 +202,16 @@ def compose(
             bump_version="minor" if bump_version == "minor" else False,
             strict_references=strict_references,
         )
+    except ComposeIncompleteError as exc:
+        # Consistent but not covering every name: the completion is the
+        # declaration to paste into the op, so print it as one.
+        click.echo(f"compose refused: {type(exc).__name__}: {exc}", err=True)
+        click.echo("completion:", err=True)
+        click.echo(
+            yaml.safe_dump(exc.completion.to_dict(), sort_keys=False).rstrip(),
+            err=True,
+        )
+        raise SystemExit(EXIT_REFUSED)
     except (
         AlignmentConflictError,
         ClusterConflictError,

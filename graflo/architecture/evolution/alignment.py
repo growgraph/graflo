@@ -36,7 +36,7 @@ attribute for its own documents.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Collection, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -59,6 +59,7 @@ from .ops import (
     AddSecondaryIdentitiesOp,
     AddVertexPropertiesOp,
     AlignmentAttribute,
+    CanonicalizeOp,
     DerivationSpec,
     EnsureExtractedFields,
     EnsureExtractedFieldsOp,
@@ -71,6 +72,10 @@ from .ops import (
     ReplaceIdentityOp,
     SharedDerivation,
 )
+
+#: Anything whose ``properties`` say which attribute names exist only
+#: post-rename: a declared vocabulary or the composite relabel compose applies.
+VocabularyMap = CanonicalMap | CanonicalizeOp
 
 __all__ = [
     "AlignmentAttribute",
@@ -111,7 +116,7 @@ def _conflict(check: str, detail: str, hint: str) -> AlignmentConflictError:
     )
 
 
-def _canonical_rename_targets(canonical_maps: tuple[CanonicalMap, ...]) -> set[str]:
+def _canonical_rename_targets(canonical_maps: Sequence[VocabularyMap]) -> set[str]:
     """Property names that exist only post-rename — absent from raw documents."""
     targets: set[str] = set()
     for cm in canonical_maps:
@@ -523,14 +528,16 @@ def validate_alignment(
     alignment: IdentityAlignment,
     manifest: GraphManifest,
     *,
-    canonical_maps: tuple[CanonicalMap, ...] | list[CanonicalMap] = (),
+    canonical_maps: Sequence[VocabularyMap] = (),
     sides: SideManifests | None = None,
     cluster_members: ClusterMembers | None = None,
 ) -> None:
     """Fail loudly when *alignment* contradicts *manifest* or the canonical maps.
 
     *manifest* is the composed union the alignment ops will be applied to.
-    Pass the :class:`CanonicalMap`\\ s used to canonicalize the sides to catch
+    Pass the maps used to canonicalize the sides — declared
+    :class:`CanonicalMap`\\ s or the composite
+    :class:`~graflo.architecture.evolution.ops.CanonicalizeOp` compose applied — to catch
     derivation inputs written in canonical vocabulary: renamed documents still
     carry their raw field names, so a rename *target* used as a derivation
     input reads an absent field and silently derives nothing.
@@ -603,9 +610,9 @@ def validate_alignment(
                 raw_inputs.setdefault(resource, []).append(production.type_field)
 
     current_identity = set(vertex_config.identity_fields(alignment.vertex))
-    into_names = [attribute.into for attribute in alignment.attributes]
+    into_names = [attribute.name for attribute in alignment.attributes]
     if alignment.local_key is not None:
-        into_names.append(alignment.local_key.into)
+        into_names.append(alignment.local_key.name)
     colliding = sorted(set(into_names) & current_identity)
     if colliding:
         raise _conflict(
@@ -647,7 +654,7 @@ def validate_alignment(
     # Scratch fields exist only for the column-presence (list) form; a
     # member-keyed derivation is the single writer of its attribute.
     scratch_names = {
-        _scratch_name(attribute.into, index)
+        _scratch_name(attribute.name, index)
         for attribute in alignment.attributes
         for resource in attribute.sources
         if attribute.members_for(resource) is None
@@ -656,7 +663,7 @@ def validate_alignment(
     }
     if alignment.local_key is not None:
         scratch_names |= {
-            _scratch_name(alignment.local_key.into, index)
+            _scratch_name(alignment.local_key.name, index)
             for resource in alignment.local_key.sources
             if alignment.local_key.members_for(resource) is None
             and len(alignment.local_key.sources_for(resource)) > 1
@@ -740,7 +747,7 @@ def _warn_on_one_derivation_for_several_members(
     if len(branches) < 2:
         return
     single = [
-        attribute.into
+        attribute.name
         for attribute in alignment.attributes
         if attribute.members_for(resource) is None
         and len(attribute.specs_for(resource)) == 1
@@ -751,7 +758,7 @@ def _warn_on_one_derivation_for_several_members(
         and local_key.members_for(resource) is None
         and len(local_key.sources_for(resource)) == 1
     ):
-        single.append(local_key.into)
+        single.append(local_key.name)
     if single:
         logger.warning(
             "identity alignment for %r: resource %r routes %s onto %r but "
@@ -780,12 +787,12 @@ def _warn_on_partial_member_coverage(
     produced = _produced_vertices(_resource_pipelines(manifest)[resource])
     in_cluster = produced & set(cluster_members.get(side, ()))
     targets: list[tuple[str, list[str] | None]] = [
-        (attribute.into, attribute.members_for(resource))
+        (attribute.name, attribute.members_for(resource))
         for attribute in alignment.attributes
     ]
     if alignment.local_key is not None:
         targets.append(
-            (alignment.local_key.into, alignment.local_key.members_for(resource))
+            (alignment.local_key.name, alignment.local_key.members_for(resource))
         )
     for into, members in targets:
         if members is None:
@@ -813,7 +820,7 @@ def alignment_to_ops(
     alignment: IdentityAlignment,
     *,
     manifest: GraphManifest | None = None,
-    canonical_maps: tuple[CanonicalMap, ...] | list[CanonicalMap] = (),
+    canonical_maps: Sequence[VocabularyMap] = (),
     sides: SideManifests | None = None,
     cluster_members: ClusterMembers | None = None,
 ) -> list[ManifestOp]:
@@ -840,9 +847,9 @@ def alignment_to_ops(
 
     ops: list[ManifestOp] = []
 
-    into_names = [attribute.into for attribute in alignment.attributes]
+    into_names = [attribute.name for attribute in alignment.attributes]
     if alignment.local_key is not None:
-        into_names.append(alignment.local_key.into)
+        into_names.append(alignment.local_key.name)
     ops.append(AddVertexPropertiesOp(additions={alignment.vertex: list(into_names)}))
 
     if manifest is not None:
@@ -858,7 +865,7 @@ def alignment_to_ops(
         for resource in attribute.sources:
             additions.setdefault(resource, []).extend(
                 _derivation_steps(
-                    attribute.into,
+                    attribute.name,
                     attribute.specs_for(resource),
                     guards=_guards(
                         productions, resource, attribute.members_for(resource)
@@ -1061,7 +1068,7 @@ def _local_key_steps(
                     module="graflo.util.transform",
                     foo=foo,
                     params=params,
-                    output=local_key.into,
+                    output=local_key.name,
                     input_fields=input_fields,
                     when=guard,
                 )
@@ -1074,7 +1081,7 @@ def _local_key_steps(
                 module="graflo.util.transform",
                 foo=foo,
                 params=params,
-                output=local_key.into,
+                output=local_key.name,
                 input_fields=input_fields,
             )
         ]
@@ -1086,11 +1093,11 @@ def _local_key_steps(
                 module="graflo.util.transform",
                 foo=foo,
                 params=params,
-                output=_scratch_name(local_key.into, index),
+                output=_scratch_name(local_key.name, index),
                 input_fields=input_fields,
             )
         )
-    steps.append(_coalesce_step(local_key.into, len(sources)))
+    steps.append(_coalesce_step(local_key.name, len(sources)))
     return steps
 
 

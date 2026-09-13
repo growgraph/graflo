@@ -57,7 +57,7 @@ ALIGNMENT = IdentityAlignment(
     vertex="Company",
     attributes=[
         AlignmentAttribute(
-            into="match_key",
+            name="match_key",
             sources={
                 "r_a": DerivationSpec(
                     input=["secondary_key", "shared_raw"],

@@ -125,11 +125,11 @@ The verb applies the op and its canonical maps together: `--canonical-map SIDE=P
 
 ## Canonical maps
 
-A `CanonicalMap` is a translation of a source vocabulary into canonical names — a partial function on names, identity where unmapped, over `vertices`, `properties` (keyed by *source* class) **and** `relations`. Two sources sharing a target is a merge and must be acknowledged with `allow_merges`. It has two uses that are one mechanism.
+A `CanonicalMap` is a translation of a source vocabulary into canonical names — a partial function on names, identity where unmapped, over `vertices`, `properties` (keyed by *source* class) **and** `relations`. Two sources sharing a target is a merge and must be acknowledged with `allow_merges`. It is a **vocabulary**, so it is idempotent: a canonical name is a fixed point nothing maps away from, and a chain (`{X: Z, Z: Q}`) or a swap is refused at construction — that shape is a relabel, which `CanonicalizeOp` expresses directly. It has two uses that are one mechanism.
 
-**On its own**, `canonical_map_to_ops(cm)` lowers it to a single `CanonicalizeOp`, which applies the whole map in one step over the original schema: attribute renames first (keyed by the source class), then classes and relations simultaneously. A chain (`{X: Z, Z: Q}`) and a swap resolve without an intermediate state, and the fibers of the map are exactly the groups that merge; a target that already exists and does not move must be declared a member of its own group with a self entry (`Company: Company`), or the op refuses rather than merging into it silently. No op order can leak into the result.
+**On its own**, `canonical_map_to_ops(cm)` lowers it to a single `CanonicalizeOp`, which applies the whole map in one step over the original schema: attribute renames first (keyed by the source class), then classes and relations simultaneously. The op is more general than the map — a chain and a swap resolve without an intermediate state, the fibers of the map are exactly the groups that merge, and a target that already exists and does not move must be declared a member of its own group with a self entry (`Company: Company`), or the op refuses rather than merging into it silently. No op order can leak into the result.
 
-**On a compose op**, `ComposeManifestsOp.canonical_maps` names the composed classes. An equivalence cluster says *which* classes are one; the map says *what they are called*, so `into` is optional. The composed name of a cluster is `into` (translated through the map when the map maps it), else the canonical name the map gives a member, else the one spelling every member shares. A member may be spelled by its own name or by its canonical name. Maps are scoped: `left` / `right` apply to that manifest's own names, `both` to either side's.
+**On a compose op**, `ComposeManifestsOp.canonical_maps` names the composed classes. An equivalence cluster says *which* classes are one; the map says *what they are called*, so `into` is optional. The composed name of a cluster is `into` (translated through the map when the map maps it), else the canonical name the map gives a member, else the one spelling every member shares. A member may be spelled by its own name or by its canonical name. Maps are scoped: `left` / `right` apply to that manifest's own names; `both` to either side's names and to composed names — an entry that matches one side only applies there and is simply inapplicable on the other.
 
 ```python
 from graflo.architecture.evolution import (
@@ -152,19 +152,51 @@ op = ComposeManifestsOp(
 composed = compose_manifests(left, right, op)
 ```
 
-Renames compose, so canonicalizing a side on its own first and then declaring the cluster in canonical names is the same function: `compose_manifests` accepts either, and a map entry whose source the caller already applied (source absent, target present) is a no-op. `resolve_clusters` — what compose runs; `validate_and_complete_canonical_map` returns just its per-side maps — folds the clusters and the maps into **one composite `CanonicalMap` per side**, lowered through the same `CanonicalizeOp` and applied before the schema/resource union.
+### Vocabulary
 
-One rule underlies every refusal: **the map and the equivalences must agree on where a name goes, and a canonical target is a fixed point neither may re-map.** `ComposeCanonicalConflictError` names both declarations:
-
-| refusal | when |
+| term | meaning |
 |---|---|
-| disagreement | the map says `Firm → Company` but the cluster names the composed class `Party`; or a cluster renames a class the map established as canonical |
-| unnamed cluster | no `into`, no mapped member, no shared spelling |
-| merge into a composed class | a map entry sends a non-member onto a cluster's composed name — declare it in the cluster, whose identity and property maps govern it |
-| dangling entry | a map entry matching nothing on its side |
-| property re-target / disagreement / unknown | the same rule for attributes: a canonical attribute is a fixed point, and a property equivalence names fields as spelled on the member |
+| **declared map** | a `CanonicalMap` the author wrote — `op.canonical_maps[scope]` or a `canonical_maps=` pair handed to compose |
+| **cluster** | one equivalence declaration, resolved: its members per side in the manifests' own spelling, and its **composed name** |
+| **cluster map** | per side, every member onto its composed name (the composed name itself included, so the op merges into it rather than refusing an occupied target) |
+| **composite map** | per side, the cluster map plus every declared entry that applies to a non-member: the one `CanonicalizeOp` compose applies before the union by name. A relabel, not a vocabulary — two clusters may chain when one composed name is renamed away by another declaration |
+| **fixed point** | a canonical target; no map and no cluster may move it |
+| **satisfied entry** | a declared entry whose source is absent and target present on a side: taken as already applied by the caller (a heuristic — it is logged) |
+| **dangling entry** | a declared entry matching nothing on any side it could apply to: a typo, refused |
+| **synthesized cluster** | a cluster compose declares itself under `name_conflict="fuse_right"` for a name both sides carry, or two spellings of one name |
+| **completion** | the extension that would make an incomplete declaration consistent, carried by `ComposeIncompleteError.completion` as `VertexEquivalence` / `RelationEquivalence` documents |
 
-The cluster-shape checks (`ClusterConflictError`, wrapped by `validate_and_complete_canonical_map`) stay: a class claimed by two declarations, two declarations sharing one composed name, a composed name occupying an existing non-member class. `merge_canonical_maps(base, extension)` is the union two author maps for one scope reconcile through — every source maps to one target and a target of `base` is a fixed point. Compose deliberately re-checks nothing it already raises on (collisions, incompatible types, divergent funnels).
+Identity is **nominal**: a class is the same class across two manifests only by name or by declared equivalence. Nothing structural fingerprints it — content hashes address a manifest, not a class — and compose never infers a match.
+
+### Where a map and the equivalences can stand
+
+Renames compose, so canonicalizing a side on its own first and then declaring the cluster in canonical names is the same function as declaring it in raw names on an op that carries the map: `compose_manifests` accepts either. Canonicalizing the *union* afterwards is a different function in general (it can collapse two composed names) and is just a unary `CanonicalizeOp` on the result. `resolve_clusters` — what compose runs; `validate_and_complete_canonical_map` returns just its per-side relabels — folds the clusters and the maps into **one composite `CanonicalizeOp` per side**, applied before the schema/resource union.
+
+One rule underlies every refusal: **the map and the equivalences must agree on where a name goes, and a canonical target is a fixed point neither may re-map.** For a name on one side, with `E` its cluster and `C` the declared entry:
+
+| case | outcome |
+|---|---|
+| neither | unchanged |
+| `C` only, target free or self-declared | carried into the composite |
+| `C` only, target an unmoving non-member without a self entry | refused by the op (occupied target) |
+| `E` only | onto the composed name |
+| `E` and `C` agree; `E` without `into` and `C` names a member; `into` itself in `dom(C)` | onto the composed name, which `C` supplies or translates |
+| **contradiction** — `E` and `C` disagree; `E` moves a fixed point; two maps disagree on a source; a property equivalence renames a canonical attribute | `ComposeCanonicalConflictError`, naming both declarations |
+| **ambiguity** — a canonical name denotes two members; maps disagree on translating `into` | `ComposeCanonicalConflictError` |
+| **incomplete** — `C` sends a non-member onto a composed name | `ComposeIncompleteError`; the completion is the cluster extended with that member, whose identity and property maps then govern it |
+| **incomplete** — a name both sides carry after their composite maps, no cluster | `error`: `ComposeIncompleteError`, the completion lists the `{n} ~ {n}` declarations; `fuse_right`: a synthesized cluster; `prefix_right`: kept apart as `r_n` |
+| two spellings of one name (`OrderLine` / `order_line`) | `error`: `ComposeNameConflictError`; `fuse_right`: a synthesized cluster under the left spelling; `prefix_right`: kept apart |
+| one-sided `both` entry | applied where it matches |
+| `both` entry over a composed name | translation of `into`, not a dangling entry |
+| dangling | refused |
+| satisfied | no-op, logged |
+| `properties` keyed by a composed or canonical class | refused — the attribute map is keyed by the source class |
+| chain or swap inside one map | refused at `CanonicalMap` construction |
+| chain across two maps | refused by `merge_canonical_maps`, in either order |
+
+A synthesized cluster is a real cluster: the union it produces goes through the same identity reconciliation as a declared one, so two same-named classes whose keys disagree raise `ComposeIdentityError` instead of composing to a key no record carries, and the right side's properties are unioned rather than dropped.
+
+The cluster-shape checks (`ClusterConflictError`, wrapped by `validate_and_complete_canonical_map`) stay: a class claimed by two declarations, two declarations sharing one composed name, a composed name occupying an existing non-member class. `merge_canonical_maps(base, extension)` is the union two declared maps for one scope reconcile through — every source maps to one target, and a target of either map is a fixed point the other may not move. Compose deliberately re-checks nothing it already raises on (incompatible types, divergent funnels).
 
 Self-relations and observation fusion are not merely warned about: compose forwards `allow_self_relations` / `allow_observation_fusion` from the op to the per-side `CanonicalizeOp`, so the merge guards fire unless the author acknowledges them.
 
@@ -181,7 +213,7 @@ from graflo.architecture.evolution import (
 
 alignment = IdentityAlignment(
     vertex="Company",
-    attributes=[AlignmentAttribute(into="match_key", sources={  # priority order
+    attributes=[AlignmentAttribute(name="match_key", sources={  # priority order
         "r_a": DerivationSpec(input=["secondary_key", "shared_raw"],
                               params={"prefix": "abc_", "strip_prefix": "ABC-"}),
         "r_b": DerivationSpec(input=["org_id", "shared_raw"],
@@ -223,7 +255,7 @@ A cluster names its **members** — the classes it collapses, per side: `VertexE
 A member is keyed by its own name on its side or by its canonical name — `Firm` or `Company` when a map renames one to the other — as in the equivalence itself. The list form needs no member names because column presence selects; the dict form is the general one, and `SharedDerivation` spells it once for the common case — one call, the members sharing it, and per member only what varies:
 
 ```python
-AlignmentAttribute(into="match_key", sources={
+AlignmentAttribute(name="match_key", sources={
     "r_view": SharedDerivation(                                  # the member decides
         spec=DerivationSpec(input=["secondary_key"], foo="affix_gated_key"),
         members={"Company": {"prefix": "abc_"}, "Shop": {"prefix": "def_"}},

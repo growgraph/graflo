@@ -106,7 +106,7 @@ when the gate matches, and `None` otherwise:
 
 ```python
 AlignmentAttribute(
-    into="match_key",
+    name="match_key",
     sources={
         "r_a": DerivationSpec(
             input=["secondary_key", "shared_raw"],

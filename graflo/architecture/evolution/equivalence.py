@@ -56,13 +56,18 @@ class ClusterSpec:
     the canonical name it was declared by, or the one the canonical map gives
     it — so the per-member maps (property equivalences,
     ``SideIdentity.members``, identity-alignment member keys) may be keyed by
-    either the member's own name or its canonical one.
+    either the member's own name or its canonical one. ``declared_into`` is
+    the composed name as the author spelled it, before any canonical map
+    translated it; ``synthesized`` marks a cluster compose created itself for
+    a same-name pair under ``name_conflict="fuse_right"``.
     """
 
     left: tuple[str, ...]
     right: tuple[str, ...]
     into: str
     aliases: dict[Side, dict[str, str]] = field(default_factory=dict)
+    declared_into: str | None = None
+    synthesized: bool = False
 
 
 @dataclass(frozen=True)
@@ -74,6 +79,8 @@ class Cluster(Generic[DeclarationT]):
     into: str
     declaration: DeclarationT
     aliases: dict[Side, dict[str, str]] = field(default_factory=dict)
+    declared_into: str | None = None
+    synthesized: bool = False
 
     def members(self, side: Side) -> tuple[str, ...]:
         return self.left if side == "left" else self.right
@@ -105,11 +112,22 @@ class ClusterIndex:
 
     @property
     def labels(self) -> frozenset[str]:
+        """The composed names of every vertex cluster."""
         return frozenset(c.into for c in self.vertices)
 
     @property
     def relation_labels(self) -> frozenset[str]:
+        """The composed names of every relation cluster."""
         return frozenset(c.into for c in self.relations)
+
+    @property
+    def declared_intos(self) -> frozenset[str]:
+        """Every composed name as the author spelled it, before translation."""
+        return frozenset(
+            c.declared_into
+            for c in (*self.vertices, *self.relations)
+            if c.declared_into is not None
+        )
 
     def vertex_members(self, side: Side) -> frozenset[str]:
         out: set[str] = set()
@@ -199,6 +217,7 @@ def declared_spec(declaration: VertexEquivalence | RelationEquivalence) -> Clust
         left=tuple(declaration.left_members),
         right=tuple(declaration.right_members),
         into=declaration.into,
+        declared_into=declaration.into,
     )
 
 
@@ -247,6 +266,8 @@ def index_clusters(
                 into=spec.into,
                 declaration=v,
                 aliases=spec.aliases,
+                declared_into=spec.declared_into,
+                synthesized=spec.synthesized,
             )
             for v, spec in zip(op.vertex_equivalences, vertex_specs, strict=True)
         ),
@@ -257,6 +278,8 @@ def index_clusters(
                 into=spec.into,
                 declaration=r,
                 aliases=spec.aliases,
+                declared_into=spec.declared_into,
+                synthesized=spec.synthesized,
             )
             for r, spec in zip(op.relation_equivalences, relation_specs, strict=True)
         ),

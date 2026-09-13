@@ -9,6 +9,7 @@ from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.evolution import (
     ClusterConflictError,
     ComposeIdentityError,
+    ComposeIncompleteError,
     ComposeManifestsOp,
     ComposeNameConflictError,
     PropertyEquivalence,
@@ -17,6 +18,7 @@ from graflo.architecture.evolution import (
     VertexEquivalence,
     apply_evolution,
     compose_manifests,
+    resolve_clusters,
 )
 from graflo.architecture.graph_types import Index
 from graflo.architecture.schema.core import CoreSchema
@@ -746,7 +748,7 @@ def test_identity_alignments_apply_inside_compose() -> None:
         vertex="Company",
         attributes=[
             AlignmentAttribute(
-                into="match_key",
+                name="match_key",
                 sources={
                     "r_a": DerivationSpec(input=["shared_raw"]),
                     "r_b": DerivationSpec(input=["shared_raw"]),
@@ -1660,3 +1662,66 @@ class TestComposedProfileFold:
                 self._op(),
                 bump_version=False,
             )
+
+
+def test_fuse_right_unions_the_right_model_rather_than_dropping_it() -> None:
+    """CORE-MERGE-001's failure class: the right ``order_line`` used to be skipped.
+
+    Adopting the left spelling made the right vertex share a name with the
+    union, and the union skipped any right vertex whose name it had seen --
+    so its properties and identity vanished with nothing raising. The fuse is
+    now a synthesized cluster, so the two models are unioned like a declared
+    equivalence.
+    """
+    right = _manifest(
+        name="r",
+        vertices=[
+            Vertex(
+                name="order_line",
+                properties=[
+                    Field(name="id", type=FieldType.STRING),
+                    Field(name="qty", type=FieldType.INT),
+                ],
+                identity=["id"],
+            )
+        ],
+        edges=[],
+        resources=[{"name": "r_right", "apply": [{"vertex": "order_line"}]}],
+    )
+    composed = compose_manifests(
+        _named("OrderLine"), right, ComposeManifestsOp(name_conflict="fuse_right")
+    )
+    assert composed.graph_schema is not None
+    vc = composed.graph_schema.core_schema.vertex_config
+    assert vc.vertex_set == {"OrderLine"}
+    assert "qty" in vc.property_names("OrderLine")
+
+
+def test_fuse_right_synthesizes_a_cluster_for_a_near_collision() -> None:
+    resolution = resolve_clusters(
+        ComposeManifestsOp(name_conflict="fuse_right"),
+        left=_named("OrderLine"),
+        right=_named("order_line"),
+    )
+    (cluster,) = resolution.index.vertices
+    assert cluster.synthesized
+    assert (cluster.left, cluster.right, cluster.into) == (
+        ("OrderLine",),
+        ("order_line",),
+        "OrderLine",
+    )
+
+
+def test_an_exact_collision_under_error_carries_its_completion() -> None:
+    with pytest.raises(
+        ComposeIncompleteError, match="vertex name collision"
+    ) as excinfo:
+        compose_manifests(
+            _named("OrderLine"),
+            _named("OrderLine", resource="r_other"),
+            ComposeManifestsOp(),
+        )
+    assert excinfo.value.completion.kind == "declare_equivalences"
+    assert excinfo.value.completion.vertex_equivalences == (
+        {"left": "OrderLine", "right": "OrderLine", "into": "OrderLine"},
+    )
