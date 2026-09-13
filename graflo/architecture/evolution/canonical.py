@@ -87,6 +87,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from graflo.architecture.contract.manifest import GraphManifest
+from graflo.architecture.refusal import Refusal
 from graflo.architecture.schema.naming import canonical_slug
 
 from .equivalence import (
@@ -142,7 +143,7 @@ def _other(side: Side) -> Side:
     return "right" if side == "left" else "left"
 
 
-class ComposeCanonicalConflictError(ValueError):
+class ComposeCanonicalConflictError(Refusal):
     """A compose op's clusters and its declared maps contradict each other.
 
     A contradiction (one name, two targets; a fixed point moved), an ambiguity
@@ -152,17 +153,9 @@ class ComposeCanonicalConflictError(ValueError):
 
     ``check`` names the rule that refused — the parenthesised phrase in the
     message — and ``subjects`` the names it is about, as
-    :func:`~graflo.architecture.evolution.equivalence.subject` ids. Both are
-    optional and neither appears in the message, so a caller that only reads
-    ``str(exc)`` sees exactly what it saw before they existed.
+    :func:`~graflo.architecture.evolution.equivalence.subject` ids; see
+    :class:`.Refusal`.
     """
-
-    def __init__(
-        self, message: str, *, check: str = "", subjects: tuple[str, ...] = ()
-    ) -> None:
-        super().__init__(message)
-        self.check = check
-        self.subjects = subjects
 
 
 @dataclass(frozen=True)
@@ -892,9 +885,17 @@ def _check_property_fields_exist(
 def _check_attribute_fixed_points(
     cluster: Cluster, *, side: Side, declared: CanonicalMap
 ) -> None:
-    """A canonical attribute the map established on a member may not be renamed by the cluster."""
+    """A canonical attribute the map established on a member may not be renamed by the cluster.
+
+    The fixed-point set is keyed by *canonical class*, not by member:
+    ``canonical_property_names`` folds every source class the map sends to one
+    canonical name, which is the whole point -- one member's rename establishes
+    the attribute for every sibling that lands on the same class. Asking it
+    with a raw member name returns nothing for exactly the members the map
+    renames, which is to say for exactly the cases this check is here for.
+    """
     for member, attr_map in cluster.property_maps(side).items():
-        canonical = declared.canonical_property_names(member)
+        canonical = declared.canonical_property_names(declared.canonical_class(member))
         for old, new in attr_map.items():
             if old in canonical and new != old:
                 raise _conflict(

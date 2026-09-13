@@ -625,6 +625,73 @@ class TestValidateAndCompleteCanonicalMap:
         with pytest.raises(ComposeCanonicalConflictError, match="property re-target"):
             self._validate(op)
 
+    def test_property_retarget_raises_for_a_member_the_map_renames(self) -> None:
+        """The same rule, reached through a member that is *not* already canonical.
+
+        ``test_property_retarget_raises`` above names ``Company``, which the map
+        leaves alone -- so the fixed-point set was found whichever name the
+        lookup used, and the check passed for the wrong reason. Here the map
+        folds ``Firm`` and ``Shop`` onto ``Company`` and establishes
+        ``company_id`` there by renaming ``Firm.firm_id``; ``Shop`` already
+        spells it that way, so nothing is unknown or colliding. Re-targeting it
+        is a fixed point moved, and the refusal has to say so for a renamed
+        member exactly as it does for an unrenamed one.
+        """
+        left = _manifest(
+            name="retarget-left",
+            vertices=[
+                Vertex(
+                    name="Firm",
+                    properties=[Field(name="firm_id")],
+                    identity=["firm_id"],
+                ),
+                Vertex(
+                    name="Shop",
+                    properties=[Field(name="company_id")],
+                    identity=["company_id"],
+                ),
+            ],
+        )
+        right = _manifest(
+            name="retarget-right",
+            vertices=[
+                Vertex(
+                    name="Org", properties=[Field(name="org_id")], identity=["org_id"]
+                )
+            ],
+        )
+        cm = CanonicalMap(
+            vertices={"Firm": "Company", "Shop": "Company"},
+            properties={"Firm": {"firm_id": "company_id"}},
+            allow_merges=True,
+        )
+        op = ComposeManifestsOp(
+            vertex_equivalences=[
+                VertexEquivalence(
+                    left=["Firm", "Shop"],
+                    right="Org",
+                    into="Company",
+                    properties=[
+                        PropertyEquivalence(
+                            left={"Shop": "company_id"},
+                            right={"Org": "org_id"},
+                            into="ident",
+                        )
+                    ],
+                )
+            ],
+            allow_merges=True,
+            canonical_maps={"left": cm},
+        )
+        from graflo.architecture.evolution.canonical import resolve_clusters
+
+        with pytest.raises(
+            ComposeCanonicalConflictError, match="property re-target"
+        ) as excinfo:
+            resolve_clusters(op, left=left, right=right)
+        assert excinfo.value.check == "property re-target"
+        assert excinfo.value.subjects == ("left:Shop.company_id",)
+
     def _right_two_orgs(self) -> GraphManifest:
         return _manifest(
             name="b2",

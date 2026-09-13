@@ -8,6 +8,8 @@ Each vertex resolves to one of four modes via the derived property **`Vertex.ide
 
 A flat `hash_identity_properties` list and an `identity_funnel` both resolve to **`hash`**: they share one write path and differ only in how the digest sources are chosen. Use **`Vertex.has_identity_funnel`** to tell them apart.
 
+Mutually exclusive means *refused*, not merely undefined: every pair that would resolve to two modes at once raises from `Vertex.set_identity`, and `merge_vertex_models` refuses the same pairs when a union would produce one. The exclusions matter most where one mode silently wins a precedence contest — `identity_mode` tests `blank` first, so a vertex carrying both `blank` and `hash_identity_properties` would key on a generated id with the declared digest never consulted, and rows that should deduplicate would not.
+
 | `identity_mode` | Authored signal | `identity` | Key behavior |
 |---|---|---|---|
 | **`natural`** | default | `[f]` or `[f1, f2, …]` | Upsert on declared fields. If a field is typed **`UUID`**, validate shape when present — **do not invent**. |

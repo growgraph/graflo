@@ -12,6 +12,7 @@ from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.contract.provenance import ManifestMetadata
 from graflo.architecture.graph_types import EdgeId
+from graflo.architecture.refusal import Refusal
 from graflo.architecture.schema.core import CoreSchema
 from graflo.architecture.schema.database_features import (
     DatabaseProfile,
@@ -181,7 +182,7 @@ def _apply_right_resource_policy(
         apply_rename_resources(right, RenameResourcesOp(renames=collisions))
 
 
-class ComposeNameConflictError(ValueError):
+class ComposeNameConflictError(Refusal):
     """Two names denote one concept under different naming conventions.
 
     Distinct from ``ComposeCanonicalConflictError`` in ``canonical.py``, which
@@ -192,18 +193,11 @@ class ComposeNameConflictError(ValueError):
 
     ``check`` names the rule that refused and ``subjects`` the names it is
     about, as :func:`~graflo.architecture.evolution.equivalence.subject` ids;
-    neither appears in the message.
+    see :class:`.Refusal`.
     """
 
-    def __init__(
-        self, message: str, *, check: str = "", subjects: tuple[str, ...] = ()
-    ) -> None:
-        super().__init__(message)
-        self.check = check
-        self.subjects = subjects
 
-
-class ComposeIdentityError(ValueError):
+class ComposeIdentityError(Refusal):
     """A composed vertex's identity is ambiguous and nothing resolves it.
 
     Two or more cluster members disagree on their (canonical-name) identity
@@ -222,9 +216,11 @@ class ComposeIdentityError(ValueError):
     def __init__(
         self, message: str, *, check: str = "", subjects: tuple[str, ...] = ()
     ) -> None:
-        super().__init__(message)
-        self.check = check or "identity disagreement"
-        self.subjects = subjects
+        # The only refusal carrying a default check: every raise site here is
+        # the same rule, and three of them pass no subjects either.
+        super().__init__(
+            message, check=check or "identity disagreement", subjects=subjects
+        )
 
 
 def _resolve_schema_collisions(

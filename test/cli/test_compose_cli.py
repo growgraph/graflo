@@ -389,9 +389,9 @@ def test_a_composing_run_writes_a_preview_with_no_findings(tmp_path):
 def test_the_findings_table_leads_with_the_refusal_and_names_its_nodes():
     """What `--dry-run` and every plotted run print.
 
-    Asserted on the formatter rather than on the captured stream: this
-    suite runs with live logging, which reroutes the stream CliRunner
-    hands back, and the ordering is the part worth pinning anyway.
+    Asserted on the formatter because building the three severities by hand is
+    the only way to pin their *order*; the test below covers the same table
+    coming out of the CLI for real.
     """
     from graflo.architecture.evolution.preview import ComposeFinding, ComposePreview
     from graflo.cli.compose import _findings_table
@@ -428,6 +428,37 @@ def test_the_findings_table_leads_with_the_refusal_and_names_its_nodes():
     assert "right:Org" in lines[1]
     assert "possible" in lines[2]
     assert "note" in lines[3], "a note sorts last; it blocks nothing"
+
+
+def test_a_dry_run_prints_the_findings_table_on_stderr(tmp_path):
+    """The table an author actually sees, through the command.
+
+    On stderr, and only on stderr: ``_write_preview`` echoes with
+    ``err=preview.refused``, so a refused run -- the only kind with a refusal to
+    lead with -- writes there, and ``click>=8.2`` keeps the two streams apart.
+    A ``result.stdout`` assertion here reads as an empty stream and looks like a
+    capture problem, which is not what it is.
+    """
+    op_path = _write(tmp_path, "op.yaml", BOUNDARY_OP)
+
+    result = CliRunner().invoke(
+        graflo,
+        [
+            "compose",
+            str(MANIFEST_A),
+            str(MANIFEST_B),
+            "--op",
+            str(op_path),
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 1, "a refusal is still a refusal"
+    assert result.stdout == "", "nothing about a refusal belongs on stdout"
+    lines = result.stderr.splitlines()
+    assert lines[0].startswith("findings: "), result.stderr
+    assert "refusal" in lines[1], "the refusal leads"
+    assert "compose refused" in result.stderr
 
 
 def test_no_findings_says_so():

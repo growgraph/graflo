@@ -385,6 +385,125 @@ def test_merging_unrelated_lineages_points_at_compose(workspace) -> None:
     assert "compose" in result.output
 
 
+def _forked_history(workspace):
+    """Two branches over one root, saved to the store. Returns both commits."""
+    from graflo.architecture.contract.manifest import GraphManifest
+    from graflo.architecture.evolution.apply import apply_evolution
+    from graflo.architecture.evolution.commit import build_commit
+    from graflo.architecture.evolution.history import FileCommitStore, History
+    from graflo.architecture.evolution.ops import AddVertexPropertiesOp
+
+    base = GraphManifest.from_dict(BASE_MANIFEST)
+    root = build_commit(
+        base, [AddVertexPropertiesOp(additions={"person": ["shared"]})], label="root"
+    )
+    after_root = apply_evolution(
+        base, list(root.ops), bump_version=False, finish_init=False
+    )
+    left = build_commit(
+        after_root,
+        [AddVertexPropertiesOp(additions={"person": ["age"]})],
+        parents=[root.id],
+        label="add age",
+    )
+    right = build_commit(
+        after_root,
+        [AddVertexPropertiesOp(additions={"person": ["email"]})],
+        parents=[root.id],
+        label="add email",
+    )
+    FileCommitStore(workspace["store"]).save(History(commits=[root, left, right]))
+    return left, right
+
+
+def test_merge_draws_the_slot_tree_and_the_lineage(workspace, tmp_path) -> None:
+    """``dot`` output, so the figures assert without Graphviz installed."""
+    left, right = _forked_history(workspace)
+    slots = tmp_path / "figs" / "slots.dot"
+    history = tmp_path / "figs" / "history.dot"
+
+    result = _run(
+        "merge",
+        left.id,
+        right.id,
+        "--base",
+        workspace["v1"],
+        "--store",
+        workspace["store"],
+        "--output-path",
+        workspace["out"],
+        "--plot",
+        str(slots),
+        "--plot-history",
+        str(history),
+    )
+
+    assert result.exit_code == 0, result.output
+    # The directory did not exist: creating it is the CLI's job, not Graphviz's.
+    assert slots.is_file() and history.is_file()
+    assert "digraph" in slots.read_text()
+    assert "digraph" in history.read_text()
+
+
+def test_a_refused_merge_still_draws_its_slot_tree(workspace, tmp_path) -> None:
+    """An unresolved conflict is exactly the case the picture is for.
+
+    Drawn before the refusal, not instead of it -- the same rule the compose
+    preview follows, and the run that would otherwise leave nothing behind.
+    """
+    from graflo.architecture.contract.manifest import GraphManifest
+    from graflo.architecture.evolution.apply import apply_evolution
+    from graflo.architecture.evolution.commit import build_commit
+    from graflo.architecture.evolution.history import FileCommitStore, History
+    from graflo.architecture.evolution.ops import AddVertexPropertiesOp
+
+    base = GraphManifest.from_dict(BASE_MANIFEST)
+    root = build_commit(
+        base, [AddVertexPropertiesOp(additions={"person": ["shared"]})], label="root"
+    )
+    after_root = apply_evolution(
+        base, list(root.ops), bump_version=False, finish_init=False
+    )
+    # Both branches retype the same property: one slot, two answers.
+    left = build_commit(
+        after_root,
+        [
+            AddVertexPropertiesOp(
+                additions={"person": [{"name": "cost", "type": "INT"}]}
+            )
+        ],
+        parents=[root.id],
+        label="cost as int",
+    )
+    right = build_commit(
+        after_root,
+        [
+            AddVertexPropertiesOp(
+                additions={"person": [{"name": "cost", "type": "STRING"}]}
+            )
+        ],
+        parents=[root.id],
+        label="cost as string",
+    )
+    FileCommitStore(workspace["store"]).save(History(commits=[root, left, right]))
+
+    slots = tmp_path / "conflict.dot"
+    result = _run(
+        "merge",
+        left.id,
+        right.id,
+        "--base",
+        workspace["v1"],
+        "--store",
+        workspace["store"],
+        "--plot",
+        str(slots),
+    )
+
+    assert result.exit_code != 0, "an unresolved conflict is still a refusal"
+    assert slots.is_file(), "written even though the merge refused"
+
+
 # ── stamp ───────────────────────────────────────────────────────────────────
 
 

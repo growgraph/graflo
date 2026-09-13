@@ -51,7 +51,10 @@ from pydantic import Field as PydanticField
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.contract.manifest import GraphManifest
+from graflo.architecture.schema.edge import Edge
+from graflo.architecture.schema.vertex import Vertex
 
+from .apply import relabel_vertex_fields
 from .canonical import (
     ClusterResolution as _ClusterResolution,
 )
@@ -75,6 +78,7 @@ from .canonical import (
 from .canonical import (
     SideMaps as _SideMaps,
 )
+from .compose import _resolve_schema_collisions
 from .equivalence import (
     Cluster,
     ClusterConflictError,
@@ -85,6 +89,10 @@ from .equivalence import (
     UnknownMemberError,
     did_you_mean,
     subject,
+)
+from .merge_core import (
+    merge_edge_pair,
+    merge_vertex_models,
 )
 from .ops import (
     CanonicalizeOp,
@@ -131,6 +139,11 @@ FindingKind = Literal[
     "unknown_property",
     "identity_disagreement",
     "type_conflict",
+    "unit_conflict",
+    "identity_mode_conflict",
+    "identity_funnel_conflict",
+    "secondary_identity_conflict",
+    "edge_conflict",
 ]
 
 #: A refusal's ``check`` phrase to the finding kind it is an instance of. The
@@ -160,6 +173,15 @@ _KIND_BY_CHECK: dict[str, FindingKind] = {
     "clash": "disagreement",
     "identity disagreement": "identity_disagreement",
     "cluster conflict": "cluster_overlap",
+    # What the schema union refuses. ``edge type disagreement`` has to outrank
+    # the bare ``disagreement`` above, which longest-match already guarantees;
+    # a bare ``conflict`` key would swallow all five and must never be added.
+    "field type conflict": "type_conflict",
+    "field units conflict": "unit_conflict",
+    "identity mode conflict": "identity_mode_conflict",
+    "identity funnel conflict": "identity_funnel_conflict",
+    "secondary identity conflict": "secondary_identity_conflict",
+    "edge type disagreement": "edge_conflict",
 }
 
 #: Refusals that carry no ``check`` are classified by type alone. A value of
@@ -172,6 +194,18 @@ _KINDS_BY_TYPE: dict[str, frozenset[FindingKind]] = {
     "ComposeIncompleteError": frozenset({"incomplete", "name_collision"}),
     "ComposeIdentityError": frozenset({"identity_disagreement"}),
     "ComposeNameConflictError": frozenset({"near_collision", "name_collision"}),
+    # Inert while the union's refusals set ``check`` -- which they all do. Kept
+    # so a raise site added later without one still classifies rather than
+    # silently becoming exempt.
+    "FieldMergeError": frozenset({"type_conflict", "unit_conflict"}),
+    "VertexMergeError": frozenset(
+        {
+            "identity_mode_conflict",
+            "identity_funnel_conflict",
+            "secondary_identity_conflict",
+        }
+    ),
+    "EdgeMergeError": frozenset({"edge_conflict"}),
 }
 
 
@@ -1038,11 +1072,6 @@ class _Builder:
                 except ComposeCanonicalConflictError as exc:
                     self.from_refusal(exc, fallback="unknown_property")
                 try:
-                    # Mirrors compose, including its own quirk: the fixed-point
-                    # set is looked up by canonical class, so a member the map
-                    # renames has none and the check passes. Reproduced rather
-                    # than corrected -- a preview that flags what compose
-                    # accepts is worse than one that agrees with it.
                     _check_attribute_fixed_points(
                         cluster, side=side, declared=self.declared[side]
                     )
@@ -1261,10 +1290,29 @@ class _Builder:
                     ],
                 )
 
-    def type_checks(self) -> None:
-        """Two members typing one composed attribute differently."""
+    def merge_checks(self) -> None:
+        """What the schema union itself refuses, one cluster at a time.
+
+        Not a second implementation of the rules: this calls
+        :func:`~graflo.architecture.evolution.merge_core.merge_vertex_models`,
+        the same kernel ``_union_schema`` calls, so a type clash, a unit clash,
+        two identity modes that exclude each other, a divergent funnel and a
+        secondary identity claimed twice are all found by the code that decides
+        them. One call per cluster, so a refusal on one does not hide the next.
+
+        The kernel takes the composed name as an argument and never reads
+        ``Vertex.name``, so only the *attribute* renames have to be applied
+        first -- the class relabel is irrelevant here. Applying them through
+        the whole-side ``apply_canonicalize`` would be wrong twice over: it is
+        all-or-nothing per side, and it runs this very kernel internally, so
+        one bad cluster would abort every other cluster's finding.
+
+        Compose reaches the kernel once more after the union, through
+        ``_apply_identity_alignments``; no case is known that refuses only
+        there, and this pass would not see it if one appeared.
+        """
         for cluster in self.index.vertices:
-            by_name: dict[str, dict[tuple[str, str], list[str]]] = {}
+            members: list[tuple[Side, str, Vertex]] = []
             for side in _SIDES:
                 schema = self.manifests[side].graph_schema
                 if schema is None:
@@ -1275,31 +1323,165 @@ class _Builder:
                 )
                 for member in cluster.members(side):
                     if member not in vertex_config.vertex_set:
-                        continue
-                    rename = renames.get(member, {})
-                    for prop in vertex_config[member].properties:
-                        if prop.type is None:
-                            continue
-                        composed_name = rename.get(prop.name, prop.name)
-                        signature = (
-                            str(prop.type),
-                            str(prop.item_type) if prop.item_type else "",
+                        continue  # reported by the existence check
+                    try:
+                        relabelled = relabel_vertex_fields(
+                            vertex_config[member], renames.get(member, {})
                         )
-                        by_name.setdefault(composed_name, {}).setdefault(
-                            signature, []
-                        ).append(subject(side, member, prop.name))
-            for attribute, signatures in by_name.items():
-                if len(signatures) < 2:
-                    continue
-                spelled = ", ".join(
-                    f"{'/'.join(t for t in sig if t)}" for sig in sorted(signatures)
+                    except ValueError as exc:
+                        # A rename the member cannot carry. Its own rule, not a
+                        # merge one -- and pydantic has already eaten any
+                        # `check` it might have carried.
+                        self.from_refusal(
+                            exc,
+                            fallback="property_collision",
+                            nodes=[subject(side, member)],
+                        )
+                        continue
+                    members.append((side, member, relabelled))
+            if len(members) < 2:
+                continue
+            try:
+                merge_vertex_models(
+                    [vertex for _s, _m, vertex in members], cluster.into
                 )
-                self.finding(
-                    "type_conflict",
-                    f"members of {cluster.into!r} type {attribute!r} differently "
-                    f"({spelled}); the composed vertex cannot carry both",
-                    nodes=[n for ids in signatures.values() for n in ids],
+            except ValueError as exc:
+                # Deliberately wider than the two typed errors: this module
+                # describes a compose, it never raises one. An untyped refusal
+                # from deeper in the kernel still earns a finding -- a general
+                # one, since nothing says which rule it is -- rather than
+                # taking the whole preview down with it.
+                self.from_refusal(
+                    exc,
+                    fallback="disagreement",
+                    nodes=self._merge_nodes(cluster, members, exc),
                 )
+
+    def _effective_map(self, side: Side, kind: Kind) -> dict[str, str]:
+        """Where a name on *side* ends up, as the union sees it.
+
+        Compose applies the composite relabel first and the right side's
+        name-conflict policy second (``compose_manifests``, in that order), so
+        the map the union sees is the policy composed onto the relabel. The
+        policy is obtained from the very function compose calls, over the
+        *post-relabel* names, so ``prefix_right`` cannot drift out of sync
+        here and start reporting conflicts on composes that succeed.
+
+        Under ``error`` and ``union_right`` the policy is empty by
+        construction, and when it refuses, ``same_names`` has already said so.
+        """
+        composite = (
+            _kind_mapping(self.composite[side], kind) if side in self.composite else {}
+        )
+        if side != "right":
+            return dict(composite)
+
+        left_after = {
+            _kind_mapping(self.composite["left"], kind).get(name, name)
+            if "left" in self.composite
+            else name
+            for name in self.names["left"].of_kind(kind)
+        }
+        right_after = sorted(
+            {composite.get(name, name) for name in self.names[side].of_kind(kind)}
+        )
+        try:
+            policy = _resolve_schema_collisions(
+                left_names=left_after,
+                right_names=right_after,
+                exempt=(
+                    self.index.labels
+                    if kind == "vertex"
+                    else self.index.relation_labels
+                ),
+                name_conflict=self.op.name_conflict,
+                kind=kind,
+                equivalence_hint=(
+                    "VertexEquivalence" if kind == "vertex" else "RelationEquivalence"
+                ),
+            )
+        except ValueError:
+            policy = {}  # the refusal is `same_names`' to report, not this pass's
+        if not policy:
+            return dict(composite)
+        out = {name: policy.get(target, target) for name, target in composite.items()}
+        for name in self.names[side].of_kind(kind):
+            if name not in out and name in policy:
+                out[name] = policy[name]
+        return out
+
+    def edge_merge_checks(self) -> None:
+        """Two declarations of one logical edge that the union cannot fold.
+
+        Not scopeable to the relation clusters: ``_union_schema`` folds *every*
+        edge of both sides by ``edge_id``, and two edges collide precisely
+        because a **vertex** cluster renamed their endpoints onto one name. So
+        this remaps both sides whole, groups by the resulting ``edge_id``, and
+        folds each group on its own -- one unit at a time, so a group that
+        refuses does not hide the next.
+        """
+        by_id: dict[Any, list[tuple[Side, Edge]]] = {}
+        for side in _SIDES:
+            schema = self.manifests[side].graph_schema
+            if schema is None:
+                continue
+            vertices = self._effective_map(side, "vertex")
+            relations = self._effective_map(side, "relation")
+            for edge in schema.core_schema.edge_config.edges:
+                remapped = edge.model_copy(
+                    update={
+                        "source": vertices.get(edge.source, edge.source),
+                        "target": vertices.get(edge.target, edge.target),
+                        **(
+                            {"relation": relations.get(edge.relation, edge.relation)}
+                            if edge.relation is not None
+                            else {}
+                        ),
+                    }
+                )
+                by_id.setdefault(remapped.edge_id, []).append((side, remapped))
+
+        for edge_id, group in by_id.items():
+            if len(group) < 2:
+                continue
+            folded = group[0][1]
+            for _side, edge in group[1:]:
+                try:
+                    folded = merge_edge_pair(folded, edge)
+                except ValueError as exc:  # never raise out of a preview
+                    self.from_refusal(
+                        exc,
+                        fallback="edge_conflict",
+                        nodes=[
+                            subject("composed", str(name))
+                            for name in edge_id
+                            if name is not None
+                        ],
+                    )
+                    break
+
+    def _merge_nodes(
+        self,
+        cluster: Cluster,
+        members: list[tuple[Side, str, Vertex]],
+        exc: ValueError,
+    ) -> list[str]:
+        """The nodes a union refusal is about, most specific first.
+
+        A field conflict names the composed attribute and every member that
+        declares it -- *including* members that left it untyped, which is the
+        side an author most needs to see. Anything else names the classes.
+        """
+        nodes: list[str] = [subject("composed", cluster.into)]
+        fields: tuple[str, ...] = getattr(exc, "fields", ())
+        if not fields:
+            return [*nodes, *(subject(s, m) for s, m, _v in members)]
+        for name in fields:
+            nodes.append(subject("composed", cluster.into, name))
+            for side, member, vertex in members:
+                if any(prop.name == name for prop in vertex.properties):
+                    nodes.append(subject(side, member, name))
+        return nodes
 
     def build(self) -> ComposePreview:
         self.schema_nodes()
@@ -1309,7 +1491,8 @@ class _Builder:
         self.property_checks()
         self.same_names()
         self.identity_checks()
-        self.type_checks()
+        self.merge_checks()
+        self.edge_merge_checks()
         return ComposePreview(
             left_name=_manifest_name(self.manifests["left"], "left"),
             right_name=_manifest_name(self.manifests["right"], "right"),

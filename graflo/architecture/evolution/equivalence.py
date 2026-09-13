@@ -35,6 +35,7 @@ from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Generic, Literal, TypeVar
 
+from graflo.architecture.refusal import Refusal
 from graflo.architecture.schema.naming import canonical_slug
 
 from .ops import ComposeManifestsOp, RelationEquivalence, VertexEquivalence
@@ -71,39 +72,35 @@ def subject(scope: SubjectScope, name: str, attr: str | None = None) -> str:
     return f"{scope}:{name}" if attr is None else f"{scope}:{name}.{attr}"
 
 
-class ClusterConflictError(ValueError):
+class ClusterConflictError(Refusal):
     """Two or more equivalence declarations conflict over cluster membership.
 
     ``check`` names the rule that refused and ``subjects`` the names it is
-    about, as :func:`subject` ids. Both are optional and neither appears in the
-    message, so a caller that only reads ``str(exc)`` sees exactly what it saw
-    before they existed.
+    about, as :func:`subject` ids -- see :class:`.Refusal`.
     """
 
-    def __init__(
-        self, message: str, *, check: str = "", subjects: tuple[str, ...] = ()
-    ) -> None:
-        super().__init__(message)
-        self.check = check
-        self.subjects = subjects
 
-
-class UnknownMemberError(ValueError):
+class UnknownMemberError(Refusal):
     """An equivalence names a member the manifest on that side does not declare.
 
     Its own type because it is the one refusal here that is nearly always a
     typo rather than a disagreement between two declarations, and a caller
-    classifying refusals cannot key on a bare ``ValueError``. Subclasses
-    ``ValueError``, so every existing handler keeps catching it.
+    classifying refusals cannot key on a bare ``ValueError``.
+
+    Derives ``check`` and ``subjects`` rather than taking them from the caller:
+    there is only one rule it can be an instance of, and only one name it can
+    be about.
     """
 
     def __init__(self, message: str, *, side: Side, kind: Kind, member: str) -> None:
-        super().__init__(message)
+        super().__init__(
+            message,
+            check=f"unknown {kind} member",
+            subjects=(subject(side, member),),
+        )
         self.side = side
         self.kind = kind
         self.member = member
-        self.check = f"unknown {kind} member"
-        self.subjects = (subject(side, member),)
 
 
 @dataclass(frozen=True)

@@ -495,7 +495,242 @@ def _cases(canonical_map: CanonicalMap) -> dict[str, ComposeManifestsOp]:
     }
 
 
-@pytest.mark.parametrize("case", sorted(_cases(CanonicalMap())))
+# ── what the schema union itself refuses ────────────────────────────────────
+#
+# These cannot be expressed against the example manifests: `manifest_a` and
+# `manifest_b` are untyped, natural-identity and carry no edges, so none of the
+# identity modes, types, units or edge kinds below has anywhere to live. They
+# get purpose-built pairs instead, and the invariant covers them all the same.
+
+
+def _schema_manifest(
+    name: str, vertices: list[dict], edges: list[dict]
+) -> GraphManifest:
+    manifest = GraphManifest.from_config(
+        {
+            "schema": {
+                "metadata": {"name": name, "version": "1.0.0"},
+                "graph": {
+                    "vertex_config": {"vertices": vertices},
+                    "edge_config": {"edges": edges},
+                },
+            }
+        }
+    )
+    manifest.finish_init()
+    return manifest
+
+
+def _pair(
+    left_vertex: dict,
+    right_vertex: dict,
+    *,
+    left_edges: list[dict] | None = None,
+    right_edges: list[dict] | None = None,
+    equivalences: list[VertexEquivalence] | None = None,
+    name_conflict: str = "error",
+) -> tuple[GraphManifest, GraphManifest, ComposeManifestsOp]:
+    """One cluster over one vertex per side, and the op that composes them."""
+    return (
+        _schema_manifest("union-left", [left_vertex], left_edges or []),
+        _schema_manifest("union-right", [right_vertex], right_edges or []),
+        ComposeManifestsOp(
+            vertex_equivalences=equivalences
+            or [
+                VertexEquivalence(
+                    left=left_vertex["name"], right=right_vertex["name"], into="Party"
+                )
+            ],
+            allow_merges=True,
+            name_conflict=name_conflict,
+        ),
+    )
+
+
+def _natural(name: str, **overrides) -> dict:
+    return {"name": name, "properties": ["p", "q"], "identity": ["p"], **overrides}
+
+
+def _funnel(name: str, branch_id: str, field: str) -> dict:
+    return {
+        "name": name,
+        "properties": ["p", "q"],
+        "identity_funnel": {"branches": [{"id": branch_id, "fields": [field]}]},
+    }
+
+
+#: Two vertices per side that a pair of clusters renames onto one pair of
+#: endpoints, which is what makes two edges collide by ``edge_id`` at all.
+_EDGE_LEFT = [_natural("A"), {"name": "X", "properties": ["k"], "identity": ["k"]}]
+_EDGE_RIGHT = [_natural("B"), {"name": "Y", "properties": ["k"], "identity": ["k"]}]
+_EDGE_CLUSTERS = [
+    VertexEquivalence(left="A", right="B", into="Party"),
+    VertexEquivalence(left="X", right="Y", into="Place"),
+]
+
+
+def _edge_pair(
+    left_edge: dict, right_edge: dict
+) -> tuple[GraphManifest, GraphManifest, ComposeManifestsOp]:
+    """``union_right`` so the shared relation name is a cluster, not a collision.
+
+    Under the default ``error`` the compose refuses on the relation name before
+    the union ever folds the two edges, which tests the wrong rule.
+    """
+    return (
+        _schema_manifest("union-left", _EDGE_LEFT, [left_edge]),
+        _schema_manifest("union-right", _EDGE_RIGHT, [right_edge]),
+        ComposeManifestsOp(
+            vertex_equivalences=_EDGE_CLUSTERS,
+            allow_merges=True,
+            name_conflict="union_right",
+        ),
+    )
+
+
+def _union_cases() -> dict[
+    str, tuple[GraphManifest, GraphManifest, ComposeManifestsOp]
+]:
+    """One case per rule ``merge_core`` and ``merge_field_lists`` refuse on."""
+    return {
+        "blank-x-assigned": _pair(
+            _natural("A", blank=True), _natural("B", assigned=True)
+        ),
+        "assigned-x-hash": _pair(
+            _natural("A", assigned=True), _natural("B", hash_identity_properties=["q"])
+        ),
+        # The pair neither the kernel nor Vertex.set_identity used to refuse.
+        "blank-x-hash": _pair(
+            _natural("A", blank=True), _natural("B", hash_identity_properties=["q"])
+        ),
+        "funnel-x-hash": _pair(
+            _funnel("A", "b1", "p"), _natural("B", hash_identity_properties=["q"])
+        ),
+        "funnel-x-blank": _pair(_funnel("A", "b1", "p"), _natural("B", blank=True)),
+        "divergent-funnels": _pair(_funnel("A", "b1", "p"), _funnel("B", "b2", "q")),
+        "blank-x-secondary": _pair(
+            _natural("A", blank=True),
+            _natural("B", secondary_identities=[{"name": "k", "fields": ["q"]}]),
+        ),
+        "secondary-name-clash": _pair(
+            _natural("A", secondary_identities=[{"name": "k", "fields": ["q"]}]),
+            _natural("B", secondary_identities=[{"name": "k", "fields": ["p", "q"]}]),
+        ),
+        "type-clash": _pair(
+            {
+                "name": "A",
+                "properties": [{"name": "p", "type": "STRING"}],
+                "identity": ["p"],
+            },
+            {
+                "name": "B",
+                "properties": [{"name": "p", "type": "INT"}],
+                "identity": ["p"],
+            },
+        ),
+        "unit-clash": _pair(
+            {
+                "name": "A",
+                "properties": ["p", {"name": "s", "semantics": {"unit": "m/s"}}],
+                "identity": ["p"],
+            },
+            {
+                "name": "B",
+                "properties": ["p", {"name": "s", "semantics": {"unit": "km/h"}}],
+                "identity": ["p"],
+            },
+        ),
+        "edge-kind-clash": _edge_pair(
+            {"source": "A", "target": "X", "relation": "r"},
+            {
+                "source": "B",
+                "target": "Y",
+                "relation": "r",
+                "type": "indirect",
+                "by": "M",
+            },
+        ),
+        "edge-property-type-clash": _edge_pair(
+            {
+                "source": "A",
+                "target": "X",
+                "relation": "r",
+                "properties": [{"name": "w", "type": "INT"}],
+            },
+            {
+                "source": "B",
+                "target": "Y",
+                "relation": "r",
+                "properties": [{"name": "w", "type": "STRING"}],
+            },
+        ),
+    }
+
+
+#: Composes that must succeed *and* draw no objection. The preview reporting a
+#: problem where compose has none is the other half of the invariant, and the
+#: name-conflict policies are where the union passes can most easily
+#: over-report: they rename the right side after the composite relabel, so a
+#: pass that models only one of the two sees collisions that do not happen.
+def _clean_cases() -> dict[
+    str, tuple[GraphManifest, GraphManifest, ComposeManifestsOp]
+]:
+    agreeing_edge_left = {"source": "A", "target": "X", "relation": "r"}
+    agreeing_edge_right = {"source": "B", "target": "Y", "relation": "r"}
+    cases = {}
+    for policy in ("prefix_right", "union_right"):
+        cases[f"agreeing-edges-{policy}"] = (
+            _schema_manifest("union-left", _EDGE_LEFT, [agreeing_edge_left]),
+            _schema_manifest("union-right", _EDGE_RIGHT, [agreeing_edge_right]),
+            ComposeManifestsOp(
+                vertex_equivalences=_EDGE_CLUSTERS,
+                allow_merges=True,
+                name_conflict=policy,
+            ),
+        )
+    cases["shared-name-prefixed"] = (
+        _schema_manifest("union-left", [_natural("Same")], []),
+        _schema_manifest("union-right", [_natural("Same")], []),
+        ComposeManifestsOp(allow_merges=True, name_conflict="prefix_right"),
+    )
+    cases["untyped-side-gives-way"] = _pair(
+        {
+            "name": "A",
+            "properties": [{"name": "p", "type": "STRING"}],
+            "identity": ["p"],
+        },
+        {"name": "B", "properties": ["p"], "identity": ["p"]},
+    )
+    return cases
+
+
+#: Refusals the structural pass is deliberately not asked to anticipate, keyed
+#: by exception type, with the reason. An entry here is a documented exemption;
+#: anything else that classifies to nothing **fails** the invariant below
+#: rather than skipping it, which is how every union refusal stayed invisible
+#: while the suite was green.
+NOT_ANTICIPATED: dict[str, str] = {}
+
+
+def _all_cases(
+    left: GraphManifest, right: GraphManifest, canonical_map: CanonicalMap
+) -> dict[str, tuple[GraphManifest, GraphManifest, ComposeManifestsOp]]:
+    """Every case as a ``(left, right, op)`` triple.
+
+    The example-backed rows share one pair of manifests; the union rows each
+    bring their own, because the example pair cannot express what they test.
+    """
+    cases: dict[str, tuple[GraphManifest, GraphManifest, ComposeManifestsOp]] = {
+        name: (left, right, op) for name, op in _cases(canonical_map).items()
+    }
+    cases.update(_union_cases())
+    cases.update(_clean_cases())
+    return cases
+
+
+@pytest.mark.parametrize(
+    "case", sorted([*_cases(CanonicalMap()), *_union_cases(), *_clean_cases()])
+)
 def test_whatever_compose_refuses_the_structural_pass_also_found(
     case, left, right, canonical_map
 ):
@@ -505,12 +740,13 @@ def test_whatever_compose_refuses_the_structural_pass_also_found(
     the preview stopped somewhere compose did not — and a preview that says
     "nothing wrong" about a pair compose refuses is worse than no preview.
     """
-    op = _cases(canonical_map)[case]
+    manifests = _all_cases(left, right, canonical_map)[case]
+    case_left, case_right, op = manifests
 
-    attempted = preview_compose(left, right, op)
+    attempted = preview_compose(case_left, case_right, op)
     # The structural pass on its own: what the preview reports when compose is
     # never run, which is how `--plot` on a refused run uses it.
-    alone = preview_compose(left, right, op, attempt=False)
+    alone = preview_compose(case_left, case_right, op, attempt=False)
     structural = {f.kind for f in alone.findings if f.severity == "possible"}
 
     if attempted.outcome.status == "composed":
@@ -519,8 +755,14 @@ def test_whatever_compose_refuses_the_structural_pass_also_found(
         return
 
     wanted = expected_kinds(attempted.outcome)
-    if not wanted:
-        return  # a refusal the preview is not asked to anticipate
+    assert wanted, (
+        f"{case}: compose refused with an unclassifiable "
+        f"{attempted.outcome.error_type} (check={attempted.outcome.check!r}). "
+        "Give the refusal a typed error carrying `check`, or record it in "
+        "NOT_ANTICIPATED with the reason it is exempt — an empty expectation "
+        "used to skip this assertion, which is how a whole class of refusals "
+        f"stayed invisible. Message: {attempted.outcome.message}"
+    )
     assert wanted & structural, (
         f"{case}: compose refused with {sorted(wanted)}, "
         f"the structural pass saw {sorted(structural)}"
@@ -558,6 +800,14 @@ def test_a_preview_survives_a_round_trip_through_json(case, left, right, canonic
         ("property re-target", "property_retarget"),
         ("unknown property", "unknown_property"),
         ("cluster overlap", "cluster_overlap"),
+        # What the schema union refuses.
+        ("field type conflict", "type_conflict"),
+        ("field units conflict", "unit_conflict"),
+        ("vertex identity mode conflict", "identity_mode_conflict"),
+        ("vertex identity funnel conflict", "identity_funnel_conflict"),
+        ("vertex secondary identity conflict", "secondary_identity_conflict"),
+        # Longest match again: this must not read as the bare `disagreement`.
+        ("edge type disagreement", "edge_conflict"),
     ],
 )
 def test_a_refusals_check_phrase_names_its_finding_kind(check, expected):
@@ -569,3 +819,58 @@ def test_an_unclassifiable_refusal_asserts_nothing():
         status="refused", error_type="ValueError", message="something deeper"
     )
     assert expected_kinds(outcome) == frozenset()
+
+
+def test_every_type_keyed_expectation_names_a_real_refusal_class():
+    """``_KINDS_BY_TYPE`` is keyed by ``type(exc).__name__``, so it is strings.
+
+    A renamed or deleted refusal class would leave a key matching nothing, and
+    the only symptom would be refusals quietly classifying to nothing again --
+    which is the failure this whole module exists to make loud.
+    """
+    from graflo.architecture.evolution import canonical, equivalence, merge_core
+    from graflo.architecture.evolution import compose as compose_module
+    from graflo.architecture.evolution.preview import _KINDS_BY_TYPE
+    from graflo.architecture.schema import vertex as vertex_module
+
+    modules = (
+        canonical,
+        compose_module,
+        equivalence,
+        merge_core,
+        vertex_module,
+    )
+    for name in _KINDS_BY_TYPE:
+        found = next(
+            (getattr(m, name) for m in modules if hasattr(m, name)),
+            None,
+        )
+        assert found is not None, (
+            f"_KINDS_BY_TYPE names {name!r}, which no refusal class answers to"
+        )
+        assert issubclass(found, ValueError), (
+            f"{name} must stay a ValueError so existing handlers keep catching it"
+        )
+
+
+def test_every_union_refusal_carries_a_check():
+    """A refusal without one classifies to nothing, and the invariant skips it.
+
+    The kernel's own guard: ``merge_vertex_models`` and ``merge_edge_pair``
+    raise only typed refusals, and every one of them names its rule. The single
+    exception is the empty-input guard, which is a programming error rather
+    than an authoring one.
+    """
+    import inspect
+
+    from graflo.architecture.evolution import merge_core
+
+    source = inspect.getsource(merge_core)
+    bare = [
+        line.strip()
+        for line in source.splitlines()
+        if line.strip().startswith("raise ValueError(")
+    ]
+    assert len(bare) == 1, (
+        f"expected only the empty-input guard to raise a bare ValueError, found {bare}"
+    )

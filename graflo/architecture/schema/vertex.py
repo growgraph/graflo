@@ -35,6 +35,7 @@ from pydantic import (
 )
 
 from graflo.architecture.base import ConfigBaseModel
+from graflo.architecture.refusal import Refusal
 from graflo.architecture.schema.identity_funnel import IdentityFunnel
 from graflo.architecture.schema.semantics import (
     FieldSemantics,
@@ -354,18 +355,57 @@ class SecondaryIdentity(ConfigBaseModel):
         return frozenset(self.fields)
 
 
-class FieldMergeConflict(ValueError):
+class FieldMergeConflict(Refusal):
     """One property that two declarations describe incompatibly.
 
     The per-property clause and the remedy are kept apart from the rendered
     message so :func:`merge_field_lists` can report every conflicting property
     under one owner heading instead of one error per run.
+
+    ``field`` and ``conflict`` are the same two facts in structured form: which
+    property, and whether the disagreement is about types or about units. A
+    caller classifying the refusal reads those rather than the prose.
     """
 
-    def __init__(self, owner: str, reason: str, remedy: str) -> None:
+    def __init__(self, owner: str, reason: str, remedy: str, *, field: str) -> None:
         self.reason = reason
         self.remedy = remedy
-        super().__init__(f"{_conflict_heading([reason], owner)}, {reason}. {remedy}")
+        self.owner = owner
+        self.field = field
+        self.conflict = _conflict_kind([reason])
+        super().__init__(
+            f"{_conflict_heading([reason], owner)}, {reason}. {remedy}",
+            check=_FIELD_CHECK[self.conflict],
+        )
+
+
+class FieldMergeError(Refusal):
+    """Every property two declarations describe incompatibly, in one refusal.
+
+    :func:`merge_field_lists` collects rather than raising on the first clash,
+    so an author fixing a large compose sees all of them at once. The
+    individual :class:`FieldMergeConflict` objects stay on ``conflicts`` and
+    their property names on ``fields``, so a caller can point at what is
+    wrong without parsing the rendered message.
+
+    ``check`` follows :func:`_conflict_kind` over the whole set, which is what
+    the heading already says -- so a reader of the message and a caller keying
+    on ``check`` are told the same thing, and a mixed set reports as a type
+    conflict on both.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        owner: str,
+        conflicts: tuple[FieldMergeConflict, ...],
+    ) -> None:
+        self.owner = owner
+        self.conflicts = conflicts
+        self.fields = tuple(dict.fromkeys(c.field for c in conflicts))
+        self.conflict = _conflict_kind([c.reason for c in conflicts])
+        super().__init__(message, check=_FIELD_CHECK[self.conflict])
 
 
 _RETYPE_REMEDY = "Retype one side with change_field_types before merging."
@@ -375,10 +415,26 @@ _UNIT_REMEDY = (
 )
 
 
+def _conflict_kind(reasons: list[str]) -> Literal["types", "units"]:
+    """``types`` unless every conflict is about units, which are not types.
+
+    One predicate behind both the rendered heading and the refusal's ``check``,
+    so the sentence an author reads and the rule a caller keys on cannot drift
+    apart.
+    """
+    return "units" if all("units " in reason for reason in reasons) else "types"
+
+
 def _conflict_heading(reasons: list[str], owner: str) -> str:
-    """``types`` unless every conflict is about units, which are not types."""
-    kind = "units" if all("units " in reason for reason in reasons) else "types"
-    return f"Conflicting field {kind} for {owner}"
+    return f"Conflicting field {_conflict_kind(reasons)} for {owner}"
+
+
+#: The rule name a field conflict of each kind refuses under. Substrings of
+#: these are what ``evolution.preview`` maps onto its finding kinds.
+_FIELD_CHECK: dict[str, str] = {
+    "types": "field type conflict",
+    "units": "field units conflict",
+}
 
 
 def _fold_field_description(left: str | None, right: str | None) -> str | None:
@@ -413,6 +469,7 @@ def merge_fields(a: Field, b: Field, *, owner: str) -> Field:
                 f"property {a.name!r}: {format_field_type_label(a)!r} vs "
                 f"{format_field_type_label(b)!r}",
                 _RETYPE_REMEDY,
+                field=a.name,
             )
         # Exactly one side is typed: its (type, item_type) pair carries whole.
         base, other = (a, b) if a.type is not None else (b, a)
@@ -430,6 +487,7 @@ def merge_fields(a: Field, b: Field, *, owner: str) -> Field:
             owner,
             f"property {a.name!r}: units {left_unit!r} vs {right_unit!r}",
             _UNIT_REMEDY,
+            field=a.name,
         ) from None
 
     # Rebuilt from the whole authored field rather than an enumerated
@@ -473,9 +531,11 @@ def merge_field_lists(fields: Iterable[Field], *, owner: str) -> list[Field]:
         heading = _conflict_heading(reasons, owner)
         remedies = list(dict.fromkeys(conflict.remedy for conflict in conflicts))
         if len(conflicts) == 1:
-            raise ValueError(f"{heading}, {reasons[0]}. {remedies[0]}")
-        listed = "\n".join(f"  {reason}" for reason in reasons)
-        raise ValueError(f"{heading}:\n{listed}\n" + " ".join(remedies))
+            message = f"{heading}, {reasons[0]}. {remedies[0]}"
+        else:
+            listed = "\n".join(f"  {reason}" for reason in reasons)
+            message = f"{heading}:\n{listed}\n" + " ".join(remedies)
+        raise FieldMergeError(message, owner=owner, conflicts=tuple(conflicts))
 
     return [merged[name] for name in order]
 
@@ -672,6 +732,12 @@ class Vertex(ConfigBaseModel):
             raise ValueError(
                 f"Vertex '{self.name}': assigned and hash_identity_properties "
                 "are mutually exclusive"
+            )
+        if self.blank and self.hash_identity_properties:
+            raise ValueError(
+                f"Vertex '{self.name}': blank and hash_identity_properties are "
+                "mutually exclusive — identity_mode reads blank first, so the "
+                "vertex would key on a generated id and never consult the digest"
             )
         if self.identity_funnel is not None:
             if self.hash_identity_properties:

@@ -104,7 +104,7 @@ Name-disjoint sides need no equivalence at all: with `vertex_equivalences` / `re
 
 A `VertexEquivalence` declaration *is* one cluster. `into` is optional — see [Canonical maps](#canonical-maps) for how a composed name is found. `ClusterConflictError` (raised before any rename) covers the three ways declarations can contradict each other: a class **claimed by two** declarations, two declarations **sharing one composed name** (that collapse is one n-ary cluster and must be spelled as one), and a composed name that already names an **existing non-member class** on a side (which would silently merge into an unrelated type). Properties with the **same spelling** on both sides after alignment fuse for free; list a `PropertyEquivalence` only to rename, to map per member (`left={"Company": "company_key", "Shop": "shop_key"}`), or to flag identity.
 
-That fusion is a **union**, and it compares more than a name. `type` and `item_type` travel together, so `LIST<STRING>` and `LIST<INT>` are a conflict rather than a shared `LIST`; descriptions from both sides are kept; grounding blocks union their `exact_match` and `synonyms`, and a disputed `iri` clears rather than electing one side's concept. Two disagreements refuse the compose instead of resolving it: two declared **types** for one property, and two declared **units** — a property that is `m/s` on one side and `km/h` on the other would hold numerically incomparable values once fused. Neither is widened automatically, because the composed type would be one neither author wrote; retype one side with `change_field_types` first. Every conflicting property is named in one error rather than one per run.
+That fusion is a **union**, and it compares more than a name. `type` and `item_type` travel together, so `LIST<STRING>` and `LIST<INT>` are a conflict rather than a shared `LIST`; descriptions from both sides are kept; grounding blocks union their `exact_match` and `synonyms`, and a disputed `iri` clears rather than electing one side's concept. Two disagreements refuse the compose instead of resolving it: two declared **types** for one property, and two declared **units** — a property that is `m/s` on one side and `km/h` on the other would hold numerically incomparable values once fused. Edge properties fold by exactly the same rule, since it is one kernel. Neither is widened automatically, because the composed type would be one neither author wrote; retype one side with `change_field_types` first. Every conflicting property is named in one error rather than one per run.
 
 Compose refuses to guess the composed **identity** too: when members disagree on their identity field-set after alignment and nothing resolves it, `ComposeIdentityError` names each member's key. Resolve it with `identity` on the cluster (a natural key, an `IdentityFunnel`, or a `SideIdentity` shorthand lowered to one funnel), a `PropertyEquivalence(identity=True)` flag, or an `identity_alignments` entry. A declared `identity` demotes each member's retired key to a lookup-only secondary identity unless the cluster sets `retire="keep"`.
 
@@ -229,8 +229,18 @@ does. Pass `attempt=False` to describe the declarations without composing.
 
 It is not a second implementation of the rules: each check calls the function
 compose itself calls, one declaration or one map entry at a time, so a refusal
-on one unit does not hide the next. The invariant the tests hold it to is that
-whatever compose refuses, the preview has a finding of a matching kind for.
+on one unit does not hide the next. That extends to the schema union — the
+preview runs `merge_vertex_models` and `merge_edge_pair` per cluster, so a type
+clash, a unit clash, two identity modes that exclude each other, a divergent
+funnel, a secondary identity claimed twice and an edge whose two declarations
+disagree on `type`/`by` are all found by the code that decides them.
+
+The invariant the tests hold it to is that whatever compose refuses, the
+preview has a finding of a matching kind for. It **fails closed**: a refusal
+the preview cannot classify fails the suite rather than skipping the case, so a
+new rule cannot be added without a finding kind to report it under. What makes
+a refusal classifiable is a `check` phrase on the exception — every refusal in
+the compose and union path carries one.
 
 From the shell, `graflo compose --plot conflicts.svg --preview-json
 conflicts.json` writes both — **including when compose refuses**, which is the
