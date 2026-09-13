@@ -204,6 +204,38 @@ op = ComposeManifestsOp(
 composed = compose_manifests(left, right, op)
 ```
 
+### Previewing
+
+`compose_manifests` raises at the first refusal — right for a function that
+returns a manifest, but it means three bad declarations take three runs to
+find. `preview_compose(left, right, op)` walks the same declarations and
+reports **every** problem at once, as data:
+
+```python
+from graflo.architecture.evolution.preview import preview_compose
+
+preview = preview_compose(left, right, op)
+for finding in preview.blocking:
+    print(finding.severity, finding.kind, finding.nodes, finding.message)
+```
+
+A `ComposePreview` carries the declaration graph — each side's classes and
+attributes, the clusters over them, the canonical names the maps establish —
+plus `findings` at three severities: `refusal` is the one compose raised,
+`possible` is everything the preview found on its own, `note` an acknowledged
+heuristic such as a satisfied entry. Every finding names the nodes it is
+about, and an incomplete one carries the same `Completion` the exception
+does. Pass `attempt=False` to describe the declarations without composing.
+
+It is not a second implementation of the rules: each check calls the function
+compose itself calls, one declaration or one map entry at a time, so a refusal
+on one unit does not hide the next. The invariant the tests hold it to is that
+whatever compose refuses, the preview has a finding of a matching kind for.
+
+From the shell, `graflo compose --plot conflicts.svg --preview-json
+conflicts.json` writes both — **including when compose refuses**, which is the
+case they are for. `--dry-run` prints the findings table on its own.
+
 ### Vocabulary
 
 | term | type | meaning |

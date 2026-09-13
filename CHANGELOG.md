@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Compose preview — every conflict at once, instead of one per run.** `preview_compose(left, right, op)` (`architecture/evolution/preview.py`) walks a compose op's equivalences and canonical maps and returns a `ComposePreview`: the declaration graph (each side's classes and attributes, the clusters over them, the canonical names the maps establish) plus `findings` at three severities — `refusal` for what compose raised, `possible` for what the preview found on its own, `note` for an acknowledged heuristic. `compose_manifests` raises at the first refusal, which is right for a function returning a manifest but means three bad declarations take three runs to find; the preview reports them together. It is not a second implementation of the rules: every check calls the function compose itself calls, one declaration or one map entry at a time, so a refusal on one unit does not hide the next. Pydantic throughout, so `to_dict()` is an API payload as much as a drawing input. `attempt=False` describes the declarations without composing.
+- **Structured refusals.** `ComposeCanonicalConflictError`, `ComposeIncompleteError`, `ComposeNameConflictError`, `ComposeIdentityError` and `ClusterConflictError` now carry `check` (the rule that refused) and `subjects` (the names it is about, as `subject()` ids such as `left:Firm` or `left:Firm.firm_id`). A new `UnknownMemberError(ValueError)` replaces the bare `ValueError` from `check_member_existence`, so a caller classifying refusals can key on the type. All keyword-only with defaults, and no message text changed.
+- **Conflict figures.** `graflo.plot.compose.plot_compose_preview` draws the declaration graph with each side in its own column and classes as tables — one row per attribute, each its own Graphviz port — so an attribute-level declaration lands on the row it renames. Findings colour what they name and are numbered into a legend; a completion is drawn as the declaration it suggests. `graflo.plot.merge.plot_merge_preview` draws a three-way merge's slot tree (slots contain one another, so a contested vertex sits above the field edits inside it) and `plot_history` the commit DAG with the merge base marked. Each has a `build_*_graph` counterpart returning a plain networkx graph, so what is drawn can be asserted without Graphviz installed.
+- **Merge projection.** `build_merge_preview(result)` turns a `MergeResult` into its slot tree — contested slots carrying each branch's ops and the ancestor's excerpt, settled ones carrying what was applied.
+- **CLI.** `graflo compose --plot PATH --preview-json PATH --max-rows N`, written **even when compose refuses**, which is the case they are for; `--dry-run` prints the findings table. `graflo merge --plot PATH --plot-history PATH`, drawn before the unresolved-conflict refusal rather than instead of it. `plot_manifest` gains `--only` to select figure families.
+- **SVG and DOT output** across every figure, alongside pdf and png. `dot` writes the source with no layout run. Output directories are created rather than failing inside Graphviz, and a missing `plot` extra now names what to install.
+- **Examples.** `examples/19-union-canonical-equivalence/build_union.py --plot-dir` draws all six demo modes; `examples/20-version-control/merge_branches.py --plot-dir` draws the slot tree and the lineage.
+
+### Changed
+
+- `plot_vc2vc` reads the schema's vertex set and declared adjacency from `SchemaGraph` rather than deriving them from `vertex_config` / `edge_config` a second time. Resource-discovered edges still supplement it — `SchemaGraph` indexes the schema and knows nothing about an edge that exists only in a pipeline.
+- `ActorWrapper.assemble_tree` delegates to `graflo.plot.plotter.assemble_tree` instead of keeping a copy, which had drifted: it hardcoded `pdf`, ignored dpi, and carried its own actor-colour table. It now honours `output_format` and `output_dpi`.
+- Every `ManifestPlotter` figure family appends the schema version to its filename. Previously only `vc2vc` and `vc2fields` did, so one run wrote two naming schemes.
+- `_fold_declared_maps` and `_same_name_groups` are public as `fold_declared_maps` and `same_name_groups`.
+
+### Fixed
+
+- **The `xml2json` console script pointed at a module that does not exist** (`graflo.cli.plot_schema`), so it was broken on install; the umbrella CLI mounted the same dead path and silently dropped the verb, because that mount is wrapped in a bare `except` for the sake of verbs behind optional extras. `sh/generate_examples_figs.sh` called the same removed name, so figure regeneration did not run either.
+- **`AuxNodeType.INDEX` was a `StrEnum` duplicate of `FIELD`**, which collapses to one member — so the polygon/orange styling keyed to it could never be applied.
+- Dead `knapsack()` helper in `graflo/cli/plot_manifest.py`, unreachable and printing as a side effect.
+
 ## [1.13.1]
 
 ### Added

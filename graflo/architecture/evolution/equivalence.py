@@ -41,11 +41,69 @@ from .ops import ComposeManifestsOp, RelationEquivalence, VertexEquivalence
 
 Side = Literal["left", "right"]
 
+#: What a declaration is about: a class or a relation.
+Kind = Literal["vertex", "relation"]
+
+#: Where a name lives. The two sides' own vocabularies, plus the two the
+#: compose declarations establish: a **composed** name is what a cluster
+#: collapses onto, a **canonical** one what a declared map renames into
+#: without any cluster naming it.
+SubjectScope = Literal["left", "right", "composed", "canonical"]
+
 DeclarationT = TypeVar("DeclarationT", VertexEquivalence, RelationEquivalence)
 
 
+def subject(scope: SubjectScope, name: str, attr: str | None = None) -> str:
+    """A stable id for the class or attribute a refusal is about.
+
+    Every refusal at this boundary names the declarations it refuses, and a
+    caller that wants to *point* at them — a preview, a diagram, an editor —
+    needs those names as data rather than parsed back out of prose.
+
+    Args:
+        scope: Which vocabulary the name lives in.
+        name: The class or relation name.
+        attr: An attribute of it, when the subject is narrower than a class.
+
+    Returns:
+        ``"left:Firm"`` for a class, ``"left:Firm.firm_id"`` for an attribute.
+    """
+    return f"{scope}:{name}" if attr is None else f"{scope}:{name}.{attr}"
+
+
 class ClusterConflictError(ValueError):
-    """Two or more equivalence declarations conflict over cluster membership."""
+    """Two or more equivalence declarations conflict over cluster membership.
+
+    ``check`` names the rule that refused and ``subjects`` the names it is
+    about, as :func:`subject` ids. Both are optional and neither appears in the
+    message, so a caller that only reads ``str(exc)`` sees exactly what it saw
+    before they existed.
+    """
+
+    def __init__(
+        self, message: str, *, check: str = "", subjects: tuple[str, ...] = ()
+    ) -> None:
+        super().__init__(message)
+        self.check = check
+        self.subjects = subjects
+
+
+class UnknownMemberError(ValueError):
+    """An equivalence names a member the manifest on that side does not declare.
+
+    Its own type because it is the one refusal here that is nearly always a
+    typo rather than a disagreement between two declarations, and a caller
+    classifying refusals cannot key on a bare ``ValueError``. Subclasses
+    ``ValueError``, so every existing handler keeps catching it.
+    """
+
+    def __init__(self, message: str, *, side: Side, kind: Kind, member: str) -> None:
+        super().__init__(message)
+        self.side = side
+        self.kind = kind
+        self.member = member
+        self.check = f"unknown {kind} member"
+        self.subjects = (subject(side, member),)
 
 
 @dataclass(frozen=True)
@@ -171,7 +229,13 @@ def _check_declarations(
                     raise ClusterConflictError(
                         f"{kind}: {side}:{name} is claimed by two equivalence "
                         f"declarations (into {specs[prior].into!r} and "
-                        f"into {into!r}); merge them into one declaration"
+                        f"into {into!r}); merge them into one declaration",
+                        check="cluster overlap",
+                        subjects=(
+                            subject(side, name),
+                            subject("composed", specs[prior].into),
+                            subject("composed", into),
+                        ),
                     )
                 claimed[key] = index
         prior_owner = into_owner.get(into)
@@ -180,7 +244,9 @@ def _check_declarations(
                 f"{kind}: two equivalence declarations both target into "
                 f"{into!r}; two declarations sharing one `into` collapse into "
                 "one composed class — spell it as one declaration naming "
-                "every member"
+                "every member",
+                check="shared into",
+                subjects=(subject("composed", into),),
             )
         into_owner[into] = index
         for side, members, names in (
@@ -199,7 +265,9 @@ def _check_declarations(
                 f"but is not a member of its cluster "
                 f"({side}={list(members)}); add it to this cluster's `{side}` "
                 "to merge into it, declare it in another cluster so it is "
-                "renamed away, or pick a different `into`"
+                "renamed away, or pick a different `into`",
+                check="occupied into",
+                subjects=(subject(side, into), subject("composed", into)),
             )
 
 
@@ -312,29 +380,46 @@ def check_member_existence(
     left_relation_names: Collection[str],
     right_relation_names: Collection[str],
 ) -> None:
-    """Every member must exist on its side; a near-miss spelling is named."""
+    """Every member must exist on its side; a near-miss spelling is named.
+
+    Raises:
+        UnknownMemberError: A member is absent from its side. A subclass of
+            ``ValueError``, so existing handlers are unaffected.
+    """
     for cluster in vertex_clusters:
         for member in cluster.left:
             if member not in left_vertex_names:
-                raise ValueError(
+                raise UnknownMemberError(
                     f"compose_manifests: left vertex {member!r} not in left "
-                    f"manifest{did_you_mean(member, left_vertex_names)}"
+                    f"manifest{did_you_mean(member, left_vertex_names)}",
+                    side="left",
+                    kind="vertex",
+                    member=member,
                 )
         for member in cluster.right:
             if member not in right_vertex_names:
-                raise ValueError(
+                raise UnknownMemberError(
                     f"compose_manifests: right vertex {member!r} not in right "
-                    f"manifest{did_you_mean(member, right_vertex_names)}"
+                    f"manifest{did_you_mean(member, right_vertex_names)}",
+                    side="right",
+                    kind="vertex",
+                    member=member,
                 )
     for cluster in relation_clusters:
         for member in cluster.left:
             if member not in left_relation_names:
-                raise ValueError(
-                    f"compose_manifests: left relation {member!r} not in left manifest"
+                raise UnknownMemberError(
+                    f"compose_manifests: left relation {member!r} not in left manifest",
+                    side="left",
+                    kind="relation",
+                    member=member,
                 )
         for member in cluster.right:
             if member not in right_relation_names:
-                raise ValueError(
+                raise UnknownMemberError(
                     f"compose_manifests: right relation {member!r} not in "
-                    "right manifest"
+                    "right manifest",
+                    side="right",
+                    kind="relation",
+                    member=member,
                 )

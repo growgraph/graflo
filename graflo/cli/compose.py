@@ -9,10 +9,15 @@ for disagreement before anything is renamed.
 Either side may carry no ``schema`` block: a manifest with only an
 ``ingestion_model`` and/or ``bindings`` is a new source wired onto an existing
 type vocabulary, and composing it is the point of the overlay shape.
+
+``--plot`` and ``--preview-json`` write the *preview*: the declaration graph
+and every conflict in it, rather than only the one compose raised. Both are
+written even when compose refuses -- which is the case they are for.
 """
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +40,13 @@ from graflo.architecture.evolution.compose import (
 )
 from graflo.architecture.evolution.equivalence import ClusterConflictError
 from graflo.architecture.evolution.ops import ComposeManifestsOp
+from graflo.architecture.evolution.preview import (
+    ComposeOutcome,
+    ComposePreview,
+    outcome_from_exception,
+    outcome_from_manifest,
+    preview_compose,
+)
 from graflo.architecture.profile import check_manifest
 from graflo.cli.io import dump_manifest, load_manifest, load_mapping
 
@@ -154,6 +166,33 @@ def _fold_canonical_maps(
     help="Compose and report, but write nothing.",
 )
 @click.option(
+    "--plot",
+    "plot_path",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help=(
+        "Draw the declaration graph and its conflicts here; the suffix picks "
+        "the format (svg, pdf, png, dot). Written even when compose refuses."
+    ),
+)
+@click.option(
+    "--preview-json",
+    "preview_json_path",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help=(
+        "Write the same preview as JSON: nodes, edges, clusters, findings and "
+        "the outcome. Written even when compose refuses."
+    ),
+)
+@click.option(
+    "--max-rows",
+    type=click.IntRange(min=0),
+    default=12,
+    show_default=True,
+    help="Attribute rows to draw per class before the rest are summarised.",
+)
+@click.option(
     "--check-profile",
     "profile_name",
     default=None,
@@ -172,6 +211,9 @@ def compose(
     bump_version: str,
     strict_references: bool,
     dry_run: bool,
+    plot_path: Path | None,
+    preview_json_path: Path | None,
+    max_rows: int,
     profile_name: str | None,
 ) -> None:
     """Compose LEFT and RIGHT into one manifest."""
@@ -196,6 +238,28 @@ def compose(
     except ValueError as exc:
         raise _ComposeSetupError(f"{op_path}: invalid compose op -- {exc}") from exc
 
+    wants_preview = plot_path is not None or preview_json_path is not None or dry_run
+    if plot_path is not None:
+        _check_plot_suffix(plot_path)
+    # Built before composing and without composing again: `attempt=False`
+    # keeps this to one compose per invocation, and the outcome is folded in
+    # below whichever way that one goes.
+    preview = (
+        preview_compose(left_manifest, right_manifest, op, attempt=False)
+        if wants_preview
+        else None
+    )
+
+    def emit(outcome: ComposeOutcome, subjects: tuple[str, ...] = ()) -> None:
+        if preview is None:
+            return
+        _write_preview(
+            preview.with_outcome(outcome, subjects=subjects),
+            plot_path=plot_path,
+            json_path=preview_json_path,
+            max_rows=max_rows,
+        )
+
     try:
         composed = compose_manifests(
             left_manifest,
@@ -207,6 +271,7 @@ def compose(
     except ComposeIncompleteError as exc:
         # Consistent but not covering every name: the completion is the
         # declaration to paste into the op, so print it as one.
+        emit(*outcome_from_exception(exc))
         click.echo(f"compose refused: {type(exc).__name__}: {exc}", err=True)
         click.echo("completion:", err=True)
         click.echo(
@@ -224,9 +289,11 @@ def compose(
     ) as exc:
         # Every one of these carries what to declare next; a traceback would
         # bury it.
+        emit(*outcome_from_exception(exc))
         click.echo(f"compose refused: {type(exc).__name__}: {exc}", err=True)
         raise SystemExit(EXIT_REFUSED)
 
+    emit(outcome_from_manifest(composed))
     for line in _summary(composed):
         click.echo(line)
 
@@ -249,6 +316,68 @@ def compose(
         return
     if output is not None:
         dump_manifest(composed, output)
+
+
+def _check_plot_suffix(path: Path) -> None:
+    """Refuse a plot path this cannot write, before doing any work."""
+    from graflo.plot.render import OUTPUT_FORMATS
+
+    if path.suffix.lstrip(".").lower() not in OUTPUT_FORMATS:
+        raise click.UsageError(
+            f"--plot: unsupported format {path.suffix or '(none)'!r}; expected "
+            f"one of {', '.join(OUTPUT_FORMATS)}"
+        )
+
+
+def _write_preview(
+    preview: ComposePreview,
+    *,
+    plot_path: Path | None,
+    json_path: Path | None,
+    max_rows: int,
+) -> None:
+    """Report the findings, and write whichever artifacts were asked for.
+
+    Reached on both paths -- composed and refused -- because a refusal is
+    exactly when a reader wants the picture, and the refused run is the one
+    that would otherwise leave nothing behind.
+    """
+    for line in _findings_table(preview):
+        click.echo(line, err=preview.refused)
+    if json_path is not None:
+        json_path.parent.mkdir(parents=True, exist_ok=True)
+        json_path.write_text(json.dumps(preview.to_dict(), indent=2) + "\n")
+        click.echo(f"preview: {json_path}", err=preview.refused)
+    if plot_path is None:
+        return
+    from graflo.plot.compose import plot_compose_preview
+
+    try:
+        written = plot_compose_preview(preview, plot_path, max_rows=max_rows)
+    except RuntimeError as exc:
+        # A missing extra is a statement about the invocation, not about the
+        # manifests, so it exits 2 rather than joining the refusal at 1.
+        raise _ComposeSetupError(str(exc)) from exc
+    click.echo(f"plot: {written}", err=preview.refused)
+
+
+def _findings_table(preview: ComposePreview) -> list[str]:
+    """The findings, most serious first, one per line."""
+    findings = sorted(
+        preview.findings,
+        key=lambda f: ({"refusal": 0, "possible": 1, "note": 2}[f.severity], f.kind),
+    )
+    if not findings:
+        return ["findings: none"]
+    width = max(len(f.kind) for f in findings)
+    lines = [f"findings: {len(preview.blocking)} blocking, {len(findings)} total"]
+    for number, finding in enumerate(findings, start=1):
+        where = f" [{', '.join(finding.nodes)}]" if finding.nodes else ""
+        lines.append(
+            f"  {number:>2}. {finding.severity:<8} {finding.kind:<{width}}"
+            f"{where}\n      {finding.message}"
+        )
+    return lines
 
 
 def _summary(manifest: GraphManifest) -> list[str]:

@@ -194,46 +194,42 @@ class ActorWrapper:
             return cls(*data)
         return cls(**data)
 
-    def assemble_tree(self, fig_path: Path | None = None):
+    def assemble_tree(
+        self,
+        fig_path: Path | str | None = None,
+        output_format: str = "pdf",
+        output_dpi: int | None = None,
+    ):
+        """Draw this pipeline's actor tree, or return it as a graph.
+
+        Delegates to :func:`graflo.plot.plotter.assemble_tree`, which is the
+        one implementation. ``graflo.plot`` sits above this layer, so the
+        import is made here rather than at module scope; a missing plotting
+        extra is reported rather than raised.
+
+        Args:
+            fig_path: Where to write the figure; ``None`` returns the graph.
+            output_format: Figure format, when writing one.
+            output_dpi: Raster resolution, for ``png``.
+
+        Returns:
+            ``networkx.MultiDiGraph | None``: the tree when *fig_path* is
+            ``None``, otherwise ``None``.
+        """
         import logging
 
         logger = logging.getLogger(__name__)
-        _, _, _, edges = self.fetch_actors(0, [])
-        logger.info("%s", len(edges))
         try:
-            import networkx as nx
-        except ImportError as e:
-            logger.error("not able to import networks %s", e)
+            from graflo.plot.plotter import assemble_tree
+        except ImportError as exc:
+            logger.error("not able to import the plotting stack: %s", exc)
             return None
-        nodes = {}
-        g = nx.MultiDiGraph()
-        for ha, hb, pa, pb in edges:
-            nodes[ha] = pa
-            nodes[hb] = pb
-        from graflo.plot.plotter import fillcolor_palette
-
-        map_class2color = {
-            DescendActor: fillcolor_palette["green"],
-            VertexActor: "orange",
-            VertexRouterActor: fillcolor_palette["peach"],
-            EdgeActor: fillcolor_palette["violet"],
-            TransformActor: fillcolor_palette["blue"],
-        }
-
-        for n, props in nodes.items():
-            nodes[n]["fillcolor"] = map_class2color[props["class"]]
-            nodes[n]["style"] = "filled"
-            nodes[n]["color"] = "brown"
-
-        edges = [(ha, hb) for ha, hb, _, _ in edges]
-        g.add_edges_from(edges)
-        g.add_nodes_from(nodes.items())
-
-        if fig_path is not None:
-            ag = nx.nx_agraph.to_agraph(g)
-            ag.draw(fig_path, "pdf", prog="dot")
-            return None
-        return g
+        return assemble_tree(
+            self,
+            fig_path=fig_path,
+            output_format=output_format,
+            output_dpi=output_dpi,
+        )
 
     def fetch_actors(self, level: int, edges: list) -> tuple[int, type, str, list]:
         return self.actor.fetch_actors(level, edges)

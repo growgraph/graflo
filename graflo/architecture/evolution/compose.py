@@ -41,7 +41,7 @@ from .canonical import (
     resolve_clusters,
 )
 from .db_profile import merge_default_property_values
-from .equivalence import Cluster, ClusterIndex, Side
+from .equivalence import Cluster, ClusterIndex, Side, subject
 from .merge_core import (
     edge_config_from_edges,
     merge_edge_pair,
@@ -189,7 +189,18 @@ class ComposeNameConflictError(ValueError):
     the residue neither side declared -- the undeclared path, where compose
     would otherwise produce two unrelated types with the data split between
     them and nothing raising.
+
+    ``check`` names the rule that refused and ``subjects`` the names it is
+    about, as :func:`~graflo.architecture.evolution.equivalence.subject` ids;
+    neither appears in the message.
     """
+
+    def __init__(
+        self, message: str, *, check: str = "", subjects: tuple[str, ...] = ()
+    ) -> None:
+        super().__init__(message)
+        self.check = check
+        self.subjects = subjects
 
 
 class ComposeIdentityError(ValueError):
@@ -202,7 +213,18 @@ class ComposeIdentityError(ValueError):
     entry for the composed class. The alternative -- silently taking the
     union of both field-sets as the new identity -- produces a natural key no
     record fully carries.
+
+    ``subjects`` names the composed class and its disagreeing members, as
+    :func:`~graflo.architecture.evolution.equivalence.subject` ids; it does not
+    appear in the message.
     """
+
+    def __init__(
+        self, message: str, *, check: str = "", subjects: tuple[str, ...] = ()
+    ) -> None:
+        super().__init__(message)
+        self.check = check or "identity disagreement"
+        self.subjects = subjects
 
 
 def _resolve_schema_collisions(
@@ -250,7 +272,13 @@ def _resolve_schema_collisions(
                 f"them. Declare a {equivalence_hint} (or a CanonicalMap) "
                 "to combine them, set name_conflict='union_right' to adopt the "
                 "left spelling, or name_conflict='prefix_right' to keep them "
-                "apart."
+                "apart.",
+                check=f"{kind} near collision",
+                subjects=tuple(
+                    name
+                    for left, right in near
+                    for name in (subject("left", left), subject("right", right))
+                ),
             )
         return {}
 
@@ -303,7 +331,13 @@ def _assert_no_canonical_split(schema: Schema) -> None:
                 f"compose_manifests produced {kind} types that denote the same "
                 f"concept under different spellings: {split}. This is an "
                 "unhandled compose path, not an authoring error -- the result "
-                "would split data between them silently."
+                "would split data between them silently.",
+                check=f"{kind} canonical split",
+                subjects=tuple(
+                    subject("composed", name)
+                    for group in split.values()
+                    for name in group
+                ),
             )
 
 
@@ -580,7 +614,11 @@ def _composed_identity(
             f"that disagree on identity ({detail}) and nothing resolves it. "
             "Declare `identity` on the VertexEquivalence, flag a "
             "PropertyEquivalence(identity=True), or add an "
-            "identity_alignments entry for this class."
+            "identity_alignments entry for this class.",
+            subjects=(
+                subject("composed", cluster.into),
+                *(subject(side, member) for side, member, _f in plain_members),
+            ),
         )
     return identity_out, False
 

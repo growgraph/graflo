@@ -35,8 +35,10 @@ from graflo.architecture.pipeline.runtime.actor import (
     VertexActor,
     VertexRouterActor,
 )
+from graflo.architecture.schema.context.graph import SchemaGraph
 from graflo.architecture.schema.edge import Edge
 from graflo.onto import BaseEnum
+from graflo.plot.render import draw
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +72,7 @@ class AuxNodeType(BaseEnum):
 
     FIELD = "field"
     FIELD_DEFINITION = "field_definition"
-    INDEX = "field"
+    INDEX = "index"
     RESOURCE = "resource"
     TRANSFORM = "transform"
     VERTEX = "vertex"
@@ -266,13 +268,7 @@ def assemble_tree(
 
     if fig_path is not None:
         ag = nx.nx_agraph.to_agraph(g)
-        if output_format == "png" and output_dpi is not None:
-            ag.graph_attr["dpi"] = str(output_dpi)
-        ag.draw(
-            fig_path,
-            output_format,
-            prog="dot",
-        )
+        draw(ag, fig_path, output_format=output_format, dpi=output_dpi)
         return None
     else:
         return g
@@ -329,6 +325,10 @@ class ManifestPlotter:
 
         self.name = self.schema.metadata.name
         self.prefix = self.name
+        # The one index over the schema's declared adjacency. Built here so
+        # every plot reads the same traversal rather than each deriving its
+        # own from `vertex_config` / `edge_config`.
+        self.schema_graph = SchemaGraph.from_schema(self.schema)
 
     def _figure_path(self, stem: str) -> str:
         return os.path.join(self.fig_path, f"{stem}.{self.output_format}")
@@ -341,12 +341,12 @@ class ManifestPlotter:
         return f"{stem}-v{version}"
 
     def _draw(self, ag, stem: str, prog: str = "dot") -> None:
-        if self.output_format == "png" and self.output_dpi is not None:
-            ag.graph_attr["dpi"] = str(self.output_dpi)
-        ag.draw(
+        draw(
+            ag,
             self._figure_path(stem),
-            self.output_format,
+            output_format=self.output_format,
             prog=prog,
+            dpi=self.output_dpi,
         )
 
     def _discover_edges_from_resources(
@@ -594,7 +594,7 @@ class ManifestPlotter:
     def _infer_vertex_levels(self, edges: list[tuple[str, str]]) -> dict[str, int]:
         """Infer robust DAG-like levels by collapsing SCCs then layering the DAG."""
         graph = nx.DiGraph()
-        graph.add_nodes_from(self.schema.core_schema.vertex_config.vertex_set)
+        graph.add_nodes_from(self.schema_graph.vertex_types)
         graph.add_edges_from(edges)
 
         condensation = nx.condensation(graph)
@@ -752,7 +752,7 @@ class ManifestPlotter:
         if vertex_nodes:
             ag.add_subgraph(vertex_nodes, name="cluster_vertices", rank="same")
 
-        self._draw(ag, f"{self.prefix}_source2vc")
+        self._draw(ag, self._versioned_stem(f"{self.prefix}_source2vc"))
 
     def _extract_resource_vertex_reasons(self, resource) -> dict[str, set[str]]:
         """Collect vertex references for a resource with lightweight reason labels."""
@@ -790,7 +790,12 @@ class ManifestPlotter:
 
             ag = nx.nx_agraph.to_agraph(g)
             ag.graph_attr["rankdir"] = "LR"
-            self._draw(ag, f"{self.schema.metadata.name}.resource2vc-{resource.name}")
+            self._draw(
+                ag,
+                self._versioned_stem(
+                    f"{self.schema.metadata.name}.resource2vc-{resource.name}"
+                ),
+            )
 
     def plot_vc2vc(
         self,
@@ -831,10 +836,15 @@ class ManifestPlotter:
             relation_source_by_edge_id,
             relation_from_key_by_edge_id,
         ) = self._discover_edges_from_resources()
-        configured_edges = dict(self.schema.core_schema.edge_config.items())
+        # Declared edges from the index; discovered ones supplement it, since
+        # an edge that only exists in a resource pipeline is not in the schema.
+        configured_edges = {
+            edge_id: self.schema_graph.edge(edge_id)
+            for edge_id in self.schema_graph.edge_ids
+        }
         all_edges = self._merge_edges(configured_edges, discovered_edges)
 
-        known_vertices = set(self.schema.core_schema.vertex_config.vertex_set)
+        known_vertices = set(self.schema_graph.vertex_types)
         valid_edges, invalid_edges = self._filter_edges_with_known_vertices(
             all_edges,
             known_vertices,
@@ -869,7 +879,7 @@ class ManifestPlotter:
             for vertex in (source, target)
         }
         all_vertices = (
-            set(self.schema.core_schema.vertex_config.vertex_set)
+            set(self.schema_graph.vertex_types)
             if include_all_vertices
             else vertices_in_edges
         )

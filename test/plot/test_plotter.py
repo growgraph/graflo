@@ -11,6 +11,7 @@ from graflo.architecture.pipeline.runtime.actor import (
     VertexRouterActor,
 )
 from graflo.architecture.pipeline.runtime.actor.wrapper import ActorWrapper
+from graflo.architecture.schema.context.graph import SchemaGraph
 from graflo.architecture.schema.edge import Edge
 from graflo.plot.plotter import ManifestPlotter, assemble_tree, fillcolor_palette
 
@@ -21,6 +22,11 @@ class _EdgeConfigStub:
 
     def items(self):
         return self._edges.items()
+
+    @property
+    def edges(self):
+        """As a real ``EdgeConfig`` exposes them, which is what SchemaGraph reads."""
+        return list(self._edges.values())
 
 
 class _VertexConfigStub:
@@ -100,6 +106,10 @@ def _build_plotter(
         ),
     )
     cast(Any, plotter).ingestion_model = SimpleNamespace(resources=[])
+    # `__init__` is bypassed here, so the adjacency index it builds is built
+    # explicitly -- `plot_vc2vc` reads the schema through it rather than
+    # walking `vertex_config` / `edge_config` a second time.
+    cast(Any, plotter).schema_graph = SchemaGraph.from_schema(cast(Any, plotter).schema)
     return plotter
 
 
@@ -232,7 +242,7 @@ def test_plot_vc2vc_appends_schema_version_to_stem(monkeypatch):
     monkeypatch.setattr(nx.nx_agraph, "to_agraph", _fake_to_agraph)
     plotter.plot_vc2vc(include_all_vertices=False)
 
-    assert captured["ag"].draw_calls[0]["path"] == "./test_schema_vc2vc-v2.3.4.pdf"
+    assert captured["ag"].draw_calls[0]["path"] == "test_schema_vc2vc-v2.3.4.pdf"
 
 
 def test_plot_vc2fields_appends_schema_version_to_stem(monkeypatch):
@@ -252,7 +262,7 @@ def test_plot_vc2fields_appends_schema_version_to_stem(monkeypatch):
     monkeypatch.setattr(nx.nx_agraph, "to_agraph", _fake_to_agraph)
     plotter.plot_vc2fields()
 
-    assert captured["ag"].draw_calls[0]["path"] == "./test_schema_vc2fields-v2.3.4.pdf"
+    assert captured["ag"].draw_calls[0]["path"] == "test_schema_vc2fields-v2.3.4.pdf"
 
 
 def test_assemble_tree_styles_router_actor_classes():

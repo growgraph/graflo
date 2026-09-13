@@ -59,7 +59,7 @@ def _mount_existing() -> None:
         "ingest": ("graflo.cli.ingest", "ingest"),
         "migrate-schema": ("graflo.cli.migrate_schema", "migrate_schema"),
         "plot-manifest": ("graflo.cli.plot_manifest", "plot_manifest"),
-        "plot-schema": ("graflo.cli.plot_schema", "xml2json"),
+        "xml2json": ("graflo.cli.xml2json", "xml2json"),
         "manage-dbs": ("graflo.cli.manage_dbs", "manage_dbs"),
         "manifest-to-rdf": ("graflo.rdf.cli", "manifest_to_rdf"),
         "rdf-to-manifest": ("graflo.rdf.cli", "rdf_to_manifest"),

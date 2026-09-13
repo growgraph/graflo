@@ -213,6 +213,35 @@ key in place of the alignment. `--canonical-map` is folded into the op
 and the same op is refused: the cluster has no name and nothing establishes
 one.
 
+## Previewing the conflicts
+
+Each refusal above is one problem, because compose stops at the first.
+`preview_compose` walks the same declarations without refusing and reports all
+of them; `build_union.py --plot-dir figs` draws one figure per mode.
+
+```bash
+uv run python build_union.py --plot-dir figs
+```
+
+The conflicting-cluster mode is the one worth looking at. Compose reports the
+overlap — `Org` is claimed by two declarations — and stops. The picture shows
+that, and the two identity disagreements waiting behind it:
+
+![Conflicting clusters](../assets/19-union-canonical-equivalence/figs/union-conflicting-cluster.svg)
+
+Classes are drawn with a row per attribute, so an attribute-level declaration
+lands on the row it is about: the dashed blue edge is `firm_id → company_id`,
+the canonical map's attribute rename. Identity attributes are underlined,
+flagged elements carry a numbered badge into the legend, and a red outline is
+what compose actually raised against an amber one the preview found itself.
+
+The same view from the shell, written even on a refusal:
+
+```bash
+graflo compose manifest_a.yaml manifest_b.yaml --op boundary_op.yaml \
+    --plot conflicts.svg --preview-json conflicts.json
+```
+
 ## Notes
 
 - **Equivalence is declared, never inferred.** The canonical map, the

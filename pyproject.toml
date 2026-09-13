@@ -77,7 +77,7 @@ migrate_schema = "graflo.cli.migrate_schema:migrate_schema"
 plot_manifest = "graflo.cli.plot_manifest:plot_manifest"
 rdf_to_manifest = "graflo.rdf.cli:rdf_to_manifest"
 run_tigergraph_queries = "graflo.cli.run_tigergraph_queries:run_tigergraph_queries"
-xml2json = "graflo.cli.plot_schema:xml2json"
+xml2json = "graflo.cli.xml2json:xml2json"
 
 [project.urls]
 Homepage = "https://github.com/growgraph/graflo"

@@ -94,9 +94,11 @@ from .equivalence import (
     ClusterConflictError,
     ClusterIndex,
     ClusterSpec,
+    Kind,
     Side,
     check_member_existence,
     index_clusters,
+    subject,
 )
 from .ops import (
     CanonicalizeOp,
@@ -121,8 +123,10 @@ __all__ = [
     "canonical_near_collisions",
     "canonicalize_ops",
     "clusters_to_side_maps",
+    "fold_declared_maps",
     "merge_canonical_maps",
     "resolve_clusters",
+    "same_name_groups",
     "validate_and_complete_canonical_map",
 ]
 
@@ -132,8 +136,6 @@ logger = logging.getLogger(__name__)
 Scope = Literal["left", "right", "both"]
 
 _SIDES: tuple[Side, ...] = ("left", "right")
-
-Kind = Literal["vertex", "relation"]
 
 
 def _other(side: Side) -> Side:
@@ -147,7 +149,20 @@ class ComposeCanonicalConflictError(ValueError):
     (a canonical name denoting two members), or a dangling entry. The
     subclass :class:`ComposeIncompleteError` is the one refusal an extension
     resolves.
+
+    ``check`` names the rule that refused — the parenthesised phrase in the
+    message — and ``subjects`` the names it is about, as
+    :func:`~graflo.architecture.evolution.equivalence.subject` ids. Both are
+    optional and neither appears in the message, so a caller that only reads
+    ``str(exc)`` sees exactly what it saw before they existed.
     """
+
+    def __init__(
+        self, message: str, *, check: str = "", subjects: tuple[str, ...] = ()
+    ) -> None:
+        super().__init__(message)
+        self.check = check
+        self.subjects = subjects
 
 
 @dataclass(frozen=True)
@@ -186,8 +201,15 @@ class ComposeIncompleteError(ComposeCanonicalConflictError):
     to be added, and :attr:`completion` says what.
     """
 
-    def __init__(self, message: str, completion: Completion) -> None:
-        super().__init__(message)
+    def __init__(
+        self,
+        message: str,
+        completion: Completion,
+        *,
+        check: str = "",
+        subjects: tuple[str, ...] = (),
+    ) -> None:
+        super().__init__(message, check=check, subjects=subjects)
         self.completion = completion
 
 
@@ -219,17 +241,29 @@ class DeclaredMaps:
         return self.left if side == "left" else self.right
 
 
-def _conflict(check: str, detail: str, hint: str) -> ComposeCanonicalConflictError:
+def _conflict(
+    check: str, detail: str, hint: str, *, subjects: tuple[str, ...] = ()
+) -> ComposeCanonicalConflictError:
     return ComposeCanonicalConflictError(
-        f"compose contradicts the canonical map ({check}): {detail}. {hint}"
+        f"compose contradicts the canonical map ({check}): {detail}. {hint}",
+        check=check,
+        subjects=subjects,
     )
 
 
 def _incomplete(
-    check: str, detail: str, hint: str, completion: Completion
+    check: str,
+    detail: str,
+    hint: str,
+    completion: Completion,
+    *,
+    subjects: tuple[str, ...] = (),
 ) -> ComposeIncompleteError:
     return ComposeIncompleteError(
-        f"compose is incomplete ({check}): {detail}. {hint}", completion
+        f"compose is incomplete ({check}): {detail}. {hint}",
+        completion,
+        check=check,
+        subjects=subjects,
     )
 
 
@@ -424,7 +458,7 @@ class ClusterResolution:
     declared: DeclaredMaps
 
 
-def _fold_declared_maps(
+def fold_declared_maps(
     op: ComposeManifestsOp, extra: Sequence[tuple[Side, CanonicalMap]]
 ) -> DeclaredMaps:
     scoped: dict[str, CanonicalMap] = {
@@ -470,6 +504,7 @@ def _resolve_member(
             f"ambiguous {kind} member",
             f"{side} {kind} {declared!r} is the canonical name of {sources}",
             "Name the member by its own spelling.",
+            subjects=tuple(subject(side, source) for source in sources),
         )
     return declared  # reported by the existence check
 
@@ -534,6 +569,13 @@ def _resolve_cluster(
             f"{dict(sorted(opinions.items()))}",
             "One composed class has one canonical name — fix the canonical "
             "map, or split the cluster.",
+            # `opinions` values are already `side:member` ids.
+            subjects=tuple(
+                sorted(
+                    {subject("composed", name) for name in opinions}
+                    | {who for whos in opinions.values() for who in whos}
+                )
+            ),
         )
 
     if declaration.into is not None:
@@ -548,6 +590,9 @@ def _resolve_cluster(
                 f"the canonical maps disagree on {declaration.into!r}: "
                 f"{sorted(translated)}",
                 "Reconcile the maps, or name the composed class by its canonical name.",
+                subjects=tuple(
+                    subject("composed", name) for name in sorted(translated)
+                ),
             )
         label = translated.pop() if translated else declaration.into
     elif opinions:
@@ -559,6 +604,9 @@ def _resolve_cluster(
                 f"unnamed {kind} cluster",
                 f"cluster {members['left']} ~ {members['right']} has no composed name",
                 "Give it `into`, or map a member in a canonical map.",
+                subjects=tuple(
+                    subject(side, member) for side in _SIDES for member in members[side]
+                ),
             )
         label = spellings.pop()
 
@@ -571,6 +619,11 @@ def _resolve_cluster(
             "The two declarations must agree on where a name goes; canonical "
             "names are fixed points, so set `into` to the canonical name or "
             "fix the canonical map.",
+            subjects=(
+                *who,
+                subject("composed", canonical_name),
+                subject("composed", label),
+            ),
         )
     return ClusterSpec(
         left=tuple(members["left"]),
@@ -694,6 +747,7 @@ def _carry_declared_entries(
                 f"the canonical map's {side} entry {source!r} -> {target!r} "
                 f"matches no {kind} on that side",
                 "Check the spelling, or drop the entry.",
+                subjects=(subject(side, source),),
             )
         if target in composed_names and target != source:
             raise _incomplete(
@@ -707,6 +761,7 @@ def _carry_declared_entries(
                 _extended_cluster_completion(
                     index, kind=kind, side=side, composed=target, member=source
                 ),
+                subjects=(subject(side, source), subject("composed", target)),
             )
         out[source] = target
 
@@ -758,12 +813,14 @@ def _composite_side_maps(
                         f"{cls!r}, a composed name",
                         "`properties` is keyed by the source class: key the "
                         "attribute map by the member it applies to.",
+                        subjects=(subject("composed", cls),),
                     )
                 raise _conflict(
                     "dangling entry",
                     f"the canonical map's {side} attribute map for {cls!r} "
                     "matches no class on that side",
                     "Check the spelling, or drop the entry.",
+                    subjects=(subject(side, cls),),
                 )
             bucket = properties.setdefault(cls, {})
             for old, new in attrs.items():
@@ -775,6 +832,7 @@ def _composite_side_maps(
                         f"but the equivalence maps it to {existing!r}",
                         "The two declarations must agree on where an attribute "
                         "goes; fix one of them.",
+                        subjects=(subject(side, cls, old),),
                     )
                 bucket[old] = new
         ops[side] = CanonicalizeOp(
@@ -827,6 +885,7 @@ def _check_property_fields_exist(
                 f"property equivalence into {pe.into!r} names "
                 f"{side}:{member}.{field_name!r}, which is not a declared property",
                 hint + ".",
+                subjects=(subject(side, member, field_name),),
             )
 
 
@@ -844,6 +903,7 @@ def _check_attribute_fixed_points(
                     f"but the equivalence renames it to {new!r}",
                     "Canonical attributes are fixed points: align the other "
                     "members onto the canonical name, or fix the canonical map.",
+                    subjects=(subject(side, member, old),),
                 )
 
 
@@ -874,6 +934,7 @@ def _check_property_maps_against_manifest(
                     "declared property",
                     "Check the spelling, or declare the property first with "
                     "AddVertexPropertiesOp.",
+                    subjects=(subject(side, member, old),),
                 )
             if new in surviving:
                 raise _conflict(
@@ -882,6 +943,10 @@ def _check_property_maps_against_manifest(
                     "existing property of that name",
                     "A property rename cannot merge fields — align them "
                     "explicitly via PropertyEquivalence on both sides instead.",
+                    subjects=(
+                        subject(side, member, old),
+                        subject(side, member, new),
+                    ),
                 )
 
 
@@ -964,7 +1029,7 @@ def _members_field(members: Sequence[str]) -> str | list[str]:
     return members[0] if len(members) == 1 else list(members)
 
 
-def _same_name_groups(
+def same_name_groups(
     resolution: ClusterResolution,
     names: Mapping[Side, SideNames],
     *,
@@ -1060,7 +1125,7 @@ def resolve_clusters(
     would resolve it: a map entry sending a non-member onto a composed name,
     or a shared name under ``name_conflict="error"``.
     """
-    declared = _fold_declared_maps(op, canonical_maps)
+    declared = fold_declared_maps(op, canonical_maps)
     names: dict[Side, SideNames] = {
         "left": SideNames.of(left),
         "right": SideNames.of(right),
@@ -1077,8 +1142,8 @@ def resolve_clusters(
         return resolution
 
     near = op.name_conflict == "union_right"
-    vertex_groups = _same_name_groups(resolution, names, kind="vertex", near=near)
-    relation_groups = _same_name_groups(resolution, names, kind="relation", near=near)
+    vertex_groups = same_name_groups(resolution, names, kind="vertex", near=near)
+    relation_groups = same_name_groups(resolution, names, kind="relation", near=near)
     if not vertex_groups and not relation_groups:
         return resolution
 
@@ -1096,6 +1161,7 @@ def resolve_clusters(
                 vertex_equivalences=_same_name_payloads(vertex_groups),
                 relation_equivalences=_same_name_payloads(relation_groups),
             ),
+            subjects=tuple(subject("composed", name) for name in shared),
         )
 
     nary = any(
@@ -1157,5 +1223,7 @@ def validate_and_complete_canonical_map(
         ).side_maps
     except ClusterConflictError as exc:
         raise ComposeCanonicalConflictError(
-            f"compose contradicts the canonical map (cluster conflict): {exc}"
+            f"compose contradicts the canonical map (cluster conflict): {exc}",
+            check=exc.check or "cluster conflict",
+            subjects=exc.subjects,
         ) from exc

@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import click
 from pydantic import ValidationError
@@ -333,6 +334,23 @@ def checkout_cmd(
 @click.option("-m", "--label", default=None, help="Short human-readable name.")
 @click.option("--output-path", type=click.Path(path_type=Path), default=None)
 @click.option("--dry", is_flag=True, default=False, help="Report without storing.")
+@click.option(
+    "--plot",
+    "plot_path",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help=(
+        "Draw the slot tree here -- where the two branches met, and what each "
+        "did. Written even when conflicts stop the merge."
+    ),
+)
+@click.option(
+    "--plot-history",
+    "history_plot_path",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Draw the commit DAG here, with the merge base marked.",
+)
 def merge_cmd(
     left: str,
     right: str,
@@ -342,6 +360,8 @@ def merge_cmd(
     label: str | None,
     output_path: Path | None,
     dry: bool,
+    plot_path: Path | None,
+    history_plot_path: Path | None,
 ) -> None:
     """Merge two commits, reconciling against their common ancestor."""
     base_manifest = _load(base_path)
@@ -363,7 +383,20 @@ def merge_cmd(
     right_state = checkout(base_manifest, history, right_commit.id)
 
     click.echo(f"merge base: {merge_base_id[:8]}")
+    if history_plot_path is not None:
+        _plot_history(
+            history,
+            history_plot_path,
+            heads=[left_commit.id, right_commit.id],
+            merge_base=merge_base_id,
+        )
+
     merged, result = merge_three_way(ancestor, left_state, right_state)
+
+    # Drawn before the refusal below, since an unresolved merge is exactly the
+    # case the picture is for.
+    if plot_path is not None:
+        _plot_slots(result, plot_path)
 
     if result.conflicts and take is None:
         click.echo(f"\n{len(result.conflicts)} conflict(s):")
@@ -426,6 +459,36 @@ def merge_cmd(
 
 
 # ── revert ──────────────────────────────────────────────────────────────────
+
+
+def _plot_slots(result: Any, path: Path) -> None:
+    """Draw the slot tree of a merge result, or say why it could not."""
+    from graflo.architecture.evolution.preview import build_merge_preview
+
+    try:
+        from graflo.plot.merge import plot_merge_preview
+    except ImportError as exc:  # pragma: no cover - depends on the environment
+        raise click.ClickException(f"--plot: {exc}") from exc
+    try:
+        written = plot_merge_preview(build_merge_preview(result), path)
+    except (RuntimeError, ValueError) as exc:
+        raise click.ClickException(f"--plot: {exc}") from exc
+    click.echo(f"plot: {written}")
+
+
+def _plot_history(
+    history: Any, path: Path, *, heads: list[str], merge_base: str | None
+) -> None:
+    """Draw the commit DAG, or say why it could not."""
+    try:
+        from graflo.plot.merge import plot_history as draw_history
+    except ImportError as exc:  # pragma: no cover - depends on the environment
+        raise click.ClickException(f"--plot-history: {exc}") from exc
+    try:
+        written = draw_history(history, path, heads=heads, merge_base=merge_base)
+    except (RuntimeError, ValueError) as exc:
+        raise click.ClickException(f"--plot-history: {exc}") from exc
+    click.echo(f"history plot: {written}")
 
 
 @click.command("revert")

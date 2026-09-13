@@ -26,12 +26,19 @@ canonical attributes (``match_key``, ``local_key``). How each source populates
 them — gating, normalization, namespacing — is resource knowledge, appended to
 the resource pipelines as ops. The source manifests stay pure.
 
+Each refusal is one problem: compose stops at the first. ``--plot-dir`` draws
+every mode instead — the declaration graph, with *all* the conflicts in it —
+through ``preview_compose``, which walks the same checks without refusing. The
+conflicting-cluster mode is the one to look at: compose reports the overlap,
+the picture also shows the two identity disagreements behind it.
+
     cd examples/19-union-canonical-equivalence
     uv run python build_union.py                      # → artifacts/manifest_union.yaml
     uv run python build_union.py --disagreeing-map-demo
     uv run python build_union.py --conflicting-cluster-demo
     uv run python build_union.py --forgotten-member-demo
     uv run python build_union.py --shared-name-demo [--union-right]
+    uv run python build_union.py --plot-dir figs      # → figs/union-<mode>.svg
 """
 
 from __future__ import annotations
@@ -254,7 +261,57 @@ def build_union(
     return compose_manifests(manifest_a, manifest_b, op)
 
 
+#: Every declaration the demos author, by the flag that selects it. Kept as
+#: one table so the figures and the single-mode runs cannot drift apart.
+def ops_by_mode(canonical_map: CanonicalMap) -> dict[str, ComposeManifestsOp]:
+    """Each demo's compose op, keyed by the mode that selects it."""
+    return {
+        "default": _boundary_op(
+            canonical_map, disagreeing_map=False, conflicting_cluster=False
+        ),
+        "disagreeing-map": _boundary_op(
+            canonical_map, disagreeing_map=True, conflicting_cluster=False
+        ),
+        "conflicting-cluster": _boundary_op(
+            canonical_map, disagreeing_map=False, conflicting_cluster=True
+        ),
+        "forgotten-member": _forgotten_member_op(canonical_map),
+        "shared-name": _shared_name_op(canonical_map, union_right=False),
+        "shared-name-union-right": _shared_name_op(canonical_map, union_right=True),
+    }
+
+
+def plot_modes(plot_dir: Path) -> list[Path]:
+    """Draw every mode's declaration graph and its conflicts.
+
+    One figure per mode. The preview never refuses, so a mode compose rejects
+    still produces a picture — which is the case the picture is for.
+    """
+    from graflo.architecture.evolution.preview import preview_compose
+    from graflo.plot.compose import plot_compose_preview
+
+    canonical_map = CanonicalMap.model_validate(
+        FileHandle.load(EXAMPLE_DIR / "canonical_map.yaml")
+    )
+    manifest_a = load_manifest(EXAMPLE_DIR / "manifest_a.yaml")
+    manifest_b = load_manifest(EXAMPLE_DIR / "manifest_b.yaml")
+
+    written: list[Path] = []
+    for mode, op in ops_by_mode(canonical_map).items():
+        preview = preview_compose(manifest_a, manifest_b, op)
+        written.append(plot_compose_preview(preview, plot_dir / f"union-{mode}.svg"))
+        blocking = len(preview.blocking)
+        click.echo(f"{mode:24} {blocking} finding(s) → {written[-1].name}")
+    return written
+
+
 @click.command()
+@click.option(
+    "--plot-dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Draw every mode's declaration graph and conflicts into this directory.",
+)
 @click.option(
     "--output",
     type=click.Path(path_type=Path),
@@ -293,6 +350,7 @@ def build_union(
     "synthesized equivalence rather than refusing.",
 )
 def main(
+    plot_dir: Path | None,
     output: Path,
     disagreeing_map_demo: bool,
     conflicting_cluster_demo: bool,
@@ -300,6 +358,10 @@ def main(
     shared_name_demo: bool,
     union_right: bool,
 ) -> None:
+    if plot_dir is not None:
+        plot_modes(plot_dir)
+        return
+
     demos = {
         "--disagreeing-map-demo": disagreeing_map_demo,
         "--conflicting-cluster-demo": conflicting_cluster_demo,

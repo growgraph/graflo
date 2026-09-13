@@ -138,8 +138,10 @@ _CANONICAL_EXPORTS = frozenset(
         "canonicalize_ops",
         "check_member_existence",
         "clusters_to_side_maps",
+        "fold_declared_maps",
         "merge_canonical_maps",
         "resolve_clusters",
+        "same_name_groups",
         "validate_and_complete_canonical_map",
     }
 )
@@ -152,8 +154,10 @@ _EQUIVALENCE_EXPORTS = frozenset(
         "ClusterResolution",
         "ClusterSpec",
         "RelationCluster",
+        "UnknownMemberError",
         "check_member_existence",
         "index_clusters",
+        "subject",
     }
 )
 
@@ -369,6 +373,7 @@ __all__ = [
     "SideIdentity",
     "SideMaps",
     "UnclassifiedListField",
+    "UnknownMemberError",
     "VertexEquivalence",
     "alignment_to_ops",
     "apply_add_edge_indexes",
@@ -425,6 +430,7 @@ __all__ = [
     "diff_manifests",
     "diff_manifests_verified",
     "find_merge_base",
+    "fold_declared_maps",
     "full_hash",
     "graph_hash",
     "index_clusters",
@@ -445,8 +451,10 @@ __all__ = [
     "ops_to_dicts",
     "ops_to_yaml_str",
     "re_merge",
+    "same_name_groups",
     "schema_hash",
     "stable_hash",
+    "subject",
     "take_left",
     "take_right",
     "validate_alignment",
