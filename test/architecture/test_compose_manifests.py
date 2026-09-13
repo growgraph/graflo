@@ -460,7 +460,7 @@ def test_the_message_names_both_spellings_and_the_ways_out() -> None:
     message = str(excinfo.value)
     assert "'OrderLine' / 'order_line'" in message
     assert "VertexEquivalence" in message
-    assert "fuse_right" in message and "prefix_right" in message
+    assert "union_right" in message and "prefix_right" in message
 
 
 def test_a_declared_equivalence_exempts_a_near_collision() -> None:
@@ -492,16 +492,16 @@ def test_prefix_right_keeps_a_near_collision_apart() -> None:
     assert _vertex_names(composed) == {"OrderLine", "r_order_line"}
 
 
-def test_fuse_right_adopts_the_left_spelling() -> None:
+def test_union_right_adopts_the_left_spelling() -> None:
     composed = compose_manifests(
         _named("OrderLine"),
         _named("order_line"),
-        ComposeManifestsOp(name_conflict="fuse_right"),
+        ComposeManifestsOp(name_conflict="union_right"),
     )
     assert _vertex_names(composed) == {"OrderLine"}
 
 
-def test_fuse_right_rewrites_ingestion_too() -> None:
+def test_union_right_rewrites_ingestion_too() -> None:
     """The rename has to reach the pipelines, not just the schema.
 
     A rename that lands on the schema alone leaves every resource step pointing
@@ -511,7 +511,7 @@ def test_fuse_right_rewrites_ingestion_too() -> None:
     composed = compose_manifests(
         _named("OrderLine"),
         _named("order_line"),
-        ComposeManifestsOp(name_conflict="fuse_right"),
+        ComposeManifestsOp(name_conflict="union_right"),
     )
     assert composed.ingestion_model is not None
     targets = {
@@ -991,7 +991,7 @@ def test_relation_nary_collapse() -> None:
     assert relations == {"signs"}
 
 
-def test_fuse_right_adopts_left_spelling_for_relations() -> None:
+def test_union_right_adopts_left_spelling_for_relations() -> None:
     left = _manifest(
         name="l",
         vertices=[
@@ -1021,7 +1021,7 @@ def test_fuse_right_adopts_left_spelling_for_relations() -> None:
             VertexEquivalence(left="A", right="AR", into="A"),
             VertexEquivalence(left="B", right="BR", into="B"),
         ],
-        name_conflict="fuse_right",
+        name_conflict="union_right",
     )
     out = compose_manifests(left, right, op, bump_version=False)
     relations = {
@@ -1414,13 +1414,13 @@ def test_prefix_right_terminates_on_a_connector_already_prefixed() -> None:
     }
 
 
-def test_fuse_right_rejects_a_connector_collision() -> None:
-    """A connector is an address, so ``fuse_right`` behaves as ``error`` for it."""
+def test_union_right_rejects_a_connector_collision() -> None:
+    """A connector is an address, so ``union_right`` behaves as ``error`` for it."""
     with pytest.raises(ValueError, match="connector name collision"):
         compose_manifests(
             _with_connector("c", side="left"),
             _with_connector("c", side="right"),
-            ComposeManifestsOp(name_conflict="fuse_right"),
+            ComposeManifestsOp(name_conflict="union_right"),
             bump_version=False,
         )
 
@@ -1664,7 +1664,7 @@ class TestComposedProfileFold:
             )
 
 
-def test_fuse_right_unions_the_right_model_rather_than_dropping_it() -> None:
+def test_union_right_unions_the_right_model_rather_than_dropping_it() -> None:
     """CORE-MERGE-001's failure class: the right ``order_line`` used to be skipped.
 
     Adopting the left spelling made the right vertex share a name with the
@@ -1689,7 +1689,7 @@ def test_fuse_right_unions_the_right_model_rather_than_dropping_it() -> None:
         resources=[{"name": "r_right", "apply": [{"vertex": "order_line"}]}],
     )
     composed = compose_manifests(
-        _named("OrderLine"), right, ComposeManifestsOp(name_conflict="fuse_right")
+        _named("OrderLine"), right, ComposeManifestsOp(name_conflict="union_right")
     )
     assert composed.graph_schema is not None
     vc = composed.graph_schema.core_schema.vertex_config
@@ -1697,9 +1697,9 @@ def test_fuse_right_unions_the_right_model_rather_than_dropping_it() -> None:
     assert "qty" in vc.property_names("OrderLine")
 
 
-def test_fuse_right_synthesizes_a_cluster_for_a_near_collision() -> None:
+def test_union_right_synthesizes_a_cluster_for_a_near_collision() -> None:
     resolution = resolve_clusters(
-        ComposeManifestsOp(name_conflict="fuse_right"),
+        ComposeManifestsOp(name_conflict="union_right"),
         left=_named("OrderLine"),
         right=_named("order_line"),
     )

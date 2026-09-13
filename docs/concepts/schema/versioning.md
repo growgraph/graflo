@@ -222,7 +222,7 @@ depends on it.
 | Names | expected to agree; disagreement is a **conflict** | expected to disagree; a **declared equivalence** reconciles them |
 | Reached by | `merge_three_way` | `compose_manifests` |
 
-Both produce multi-parent commits. They are not the same operation.
+Both produce multi-parent commits. They are not the same operation — and "merge" names a third thing again inside a schema (combining the definitions one name has on both sides). See [Words for combining things](manifest_evolution.md#words-for-combining-things).
 
 ## Tracked merges
 

@@ -124,11 +124,13 @@ def _fold_canonical_maps(
 )
 @click.option(
     "--name-conflict",
-    type=click.Choice(["error", "prefix_right", "fuse_right"]),
+    # `fuse_right` is the pre-rename spelling of `union_right`; both are
+    # accepted here so a recorded command line keeps working.
+    type=click.Choice(["error", "prefix_right", "union_right", "fuse_right"]),
     default=None,
     help=(
         "Override the op's name_conflict policy: error refuses a name both "
-        "sides carry and prints the equivalences to declare; fuse_right "
+        "sides carry and prints the equivalences to declare; union_right "
         "unions by name (each shared or alike-spelled name becomes a 1-1 "
         "equivalence into the left spelling); prefix_right keeps them apart "
         "under r_ names."

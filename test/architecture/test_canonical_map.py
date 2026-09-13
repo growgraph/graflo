@@ -1023,7 +1023,7 @@ class TestCaseTable:
             {"left": "Deal", "right": "Deal", "into": "Deal"}
         ]
 
-    def test_fuse_right_unions_shared_names_through_a_cluster(self) -> None:
+    def test_union_right_unions_shared_names_through_a_cluster(self) -> None:
         right = _manifest(
             name="b",
             vertices=[
@@ -1054,7 +1054,7 @@ class TestCaseTable:
                     ],
                 )
             ],
-            name_conflict="fuse_right",
+            name_conflict="union_right",
         )
         index = resolve_clusters(op, left=_source_a_manifest(), right=right).index
         assert [c.into for c in index.vertices if c.synthesized] == ["Deal"]
@@ -1073,7 +1073,7 @@ class TestCaseTable:
         }
         assert edges == {("Company", "Deal", "signs")}
 
-    def test_fuse_right_refuses_a_shared_name_whose_keys_disagree(self) -> None:
+    def test_union_right_refuses_a_shared_name_whose_keys_disagree(self) -> None:
         right = _manifest(
             name="b",
             vertices=[
@@ -1088,10 +1088,10 @@ class TestCaseTable:
             compose_manifests(
                 _source_a_manifest(),
                 right,
-                ComposeManifestsOp(name_conflict="fuse_right"),
+                ComposeManifestsOp(name_conflict="union_right"),
             )
 
-    def test_fuse_right_synthesizes_an_nary_cluster_from_a_map_group(self) -> None:
+    def test_union_right_synthesizes_an_nary_cluster_from_a_map_group(self) -> None:
         left = self._right("Firm", "Shop")  # two left classes, no edges
         right = self._right("Party")
         op = ComposeManifestsOp(
@@ -1100,7 +1100,7 @@ class TestCaseTable:
                     vertices={"Firm": "Party", "Shop": "Party"}, allow_merges=True
                 )
             },
-            name_conflict="fuse_right",
+            name_conflict="union_right",
         )
         (cluster,) = resolve_clusters(op, left=left, right=right).index.vertices
         assert cluster.synthesized
@@ -1139,7 +1139,13 @@ class TestCaseTable:
                 VertexEquivalence(left="Firm", right="Org", into="Company"),
                 VertexEquivalence(left="Deal", right="Deal"),
             ],
-            name_conflict="fuse_right",
+            name_conflict="union_right",
         )
         index = resolve_clusters(op, left=_source_a_manifest(), right=right).index
         assert [c.synthesized for c in index.vertices] == [False, False]
+
+    def test_union_right_still_parses_as_fuse_right(self) -> None:
+        """`fuse` is reserved for records; the policy unions type names."""
+        op = ComposeManifestsOp.model_validate({"name_conflict": "fuse_right"})
+        assert op.name_conflict == "union_right"
+        assert op.to_dict()["name_conflict"] == "union_right"

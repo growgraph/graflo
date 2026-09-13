@@ -59,7 +59,7 @@ class ClusterSpec:
     either the member's own name or its canonical one. ``declared_into`` is
     the composed name as the author spelled it, before any canonical map
     translated it; ``synthesized`` marks a cluster compose created itself for
-    a same-name pair under ``name_conflict="fuse_right"``.
+    a same-name pair under ``name_conflict="union_right"``.
     """
 
     left: tuple[str, ...]

@@ -2276,7 +2276,7 @@ class ComposeManifestsOp(ConfigBaseModel):
         default_factory=dict,
         description="Rename map applied to *right* resource names before union.",
     )
-    name_conflict: Literal["error", "prefix_right", "fuse_right"] = PydanticField(
+    name_conflict: Literal["error", "prefix_right", "union_right"] = PydanticField(
         default="error",
         description=(
             "How to handle name collisions no equivalence covers, on the "
@@ -2286,14 +2286,32 @@ class ComposeManifestsOp(ConfigBaseModel):
             "one concept spelled two ways, and composing them into two "
             "unrelated types splits the data silently. ``error`` refuses and "
             "names the equivalences to declare; ``prefix_right`` keeps them "
-            "apart under ``r_`` names; ``fuse_right`` unions by name -- every "
+            "apart under ``r_`` names; ``union_right`` unions by name -- every "
             "exact or near collision becomes a synthesized 1-1 equivalence "
             "into the left spelling, so identity and property reconciliation "
-            "apply exactly as to a declared one. ``fuse_right`` applies to "
+            "apply exactly as to a declared one. ``union_right`` applies to "
             "vertices and relations only (resources and connectors are "
-            "addresses, not concepts, so it behaves as ``error`` for them)."
+            "addresses, not concepts, so it behaves as ``error`` for them). "
+            "``fuse_right`` is accepted as a legacy spelling of "
+            "``union_right``; `fuse` is otherwise reserved for records "
+            "becoming one node, not for type names."
         ),
     )
+
+    @field_validator("name_conflict", mode="before")
+    @classmethod
+    def _union_right_was_called_fuse_right(cls, value: Any) -> Any:
+        """Accept the pre-rename spelling of ``union_right``.
+
+        The policy unions two type *names*; ``fuse`` everywhere else in the
+        contract means two *records* becoming one node
+        (``allow_observation_fusion``, identity alignment), so the value was
+        renamed. Compose is excluded from the revision vocabulary, so no
+        stored change set carries the old spelling -- only authored documents,
+        which keep working.
+        """
+        return "union_right" if value == "fuse_right" else value
+
     allow_merges: bool = PydanticField(
         default=False,
         description=(

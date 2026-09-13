@@ -17,87 +17,62 @@ intermediate vocabulary an author has to write in.
 Vocabulary
 ----------
 
-declared map
-    A ``CanonicalMap`` the author wrote: ``op.canonical_maps[scope]`` and the
-    ``canonical_maps=`` pairs handed to compose. Scoped ``left`` / ``right``
-    (that side's own names) or ``both`` (either side's names, and composed
-    names). Folded per side by :func:`merge_canonical_maps`.
-cluster
-    One equivalence declaration, resolved: its members per side, in the
-    manifests' own spelling, and its **composed name** — ``into`` translated
-    through the declared maps, else the canonical name a map gives a member,
-    else the one spelling every member shares.
-cluster map
-    Per side, every member onto its composed name, the composed name itself
-    included as a self entry so the op merges into it rather than refusing
-    an occupied target.
-composite map
-    Per side, the cluster map plus every declared entry that applies to a
-    non-member: the one ``CanonicalizeOp`` compose applies to that side before
-    the union by name (:class:`SideMaps`). It is a relabel, not a vocabulary —
-    two clusters may legitimately chain (one composed name renamed away by
-    another declaration), which a ``CanonicalMap`` refuses.
-fixed point
-    A canonical target. No declared map and no cluster may move it.
-opinion
-    What the declared maps say a member's canonical name is — the target it
-    maps to, or itself when it is a fixed point.
-satisfied entry
-    A declared entry whose source is absent from a side and whose target is
-    present: taken as already applied by the caller. A heuristic — it cannot
-    tell that from a target that never had that source — so it is logged.
-dangling entry
-    A declared entry that matches nothing on any side it could apply to. A
-    typo, refused.
-synthesized cluster
-    A cluster compose creates itself under ``name_conflict="fuse_right"`` for
-    a name both sides carry after their composite maps, or two spellings of
-    one name, so that a union by name goes through the same identity and
-    property reconciliation as a declared one.
-completion
-    The extension that would make an incomplete declaration consistent,
-    carried by :class:`ComposeIncompleteError` as declaration payloads.
+- **declared map** — a ``CanonicalMap`` the author wrote:
+  ``op.canonical_maps[scope]`` and the ``canonical_maps=`` pairs handed to
+  compose. Scoped ``left`` / ``right`` (that side's own names) or ``both``
+  (either side's names, and composed names). Folded per side by
+  :func:`merge_canonical_maps` into a :class:`DeclaredMaps`.
+- **cluster** (:class:`~graflo.architecture.evolution.equivalence.Cluster`,
+  resolved from a :class:`~graflo.architecture.evolution.equivalence.ClusterSpec`)
+  — one equivalence declaration, resolved: its members per side, in the
+  manifests' own spelling, and its **composed name** — ``into`` translated
+  through the declared maps, else the canonical name a map gives a member,
+  else the one spelling every member shares.
+- **cluster map** — per side, every member onto its composed name, the composed
+  name itself included as a self entry so the op merges into it rather than
+  refusing an occupied target.
+- **composite map** (:class:`SideMaps`, one ``CanonicalizeOp`` per side) — the
+  cluster map plus every declared entry that applies to a non-member: what
+  compose applies to that side before the union by name. A relabel, not a
+  vocabulary — two clusters may legitimately chain (one composed name renamed
+  away by another declaration), which a ``CanonicalMap`` refuses.
+- **fixed point** — a canonical target. No declared map and no cluster may
+  move it.
+- **opinion** — what the declared maps say a member's canonical name is: the
+  target it maps to, or itself when it is a fixed point.
+- **satisfied entry** — a declared entry whose source is absent from a side and
+  whose target is present: taken as already applied by the caller. A heuristic
+  — it cannot tell that from a target that never had that source — so it is
+  logged.
+- **dangling entry** — a declared entry that matches nothing on any side it
+  could apply to. A typo, refused.
+- **synthesized cluster** — a cluster compose declares itself under
+  ``name_conflict="union_right"`` for a name both sides carry after their
+  composite maps, or two spellings of one name, so that a union by name goes
+  through the same identity and property reconciliation as a declared one.
+- **completion** (:class:`Completion`) — the extension that would make an
+  incomplete declaration consistent, carried by
+  :class:`ComposeIncompleteError` as declaration payloads.
 
-Case table
-----------
+One rule
+--------
 
-For a name on one side, ``E`` its cluster and ``C`` the declared entry:
+**The declared maps and the equivalences must agree on where every name goes,
+and a canonical target is a fixed point neither may re-map.** Every refusal is
+an instance of it, in one of four classes:
 
-=====================================  ==========================================
-neither                                 unchanged
-``C`` only, target free or self-entry   carried into the composite
-``C`` only, target an unmoving
-non-member without a self entry         refused by the op (occupied target)
-``E`` only                              onto the composed name
-``E`` and ``C`` agree                   onto the composed name
-``E`` without ``into``, ``C`` names a
-member                                  composed name from ``C``
-``into`` itself in ``dom(C)``           composed name is ``C(into)``
-``E`` and ``C`` disagree; ``E`` moves
-a fixed point; two maps disagree on a
-source; a property equivalence renames
-a canonical attribute                   **contradiction** —
-                                        :class:`ComposeCanonicalConflictError`
-a canonical name denotes two members;
-maps disagree on translating ``into``   **ambiguity** — the same error
-``C`` sends a non-member onto a
-composed name                           **incomplete** —
-                                        :class:`ComposeIncompleteError`, the
-                                        cluster extended with that member
-a name both sides carry, no cluster     ``error``: incomplete, the ``{n}~{n}``
-                                        declarations to add; ``fuse_right``:
-                                        synthesized; ``prefix_right``: kept apart
-one-sided ``both`` entry                applied where it matches, inapplicable
-                                        elsewhere
-``both`` entry over a composed name     translation, not dangling
-dangling                                refused
-satisfied                               no-op, logged
-``properties`` keyed by a composed or
-canonical class                         refused — the map is keyed by source
-chain or swap inside one map            refused at ``CanonicalMap`` construction
-chain across two maps                   refused by :func:`merge_canonical_maps`,
-                                        in either order
-=====================================  ==========================================
+| class | error | a trigger |
+|---|---|---|
+| contradiction | ``ComposeCanonicalConflictError`` | the map says ``Firm → Company``, the cluster names the composed class ``Party`` |
+| ambiguity | ``ComposeCanonicalConflictError`` | one canonical name denotes two members of one cluster |
+| incomplete | ``ComposeIncompleteError`` (carries a ``Completion``) | a map entry sends a non-member onto a composed name |
+| dangling | ``ComposeCanonicalConflictError`` | an entry matching no name on any side it could apply to |
+
+Plus the cluster-shape checks of
+:mod:`~graflo.architecture.evolution.equivalence`, which run before any
+rename. Every case a declared entry and a cluster can stand in — agreement,
+naming, translation and each refusal — is tabulated in
+``docs/concepts/schema/manifest_evolution.md`` under "Canonical maps".
 
 Identity is nominal: a class is the same class across two manifests only by
 name (or by declared equivalence) — nothing structural fingerprints it, and
@@ -182,7 +157,7 @@ class Completion:
     ``kind`` says what to do: ``extend_cluster`` — replace one declared cluster
     by the payload carried here (the same declaration with one more member);
     ``declare_equivalences`` — add the carried declarations to the op (or set
-    ``name_conflict="fuse_right"``, which declares exactly these itself).
+    ``name_conflict="union_right"``, which declares exactly these itself).
     Payloads are ``VertexEquivalence`` / ``RelationEquivalence`` documents, so
     a CLI can print them and an author can paste them.
     """
@@ -269,9 +244,10 @@ def _targets(mapping: Mapping[str, str]) -> set[str]:
     return {target for source, target in mapping.items() if source != target}
 
 
-def _union_name_maps(
+def _merge_name_maps(
     base: Mapping[str, str], extension: Mapping[str, str], *, noun: str
 ) -> dict[str, str]:
+    """One kind's half of :func:`merge_canonical_maps` — same verb, same operation."""
     out = dict(base)
     for source, target in extension.items():
         existing = out.get(source)
@@ -305,8 +281,8 @@ def merge_canonical_maps(base: CanonicalMap, extension: CanonicalMap) -> Canonic
     in both directions so the result does not depend on which map is *base*.
     ``properties`` union the same way per source class.
     """
-    vertices = _union_name_maps(base.vertices, extension.vertices, noun="vertex")
-    relations = _union_name_maps(base.relations, extension.relations, noun="relation")
+    vertices = _merge_name_maps(base.vertices, extension.vertices, noun="vertex")
+    relations = _merge_name_maps(base.relations, extension.relations, noun="relation")
     properties: dict[str, dict[str, str]] = {
         cls: dict(attrs) for cls, attrs in base.properties.items()
     }
@@ -1067,7 +1043,7 @@ def resolve_clusters(
 
     A name both sides carry after their composite maps, and no cluster
     composes, is what ``op.name_conflict`` decides: ``error`` refuses it as
-    incomplete, naming the equivalences to declare; ``fuse_right`` declares
+    incomplete, naming the equivalences to declare; ``union_right`` declares
     them itself (a **synthesized** cluster, so the union goes through the
     same identity and property reconciliation as a declared one — two
     spellings of one name, ``canonical_slug`` alike, are one such cluster
@@ -1100,7 +1076,7 @@ def resolve_clusters(
     if op.name_conflict == "prefix_right":
         return resolution
 
-    near = op.name_conflict == "fuse_right"
+    near = op.name_conflict == "union_right"
     vertex_groups = _same_name_groups(resolution, names, kind="vertex", near=near)
     relation_groups = _same_name_groups(resolution, names, kind="relation", near=near)
     if not vertex_groups and not relation_groups:
@@ -1113,7 +1089,7 @@ def resolve_clusters(
             f"{kind} name collision",
             f"{shared} exist on both sides and no equivalence composes them",
             "Declare the equivalences the completion carries, set "
-            "name_conflict='fuse_right' to union by name, or "
+            "name_conflict='union_right' to union by name, or "
             "name_conflict='prefix_right' to keep them apart.",
             Completion(
                 kind="declare_equivalences",

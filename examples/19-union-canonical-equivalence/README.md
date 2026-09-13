@@ -80,11 +80,28 @@ naming both declarations, on:
 - a **disagreement** — the map says `Firm → Company` but the cluster names the
   composed class `Party` (`--disagreeing-map-demo`), or a cluster renames a
   class the map already established as canonical;
-- a map entry that **merges a non-member into a composed class** — declare it
-  in the cluster instead; the cluster's identity and property maps govern it;
-- a **dangling** map entry that matches nothing on its side;
+- a **dangling** map entry that matches nothing on any side it could apply to;
 - the same rule for attributes: a canonical attribute is a fixed point, and a
   property equivalence names fields as spelled on the member.
+
+Two declarations can also be **consistent but incomplete** — nothing to
+retract, something to add. Compose refuses those as well, and the refusal
+carries the declaration that settles it:
+
+- a map entry sending a **non-member onto a composed class**
+  (`--forgotten-member-demo`): the class would arrive at `Company` without the
+  cluster's identity and property maps governing it. The completion is that
+  same cluster with the member added;
+- a name **both sides arrive at** that no cluster composes
+  (`--shared-name-demo`): two sides meeting at `Outlet` is not a disjoint
+  union and is never silently treated as one. The completion names the members
+  in each side's own spelling. `--union-right` declares that equivalence
+  itself — a *synthesized* cluster — and composes instead of refusing.
+
+A synthesized cluster is a real cluster, so its members must agree on an
+identity exactly as a declared one's must; the demo's maps align the keys
+(`shop_id` / `branch_id` → `outlet_id`) and dropping that alignment raises
+`ComposeIdentityError` rather than keying on a field no record carries.
 
 Clusters must also not contradict each other — `ClusterConflictError`,
 wrapped as `ComposeCanonicalConflictError` when it surfaces through
@@ -149,7 +166,13 @@ uv run python build_union.py                          # → artifacts/manifest_u
 uv run python inspect_fusion.py                       # which records fuse, and to what
 uv run python build_union.py --disagreeing-map-demo   # map vs cluster → conflict
 uv run python build_union.py --conflicting-cluster-demo  # overlapping declarations → conflict
+uv run python build_union.py --forgotten-member-demo  # incomplete → completion: add the member
+uv run python build_union.py --shared-name-demo       # incomplete → completion: declare the pair
+uv run python build_union.py --shared-name-demo --union-right   # …or union it by name
 ```
+
+The two incompleteness demos print their completion as YAML, ready to paste
+into the op — the same thing `graflo compose` prints when it refuses.
 
 `inspect_fusion.py` prints one row per emitted vertex doc across the four
 resources feeding `Company`: five records collapse to three vertices, one

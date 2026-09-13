@@ -92,7 +92,7 @@ def _resolve_name_collisions(
     occupied: set[str],
     candidates: list[str],
     *,
-    name_conflict: Literal["error", "prefix_right", "fuse_right"],
+    name_conflict: Literal["error", "prefix_right", "union_right"],
     kind: str,
     hint: str = "provide an equivalence / resource_renames",
 ) -> dict[str, str]:
@@ -102,7 +102,7 @@ def _resolve_name_collisions(
     *addresses*, not concepts. Two whose names key alike cause no split -- each
     keeps its own name, each is looked up by that name, each targets its own
     vertex -- so canonical matching here would be pure false positive.
-    ``fuse_right`` is meaningless for the same reason and behaves as ``error``.
+    ``union_right`` is meaningless for the same reason and behaves as ``error``.
     """
     renames: dict[str, str] = {}
     taken = set(occupied)
@@ -110,7 +110,7 @@ def _resolve_name_collisions(
         if name not in taken:
             taken.add(name)
             continue
-        if name_conflict in ("error", "fuse_right"):
+        if name_conflict in ("error", "union_right"):
             raise ValueError(
                 f"compose_manifests: {kind} name collision on {name!r}; "
                 f"{hint}, or set name_conflict='prefix_right'"
@@ -220,11 +220,11 @@ def _resolve_schema_collisions(
     on both sides) is a name no cluster composes: under ``error`` it has
     already been refused as incomplete by
     :func:`~graflo.architecture.evolution.canonical.resolve_clusters`, and
-    under ``fuse_right`` it has already become a synthesized cluster -- so
+    under ``union_right`` it has already become a synthesized cluster -- so
     reaching one here is an invariant breach, not an authoring error. A
     **canonical** collision (``Customer`` / ``customer``, ``OrderLine`` /
     ``order_line``) is the same question with less confidence: ``error``
-    refuses it naming both spellings, ``fuse_right`` has synthesized it under
+    refuses it naming both spellings, ``union_right`` has synthesized it under
     the left spelling upstream, and ``prefix_right`` keeps both apart here.
 
     Left alone the right names compose into two unrelated types with the
@@ -248,18 +248,18 @@ def _resolve_schema_collisions(
                 f"different naming conventions, so they would compose into two "
                 f"unrelated {kind} types with the source data split between "
                 f"them. Declare a {equivalence_hint} (or a CanonicalMap) "
-                "to combine them, set name_conflict='fuse_right' to adopt the "
+                "to combine them, set name_conflict='union_right' to adopt the "
                 "left spelling, or name_conflict='prefix_right' to keep them "
                 "apart."
             )
         return {}
 
-    if name_conflict == "fuse_right":
+    if name_conflict == "union_right":
         if exact or near:
             raise ValueError(
                 f"compose_manifests: unreachable -- {kind} names "
                 f"{sorted(exact) + [right for _left, right in near]!r} survived "
-                "cluster resolution under fuse_right; every same-name pair "
+                "cluster resolution under union_right; every same-name pair "
                 "should have been synthesized into a cluster"
             )
         return {}
@@ -959,7 +959,7 @@ def _union_bindings(
     left: Bindings | None,
     right: Bindings | None,
     *,
-    name_conflict: Literal["error", "prefix_right", "fuse_right"],
+    name_conflict: Literal["error", "prefix_right", "union_right"],
 ) -> Bindings | None:
     if left is None and right is None:
         return None
@@ -976,7 +976,7 @@ def _union_bindings(
     left_names = {n for c in left_connectors if (n := _connector_name(c)) is not None}
     right_names = [n for c in right_connectors if (n := _connector_name(c)) is not None]
     # Connectors are addresses, like resources: the same exact-match policy,
-    # the same ordinal disambiguation, and ``fuse_right`` behaves as ``error``.
+    # the same ordinal disambiguation, and ``union_right`` behaves as ``error``.
     rename_connectors = _resolve_name_collisions(
         left_names,
         right_names,
@@ -1082,7 +1082,7 @@ def compose_manifests(
     name. Does not invent semantic matches: a name both sides carry and no
     cluster composes is refused under ``name_conflict="error"`` (naming the
     equivalences to declare), synthesized into a 1-1 cluster under
-    ``fuse_right`` so it reconciles exactly as a declared one, and kept apart
+    ``union_right`` so it reconciles exactly as a declared one, and kept apart
     under ``prefix_right``.
 
     When ``op.identity_alignments`` is non-empty, the composed union is further

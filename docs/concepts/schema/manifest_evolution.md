@@ -39,7 +39,8 @@ GraFlo provides **contract-level** operations that transform a validated `GraphM
 | **Add resource transforms** | Appends transform steps to a named level of named resources' pipelines (`at`, as `descend` step indices; root by default — actor type-priority ordering runs them before vertex extraction at that level) and optionally registers named transforms (loud on same-name/different-body, mirroring compose). The only op whose primary effect is ingestion; requires `ingestion_model` and raises otherwise. Steps may reference the registry via `call.use` or carry a fully inline `call` (collision-free). Irreversible. |
 | **Add / remove resources** | `add_resources` takes full `ResourceConfig` definitions (creating `ingestion_model` if absent; an existing name is rejected); `remove_resources` takes names and prunes the `resource_connector` entries that wired them. Inverses of each other — a removal that pruned a binding has none. The differ emits both. |
 | **Set vertex / edge / field semantics** | Ground an existing element in an external vocabulary: `set_vertex_semantics` (`{vertex: Semantics \| null}`), `set_edge_semantics` (edge triples + one `Semantics`), `set_field_semantics` (per-target `FieldSemantics`, the only model carrying `unit`; a target is a vertex property `{vertex, field}` or an edge property `{source, target, relation, field}`). `null` clears, which is what makes each invertible. Never consulted at execution time. The differ emits all three. |
-| **Compose manifests** | Binary union of two full `GraphManifest`s (schema **and** resources/bindings) via `ComposeManifestsOp` + `compose_manifests(left, right, op)`. Consumes **explicit** equivalence maps only (no semantic inference): n-ary vertex clusters (`vertex_equivalences`: `left` / `right` each name one or more classes collapsing onto one `into`), property alignment, optional composed `identity`, optional `identity_alignments`, relation equivalences (`relation_equivalences`), resource renames / `name_conflict`. Distinct from unary `MergeVerticesOp`. Rejected by unary `apply_evolution`. |
+| **Canonicalize** | Applies a whole **vocabulary map** — classes, per-class attributes (keyed by the *source* class), and relations — in one step over the original schema. Attribute renames run first, then classes and relations simultaneously, so a chain (`{X: Z, Z: Q}`) and a swap resolve without an intermediate state and no op order can leak into the result. The fibers of the map are exactly the groups that merge, so a group of more than one name needs `allow_merges`; a target that already exists and does not move must be declared a member of its own group with a self entry (`Company: Company`), or the op refuses rather than merging into it silently. Reversible when it only renames. This is what a `CanonicalMap` lowers to, and the per-side step of compose. See [Canonical maps](#canonical-maps). |
+| **Compose manifests** | Binary union of two full `GraphManifest`s (schema **and** resources/bindings) via `ComposeManifestsOp` + `compose_manifests(left, right, op)`. Consumes **explicit** equivalence maps only (no semantic inference): n-ary vertex clusters (`vertex_equivalences`: `left` / `right` each name one or more classes collapsing onto one `into`), property alignment, optional composed `identity`, optional `identity_alignments`, relation equivalences (`relation_equivalences`), resource renames, and `canonical_maps` (scoped `left` / `right` / `both`), which name the composed classes so `into` may be omitted. A name both sides carry that no equivalence covers is what `name_conflict` decides — refused with the declarations to add (`error`), unioned by name through a synthesized equivalence (`union_right`), or kept apart (`prefix_right`). Distinct from unary `MergeVerticesOp`. Rejected by unary `apply_evolution`. |
 
 ## Compose two manifests
 
@@ -74,9 +75,11 @@ composed = compose_manifests(
                 identity=["email"],  # optional explicit key; else merge + flags
             )
         ],
-        relations=[RelationEquivalence(left="places", right="billed", into="activity")],
+        relation_equivalences=[
+            RelationEquivalence(left="places", right="billed", into="activity")
+        ],
         resource_renames={},  # right resource name -> composed name
-        name_conflict="error",  # or "prefix_right" / "fuse_right"
+        name_conflict="error",  # or "prefix_right" / "union_right"
     ),
 )
 ```
@@ -97,13 +100,51 @@ ComposeManifestsOp(
 )
 ```
 
-Empty `vertex_equivalences` / `relation_equivalences` yields a **disjoint union** (both resource sets and bindings retained), subject to collision policy.
+Name-disjoint sides need no equivalence at all: with `vertex_equivalences` / `relation_equivalences` empty they compose into a **disjoint union**, both resource sets and bindings retained. A name *both* sides carry is not a disjoint union and is never silently treated as one — it is what `name_conflict` decides (see the [case table](#where-a-map-and-the-equivalences-can-stand)).
 
 A `VertexEquivalence` declaration *is* one cluster. `into` is optional — see [Canonical maps](#canonical-maps) for how a composed name is found. `ClusterConflictError` (raised before any rename) covers the three ways declarations can contradict each other: a class **claimed by two** declarations, two declarations **sharing one composed name** (that collapse is one n-ary cluster and must be spelled as one), and a composed name that already names an **existing non-member class** on a side (which would silently merge into an unrelated type). Properties with the **same spelling** on both sides after alignment fuse for free; list a `PropertyEquivalence` only to rename, to map per member (`left={"Company": "company_key", "Shop": "shop_key"}`), or to flag identity.
 
 That fusion is a **union**, and it compares more than a name. `type` and `item_type` travel together, so `LIST<STRING>` and `LIST<INT>` are a conflict rather than a shared `LIST`; descriptions from both sides are kept; grounding blocks union their `exact_match` and `synonyms`, and a disputed `iri` clears rather than electing one side's concept. Two disagreements refuse the compose instead of resolving it: two declared **types** for one property, and two declared **units** — a property that is `m/s` on one side and `km/h` on the other would hold numerically incomparable values once fused. Neither is widened automatically, because the composed type would be one neither author wrote; retype one side with `change_field_types` first. Every conflicting property is named in one error rather than one per run.
 
 Compose refuses to guess the composed **identity** too: when members disagree on their identity field-set after alignment and nothing resolves it, `ComposeIdentityError` names each member's key. Resolve it with `identity` on the cluster (a natural key, an `IdentityFunnel`, or a `SideIdentity` shorthand lowered to one funnel), a `PropertyEquivalence(identity=True)` flag, or an `identity_alignments` entry. A declared `identity` demotes each member's retired key to a lookup-only secondary identity unless the cluster sets `retire="keep"`.
+
+### What compose does, in order
+
+`compose_manifests` is one pass with a fixed order. Two steps are where they are for a reason, noted below.
+
+1. **Fold the declared maps** per side — `both` under `left`, `both` under `right` (`merge_canonical_maps`), refusing two maps that disagree on a source or move each other's targets.
+2. **Resolve the clusters** against those maps: members in each manifest's own spelling, one composed name each, and one composite relabel per side.
+3. **Synthesize** a cluster for every name both sides still carry, as `name_conflict` directs, then re-resolve so the synthesized ones are ordinary clusters from here on.
+4. **Capture each member's identity key and property names** — *before* the relabel, because once the members are collapsed onto one name the schema no longer records which key came from which member, and the composed identity is decided by comparing exactly those.
+5. **Rename the right side's resources** per `resource_renames`, then per the collision policy.
+6. **Snapshot both sides as they now stand** — also *before* the relabel: the relabel rewrites a `vertex_router`'s `type_map` values to the composed name, after which nothing says which router key produced which member. Identity alignment needs that, so it reads these snapshots.
+7. **Apply the composite relabel** to each side, one `CanonicalizeOp` per side.
+8. **Prefix the right side's remaining vertex and relation collisions** (`prefix_right` only — `error` and `union_right` settled theirs in step 3).
+9. **Union schema, ingestion and bindings by name**, merging each name both sides carry, deciding the composed identity, and demoting retired keys to secondary identities.
+10. **Assert no canonical split** on the result: no two composed types may denote one concept under different spellings.
+11. **Bump the version, apply `identity_alignments`, `finish_init`.**
+
+### Words for combining things
+
+Five verbs recur, and they are not synonyms.
+
+| verb | sense | where |
+|---|---|---|
+| **compose** | join two manifests of *unrelated lineage* by declared equivalence | `compose_manifests`, `ComposeManifestsOp` |
+| **union** | assemble two collections **by name** — the outer step | `_union_schema`, `_union_ingestion`, `_union_bindings` |
+| **merge** | combine the definitions **one name** has on both sides, refusing conflicts — the inner step | `merge_vertex_models`, `merge_edge_pair`, `merge_semantics` |
+| **merge** (collapse) | send *several distinct* classes or relations to one name | `MergeVerticesOp`, `MergeEdgesOp`, `allow_merges` |
+| **merge** (three-way) | reconcile two descendants of a **common ancestor** — a different operation entirely | `merge_three_way`, `MergeConflict` |
+| **fuse** | two *records* becoming one node at ingestion | `allow_observation_fusion`, identity alignment |
+| **collapse** | cluster members arriving at their composed name | `VertexEquivalence`, `CanonicalizeOp` |
+
+Union and merge are not competing words: they are the two levels of one operation. The union walks the names; the merge is what it does at a name both sides carry.
+
+Collapse and merge-at-a-name share one implementation — `merge_vertex_models` is called both by `MergeVerticesOp` and by the union — because at the field level they are the same work: union the properties, reconcile the identity, refuse a conflicting type or unit. What differs is the author's claim about the inputs, and `allow_merges` is where that claim is made: several *distinct* classes becoming one is a stated intent, while two views of one class needs no acknowledgement.
+
+`fuse` is about records, not types. The one exception is the `name_conflict="union_right"` policy, which was spelled `fuse_right` before this distinction was drawn and still parses under that name.
+
+Three-way merge is the outlier: it reconciles change sets, not schemas, and expects names to *agree*. See [Merge is not compose](versioning.md#merge-is-not-compose).
 
 ### Either side may carry no schema
 
@@ -117,11 +158,22 @@ When both sides *are* present the profile fold elects neither. `db_flavor` and `
 
 ```bash
 graflo compose LEFT.yaml RIGHT.yaml --op OP.yaml -o OUT.yaml \
-  [--canonical-map SIDE=PATH]... [--name-conflict error|prefix_right|fuse_right] \
+  [--canonical-map SIDE=PATH]... [--name-conflict error|prefix_right|union_right] \
   [--bump-version minor|none] [--strict-references] [--dry-run] [--check-profile NAME]
 ```
 
-The verb applies the op and its canonical maps together: `--canonical-map SIDE=PATH` (`SIDE` one of `left`, `right`, `both`) is folded into the op's `canonical_maps`, so the same document may carry the maps itself. Omitting `--op` composes a disjoint union. Exit `0` composed, `1` compose refused (the refusal message names what to declare), `2` the command could not run.
+The verb applies the op and its canonical maps together: `--canonical-map SIDE=PATH` (`SIDE` one of `left`, `right`, `both`) is folded into the op's `canonical_maps`, so the same document may carry the maps itself. Omitting `--op` composes a disjoint union. `--name-conflict` overrides the op's policy: `error` refuses a name both sides carry, `union_right` unions by name, `prefix_right` keeps them apart under `r_` names. Exit `0` composed, `1` compose refused, `2` the command could not run.
+
+A refusal names what to declare, and an *incomplete* one prints the declarations themselves — `ComposeIncompleteError` carries a completion, which the verb renders as YAML on stderr below the message, ready to paste into the op:
+
+```yaml
+completion:
+  kind: declare_equivalences
+  vertex_equivalences:
+  -   left: Deal
+      right: Deal
+      into: Deal
+```
 
 ## Canonical maps
 
@@ -154,17 +206,18 @@ composed = compose_manifests(left, right, op)
 
 ### Vocabulary
 
-| term | meaning |
-|---|---|
-| **declared map** | a `CanonicalMap` the author wrote — `op.canonical_maps[scope]` or a `canonical_maps=` pair handed to compose |
-| **cluster** | one equivalence declaration, resolved: its members per side in the manifests' own spelling, and its **composed name** |
-| **cluster map** | per side, every member onto its composed name (the composed name itself included, so the op merges into it rather than refusing an occupied target) |
-| **composite map** | per side, the cluster map plus every declared entry that applies to a non-member: the one `CanonicalizeOp` compose applies before the union by name. A relabel, not a vocabulary — two clusters may chain when one composed name is renamed away by another declaration |
-| **fixed point** | a canonical target; no map and no cluster may move it |
-| **satisfied entry** | a declared entry whose source is absent and target present on a side: taken as already applied by the caller (a heuristic — it is logged) |
-| **dangling entry** | a declared entry matching nothing on any side it could apply to: a typo, refused |
-| **synthesized cluster** | a cluster compose declares itself under `name_conflict="fuse_right"` for a name both sides carry, or two spellings of one name |
-| **completion** | the extension that would make an incomplete declaration consistent, carried by `ComposeIncompleteError.completion` as `VertexEquivalence` / `RelationEquivalence` documents |
+| term | type | meaning |
+|---|---|---|
+| **declared map** | `CanonicalMap`, folded into `DeclaredMaps` | a map the author wrote — `op.canonical_maps[scope]` or a `canonical_maps=` pair handed to compose |
+| **cluster** | `Cluster` (resolved from `ClusterSpec`) | one equivalence declaration, resolved: its members per side in the manifests' own spelling, and its **composed name** |
+| **cluster map** | — | per side, every member onto its composed name (the composed name itself included, so the op merges into it rather than refusing an occupied target) |
+| **composite map** | `SideMaps`, one `CanonicalizeOp` per side | the cluster map plus every declared entry that applies to a non-member: what compose applies to that side before the union by name. A relabel, not a vocabulary — two clusters may chain when one composed name is renamed away by another declaration |
+| **fixed point** | — | a canonical target; no map and no cluster may move it |
+| **opinion** | — | what the declared maps say a member's canonical name is: the target it maps to, or itself when it is a fixed point |
+| **satisfied entry** | — | a declared entry whose source is absent and target present on a side: taken as already applied by the caller (a heuristic — it is logged) |
+| **dangling entry** | — | a declared entry matching nothing on any side it could apply to: a typo, refused |
+| **synthesized cluster** | `Cluster.synthesized` | a cluster compose declares itself under `name_conflict="union_right"` for a name both sides carry, or two spellings of one name |
+| **completion** | `Completion`, on `ComposeIncompleteError` | the extension that would make an incomplete declaration consistent, as `VertexEquivalence` / `RelationEquivalence` documents |
 
 Identity is **nominal**: a class is the same class across two manifests only by name or by declared equivalence. Nothing structural fingerprints it — content hashes address a manifest, not a class — and compose never infers a match.
 
@@ -172,7 +225,9 @@ Identity is **nominal**: a class is the same class across two manifests only by 
 
 Renames compose, so canonicalizing a side on its own first and then declaring the cluster in canonical names is the same function as declaring it in raw names on an op that carries the map: `compose_manifests` accepts either. Canonicalizing the *union* afterwards is a different function in general (it can collapse two composed names) and is just a unary `CanonicalizeOp` on the result. `resolve_clusters` — what compose runs; `validate_and_complete_canonical_map` returns just its per-side relabels — folds the clusters and the maps into **one composite `CanonicalizeOp` per side**, applied before the schema/resource union.
 
-One rule underlies every refusal: **the map and the equivalences must agree on where a name goes, and a canonical target is a fixed point neither may re-map.** For a name on one side, with `E` its cluster and `C` the declared entry:
+One rule underlies every refusal: **the map and the equivalences must agree on where a name goes, and a canonical target is a fixed point neither may re-map.** Every case below is an instance of it.
+
+**Per name.** For one name on one side, with `E` its cluster and `C` the declared entry that names it:
 
 | case | outcome |
 |---|---|
@@ -181,18 +236,28 @@ One rule underlies every refusal: **the map and the equivalences must agree on w
 | `C` only, target an unmoving non-member without a self entry | refused by the op (occupied target) |
 | `E` only | onto the composed name |
 | `E` and `C` agree; `E` without `into` and `C` names a member; `into` itself in `dom(C)` | onto the composed name, which `C` supplies or translates |
-| **contradiction** — `E` and `C` disagree; `E` moves a fixed point; two maps disagree on a source; a property equivalence renames a canonical attribute | `ComposeCanonicalConflictError`, naming both declarations |
+| `E` names a member the side does not declare | `ValueError` naming the member — and, when another spelling on that side denotes the same concept, naming that too ("author the equivalence in the manifest's own spelling") |
+| `E` with no `into`, no mapped member and no spelling its members share | refused as an **unnamed cluster**: give it `into`, or map a member |
+| **contradiction** — `E` and `C` disagree; `E` moves a fixed point; a property equivalence renames a canonical attribute | `ComposeCanonicalConflictError`, naming both declarations |
 | **ambiguity** — a canonical name denotes two members; maps disagree on translating `into` | `ComposeCanonicalConflictError` |
 | **incomplete** — `C` sends a non-member onto a composed name | `ComposeIncompleteError`; the completion is the cluster extended with that member, whose identity and property maps then govern it |
-| **incomplete** — a name both sides carry after their composite maps, no cluster | `error`: `ComposeIncompleteError`, the completion lists the `{n} ~ {n}` declarations; `fuse_right`: a synthesized cluster; `prefix_right`: kept apart as `r_n` |
-| two spellings of one name (`OrderLine` / `order_line`) | `error`: `ComposeNameConflictError`; `fuse_right`: a synthesized cluster under the left spelling; `prefix_right`: kept apart |
 | one-sided `both` entry | applied where it matches |
 | `both` entry over a composed name | translation of `into`, not a dangling entry |
 | dangling | refused |
 | satisfied | no-op, logged |
 | `properties` keyed by a composed or canonical class | refused — the attribute map is keyed by the source class |
+| `properties` renaming a field the member does not declare, or onto a field it keeps | refused — a property rename cannot merge two fields; align them with `PropertyEquivalence` on both sides |
 | chain or swap inside one map | refused at `CanonicalMap` construction |
-| chain across two maps | refused by `merge_canonical_maps`, in either order |
+
+**Across the two sides.** These are facts about a *pair* of names, decided after each side's composite map has been applied:
+
+| case | outcome |
+|---|---|
+| a name both sides carry, no cluster | `error`: `ComposeIncompleteError`, whose completion declares the equivalence — naming the members in each side's **own** spelling, composed onto the shared name; `union_right`: a synthesized cluster; `prefix_right`: kept apart as `r_n` |
+| two spellings of one name (`OrderLine` / `order_line`) | `error`: `ComposeNameConflictError`; `union_right`: a synthesized cluster under the left spelling; `prefix_right`: kept apart |
+| a **resource** or **connector** name both sides carry | matched **exactly only** — these are addresses, not concepts, so two that key alike split nothing and `union_right` behaves as `error`. Resolve with `resource_renames` or `prefix_right` |
+| two **property** names that key alike (`customer_email` / `customerEmail`) | never fused: a property name binds to a key in the source document, so the two are fed by different columns. Only exact spellings fuse |
+| two declared maps chaining (`{Z: Q}` and `{X: Z}`) | refused by `merge_canonical_maps`, in either order |
 
 A synthesized cluster is a real cluster: the union it produces goes through the same identity reconciliation as a declared one, so two same-named classes whose keys disagree raise `ComposeIdentityError` instead of composing to a key no record carries, and the right side's properties are unioned rather than dropped.
 
