@@ -17,6 +17,7 @@ from graflo.architecture.onto_sample import (
 )
 from graflo.architecture.schema.vertex import Field, FieldType, Vertex
 from graflo.db.cross_resource_identity import (
+    ColumnAlignment,
     CrossResourceIdentityConfig,
     CrossResourceIdentityInferencer,
     apply_proposal_to_vertex,
@@ -318,6 +319,22 @@ class TestApplyProposal:
         with pytest.raises(ValueError, match="cannot be used as identity"):
             apply_proposal_to_vertex(vertex, proposal)
 
+    def test_applying_a_proposal_clears_blank(self) -> None:
+        """A proposal states the whole identity policy, ``blank`` included.
+
+        ``identity_mode`` reads ``blank`` before anything else, so a vertex left
+        blank would accept the proposal and then key on a generated id anyway --
+        the declared key never consulted, and nothing said.
+        """
+        vertex = Vertex(name="party", properties=[Field(name="email")], blank=True)
+        proposal = _inferencer().infer(_shared_email(), vertex_name="party")
+
+        applied = apply_proposal_to_vertex(vertex, proposal)
+
+        assert applied.blank is False
+        assert applied.identity_mode == "natural"
+        assert applied.identity == ["email"]
+
 
 class TestDeterminism:
     def test_repeated_runs_agree(self) -> None:
@@ -335,3 +352,150 @@ class TestDeterminism:
             _inferencer().infer(samples).identity
             == _inferencer().infer(reversed_samples).identity
         )
+
+
+class TestTransitiveClosure:
+    """Three resources, one column, three spellings.
+
+    Every other case in this file uses exactly two resources, where the
+    canonical name is ``min`` of one pair and any scheme agrees. The moment a
+    third resource joins, a per-pair choice and a per-*group* choice diverge --
+    and because the shared-field set is an intersection, a group left
+    disagreeing produces no shared column at all.
+    """
+
+    @staticmethod
+    def _three_spellings() -> dict[str, list[dict]]:
+        return {
+            "crm": [
+                {"email": f"user{i}@example.com", "full_name": f"User {i}"}
+                for i in range(N)
+            ],
+            "billing": [
+                {"email_address": f"user{i}@example.com", "amount": i * 3}
+                for i in range(N)
+            ],
+            "support": [
+                {"mail": f"user{i}@example.com", "tickets": i % 7} for i in range(N)
+            ],
+        }
+
+    def test_a_third_resource_does_not_destroy_the_shared_key(self) -> None:
+        proposal = _inferencer().infer(self._three_spellings(), vertex_name="party")
+
+        assert proposal.strategy == "natural"
+        assert proposal.identity == ["email"]
+
+    def test_every_spelling_lands_on_one_canonical_name(self) -> None:
+        proposal = _inferencer().infer(self._three_spellings(), vertex_name="party")
+
+        assert proposal.resource_field_maps == {
+            "crm": {"email": "email"},
+            "billing": {"email_address": "email"},
+            "support": {"mail": "email"},
+        }
+
+    def test_resource_order_does_not_change_the_canonical_name(self) -> None:
+        """The two-resource determinism test cannot see this.
+
+        With one pair, ``min`` is confluent whatever the order. With a chain,
+        a per-pair choice depends on which pair the score sort consulted first.
+        """
+        samples = self._three_spellings()
+        forward = _inferencer().infer(samples, vertex_name="party")
+        reversed_order = _inferencer().infer(
+            {name: samples[name] for name in reversed(list(samples))},
+            vertex_name="party",
+        )
+
+        assert forward.resource_field_maps == reversed_order.resource_field_maps
+        assert forward.identity == reversed_order.identity
+
+
+class TestAmbiguousAlignment:
+    def test_two_columns_of_one_resource_on_one_name_are_dropped_not_fused(
+        self,
+    ) -> None:
+        """Projecting both onto one name would silently lose a column.
+
+        ``_project`` builds a dict keyed by the canonical name, so the second
+        column overwrites the first. Compose refuses the same shape outright on
+        the declared side; this module proposes rather than raises, so it drops
+        the group and records why.
+        """
+        groups = CrossResourceIdentityInferencer._alignment_groups(
+            [
+                ColumnAlignment(
+                    left_resource="a",
+                    left_field="email",
+                    right_resource="b",
+                    right_field="contact_email",
+                    name_score=0.8,
+                    value_jaccard=0.9,
+                ),
+                ColumnAlignment(
+                    left_resource="a",
+                    left_field="email",
+                    right_resource="b",
+                    right_field="billing_email",
+                    name_score=0.8,
+                    value_jaccard=0.9,
+                ),
+            ]
+        )
+        assert len(groups) == 1, "the chain through a.email is one group"
+
+        maps, ambiguous = CrossResourceIdentityInferencer._canonical_field_maps(
+            [
+                ColumnAlignment(
+                    left_resource="a",
+                    left_field="email",
+                    right_resource="b",
+                    right_field="contact_email",
+                    name_score=0.8,
+                    value_jaccard=0.9,
+                ),
+                ColumnAlignment(
+                    left_resource="a",
+                    left_field="email",
+                    right_resource="b",
+                    right_field="billing_email",
+                    name_score=0.8,
+                    value_jaccard=0.9,
+                ),
+            ]
+        )
+        assert maps == {}, "nothing is projected, so no column is lost"
+        assert len(ambiguous) == 1
+        assert "billing_email" in ambiguous[0] and "contact_email" in ambiguous[0]
+
+    def test_an_unambiguous_chain_is_kept(self) -> None:
+        maps, ambiguous = CrossResourceIdentityInferencer._canonical_field_maps(
+            [
+                ColumnAlignment(
+                    left_resource="a",
+                    left_field="mail",
+                    right_resource="b",
+                    right_field="zebra",
+                    name_score=0.8,
+                    value_jaccard=0.9,
+                ),
+                ColumnAlignment(
+                    left_resource="b",
+                    left_field="zebra",
+                    right_resource="c",
+                    right_field="email",
+                    name_score=0.8,
+                    value_jaccard=0.9,
+                ),
+            ]
+        )
+        assert not ambiguous
+        # Names chosen so per-pair and per-group disagree: pair one would pick
+        # `mail`, pair two `email`, leaving `a` alone on `mail`. Over the group
+        # there is one answer, and `a` is in it.
+        assert maps == {
+            "a": {"mail": "email"},
+            "b": {"zebra": "email"},
+            "c": {"email": "email"},
+        }

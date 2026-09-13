@@ -187,7 +187,8 @@ Optional extras (see `pyproject.toml` → `[project.optional-dependencies]`):
 
 - `dev` — pytest, ty, pre-commit
 - `docs` — MkDocs stack for building the documentation site
-- `plot` — `pygraphviz` for the `plot_manifest` CLI (install system Graphviz first)
+- `plot` — `pygraphviz` for the `plot_manifest` CLI and the conflict figures
+  (`graflo compose --plot`, `graflo merge --plot`); install system Graphviz first
 
 ```bash
 pip install "graflo[dev]"

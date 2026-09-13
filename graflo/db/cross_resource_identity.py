@@ -303,7 +303,7 @@ class CrossResourceIdentityInferencer:
                 "resources share no comparable key material",
             )
 
-        field_maps = self._canonical_field_maps(alignments)
+        field_maps, ambiguous_alignments = self._canonical_field_maps(alignments)
         projected = {
             name: _project(docs, field_maps.get(name, {}))
             for name, docs in usable.items()
@@ -323,6 +323,8 @@ class CrossResourceIdentityInferencer:
             "doc_counts": {name: len(docs) for name, docs in usable.items()},
             "shared_fields": shared_fields,
         }
+        if ambiguous_alignments:
+            evidence["ambiguous_alignments"] = ambiguous_alignments
 
         if key is not None:
             return self._natural_proposal(
@@ -415,24 +417,93 @@ class CrossResourceIdentityInferencer:
         return pairs
 
     @staticmethod
+    def _alignment_groups(
+        alignments: list[ColumnAlignment],
+    ) -> list[list[tuple[str, str]]]:
+        """The ``(resource, field)`` groups the alignments induce, closed.
+
+        Alignments are *pairs*; what a canonical name has to be stable over is
+        the **group**. Three resources aligned ``a <-> b`` and ``b <-> c``
+        describe one column under three spellings, and only a closure sees that
+        -- taking each pair on its own leaves the group's members disagreeing,
+        and because the shared-field set is an intersection, the key search then
+        sees no shared column at all and the whole inference falls back.
+
+        Union-find, rooted on the alphabetically first field name, so the
+        representative *is* the canonical name and the result depends on neither
+        resource order nor which pair scored highest.
+        """
+        parent: dict[tuple[str, str], tuple[str, str]] = {}
+
+        def find(node: tuple[str, str]) -> tuple[str, str]:
+            parent.setdefault(node, node)
+            while parent[node] != node:
+                parent[node] = parent[parent[node]]
+                node = parent[node]
+            return node
+
+        def union(left: tuple[str, str], right: tuple[str, str]) -> None:
+            left_root, right_root = find(left), find(right)
+            if left_root == right_root:
+                return
+            # The lower field name keeps the root, so by induction every root is
+            # the alphabetically first field name of its whole group.
+            if left_root[1] <= right_root[1]:
+                parent[right_root] = left_root
+            else:
+                parent[left_root] = right_root
+
+        for alignment in alignments:
+            union(
+                (alignment.left_resource, alignment.left_field),
+                (alignment.right_resource, alignment.right_field),
+            )
+
+        groups: dict[tuple[str, str], list[tuple[str, str]]] = {}
+        for node in sorted(parent):
+            groups.setdefault(find(node), []).append(node)
+        return [groups[root] for root in sorted(groups)]
+
+    @staticmethod
     def _canonical_field_maps(
         alignments: list[ColumnAlignment],
-    ) -> dict[str, dict[str, str]]:
-        """Map each aligned source column to a shared canonical name.
+    ) -> tuple[dict[str, dict[str, str]], list[str]]:
+        """Each aligned source column onto its group's canonical name.
 
-        The canonical name is the alphabetically first field in the alignment
-        group, so the choice is stable across runs regardless of resource order.
+        Returns the per-resource maps and a description of every group dropped
+        as ambiguous. A group holding **two fields of one resource** would
+        project both onto one name, and ``_project`` builds a dict -- so one of
+        the two columns would vanish with nothing said. Compose refuses the same
+        shape outright on the declared side (``property rename collision``);
+        this module only ever proposes, so it drops the group and says why
+        rather than raising.
         """
         maps: dict[str, dict[str, str]] = {}
-        for alignment in alignments:
-            canonical = min(alignment.left_field, alignment.right_field)
-            maps.setdefault(alignment.left_resource, {})[alignment.left_field] = (
-                canonical
+        ambiguous: list[str] = []
+        for group in CrossResourceIdentityInferencer._alignment_groups(alignments):
+            canonical = group[0][1] if len(group) == 1 else min(f for _r, f in group)
+            by_resource: dict[str, list[str]] = {}
+            for resource, field_name in group:
+                by_resource.setdefault(resource, []).append(field_name)
+            collided = {r: f for r, f in by_resource.items() if len(f) > 1}
+            if collided:
+                ambiguous.append(
+                    f"{canonical!r}: "
+                    + "; ".join(
+                        f"{resource} aligns {sorted(fields)} onto one name"
+                        for resource, fields in sorted(collided.items())
+                    )
+                )
+                continue
+            for resource, field_names in by_resource.items():
+                maps.setdefault(resource, {})[field_names[0]] = canonical
+        if ambiguous:
+            logger.warning(
+                "cross-resource identity: dropped %d ambiguous column group(s) -- %s",
+                len(ambiguous),
+                "; ".join(ambiguous),
             )
-            maps.setdefault(alignment.right_resource, {})[alignment.right_field] = (
-                canonical
-            )
-        return maps
+        return maps, ambiguous
 
     # -- key search -----------------------------------------------------
 
@@ -684,6 +755,12 @@ def apply_proposal_to_vertex(
         else None
     )
     payload["assigned"] = proposal.assigned
+    # Written explicitly, not left as the vertex had it. A proposal states the
+    # whole identity policy, and `blank` outranks every other mode in
+    # `Vertex.identity_mode` -- so leaving a pre-existing `blank` in place would
+    # accept the proposal and then key the vertex on a generated id anyway,
+    # which is the same silent no-op `merge_vertex_models` now refuses.
+    payload["blank"] = False
 
     known = {field.get("name") for field in payload.get("properties", [])}
     for name in _proposal_field_names(proposal):

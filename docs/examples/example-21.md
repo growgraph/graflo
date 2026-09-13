@@ -31,12 +31,12 @@ The view produces two: `Firm` for `kind: firm` rows and `Shop` for
 `kind: shop` rows, through the router. Canonical attributes are derived per
 member, and that is the whole idea of what follows.
 
-## What the merge already does to the router
+## What the collapse already does to the router
 
 Nothing here is new. The per-side relabel (`CanonicalizeOp`) rewrites the
 router in place: `type_map` becomes `{firm: Company, shop: Company, person:
 Person}` and `vertex_from_map`
-keys are remapped, with the merged types' column maps **unioned** — one vertex
+keys are remapped, with the collapsed types' column maps **unioned** — one vertex
 field reading two different columns raises rather than silently keeping the
 last. And `allow_observation_fusion` is *not* needed: a router emits at most one
 vertex per document, so two branches pointing at one class cannot fuse
@@ -58,7 +58,7 @@ view's entry is keyed by **member**:
 
 ```python
 AlignmentAttribute(
-    into="match_key",
+    name="match_key",
     sources={
         "r_view": SharedDerivation(
             spec=DerivationSpec(input=["secondary_key"], foo="affix_gated_key"),
@@ -80,7 +80,7 @@ expands to `{"Firm": DerivationSpec(..., params={"prefix": "abc_"}), "Shop":
 ...}`, which is what you write when more than a parameter varies (a different
 column, a different function), or `members=["A", "B", ...]` when nothing does.
 
-Nothing names `kind`, `firm` or `shop`. The lowering asks the pre-merge left
+Nothing names `kind`, `firm` or `shop`. The lowering asks the pre-collapse left
 side how `r_view` produces `Shop` — a router over `kind`, key `shop` — and
 guards the step accordingly. What lands in the pipeline:
 

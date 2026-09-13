@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.13.1]
+
+### Added
+
+- **`ComposeIncompleteError`** with typed `completion` (`VertexEquivalence` / `RelationEquivalence` documents) for a map entry sending a non-member onto a composed class, or — under `name_conflict="error"` — a shared name no cluster composes. `graflo compose` prints the completion as YAML.
+- **Synthesized clusters** under `name_conflict="union_right"`: shared names and near-collisions become 1-1 equivalences into the left spelling. `Cluster.synthesized` marks them; `Cluster.declared_into` keeps the author's composed name.
+- **`canonicalize_ops`, `canonical_near_collisions`, `DeclaredMaps`, `Completion`** on `graflo.architecture.evolution`. One compose-resolution vocabulary (declared map, cluster, composite map, fixed point, synthesized cluster, completion) shared by `canonical.py` and the evolution guide.
+- **Example 19 incompleteness demos** (`--forgotten-member-demo`, `--shared-name-demo`) and **example 19/20 `--plot-dir`** for compose and merge figures.
+- **`Refusal`** base (`architecture/refusal.py`) with `check` and `subjects`; shared by compose refusals and union merge errors (`FieldMergeError`, `VertexMergeError`, `EdgeMergeError`). Still a `ValueError`.
+- **`preview_compose`** returns a `ComposePreview` — declaration graph plus `findings` at `refusal` / `possible` / `note` — by calling the same merge kernel compose uses (`merge_vertex_models`, `merge_edge_pair`). New finding kinds: `unit_conflict`, `identity_mode_conflict`, `identity_funnel_conflict`, `secondary_identity_conflict`, `edge_conflict`.
+- **`relabel_vertex_fields`** — one vertex with rewritten attribute names; lets the preview reach union inputs without whole-side canonicalize.
+- **Structured refusals:** `ComposeCanonicalConflictError`, `ComposeIncompleteError`, `ComposeNameConflictError`, `ComposeIdentityError`, `ClusterConflictError` and new `UnknownMemberError` carry `check` / `subjects` (keyword-only; message text unchanged).
+- **Conflict figures:** `plot_compose_preview`, `plot_merge_preview`, `plot_history` plus `build_*_graph` networkx counterparts; `build_merge_preview` projects a `MergeResult` slot tree.
+- **CLI:** `graflo compose --plot`, `--preview-json`, `--max-rows` (written even on refusal; `--dry-run` prints findings to stderr); `graflo merge --plot`, `--plot-history`; `plot_manifest --only`.
+- **SVG and DOT output** for all figures; output dirs created automatically; missing `plot` extra names the install command.
+
+### Changed
+
+- **`CanonicalMap` is idempotent** — chains and swaps refused at construction; relabel chains lower to `CanonicalizeOp`. `merge_canonical_maps` refuses chains across two maps regardless of base order.
+- **`AlignmentAttribute.name` / `LocalKeySpec.name`** replace `into` on alignment models (`into` still parses); `into` means collapse target, `name` means derived attribute label.
+- **`name_conflict="fuse_right"` → `"union_right"`** (`fuse_right` still parses). Unions by name for both exact and near collisions; previously exact matches were refused while near collisions fused.
+- **`both`-scoped canonical maps** apply where they match; one-sided or composed-class entries no longer refused as dangling on the other side.
+- Per-side composite relabel is a `CanonicalizeOp` (`SideMaps`); `ClusterResolution.author` → `.declared`. Shared names under `name_conflict="error"` refused as incomplete.
+- `merge_field_lists` raises `FieldMergeError` with structured conflicts; `check` derived from the same predicate as the message heading.
+- `plot_vc2vc` reads vertex set and adjacency from `SchemaGraph`; resource-discovered edges still supplement.
+- `ActorWrapper.assemble_tree` delegates to `graflo.plot.plotter.assemble_tree` (honours `output_format` / `output_dpi`).
+- Every `ManifestPlotter` figure appends schema version to its filename; `_fold_declared_maps` / `_same_name_groups` public as `fold_declared_maps` / `same_name_groups`.
+
+### Fixed
+
+- **`blank` and `hash` mutually exclusive** — `Vertex.set_identity` and `merge_vertex_models` now refuse the pair.
+- **`union_right` dropped the right vertex model** after adopting the left spelling; union now refuses to skip any non-cluster vertex sharing a name.
+- **Compose preview blind to schema-union refusals** — bare `ValueError`s had no `check`; invariant now fails closed on unclassified refusals. Field-type clashes no longer double-report as `possible` + `refusal`.
+- **`_check_attribute_fixed_points`** keyed by member name where `canonical_property_names` keys on canonical class — check never fired for renamed members.
+- **Cross-resource identity alignments** closed transitively into connected components; ambiguous same-resource pairs reported in `evidence["ambiguous_alignments"]`.
+- **`apply_proposal_to_vertex` ignored `blank`** — identity proposals now write the full policy.
+- **Canonical map `properties` keyed by composed/canonical class name** dropped silently; now refused with a source-class hint. Satisfied entries (source absent, target present) logged at `INFO`.
+- **Canonical vocabulary docstring** used RST syntax the Markdown pipeline collapsed; now Markdown, with the case table in the evolution guide.
+- **`xml2json` console script** pointed at removed `graflo.cli.plot_schema`; umbrella CLI and `sh/generate_examples_figs.sh` updated.
+- **`AuxNodeType.INDEX`** was a `StrEnum` duplicate of `FIELD`; dead `knapsack()` helper removed from `plot_manifest.py`.
+
 ## [1.13.0]
 
 ### Added

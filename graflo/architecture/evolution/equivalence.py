@@ -35,17 +35,72 @@ from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Generic, Literal, TypeVar
 
+from graflo.architecture.refusal import Refusal
 from graflo.architecture.schema.naming import canonical_slug
 
 from .ops import ComposeManifestsOp, RelationEquivalence, VertexEquivalence
 
 Side = Literal["left", "right"]
 
+#: What a declaration is about: a class or a relation.
+Kind = Literal["vertex", "relation"]
+
+#: Where a name lives. The two sides' own vocabularies, plus the two the
+#: compose declarations establish: a **composed** name is what a cluster
+#: collapses onto, a **canonical** one what a declared map renames into
+#: without any cluster naming it.
+SubjectScope = Literal["left", "right", "composed", "canonical"]
+
 DeclarationT = TypeVar("DeclarationT", VertexEquivalence, RelationEquivalence)
 
 
-class ClusterConflictError(ValueError):
-    """Two or more equivalence declarations conflict over cluster membership."""
+def subject(scope: SubjectScope, name: str, attr: str | None = None) -> str:
+    """A stable id for the class or attribute a refusal is about.
+
+    Every refusal at this boundary names the declarations it refuses, and a
+    caller that wants to *point* at them — a preview, a diagram, an editor —
+    needs those names as data rather than parsed back out of prose.
+
+    Args:
+        scope: Which vocabulary the name lives in.
+        name: The class or relation name.
+        attr: An attribute of it, when the subject is narrower than a class.
+
+    Returns:
+        ``"left:Firm"`` for a class, ``"left:Firm.firm_id"`` for an attribute.
+    """
+    return f"{scope}:{name}" if attr is None else f"{scope}:{name}.{attr}"
+
+
+class ClusterConflictError(Refusal):
+    """Two or more equivalence declarations conflict over cluster membership.
+
+    ``check`` names the rule that refused and ``subjects`` the names it is
+    about, as :func:`subject` ids -- see :class:`.Refusal`.
+    """
+
+
+class UnknownMemberError(Refusal):
+    """An equivalence names a member the manifest on that side does not declare.
+
+    Its own type because it is the one refusal here that is nearly always a
+    typo rather than a disagreement between two declarations, and a caller
+    classifying refusals cannot key on a bare ``ValueError``.
+
+    Derives ``check`` and ``subjects`` rather than taking them from the caller:
+    there is only one rule it can be an instance of, and only one name it can
+    be about.
+    """
+
+    def __init__(self, message: str, *, side: Side, kind: Kind, member: str) -> None:
+        super().__init__(
+            message,
+            check=f"unknown {kind} member",
+            subjects=(subject(side, member),),
+        )
+        self.side = side
+        self.kind = kind
+        self.member = member
 
 
 @dataclass(frozen=True)
@@ -56,13 +111,18 @@ class ClusterSpec:
     the canonical name it was declared by, or the one the canonical map gives
     it — so the per-member maps (property equivalences,
     ``SideIdentity.members``, identity-alignment member keys) may be keyed by
-    either the member's own name or its canonical one.
+    either the member's own name or its canonical one. ``declared_into`` is
+    the composed name as the author spelled it, before any canonical map
+    translated it; ``synthesized`` marks a cluster compose created itself for
+    a same-name pair under ``name_conflict="union_right"``.
     """
 
     left: tuple[str, ...]
     right: tuple[str, ...]
     into: str
     aliases: dict[Side, dict[str, str]] = field(default_factory=dict)
+    declared_into: str | None = None
+    synthesized: bool = False
 
 
 @dataclass(frozen=True)
@@ -74,6 +134,8 @@ class Cluster(Generic[DeclarationT]):
     into: str
     declaration: DeclarationT
     aliases: dict[Side, dict[str, str]] = field(default_factory=dict)
+    declared_into: str | None = None
+    synthesized: bool = False
 
     def members(self, side: Side) -> tuple[str, ...]:
         return self.left if side == "left" else self.right
@@ -105,11 +167,22 @@ class ClusterIndex:
 
     @property
     def labels(self) -> frozenset[str]:
+        """The composed names of every vertex cluster."""
         return frozenset(c.into for c in self.vertices)
 
     @property
     def relation_labels(self) -> frozenset[str]:
+        """The composed names of every relation cluster."""
         return frozenset(c.into for c in self.relations)
+
+    @property
+    def declared_intos(self) -> frozenset[str]:
+        """Every composed name as the author spelled it, before translation."""
+        return frozenset(
+            c.declared_into
+            for c in (*self.vertices, *self.relations)
+            if c.declared_into is not None
+        )
 
     def vertex_members(self, side: Side) -> frozenset[str]:
         out: set[str] = set()
@@ -153,7 +226,13 @@ def _check_declarations(
                     raise ClusterConflictError(
                         f"{kind}: {side}:{name} is claimed by two equivalence "
                         f"declarations (into {specs[prior].into!r} and "
-                        f"into {into!r}); merge them into one declaration"
+                        f"into {into!r}); merge them into one declaration",
+                        check="cluster overlap",
+                        subjects=(
+                            subject(side, name),
+                            subject("composed", specs[prior].into),
+                            subject("composed", into),
+                        ),
                     )
                 claimed[key] = index
         prior_owner = into_owner.get(into)
@@ -162,7 +241,9 @@ def _check_declarations(
                 f"{kind}: two equivalence declarations both target into "
                 f"{into!r}; two declarations sharing one `into` collapse into "
                 "one composed class — spell it as one declaration naming "
-                "every member"
+                "every member",
+                check="shared into",
+                subjects=(subject("composed", into),),
             )
         into_owner[into] = index
         for side, members, names in (
@@ -181,7 +262,9 @@ def _check_declarations(
                 f"but is not a member of its cluster "
                 f"({side}={list(members)}); add it to this cluster's `{side}` "
                 "to merge into it, declare it in another cluster so it is "
-                "renamed away, or pick a different `into`"
+                "renamed away, or pick a different `into`",
+                check="occupied into",
+                subjects=(subject(side, into), subject("composed", into)),
             )
 
 
@@ -199,6 +282,7 @@ def declared_spec(declaration: VertexEquivalence | RelationEquivalence) -> Clust
         left=tuple(declaration.left_members),
         right=tuple(declaration.right_members),
         into=declaration.into,
+        declared_into=declaration.into,
     )
 
 
@@ -247,6 +331,8 @@ def index_clusters(
                 into=spec.into,
                 declaration=v,
                 aliases=spec.aliases,
+                declared_into=spec.declared_into,
+                synthesized=spec.synthesized,
             )
             for v, spec in zip(op.vertex_equivalences, vertex_specs, strict=True)
         ),
@@ -257,6 +343,8 @@ def index_clusters(
                 into=spec.into,
                 declaration=r,
                 aliases=spec.aliases,
+                declared_into=spec.declared_into,
+                synthesized=spec.synthesized,
             )
             for r, spec in zip(op.relation_equivalences, relation_specs, strict=True)
         ),
@@ -289,29 +377,46 @@ def check_member_existence(
     left_relation_names: Collection[str],
     right_relation_names: Collection[str],
 ) -> None:
-    """Every member must exist on its side; a near-miss spelling is named."""
+    """Every member must exist on its side; a near-miss spelling is named.
+
+    Raises:
+        UnknownMemberError: A member is absent from its side. A subclass of
+            ``ValueError``, so existing handlers are unaffected.
+    """
     for cluster in vertex_clusters:
         for member in cluster.left:
             if member not in left_vertex_names:
-                raise ValueError(
+                raise UnknownMemberError(
                     f"compose_manifests: left vertex {member!r} not in left "
-                    f"manifest{did_you_mean(member, left_vertex_names)}"
+                    f"manifest{did_you_mean(member, left_vertex_names)}",
+                    side="left",
+                    kind="vertex",
+                    member=member,
                 )
         for member in cluster.right:
             if member not in right_vertex_names:
-                raise ValueError(
+                raise UnknownMemberError(
                     f"compose_manifests: right vertex {member!r} not in right "
-                    f"manifest{did_you_mean(member, right_vertex_names)}"
+                    f"manifest{did_you_mean(member, right_vertex_names)}",
+                    side="right",
+                    kind="vertex",
+                    member=member,
                 )
     for cluster in relation_clusters:
         for member in cluster.left:
             if member not in left_relation_names:
-                raise ValueError(
-                    f"compose_manifests: left relation {member!r} not in left manifest"
+                raise UnknownMemberError(
+                    f"compose_manifests: left relation {member!r} not in left manifest",
+                    side="left",
+                    kind="relation",
+                    member=member,
                 )
         for member in cluster.right:
             if member not in right_relation_names:
-                raise ValueError(
+                raise UnknownMemberError(
                     f"compose_manifests: right relation {member!r} not in "
-                    "right manifest"
+                    "right manifest",
+                    side="right",
+                    kind="relation",
+                    member=member,
                 )

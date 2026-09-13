@@ -6,7 +6,6 @@ mappings. The module supports various visualization options and graph layout cus
 
 Key Components:
     - manifestPlotter: Main class for manifest visualization
-    - knapsack: Utility for optimizing graph layout
     - plot_manifest: CLI command for manifest visualization
 
 Graphviz Attributes Reference:
@@ -45,54 +44,8 @@ sg_one = ag.add_subgraph(level_one, rank='same')
 """
 
 
-def knapsack(weights, ks_size=7):
-    """Split a set of weights into groups of at most threshold weight.
-
-    This function implements a greedy algorithm to partition weights into groups
-    where each group's total weight is at most ks_size. It's used for optimizing
-    graph layout by balancing node distribution.
-
-    Args:
-        weights: List of weights to partition
-        ks_size: Maximum total weight per group (default: 7)
-
-    Returns:
-        list[list[int]]: List of groups, where each group is a list of indices
-            from the original weights list
-
-    Raises:
-        ValueError: If any single weight exceeds ks_size
-
-    Example:
-        >>> weights = [3, 4, 2, 5, 1]
-        >>> knapsack(weights, ks_size=7)
-        [[4, 0, 2], [1, 3]]  # Groups with weights [6, 7]
-    """
-    pp = sorted(zip(range(len(weights)), weights), key=lambda x: x[1])
-    print(pp)
-    acc = []
-    if pp[-1][1] > ks_size:
-        raise ValueError("One of the items is larger than the knapsack")
-
-    while pp:
-        w_item = []
-        w_item += [pp.pop()]
-        ww_item = sum([item for _, item in w_item])
-        while ww_item < ks_size:
-            cnt = 0
-            for j, item in enumerate(pp[::-1]):
-                diff = ks_size - item[1] - ww_item
-                if diff >= 0:
-                    cnt += 1
-                    w_item += [pp.pop(len(pp) - j - 1)]
-                    ww_item += w_item[-1][1]
-                else:
-                    break
-            if ww_item >= ks_size or cnt == 0:
-                acc += [w_item]
-                break
-    acc_ret = [[y for y, _ in subitem] for subitem in acc]
-    return acc_ret
+#: The figure families this command can draw, as ``--only`` accepts them.
+FIGURES = ("vc2vc", "vc2fields", "resources", "source2vc", "source2vc_detailed")
 
 
 @click.command()
@@ -118,7 +71,7 @@ def knapsack(weights, ks_size=7):
 )
 @click.option(
     "--output-format",
-    type=click.Choice(["pdf", "png"], case_sensitive=False),
+    type=click.Choice(["svg", "pdf", "png", "dot"], case_sensitive=False),
     default="pdf",
     show_default=True,
     help="Output figure format.",
@@ -130,6 +83,16 @@ def knapsack(weights, ks_size=7):
     show_default=True,
     help="DPI used when output format is png.",
 )
+@click.option(
+    "--only",
+    multiple=True,
+    type=click.Choice(FIGURES, case_sensitive=False),
+    help=(
+        "Draw only these figures; repeatable. Omitted draws all of them: "
+        + ", ".join(FIGURES)
+        + "."
+    ),
+)
 def plot_manifest(
     manifest_path,
     figure_output_path,
@@ -139,6 +102,7 @@ def plot_manifest(
     include_all_vertices,
     output_format,
     output_dpi,
+    only,
 ):
     """Generate visualizations of the graph database manifest.
 
@@ -157,8 +121,9 @@ def plot_manifest(
         group_vc_by_level: Whether to cluster vc2vc by inferred graph level
         color_vc_by_level: Whether to color vc2vc nodes by inferred graph level
         include_all_vertices: Whether to include isolated vertex collections
-        output_format: Output image format (pdf or png)
+        output_format: Output image format (svg, pdf, png or dot)
         output_dpi: DPI for raster outputs (png)
+        only: Figures to draw; empty draws all of them
 
     Example:
         $ uv run plot_manifest -c manifest.yaml -o output_dir
@@ -171,17 +136,23 @@ def plot_manifest(
         output_format=output_format.lower(),
         output_dpi=output_dpi if output_format.lower() == "png" else None,
     )
-    plotter.plot_vc2vc(
-        prune_leaves=prune_low_degree_nodes,
-        group_by_inferred_level=(group_vc_by_level or color_vc_by_level),
-        color_by_partition=color_vc_by_level,
-        group_by_partition=group_vc_by_level,
-        include_all_vertices=include_all_vertices,
-    )
-    plotter.plot_vc2fields()
-    plotter.plot_resources()
-    plotter.plot_source2vc()
-    plotter.plot_source2vc_detailed()
+    wanted = {name.lower() for name in only} or set(FIGURES)
+    if "vc2vc" in wanted:
+        plotter.plot_vc2vc(
+            prune_leaves=prune_low_degree_nodes,
+            group_by_inferred_level=(group_vc_by_level or color_vc_by_level),
+            color_by_partition=color_vc_by_level,
+            group_by_partition=group_vc_by_level,
+            include_all_vertices=include_all_vertices,
+        )
+    if "vc2fields" in wanted:
+        plotter.plot_vc2fields()
+    if "resources" in wanted:
+        plotter.plot_resources()
+    if "source2vc" in wanted:
+        plotter.plot_source2vc()
+    if "source2vc_detailed" in wanted:
+        plotter.plot_source2vc_detailed()
 
 
 if __name__ == "__main__":

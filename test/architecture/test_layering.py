@@ -40,6 +40,7 @@ LAYERS: dict[str, int] = {
     "graflo.util": 0,
     "graflo.architecture": 4,  # default for the architecture umbrella
     "graflo.architecture.base": 0,
+    "graflo.architecture.refusal": 0,  # leaf: the refusal base, imported from L2 up
     "graflo.filter": 1,
     "graflo.architecture.graph_types": 1,
     "graflo.architecture.schema": 2,

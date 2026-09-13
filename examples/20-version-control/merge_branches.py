@@ -11,6 +11,11 @@ The point of the last flag is the one that is hard to see from an API listing:
 a merge whose resolutions were *recorded* can be run again after one side moves
 on, and only genuinely new conflicts come back. That is what makes an overlay
 maintainable instead of a fork someone has to re-litigate every release.
+
+``--plot-dir`` draws two pictures of the same run: the **slot tree**, which
+says where in the model the branches met — slots contain one another, so a
+contested vertex sits above the field edits inside it — and the **commit DAG**
+with the merge base marked.
 """
 
 from __future__ import annotations
@@ -62,6 +67,12 @@ def _properties_of(manifest: GraphManifest) -> list[str]:
 
 @click.command()
 @click.option(
+    "--plot-dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Draw the slot tree and the commit DAG into this directory.",
+)
+@click.option(
     "--take",
     type=click.Choice(["left", "right"]),
     default="left",
@@ -79,7 +90,7 @@ def _properties_of(manifest: GraphManifest) -> list[str]:
     default=STORE_ROOT,
     show_default=True,
 )
-def main(take: str, advance_left: bool, store: Path) -> None:
+def main(plot_dir: Path | None, take: str, advance_left: bool, store: Path) -> None:
     """Merge the two heads, resolving the identity conflict."""
     base, history = build_history()
 
@@ -118,6 +129,20 @@ def main(take: str, advance_left: bool, store: Path) -> None:
 
     # ── the conflict ────────────────────────────────────────────────────────
     merged, result = merge_three_way(ancestor, left_state, right_state)
+
+    if plot_dir is not None:
+        # Drawn from the *unresolved* result: an open conflict is what the
+        # slot tree is for, and it is gone once a decision is recorded. Then
+        # stop -- drawing is a read, and writing the store as a side effect of
+        # asking for a figure would rewrite the committed artifacts.
+        _plot(
+            result,
+            history,
+            plot_dir,
+            heads=[left_commit.id, right_commit.id],
+            merge_base=base_id,
+        )
+        return
     if merged is not None:
         raise click.ClickException("expected a conflict; the example is stale")
 
@@ -186,6 +211,27 @@ def main(take: str, advance_left: bool, store: Path) -> None:
     FileCommitStore(store).save(reconciled)
     click.echo(f"\nheads after merging: {len(reconciled.heads())}")
     click.echo(f"stored: {store}")
+
+
+def _plot(
+    result,
+    history: History,
+    plot_dir: Path,
+    *,
+    heads: list[str],
+    merge_base: str,
+) -> None:
+    """Draw where the branches met, and the lineage they met on."""
+    from graflo.architecture.evolution.preview import build_merge_preview
+    from graflo.plot.merge import plot_history, plot_merge_preview
+
+    preview = build_merge_preview(result)
+    slots = plot_merge_preview(preview, plot_dir / "merge-slots.svg")
+    lineage = plot_history(
+        history, plot_dir / "merge-history.svg", heads=heads, merge_base=merge_base
+    )
+    click.echo(f"slot tree ({preview.conflicts} contested) → {slots}")
+    click.echo(f"lineage → {lineage}\n")
 
 
 if __name__ == "__main__":

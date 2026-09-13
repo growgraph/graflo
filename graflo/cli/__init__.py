@@ -10,5 +10,5 @@ Key Components:
 
 Example:
     >>> uv run ingest --config config.json --data data.json
-    >>> uv run plot_schema --config schema.yaml --output figs
+    >>> uv run plot_manifest -c manifest.yaml -o figs
 """

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from graflo.architecture.contract.manifest import GraphManifest
@@ -9,6 +11,8 @@ from graflo.architecture.evolution import (
     CanonicalizeOp,
     CanonicalMap,
     ComposeCanonicalConflictError,
+    ComposeIdentityError,
+    ComposeIncompleteError,
     ComposeManifestsOp,
     PropertyEquivalence,
     RelationEquivalence,
@@ -17,6 +21,7 @@ from graflo.architecture.evolution import (
     canonical_map_to_ops,
     compose_manifests,
     merge_canonical_maps,
+    resolve_clusters,
     validate_and_complete_canonical_map,
 )
 from graflo.architecture.schema.core import CoreSchema
@@ -227,7 +232,11 @@ class TestCanonicalMapToOps:
 
 
 class TestCanonicalizeAppliesInOneStep:
-    """The map is a function on names applied once; op order cannot leak in."""
+    """The op is a function on names applied once; op order cannot leak in.
+
+    A chain is a *relabel*: ``CanonicalMap`` refuses it (a vocabulary has
+    fixed points), so these build the ``CanonicalizeOp`` directly.
+    """
 
     @staticmethod
     def _three() -> GraphManifest:
@@ -244,8 +253,8 @@ class TestCanonicalizeAppliesInOneStep:
 
     def test_a_merge_landing_on_a_name_that_moves_builds_a_fresh_class(self) -> None:
         """{X, X2} -> Z while Z -> Q: Q is the old Z alone, Z is X and X2 alone."""
-        cm = CanonicalMap(vertices={"X": "Z", "X2": "Z", "Z": "Q"}, allow_merges=True)
-        out = apply_evolution(self._three(), canonical_map_to_ops(cm))
+        op = CanonicalizeOp(vertices={"X": "Z", "X2": "Z", "Z": "Q"}, allow_merges=True)
+        out = apply_evolution(self._three(), [op])
         assert out.graph_schema is not None
         vc = out.graph_schema.core_schema.vertex_config
         assert vc.vertex_set == {"Z", "Q"}
@@ -265,8 +274,8 @@ class TestCanonicalizeAppliesInOneStep:
                 for n in ("A", "X", "X2")
             ],
         )
-        cm = CanonicalMap(vertices={"A": "X", "X": "Z", "X2": "Z"}, allow_merges=True)
-        out = apply_evolution(m, canonical_map_to_ops(cm))
+        op = CanonicalizeOp(vertices={"A": "X", "X": "Z", "X2": "Z"}, allow_merges=True)
+        out = apply_evolution(m, [op])
         assert out.graph_schema is not None
         vc = out.graph_schema.core_schema.vertex_config
         assert vc.vertex_set == {"X", "Z"}
@@ -479,14 +488,21 @@ class TestValidateAndCompleteCanonicalMap:
             vertex_equivalences=[VertexEquivalence(left="Firm", right="Org")]
         )
         with pytest.raises(
-            ComposeCanonicalConflictError, match="merge into a composed class"
-        ):
+            ComposeIncompleteError, match="joining a composed class"
+        ) as exc:
             validate_and_complete_canonical_map(
                 op,
                 left=_source_a_manifest(),
                 right=_right_b_manifest(),
                 canonical_maps=[("left", cm)],
             )
+        completion = exc.value.completion
+        assert completion.kind == "extend_cluster"
+        assert completion.side == "left"
+        (payload,) = completion.vertex_equivalences
+        assert payload["left"] == ["Firm", "Deal"]
+        assert payload["right"] == "Org"
+        assert payload["into"] == "Company"
 
     def test_a_dangling_map_entry_raises(self) -> None:
         cm = CanonicalMap(vertices={"Ghost": "Company"})
@@ -525,7 +541,8 @@ class TestValidateAndCompleteCanonicalMap:
         )
         op = ComposeManifestsOp(
             vertex_equivalences=[
-                VertexEquivalence(left="Firm", right="Org", into="Company")
+                VertexEquivalence(left="Firm", right="Org", into="Company"),
+                VertexEquivalence(left="Deal", right="Deal"),
             ],
             relation_equivalences=[RelationEquivalence(left="signs", right="inks")],
         )
@@ -607,6 +624,73 @@ class TestValidateAndCompleteCanonicalMap:
         )
         with pytest.raises(ComposeCanonicalConflictError, match="property re-target"):
             self._validate(op)
+
+    def test_property_retarget_raises_for_a_member_the_map_renames(self) -> None:
+        """The same rule, reached through a member that is *not* already canonical.
+
+        ``test_property_retarget_raises`` above names ``Company``, which the map
+        leaves alone -- so the fixed-point set was found whichever name the
+        lookup used, and the check passed for the wrong reason. Here the map
+        folds ``Firm`` and ``Shop`` onto ``Company`` and establishes
+        ``company_id`` there by renaming ``Firm.firm_id``; ``Shop`` already
+        spells it that way, so nothing is unknown or colliding. Re-targeting it
+        is a fixed point moved, and the refusal has to say so for a renamed
+        member exactly as it does for an unrenamed one.
+        """
+        left = _manifest(
+            name="retarget-left",
+            vertices=[
+                Vertex(
+                    name="Firm",
+                    properties=[Field(name="firm_id")],
+                    identity=["firm_id"],
+                ),
+                Vertex(
+                    name="Shop",
+                    properties=[Field(name="company_id")],
+                    identity=["company_id"],
+                ),
+            ],
+        )
+        right = _manifest(
+            name="retarget-right",
+            vertices=[
+                Vertex(
+                    name="Org", properties=[Field(name="org_id")], identity=["org_id"]
+                )
+            ],
+        )
+        cm = CanonicalMap(
+            vertices={"Firm": "Company", "Shop": "Company"},
+            properties={"Firm": {"firm_id": "company_id"}},
+            allow_merges=True,
+        )
+        op = ComposeManifestsOp(
+            vertex_equivalences=[
+                VertexEquivalence(
+                    left=["Firm", "Shop"],
+                    right="Org",
+                    into="Company",
+                    properties=[
+                        PropertyEquivalence(
+                            left={"Shop": "company_id"},
+                            right={"Org": "org_id"},
+                            into="ident",
+                        )
+                    ],
+                )
+            ],
+            allow_merges=True,
+            canonical_maps={"left": cm},
+        )
+        from graflo.architecture.evolution.canonical import resolve_clusters
+
+        with pytest.raises(
+            ComposeCanonicalConflictError, match="property re-target"
+        ) as excinfo:
+            resolve_clusters(op, left=left, right=right)
+        assert excinfo.value.check == "property re-target"
+        assert excinfo.value.subjects == ("left:Shop.company_id",)
 
     def _right_two_orgs(self) -> GraphManifest:
         return _manifest(
@@ -845,3 +929,290 @@ class TestTheTwoChecksDoNotOverlap:
         from graflo.architecture.schema.naming import canonical_slug
 
         assert canonical_slug("Firm") != canonical_slug("Company")
+
+
+class TestCaseTable:
+    """One test per row of the case table in :mod:`canonical` that is not covered above."""
+
+    @staticmethod
+    def _right(*names: str, edges: list[Edge] | None = None) -> GraphManifest:
+        return _manifest(
+            name="b",
+            vertices=[
+                Vertex(
+                    name=n,
+                    properties=[Field(name="id", type=FieldType.STRING)],
+                    identity=["id"],
+                )
+                for n in names
+            ],
+            edges=edges,
+        )
+
+    # ── `both` scope ────────────────────────────────────────────────────────
+
+    def test_a_one_sided_both_entry_applies_where_it_matches(self) -> None:
+        op = ComposeManifestsOp(
+            vertex_equivalences=[
+                VertexEquivalence(left="Firm", right="Org", into="Company")
+            ],
+            canonical_maps={
+                "both": CanonicalMap(vertices={"Firm": "Company", "Deal": "Contract"})
+            },
+        )
+        side_maps = validate_and_complete_canonical_map(
+            op, left=_source_a_manifest(), right=_right_b_manifest()
+        )
+        assert side_maps.left.vertices == {"Firm": "Company", "Deal": "Contract"}
+        assert side_maps.right.vertices == {"Org": "Company"}
+
+    def test_a_both_entry_over_a_composed_name_translates_it(self) -> None:
+        op = ComposeManifestsOp(
+            vertex_equivalences=[
+                VertexEquivalence(left="Firm", right="Org", into="Company")
+            ],
+            canonical_maps={"both": CanonicalMap(vertices={"Company": "Party"})},
+        )
+        side_maps = validate_and_complete_canonical_map(
+            op, left=_source_a_manifest(), right=_right_b_manifest()
+        )
+        assert side_maps.left.vertices == {"Firm": "Party"}
+        assert side_maps.right.vertices == {"Org": "Party"}
+
+    def test_a_dangling_both_entry_is_still_refused(self) -> None:
+        op = ComposeManifestsOp(
+            vertex_equivalences=[
+                VertexEquivalence(left="Firm", right="Org", into="Company")
+            ],
+            canonical_maps={"both": CanonicalMap(vertices={"Ghost": "Spectre"})},
+        )
+        with pytest.raises(ComposeCanonicalConflictError, match="dangling"):
+            validate_and_complete_canonical_map(
+                op, left=_source_a_manifest(), right=_right_b_manifest()
+            )
+
+    # ── a vocabulary is idempotent ──────────────────────────────────────────
+
+    def test_a_chain_is_refused_at_construction(self) -> None:
+        with pytest.raises(ValueError, match="fixed points"):
+            CanonicalMap(vertices={"X": "Z", "Z": "Q"})
+
+    def test_a_swap_is_refused_at_construction(self) -> None:
+        with pytest.raises(ValueError, match="fixed points"):
+            CanonicalMap(vertices={"A": "B", "B": "A"})
+
+    def test_a_relation_chain_is_refused_at_construction(self) -> None:
+        with pytest.raises(ValueError, match="canonical relation"):
+            CanonicalMap(relations={"a": "b", "b": "c"})
+
+    def test_a_property_chain_is_refused_at_construction(self) -> None:
+        with pytest.raises(ValueError, match="canonical property"):
+            CanonicalMap(properties={"Firm": {"a": "b", "b": "c"}})
+
+    def test_the_relabel_op_still_accepts_a_chain(self) -> None:
+        assert CanonicalizeOp(vertices={"X": "Z", "Z": "Q"}).vertices == {
+            "X": "Z",
+            "Z": "Q",
+        }
+
+    def test_a_chain_across_two_maps_is_refused_in_either_order(self) -> None:
+        moves_z = CanonicalMap(vertices={"Z": "Q"})
+        lands_on_z = CanonicalMap(vertices={"X": "Z"})
+        for base, extension in ((moves_z, lands_on_z), (lands_on_z, moves_z)):
+            with pytest.raises(ComposeCanonicalConflictError, match="re-target"):
+                merge_canonical_maps(base, extension)
+
+    # ── silent no-ops made loud ─────────────────────────────────────────────
+
+    def test_a_property_map_keyed_by_a_composed_name_is_refused(self) -> None:
+        op = ComposeManifestsOp(
+            vertex_equivalences=[
+                VertexEquivalence(left="Firm", right="Org", into="Company")
+            ],
+            canonical_maps={
+                "left": CanonicalMap(
+                    vertices={"Firm": "Company"},
+                    properties={"Company": {"firm_id": "cid"}},
+                )
+            },
+        )
+        with pytest.raises(ComposeCanonicalConflictError, match="a composed name"):
+            validate_and_complete_canonical_map(
+                op, left=_source_a_manifest(), right=_right_b_manifest()
+            )
+
+    def test_a_satisfied_entry_is_logged(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        op = ComposeManifestsOp(
+            vertex_equivalences=[
+                VertexEquivalence(left="Company", right="Org", into="Company")
+            ]
+        )
+        left = apply_evolution(_source_a_manifest(), canonical_map_to_ops(_CANONICAL))
+        with caplog.at_level(
+            logging.INFO, logger="graflo.architecture.evolution.canonical"
+        ):
+            validate_and_complete_canonical_map(
+                op,
+                left=left,
+                right=_right_b_manifest(),
+                canonical_maps=[("left", _CANONICAL)],
+            )
+        assert any("satisfied" in record.getMessage() for record in caplog.records)
+
+    # ── a name both sides carry ─────────────────────────────────────────────
+
+    def test_a_shared_name_under_error_is_incomplete_with_the_declarations(
+        self,
+    ) -> None:
+        right = self._right(
+            "Org", "Deal", edges=[Edge(source="Org", target="Deal", relation="signs")]
+        )
+        op = ComposeManifestsOp(
+            vertex_equivalences=[
+                VertexEquivalence(left="Firm", right="Org", into="Company")
+            ]
+        )
+        with pytest.raises(
+            ComposeIncompleteError, match="vertex name collision"
+        ) as exc:
+            compose_manifests(_source_a_manifest(), right, op)
+        completion = exc.value.completion
+        assert completion.kind == "declare_equivalences"
+        assert completion.vertex_equivalences == (
+            {"left": "Deal", "right": "Deal", "into": "Deal"},
+        )
+        assert completion.relation_equivalences == (
+            {"left": "signs", "right": "signs", "into": "signs"},
+        )
+        assert completion.to_dict()["vertex_equivalences"] == [
+            {"left": "Deal", "right": "Deal", "into": "Deal"}
+        ]
+
+    def test_union_right_unions_shared_names_through_a_cluster(self) -> None:
+        right = _manifest(
+            name="b",
+            vertices=[
+                Vertex(
+                    name="Org",
+                    properties=[Field(name="org_id", type=FieldType.STRING)],
+                    identity=["org_id"],
+                ),
+                Vertex(
+                    name="Deal",
+                    properties=[
+                        Field(name="id", type=FieldType.STRING),
+                        Field(name="amount", type=FieldType.FLOAT),
+                    ],
+                    identity=["id"],
+                ),
+            ],
+            edges=[Edge(source="Org", target="Deal", relation="signs")],
+        )
+        op = ComposeManifestsOp(
+            vertex_equivalences=[
+                VertexEquivalence(
+                    left="Firm",
+                    right="Org",
+                    into="Company",
+                    properties=[
+                        PropertyEquivalence(left="firm_id", right="org_id", into="id")
+                    ],
+                )
+            ],
+            name_conflict="union_right",
+        )
+        index = resolve_clusters(op, left=_source_a_manifest(), right=right).index
+        assert [c.into for c in index.vertices if c.synthesized] == ["Deal"]
+        assert [c.into for c in index.relations if c.synthesized] == ["signs"]
+        assert [c.into for c in index.vertices if not c.synthesized] == ["Company"]
+
+        out = compose_manifests(_source_a_manifest(), right, op, bump_version=False)
+        assert out.graph_schema is not None
+        vc = out.graph_schema.core_schema.vertex_config
+        assert vc.vertex_set == {"Company", "Deal"}
+        # The right model is unioned into the cluster, not dropped.
+        assert "amount" in vc.property_names("Deal")
+        edges = {
+            (e.source, e.target, e.relation)
+            for e in out.graph_schema.core_schema.edge_config.edges
+        }
+        assert edges == {("Company", "Deal", "signs")}
+
+    def test_union_right_refuses_a_shared_name_whose_keys_disagree(self) -> None:
+        right = _manifest(
+            name="b",
+            vertices=[
+                Vertex(
+                    name="Deal",
+                    properties=[Field(name="code", type=FieldType.STRING)],
+                    identity=["code"],
+                )
+            ],
+        )
+        with pytest.raises(ComposeIdentityError):
+            compose_manifests(
+                _source_a_manifest(),
+                right,
+                ComposeManifestsOp(name_conflict="union_right"),
+            )
+
+    def test_union_right_synthesizes_an_nary_cluster_from_a_map_group(self) -> None:
+        left = self._right("Firm", "Shop")  # two left classes, no edges
+        right = self._right("Party")
+        op = ComposeManifestsOp(
+            canonical_maps={
+                "left": CanonicalMap(
+                    vertices={"Firm": "Party", "Shop": "Party"}, allow_merges=True
+                )
+            },
+            name_conflict="union_right",
+        )
+        (cluster,) = resolve_clusters(op, left=left, right=right).index.vertices
+        assert cluster.synthesized
+        assert cluster.left == ("Firm", "Shop")
+        assert cluster.right == ("Party",)
+        assert cluster.into == "Party"
+        out = compose_manifests(left, right, op, bump_version=False)
+        assert out.graph_schema is not None
+        assert out.graph_schema.core_schema.vertex_config.vertex_set == {"Party"}
+
+    def test_prefix_right_keeps_a_shared_name_apart(self) -> None:
+        right = self._right("Org", "Deal")
+        op = ComposeManifestsOp(
+            vertex_equivalences=[
+                VertexEquivalence(
+                    left="Firm",
+                    right="Org",
+                    into="Company",
+                    properties=[PropertyEquivalence(left="firm_id", into="id")],
+                )
+            ],
+            name_conflict="prefix_right",
+        )
+        out = compose_manifests(_source_a_manifest(), right, op, bump_version=False)
+        assert out.graph_schema is not None
+        assert out.graph_schema.core_schema.vertex_config.vertex_set == {
+            "Company",
+            "Deal",
+            "r_Deal",
+        }
+
+    def test_a_declared_shared_name_is_not_synthesized(self) -> None:
+        right = self._right("Org", "Deal")
+        op = ComposeManifestsOp(
+            vertex_equivalences=[
+                VertexEquivalence(left="Firm", right="Org", into="Company"),
+                VertexEquivalence(left="Deal", right="Deal"),
+            ],
+            name_conflict="union_right",
+        )
+        index = resolve_clusters(op, left=_source_a_manifest(), right=right).index
+        assert [c.synthesized for c in index.vertices] == [False, False]
+
+    def test_union_right_still_parses_as_fuse_right(self) -> None:
+        """`fuse` is reserved for records; the policy unions type names."""
+        op = ComposeManifestsOp.model_validate({"name_conflict": "fuse_right"})
+        assert op.name_conflict == "union_right"
+        assert op.to_dict()["name_conflict"] == "union_right"

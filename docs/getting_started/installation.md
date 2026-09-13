@@ -47,7 +47,7 @@ The default package includes RDF/SPARQL support (`rdflib`, `SPARQLWrapper`) and 
 |-------|---------|
 | `dev` | Development: `pytest`, `ty`, `pre-commit` |
 | `docs` | Building this site: MkDocs and plugins |
-| `plot` | `plot_manifest` / schema diagrams via `pygraphviz` |
+| `plot` | `plot_manifest` / schema diagrams and the compose & merge conflict figures, via `pygraphviz` |
 
 ### pip
 

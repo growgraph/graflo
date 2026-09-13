@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
 from graflo.architecture.contract.ingestion import IngestionModel
@@ -772,7 +772,7 @@ def apply_canonicalize(manifest: GraphManifest, op: CanonicalizeOp) -> None:
     manifest.bindings = work.bindings
 
 
-def _rename_field_list(names: list[str], renames: dict[str, str]) -> list[str]:
+def _rename_field_list(names: list[str], renames: Mapping[str, str]) -> list[str]:
     """Apply *renames* to *names*, preserving order and dropping duplicates."""
     out: list[str] = []
     seen: set[str] = set()
@@ -785,62 +785,90 @@ def _rename_field_list(names: list[str], renames: dict[str, str]) -> list[str]:
     return out
 
 
+def relabel_vertex_fields(vertex: Vertex, renames: Mapping[str, str]) -> Vertex:
+    """One vertex with its attribute names rewritten, as a new validated model.
+
+    Every field-set that names a property follows the rename: ``properties``,
+    ``identity``, ``hash_identity_properties``, each funnel branch's ``fields``
+    and ``when_all_present``, and each secondary identity's ``fields``.
+
+    **A property whose new name is already taken is dropped, not appended.**
+    That is not a shortcut -- ``_check_property_renames`` has already refused a
+    genuine rename collision by then, naming it as one. Appending instead would
+    hand :meth:`Vertex.set_identity` two fields of one name, and the
+    ``merge_field_lists`` it runs would report a *type conflict* for what is
+    really a collision, misclassified and wrapped by pydantic besides.
+
+    Pure: the argument is untouched, and the result is built in one
+    ``model_validate`` rather than by assignment, so there is no intermediate
+    state in which ``validate_assignment`` can re-add a stale pre-rename name
+    as an untyped ghost property.
+    """
+    if not renames:
+        return vertex
+
+    payload = vertex.to_dict(skip_defaults=False)
+    payload["identity"] = _rename_field_list(vertex.identity, renames)
+    payload["hash_identity_properties"] = _rename_field_list(
+        vertex.hash_identity_properties, renames
+    )
+    if vertex.identity_funnel is not None:
+        payload["identity_funnel"] = vertex.identity_funnel.model_copy(
+            update={
+                "branches": [
+                    branch.model_copy(
+                        update={
+                            "fields": _rename_field_list(branch.fields, renames),
+                            "when_all_present": (
+                                _rename_field_list(branch.when_all_present, renames)
+                                if branch.when_all_present is not None
+                                else None
+                            ),
+                        }
+                    )
+                    for branch in vertex.identity_funnel.branches
+                ]
+            }
+        ).to_dict(skip_defaults=False)
+    if vertex.secondary_identities:
+        payload["secondary_identities"] = [
+            entry.model_copy(
+                update={"fields": _rename_field_list(entry.fields, renames)}
+            ).to_dict(skip_defaults=False)
+            for entry in vertex.secondary_identities
+        ]
+
+    new_properties: list[Field] = []
+    seen_names: set[str] = set()
+    for field in vertex.properties:
+        new_name = renames.get(field.name, field.name)
+        if new_name in seen_names:
+            continue
+        seen_names.add(new_name)
+        new_properties.append(
+            field
+            if new_name == field.name
+            else field.model_copy(update={"name": new_name})
+        )
+    payload["properties"] = [f.to_dict(skip_defaults=False) for f in new_properties]
+    return Vertex.model_validate(payload)
+
+
 def _rename_fields_in_schema(
     schema: Schema, renames: dict[str, dict[str, str]]
 ) -> None:
-    """Mutate vertex properties + every identity field-set in place per the rename map."""
+    """Rewrite vertex properties + every identity field-set per the rename map.
+
+    In place at the config level, but each vertex is rebuilt by
+    :func:`relabel_vertex_fields` rather than mutated field by field.
+    """
     if not renames:
         return
-    for vertex in schema.core_schema.vertex_config.vertices:
-        per_vertex = renames.get(vertex.name)
-        if not per_vertex:
-            continue
-        # Update the identity field-sets first so Vertex.validate_assignment doesn't
-        # re-add stale pre-rename names into properties as type=None ghosts.
-        vertex.identity = _rename_field_list(vertex.identity, per_vertex)
-        vertex.hash_identity_properties = _rename_field_list(
-            vertex.hash_identity_properties, per_vertex
-        )
-        if vertex.identity_funnel is not None:
-            vertex.identity_funnel = vertex.identity_funnel.model_copy(
-                update={
-                    "branches": [
-                        branch.model_copy(
-                            update={
-                                "fields": _rename_field_list(branch.fields, per_vertex),
-                                "when_all_present": (
-                                    _rename_field_list(
-                                        branch.when_all_present, per_vertex
-                                    )
-                                    if branch.when_all_present is not None
-                                    else None
-                                ),
-                            }
-                        )
-                        for branch in vertex.identity_funnel.branches
-                    ]
-                }
-            )
-        if vertex.secondary_identities:
-            vertex.secondary_identities = [
-                entry.model_copy(
-                    update={"fields": _rename_field_list(entry.fields, per_vertex)}
-                )
-                for entry in vertex.secondary_identities
-            ]
-
-        new_properties: list[Field] = []
-        seen_names: set[str] = set()
-        for field in vertex.properties:
-            new_name = per_vertex.get(field.name, field.name)
-            if new_name in seen_names:
-                continue
-            seen_names.add(new_name)
-            if new_name == field.name:
-                new_properties.append(field)
-            else:
-                new_properties.append(field.model_copy(update={"name": new_name}))
-        vertex.properties = new_properties
+    vertex_config = schema.core_schema.vertex_config
+    vertex_config.vertices = [
+        relabel_vertex_fields(vertex, renames.get(vertex.name) or {})
+        for vertex in vertex_config.vertices
+    ]
 
 
 def _rebuild_ingestion_with_pipeline_rewrite(

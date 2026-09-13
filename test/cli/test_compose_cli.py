@@ -13,6 +13,7 @@ apart cannot gate on either.
 
 from __future__ import annotations
 
+import json
 import pathlib
 
 import yaml
@@ -33,6 +34,15 @@ BOUNDARY_OP: dict = {
     "vertices": [
         {"left": ["Company", "Shop"], "right": ["Org", "Branch"], "into": "Company"}
     ],
+}
+
+
+#: The same cluster with its identity settled, so it composes. Without it the
+#: four members disagree on their natural key -- which the preview reports and
+#: compose refuses.
+KEYED_OP: dict = {
+    **BOUNDARY_OP,
+    "vertices": [{**BOUNDARY_OP["vertices"][0], "identity": ["company_id"]}],
 }
 
 
@@ -309,3 +319,171 @@ def test_a_schemaless_overlay_composes(tmp_path: pathlib.Path) -> None:
     composed = yaml.safe_load(out.read_text(encoding="utf-8"))
     assert composed["schema"]["core_schema"]["vertex_config"]["vertices"]
     assert {r["name"] for r in composed["ingestion_model"]["resources"]} >= {"r_feed"}
+
+
+# ── the preview artifacts ───────────────────────────────────────────────────
+
+
+def test_a_refused_run_still_writes_its_plot_and_its_preview(tmp_path):
+    """The case the artifacts exist for.
+
+    A refusal is exactly when an author wants the picture, and it is the run
+    that would otherwise leave nothing behind -- so both are written before
+    the non-zero exit, not instead of it.
+    """
+    op_path = _write(tmp_path, "op.yaml", BOUNDARY_OP)
+    plot = tmp_path / "figs" / "preview.dot"
+    payload = tmp_path / "preview.json"
+
+    result = CliRunner().invoke(
+        graflo,
+        [
+            "compose",
+            str(MANIFEST_A),
+            str(MANIFEST_B),
+            "--op",
+            str(op_path),
+            "--plot",
+            str(plot),
+            "--preview-json",
+            str(payload),
+        ],
+    )
+
+    assert result.exit_code == 1, "a refusal is still a refusal"
+    assert plot.is_file(), "written even though compose refused"
+    assert payload.is_file()
+
+    document = json.loads(payload.read_text())
+    assert document["outcome"]["status"] == "refused"
+    assert any(f["severity"] == "refusal" for f in document["findings"])
+    assert document["nodes"], "the declaration graph is in there too"
+
+
+def test_a_composing_run_writes_a_preview_with_no_findings(tmp_path):
+    op_path = _write(tmp_path, "op.yaml", KEYED_OP)
+    payload = tmp_path / "preview.json"
+
+    result = CliRunner().invoke(
+        graflo,
+        [
+            "compose",
+            str(MANIFEST_A),
+            str(MANIFEST_B),
+            "--op",
+            str(op_path),
+            "--canonical-map",
+            f"left={CANONICAL_MAP}",
+            "--preview-json",
+            str(payload),
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0
+    document = json.loads(payload.read_text())
+    assert document["outcome"]["status"] == "composed"
+    assert not [f for f in document["findings"] if f["severity"] != "note"]
+
+
+def test_the_findings_table_leads_with_the_refusal_and_names_its_nodes():
+    """What `--dry-run` and every plotted run print.
+
+    Asserted on the formatter because building the three severities by hand is
+    the only way to pin their *order*; the test below covers the same table
+    coming out of the CLI for real.
+    """
+    from graflo.architecture.evolution.preview import ComposeFinding, ComposePreview
+    from graflo.cli.compose import _findings_table
+
+    preview = ComposePreview(
+        findings=[
+            ComposeFinding(
+                kind="satisfied",
+                severity="note",
+                message="already applied",
+                source="structure",
+            ),
+            ComposeFinding(
+                kind="identity_disagreement",
+                severity="possible",
+                message="members disagree",
+                source="structure",
+                nodes=["composed:Company"],
+            ),
+            ComposeFinding(
+                kind="cluster_overlap",
+                severity="refusal",
+                message="claimed twice",
+                source="compose",
+                nodes=["right:Org"],
+            ),
+        ]
+    )
+
+    lines = _findings_table(preview)
+
+    assert lines[0] == "findings: 2 blocking, 3 total"
+    assert "refusal" in lines[1] and "cluster_overlap" in lines[1]
+    assert "right:Org" in lines[1]
+    assert "possible" in lines[2]
+    assert "note" in lines[3], "a note sorts last; it blocks nothing"
+
+
+def test_a_dry_run_prints_the_findings_table_on_stderr(tmp_path):
+    """The table an author actually sees, through the command.
+
+    On stderr, and only on stderr: ``_write_preview`` echoes with
+    ``err=preview.refused``, so a refused run -- the only kind with a refusal to
+    lead with -- writes there, and ``click>=8.2`` keeps the two streams apart.
+    A ``result.stdout`` assertion here reads as an empty stream and looks like a
+    capture problem, which is not what it is.
+    """
+    op_path = _write(tmp_path, "op.yaml", BOUNDARY_OP)
+
+    result = CliRunner().invoke(
+        graflo,
+        [
+            "compose",
+            str(MANIFEST_A),
+            str(MANIFEST_B),
+            "--op",
+            str(op_path),
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 1, "a refusal is still a refusal"
+    assert result.stdout == "", "nothing about a refusal belongs on stdout"
+    lines = result.stderr.splitlines()
+    assert lines[0].startswith("findings: "), result.stderr
+    assert "refusal" in lines[1], "the refusal leads"
+    assert "compose refused" in result.stderr
+
+
+def test_no_findings_says_so():
+    from graflo.architecture.evolution.preview import ComposePreview
+    from graflo.cli.compose import _findings_table
+
+    assert _findings_table(ComposePreview()) == ["findings: none"]
+
+
+def test_a_plot_format_this_cannot_write_is_a_bad_invocation(tmp_path):
+    """Exit 2, not 1: a statement about the command, not about the manifests."""
+    op_path = _write(tmp_path, "op.yaml", BOUNDARY_OP)
+
+    result = CliRunner().invoke(
+        graflo,
+        [
+            "compose",
+            str(MANIFEST_A),
+            str(MANIFEST_B),
+            "--op",
+            str(op_path),
+            "--plot",
+            str(tmp_path / "preview.jpeg"),
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "unsupported format" in result.output

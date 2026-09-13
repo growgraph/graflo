@@ -30,8 +30,8 @@ for subdir in "$BASE_DIR"*/; do
         # Create output directory if it doesn't exist
         mkdir -p "$output_dir"
 
-        # Run plot_schema
-        if plot_schema -c "$schema_file" -o "$output_dir"; then
+        # Run plot_manifest
+        if plot_manifest -c "$schema_file" -o "$output_dir"; then
             echo "  ✓ Generated plots"
 
             # Convert PDFs to PNGs using local conv.sh script

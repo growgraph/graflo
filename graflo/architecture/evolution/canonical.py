@@ -1,43 +1,105 @@
-"""Canonical vocabulary maps: one composite map per side, applied once.
+"""Canonical vocabulary maps and compose-time cluster resolution.
 
-A :class:`~graflo.architecture.evolution.ops.CanonicalMap` is the author's
-translation of a source vocabulary into canonical names — a partial function
-on names, identity where unmapped. An equivalence cluster on a
-:class:`~graflo.architecture.evolution.ops.ComposeManifestsOp` is the other
-half of the same object: it says *which* classes are one (a partition), and
-may leave the composed name to the map. Renames compose, so "canonicalize,
-then declare equivalences in canonical names" and "declare equivalences in
-raw names, then canonicalize" are the same function; :func:`resolve_clusters`
-computes it directly — one composite ``CanonicalMap`` per side, lowered
-through :func:`canonical_map_to_ops` to a single
+Two declarations say how two manifests' names relate. A
+:class:`~graflo.architecture.evolution.ops.CanonicalMap` translates one side's
+vocabulary into canonical names — a partial function on names, identity where
+unmapped, and *idempotent*: a canonical name is a fixed point nothing maps away
+from. An equivalence cluster on a
+:class:`~graflo.architecture.evolution.ops.ComposeManifestsOp` says *which*
+classes across the two sides are one, and may leave what they are called to
+the map. Renames compose, so "canonicalize, then declare equivalences in
+canonical names" and "declare equivalences in raw names, then canonicalize"
+are the same function; :func:`resolve_clusters` computes it directly — one
+composite relabel per side, applied as a single
 :class:`~graflo.architecture.evolution.ops.CanonicalizeOp` — so there is no
 intermediate vocabulary an author has to write in.
 
-Consistency is one rule: the canonical map and the equivalences must agree on
-where every name goes, and a canonical target is a fixed point neither may
-re-map. Every refusal below is an instance of that rule, plus the
-cluster-shape checks of :mod:`~graflo.architecture.evolution.equivalence`.
-:func:`merge_canonical_maps` is the union primitive two author maps for one
-scope reconcile through.
+Vocabulary
+----------
+
+- **declared map** — a ``CanonicalMap`` the author wrote:
+  ``op.canonical_maps[scope]`` and the ``canonical_maps=`` pairs handed to
+  compose. Scoped ``left`` / ``right`` (that side's own names) or ``both``
+  (either side's names, and composed names). Folded per side by
+  :func:`merge_canonical_maps` into a :class:`DeclaredMaps`.
+- **cluster** (:class:`~graflo.architecture.evolution.equivalence.Cluster`,
+  resolved from a :class:`~graflo.architecture.evolution.equivalence.ClusterSpec`)
+  — one equivalence declaration, resolved: its members per side, in the
+  manifests' own spelling, and its **composed name** — ``into`` translated
+  through the declared maps, else the canonical name a map gives a member,
+  else the one spelling every member shares.
+- **cluster map** — per side, every member onto its composed name, the composed
+  name itself included as a self entry so the op merges into it rather than
+  refusing an occupied target.
+- **composite map** (:class:`SideMaps`, one ``CanonicalizeOp`` per side) — the
+  cluster map plus every declared entry that applies to a non-member: what
+  compose applies to that side before the union by name. A relabel, not a
+  vocabulary — two clusters may legitimately chain (one composed name renamed
+  away by another declaration), which a ``CanonicalMap`` refuses.
+- **fixed point** — a canonical target. No declared map and no cluster may
+  move it.
+- **opinion** — what the declared maps say a member's canonical name is: the
+  target it maps to, or itself when it is a fixed point.
+- **satisfied entry** — a declared entry whose source is absent from a side and
+  whose target is present: taken as already applied by the caller. A heuristic
+  — it cannot tell that from a target that never had that source — so it is
+  logged.
+- **dangling entry** — a declared entry that matches nothing on any side it
+  could apply to. A typo, refused.
+- **synthesized cluster** — a cluster compose declares itself under
+  ``name_conflict="union_right"`` for a name both sides carry after their
+  composite maps, or two spellings of one name, so that a union by name goes
+  through the same identity and property reconciliation as a declared one.
+- **completion** (:class:`Completion`) — the extension that would make an
+  incomplete declaration consistent, carried by
+  :class:`ComposeIncompleteError` as declaration payloads.
+
+One rule
+--------
+
+**The declared maps and the equivalences must agree on where every name goes,
+and a canonical target is a fixed point neither may re-map.** Every refusal is
+an instance of it, in one of four classes:
+
+| class | error | a trigger |
+|---|---|---|
+| contradiction | ``ComposeCanonicalConflictError`` | the map says ``Firm → Company``, the cluster names the composed class ``Party`` |
+| ambiguity | ``ComposeCanonicalConflictError`` | one canonical name denotes two members of one cluster |
+| incomplete | ``ComposeIncompleteError`` (carries a ``Completion``) | a map entry sends a non-member onto a composed name |
+| dangling | ``ComposeCanonicalConflictError`` | an entry matching no name on any side it could apply to |
+
+Plus the cluster-shape checks of
+:mod:`~graflo.architecture.evolution.equivalence`, which run before any
+rename. Every case a declared entry and a cluster can stand in — agreement,
+naming, translation and each refusal — is tabulated in
+``docs/concepts/schema/manifest_evolution.md`` under "Canonical maps".
+
+Identity is nominal: a class is the same class across two manifests only by
+name (or by declared equivalence) — nothing structural fingerprints it, and
+compose never infers a match.
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
-from typing import Literal
+from collections.abc import Collection, Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
+from typing import Any, Literal
 
 from graflo.architecture.contract.manifest import GraphManifest
+from graflo.architecture.refusal import Refusal
+from graflo.architecture.schema.naming import canonical_slug
 
 from .equivalence import (
     Cluster,
     ClusterConflictError,
     ClusterIndex,
     ClusterSpec,
+    Kind,
     Side,
     check_member_existence,
     index_clusters,
+    subject,
 )
 from .ops import (
     CanonicalizeOp,
@@ -51,96 +113,203 @@ from .ops import (
 __all__ = [
     "CanonicalMap",
     "ClusterResolution",
+    "Completion",
     "ComposeCanonicalConflictError",
+    "ComposeIncompleteError",
+    "DeclaredMaps",
     "Scope",
     "SideMaps",
     "SideNames",
     "canonical_map_to_ops",
+    "canonical_near_collisions",
+    "canonicalize_ops",
     "clusters_to_side_maps",
+    "fold_declared_maps",
     "merge_canonical_maps",
     "resolve_clusters",
+    "same_name_groups",
     "validate_and_complete_canonical_map",
 ]
 
 logger = logging.getLogger(__name__)
 
-#: Where a canonical map applies: one side's own names, or either side's.
+#: Where a declared map applies: one side's own names, or either side's.
 Scope = Literal["left", "right", "both"]
 
 _SIDES: tuple[Side, ...] = ("left", "right")
 
 
-class ComposeCanonicalConflictError(ValueError):
-    """A compose op's declared clusters contradict the canonical map(s) they were authored against."""
+def _other(side: Side) -> Side:
+    return "right" if side == "left" else "left"
+
+
+class ComposeCanonicalConflictError(Refusal):
+    """A compose op's clusters and its declared maps contradict each other.
+
+    A contradiction (one name, two targets; a fixed point moved), an ambiguity
+    (a canonical name denoting two members), or a dangling entry. The
+    subclass :class:`ComposeIncompleteError` is the one refusal an extension
+    resolves.
+
+    ``check`` names the rule that refused — the parenthesised phrase in the
+    message — and ``subjects`` the names it is about, as
+    :func:`~graflo.architecture.evolution.equivalence.subject` ids; see
+    :class:`.Refusal`.
+    """
+
+
+@dataclass(frozen=True)
+class Completion:
+    """The extension that would make an incomplete compose declaration consistent.
+
+    ``kind`` says what to do: ``extend_cluster`` — replace one declared cluster
+    by the payload carried here (the same declaration with one more member);
+    ``declare_equivalences`` — add the carried declarations to the op (or set
+    ``name_conflict="union_right"``, which declares exactly these itself).
+    Payloads are ``VertexEquivalence`` / ``RelationEquivalence`` documents, so
+    a CLI can print them and an author can paste them.
+    """
+
+    kind: Literal["extend_cluster", "declare_equivalences"]
+    side: Side | None = None
+    vertex_equivalences: tuple[dict[str, Any], ...] = ()
+    relation_equivalences: tuple[dict[str, Any], ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        """The completion as a plain document."""
+        out: dict[str, Any] = {"kind": self.kind}
+        if self.side is not None:
+            out["side"] = self.side
+        if self.vertex_equivalences:
+            out["vertex_equivalences"] = [dict(p) for p in self.vertex_equivalences]
+        if self.relation_equivalences:
+            out["relation_equivalences"] = [dict(p) for p in self.relation_equivalences]
+        return out
+
+
+class ComposeIncompleteError(ComposeCanonicalConflictError):
+    """The declarations are consistent but do not cover a name; an extension would.
+
+    Distinct from a contradiction: nothing has to be retracted, something has
+    to be added, and :attr:`completion` says what.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        completion: Completion,
+        *,
+        check: str = "",
+        subjects: tuple[str, ...] = (),
+    ) -> None:
+        super().__init__(message, check=check, subjects=subjects)
+        self.completion = completion
 
 
 @dataclass(frozen=True)
 class SideMaps:
-    """A ``(left, right)`` :class:`CanonicalMap` pair for one compose op."""
+    """The composite relabel per side: the one op compose applies to each."""
+
+    left: CanonicalizeOp
+    right: CanonicalizeOp
+
+    def __getitem__(self, side: Side) -> CanonicalizeOp:
+        return self.left if side == "left" else self.right
+
+
+@dataclass(frozen=True)
+class DeclaredMaps:
+    """The declared vocabulary as each side sees it.
+
+    ``left`` / ``right`` are the ``both``-scoped map folded under that side's
+    own map; ``both`` is kept apart because its entries may legitimately apply
+    to one side only.
+    """
 
     left: CanonicalMap
     right: CanonicalMap
+    both: CanonicalMap = field(default_factory=CanonicalMap)
 
     def __getitem__(self, side: Side) -> CanonicalMap:
         return self.left if side == "left" else self.right
 
 
-def _conflict(check: str, detail: str, hint: str) -> ComposeCanonicalConflictError:
+def _conflict(
+    check: str, detail: str, hint: str, *, subjects: tuple[str, ...] = ()
+) -> ComposeCanonicalConflictError:
     return ComposeCanonicalConflictError(
-        f"compose contradicts the canonical map ({check}): {detail}. {hint}"
+        f"compose contradicts the canonical map ({check}): {detail}. {hint}",
+        check=check,
+        subjects=subjects,
     )
 
 
+def _incomplete(
+    check: str,
+    detail: str,
+    hint: str,
+    completion: Completion,
+    *,
+    subjects: tuple[str, ...] = (),
+) -> ComposeIncompleteError:
+    return ComposeIncompleteError(
+        f"compose is incomplete ({check}): {detail}. {hint}",
+        completion,
+        check=check,
+        subjects=subjects,
+    )
+
+
+# ── declared maps ───────────────────────────────────────────────────────────
+
+
+def _moving(mapping: Mapping[str, str]) -> set[str]:
+    return {source for source, target in mapping.items() if source != target}
+
+
+def _targets(mapping: Mapping[str, str]) -> set[str]:
+    return {target for source, target in mapping.items() if source != target}
+
+
+def _merge_name_maps(
+    base: Mapping[str, str], extension: Mapping[str, str], *, noun: str
+) -> dict[str, str]:
+    """One kind's half of :func:`merge_canonical_maps` — same verb, same operation."""
+    out = dict(base)
+    for source, target in extension.items():
+        existing = out.get(source)
+        if existing is not None and existing != target:
+            raise _conflict(
+                f"canonical {noun} clash",
+                f"{source!r} maps to both {existing!r} and {target!r}",
+                "Reconcile the canonical maps.",
+            )
+        out[source] = target
+    chained = sorted(
+        (_moving(base) & _targets(extension)) | (_moving(extension) & _targets(base))
+    )
+    if chained:
+        raise _conflict(
+            f"canonical {noun} re-target",
+            f"{chained} are canonical targets of one map and moving sources of "
+            "the other",
+            "Canonical targets are fixed points: a name one map establishes "
+            "may not be mapped away by the other.",
+        )
+    return out
+
+
 def merge_canonical_maps(base: CanonicalMap, extension: CanonicalMap) -> CanonicalMap:
-    """Partial-function union: *base* wins, its targets are fixed points.
+    """Partial-function union of two declared maps; a target of either is a fixed point.
 
     Every source named by *base* or *extension* maps to exactly one target; a
     source the two disagree on raises :class:`ComposeCanonicalConflictError`.
-    A **target** of *base* is additionally a fixed point — *extension* may not
-    re-map it to anything else — so two author maps for one scope reconcile
-    without one silently overriding the other. ``properties`` union the same
-    way per source class.
+    A target of either map is a fixed point the other may not move, checked
+    in both directions so the result does not depend on which map is *base*.
+    ``properties`` union the same way per source class.
     """
-    vertices = dict(base.vertices)
-    for source, target in extension.vertices.items():
-        existing = vertices.get(source)
-        if existing is not None and existing != target:
-            raise _conflict(
-                "canonical vertex clash",
-                f"{source!r} maps to both {existing!r} and {target!r}",
-                "Reconcile the canonical maps.",
-            )
-        vertices[source] = target
-    for fixed in base.vertices.values():
-        remapped = extension.vertices.get(fixed, fixed)
-        if remapped != fixed:
-            raise _conflict(
-                "canonical vertex re-target",
-                f"the canonical map's target {fixed!r} would be re-mapped to "
-                f"{remapped!r}",
-                "Canonical targets are fixed points.",
-            )
-
-    relations = dict(base.relations)
-    for source, target in extension.relations.items():
-        existing = relations.get(source)
-        if existing is not None and existing != target:
-            raise _conflict(
-                "canonical relation clash",
-                f"{source!r} maps to both {existing!r} and {target!r}",
-                "Reconcile the canonical maps.",
-            )
-        relations[source] = target
-    for fixed in base.relations.values():
-        remapped = extension.relations.get(fixed, fixed)
-        if remapped != fixed:
-            raise _conflict(
-                "canonical relation re-target",
-                f"the canonical map's target {fixed!r} would be re-mapped to "
-                f"{remapped!r}",
-                "Canonical targets are fixed points.",
-            )
-
+    vertices = _merge_name_maps(base.vertices, extension.vertices, noun="vertex")
+    relations = _merge_name_maps(base.relations, extension.relations, noun="relation")
     properties: dict[str, dict[str, str]] = {
         cls: dict(attrs) for cls, attrs in base.properties.items()
     }
@@ -155,7 +324,6 @@ def merge_canonical_maps(base: CanonicalMap, extension: CanonicalMap) -> Canonic
                     "Reconcile the canonical maps.",
                 )
             bucket[old] = new
-
     return CanonicalMap(
         vertices=vertices,
         relations=relations,
@@ -164,13 +332,36 @@ def merge_canonical_maps(base: CanonicalMap, extension: CanonicalMap) -> Canonic
     )
 
 
+def _effective(
+    vertices: Mapping[str, str],
+    relations: Mapping[str, str],
+    properties: Mapping[str, Mapping[str, str]],
+) -> bool:
+    return (
+        any(source != target for source, target in vertices.items())
+        or any(source != target for source, target in relations.items())
+        or any(
+            old != new
+            for attr_map in properties.values()
+            for old, new in attr_map.items()
+        )
+    )
+
+
+def canonicalize_ops(op: CanonicalizeOp) -> list[ManifestOp]:
+    """*op* as the op list to apply: empty when it has no effective entry."""
+    if not _effective(op.vertices, op.relations, op.properties):
+        return []
+    return [op]
+
+
 def canonical_map_to_ops(
     cm: CanonicalMap,
     *,
     allow_self_relations: bool = False,
     allow_observation_fusion: bool = False,
 ) -> list[ManifestOp]:
-    """Lower a canonical map to its single op.
+    """Lower a declared map to its single op.
 
     A canonical map is a function on names, and
     :class:`~graflo.architecture.evolution.ops.CanonicalizeOp` applies exactly
@@ -180,18 +371,7 @@ def canonical_map_to_ops(
     group of more than one class or relation is a merge and is refused unless
     ``allow_merges`` is set.
     """
-    effective = (
-        any(source != target for source, target in cm.vertices.items())
-        or any(source != target for source, target in cm.relations.items())
-        or any(
-            old != new
-            for attr_map in cm.properties.values()
-            for old, new in attr_map.items()
-        )
-    )
-    if not effective:
-        return []
-    return [
+    return canonicalize_ops(
         CanonicalizeOp(
             vertices=dict(cm.vertices),
             properties={cls: dict(attrs) for cls, attrs in cm.properties.items()},
@@ -200,7 +380,31 @@ def canonical_map_to_ops(
             allow_self_relations=allow_self_relations,
             allow_observation_fusion=allow_observation_fusion,
         )
-    ]
+    )
+
+
+def canonical_near_collisions(
+    left_names: Iterable[str],
+    right_names: Iterable[str],
+    *,
+    exempt: Collection[str],
+) -> list[tuple[str, str]]:
+    """``(left, right)`` pairs that key alike under ``canonical_slug`` but differ.
+
+    Exact matches are excluded: those are the same-name path, so the two
+    checks can never report one pair twice.
+    """
+    by_key: dict[str, list[str]] = {}
+    for name in left_names:
+        by_key.setdefault(canonical_slug(name), []).append(name)
+    pairs: list[tuple[str, str]] = []
+    for right_name in right_names:
+        if right_name in exempt:
+            continue
+        for left_name in by_key.get(canonical_slug(right_name), []):
+            if left_name != right_name:
+                pairs.append((left_name, right_name))
+    return sorted(set(pairs))
 
 
 # ── resolution ──────────────────────────────────────────────────────────────
@@ -227,25 +431,29 @@ class SideNames:
             ),
         )
 
+    def of_kind(self, kind: Kind) -> frozenset[str]:
+        return self.vertices if kind == "vertex" else self.relations
+
 
 @dataclass(frozen=True)
 class ClusterResolution:
-    """What compose applies: the resolved clusters and one composite map per side.
+    """What compose applies: the resolved clusters and one composite relabel per side.
 
-    ``author`` is the folded author vocabulary as seen from each side
-    (``both`` under the side's own map); ``side_maps`` is the composite —
-    every cluster member onto its composed name, every other author entry as
-    declared — which :func:`canonical_map_to_ops` lowers to one op per side.
+    ``declared`` is the folded declared vocabulary as seen from each side;
+    ``side_maps`` is the composite — every cluster member onto its composed
+    name, every applicable declared entry as written — one
+    :class:`~graflo.architecture.evolution.ops.CanonicalizeOp` per side.
+    ``index`` includes any cluster compose synthesized.
     """
 
     index: ClusterIndex
     side_maps: SideMaps
-    author: SideMaps
+    declared: DeclaredMaps
 
 
-def _fold_author_maps(
+def fold_declared_maps(
     op: ComposeManifestsOp, extra: Sequence[tuple[Side, CanonicalMap]]
-) -> SideMaps:
+) -> DeclaredMaps:
     scoped: dict[str, CanonicalMap] = {
         "left": CanonicalMap(),
         "right": CanonicalMap(),
@@ -255,13 +463,14 @@ def _fold_author_maps(
         scoped[scope] = merge_canonical_maps(scoped[scope], cm)
     for side, cm in extra:
         scoped[side] = merge_canonical_maps(scoped[side], cm)
-    return SideMaps(
+    return DeclaredMaps(
         left=merge_canonical_maps(scoped["both"], scoped["left"]),
         right=merge_canonical_maps(scoped["both"], scoped["right"]),
+        both=scoped["both"],
     )
 
 
-def _mapping(cm: CanonicalMap, kind: str) -> dict[str, str]:
+def _mapping(cm: CanonicalMap | CanonicalizeOp, kind: Kind) -> dict[str, str]:
     return cm.vertices if kind == "vertex" else cm.relations
 
 
@@ -271,7 +480,7 @@ def _resolve_member(
     names: frozenset[str],
     mapping: Mapping[str, str],
     side: Side,
-    kind: str,
+    kind: Kind,
 ) -> str:
     """A member spelled by its own name, or by its canonical name when that names one source."""
     if declared in names:
@@ -288,6 +497,7 @@ def _resolve_member(
             f"ambiguous {kind} member",
             f"{side} {kind} {declared!r} is the canonical name of {sources}",
             "Name the member by its own spelling.",
+            subjects=tuple(subject(side, source) for source in sources),
         )
     return declared  # reported by the existence check
 
@@ -295,11 +505,12 @@ def _resolve_member(
 def _resolve_cluster(
     declaration: VertexEquivalence | RelationEquivalence,
     *,
-    kind: str,
-    author: SideMaps,
+    kind: Kind,
+    declared: DeclaredMaps,
     names: Mapping[Side, SideNames],
+    synthesized: bool,
 ) -> ClusterSpec:
-    """Resolve one declaration's members and composed name against the author maps.
+    """Resolve one declaration's members and composed name against the declared maps.
 
     The composed name is ``into`` (translated through the maps when they map
     it), else the canonical name the maps give a member, else the one
@@ -307,28 +518,25 @@ def _resolve_cluster(
     maps have an opinion about — a mapped source, or a canonical target, which
     is a fixed point — must agree with that name.
     """
-    mapping = {side: _mapping(author[side], kind) for side in _SIDES}
-    side_names = {
-        side: names[side].vertices if kind == "vertex" else names[side].relations
-        for side in _SIDES
-    }
-    targets = {side: {t for s, t in mapping[side].items() if s != t} for side in _SIDES}
+    mapping = {side: _mapping(declared[side], kind) for side in _SIDES}
+    side_names = {side: names[side].of_kind(kind) for side in _SIDES}
+    targets = {side: _targets(mapping[side]) for side in _SIDES}
 
     members: dict[Side, list[str]] = {}
     aliases: dict[Side, dict[str, str]] = {}
     for side in _SIDES:
         resolved: list[str] = []
-        for declared in declaration.members(side):
+        for spelled in declaration.members(side):
             name = _resolve_member(
-                declared,
+                spelled,
                 names=side_names[side],
                 mapping=mapping[side],
                 side=side,
                 kind=kind,
             )
             resolved.append(name)
-            if name != declared:
-                aliases.setdefault(side, {})[declared] = name
+            if name != spelled:
+                aliases.setdefault(side, {})[spelled] = name
         members[side] = resolved
         # A member may also be named by its canonical name wherever the
         # declaration keys by member — unless that name is a real class on the
@@ -354,6 +562,13 @@ def _resolve_cluster(
             f"{dict(sorted(opinions.items()))}",
             "One composed class has one canonical name — fix the canonical "
             "map, or split the cluster.",
+            # `opinions` values are already `side:member` ids.
+            subjects=tuple(
+                sorted(
+                    {subject("composed", name) for name in opinions}
+                    | {who for whos in opinions.values() for who in whos}
+                )
+            ),
         )
 
     if declaration.into is not None:
@@ -368,6 +583,9 @@ def _resolve_cluster(
                 f"the canonical maps disagree on {declaration.into!r}: "
                 f"{sorted(translated)}",
                 "Reconcile the maps, or name the composed class by its canonical name.",
+                subjects=tuple(
+                    subject("composed", name) for name in sorted(translated)
+                ),
             )
         label = translated.pop() if translated else declaration.into
     elif opinions:
@@ -379,29 +597,46 @@ def _resolve_cluster(
                 f"unnamed {kind} cluster",
                 f"cluster {members['left']} ~ {members['right']} has no composed name",
                 "Give it `into`, or map a member in a canonical map.",
+                subjects=tuple(
+                    subject(side, member) for side in _SIDES for member in members[side]
+                ),
             )
         label = spellings.pop()
 
     if opinions and label not in opinions:
-        ((canonical, who),) = opinions.items()
+        ((canonical_name, who),) = opinions.items()
         raise _conflict(
             f"{kind} disagreement",
-            f"the canonical map says {', '.join(who)} is {canonical!r}, but the "
-            f"equivalence names the composed {kind} {label!r}",
+            f"the canonical map says {', '.join(who)} is {canonical_name!r}, but "
+            f"the equivalence names the composed {kind} {label!r}",
             "The two declarations must agree on where a name goes; canonical "
             "names are fixed points, so set `into` to the canonical name or "
             "fix the canonical map.",
+            subjects=(
+                *who,
+                subject("composed", canonical_name),
+                subject("composed", label),
+            ),
         )
     return ClusterSpec(
         left=tuple(members["left"]),
         right=tuple(members["right"]),
         into=label,
         aliases=aliases,
+        declared_into=declaration.into,
+        synthesized=synthesized,
     )
 
 
-def _cluster_maps(index: ClusterIndex, side: Side) -> CanonicalMap:
-    """Every cluster member onto its composed name, with the declared attribute maps."""
+def _cluster_maps(
+    index: ClusterIndex, side: Side
+) -> tuple[dict[str, str], dict[str, str], dict[str, dict[str, str]]]:
+    """Every cluster member onto its composed name, with the declared attribute maps.
+
+    A member that already equals the composed name gets a self entry: it
+    declares the name a member of its own group, so the op merges into it
+    rather than refusing an occupied target.
+    """
     vertices: dict[str, str] = {}
     properties: dict[str, dict[str, str]] = {}
     for cluster in index.vertices:
@@ -413,107 +648,172 @@ def _cluster_maps(index: ClusterIndex, side: Side) -> CanonicalMap:
     for cluster in index.relations:
         for member in cluster.members(side):
             relations[member] = cluster.into
-    return CanonicalMap(
-        vertices=vertices, relations=relations, properties=properties, allow_merges=True
-    )
+    return vertices, relations, properties
 
 
 def clusters_to_side_maps(index: ClusterIndex, *, allow_merges: bool) -> SideMaps:
-    """Lower every cluster of *index* into a pair of per-side canonical maps.
+    """Lower every cluster of *index* into a pair of per-side relabels, and nothing else."""
+    ops: dict[Side, CanonicalizeOp] = {}
+    for side in _SIDES:
+        vertices, relations, properties = _cluster_maps(index, side)
+        ops[side] = CanonicalizeOp(
+            vertices=vertices,
+            relations=relations,
+            properties=properties,
+            allow_merges=allow_merges,
+        )
+    return SideMaps(left=ops["left"], right=ops["right"])
 
-    Every member maps to its cluster's composed name, **including** a member
-    that already equals it — that self entry declares the name a member of its
-    own group, so :class:`~graflo.architecture.evolution.ops.CanonicalizeOp`
-    merges into it rather than refusing an occupied target.
-    """
-    return SideMaps(
-        left=_cluster_maps(index, "left").model_copy(
-            update={"allow_merges": allow_merges}
-        ),
-        right=_cluster_maps(index, "right").model_copy(
-            update={"allow_merges": allow_merges}
-        ),
+
+def _extended_cluster_completion(
+    index: ClusterIndex, *, kind: Kind, side: Side, composed: str, member: str
+) -> Completion:
+    clusters: Sequence[Cluster] = (
+        index.vertices if kind == "vertex" else index.relations
+    )
+    cluster = next(c for c in clusters if c.into == composed)
+    payload = cluster.declaration.to_dict(skip_defaults=True)
+    payload[side] = [*cluster.members(side), member]
+    payload["into"] = cluster.into
+    if kind == "vertex":
+        return Completion(
+            kind="extend_cluster", side=side, vertex_equivalences=(payload,)
+        )
+    return Completion(
+        kind="extend_cluster", side=side, relation_equivalences=(payload,)
     )
 
 
-def _extend_with_author(
+def _carry_declared_entries(
     out: dict[str, str],
     mapping: Mapping[str, str],
-    names: frozenset[str],
-    labels: frozenset[str],
     *,
+    names: frozenset[str],
+    other_names: frozenset[str],
+    shared_sources: Collection[str],
+    index: ClusterIndex,
     side: Side,
-    kind: str,
+    kind: Kind,
 ) -> None:
-    """Add the author's entries for non-members to a side's composite map."""
+    """Carry the declared map's entries for non-members into a side's composite.
+
+    *out* is that side's cluster map; every declared entry lands in one of
+    five outcomes:
+
+    * **member** — the source is in *out*: the commutation rule already holds
+      for it, nothing to carry;
+    * **satisfied** — the source is absent and the target present: assumed
+      already applied by the caller, logged, not carried;
+    * **translated** — the source is a composed name as the author spelled
+      it: the cluster's ``into`` translation already used it;
+    * **inapplicable** — a ``both``-scoped entry that matches the other side
+      only: carried there, skipped here;
+    * **dangling** — matches nothing anywhere it could apply: refused;
+    * **carried** — otherwise, as declared — unless the target is a composed
+      name, which makes the declaration incomplete: a class joining a composed
+      class is governed by the cluster's identity and property maps, so it
+      must be a member, and the refusal carries that extended cluster.
+    """
+    composed_names = index.labels if kind == "vertex" else index.relation_labels
     for source, target in mapping.items():
         if source in out:
-            continue  # a member: the commutation rule already holds
+            continue
         if source not in names:
-            if target in names or source in labels:
-                # Already applied by the caller, or a composed name spelled in
-                # the author's raw terms: nothing left to do on this side.
+            if target in names:
+                logger.info(
+                    "compose: %s canonical %s entry %r -> %r is already applied "
+                    "(source absent, target present); carried as satisfied",
+                    side,
+                    kind,
+                    source,
+                    target,
+                )
+                continue
+            if source in index.declared_intos or source in composed_names:
+                continue
+            if source in shared_sources and (
+                source in other_names or target in other_names
+            ):
                 continue
             raise _conflict(
                 "dangling entry",
                 f"the canonical map's {side} entry {source!r} -> {target!r} "
                 f"matches no {kind} on that side",
                 "Check the spelling, or drop the entry.",
+                subjects=(subject(side, source),),
             )
-        if target in labels and target != source:
-            raise _conflict(
-                f"{kind} merge into a composed class",
-                f"the canonical map merges {side}:{source!r} into {target!r}, "
-                "the composed name of a declared cluster",
-                f"Declare {source!r} as a member of that cluster — a {kind} "
-                "joining a composed class is governed by the cluster's identity "
-                "and property maps.",
+        if target in composed_names and target != source:
+            raise _incomplete(
+                f"{kind} joining a composed class",
+                f"the canonical map sends {side}:{source!r} onto {target!r}, "
+                "the composed name of a declared cluster, without declaring it "
+                "a member",
+                f"A {kind} joining a composed class is governed by the "
+                "cluster's identity and property maps: declare it a member "
+                "(the completion carries the extended cluster).",
+                _extended_cluster_completion(
+                    index, kind=kind, side=side, composed=target, member=source
+                ),
+                subjects=(subject(side, source), subject("composed", target)),
             )
         out[source] = target
 
 
 def _composite_side_maps(
+    op: ComposeManifestsOp,
     index: ClusterIndex,
-    author: SideMaps,
+    declared: DeclaredMaps,
     names: Mapping[Side, SideNames],
-    *,
-    allow_merges: bool,
 ) -> SideMaps:
-    maps: dict[Side, CanonicalMap] = {}
+    ops: dict[Side, CanonicalizeOp] = {}
     for side in _SIDES:
-        cm = author[side]
-        base = _cluster_maps(index, side)
-        vertices = dict(base.vertices)
-        relations = dict(base.relations)
-        properties = {cls: dict(attrs) for cls, attrs in base.properties.items()}
-        _extend_with_author(
+        cm = declared[side]
+        other = _other(side)
+        vertices, relations, properties = _cluster_maps(index, side)
+        _carry_declared_entries(
             vertices,
             cm.vertices,
-            names[side].vertices,
-            index.labels,
+            names=names[side].vertices,
+            other_names=names[other].vertices,
+            shared_sources=declared.both.vertices,
+            index=index,
             side=side,
             kind="vertex",
         )
-        _extend_with_author(
+        _carry_declared_entries(
             relations,
             cm.relations,
-            names[side].relations,
-            index.relation_labels,
+            names=names[side].relations,
+            other_names=names[other].relations,
+            shared_sources=declared.both.relations,
+            index=index,
             side=side,
             kind="relation",
         )
         for cls, attrs in cm.properties.items():
             if cls not in names[side].vertices:
-                if (
-                    cm.canonical_class(cls) in names[side].vertices
-                    or cls in index.labels
+                if cm.canonical_class(cls) in names[side].vertices:
+                    continue  # satisfied: the class was already renamed away
+                if cls in declared.both.properties and (
+                    cls in names[other].vertices
+                    or cm.canonical_class(cls) in names[other].vertices
                 ):
-                    continue  # renamed away already, or a composed name in raw terms
+                    continue  # a `both` entry that applies to the other side
+                if cls in index.labels or cls in index.declared_intos:
+                    raise _conflict(
+                        "dangling entry",
+                        f"the canonical map's {side} attribute map is keyed by "
+                        f"{cls!r}, a composed name",
+                        "`properties` is keyed by the source class: key the "
+                        "attribute map by the member it applies to.",
+                        subjects=(subject("composed", cls),),
+                    )
                 raise _conflict(
                     "dangling entry",
                     f"the canonical map's {side} attribute map for {cls!r} "
                     "matches no class on that side",
                     "Check the spelling, or drop the entry.",
+                    subjects=(subject(side, cls),),
                 )
             bucket = properties.setdefault(cls, {})
             for old, new in attrs.items():
@@ -525,19 +825,22 @@ def _composite_side_maps(
                         f"but the equivalence maps it to {existing!r}",
                         "The two declarations must agree on where an attribute "
                         "goes; fix one of them.",
+                        subjects=(subject(side, cls, old),),
                     )
                 bucket[old] = new
-        maps[side] = CanonicalMap(
+        ops[side] = CanonicalizeOp(
             vertices=vertices,
             relations=relations,
             properties=properties,
-            allow_merges=allow_merges or cm.allow_merges,
+            allow_merges=op.allow_merges or cm.allow_merges,
+            allow_self_relations=op.allow_self_relations,
+            allow_observation_fusion=op.allow_observation_fusion,
         )
-    return SideMaps(left=maps["left"], right=maps["right"])
+    return SideMaps(left=ops["left"], right=ops["right"])
 
 
 def _check_property_fields_exist(
-    manifest: GraphManifest, cluster: Cluster, *, side: Side, author: CanonicalMap
+    manifest: GraphManifest, cluster: Cluster, *, side: Side, declared: CanonicalMap
 ) -> None:
     """Every field a property equivalence names must exist on its member, as spelled."""
     schema = manifest.graph_schema
@@ -553,18 +856,18 @@ def _check_property_fields_exist(
             if isinstance(spec, str)
             else {cluster.resolved(side, m): f for m, f in spec.items()}
         )
-        for member, field in per_member.items():
+        for member, field_name in per_member.items():
             if member not in vertex_config.vertex_set:
                 continue  # the existence check reports the member
-            if field in vertex_config.property_names(member):
+            if field_name in vertex_config.property_names(member):
                 continue
             sources = sorted(
                 old
-                for old, new in author.properties.get(member, {}).items()
-                if new == field and old != new
+                for old, new in declared.properties.get(member, {}).items()
+                if new == field_name and old != new
             )
             hint = (
-                f"{field!r} is the canonical name of {member}.{sources[0]!r} — "
+                f"{field_name!r} is the canonical name of {member}.{sources[0]!r} — "
                 "name the source field"
                 if sources
                 else "Check the spelling, or declare the property first with "
@@ -573,17 +876,26 @@ def _check_property_fields_exist(
             raise _conflict(
                 "unknown property",
                 f"property equivalence into {pe.into!r} names "
-                f"{side}:{member}.{field!r}, which is not a declared property",
+                f"{side}:{member}.{field_name!r}, which is not a declared property",
                 hint + ".",
+                subjects=(subject(side, member, field_name),),
             )
 
 
 def _check_attribute_fixed_points(
-    cluster: Cluster, *, side: Side, author: CanonicalMap
+    cluster: Cluster, *, side: Side, declared: CanonicalMap
 ) -> None:
-    """A canonical attribute the map established on a member may not be renamed by the cluster."""
+    """A canonical attribute the map established on a member may not be renamed by the cluster.
+
+    The fixed-point set is keyed by *canonical class*, not by member:
+    ``canonical_property_names`` folds every source class the map sends to one
+    canonical name, which is the whole point -- one member's rename establishes
+    the attribute for every sibling that lands on the same class. Asking it
+    with a raw member name returns nothing for exactly the members the map
+    renames, which is to say for exactly the cases this check is here for.
+    """
     for member, attr_map in cluster.property_maps(side).items():
-        canonical = author.canonical_property_names(member)
+        canonical = declared.canonical_property_names(declared.canonical_class(member))
         for old, new in attr_map.items():
             if old in canonical and new != old:
                 raise _conflict(
@@ -592,11 +904,12 @@ def _check_attribute_fixed_points(
                     f"but the equivalence renames it to {new!r}",
                     "Canonical attributes are fixed points: align the other "
                     "members onto the canonical name, or fix the canonical map.",
+                    subjects=(subject(side, member, old),),
                 )
 
 
 def _check_property_maps_against_manifest(
-    manifest: GraphManifest, cm: CanonicalMap, *, side: Side
+    manifest: GraphManifest, relabel: CanonicalizeOp, *, side: Side
 ) -> None:
     """Refuse a property rename whose old name is absent or whose new name collides.
 
@@ -607,7 +920,7 @@ def _check_property_maps_against_manifest(
     if schema is None:
         return
     vertex_config = schema.core_schema.vertex_config
-    for member, attr_map in cm.properties.items():
+    for member, attr_map in relabel.properties.items():
         if member not in vertex_config.vertex_set:
             continue  # reported by the existence check
         existing = set(vertex_config.property_names(member))
@@ -622,6 +935,7 @@ def _check_property_maps_against_manifest(
                     "declared property",
                     "Check the spelling, or declare the property first with "
                     "AddVertexPropertiesOp.",
+                    subjects=(subject(side, member, old),),
                 )
             if new in surviving:
                 raise _conflict(
@@ -630,50 +944,46 @@ def _check_property_maps_against_manifest(
                     "existing property of that name",
                     "A property rename cannot merge fields — align them "
                     "explicitly via PropertyEquivalence on both sides instead.",
+                    subjects=(
+                        subject(side, member, old),
+                        subject(side, member, new),
+                    ),
                 )
 
 
 def _occupancy(names: frozenset[str], mapping: Mapping[str, str]) -> frozenset[str]:
-    """Names a composed name could collide with: those the author map does not move away."""
-    return names - {source for source, target in mapping.items() if source != target}
+    """Names a composed name could collide with: those the declared map does not move away."""
+    return names - _moving(mapping)
 
 
-def resolve_clusters(
+def _resolve(
     op: ComposeManifestsOp,
     *,
-    left: GraphManifest,
-    right: GraphManifest,
-    canonical_maps: Sequence[tuple[Side, CanonicalMap]] = (),
+    declared: DeclaredMaps,
+    names: Mapping[Side, SideNames],
+    manifests: Mapping[Side, GraphManifest],
+    synthesized_from: tuple[int, int],
 ) -> ClusterResolution:
-    """Resolve *op*'s clusters against its canonical maps and build the per-side composite.
-
-    *canonical_maps* are extra ``(side, map)`` pairs folded into
-    ``op.canonical_maps``. *left* / *right* are the manifests about to be
-    composed, in whatever vocabulary they are in: an author entry whose source
-    is absent on its side but whose target is present is already applied and
-    is a no-op; one matching nothing is refused as a typo.
-
-    Raises :class:`~graflo.architecture.evolution.equivalence.ClusterConflictError`
-    when the declared clusters themselves conflict, and
-    :class:`ComposeCanonicalConflictError` when a map and the equivalences
-    disagree: a member the map sends elsewhere than the composed name, a
-    canonical class or attribute re-targeted by a cluster, a cluster with no
-    name, a map entry merging a non-member into a composed class, a dangling
-    entry, and property equivalences naming absent or colliding fields.
-    """
-    author = _fold_author_maps(op, canonical_maps)
-    names: dict[Side, SideNames] = {
-        "left": SideNames.of(left),
-        "right": SideNames.of(right),
-    }
-
+    """Resolve *op*'s clusters as declared; *synthesized_from* marks the tail compose added."""
     vertex_specs = [
-        _resolve_cluster(v, kind="vertex", author=author, names=names)
-        for v in op.vertex_equivalences
+        _resolve_cluster(
+            v,
+            kind="vertex",
+            declared=declared,
+            names=names,
+            synthesized=i >= synthesized_from[0],
+        )
+        for i, v in enumerate(op.vertex_equivalences)
     ]
     relation_specs = [
-        _resolve_cluster(r, kind="relation", author=author, names=names)
-        for r in op.relation_equivalences
+        _resolve_cluster(
+            r,
+            kind="relation",
+            declared=declared,
+            names=names,
+            synthesized=i >= synthesized_from[1],
+        )
+        for i, r in enumerate(op.relation_equivalences)
     ]
     check_member_existence(
         vertex_specs,
@@ -685,26 +995,206 @@ def resolve_clusters(
     )
     index = index_clusters(
         op,
-        left_vertices=_occupancy(names["left"].vertices, author.left.vertices),
-        right_vertices=_occupancy(names["right"].vertices, author.right.vertices),
-        left_relations=_occupancy(names["left"].relations, author.left.relations),
-        right_relations=_occupancy(names["right"].relations, author.right.relations),
+        left_vertices=_occupancy(names["left"].vertices, declared.left.vertices),
+        right_vertices=_occupancy(names["right"].vertices, declared.right.vertices),
+        left_relations=_occupancy(names["left"].relations, declared.left.relations),
+        right_relations=_occupancy(names["right"].relations, declared.right.relations),
         vertex_specs=vertex_specs,
         relation_specs=relation_specs,
     )
-    manifests: dict[Side, GraphManifest] = {"left": left, "right": right}
     for side in _SIDES:
         for cluster in index.vertices:
             _check_property_fields_exist(
-                manifests[side], cluster, side=side, author=author[side]
+                manifests[side], cluster, side=side, declared=declared[side]
             )
-            _check_attribute_fixed_points(cluster, side=side, author=author[side])
-    side_maps = _composite_side_maps(index, author, names, allow_merges=op.allow_merges)
+            _check_attribute_fixed_points(cluster, side=side, declared=declared[side])
+    side_maps = _composite_side_maps(op, index, declared, names)
     for side in _SIDES:
         _check_property_maps_against_manifest(
             manifests[side], side_maps[side], side=side
         )
-    return ClusterResolution(index=index, side_maps=side_maps, author=author)
+    return ClusterResolution(index=index, side_maps=side_maps, declared=declared)
+
+
+def _preimages(
+    mapping: Mapping[str, str], names: frozenset[str]
+) -> dict[str, list[str]]:
+    """``{post-map name: [own names landing on it]}`` over one side."""
+    groups: dict[str, list[str]] = {}
+    for name in sorted(names):
+        groups.setdefault(mapping.get(name, name), []).append(name)
+    return groups
+
+
+def _members_field(members: Sequence[str]) -> str | list[str]:
+    return members[0] if len(members) == 1 else list(members)
+
+
+def same_name_groups(
+    resolution: ClusterResolution,
+    names: Mapping[Side, SideNames],
+    *,
+    kind: Kind,
+    near: bool,
+) -> list[tuple[str, list[str], list[str]]]:
+    """``(composed name, left members, right members)`` for every name no cluster covers.
+
+    Names are compared after each side's composite map, since that is what
+    the union sees. With *near*, two spellings of one name (``canonical_slug``
+    alike) form one group too, composed under the left spelling.
+    """
+    index = resolution.index
+    composed = index.labels if kind == "vertex" else index.relation_labels
+    pre = {
+        side: _preimages(
+            _mapping(resolution.side_maps[side], kind), names[side].of_kind(kind)
+        )
+        for side in _SIDES
+    }
+    groups: list[tuple[str, list[str], list[str]]] = []
+    if near:
+        by_key: dict[str, dict[Side, list[str]]] = {}
+        for side in _SIDES:
+            for post_name in pre[side]:
+                if post_name in composed:
+                    continue
+                by_key.setdefault(canonical_slug(post_name), {}).setdefault(
+                    side, []
+                ).append(post_name)
+        for _key, sides in sorted(by_key.items()):
+            left_post = sorted(sides.get("left", []))
+            right_post = sorted(sides.get("right", []))
+            if not left_post or not right_post:
+                continue
+            exact = sorted(set(left_post) & set(right_post))
+            into = exact[0] if exact else left_post[0]
+            groups.append(
+                (
+                    into,
+                    [m for n in left_post for m in pre["left"][n]],
+                    [m for n in right_post for m in pre["right"][n]],
+                )
+            )
+        return groups
+    for post_name in sorted(set(pre["left"]) & set(pre["right"])):
+        if post_name in composed:
+            continue
+        groups.append((post_name, pre["left"][post_name], pre["right"][post_name]))
+    return groups
+
+
+def _same_name_payloads(
+    groups: Sequence[tuple[str, list[str], list[str]]],
+) -> tuple[dict[str, Any], ...]:
+    return tuple(
+        {"left": _members_field(left), "right": _members_field(right), "into": into}
+        for into, left, right in groups
+    )
+
+
+def resolve_clusters(
+    op: ComposeManifestsOp,
+    *,
+    left: GraphManifest,
+    right: GraphManifest,
+    canonical_maps: Sequence[tuple[Side, CanonicalMap]] = (),
+) -> ClusterResolution:
+    """Resolve *op*'s clusters against its declared maps and build the per-side composite.
+
+    *canonical_maps* are extra ``(side, map)`` pairs folded into
+    ``op.canonical_maps``. *left* / *right* are the manifests about to be
+    composed, in whatever vocabulary they are in: a declared entry whose
+    source is absent on its side but whose target is present is satisfied and
+    is a no-op; one matching nothing is refused as a typo.
+
+    A name both sides carry after their composite maps, and no cluster
+    composes, is what ``op.name_conflict`` decides: ``error`` refuses it as
+    incomplete, naming the equivalences to declare; ``union_right`` declares
+    them itself (a **synthesized** cluster, so the union goes through the
+    same identity and property reconciliation as a declared one — two
+    spellings of one name, ``canonical_slug`` alike, are one such cluster
+    under the left spelling); ``prefix_right`` leaves them to compose to keep
+    apart.
+
+    Raises :class:`~graflo.architecture.evolution.equivalence.ClusterConflictError`
+    when the declared clusters themselves conflict,
+    :class:`ComposeCanonicalConflictError` when a map and the equivalences
+    disagree — a member the map sends elsewhere than the composed name, a
+    canonical class or attribute re-targeted by a cluster, a cluster with no
+    name, a dangling entry, a property equivalence naming an absent or
+    colliding field — and :class:`ComposeIncompleteError` when an extension
+    would resolve it: a map entry sending a non-member onto a composed name,
+    or a shared name under ``name_conflict="error"``.
+    """
+    declared = fold_declared_maps(op, canonical_maps)
+    names: dict[Side, SideNames] = {
+        "left": SideNames.of(left),
+        "right": SideNames.of(right),
+    }
+    manifests: dict[Side, GraphManifest] = {"left": left, "right": right}
+    resolution = _resolve(
+        op,
+        declared=declared,
+        names=names,
+        manifests=manifests,
+        synthesized_from=(len(op.vertex_equivalences), len(op.relation_equivalences)),
+    )
+    if op.name_conflict == "prefix_right":
+        return resolution
+
+    near = op.name_conflict == "union_right"
+    vertex_groups = same_name_groups(resolution, names, kind="vertex", near=near)
+    relation_groups = same_name_groups(resolution, names, kind="relation", near=near)
+    if not vertex_groups and not relation_groups:
+        return resolution
+
+    if op.name_conflict == "error":
+        kind: Kind = "vertex" if vertex_groups else "relation"
+        shared = [into for into, _l, _r in (vertex_groups or relation_groups)]
+        raise _incomplete(
+            f"{kind} name collision",
+            f"{shared} exist on both sides and no equivalence composes them",
+            "Declare the equivalences the completion carries, set "
+            "name_conflict='union_right' to union by name, or "
+            "name_conflict='prefix_right' to keep them apart.",
+            Completion(
+                kind="declare_equivalences",
+                vertex_equivalences=_same_name_payloads(vertex_groups),
+                relation_equivalences=_same_name_payloads(relation_groups),
+            ),
+            subjects=tuple(subject("composed", name) for name in shared),
+        )
+
+    nary = any(
+        len(l_members) > 1 or len(r_members) > 1
+        for _into, l_members, r_members in (*vertex_groups, *relation_groups)
+    )
+    extended = op.model_copy(
+        update={
+            "vertex_equivalences": [
+                *op.vertex_equivalences,
+                *(
+                    VertexEquivalence.model_validate(payload)
+                    for payload in _same_name_payloads(vertex_groups)
+                ),
+            ],
+            "relation_equivalences": [
+                *op.relation_equivalences,
+                *(
+                    RelationEquivalence.model_validate(payload)
+                    for payload in _same_name_payloads(relation_groups)
+                ),
+            ],
+            "allow_merges": op.allow_merges or nary,
+        }
+    )
+    return _resolve(
+        extended,
+        declared=declared,
+        names=names,
+        manifests=manifests,
+        synthesized_from=(len(op.vertex_equivalences), len(op.relation_equivalences)),
+    )
 
 
 def validate_and_complete_canonical_map(
@@ -714,12 +1204,12 @@ def validate_and_complete_canonical_map(
     right: GraphManifest,
     canonical_maps: Sequence[tuple[Side, CanonicalMap]] = (),
 ) -> SideMaps:
-    """Validate *op* against its canonical maps and return the completed per-side maps.
+    """Validate *op* against its declared maps and return the completed per-side relabels.
 
     The composed name of every cluster is completed — from ``into``, the
-    canonical map, or the members' shared spelling — and every member maps
-    onto it; the author's remaining entries are carried as declared. Apply
-    the result to each side with :func:`canonical_map_to_ops` before the
+    declared map, or the members' shared spelling — and every member maps
+    onto it; the declared map's remaining entries are carried as written.
+    Apply the result to each side with :func:`canonicalize_ops` before the
     schema/resource union, which is what
     :func:`~graflo.architecture.evolution.compose.compose_manifests` does.
 
@@ -734,5 +1224,7 @@ def validate_and_complete_canonical_map(
         ).side_maps
     except ClusterConflictError as exc:
         raise ComposeCanonicalConflictError(
-            f"compose contradicts the canonical map (cluster conflict): {exc}"
+            f"compose contradicts the canonical map (cluster conflict): {exc}",
+            check=exc.check or "cluster conflict",
+            subjects=exc.subjects,
         ) from exc

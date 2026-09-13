@@ -62,7 +62,7 @@ ALIGNMENT = IdentityAlignment(
     vertex="Company",
     attributes=[
         AlignmentAttribute(
-            into="match_key",
+            name="match_key",
             sources={
                 # Keyed by member, as the view's side names it — `Company`,
                 # the canonical name of `Firm`, would resolve alike. One call

@@ -112,6 +112,30 @@ contested is how a re-merge quietly reverts someone's work.
 - **The merged manifest is stamped** with `content_hash`, `canon`, both parents
   and the recipe hash, so it is self-describing outside any store.
 
+## Seeing where they met
+
+A conflict list says *what*; the slot tree says *where*. Slots are paths that
+contain one another, so `vertex/person` sits above the field edits inside it,
+and a rename colliding with three of them reads as one conflict about the
+vertex rather than three about fields that happen to live there.
+
+```bash
+uv run python merge_branches.py --plot-dir figs
+```
+
+![The contested slot](../assets/20-version-control/figs/merge-slots.svg)
+
+The contested slot carries both branches' ops and the ancestor's state — the
+question a decision actually turns on, and the one a two-way diff cannot
+answer. Alongside it, the lineage, with first-parent edges solid because that
+is the line a commit's ops are a diff along, and the common ancestor marked:
+
+![The lineage](../assets/20-version-control/figs/merge-history.svg)
+
+`graflo merge --plot slots.svg --plot-history lineage.svg` draws the same two
+from the shell. Both are written *before* the unresolved-conflict refusal, not
+instead of it.
+
 ## Files
 
 | File | Purpose |

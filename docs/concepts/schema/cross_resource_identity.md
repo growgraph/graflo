@@ -46,8 +46,15 @@ hard to reverse — so it stays out.
    **mandatory floor** — two columns sharing no values cannot be the same
    column, however alike their names read. Name similarity contributes to a
    combined score but cannot veto strong value evidence on its own.
-4. **Projection.** Aligned columns are renamed to one canonical name (the
-   alphabetically first of the pair, so the result is stable across runs).
+4. **Projection.** The alignments are pairs, but the thing a canonical name has
+   to be stable over is the **group** they induce: three resources aligned
+   `a <-> b` and `b <-> c` describe one column under three spellings. The pairs
+   are closed into connected components and each component takes the
+   alphabetically first field name in it, so the result depends on neither
+   resource order nor which pair scored highest. A component holding two
+   columns of the *same* resource is ambiguous — projecting both onto one name
+   would drop one of them — so it is dropped and reported under
+   `evidence["ambiguous_alignments"]` rather than silently fused.
 5. **Key search.** The smallest shared field tuple that is unique **within every
    resource** and survives bootstrap resampling in each. Tuples are scored, not
    columns: a pair may key the rows while neither field is unique alone.

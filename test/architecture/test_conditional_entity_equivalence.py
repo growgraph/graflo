@@ -105,7 +105,7 @@ _ALIGNMENT = IdentityAlignment(
     vertex="Company",
     attributes=[
         AlignmentAttribute(
-            into="match_key",
+            name="match_key",
             sources={
                 "r_a": DerivationSpec(
                     input=["secondary_key", "shared_raw"],
@@ -258,7 +258,7 @@ class TestPrefixMarkerAdmission:
             vertex="Company",
             attributes=[
                 AlignmentAttribute(
-                    into="match_key",
+                    name="match_key",
                     # Literally the same call on both sides: one normal form.
                     sources={"r_a": spec, "r_b": spec},
                 )
@@ -301,7 +301,7 @@ class TestPriorityFunnel:
             vertex="Company",
             attributes=[
                 AlignmentAttribute(
-                    into="c1",
+                    name="c1",
                     sources={
                         "r_a": DerivationSpec(
                             input=["secondary_key", "shared_raw"],
@@ -314,7 +314,7 @@ class TestPriorityFunnel:
                     },
                 ),
                 AlignmentAttribute(
-                    into="c2",
+                    name="c2",
                     sources={
                         "r_a": DerivationSpec(
                             input=["firm_id", "tax_no"], params={"prefix": ""}
@@ -419,7 +419,7 @@ _ROUTED_ALIGNMENT = IdentityAlignment(
     vertex="Company",
     attributes=[
         AlignmentAttribute(
-            into="match_key",
+            name="match_key",
             sources={
                 # Each branch of the view carries the shared key in its own
                 # column; the other is empty, which is what selects.
@@ -634,7 +634,7 @@ _MEMBER_ALIGNMENT = IdentityAlignment(
     vertex="Company",
     attributes=[
         AlignmentAttribute(
-            into="match_key",
+            name="match_key",
             sources={
                 # One column for every kind; the member decides which marker
                 # admits a value. The left member is `Company` because the
