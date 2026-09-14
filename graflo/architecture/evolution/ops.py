@@ -190,9 +190,11 @@ class MergeVerticesOp(ConfigBaseModel):
         default=False,
         validation_alias=AliasChoices("allow_observation_fusion", "allow_row_fusion"),
         description=(
-            "Accept resource pipelines that produce ``into`` more than once at the same "
-            "level. Those steps then write to one accumulator slot, fusing into one node "
-            "what a single source document emitted as two vertex observations. Rejected "
+            "Accept resource pipelines whose sources land in one accumulator slot — "
+            "the same level and the same ``role``, or both bare. Those steps then "
+            "write to one slot, fusing into one node what a single source document "
+            "emitted as two vertex observations. Same-level steps with distinct "
+            "``role``s never share a slot and need no acknowledgement. Rejected "
             "unless set. ``allow_row_fusion`` is accepted as a legacy alias."
         ),
     )
@@ -371,8 +373,9 @@ class CanonicalizeOp(ConfigBaseModel):
     allow_observation_fusion: bool = PydanticField(
         default=False,
         description=(
-            "Accept a merge whose sources are produced more than once at one "
-            "resource pipeline level, fusing those observations into one node."
+            "Accept a merge whose sources are produced in one accumulator slot "
+            "(the same pipeline level and the same ``role``, or both bare), "
+            "fusing those observations into one node."
         ),
     )
 
@@ -2344,9 +2347,10 @@ class ComposeManifestsOp(ConfigBaseModel):
         default=False,
         validation_alias=AliasChoices("allow_observation_fusion", "allow_row_fusion"),
         description=(
-            "Accept a merge whose sources are produced more than once at one "
-            "resource pipeline level. Forwarded to the per-side "
-            "``MergeVerticesOp``. ``allow_row_fusion`` is accepted as a legacy alias."
+            "Accept a merge whose sources are produced in one accumulator slot "
+            "(the same pipeline level and the same ``role``, or both bare). "
+            "Forwarded to the per-side ``CanonicalizeOp``. ``allow_row_fusion`` "
+            "is accepted as a legacy alias."
         ),
     )
     allow_dangling_entries: bool = PydanticField(

@@ -1306,6 +1306,56 @@ def test_a_merge_chain_through_an_occupied_into_composes() -> None:
     assert set(vc.property_names("Z")) == {"x_id", "x2_id", "y_id"}
 
 
+def test_role_separated_members_compose_without_the_fusion_flag() -> None:
+    """{X, X2}~{Y} -> Z with X and X2 at one level under distinct roles.
+
+    The two steps store in distinct accumulator slots, so nothing fuses and the
+    compose needs only ``allow_merges``.
+    """
+
+    def _v(name: str, key: str) -> Vertex:
+        return Vertex(
+            name=name,
+            properties=[Field(name=key, type=FieldType.STRING)],
+            identity=[key],
+        )
+
+    left = _manifest(
+        name="left",
+        vertices=[_v("X", "x_id"), _v("X2", "x2_id")],
+        edges=[],
+        resources=[
+            {
+                "name": "r_left",
+                "apply": [
+                    {"vertex": "X", "role": "x"},
+                    {"vertex": "X2", "role": "x2"},
+                ],
+            }
+        ],
+    )
+    right = _manifest(
+        name="right",
+        vertices=[_v("Y", "y_id")],
+        edges=[],
+        resources=[{"name": "r_right", "apply": [{"vertex": "Y"}]}],
+    )
+    op = ComposeManifestsOp(
+        vertex_equivalences=[
+            VertexEquivalence(left=["X", "X2"], right="Y", into="Z", identity=["x_id"])
+        ],
+        allow_merges=True,
+    )
+    out = compose_manifests(left, right, op, bump_version=False)
+    assert out.graph_schema is not None
+    assert out.graph_schema.core_schema.vertex_config.vertex_set == {"Z"}
+    steps = out.require_ingestion_model().resources[0].pipeline
+    assert [(s.get("vertex"), s.get("role")) for s in steps] == [
+        ("Z", "x"),
+        ("Z", "x2"),
+    ]
+
+
 def test_a_rename_chain_through_an_occupied_into_composes() -> None:
     """{X}~{Y} -> Z and {Z}~{W} -> Q, end to end: the map applies in one step."""
 

@@ -12,7 +12,13 @@ import asyncio
 import pytest
 
 from graflo.architecture.contract.manifest import GraphManifest
-from graflo.architecture.evolution import MergeVerticesOp, apply_evolution
+from graflo.architecture.evolution import (
+    ComposeManifestsOp,
+    MergeVerticesOp,
+    VertexEquivalence,
+    apply_evolution,
+    compose_manifests,
+)
 from graflo.architecture.schema.core import CoreSchema
 from graflo.architecture.schema.document import Schema
 from graflo.architecture.schema.edge import Edge, EdgeConfig
@@ -22,6 +28,11 @@ from graflo.hq.document_caster import DocumentCaster
 from graflo.hq.ingestion_parameters import IngestionParams
 
 DOC = {"a_id": "a1", "b_id": "b1", "c_id": "c1"}
+
+# A flat DOC carries every key, so a ``full``-scope step would scoop all of the
+# merged class's properties and every step would emit the same entity. Mapping
+# each step to its own key is what real pipelines do (``from`` + ``keep_fields``).
+_MAPPED = {"extraction_scope": "mapped_only"}
 
 
 def _manifest(*, edges: list[Edge], pipeline: list[dict]) -> GraphManifest:
@@ -194,3 +205,198 @@ class TestMergeGuardsProtectTheEmittedGraph:
             bump_version=False,
         )
         assert "B" not in out.require_schema().core_schema.vertex_config.vertex_set
+
+
+class TestFusionIsJudgedPerSlot:
+    """The runtime fuses per accumulator slot — level plus ``role`` — never per level.
+
+    A vertex step with a ``role`` stores at ``lindex.extend((role, 0))``; a bare
+    step at the level itself. Two same-level steps with distinct roles cannot
+    share a bucket, so the guard must not read them as fusion.
+    """
+
+    @staticmethod
+    def _edges() -> list[Edge]:
+        return [
+            Edge(source="A", target="C", relation="ac"),
+            Edge(source="B", target="C", relation="bc"),
+        ]
+
+    def test_role_separated_steps_are_not_fusion(self) -> None:
+        """Distinct roles: the merge applies unflagged and both nodes survive."""
+        manifest = _manifest(
+            edges=self._edges(),
+            pipeline=[
+                {"vertex": "A", "role": "a", "from": {"a_id": "a_id"}, **_MAPPED},
+                {"vertex": "B", "role": "b", "from": {"b_id": "b_id"}, **_MAPPED},
+                {"vertex": "C"},
+            ],
+        )
+        out = apply_evolution(
+            manifest,
+            [MergeVerticesOp(sources=["B"], into="A")],
+            bump_version=False,
+        )
+        vertices, _edges = _emit(out)
+        assert vertices["A"] == [{"a_id": "a1"}, {"b_id": "b1"}]
+
+    @staticmethod
+    def _composed(pipeline: list[dict], *, allow_fusion: bool) -> GraphManifest:
+        """A and B collapsed onto A under identity ``a_id`` by a compose.
+
+        Under that identity the observation the former B step emits carries no
+        key, which is the shape that fuses: ``merge_doc_basis`` folds a keyless
+        observation into the keyed one before it *in the same bucket*.
+        """
+        left = _manifest(edges=TestFusionIsJudgedPerSlot._edges(), pipeline=pipeline)
+        right = GraphManifest.from_config(
+            {
+                "schema": Schema(
+                    metadata=GraphMetadata(name="r", version="1.0.0"),
+                    core_schema=CoreSchema(
+                        vertex_config=VertexConfig(
+                            vertices=[
+                                Vertex(
+                                    name="D",
+                                    properties=[Field(name="d_id")],
+                                    identity=["d_id"],
+                                )
+                            ],
+                            force_types={},
+                        ),
+                        edge_config=EdgeConfig(edges=[]),
+                    ),
+                ).to_dict(skip_defaults=False),
+                "ingestion_model": {
+                    "resources": [{"name": "res_r", "apply": [{"vertex": "D"}]}],
+                    "transforms": [],
+                },
+            }
+        )
+        right.finish_init()
+        op = ComposeManifestsOp(
+            vertex_equivalences=[
+                VertexEquivalence(
+                    left=["A", "B"], right="D", into="A", identity=["a_id"]
+                )
+            ],
+            allow_merges=True,
+            allow_observation_fusion=allow_fusion,
+        )
+        return compose_manifests(left, right, op, bump_version=False)
+
+    @staticmethod
+    def _a_rows(manifest: GraphManifest) -> list[dict]:
+        vertices, _edges = _emit(manifest)
+        return [
+            {k: v for k, v in row.items() if k in ("a_id", "b_id")}
+            for row in vertices["A"]
+        ]
+
+    def test_bare_steps_of_two_members_fuse_once_acknowledged(self) -> None:
+        """The hazard the flag acknowledges is real: one bucket, one node."""
+        out = self._composed(
+            [
+                {"vertex": "A", "from": {"a_id": "a_id"}, **_MAPPED},
+                {"vertex": "B", "from": {"b_id": "b_id"}, **_MAPPED},
+                {"vertex": "C"},
+            ],
+            allow_fusion=True,
+        )
+        assert self._a_rows(out) == [{"a_id": "a1", "b_id": "b1"}]
+
+    def test_roled_steps_of_two_members_stay_apart_unacknowledged(self) -> None:
+        """Same collapse, distinct roles: two buckets, no flag, A's row intact.
+
+        The former B observation is in its own bucket, so nothing folds it into
+        A's row. Carrying only the demoted secondary key, it has no primary
+        identity and the caster drops it — until an identity alignment derives
+        ``a_id`` for it — so the emitted graph holds A's own row and nothing
+        borrowed from B.
+        """
+        out = self._composed(
+            [
+                {"vertex": "A", "role": "a", "from": {"a_id": "a_id"}, **_MAPPED},
+                {"vertex": "B", "role": "b", "from": {"b_id": "b_id"}, **_MAPPED},
+                {"vertex": "C"},
+            ],
+            allow_fusion=False,
+        )
+        assert self._a_rows(out) == [{"a_id": "a1"}]
+
+    def test_same_role_slot_is_still_fusion(self) -> None:
+        manifest = _manifest(
+            edges=self._edges(),
+            pipeline=[
+                {"vertex": "A", "role": "s"},
+                {"vertex": "B", "role": "s"},
+                {"vertex": "C"},
+            ],
+        )
+        with pytest.raises(ValueError, match=r"more than once.*slot 's'.*'A', 'B'"):
+            apply_evolution(
+                manifest,
+                [MergeVerticesOp(sources=["B"], into="A")],
+                bump_version=False,
+            )
+
+    def test_the_refusal_points_at_roles(self) -> None:
+        manifest = _manifest(
+            edges=self._edges(),
+            pipeline=[{"vertex": "A"}, {"vertex": "B"}, {"vertex": "C"}],
+        )
+        with pytest.raises(ValueError, match=r"slot <bare>.*its own `role`"):
+            apply_evolution(
+                manifest,
+                [MergeVerticesOp(sources=["B"], into="A")],
+                bump_version=False,
+            )
+
+    @pytest.mark.parametrize(
+        "pipeline",
+        [
+            [{"vertex": "A"}, {"vertex": "A"}, {"vertex": "C"}],
+            [
+                {"vertex": "A", "role": "x"},
+                {"vertex": "A", "role": "y"},
+                {"vertex": "C"},
+            ],
+        ],
+        ids=["bare", "roled"],
+    )
+    def test_a_class_already_produced_twice_is_not_the_merges_doing(
+        self, pipeline: list[dict]
+    ) -> None:
+        """A level that repeated one class before the merge is unchanged by it."""
+        manifest = _manifest(edges=self._edges(), pipeline=pipeline)
+        out = apply_evolution(
+            manifest,
+            [MergeVerticesOp(sources=["B"], into="A")],
+            bump_version=False,
+        )
+        assert "B" not in out.require_schema().core_schema.vertex_config.vertex_set
+
+    def test_a_router_slot_is_distinct_from_a_bare_step(self) -> None:
+        """A router stores at ``(role or type_field, 0)``; a bare step at the level."""
+        router = {"type_field": "kind", "type_map": {"a": "A"}}
+        manifest = _manifest(
+            edges=self._edges(),
+            pipeline=[router, {"vertex": "B"}, {"vertex": "C"}],
+        )
+        out = apply_evolution(
+            manifest,
+            [MergeVerticesOp(sources=["B"], into="A")],
+            bump_version=False,
+        )
+        assert "B" not in out.require_schema().core_schema.vertex_config.vertex_set
+
+        manifest = _manifest(
+            edges=self._edges(),
+            pipeline=[router, {"vertex": "B", "role": "kind"}, {"vertex": "C"}],
+        )
+        with pytest.raises(ValueError, match=r"more than once.*slot 'kind'"):
+            apply_evolution(
+                manifest,
+                [MergeVerticesOp(sources=["B"], into="A")],
+                bump_version=False,
+            )

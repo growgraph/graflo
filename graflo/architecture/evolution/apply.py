@@ -346,42 +346,69 @@ def _rewrite_ingestion_for_merge(im: IngestionModel, mapping: dict[str, str]) ->
     im.resources = new_resources
 
 
-def _merged_name_step_counts(
-    steps: list[Any], merged: str, *, path: str = "pipeline"
+def _fused_slots(
+    steps: list[Any], *, merged: str, mapping: dict[str, str], path: str = "pipeline"
 ) -> list[str]:
-    """Paths of pipeline levels where *merged* is produced by more than one step.
+    """Accumulator slots of a *pre-merge* pipeline where *merged* would fuse.
 
-    A level producing the merged name twice means one source document yielded both
-    of the pre-merge types. After the merge they share an accumulator slot, so
-    ``assemble`` merges them into a single node — two real-world entities become
-    one. That is almost never what a type merge was meant to do.
+    The runtime never fuses by level: a vertex step stores its observation at
+    ``lindex.extend((role, 0))`` when it carries a ``role`` and at the bare
+    ``lindex`` otherwise, a router always at ``(role or type_field, 0)``, and
+    assembly merges one ``(vertex, lindex)`` bucket at a time. So two steps at
+    one level share a slot only when their roles agree (or both are bare).
+
+    A slot is reported when it holds more than one producing step *and* those
+    steps came from more than one pre-merge name: one source document then
+    yields both members, and after the merge they share the bucket, so
+    ``assemble`` folds them into a single node — two real-world entities
+    become one. A slot that already repeated a single name is pre-existing
+    behaviour, not the merge's doing, and a lone router emits at most one
+    vertex per document, so neither is a fusion.
     """
     hits: list[str] = []
-    produced = 0
+    slots: dict[str | None, list[set[str]]] = {}
     for index, step in enumerate(steps):
         if not isinstance(step, dict):
             continue
         normalized = normalize_actor_step(dict(step))
         step_type = normalized.get("type")
         if step_type == "vertex":
-            if normalized.get("vertex") == merged:
-                produced += 1
+            name = normalized.get("vertex")
+            if isinstance(name, str) and mapping.get(name, name) == merged:
+                slots.setdefault(normalized.get("role"), []).append({name})
         elif step_type == "vertex_router":
             type_map = normalized.get("type_map")
-            if isinstance(type_map, dict) and any(
-                value == merged for value in type_map.values()
-            ):
-                produced += 1
+            if isinstance(type_map, dict):
+                members = {
+                    value
+                    for value in type_map.values()
+                    if isinstance(value, str) and mapping.get(value, value) == merged
+                }
+            else:
+                # No type_map: the router can emit every declared class.
+                members = {merged}
+            if members:
+                slot = normalized.get("role") or normalized.get("type_field")
+                slots.setdefault(slot, []).append(members)
         elif step_type == "descend":
             sub = normalized.get("pipeline")
             if isinstance(sub, list):
                 hits.extend(
-                    _merged_name_step_counts(
-                        sub, merged, path=f"{path}[{index}].pipeline"
+                    _fused_slots(
+                        sub,
+                        merged=merged,
+                        mapping=mapping,
+                        path=f"{path}[{index}].pipeline",
                     )
                 )
-    if produced > 1:
-        hits.append(f"{path} ({produced} steps produce {merged!r})")
+    for slot, producers in slots.items():
+        members = sorted(set().union(*producers))
+        if len(producers) > 1 and len(members) > 1:
+            label = "<bare>" if slot is None else repr(slot)
+            hits.append(
+                f"{path} (slot {label}: {len(producers)} steps produce "
+                f"{merged!r} from {members})"
+            )
     return hits
 
 
@@ -389,14 +416,18 @@ def _describe_merge_impact(
     manifest: GraphManifest,
     *,
     before_edges: list[Edge],
+    before_resources: list[Any],
     merged: str,
     mapping: dict[str, str],
 ) -> tuple[list[str], list[str], list[str]]:
-    """Return ``(self_relations, fused_levels, advisories)`` for a completed merge.
+    """Return ``(self_relations, fused_slots, advisories)`` for a completed merge.
 
     Everything here is invisible in the manifest diff but changes what ingestion
     emits, which is why the merge reports it rather than leaving it to be
-    discovered against a populated database.
+    discovered against a populated database. ``before_edges`` and
+    ``before_resources`` are the pre-merge schema edges and resources: fusion
+    is judged on which *members* land in one slot, and after the relabel the
+    pipeline no longer says which member a step produced.
     """
     self_relations = sorted(
         f"({edge.source}, {edge.target}, {edge.relation}) -> "
@@ -409,12 +440,11 @@ def _describe_merge_impact(
     )
 
     fused_levels: list[str] = []
-    if manifest.ingestion_model is not None:
-        for resource in manifest.ingestion_model.resources:
-            fused_levels.extend(
-                f"{resource.name}: {hit}"
-                for hit in _merged_name_step_counts(resource.pipeline, merged)
-            )
+    for resource in before_resources:
+        fused_levels.extend(
+            f"{resource.name}: {hit}"
+            for hit in _fused_slots(resource.pipeline, merged=merged, mapping=mapping)
+        )
 
     advisories: list[str] = []
     schema = manifest.graph_schema
@@ -472,14 +502,22 @@ def apply_merge_vertices(
     apply_vertex_merge_to_db_profile(schema.db_profile, sset, into)
     schema.db_profile = _revalidate_db_profile(schema.db_profile)
 
+    before_resources: list[Any] = []
     if manifest.ingestion_model is not None:
+        # The rewrite rebuilds the resource list from dicts and never mutates
+        # the old Resource objects, so holding them keeps the pre-merge view.
+        before_resources = list(manifest.ingestion_model.resources)
         _rewrite_ingestion_for_merge(manifest.ingestion_model, m)
         manifest.ingestion_model = IngestionModel.model_validate(
             manifest.ingestion_model.to_dict(skip_defaults=False)
         )
 
     self_relations, fused_levels, advisories = _describe_merge_impact(
-        manifest, before_edges=before_edges, merged=into, mapping=m
+        manifest,
+        before_edges=before_edges,
+        before_resources=before_resources,
+        merged=into,
+        mapping=m,
     )
     if self_relations and not op.allow_self_relations:
         raise ValueError(
@@ -493,10 +531,12 @@ def apply_merge_vertices(
     if fused_levels and not op.allow_observation_fusion:
         raise ValueError(
             f"merge_vertices: merging {sorted(sset)} into {into!r} leaves pipeline "
-            f"levels producing {into!r} more than once: {fused_levels}. One source "
-            "document yielded both types, so the merged observations fuse into a "
-            "single node. Split the resource, or set allow_observation_fusion=true "
-            "if fusing them is the intent."
+            f"slots producing {into!r} more than once: {fused_levels}. Steps at "
+            "one level share an accumulator slot unless they carry distinct "
+            "`role`s, so one document that yields both fuses them into a single "
+            "node. Give each step its own `role` (and address it from the edge "
+            "with `source_role` / `target_role`), split the resource, or set "
+            "allow_observation_fusion=true if fusing them is the intent."
         )
     for advisory in advisories:
         logger.warning("merge_vertices: %s", advisory)
@@ -740,9 +780,20 @@ def apply_canonicalize(manifest: GraphManifest, op: CanonicalizeOp) -> None:
             )
 
         advisories: list[str] = []
+        # `manifest` is untouched until the swap below, so its resources are
+        # the pre-relabel view the fusion check needs.
+        before_resources: list[Any] = (
+            list(manifest.ingestion_model.resources)
+            if manifest.ingestion_model is not None
+            else []
+        )
         for target in merged_targets:
             self_relations, fused_levels, target_advisories = _describe_merge_impact(
-                work, before_edges=before_edges, merged=target, mapping=vertex_map
+                work,
+                before_edges=before_edges,
+                before_resources=before_resources,
+                merged=target,
+                mapping=vertex_map,
             )
             sources = sorted(m for m in vertex_groups[target] if m != target)
             if self_relations and not op.allow_self_relations:
@@ -757,11 +808,13 @@ def apply_canonicalize(manifest: GraphManifest, op: CanonicalizeOp) -> None:
             if fused_levels and not op.allow_observation_fusion:
                 raise ValueError(
                     f"canonicalize: merging {sources} into {target!r} leaves "
-                    f"pipeline levels producing {target!r} more than once: "
-                    f"{fused_levels}. One source document yielded both types, so "
-                    "the merged observations fuse into a single node. Split the "
-                    "resource, or set allow_observation_fusion=true if fusing "
-                    "them is the intent."
+                    f"pipeline slots producing {target!r} more than once: "
+                    f"{fused_levels}. Steps at one level share an accumulator "
+                    "slot unless they carry distinct `role`s, so one document "
+                    "that yields both fuses them into a single node. Give each "
+                    "step its own `role` (and address it from the edge with "
+                    "`source_role` / `target_role`), split the resource, or set "
+                    "allow_observation_fusion=true if fusing them is the intent."
                 )
             advisories.extend(a for a in target_advisories if a not in advisories)
         for advisory in advisories:

@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Observation-fusion guard is slot-aware.** `merge_vertices`, `canonicalize` and `compose_manifests` judge fusion per accumulator slot — the same pipeline level *and* the same `role`, or both bare — which is what the runtime fuses on. Same-level steps with distinct `role`s (client/server, buyer/seller) and a router beside a bare step no longer trip it, and a class a level already produced twice before the merge is not attributed to it. The refusal names the slot and the members that would fuse, and points at `role` / `source_role` / `target_role` as the remedy.
 - **Identity alignment over a `vertex_router` with no `type_map`** resolves the producing level and gates each member by its own name. Routers now produce every class the schema declares; explicit steps outrank pass-through. `ensure_extracted_fields` widens all routers at the level.
 - **Runtime resource scope includes every class a router can emit**, not only names mentioned in steps — fixes skipped records after a partial `type_map` or rename.
 
