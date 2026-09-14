@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import click
 
+from graflo.cli.canonical import canonical_check as canonical_check_cmd
 from graflo.cli.check import check as check_cmd
 from graflo.cli.commit import commit_group
 from graflo.cli.compose import compose as compose_cmd
@@ -40,6 +41,11 @@ graflo.add_command(check_cmd, name="check")
 # `_mount_existing`, whose defensive try/except exists for verbs behind
 # optional extras -- this one has no extra to be missing.
 graflo.add_command(compose_cmd, name="compose")
+
+# A canonical map against the manifest it maps, without composing. Compose is
+# the only thing that checked a map until now, which makes authoring one a loop
+# through a refusal that reports a single entry.
+graflo.add_command(canonical_check_cmd, name="canonical-check")
 
 # Lifting a manifest into a twin-ready schema. A planner over the same op
 # vocabulary `graflo evolve` applies, so the conversion is reviewable before it

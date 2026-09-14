@@ -182,16 +182,14 @@ def _widen_router_projection(step: dict, vertex: str, fields: list[str]) -> dict
 
     ``None`` when nothing needs widening — a plain ``vertex`` step (it reads the
     transform buffer directly), or a router that restricts neither
-    ``keep_fields`` nor ``extraction_scope``.
+    ``keep_fields`` nor ``extraction_scope``. Every router at the level is
+    widened, not only one whose table names *vertex*: a router routes an
+    unmapped discriminator value as the class name, so one without an entry
+    for *vertex* still produces it, and a derived field it does not keep is
+    written and then discarded without a word.
     """
     normalized = normalize_actor_step(dict(step))
     if normalized.get("type") != "vertex_router":
-        return None
-
-    produced = set((normalized.get("type_map") or {}).values()) | set(
-        normalized.get("vertex_from_map") or {}
-    )
-    if vertex not in produced:
         return None
 
     keep_fields = normalized.get("keep_fields")

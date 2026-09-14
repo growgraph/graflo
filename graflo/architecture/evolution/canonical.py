@@ -45,7 +45,10 @@ Vocabulary
   — it cannot tell that from a target that never had that source — so it is
   logged.
 - **dangling entry** — a declared entry that matches nothing on any side it
-  could apply to. A typo, refused.
+  could apply to. A typo, refused: one refusal names every one of them on a
+  side, each with a near-miss candidate where another spelling denotes the
+  same concept. ``allow_dangling_entries`` drops them instead, for a shared
+  vocabulary deliberately broader than the manifest it is applied to.
 - **synthesized cluster** — a cluster compose declares itself under
   ``name_conflict="union_right"`` for a name both sides carry after their
   composite maps, or two spellings of one name, so that a union by name goes
@@ -98,6 +101,7 @@ from .equivalence import (
     Kind,
     Side,
     check_member_existence,
+    did_you_mean,
     index_clusters,
     subject,
 )
@@ -116,6 +120,7 @@ __all__ = [
     "Completion",
     "ComposeCanonicalConflictError",
     "ComposeIncompleteError",
+    "DanglingEntry",
     "DeclaredMaps",
     "Scope",
     "SideMaps",
@@ -124,10 +129,12 @@ __all__ = [
     "canonical_near_collisions",
     "canonicalize_ops",
     "clusters_to_side_maps",
+    "dangling_entries",
     "fold_declared_maps",
     "merge_canonical_maps",
     "resolve_clusters",
     "same_name_groups",
+    "trim_canonical_map",
     "validate_and_complete_canonical_map",
 ]
 
@@ -234,6 +241,42 @@ class DeclaredMaps:
         return self.left if side == "left" else self.right
 
 
+@dataclass(frozen=True)
+class DanglingEntry:
+    """A canonical-map entry whose source matches nothing on its side.
+
+    The source names no class or relation the side declares, and the entry is
+    none of the four ways an absent source is still meaningful: a cluster
+    member, an already-applied rename, a composed name as the author spelled
+    it, or a ``both``-scoped entry that applies to the other side.
+
+    Carried as data rather than refused one at a time, so that authoring a map
+    against a schema of hundreds of classes is not one refusal per mistake.
+    """
+
+    side: Side
+    kind: Kind | Literal["property"]
+    source: str
+    target: str | None = None
+    suggestion: str = ""
+
+    def describe(self) -> str:
+        """The entry as it reads in a refusal, without naming the side.
+
+        The near-miss :attr:`suggestion` is left to the caller to place: it is
+        a trailing clause, and only a listing has somewhere to put one.
+        """
+        if self.kind == "property":
+            return f"attribute map for {self.source!r}"
+        return f"{self.kind} {self.source!r} -> {self.target!r}"
+
+
+#: How many dangling entries a refusal lists before summarising the rest. A map
+#: authored against the wrong manifest dangles in its entirety, and the first
+#: handful of entries already says so.
+_DANGLING_LISTED = 10
+
+
 def _conflict(
     check: str, detail: str, hint: str, *, subjects: tuple[str, ...] = ()
 ) -> ComposeCanonicalConflictError:
@@ -329,6 +372,9 @@ def merge_canonical_maps(base: CanonicalMap, extension: CanonicalMap) -> Canonic
         relations=relations,
         properties=properties,
         allow_merges=base.allow_merges or extension.allow_merges,
+        allow_dangling_entries=(
+            base.allow_dangling_entries or extension.allow_dangling_entries
+        ),
     )
 
 
@@ -433,6 +479,83 @@ class SideNames:
 
     def of_kind(self, kind: Kind) -> frozenset[str]:
         return self.vertices if kind == "vertex" else self.relations
+
+
+def _declares(side: Side, names: SideNames) -> str:
+    """What the side *does* declare — the context a dangling entry is missing.
+
+    A manifest with no ``schema`` block declares no names at all, which makes
+    every entry scoped to it dangle at once. That reads exactly like a page of
+    typos unless the refusal says so.
+    """
+    if not names.vertices and not names.relations:
+        return f"the {side} manifest declares no schema block, so no entry can match it"
+    return (
+        f"{side} declares {_count(len(names.vertices), 'vertex', 'vertices')} "
+        f"and {_count(len(names.relations), 'relation', 'relations')}"
+    )
+
+
+def _count(n: int, singular: str, plural: str) -> str:
+    return f"{n} {singular if n == 1 else plural}"
+
+
+def _dangling_refusal(
+    entries: Sequence[DanglingEntry], *, names: SideNames | None = None
+) -> ComposeCanonicalConflictError:
+    """One refusal naming every dangling entry on a side.
+
+    A canonical map is authored as a whole, so it is corrected as a whole: the
+    refusal lists each entry with a near-miss candidate where one exists,
+    rather than surfacing the next mistake only after the previous one is
+    fixed and the compose re-run.
+
+    *names* is what the side declares, used for context. A caller classifying
+    one entry in isolation has no side to describe and omits it.
+    """
+    side = entries[0].side
+    subjects = tuple(subject(e.side, e.source) for e in entries)
+    hint = (
+        "Check the spelling, drop the entries, or set allow_dangling_entries "
+        "if the map is deliberately broader than this manifest."
+    )
+    if len(entries) == 1:
+        entry = entries[0]
+        # The degenerate case is worth naming even for a single entry; the
+        # count of what the side has is noise when the side has anything.
+        context = (
+            f" ({_declares(side, names)})"
+            if names is not None and not names.vertices and not names.relations
+            else ""
+        )
+        if entry.kind == "property":
+            detail = (
+                f"the canonical map's {side} attribute map for {entry.source!r} "
+                f"matches no class on that side{context}{entry.suggestion}"
+            )
+        else:
+            detail = (
+                f"the canonical map's {side} entry {entry.source!r} -> "
+                f"{entry.target!r} matches no {entry.kind} on that "
+                f"side{context}{entry.suggestion}"
+            )
+        return _conflict("dangling entry", detail, hint, subjects=subjects)
+    listed = "\n".join(
+        f"  {entry.describe()}{entry.suggestion}"
+        for entry in entries[:_DANGLING_LISTED]
+    )
+    if len(entries) > _DANGLING_LISTED:
+        listed += f"\n  ... and {len(entries) - _DANGLING_LISTED} more"
+    context = "" if names is None else f" ({_declares(side, names)})"
+    # Built directly rather than through ``_conflict``: the hint belongs with
+    # the summary, above the list, not trailing off the last entry.
+    return ComposeCanonicalConflictError(
+        f"compose contradicts the canonical map (dangling entry): "
+        f"{len(entries)} {side} canonical map entries match nothing on that "
+        f"side{context}. {hint}\n{listed}",
+        check="dangling entry",
+        subjects=subjects,
+    )
 
 
 @dataclass(frozen=True)
@@ -694,8 +817,14 @@ def _carry_declared_entries(
     index: ClusterIndex,
     side: Side,
     kind: Kind,
+    dangling: list[DanglingEntry] | None = None,
 ) -> None:
     """Carry the declared map's entries for non-members into a side's composite.
+
+    *dangling* selects how a dangling entry is reported. Left at ``None`` the
+    entry is refused on the spot, which is what a caller classifying one entry
+    at a time wants. Given a list, the entry is appended to it and skipped, and
+    the caller refuses once for every kind it collected.
 
     *out* is that side's cluster map; every declared entry lands in one of
     five outcomes:
@@ -735,13 +864,17 @@ def _carry_declared_entries(
                 source in other_names or target in other_names
             ):
                 continue
-            raise _conflict(
-                "dangling entry",
-                f"the canonical map's {side} entry {source!r} -> {target!r} "
-                f"matches no {kind} on that side",
-                "Check the spelling, or drop the entry.",
-                subjects=(subject(side, source),),
+            entry = DanglingEntry(
+                side=side,
+                kind=kind,
+                source=source,
+                target=target,
+                suggestion=did_you_mean(source, names),
             )
+            if dangling is None:
+                raise _dangling_refusal((entry,))
+            dangling.append(entry)
+            continue
         if target in composed_names and target != source:
             raise _incomplete(
                 f"{kind} joining a composed class",
@@ -759,6 +892,93 @@ def _carry_declared_entries(
         out[source] = target
 
 
+def _side_map(
+    op: ComposeManifestsOp,
+    index: ClusterIndex,
+    declared: DeclaredMaps,
+    names: Mapping[Side, SideNames],
+    *,
+    side: Side,
+    dangling: list[DanglingEntry],
+) -> CanonicalizeOp:
+    """One side's composite relabel; its dangling entries land in *dangling*."""
+    cm = declared[side]
+    other = _other(side)
+    vertices, relations, properties = _cluster_maps(index, side)
+    _carry_declared_entries(
+        vertices,
+        cm.vertices,
+        names=names[side].vertices,
+        other_names=names[other].vertices,
+        shared_sources=declared.both.vertices,
+        index=index,
+        side=side,
+        kind="vertex",
+        dangling=dangling,
+    )
+    _carry_declared_entries(
+        relations,
+        cm.relations,
+        names=names[side].relations,
+        other_names=names[other].relations,
+        shared_sources=declared.both.relations,
+        index=index,
+        side=side,
+        kind="relation",
+        dangling=dangling,
+    )
+    for cls, attrs in cm.properties.items():
+        if cls not in names[side].vertices:
+            if cm.canonical_class(cls) in names[side].vertices:
+                continue  # satisfied: the class was already renamed away
+            if cls in declared.both.properties and (
+                cls in names[other].vertices
+                or cm.canonical_class(cls) in names[other].vertices
+            ):
+                continue  # a `both` entry that applies to the other side
+            if cls in index.labels or cls in index.declared_intos:
+                # Not a missing name but a misplaced one, with its own hint:
+                # refused on the spot rather than listed with the typos.
+                raise _conflict(
+                    "dangling entry",
+                    f"the canonical map's {side} attribute map is keyed by "
+                    f"{cls!r}, a composed name",
+                    "`properties` is keyed by the source class: key the "
+                    "attribute map by the member it applies to.",
+                    subjects=(subject("composed", cls),),
+                )
+            dangling.append(
+                DanglingEntry(
+                    side=side,
+                    kind="property",
+                    source=cls,
+                    suggestion=did_you_mean(cls, names[side].vertices),
+                )
+            )
+            continue
+        bucket = properties.setdefault(cls, {})
+        for old, new in attrs.items():
+            existing = bucket.get(old)
+            if existing is not None and existing != new:
+                raise _conflict(
+                    "property disagreement",
+                    f"the canonical map says {side}:{cls}.{old} -> {new!r}, "
+                    f"but the equivalence maps it to {existing!r}",
+                    "The two declarations must agree on where an attribute "
+                    "goes; fix one of them.",
+                    subjects=(subject(side, cls, old),),
+                )
+            bucket[old] = new
+    return CanonicalizeOp(
+        vertices=vertices,
+        relations=relations,
+        properties=properties,
+        allow_merges=op.allow_merges or cm.allow_merges,
+        allow_self_relations=op.allow_self_relations,
+        allow_observation_fusion=op.allow_observation_fusion,
+    )
+
+
 def _composite_side_maps(
     op: ComposeManifestsOp,
     index: ClusterIndex,
@@ -768,74 +988,27 @@ def _composite_side_maps(
     ops: dict[Side, CanonicalizeOp] = {}
     for side in _SIDES:
         cm = declared[side]
-        other = _other(side)
-        vertices, relations, properties = _cluster_maps(index, side)
-        _carry_declared_entries(
-            vertices,
-            cm.vertices,
-            names=names[side].vertices,
-            other_names=names[other].vertices,
-            shared_sources=declared.both.vertices,
-            index=index,
-            side=side,
-            kind="vertex",
-        )
-        _carry_declared_entries(
-            relations,
-            cm.relations,
-            names=names[side].relations,
-            other_names=names[other].relations,
-            shared_sources=declared.both.relations,
-            index=index,
-            side=side,
-            kind="relation",
-        )
-        for cls, attrs in cm.properties.items():
-            if cls not in names[side].vertices:
-                if cm.canonical_class(cls) in names[side].vertices:
-                    continue  # satisfied: the class was already renamed away
-                if cls in declared.both.properties and (
-                    cls in names[other].vertices
-                    or cm.canonical_class(cls) in names[other].vertices
-                ):
-                    continue  # a `both` entry that applies to the other side
-                if cls in index.labels or cls in index.declared_intos:
-                    raise _conflict(
-                        "dangling entry",
-                        f"the canonical map's {side} attribute map is keyed by "
-                        f"{cls!r}, a composed name",
-                        "`properties` is keyed by the source class: key the "
-                        "attribute map by the member it applies to.",
-                        subjects=(subject("composed", cls),),
-                    )
-                raise _conflict(
-                    "dangling entry",
-                    f"the canonical map's {side} attribute map for {cls!r} "
-                    "matches no class on that side",
-                    "Check the spelling, or drop the entry.",
-                    subjects=(subject(side, cls),),
+        dangling: list[DanglingEntry] = []
+        try:
+            built = _side_map(op, index, declared, names, side=side, dangling=dangling)
+        except ComposeIncompleteError as exc:
+            # A name that is not on the side at all is the more basic mistake,
+            # and which of the two surfaced first used to be mapping order.
+            if not dangling:
+                raise
+            raise _dangling_refusal(dangling, names=names[side]) from exc
+        if dangling:
+            if not (op.allow_dangling_entries or cm.allow_dangling_entries):
+                raise _dangling_refusal(dangling, names=names[side])
+            for entry in dangling:
+                logger.info(
+                    "compose: dropping the %s canonical %s, which matches "
+                    "nothing on that side (allow_dangling_entries)%s",
+                    entry.side,
+                    entry.describe(),
+                    entry.suggestion,
                 )
-            bucket = properties.setdefault(cls, {})
-            for old, new in attrs.items():
-                existing = bucket.get(old)
-                if existing is not None and existing != new:
-                    raise _conflict(
-                        "property disagreement",
-                        f"the canonical map says {side}:{cls}.{old} -> {new!r}, "
-                        f"but the equivalence maps it to {existing!r}",
-                        "The two declarations must agree on where an attribute "
-                        "goes; fix one of them.",
-                        subjects=(subject(side, cls, old),),
-                    )
-                bucket[old] = new
-        ops[side] = CanonicalizeOp(
-            vertices=vertices,
-            relations=relations,
-            properties=properties,
-            allow_merges=op.allow_merges or cm.allow_merges,
-            allow_self_relations=op.allow_self_relations,
-            allow_observation_fusion=op.allow_observation_fusion,
-        )
+        ops[side] = built
     return SideMaps(left=ops["left"], right=ops["right"])
 
 
@@ -1228,3 +1401,96 @@ def validate_and_complete_canonical_map(
             check=exc.check or "cluster conflict",
             subjects=exc.subjects,
         ) from exc
+
+
+def dangling_entries(
+    cm: CanonicalMap, manifest: GraphManifest, *, side: Side = "left"
+) -> tuple[DanglingEntry, ...]:
+    """The map's entries that match nothing in *manifest*, with near-miss candidates.
+
+    A canonical map is authored against one manifest long before it is composed
+    against another, and this is that check on its own: no equivalences, no
+    other side, no compose. With no clusters declared there are no composed
+    names and no ``both`` scope, so the classification compose uses collapses
+    to its two surviving cases — a source the manifest declares is applicable,
+    a source it does not but whose target it does is already applied — and
+    everything else dangles.
+
+    Args:
+        cm: The declared map.
+        manifest: The manifest the map is meant to apply to.
+        side: Which side the map is scoped to; names the entries in the result.
+
+    Returns:
+        One :class:`DanglingEntry` per unmatched entry, vertices first, then
+        relations, then attribute maps. Empty means the map applies as written.
+    """
+    names = SideNames.of(manifest)
+    out: list[DanglingEntry] = []
+    for kind, mapping, known in (
+        ("vertex", cm.vertices, names.vertices),
+        ("relation", cm.relations, names.relations),
+    ):
+        for source, target in mapping.items():
+            if source in known or target in known:
+                continue
+            out.append(
+                DanglingEntry(
+                    side=side,
+                    kind=kind,  # type: ignore[arg-type]
+                    source=source,
+                    target=target,
+                    suggestion=did_you_mean(source, known),
+                )
+            )
+    for cls in cm.properties:
+        if cls in names.vertices or cm.canonical_class(cls) in names.vertices:
+            continue
+        out.append(
+            DanglingEntry(
+                side=side,
+                kind="property",
+                source=cls,
+                suggestion=did_you_mean(cls, names.vertices),
+            )
+        )
+    return tuple(out)
+
+
+def trim_canonical_map(
+    cm: CanonicalMap, manifest: GraphManifest, *, side: Side = "left"
+) -> tuple[CanonicalMap, tuple[DanglingEntry, ...]]:
+    """*cm* with its entries for *manifest* only, and the entries dropped.
+
+    Trimming is an authoring step, not something compose does on its own: the
+    result is a value to inspect and save, so that a map narrowed to a manifest
+    is a change with a diff rather than a silent omission at compose time. A
+    map that is deliberately broader than any one manifest is better served by
+    ``allow_dangling_entries``, which keeps the map whole.
+
+    Returns:
+        The trimmed map and the entries removed, as
+        :func:`dangling_entries` reports them.
+    """
+    dropped = dangling_entries(cm, manifest, side=side)
+    if not dropped:
+        return cm, ()
+    gone = {(entry.kind, entry.source) for entry in dropped}
+    return (
+        cm.model_copy(
+            update={
+                "vertices": {
+                    s: t for s, t in cm.vertices.items() if ("vertex", s) not in gone
+                },
+                "relations": {
+                    s: t for s, t in cm.relations.items() if ("relation", s) not in gone
+                },
+                "properties": {
+                    c: dict(a)
+                    for c, a in cm.properties.items()
+                    if ("property", c) not in gone
+                },
+            }
+        ),
+        dropped,
+    )

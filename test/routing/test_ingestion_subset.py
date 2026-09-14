@@ -382,3 +382,46 @@ def test_edge_inference_skips_edges_with_disallowed_vertices() -> None:
 
     # Edge A->B should still exist (inferred).
     assert any(isinstance(k, tuple) and k[0] == "A" and k[1] == "B" for k in result)
+
+
+def test_a_resource_with_a_router_can_produce_every_class() -> None:
+    """Scoped by what the pipeline can produce, not by the names it states."""
+    vc = _vertex_config_a_b_c()
+    ec = EdgeConfig.from_dict({"edges": []})
+    resource = _vertex_router_only_type_field_resource()
+    resource["pipeline"][0]["vertex_router"]["type_map"] = {"a": "A"}
+
+    runtime = _runtime(resource, vc, ec)
+
+    assert runtime.collect_vertex_names() == {"A", "B", "C"}
+    assert set(runtime.vertex_config.vertex_set) == {"A", "B", "C"}
+
+
+def test_document_caster_vertex_router_with_a_table_entry_still_routes_the_rest() -> (
+    None
+):
+    """A table entry names one class; the router still routes every other one.
+
+    Scoped by the names it states, this router would keep only ``A`` and skip
+    the ``B`` record without a word.
+    """
+    vc = _vertex_config_a_b_c()
+    ec = EdgeConfig.from_dict({"edges": []})
+    core = CoreSchema(vertex_config=vc, edge_config=ec)
+    resource = _vertex_router_only_type_field_resource()
+    resource["pipeline"][0]["vertex_router"]["type_map"] = {"a": "A"}
+    ingestion_model = IngestionModel.model_validate({"resources": [resource]})
+    ingestion_model.finish_init(core)
+
+    caster = DocumentCaster(ingestion_model)
+    result = asyncio.run(
+        caster.cast_batch(
+            [{"vtype": "a", "id": "a1"}, {"vtype": "B", "id": "b1"}],
+            "r",
+            params=IngestionParams(),
+        )
+    )
+
+    assert set(result.graph.vertices.keys()) == {"A", "B"}
+    assert result.graph.vertices["A"] == [{"id": "a1"}]
+    assert result.graph.vertices["B"] == [{"id": "b1"}]

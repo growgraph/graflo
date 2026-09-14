@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.13.2]
+
+### Added
+
+- **`graflo canonical-check MAP --left manifest.yaml`** — report dangling canonical map entries against a manifest without composing; near-miss hint per entry. `--right`, `--json`, `--trim OUT.yaml`. Exit 1 on dangling entries, 2 on failure.
+- **`dangling_entries` / `trim_canonical_map` / `DanglingEntry`** on `graflo.architecture.evolution` — same check and trim from Python.
+- **`allow_dangling_entries`** on `CanonicalMap` and `ComposeManifestsOp` — accept entries scoped to a side that match nothing there, dropping each with a log. Off by default.
+
+### Changed
+
+- **Dangling canonical map entries refused once per side** with every entry and a near-miss candidate, instead of stopping at the first. Dangling entries outrank `ComposeIncompleteError` on the same side.
+- **Class rename propagates the old name into each router `type_map`** on that side (`{old: new}`) via canonical maps and compose relabel — so pass-through discriminator values keep routing after a rename.
+
+### Fixed
+
+- **Identity alignment over a `vertex_router` with no `type_map`** resolves the producing level and gates each member by its own name. Routers now produce every class the schema declares; explicit steps outrank pass-through. `ensure_extracted_fields` widens all routers at the level.
+- **Runtime resource scope includes every class a router can emit**, not only names mentioned in steps — fixes skipped records after a partial `type_map` or rename.
+
 ## [1.13.1]
 
 ### Added

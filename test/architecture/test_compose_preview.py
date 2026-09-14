@@ -189,6 +189,35 @@ def test_a_clean_compose_reports_nothing(left, right, canonical_map):
     assert not preview.refused
 
 
+def test_each_dangling_entry_is_its_own_finding(left, right):
+    """The preview classifies one entry at a time; compose batches them.
+
+    Compose refuses a whole side at once, which is what an author of a large
+    map wants from a refusal. The preview must not inherit that: a finding is
+    per declaration, and collapsing four entries into one would cost it the
+    only number it exists to report.
+    """
+    op = ComposeManifestsOp(
+        vertex_equivalences=[
+            VertexEquivalence(left="Firm", right="Org", into="Company")
+        ],
+        canonical_maps={
+            "left": CanonicalMap(
+                vertices={"Nope": "Whatever", "AlsoNope": "Something"},
+                relations={"never": "ever"},
+            )
+        },
+    )
+    preview = preview_compose(left, right, op, attempt=False)
+
+    dangling = [f for f in preview.findings if f.kind == "dangling"]
+    assert len(dangling) == 3
+    # A dangling source names nothing, so it is no node of the declaration
+    # graph and the finding carries it in the message rather than in `nodes`.
+    for name in ("Nope", "AlsoNope", "never"):
+        assert sum(repr(name) in f.message for f in dangling) == 1
+
+
 def test_not_attempting_leaves_the_outcome_open(left, right, canonical_map):
     preview = preview_compose(left, right, _keyed(canonical_map), attempt=False)
 

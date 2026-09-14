@@ -246,6 +246,21 @@ From the shell, `graflo compose --plot conflicts.svg --preview-json
 conflicts.json` writes both — **including when compose refuses**, which is the
 case they are for. `--dry-run` prints the findings table on its own.
 
+### Checking a map before composing
+
+A canonical map is authored against one schema long before it meets another, and
+a map of hundreds of entries is not debugged through a compose. `graflo
+canonical-check MAP --left manifest.yaml` classifies every entry against that
+one manifest — no op, no other side — and names each one that matches nothing,
+with a near-miss candidate where another spelling denotes the same concept. It
+exits 1 when entries dangle and 2 when it could not run, so it gates in CI.
+
+Give it both `--left` and `--right` and it runs the full preview instead. Give
+it `--trim OUT.yaml` and it writes the map narrowed to what the manifest
+declares, so pruning a map is a change with a diff rather than something
+discovered at compose time. In Python the same two are
+`dangling_entries(cm, manifest)` and `trim_canonical_map(cm, manifest)`.
+
 ### Vocabulary
 
 | term | type | meaning |
@@ -257,7 +272,7 @@ case they are for. `--dry-run` prints the findings table on its own.
 | **fixed point** | — | a canonical target; no map and no cluster may move it |
 | **opinion** | — | what the declared maps say a member's canonical name is: the target it maps to, or itself when it is a fixed point |
 | **satisfied entry** | — | a declared entry whose source is absent and target present on a side: taken as already applied by the caller (a heuristic — it is logged) |
-| **dangling entry** | — | a declared entry matching nothing on any side it could apply to: a typo, refused |
+| **dangling entry** | — | a declared entry matching nothing on any side it could apply to: a typo, refused. Every one on a side is named by a single refusal, with a near-miss candidate where one exists; `allow_dangling_entries` drops them instead |
 | **synthesized cluster** | `Cluster.synthesized` | a cluster compose declares itself under `name_conflict="union_right"` for a name both sides carry, or two spellings of one name |
 | **completion** | `Completion`, on `ComposeIncompleteError` | the extension that would make an incomplete declaration consistent, as `VertexEquivalence` / `RelationEquivalence` documents |
 
@@ -285,7 +300,8 @@ One rule underlies every refusal: **the map and the equivalences must agree on w
 | **incomplete** — `C` sends a non-member onto a composed name | `ComposeIncompleteError`; the completion is the cluster extended with that member, whose identity and property maps then govern it |
 | one-sided `both` entry | applied where it matches |
 | `both` entry over a composed name | translation of `into`, not a dangling entry |
-| dangling | refused |
+| dangling | refused — one refusal lists every dangling entry on that side, each with a near-miss candidate where another spelling denotes the same concept. It outranks an `incomplete` on the same side: a name that is not there at all is the more basic mistake |
+| dangling, with `allow_dangling_entries` on the map or the op | dropped and logged, for a shared vocabulary deliberately broader than this manifest. Off by default — a misspelt class has the same shape, and dropping it silently renames less than the author asked |
 | satisfied | no-op, logged |
 | `properties` keyed by a composed or canonical class | refused — the attribute map is keyed by the source class |
 | `properties` renaming a field the member does not declare, or onto a field it keeps | refused — a property rename cannot merge two fields; align them with `PropertyEquivalence` on both sides |
@@ -386,6 +402,8 @@ local_key = LocalKeySpec(sources={
     when: {field: kind, in: [shop]}
     call: {foo: affix_gated_key, input: [secondary_key], output: [match_key], params: {prefix: def_}}
 ```
+
+A router with no entry for the member — no `type_map` at all, or a table that does not name it — routes the raw discriminator value as the class name, so the guard is the member's **own name**: that is the value which reaches it. When a level must be chosen, a step naming the class explicitly outranks such pass-through; a resource whose routers pass through at several levels picks one with `at`. Renames keep a pass-through router routing: a canonical map or a compose that renames a class writes `{old: new}` into every router's `type_map` on that side, so a raw value that used to name the class still lands on it.
 
 A guarded step that does not fire **writes nothing**, so each member's step is the single writer of the attribute for its own documents and nothing clobbers — no scratch fields, no coalesce. Documents of other members never run it: a `person` row through the same router is not "derived and dropped", it is never derived. This is also why the gate cannot be a function returning `None`: behind a router a later `None` overwrites an earlier real value.
 

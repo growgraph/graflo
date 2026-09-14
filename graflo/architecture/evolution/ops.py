@@ -249,6 +249,17 @@ class CanonicalMap(ConfigBaseModel):
             "can create self-relations."
         ),
     )
+    allow_dangling_entries: bool = PydanticField(
+        default=False,
+        description=(
+            "Accept entries that name nothing in the manifest the map is "
+            "applied to, dropping and logging each one. A shared vocabulary "
+            "map is legitimately broader than any single manifest. Off by "
+            "default, because a misspelt class has exactly the same shape, "
+            "and dropping it silently narrows the rename to less than the "
+            "author asked for."
+        ),
+    )
 
     @model_validator(mode="after")
     def _validate_maps(self) -> CanonicalMap:
@@ -2336,6 +2347,15 @@ class ComposeManifestsOp(ConfigBaseModel):
             "Accept a merge whose sources are produced more than once at one "
             "resource pipeline level. Forwarded to the per-side "
             "``MergeVerticesOp``. ``allow_row_fusion`` is accepted as a legacy alias."
+        ),
+    )
+    allow_dangling_entries: bool = PydanticField(
+        default=False,
+        description=(
+            "Accept canonical map entries that name nothing on the side they "
+            "are scoped to, dropping and logging each one instead of refusing "
+            "with the list. Set it on a map itself to say the map is broader "
+            "than this compose; set it here to say so for both maps at once."
         ),
     )
     identity_alignments: list[IdentityAlignment] = PydanticField(

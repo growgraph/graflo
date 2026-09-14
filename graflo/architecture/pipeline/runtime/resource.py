@@ -10,6 +10,7 @@ from typing import Any
 from graflo.architecture.contract.ingestion.resource import (
     EdgeInferSpec,
     ResourceConfig,
+    pipeline_has_vertex_router,
 )
 from graflo.architecture.contract.ingestion.transform import ProtoTransform
 from graflo.architecture.graph_types.context import ResourceCastResult
@@ -167,7 +168,20 @@ class ResourceRuntime:
         return self._type_casters
 
     def collect_vertex_names(self) -> set[str]:
-        return self.config.collect_vertex_names()
+        """Vertex types this resource can produce.
+
+        The names its pipeline states, plus every class in scope when a
+        ``vertex_router`` is among the steps: a router routes an unmapped
+        discriminator value as the class name, so the classes it can reach are
+        the schema's, not its table's.
+        """
+        return self._producible_vertex_names(self._vertex_config)
+
+    def _producible_vertex_names(self, vertex_config: VertexConfig) -> set[str]:
+        names = self.config.collect_vertex_names()
+        if pipeline_has_vertex_router(self.config.pipeline):
+            names |= set(vertex_config.vertex_set)
+        return names
 
     def count(self) -> int:
         return self._root.count()
@@ -190,9 +204,12 @@ class ResourceRuntime:
         *,
         allowed_vertex_names: set[str] | None,
     ) -> tuple[VertexConfig, EdgeConfig]:
+        # Scoped by what the pipeline can produce, not by the names it states:
+        # a router with a table entry or two would otherwise be cut down to
+        # those classes and skip every other record it routes.
         runtime_vertex_config = filter_vertex_config_for_resource(
             vertex_config,
-            resource_vertex_names=self.collect_vertex_names(),
+            resource_vertex_names=self._producible_vertex_names(vertex_config),
             allowed_vertex_names=allowed_vertex_names,
         )
         local_edge_config = EdgeConfig.model_validate(
@@ -210,7 +227,7 @@ class ResourceRuntime:
             # dropped by filter_vertex_config_for_resource, so a pipeline that
             # writes nothing validates clean. Under strict references that is an
             # error: the resource claims to produce a vertex the schema lacks.
-            undeclared = sorted(self.collect_vertex_names() - known_vertices)
+            undeclared = sorted(self.config.collect_vertex_names() - known_vertices)
             if undeclared:
                 raise ValueError(
                     f"Resource '{self.config.name}' pipeline references undefined "

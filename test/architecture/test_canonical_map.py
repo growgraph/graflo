@@ -20,8 +20,10 @@ from graflo.architecture.evolution import (
     apply_evolution,
     canonical_map_to_ops,
     compose_manifests,
+    dangling_entries,
     merge_canonical_maps,
     resolve_clusters,
+    trim_canonical_map,
     validate_and_complete_canonical_map,
 )
 from graflo.architecture.schema.core import CoreSchema
@@ -518,6 +520,121 @@ class TestValidateAndCompleteCanonicalMap:
                 right=_right_b_manifest(),
                 canonical_maps=[("left", cm)],
             )
+
+    def test_every_dangling_entry_is_named_by_one_refusal(self) -> None:
+        """A map is authored as a whole, so it is not corrected one rerun at a time."""
+        cm = CanonicalMap(
+            vertices={"Ghost": "Spectre", "Phantom": "Wraith"},
+            relations={"has_parent": "parent_of"},
+            properties={"Shade": {"x": "y"}},
+        )
+        with pytest.raises(ComposeCanonicalConflictError, match="dangling") as excinfo:
+            validate_and_complete_canonical_map(
+                ComposeManifestsOp(),
+                left=_source_a_manifest(),
+                right=_right_b_manifest(),
+                canonical_maps=[("left", cm)],
+            )
+        message = str(excinfo.value)
+        for name in ("Ghost", "Phantom", "has_parent", "Shade"):
+            assert repr(name) in message
+        assert excinfo.value.subjects == (
+            "left:Ghost",
+            "left:Phantom",
+            "left:has_parent",
+            "left:Shade",
+        )
+
+    def test_a_near_miss_spelling_is_named(self) -> None:
+        """ "Not on that side" is a dead end when the class is there, spelled otherwise."""
+        cm = CanonicalMap(vertices={"firm": "Company"})
+        with pytest.raises(ComposeCanonicalConflictError) as excinfo:
+            validate_and_complete_canonical_map(
+                ComposeManifestsOp(),
+                left=_source_a_manifest(),
+                right=_right_b_manifest(),
+                canonical_maps=[("left", cm)],
+            )
+        assert "'Firm'" in str(excinfo.value)
+
+    def test_a_side_with_no_schema_block_says_so(self) -> None:
+        """Every entry dangling at once is a missing schema, not a page of typos."""
+        overlay = GraphManifest.from_config(
+            {"ingestion_model": {"resources": [], "transforms": []}}
+        )
+        overlay.finish_init()
+        with pytest.raises(ComposeCanonicalConflictError) as excinfo:
+            validate_and_complete_canonical_map(
+                ComposeManifestsOp(),
+                left=overlay,
+                right=_right_b_manifest(),
+                canonical_maps=[("left", CanonicalMap(vertices={"Ghost": "Company"}))],
+            )
+        assert "no schema block" in str(excinfo.value)
+
+    def test_allow_dangling_entries_drops_and_logs_them(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A shared vocabulary is broader than one manifest; saying so is opt-in."""
+        cm = CanonicalMap(
+            vertices={"Firm": "Company", "Ghost": "Spectre"},
+            allow_dangling_entries=True,
+        )
+        with caplog.at_level(
+            logging.INFO, logger="graflo.architecture.evolution.canonical"
+        ):
+            side_maps = validate_and_complete_canonical_map(
+                ComposeManifestsOp(),
+                left=_source_a_manifest(),
+                right=_right_b_manifest(),
+                canonical_maps=[("left", cm)],
+            )
+        assert side_maps.left.vertices == {"Firm": "Company"}
+        assert any("Ghost" in record.getMessage() for record in caplog.records)
+
+    def test_a_dangling_entry_outranks_an_incomplete_one(self) -> None:
+        """A name that is not there at all is the more basic mistake of the two."""
+        cm = CanonicalMap(vertices={"Ghost": "Spectre", "Deal": "Company"})
+        op = ComposeManifestsOp(
+            vertex_equivalences=[
+                VertexEquivalence(left="Firm", right="Org", into="Company")
+            ]
+        )
+        with pytest.raises(ComposeCanonicalConflictError) as excinfo:
+            validate_and_complete_canonical_map(
+                op,
+                left=_source_a_manifest(),
+                right=_right_b_manifest(),
+                canonical_maps=[("left", cm)],
+            )
+        assert excinfo.value.check == "dangling entry"
+
+    def test_dangling_entries_and_trim_agree_on_one_manifest(self) -> None:
+        """The authoring-time check: one map, one manifest, no compose."""
+        cm = CanonicalMap(
+            vertices={"Firm": "Company", "Ghost": "Spectre"},
+            relations={"signs": "signed", "has_parent": "parent_of"},
+            properties={"Shade": {"x": "y"}},
+        )
+        left = _source_a_manifest()
+        found = dangling_entries(cm, left)
+        assert [(e.kind, e.source) for e in found] == [
+            ("vertex", "Ghost"),
+            ("relation", "has_parent"),
+            ("property", "Shade"),
+        ]
+        trimmed, dropped = trim_canonical_map(cm, left)
+        assert dropped == found
+        assert trimmed.vertices == {"Firm": "Company"}
+        assert trimmed.relations == {"signs": "signed"}
+        assert trimmed.properties == {}
+        assert dangling_entries(trimmed, left) == ()
+
+    def test_trimming_a_map_that_fits_returns_it_unchanged(self) -> None:
+        cm = CanonicalMap(vertices={"Firm": "Company"})
+        trimmed, dropped = trim_canonical_map(cm, _source_a_manifest())
+        assert trimmed is cm
+        assert dropped == ()
 
     def test_a_map_the_caller_already_applied_is_a_no_op(self) -> None:
         """Source absent, target present: the entry is satisfied, not dangling."""

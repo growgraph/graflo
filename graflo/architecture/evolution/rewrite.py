@@ -159,7 +159,28 @@ def rewrite_entity_names_in_pipeline(
     if isinstance(step.get("vertex"), str):
         step["vertex"] = vertex_name(step["vertex"])
 
-    if isinstance(step.get("type_map"), dict):
+    # A router's table lives at the top level in the flat spelling and under
+    # ``vertex_router`` in the shorthand; the authored payload is what is here.
+    router_payload = step.get("vertex_router")
+    if not isinstance(router_payload, dict):
+        router_payload = (
+            step
+            if step.get("type") == "vertex_router" or "type_field" in step
+            else None
+        )
+    if router_payload is not None:
+        if isinstance(router_payload.get("type_map"), dict):
+            router_payload["type_map"] = {
+                raw: vertex_name(mapped) if isinstance(mapped, str) else mapped
+                for raw, mapped in router_payload["type_map"].items()
+            }
+        if vertices:
+            materialized = materialize_router_renames(
+                router_payload.get("type_map"), vertices
+            )
+            if materialized is not None:
+                router_payload["type_map"] = materialized
+    elif isinstance(step.get("type_map"), dict):
         step["type_map"] = {
             raw: vertex_name(mapped) if isinstance(mapped, str) else mapped
             for raw, mapped in step["type_map"].items()
@@ -484,6 +505,27 @@ def _map_name(name: str | None, mapping: dict[str, str]) -> str | None:
     return mapping.get(name, name)
 
 
+def materialize_router_renames(
+    type_map: dict[str, Any] | None, mapping: dict[str, str]
+) -> dict[str, Any] | None:
+    """*type_map* with an entry for every class *mapping* renames away.
+
+    A router routes an unmapped discriminator value as the class name, so
+    before the rename a raw ``old`` reached ``old`` with no table entry; after
+    it only an entry can send it to ``new``, or the value names a class that
+    no longer exists and the record is skipped at runtime without a word.
+    Keys the table already has were rewritten in place. ``None`` when there is
+    no table and nothing to add.
+    """
+    present = type_map or {}
+    added = {
+        old: new for old, new in mapping.items() if old != new and old not in present
+    }
+    if not added:
+        return type_map
+    return {**present, **added}
+
+
 def rewrite_vertex_names_in_step(
     step: dict[str, Any], mapping: dict[str, str]
 ) -> dict[str, Any]:
@@ -505,6 +547,9 @@ def rewrite_vertex_names_in_step(
             out["type_map"] = {
                 k: _map_name(str(v), mapping) or v for k, v in tm.items()
             }
+        materialized = materialize_router_renames(out.get("type_map"), mapping)
+        if materialized is not None:
+            out["type_map"] = materialized
         vfm = out.get("vertex_from_map")
         if isinstance(vfm, dict):
             out["vertex_from_map"] = _merge_vertex_from_map(vfm, mapping)

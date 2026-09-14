@@ -137,6 +137,14 @@ def _resource_pipelines(manifest: GraphManifest) -> dict[str, list]:
     return {resource.name: list(resource.pipeline) for resource in im.resources}
 
 
+def _vertex_set(manifest: GraphManifest) -> set[str]:
+    """Classes *manifest* declares — what a router can route to by pass-through."""
+    schema = manifest.graph_schema
+    if schema is None:
+        return set()
+    return set(schema.core_schema.vertex_config.vertex_set)
+
+
 # --------------------------------------------------------------------------- #
 # Members: how a resource produces one class, read off its side manifest.
 # --------------------------------------------------------------------------- #
@@ -210,18 +218,20 @@ def _side_of(resource: str, sides: SideManifests) -> tuple[str, GraphManifest]:
     return hits[0]
 
 
-def _produced_vertices(steps: list[Any]) -> set[str]:
+def _produced_vertices(
+    steps: list[Any], *, known_vertices: Collection[str] | None = None
+) -> set[str]:
     """Every class any step of *steps* (recursively) produces."""
     out: set[str] = set()
     for step in steps:
         if not isinstance(step, dict):
             continue
-        out |= step_produces_vertices(step)
+        out |= step_produces_vertices(step, known_vertices=known_vertices)
         normalized = normalize_actor_step(dict(step))
         if normalized.get("type") == "descend":
             sub = normalized.get("pipeline")
             if isinstance(sub, list):
-                out |= _produced_vertices(sub)
+                out |= _produced_vertices(sub, known_vertices=known_vertices)
     return out
 
 
@@ -233,14 +243,16 @@ def _resolve_member_production(
 ) -> _MemberProduction:
     side, manifest = _side_of(resource, sides)
     pipeline = _resource_pipelines(manifest)[resource]
-    candidates = find_vertex_producing_levels(pipeline, member)
+    known = _vertex_set(manifest)
+    candidates = find_vertex_producing_levels(pipeline, member, known_vertices=known)
     if not candidates:
         raise _conflict(
             "resource does not produce the member",
             f"resource {resource!r} ({side}) has no pipeline step producing {member!r}",
             "A member key names a class the resource produces on its side — "
             "through compose, by its own name or its canonical one: "
-            f"{sorted(_produced_vertices(pipeline))}.",
+            f"{sorted(_produced_vertices(pipeline, known_vertices=known))}. "
+            "A vertex_router routes any class the side's schema declares.",
         )
     if resource in alignment.at:
         path = list(alignment.at[resource])
@@ -433,6 +445,7 @@ def resolve_derivation_levels(
     pick would be a guess about where the source fields live.
     """
     pipelines = _resource_pipelines(manifest)
+    known = _vertex_set(manifest)
     levels: dict[str, list[int]] = {}
     for resource in sorted(_referenced_resources(alignment)):
         pipeline = pipelines.get(resource, [])
@@ -451,10 +464,13 @@ def resolve_derivation_levels(
             # run, find no inputs, and skip without a word.
             if not any(
                 isinstance(step, dict)
-                and alignment.vertex in step_produces_vertices(step)
+                and alignment.vertex
+                in step_produces_vertices(step, known_vertices=known)
                 for step in level
             ):
-                candidates = find_vertex_producing_levels(pipeline, alignment.vertex)
+                candidates = find_vertex_producing_levels(
+                    pipeline, alignment.vertex, known_vertices=known
+                )
                 raise _conflict(
                     "level produces nothing",
                     f"`at` sends resource {resource!r} derivations to level "
@@ -475,7 +491,9 @@ def resolve_derivation_levels(
             levels[resource] = list(next(iter(productions[resource].values())).level)
             continue
 
-        candidates = find_vertex_producing_levels(pipeline, alignment.vertex)
+        candidates = find_vertex_producing_levels(
+            pipeline, alignment.vertex, known_vertices=known
+        )
         if not candidates:
             raise _conflict(
                 "resource does not produce the class",
@@ -509,14 +527,21 @@ def _referenced_resources(alignment: IdentityAlignment) -> set[str]:
 def _producing_steps(
     manifest: GraphManifest, resource: str, path: list[int], vertex: str
 ) -> list[dict]:
-    """Normalized steps at *path* in *resource* that produce *vertex*."""
+    """Normalized steps at *path* in *resource* that produce *vertex*.
+
+    The two tiers of :func:`find_vertex_producing_levels`, within one level:
+    the steps naming the class explicitly when any does, else every router
+    there — each routes the raw discriminator value as the class name.
+    """
     pipeline = list(_resource_pipelines(manifest).get(resource, []))
     level = resolve_pipeline_level(pipeline, list(path))
-    return [
-        normalize_actor_step(dict(step))
-        for step in level
-        if isinstance(step, dict) and vertex in step_produces_vertices(step)
+    steps = [
+        normalize_actor_step(dict(step)) for step in level if isinstance(step, dict)
     ]
+    explicit = [step for step in steps if vertex in step_produces_vertices(step)]
+    if explicit or vertex not in _vertex_set(manifest):
+        return explicit
+    return [step for step in steps if step.get("type") == "vertex_router"]
 
 
 # --------------------------------------------------------------------------- #
@@ -716,7 +741,9 @@ def _check_sibling_classes(
     schema = manifest.graph_schema
     assert schema is not None
     vertex_config = schema.core_schema.vertex_config
-    siblings = step_produces_vertices(step) - {alignment.vertex}
+    siblings = step_produces_vertices(step, known_vertices=vertex_config.vertex_set) - {
+        alignment.vertex
+    }
     for sibling in sorted(siblings):
         if sibling not in vertex_config.vertex_set:
             continue

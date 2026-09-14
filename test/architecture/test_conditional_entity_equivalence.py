@@ -877,3 +877,118 @@ class TestMemberKeysResolveThroughTheMap:
         attribute.sources["r_view"] = {**entry, "Company": _marker("abc_")}
         with pytest.raises(AlignmentConflictError, match="keyed twice"):
             _raw_member_union(alignment)
+
+
+def _dynamic_manifest_a() -> GraphManifest:
+    """:func:`_routed_manifest_a` with no table: ``kind`` *is* the class name."""
+    manifest = _routed_manifest_a()
+    manifest.require_ingestion_model().resources[0].pipeline = [
+        {
+            "descend": {
+                "key": "records",
+                "apply": [
+                    {
+                        "vertex_router": {
+                            "type_field": "kind",
+                            "keep_fields": [
+                                "firm_id",
+                                "shop_id",
+                                "person_id",
+                                "secondary_key",
+                            ],
+                        }
+                    }
+                ],
+            }
+        }
+    ]
+    manifest.finish_init()
+    return manifest
+
+
+def _build_dynamic_member_union() -> GraphManifest:
+    left = apply_evolution(
+        _dynamic_manifest_a(), canonical_map_to_ops(_ROUTED_CANONICAL)
+    )
+    op = ComposeManifestsOp(
+        vertex_equivalences=[
+            VertexEquivalence(left=["Company", "Shop"], right="Org", into="Company")
+        ],
+        allow_merges=True,
+        identity_alignments=[_MEMBER_ALIGNMENT],
+    )
+    return compose_manifests(
+        left, _manifest_b(), op, canonical_maps=[("left", _ROUTED_CANONICAL)]
+    )
+
+
+_DYNAMIC_VIEW = [
+    {
+        "records": [
+            {"kind": "Firm", "firm_id": "f1", "secondary_key": "abc_alpha"},
+            {"kind": "Firm", "firm_id": "f2", "secondary_key": "alpha"},
+            {"kind": "Shop", "shop_id": "s1", "secondary_key": "def_beta"},
+            {"kind": "Shop", "shop_id": "s2", "secondary_key": "abc_alpha"},
+            {"kind": "Person", "person_id": "p1", "secondary_key": "abc_9"},
+        ]
+    }
+]
+
+
+class TestDynamicRouterFusion:
+    """The router has no table; the source's own class names are its raw values.
+
+    The canonical map and the compose each rename a class the router passed
+    through, and each writes the entry that keeps the raw value routing.
+    """
+
+    def _router(self, union: GraphManifest) -> dict:
+        from graflo.architecture.contract.ingestion.steps.normalize import (
+            normalize_actor_step,
+        )
+
+        pipeline = union.require_ingestion_model().resources[0].pipeline
+        descend = normalize_actor_step(dict(pipeline[0]))
+        return normalize_actor_step(dict(descend["pipeline"][0]))
+
+    def test_the_renames_are_written_into_the_table(self) -> None:
+        union = _build_dynamic_member_union()
+
+        assert self._router(union)["type_map"] == {
+            "Firm": "Company",
+            "Shop": "Company",
+        }
+
+    def test_each_member_fuses_through_its_own_marker(self) -> None:
+        union = _build_dynamic_member_union()
+
+        view = _cast(union, "r_view", _DYNAMIC_VIEW)
+        orgs = _cast(
+            union,
+            "r_b",
+            [
+                {"org_id": "o1", "shared_raw": "alpha"},
+                {"org_id": "o2", "shared_raw": "beta"},
+            ],
+        )
+
+        by_local = {doc["local_key"]: doc for doc in view}
+        assert by_local["firm:f1"]["match_key"] == "alpha"
+        assert by_local["firm:f1"]["id"] == orgs[0]["id"]
+        assert by_local["shop:s1"]["match_key"] == "beta"
+        assert by_local["shop:s1"]["id"] == orgs[1]["id"]
+        assert by_local["shop:s2"].get("match_key") is None
+        assert by_local["firm:f2"].get("match_key") is None
+
+    def test_the_unaligned_class_still_routes_and_derives_nothing(self) -> None:
+        union = _build_dynamic_member_union()
+        caster = DocumentCaster(union.require_ingestion_model())
+
+        result = asyncio.run(
+            caster.cast_batch(_DYNAMIC_VIEW, "r_view", params=IngestionParams())
+        )
+
+        people = result.graph.vertices["Person"]
+        assert [p["person_id"] for p in people] == ["p1"]
+        assert "match_key" not in people[0]
+        assert "local_key" not in people[0]
