@@ -245,7 +245,7 @@ class TestFusionIsJudgedPerSlot:
         """A and B collapsed onto A under identity ``a_id`` by a compose.
 
         Under that identity the observation the former B step emits carries no
-        key, which is the shape that fuses: ``merge_doc_basis`` folds a keyless
+        key, which is the shape that fuses: ``fuse_doc_basis`` folds a keyless
         observation into the keyed one before it *in the same bucket*.
         """
         left = _manifest(edges=TestFusionIsJudgedPerSlot._edges(), pipeline=pipeline)

@@ -221,8 +221,24 @@ depends on it.
 | Inputs | two descendants of a common ancestor | unrelated lineages |
 | Names | expected to agree; disagreement is a **conflict** | expected to disagree; a **declared equivalence** reconciles them |
 | Reached by | `merge_three_way` | `compose_manifests` |
+| Side order | significant by construction — the commit's ops are the diff from its **first** parent | significant in six slots only; see below |
 
 Both produce multi-parent commits. They are not the same operation — and "merge" names a third thing again inside a schema (combining the definitions one name has on both sides). See [Words for combining things](manifest_evolution.md#words-for-combining-things).
+
+#### What compose does and does not depend on side order
+
+Composing `B` onto `A` and `A` onto `B` produce the **same content hash** for everything the outer union assembles. Every container the union concatenates — vertices, edges, resources, transforms, connectors, semantic anchors, indexes — is classified `SORTED` in the canonical form, so the order the two sides were walked in is normalized away before anything is hashed. Metadata is excluded from the hash entirely, so the folded name (`a+b`), the joined description and the left side's `version` do not move the content address either.
+
+Six slots *are* order-dependent, and all six are reached through the same call: the merge of two declarations of one name (`merge_vertex_models([left, right], name)`). They are the fields the canonical form marks `PRESERVED`, because their order carries meaning that sorting would destroy:
+
+- `Vertex.identity` — the composite key's column order
+- `Vertex.hash_identity_properties` — feeds the identity digest
+- `Vertex.filters`
+- `IdentityFunnel.branches` — branch order *is* the key's fallback order
+- auto-assigned `SecondaryIdentity` names (`secondary_0`, `secondary_1`) — positional
+- `Vertex` / `Edge` / `Field.description` — joined in side order
+
+So compose is commutative in the world model and not in those six. Where a value is a *claim* rather than an ordering, compose refuses instead of electing a side: two declared `db_flavor`s raise, a disputed `iri` clears to `None`, conflicting `force_types`, storage names, field types and units all raise.
 
 ## Tracked merges
 
@@ -287,12 +303,16 @@ what to compare against.
   JOT 2011 / MODELS 2011. The delta-lens view in which an inverse needs the delta, not just the
   end state — the shape of `invert_ops`.
 - Bernstein, Melnik — *Model Management 2.0*, SIGMOD 2007; Melnik, Rahm, Bernstein — *Rondo*,
-  SIGMOD 2003. Merge, Diff and Compose as generic operators over models. The merge / compose
-  distinction on this page is that vocabulary applied to manifests.
+  SIGMOD 2003. Match, Merge, Diff and Compose as generic operators over models. GraFlo borrows
+  the operators, not the spelling: there **Merge** takes two models plus correspondences and
+  **Compose** composes two mappings, which is the reverse of how this page uses the two words.
+  The translation table is in
+  [Words for combining things](manifest_evolution.md#these-names-are-graflos-not-the-literatures).
 - Pottinger, Bernstein — *Merging Models Based on Given Correspondences*, VLDB 2003, and
-  *Associativity and Commutativity in Generic Merge*, LNCS 5600, 2009. The latter defines the
-  properties this page's three-way merge does **not** yet claim: the same inputs merge
-  deterministically, but merging is not asserted to be commutative or associative.
+  *Associativity and Commutativity in Generic Merge*, LNCS 5600, 2009. Their **Merge** — two
+  models plus correspondences — is the operator this page calls **compose**, and those papers
+  are where its commutativity is studied. GraFlo's compose is commutative in the union and not
+  in six preserved slots (above); three-way merge claims neither property, only determinism.
 - Edwards, Petricek — *Baseline: Operation-Based Evolution and Versioning of Data*, 2025;
   Deshpande — *Living Databases*, 2026. Contemporary operation-based versioning of data, where the
   operations are the diff — the same design position, applied to instances rather than contracts.

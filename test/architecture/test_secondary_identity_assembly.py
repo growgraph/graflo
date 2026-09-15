@@ -15,9 +15,9 @@ from graflo.architecture.graph_types import (
     LocationIndex,
     VertexRep,
 )
-from graflo.architecture.graph_types.merge import merge_doc_basis
+from graflo.architecture.graph_types.merge import fuse_doc_basis
 from graflo.architecture.pipeline.runtime.actor.edge_render import render_edge
-from graflo.architecture.pipeline.runtime.assemble import _merge_vertices_for_edge
+from graflo.architecture.pipeline.runtime.assemble import _fuse_vertices_for_edge
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import Vertex, VertexConfig
 
@@ -64,7 +64,7 @@ class TestMergeBasis:
     def test_secondary_only_docs_would_collapse_under_primary_basis(self) -> None:
         """Documents the regression: merging keyless docs folds them into one."""
         docs = [{"isin": "US001"}, {"isin": "US002"}, {"isin": "US003"}]
-        assert len(merge_doc_basis(list(docs), ("sid",))) == 1
+        assert len(fuse_doc_basis(list(docs), ("sid",))) == 1
 
     def test_merge_on_selected_fields_keeps_rows_distinct(
         self, vertex_config: VertexConfig
@@ -74,7 +74,7 @@ class TestMergeBasis:
             [{"isin": "US001"}, {"isin": "US002"}, {"isin": "US003"}],
             [{"lei": "L1"}],
         )
-        _merge_vertices_for_edge(
+        _fuse_vertices_for_edge(
             ctx,
             vertex_config,
             "instrument",
@@ -93,7 +93,7 @@ class TestMergeBasis:
         lindex = LocationIndex()
         for doc in ({"sid": "S1", "isin": "US001"}, {"sid": "S2", "isin": "US002"}):
             ctx.acc_vertex["instrument"][lindex].append(VertexRep(vertex=doc))
-        _merge_vertices_for_edge(
+        _fuse_vertices_for_edge(
             ctx,
             vertex_config,
             "instrument",
@@ -167,10 +167,10 @@ class TestLookupOnlyObservations:
         assert VertexRep(vertex={"sid": "S1"}).lookup_only is False
 
     def test_flag_survives_merge(self) -> None:
-        """merge_doc_basis rebuilds VertexReps; the tag must not be lost."""
+        """fuse_doc_basis rebuilds VertexReps; the tag must not be lost."""
         reps = [
             VertexRep(vertex={"isin": "US001"}, lookup_only=True),
             VertexRep(vertex={"isin": "US002"}, lookup_only=True),
         ]
-        merged = merge_doc_basis(reps, ("isin",))
+        merged = fuse_doc_basis(reps, ("isin",))
         assert all(rep.lookup_only for rep in merged)

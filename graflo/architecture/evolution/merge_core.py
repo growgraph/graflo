@@ -158,7 +158,7 @@ def _merge_secondary_identities(
 
 
 def merge_vertex_models(vertices: list[Vertex], into_name: str) -> Vertex:
-    """Union-merge vertex definitions into a single :class:`Vertex`.
+    """Merge vertex definitions into a single :class:`Vertex`.
 
     Identity mode is carried through the merge: ``blank`` / ``assigned`` propagate when
     any source declares them, and ``hash_identity_properties`` / ``secondary_identities``

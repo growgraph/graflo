@@ -40,7 +40,7 @@ GraFlo provides **contract-level** operations that transform a validated `GraphM
 | **Add / remove resources** | `add_resources` takes full `ResourceConfig` definitions (creating `ingestion_model` if absent; an existing name is rejected); `remove_resources` takes names and prunes the `resource_connector` entries that wired them. Inverses of each other — a removal that pruned a binding has none. The differ emits both. |
 | **Set vertex / edge / field semantics** | Ground an existing element in an external vocabulary: `set_vertex_semantics` (`{vertex: Semantics \| null}`), `set_edge_semantics` (edge triples + one `Semantics`), `set_field_semantics` (per-target `FieldSemantics`, the only model carrying `unit`; a target is a vertex property `{vertex, field}` or an edge property `{source, target, relation, field}`). `null` clears, which is what makes each invertible. Never consulted at execution time. The differ emits all three. |
 | **Canonicalize** | Applies a whole **vocabulary map** — classes, per-class attributes (keyed by the *source* class), and relations — in one step over the original schema. Attribute renames run first, then classes and relations simultaneously, so a chain (`{X: Z, Z: Q}`) and a swap resolve without an intermediate state and no op order can leak into the result. The fibers of the map are exactly the groups that merge, so a group of more than one name needs `allow_merges`; a target that already exists and does not move must be declared a member of its own group with a self entry (`Company: Company`), or the op refuses rather than merging into it silently. Reversible when it only renames. This is what a `CanonicalMap` lowers to, and the per-side step of compose. See [Canonical maps](#canonical-maps). |
-| **Compose manifests** | Binary union of two full `GraphManifest`s (schema **and** resources/bindings) via `ComposeManifestsOp` + `compose_manifests(left, right, op)`. Consumes **explicit** equivalence maps only (no semantic inference): n-ary vertex clusters (`vertex_equivalences`: `left` / `right` each name one or more classes collapsing onto one `into`), property alignment, optional composed `identity`, optional `identity_alignments`, relation equivalences (`relation_equivalences`), resource renames, and `canonical_maps` (scoped `left` / `right` / `both`), which name the composed classes so `into` may be omitted. A name both sides carry that no equivalence covers is what `name_conflict` decides — refused with the declarations to add (`error`), unioned by name through a synthesized equivalence (`union_right`), or kept apart (`prefix_right`). Distinct from unary `MergeVerticesOp`. Rejected by unary `apply_evolution`. |
+| **Compose manifests** | Binary compose of two full `GraphManifest`s (schema **and** resources/bindings) via `ComposeManifestsOp` + `compose_manifests(left, right, op)`. Consumes **explicit** equivalence maps only (no semantic inference): n-ary vertex clusters (`vertex_equivalences`: `left` / `right` each name one or more classes collapsing onto one `into`), property alignment, optional composed `identity`, optional `identity_alignments`, relation equivalences (`relation_equivalences`), resource renames, and `canonical_maps` (scoped `left` / `right` / `both`), which name the composed classes so `into` may be omitted. A name both sides carry that no equivalence covers is what `name_conflict` decides — refused with the declarations to add (`error`), unioned by name through a synthesized equivalence (`union_right`), or kept apart (`prefix_right`). Distinct from unary `MergeVerticesOp`. Rejected by unary `apply_evolution`. |
 
 ## Compose two manifests
 
@@ -126,12 +126,12 @@ Compose refuses to guess the composed **identity** too: when members disagree on
 
 ### Words for combining things
 
-Five verbs recur, and they are not synonyms.
+Five verbs recur across seven senses, and they are not synonyms.
 
 | verb | sense | where |
 |---|---|---|
 | **compose** | join two manifests of *unrelated lineage* by declared equivalence | `compose_manifests`, `ComposeManifestsOp` |
-| **union** | assemble two collections **by name** — the outer step | `_union_schema`, `_union_ingestion`, `_union_bindings` |
+| **union** | assemble two collections **by name** — the outer step | `_union_transforms`, `_union_schema`, `_union_bindings` |
 | **merge** | combine the definitions **one name** has on both sides, refusing conflicts — the inner step | `merge_vertex_models`, `merge_edge_pair`, `merge_semantics` |
 | **merge** (collapse) | send *several distinct* classes or relations to one name | `MergeVerticesOp`, `MergeEdgesOp`, `allow_merges` |
 | **merge** (three-way) | reconcile two descendants of a **common ancestor** — a different operation entirely | `merge_three_way`, `MergeConflict` |
@@ -140,11 +140,26 @@ Five verbs recur, and they are not synonyms.
 
 Union and merge are not competing words: they are the two levels of one operation. The union walks the names; the merge is what it does at a name both sides carry.
 
+`_union_transforms` is the plain case — it folds a registry by name, keeping one copy of an identical body and refusing two different ones. `_union_schema` is a union *and* the merges it drives, which is why it reads as the whole loop rather than the outer step alone. `_concat_ingestion` is neither: resource name collisions are settled earlier in the pipeline, so by the time the lists meet there is nothing left to fold and it concatenates.
+
 Collapse and merge-at-a-name share one implementation — `merge_vertex_models` is called both by `MergeVerticesOp` and by the union — because at the field level they are the same work: union the properties, reconcile the identity, refuse a conflicting type or unit. What differs is the author's claim about the inputs, and `allow_merges` is where that claim is made: several *distinct* classes becoming one is a stated intent, while two views of one class needs no acknowledgement.
 
 `fuse` is about records, not types. The one exception is the `name_conflict="union_right"` policy, which was spelled `fuse_right` before this distinction was drawn and still parses under that name.
 
 Three-way merge is the outlier: it reconciles change sets, not schemas, and expects names to *agree*. See [Merge is not compose](versioning.md#merge-is-not-compose).
+
+**`join`** is not an eighth sense. It is used in prose as the superordinate for compose — "joins two lineages" — and never names an operation; nothing is called `join_*` except SQL and URL joins, which are unrelated.
+
+#### These names are GraFlo's, not the literature's
+
+The generic-model-management operators GraFlo's design draws on (see [the references](versioning.md#further-reading)) use two of these words for different things, and a reader arriving from that literature should know which way round they are:
+
+| GraFlo | that literature | signature |
+|---|---|---|
+| `compose_manifests(left, right, op)` | **Merge** | two models plus correspondences → a model |
+| `merge_canonical_maps(base, extension)` | **Compose** | two mappings → a mapping |
+
+So GraFlo's *compose* is the operator that literature calls Merge, and the operator it calls Compose — composing two mappings — is what `merge_canonical_maps` does. The names here are not being changed to match: `ComposeManifestsOp` is a published contract that appears in authored documents. This table is the translation.
 
 ### Either side may carry no schema
 

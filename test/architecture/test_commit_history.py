@@ -231,7 +231,7 @@ def test_a_merge_commit_is_materialized_against_its_first_parent(linear) -> None
     commit = build_merge_commit(
         first_parent_state, merged, parents=[first.id, "otherbranch1"], kind="merge"
     )
-    assert commit.is_merge
+    assert commit.is_multi_parent
     assert commit.first_parent == first.id
     assert commit.tree_before == manifest_hash(first_parent_state)
     assert commit.tree == manifest_hash(merged)

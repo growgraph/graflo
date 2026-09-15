@@ -1,10 +1,13 @@
-"""Document merging utilities.
+"""Document fusion: several observations of one entity becoming one document.
 
-This module provides functions for merging documents based on common index keys,
-preserving order and handling both dict and VertexRep objects.
+This is the *fuse* plane -- two records becoming one node -- and not either
+schema-level sense of "merge". Nothing here folds two declarations of a type;
+it folds the documents a pipeline emitted for the same entity, keyed on the
+fields they will be matched on, preserving order and handling both dict and
+:class:`VertexRep` objects.
 
 Key Functions:
-    - merge_doc_basis: Merge documents based on common index keys, preserving order
+    - fuse_doc_basis: fold documents sharing an index key, preserving order
 
 """
 
@@ -14,20 +17,20 @@ from graflo.architecture.graph_types.transform import VertexRep
 
 
 @overload
-def merge_doc_basis(
+def fuse_doc_basis(
     docs: list[dict],
     index_keys: tuple[str, ...],
 ) -> list[dict]: ...
 
 
 @overload
-def merge_doc_basis(
+def fuse_doc_basis(
     docs: list[VertexRep],
     index_keys: tuple[str, ...],
 ) -> list[VertexRep]: ...
 
 
-def merge_doc_basis(
+def fuse_doc_basis(
     docs: list[dict] | list[VertexRep],
     index_keys: tuple[str, ...],
 ) -> list[dict] | list[VertexRep]:
@@ -86,7 +89,7 @@ def merge_doc_basis(
                 raise TypeError(f"expected dict, got {type(doc).__name__}")
             return any(k in doc for k in index_keys)
 
-    def merge_doc(target: dict | VertexRep, source: dict | VertexRep) -> None:
+    def fuse_doc(target: dict | VertexRep, source: dict | VertexRep) -> None:
         """Merge source into target."""
         if is_vertexrep:
             if not (isinstance(target, VertexRep) and isinstance(source, VertexRep)):
@@ -120,17 +123,17 @@ def merge_doc_basis(
                 if merged_docs:
                     # Merge accumulated non-IDs into the last ID doc
                     for pending in pending_non_ids:
-                        merge_doc(merged_docs[-1], pending)
+                        fuse_doc(merged_docs[-1], pending)
                 else:
                     # No previous ID doc, merge pending non-IDs into the current ID doc
                     for pending in pending_non_ids:
-                        merge_doc(doc, pending)
+                        fuse_doc(doc, pending)
                 pending_non_ids.clear()
 
             # Handle the current document with index keys
             if index_tuple in index_to_position:
                 # Merge into existing document at that position
-                merge_doc(merged_docs[index_to_position[index_tuple]], doc)
+                fuse_doc(merged_docs[index_to_position[index_tuple]], doc)
             else:
                 # First occurrence of this index tuple, add new document
                 merged_docs.append(copy_doc(doc))
@@ -143,7 +146,7 @@ def merge_doc_basis(
     if pending_non_ids and merged_docs:
         # Merge into last ID doc
         for pending in pending_non_ids:
-            merge_doc(merged_docs[-1], pending)
+            fuse_doc(merged_docs[-1], pending)
     elif pending_non_ids:
         # No documents with index keys: merge all into a single document
         if is_vertexrep:
@@ -151,7 +154,7 @@ def merge_doc_basis(
         else:
             merged_doc = {}
         for pending in pending_non_ids:
-            merge_doc(merged_doc, pending)
+            fuse_doc(merged_doc, pending)
         merged_docs.append(merged_doc)
 
     # Type narrowing: return type matches input type due to homogeneous list requirement

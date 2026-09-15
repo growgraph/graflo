@@ -352,7 +352,7 @@ def test_merging_two_branches_reconciles_them(workspace) -> None:
     # The merge is stamped with its lineage, and a merge commit was recorded.
     merged = yaml.safe_load(workspace["out"].read_text())
     assert merged["metadata"]["provenance"]["parents"] == [left.id, right.id]
-    assert FileCommitStore(workspace["store"]).load().heads()[0].is_merge
+    assert FileCommitStore(workspace["store"]).load().heads()[0].is_multi_parent
 
 
 def test_merging_unrelated_lineages_points_at_compose(workspace) -> None:

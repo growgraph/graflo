@@ -6,6 +6,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+
+### Changed
+
+- **`Commit.is_merge` and `Provenance.is_merge` are now `is_multi_parent`.** Both were
+  `len(parents) > 1`, which is true of a `compose` commit as well as a `merge` one, so the
+  name asserted something the value did not test. Read `kind` to tell the two apart. This
+  renames a public property on both models.
+- **The document-fusion helpers say `fuse`.** `merge_doc_basis` → `fuse_doc_basis`,
+  `merge_doc` → `fuse_doc`, `_merge_vertices_for_edge` → `_fuse_vertices_for_edge`. These
+  fold several observations of one entity into one document — the `fuse` sense — and
+  nothing about them folds two declarations of a type, which is what `merge` names
+  everywhere else. `ResourceConfig.merge_collections` keeps its name: it is an authored
+  contract key, and its description now says which sense it carries.
+- **`_union_ingestion` → `_concat_ingestion`** (private). It concatenates two resource
+  lists; the colliding names were already resolved before it runs, so it never unioned by
+  name. `_union_schema`, `_concat_ingestion` and `_union_bindings` now carry docstrings
+  saying which level of the operation each one is.
+
+### Fixed
+
+- **The combining vocabulary is defined in one place.** "Words for combining things" is now
+  the single normative glossary for `compose` / `union` / `merge` / `fuse` / `collapse`;
+  its own opening line contradicted its table, and the ops table two screens above it
+  described `ComposeManifestsOp` as a "binary union" — the usage the glossary forbids. The
+  `ComposeManifestsOp`, `merge_vertex_models`, `merge_semantics` and `merge_field_semantics`
+  docstrings opened with the wrong verb and now open with the right one.
+- **Compose's dependence on side order is stated.** The union is commutative — every
+  container it assembles is sorted in the canonical form, so composing either way round
+  yields one content hash — and six preserved slots are not, all of them reached through
+  the merge of two declarations of one name. The disclaimer that said so was attached to
+  three-way merge, which is not the operator the cited work is about.
+- **The generic-model-management references say which operator is which.** In that
+  literature `Merge` takes two models plus correspondences and `Compose` composes two
+  mappings, the reverse of GraFlo's spelling; the docs now carry the translation instead of
+  implying the vocabulary was adopted unchanged.
+
+
 ## [1.13.2]
 
 ### Added

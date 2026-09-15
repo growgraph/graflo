@@ -297,7 +297,12 @@ class ResourceConfig(ConfigBaseModel):
     )
     merge_collections: list[str] = PydanticField(
         default_factory=list,
-        description="List of collection names to merge when writing to the graph.",
+        description=(
+            "Collection names whose documents fuse when written to the graph -- "
+            "several observations becoming one node, not two type declarations "
+            "becoming one. Named `merge_` because it is an authored contract key; "
+            "the vocabulary calls this sense `fuse`."
+        ),
     )
     extra_weights: list[ResourceExtraWeightEntry] = PydanticField(
         default_factory=list,

@@ -9,7 +9,7 @@ from graflo.architecture.graph_types.edge_derivation import (
     EdgeDerivation,
     EdgeDerivationRegistry,
 )
-from graflo.architecture.graph_types.merge import merge_doc_basis
+from graflo.architecture.graph_types.merge import fuse_doc_basis
 from graflo.architecture.schema.edge import (
     DEFAULT_TIGERGRAPH_RELATION_WEIGHTNAME,
     Edge,
@@ -37,7 +37,7 @@ def _resolved_relation_input_field(
     return None
 
 
-def _merge_vertices_for_edge(
+def _fuse_vertices_for_edge(
     ctx: AssemblyContext,
     vertex_config: VertexConfig,
     source: str,
@@ -64,7 +64,7 @@ def _merge_vertices_for_edge(
 
     for vname, fields in bases:
         for lindex, vlist in ctx.acc_vertex[vname].items():
-            ctx.acc_vertex[vname][lindex] = merge_doc_basis(vlist, tuple(fields))
+            ctx.acc_vertex[vname][lindex] = fuse_doc_basis(vlist, tuple(fields))
 
 
 def _emit_edge_documents(
@@ -83,7 +83,7 @@ def _emit_edge_documents(
     target_fields = vertex_config.match_fields(
         edge.target, derivation.target_match if derivation is not None else None
     )
-    _merge_vertices_for_edge(
+    _fuse_vertices_for_edge(
         ctx,
         vertex_config,
         edge.source,

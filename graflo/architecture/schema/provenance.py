@@ -67,8 +67,12 @@ class Provenance(ConfigBaseModel):
     )
 
     @property
-    def is_merge(self) -> bool:
-        """Whether this state was produced by combining two or more lineages."""
+    def is_multi_parent(self) -> bool:
+        """Whether this state was produced by combining two or more lineages.
+
+        True after a merge and after a compose alike -- both record two or more
+        parents. The commit's `kind` is what distinguishes them.
+        """
         return len(self.parents) > 1
 
 

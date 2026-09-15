@@ -26,7 +26,7 @@ from graflo.architecture.graph_types import (
     GraphEntity,
     LocationIndex,
 )
-from graflo.architecture.graph_types.merge import merge_doc_basis
+from graflo.architecture.graph_types.merge import fuse_doc_basis
 from graflo.architecture.schema.edge import EdgeConfig
 from graflo.architecture.schema.identity_digest import (
     ensure_digest_identities_in_acc_vertex,
@@ -150,7 +150,7 @@ class ActorWrapper:
         # Synthetic identities must exist before edges are assembled and before
         # docs are deduplicated on their identity fields: a hash/funnel vertex
         # keys on ``id``, so an empty ``id`` gives edges no endpoint key and
-        # merge_doc_basis no basis (it would fold the batch into one doc).
+        # fuse_doc_basis no basis (it would fold the batch into one doc).
         ensure_assigned_uuids_in_acc_vertex(assembly_ctx.acc_vertex, self.vertex_config)
         ensure_digest_identities_in_acc_vertex(
             assembly_ctx.acc_vertex, self.vertex_config
@@ -174,7 +174,7 @@ class ActorWrapper:
                 writable = [x.vertex for x in vertex_list if not x.lookup_only]
                 if not writable:
                     continue
-                vertex_list_updated = merge_doc_basis(
+                vertex_list_updated = fuse_doc_basis(
                     writable,
                     tuple(self.vertex_config.identity_fields(vertex_name)),
                 )

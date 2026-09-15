@@ -132,8 +132,13 @@ class Commit(ConfigBaseModel):
         return not self.parents
 
     @property
-    def is_merge(self) -> bool:
-        """Whether this commit joins two or more lineages."""
+    def is_multi_parent(self) -> bool:
+        """Whether this commit joins two or more lineages.
+
+        True for both `merge` and `compose` kinds: joining unrelated lineages
+        is as multi-parent as reconciling related ones. Not a test for
+        `kind == "merge"` -- read `kind` for that.
+        """
         return len(self.parents) > 1
 
     @property

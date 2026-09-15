@@ -343,7 +343,7 @@ def _apply_right_schema_collision_policy(
     op: ComposeManifestsOp,
     index: ClusterIndex,
 ) -> None:
-    """Prefix, fuse or error on non-equivalent right vertex/relation names.
+    """Prefix, union or error on non-equivalent right vertex/relation names.
 
     Names are compared both exactly and by :func:`canonical_slug`, so two
     spellings of one concept are a collision rather than two types.
@@ -841,6 +841,16 @@ def _union_schema(
     member_property_names: dict[tuple[Side, str], set[str]],
     alignment_labels: set[str],
 ) -> tuple[Schema, list[ManifestOp]]:
+    """Assemble both schemas by name, merging at every name they share.
+
+    Both levels of the operation in one pass: the walk over names is the
+    *union*, and ``merge_vertex_models`` / ``merge_edge_pair`` at a shared name
+    is the *merge*. Cluster members have already arrived at their composed name
+    by the time this runs, so a cluster reads here as an ordinary shared name.
+
+    Returns the composed schema and the ``AddSecondaryIdentitiesOp``s that
+    retire each merged member's pre-merge key.
+    """
     left_vc = left.core_schema.vertex_config
     right_vc = right.core_schema.vertex_config
     left_by_name = {v.name: v for v in left_vc.vertices}
@@ -955,9 +965,16 @@ def _union_transforms(
     return out
 
 
-def _union_ingestion(
+def _concat_ingestion(
     left: IngestionModel | None, right: IngestionModel | None
 ) -> IngestionModel | None:
+    """Concatenate both resource lists; union the transform registries by name.
+
+    Not a union by name on the resources: colliding resource names were already
+    resolved by ``_apply_right_resource_policy`` before the relabel, so nothing
+    is left to fold and the lists simply join. ``transforms`` is a real by-name
+    union -- see ``_union_transforms``.
+    """
     if left is None and right is None:
         return None
     if left is None:
@@ -995,6 +1012,12 @@ def _union_bindings(
     *,
     name_conflict: Literal["error", "prefix_right", "union_right"],
 ) -> Bindings | None:
+    """Assemble both bindings registries by name, renaming right-side collisions.
+
+    Connectors are *addresses*, not concepts, so they collide only on an exact
+    name and ``union_right`` is meaningless for them -- it behaves as ``error``.
+    A renamed right connector is propagated into the references that name it.
+    """
     if left is None and right is None:
         return None
     if left is None:
@@ -1204,7 +1227,7 @@ def compose_manifests(
         composed_schema = None
     if composed_schema is not None:
         _assert_no_canonical_split(composed_schema)
-    composed_ingestion = _union_ingestion(
+    composed_ingestion = _concat_ingestion(
         out_left.ingestion_model, out_right.ingestion_model
     )
     composed_bindings = _union_bindings(

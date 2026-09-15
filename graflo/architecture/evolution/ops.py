@@ -2254,7 +2254,7 @@ def _describe_cluster(declaration: VertexEquivalence | RelationEquivalence) -> s
 
 
 class ComposeManifestsOp(ConfigBaseModel):
-    """Union two full ``GraphManifest``s using explicit equivalence maps.
+    """Compose two full ``GraphManifest``s using explicit equivalence maps.
 
     Binary only — apply via :func:`~graflo.architecture.evolution.compose.compose_manifests`.
     Unary :func:`~graflo.architecture.evolution.apply.apply_evolution` rejects this op.
