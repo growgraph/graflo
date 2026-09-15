@@ -25,7 +25,7 @@ GraFlo provides **contract-level** operations that transform a validated `GraphM
 | **Remove edge fields** | Removes per-relation edge properties, prunes edge index/default references, and rewrites edge actor `properties`. |
 | **Add edge fields** | Adds properties to existing relations. An entry is a bare name (untyped) or a full `Field` carrying type and grounding, as for vertices. Rejects an unknown relation. |
 | **Add inverse edges** | `inverses: {R: R_inv}` (injective; no relation is its own inverse). For each **directed** forward relation `R -> R_inv`, appends inverse schema edges and mirrors ingestion (`pipeline` EdgeActor steps including dynamic endpoints, `relation_field`, redefined `relation_map`, nested `descend`), `infer_edge_only` / `infer_edge_except`, `extra_weights`, and `db_profile`. Skips `directed: false`, TigerGraph `edge_specs[*].reverse_edge`, and existing inverse triples. |
-| **Project manifest** | Keeps a logical subgraph by vertex names and/or edge triples `(source, target, relation)`. Prunes isolated vertex types from `keep_vertices` when they have no surviving edges (`connectivity: induced_prune`). Cascades to schema, `db_profile`, ingestion (pipeline steps, infer selectors, `extra_weights`), and bindings through the same removal as **Remove vertices**, so a `vertex_router` keeps routing the kept types. Optional `keep_resources` filters ingestion resources. Inverse edges are not auto-kept. Fails if ingestion would be left empty. |
+| **Project manifest** | Keeps a logical subgraph by vertex names and/or edge triples `(source, target, relation)`. Prunes isolated vertex types from `keep_vertices` when they have no surviving edges (`connectivity: induced_prune`). Cascades to schema, `db_profile`, ingestion (pipeline steps, infer selectors, `extra_weights`), and bindings through the same removal as **Remove vertices**, so a `vertex_router` keeps routing the kept types. Optional `keep_resources` filters ingestion resources. Optional `depth` expands `keep_vertices` into seeds for an n-hop neighbourhood walk (`direction` orients it), yielding the induced subgraph on the hop ball. Inverse edges are not auto-kept. Fails if ingestion would be left empty. |
 | **Replace identity** | `replacements: {vertex: {to, retire, ...}}`. Per-vertex identity policy swap covering both field-set and **mode** changes (`natural` / `hash` / `assigned` / `blank`). `retire` decides what becomes of the old field-set — `demote` (default) turns it into a secondary identity, `keep` leaves it as plain properties, `drop` removes it. `endpoints` decides whether edge steps follow the new identity (`follow_new`, default) or stay pinned to the demoted one (`pin_to_retired`). Drops `db_profile` indexes that encoded the retired identity. See [Replacing a vertex identity](#replacing-a-vertex-identity). |
 | **Add / remove secondary identities** | Declares or withdraws alternate lookup keys on existing vertices. Each field-set's non-unique index is *derived* by `Schema.finish_init`, so adding one needs no index authoring; removing one drops the derived index explicitly. Removal is rejected while an edge step still selects the field-set. |
 | **Replace edge identities** | Replaces `Edge.identities` (uniqueness keys) per `(source, target, relation)`. No retire policy — edge identities have no lookup plane. Non-endpoint tokens are merged into edge `properties` by `Edge.finish_init`. |
@@ -708,6 +708,31 @@ slice = apply_evolution(
 ```
 
 With `keep_vertices` only, vertex types listed but not incident to any surviving edge are dropped (`connectivity: induced_prune`). List inverse edge triples explicitly in `keep_edges` when you need them; they are not inferred automatically.
+
+#### Slicing by neighbourhood (`depth`)
+
+Enumerating every vertex type you want means reading the schema first and transcribing the answer. `depth` turns `keep_vertices` into *seeds* and lets the op derive the rest:
+
+```python
+slice = apply_evolution(
+    manifest,
+    [ProjectManifestOp(keep_vertices=["person"], depth=1)],
+    bump_version=False,
+)
+```
+
+One rule covers every combination. Let `E` be `keep_edges` when given and every declared edge otherwise. The survivors are the vertex types within `depth` hops of a seed, walking `E` under `direction`, and then `E` restricted to surviving endpoints.
+
+| | Behaviour |
+|---|---|
+| `depth: 0` (default) | `keep_vertices` is the literal list, exactly as before. |
+| Edges among neighbours | **Kept.** The result is the induced subgraph on the hop ball, not a breadth-first tree — if two of `person`'s neighbours are linked to each other, that edge survives even though no walk needed it. |
+| `keep_edges` + `depth` | `keep_edges` **bounds the walk**: traversal follows only those triples. "Walk out N hops, but only along these edges." |
+| Isolated seed | Still dropped. `induced_prune` is unaffected by `depth`. |
+| `direction` | `any` by default — `out` follows only edges where the frontier type is the source, `in` only where it is the target. An edge declared `directed: false` is followed both ways regardless. |
+| `depth > 0` with no `keep_vertices` | Rejected: with no seeds the selection already means "every vertex type", so there is nothing to expand. |
+
+`Edge.by` — the third vertex type on an `INDIRECT` edge — is not part of schema adjacency, so a walk never pulls it in. That is the same blind spot the flat selection has.
 
 ### Choosing `RenameRelationsOp` vs `MergeEdgesOp`
 

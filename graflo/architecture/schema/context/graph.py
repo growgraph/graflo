@@ -12,6 +12,7 @@ is ``Connection.graph_neighbors``; the two must never share a name or an endpoin
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Iterable
 
 from pydantic import Field as PydanticField
 
@@ -198,6 +199,7 @@ class SchemaGraph:
         hops: int = 1,
         direction: EdgeDirection = EdgeDirection.ANY,
         edge_relations: set[str | None] | None = None,
+        edge_ids: set[EdgeId] | None = None,
     ) -> SchemaNeighborhood:
         """Vertex types adjacent to *vertex_type* within *hops*.
 
@@ -213,6 +215,9 @@ class SchemaGraph:
                 ways whatever is requested here.
             edge_relations: Restrict traversal to these relation names (``None`` is
                 a valid member, matching edges with no relation).
+            edge_ids: Restrict traversal to these exact edges. Finer-grained than
+                *edge_relations*, which cannot separate two dyads sharing one
+                relation name. Both filters apply when both are given.
 
         Returns:
             SchemaNeighborhood: distances per reachable type and the edges used.
@@ -237,6 +242,8 @@ class SchemaGraph:
                 continue
             for edge_id in self._incident(current):
                 if edge_relations is not None and edge_id[2] not in edge_relations:
+                    continue
+                if edge_ids is not None and edge_id not in edge_ids:
                     continue
                 far = self._traversable(edge_id, current, direction)
                 if far is None:
@@ -319,3 +326,49 @@ class SchemaGraph:
             key=lambda path: (path.length, [edge_sort_key(e) for e in path.edges])
         )
         return found[:max_paths]
+
+
+def neighborhood_distances(
+    graph: SchemaGraph,
+    seeds: Iterable[str],
+    *,
+    hops: int = 1,
+    direction: EdgeDirection = EdgeDirection.ANY,
+    edge_relations: set[str | None] | None = None,
+    edge_ids: set[EdgeId] | None = None,
+) -> dict[str, int]:
+    """Hop distance to every type reachable from *any* seed, nearest seed winning.
+
+    The multi-seed union of :meth:`SchemaGraph.schema_neighbors`. Both consumers of
+    "what is near what I asked about" — rank-then-budget schema context and
+    ``project_manifest``'s ``depth`` — go through here, so the two cannot drift
+    apart on direction handling, undirected edges or the treatment of ``hops=0``.
+
+    Args:
+        graph: Adjacency index to walk.
+        seeds: Vertex types to start from. Each must be declared.
+        hops: Maximum hop distance. ``0`` yields just the seeds.
+        direction: Orientation followed from each frontier vertex.
+        edge_relations: Restrict traversal to these relation names.
+        edge_ids: Restrict traversal to these exact edges.
+
+    Returns:
+        dict: reachable vertex type -> distance from the nearest seed (seeds map
+        to ``0``). Empty when *seeds* is empty.
+
+    Raises:
+        KeyError: if a seed is not declared in the schema.
+    """
+    distances: dict[str, int] = {}
+    for seed in seeds:
+        neighborhood = graph.schema_neighbors(
+            seed,
+            hops=hops,
+            direction=direction,
+            edge_relations=edge_relations,
+            edge_ids=edge_ids,
+        )
+        for name, distance in neighborhood.distances.items():
+            if name not in distances or distance < distances[name]:
+                distances[name] = distance
+    return distances

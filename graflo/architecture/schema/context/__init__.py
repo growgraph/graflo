@@ -43,6 +43,7 @@ from graflo.architecture.schema.context.graph import (
     SchemaGraph,
     SchemaNeighborhood,
     SchemaPath,
+    neighborhood_distances,
 )
 from graflo.architecture.schema.context.rank import (
     RankingWeights,
@@ -81,6 +82,7 @@ __all__ = [
     "build_transform_card",
     "build_vertex_card",
     "estimate_tokens",
+    "neighborhood_distances",
     "score_vertices",
     "subschema",
 ]

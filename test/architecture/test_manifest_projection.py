@@ -10,6 +10,7 @@ from graflo.architecture.evolution import (
     ProjectManifestOp,
     apply_evolution,
 )
+from graflo.architecture.graph_types import EdgeDirection
 from graflo.architecture.schema.core import CoreSchema
 from graflo.architecture.schema.document import Schema
 from graflo.architecture.schema.edge import Edge, EdgeConfig
@@ -268,3 +269,160 @@ def test_project_keep_resources_filters_bindings() -> None:
 def test_project_op_requires_at_least_one_selector() -> None:
     with pytest.raises(ValueError, match="at least one"):
         ProjectManifestOp()
+
+
+def _neighborhood_manifest() -> GraphManifest:
+    """A hub with two mutually-linked neighbours and one type two hops out.
+
+    ``hub`` reaches ``left`` and ``right`` in one hop; ``left`` and ``right`` are
+    linked to each other, which is the edge a breadth-first tree would drop and an
+    induced slice must keep. ``far`` sits one hop beyond ``right``.
+    """
+    meta = GraphMetadata(name="neighborhood", version="1.0.0")
+    vc = VertexConfig(
+        vertices=[
+            Vertex(name=name, properties=[Field(name="id")], identity=["id"])
+            for name in ("hub", "left", "right", "far")
+        ],
+        force_types={},
+    )
+    ec = EdgeConfig(
+        edges=[
+            Edge(source="hub", target="left", relation="hl"),
+            Edge(source="hub", target="right", relation="hr"),
+            Edge(source="left", target="right", relation="lr"),
+            Edge(source="right", target="far", relation="rf"),
+        ]
+    )
+    schema = Schema(
+        metadata=meta, core_schema=CoreSchema(vertex_config=vc, edge_config=ec)
+    )
+    ingestion = {
+        "resources": [
+            {"name": f"r_{name}", "apply": [{"vertex": name}]}
+            for name in ("hub", "left", "right", "far")
+        ],
+        "transforms": [],
+    }
+    return GraphManifest.from_config(
+        {"schema": schema.to_dict(skip_defaults=False), "ingestion_model": ingestion}
+    )
+
+
+def _project(manifest: GraphManifest, **kwargs) -> GraphManifest:
+    return apply_evolution(manifest, [ProjectManifestOp(**kwargs)], bump_version=False)
+
+
+def _surviving(manifest: GraphManifest) -> tuple[set[str], set]:
+    schema = manifest.require_schema()
+    return (
+        schema.core_schema.vertex_config.vertex_set,
+        {edge.edge_id for edge in schema.core_schema.edge_config.edges},
+    )
+
+
+def test_project_depth_zero_is_the_literal_selection() -> None:
+    """The default leaves the flat behaviour exactly as it was."""
+    manifest = _neighborhood_manifest()
+    manifest.finish_init()
+
+    vertices, edges = _surviving(_project(manifest, keep_vertices=["hub", "left"]))
+    assert vertices == {"hub", "left"}
+    assert edges == {("hub", "left", "hl")}
+
+
+def test_project_depth_one_keeps_the_induced_ball() -> None:
+    """`left--right` survives although no walk needed it to reach either type."""
+    manifest = _neighborhood_manifest()
+    manifest.finish_init()
+
+    out = _project(manifest, keep_vertices=["hub"], depth=1)
+    vertices, edges = _surviving(out)
+    assert vertices == {"hub", "left", "right"}
+    assert edges == {
+        ("hub", "left", "hl"),
+        ("hub", "right", "hr"),
+        ("left", "right", "lr"),
+    }
+    assert {r.name for r in out.require_ingestion_model().resources} == {
+        "r_hub",
+        "r_left",
+        "r_right",
+    }
+    out.finish_init()
+
+
+def test_project_depth_two_reaches_further() -> None:
+    manifest = _neighborhood_manifest()
+    manifest.finish_init()
+
+    vertices, _ = _surviving(_project(manifest, keep_vertices=["hub"], depth=2))
+    assert vertices == {"hub", "left", "right", "far"}
+
+
+def test_project_depth_honours_direction() -> None:
+    """OUT from `right` reaches only `far`; ANY also reaches `hub` and `left`."""
+    manifest = _neighborhood_manifest()
+    manifest.finish_init()
+
+    out_only, _ = _surviving(
+        _project(
+            manifest, keep_vertices=["right"], depth=1, direction=EdgeDirection.OUT
+        )
+    )
+    assert out_only == {"right", "far"}
+
+    either, _ = _surviving(_project(manifest, keep_vertices=["right"], depth=1))
+    assert either == {"right", "far", "hub", "left"}
+
+
+def test_project_depth_is_bounded_by_keep_edges() -> None:
+    """`keep_edges` restricts the walk, so `left` is never reached."""
+    manifest = _neighborhood_manifest()
+    manifest.finish_init()
+
+    vertices, edges = _surviving(
+        _project(
+            manifest,
+            keep_vertices=["hub"],
+            depth=2,
+            keep_edges=[
+                EdgeSelector(source="hub", target="right", relation="hr"),
+                EdgeSelector(source="right", target="far", relation="rf"),
+            ],
+        )
+    )
+    assert vertices == {"hub", "right", "far"}
+    assert edges == {("hub", "right", "hr"), ("right", "far", "rf")}
+
+
+def test_project_depth_still_prunes_an_isolated_seed() -> None:
+    """`induced_prune` is unchanged by depth: `c` has no edges, so it goes."""
+    manifest = _three_vertex_manifest()
+    manifest.finish_init()
+
+    vertices, _ = _surviving(_project(manifest, keep_vertices=["a", "b", "c"], depth=1))
+    assert vertices == {"a", "b"}
+
+
+def test_project_depth_ignores_unknown_seeds_when_not_strict() -> None:
+    manifest = _neighborhood_manifest()
+    manifest.finish_init()
+
+    vertices, _ = _surviving(
+        _project(manifest, keep_vertices=["hub", "nope"], depth=1, strict=False)
+    )
+    assert vertices == {"hub", "left", "right"}
+
+
+def test_project_depth_requires_keep_vertices() -> None:
+    with pytest.raises(ValueError, match="depth > 0 requires keep_vertices"):
+        ProjectManifestOp(
+            keep_edges=[EdgeSelector(source="hub", target="left", relation="hl")],
+            depth=1,
+        )
+
+
+def test_project_depth_rejects_negative() -> None:
+    with pytest.raises(ValueError):
+        ProjectManifestOp(keep_vertices=["hub"], depth=-1)

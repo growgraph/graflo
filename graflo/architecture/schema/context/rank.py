@@ -14,7 +14,10 @@ from pydantic import Field as PydanticField
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.graph_types import EdgeDirection
-from graflo.architecture.schema.context.graph import SchemaGraph
+from graflo.architecture.schema.context.graph import (
+    SchemaGraph,
+    neighborhood_distances,
+)
 
 #: Relative usefulness of each identity mode to an agent forming a query.
 #: A ``blank`` vertex has no natural key to filter on, so it is nearly
@@ -95,12 +98,7 @@ def score_vertices(
     vertex_config = schema.core_schema.vertex_config
     db_profile = schema.db_profile
 
-    distances: dict[str, int] = {}
-    for seed in seeds:
-        neighborhood = graph.schema_neighbors(seed, hops=max_hops, direction=direction)
-        for name, distance in neighborhood.distances.items():
-            if name not in distances or distance < distances[name]:
-                distances[name] = distance
+    distances = neighborhood_distances(graph, seeds, hops=max_hops, direction=direction)
 
     degrees = {name: graph.degree(name) for name in graph.vertex_types}
     max_degree = max(degrees.values(), default=0)

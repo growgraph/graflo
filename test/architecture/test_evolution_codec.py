@@ -24,6 +24,7 @@ from graflo.architecture.evolution.codec import (
     ops_to_yaml_str,
 )
 from graflo.architecture.evolution.ops import ManifestOp, MergeManifestsOp
+from graflo.architecture.graph_types import EdgeDirection
 
 #: One canonical payload per op, keyed by discriminator.
 OP_PAYLOADS: dict[str, dict] = {
@@ -600,3 +601,40 @@ class TestLegacyFieldAliases:
     def test_the_new_spelling_is_the_one_that_serializes(self) -> None:
         op = MergeManifestsOp(allow_observation_fusion=True)
         assert op.to_dict()["allow_observation_fusion"] is True
+
+
+class TestProjectionDepth:
+    """`depth`/`direction` on `project_manifest`."""
+
+    def test_depth_and_direction_round_trip(self) -> None:
+        """`direction` is an enum carrying a default, the shape most at risk from
+        the compact (defaults-dropped) serialization."""
+        original = op_from_dict(
+            {
+                "op": "project_manifest",
+                "keep_vertices": ["party"],
+                "depth": 2,
+                "direction": "out",
+            }
+        )
+
+        restored = ops_from_yaml(ops_to_yaml_str([original]))
+
+        assert restored == [original]
+        assert restored[0].depth == 2
+        # `ConfigBaseModel` sets `use_enum_values`, so the field holds the *value*.
+        # `EdgeDirection` is a `StrEnum`, so it still compares and tests membership
+        # against the enum — which is what `SchemaGraph._traversable` relies on.
+        assert restored[0].direction == EdgeDirection.OUT
+
+    def test_defaults_stay_out_of_the_payload(self) -> None:
+        """An op that does not use depth serializes exactly as it did before."""
+        payload = ops_to_dicts(
+            [
+                op_from_dict(
+                    {"op": "project_manifest", **OP_PAYLOADS["project_manifest"]}
+                )
+            ]
+        )[0]
+
+        assert payload == {"op": "project_manifest", "keep_vertices": ["party"]}

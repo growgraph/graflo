@@ -21,7 +21,7 @@ from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.contract.bindings.core import Bindings
 from graflo.architecture.contract.ingestion.resource import ResourceConfig
 from graflo.architecture.contract.ingestion.transform import ProtoTransform
-from graflo.architecture.graph_types import Index
+from graflo.architecture.graph_types import EdgeDirection, Index
 from graflo.architecture.schema.database_features import DatabaseProfile
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.identity_funnel import IdentityFunnel
@@ -1616,6 +1616,20 @@ class ProjectManifestOp(ConfigBaseModel):
 
     With ``connectivity=\"induced_prune\"`` (v1 default), when ``keep_vertices`` is
     set, vertex types from that list with no incident surviving edge are dropped.
+
+    ``depth`` turns ``keep_vertices`` from a literal list into seeds for a
+    neighbourhood walk. One rule covers every combination: let ``E`` be
+    ``keep_edges`` when given and every declared edge otherwise; the survivors are
+    the vertex types within ``depth`` hops of a seed along ``E`` under
+    ``direction``, and then ``E`` restricted to surviving endpoints. So the result
+    is the *induced* subgraph on the hop ball — an edge between two neighbours
+    survives even though no walk needed it — and ``keep_edges`` bounds the walk
+    rather than being overridden by it. Pruning is unchanged: a seed left with no
+    surviving edge is still dropped, whatever the depth.
+
+    ``Edge.by`` (the third vertex type on an ``EdgeType.INDIRECT`` edge) is not part
+    of schema adjacency, so a walk never pulls it in — the same blind spot the flat
+    selection already has.
     """
 
     op: Literal["project_manifest"] = "project_manifest"
@@ -1630,6 +1644,22 @@ class ProjectManifestOp(ConfigBaseModel):
     connectivity: Literal["induced_prune"] = PydanticField(
         default="induced_prune",
         description="How to interpret ``keep_vertices`` relative to surviving edges.",
+    )
+    depth: int = PydanticField(
+        default=0,
+        ge=0,
+        description=(
+            "Hops to expand ``keep_vertices`` by before the induced slice. "
+            "``0`` (default) keeps the literal list."
+        ),
+    )
+    direction: EdgeDirection = PydanticField(
+        default=EdgeDirection.ANY,
+        description=(
+            "Orientation followed when expanding by ``depth``. Edges declared "
+            "``directed: false`` are followed both ways regardless. Ignored when "
+            "``depth`` is 0."
+        ),
     )
     keep_resources: list[str] | None = PydanticField(
         default=None,
@@ -1656,6 +1686,11 @@ class ProjectManifestOp(ConfigBaseModel):
                 raise ValueError(
                     "keep_edges entries must be unique by (source, target, relation)"
                 )
+        if self.depth > 0 and not self.keep_vertices:
+            # Without seeds `keep_vertices=None` already means "every vertex type",
+            # so there is nothing for a walk to expand — the request is a mistake
+            # rather than a no-op, and saying so beats silently ignoring `depth`.
+            raise ValueError("project_manifest: depth > 0 requires keep_vertices")
         return self
 
 
