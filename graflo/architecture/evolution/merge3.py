@@ -202,6 +202,14 @@ def op_slots(op: ManifestOp) -> set[Slot]:
         }
     elif isinstance(op, ops.SetEdgeDirectedOp):
         slots |= {(*_edge_slot(*entry.edge_id()), "directed") for entry in op.edges}
+
+    # Block-level setters. One slot for the whole block, because that is what
+    # the op replaces -- two independent bindings edits therefore conflict,
+    # which is the price of the block having any op at all.
+    elif isinstance(op, ops.SetBindingsOp):
+        slots |= {("bindings",)}
+    elif isinstance(op, ops.SetDbProfileOp):
+        slots |= {("db_profile",)}
     elif isinstance(op, ops.SetEdgeSemanticsOp):
         slots |= {(*_edge_slot(*entry.edge_id()), "semantics") for entry in op.edges}
 
@@ -709,6 +717,36 @@ class MergeRecipe(ConfigBaseModel):
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def build_compose_recipe(
+    left: GraphManifest,
+    right: GraphManifest,
+    op: ops.ComposeManifestsOp,
+) -> MergeRecipe:
+    """Record how a compose was *declared*, addressed by content.
+
+    The compose counterpart to :func:`build_recipe`. Two things differ, and both
+    follow from compose joining unrelated lineages rather than reconciling
+    related ones: there is no merge base, so ``base`` is ``None``; and there are
+    no conflicts to resolve, because compose refuses rather than resolving, so
+    ``resolutions`` stays empty.
+
+    What takes their place is the declaration itself. The whole op is recorded
+    -- equivalences, canonical maps, identity alignments, resource renames and
+    the name-conflict policy -- because all of it is "how these two were
+    joined", and a re-compose that had only the equivalences would reconstruct a
+    different manifest.
+    """
+    return MergeRecipe(
+        kind="compose",
+        left=manifest_hash(left),
+        right=manifest_hash(right),
+        base=None,
+        resolutions=[],
+        equivalences=op.to_dict(),
+        name_conflict=op.name_conflict,
+    )
+
+
 def build_recipe(
     base: GraphManifest | None,
     left: GraphManifest,
@@ -821,6 +859,7 @@ __all__ = [
     "MergeRecipe",
     "MergeResult",
     "Slot",
+    "build_compose_recipe",
     "build_recipe",
     "describe_slot",
     "find_merge_base",

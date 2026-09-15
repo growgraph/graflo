@@ -34,6 +34,7 @@ import re
 from typing import Any
 
 from pydantic import Field as PydanticField
+from pydantic import model_validator
 
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.contract.manifest import GraphManifest
@@ -47,12 +48,13 @@ logger = logging.getLogger(__name__)
 #: Length of the content-derived commit id, in hex characters.
 COMMIT_ID_LENGTH = 12
 
-#: What produced a commit. ``edit`` is an ordinary change set; ``merge``
-#: reconciles two descendants of a common ancestor; ``compose`` joins unrelated
-#: lineages by declared equivalence; ``revert`` undoes an earlier commit.
+#: What produced a commit. ``root`` names a tree that nothing derived it from;
+#: ``edit`` is an ordinary change set; ``merge`` reconciles two descendants of a
+#: common ancestor; ``compose`` joins unrelated lineages by declared
+#: equivalence; ``revert`` undoes an earlier commit.
 CommitKind = str
 
-COMMIT_KINDS: frozenset[str] = frozenset({"edit", "merge", "compose", "revert"})
+COMMIT_KINDS: frozenset[str] = frozenset({"root", "edit", "merge", "compose", "revert"})
 
 _SLUG_STRIP = re.compile(r"[^a-z0-9]+")
 
@@ -93,16 +95,18 @@ class Commit(ConfigBaseModel):
         ),
     )
     ops: list[RevisionOp] = PydanticField(
-        ...,
-        min_length=1,
-        description="Ordered operations, as a diff from the first parent's tree.",
-    )
-    tree_before: str = PydanticField(
-        ...,
+        default_factory=list,
         description=(
-            "Content hash of the first parent's manifest. Redundant against the "
-            "parent's own `tree` on purpose: replay drift fails here, loudly, "
-            "rather than producing a plausible wrong manifest."
+            "Ordered operations, as a diff from the first parent's tree. Empty "
+            "only on a root, which names a tree rather than deriving one."
+        ),
+    )
+    tree_before: str | None = PydanticField(
+        default=None,
+        description=(
+            "Content hash of the first parent's manifest, or ``None`` on a root. "
+            "Redundant against the parent's own `tree` on purpose: replay drift "
+            "fails here, loudly, rather than producing a plausible wrong manifest."
         ),
     )
     tree: str = PydanticField(
@@ -125,6 +129,32 @@ class Commit(ConfigBaseModel):
         description="How a merge was resolved; present on merge/compose commits.",
     )
     notes: str | None = None
+
+    @model_validator(mode="after")
+    def _only_a_root_may_derive_nothing(self) -> Commit:
+        """A commit with a parent must say how it got there.
+
+        Relaxing ``ops`` to allow a root is not a licence for an empty edit: an
+        edit whose ops are empty claims a transition it cannot replay, which is
+        the one failure the verified-replay design exists to prevent.
+
+        Two parentless shapes are both legal and must not be confused. A
+        *derived* root has ops and a ``tree_before`` -- the base a change set was
+        authored against. A *naming* root has neither: it asserts that a tree
+        exists, which is the only thing that can be said about an artifact that
+        simply arrived.
+        """
+        if self.parents and not self.ops:
+            raise ValueError(
+                f"commit '{self.id}' has parents but no operations; only a root "
+                "commit may name a tree without deriving it"
+            )
+        if not self.ops and self.tree_before is not None:
+            raise ValueError(
+                f"commit '{self.id}' derives nothing, so it has no tree to start "
+                "from; a naming root carries a tree and no tree_before"
+            )
+        return self
 
     @property
     def is_root(self) -> bool:
@@ -177,6 +207,69 @@ class MergeRecipeRef(ConfigBaseModel):
 
 
 Commit.model_rebuild()
+
+
+def compute_root_commit_id(tree: str, scope: str | None = None) -> str:
+    """Content-derived id for a root that names *tree*.
+
+    :func:`compute_commit_id` hashes the ops and the parents, both of which are
+    empty on a naming root -- so every root in existence would share one id.
+    The tree is what a root asserts, so the tree is what identifies it.
+
+    *scope* separates two roots that name the same tree but belong to different
+    lineages. A registry keyed by artifact passes the artifact id: without it,
+    two artifacts whose first version has identical content collide, the store
+    dedupes the second against the first, and one of them silently ends up with
+    no root at all.
+    """
+    payload = json.dumps(
+        {"root": tree, "scope": scope}, sort_keys=True, separators=(",", ":")
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:COMMIT_ID_LENGTH]
+
+
+def build_root_commit(
+    manifest: GraphManifest,
+    *,
+    scope: str | None = None,
+    label: str | None = None,
+    created_at: str | None = None,
+    notes: str | None = None,
+) -> Commit:
+    """Record *manifest* as a root that names its tree.
+
+    The counterpart to :func:`build_commit` for an artifact that was not derived
+    from anything this history holds -- pushed to a registry, seeded from a
+    pack, or otherwise simply present. There is no base to diff against, so
+    there are no ops: the commit asserts the tree and stops.
+
+    That is deliberately not "a diff from an empty manifest". An empty
+    ``GraphManifest`` is not constructible (it must carry at least one block),
+    and the op vocabulary cannot build every block from nothing -- so a
+    synthesized construction diff would fail for exactly the manifests a
+    registry most often holds.
+
+    Args:
+        manifest: The artifact this root names.
+        scope: Lineage discriminator folded into the id; see
+            :func:`compute_root_commit_id`.
+        label: Short human-readable name.
+        created_at: ISO-8601 timestamp.
+        notes: Free-form annotation.
+    """
+    tree = manifest_hash(manifest)
+    return Commit(
+        id=compute_root_commit_id(tree, scope),
+        parents=[],
+        ops=[],
+        tree_before=None,
+        tree=tree,
+        kind="root",
+        label=label,
+        created_at=created_at,
+        reversible=True,
+        notes=notes,
+    )
 
 
 def build_commit(

@@ -487,3 +487,65 @@ def test_a_plot_format_this_cannot_write_is_a_bad_invocation(tmp_path):
 
     assert result.exit_code == 2
     assert "unsupported format" in result.output
+
+
+class TestRecordingTheCompose:
+    """``-m`` records the compose in the store as a two-parent commit.
+
+    Without it a composed manifest is a lineage dead-end: nothing says which
+    two manifests produced it, or under which equivalences. The commit itself
+    is exercised in ``test_compose_commit.py``; these two pin the verb's
+    contract around it.
+    """
+
+    def test_without_the_flag_no_store_is_written(self, tmp_path: pathlib.Path) -> None:
+        """The default stays "two files in, one file out"."""
+        out = tmp_path / "union.yaml"
+        store = tmp_path / "cs"
+        result = CliRunner().invoke(
+            graflo,
+            [
+                "compose",
+                str(MANIFEST_A),
+                str(MANIFEST_B),
+                "--op",
+                str(_write(tmp_path, "op.yaml", KEYED_OP)),
+                "--canonical-map",
+                f"left={CANONICAL_MAP}",
+                "-o",
+                str(out),
+                "--store",
+                str(store),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert out.exists()
+        assert not store.exists()
+
+    def test_a_side_absent_from_the_store_is_refused_by_name(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """Half a lineage is worse than none; say which side is missing."""
+        result = CliRunner().invoke(
+            graflo,
+            [
+                "compose",
+                str(MANIFEST_A),
+                str(MANIFEST_B),
+                "--op",
+                str(_write(tmp_path, "op.yaml", KEYED_OP)),
+                "--canonical-map",
+                f"left={CANONICAL_MAP}",
+                "-o",
+                str(tmp_path / "union.yaml"),
+                "--store",
+                str(tmp_path / "empty-store"),
+                "-m",
+                "join",
+            ],
+        )
+
+        # Exit 2, not 1: the manifests compose fine, the store cannot name a
+        # parent for them. The message is checked where it is emitted.
+        assert result.exit_code == 2

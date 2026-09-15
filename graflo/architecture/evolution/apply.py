@@ -87,6 +87,8 @@ from .ops import (
     ReplaceIdentityOp,
     RetargetEdgesOp,
     SanitizeOp,
+    SetBindingsOp,
+    SetDbProfileOp,
     SetEdgeDirectedOp,
     SetEdgeSemanticsOp,
     SetFieldSemanticsOp,
@@ -1986,6 +1988,14 @@ def _dispatch_op(manifest: GraphManifest, op: Any) -> None:
         from .physical import apply_set_edge_directed
 
         apply_set_edge_directed(manifest, op)
+    elif isinstance(op, SetBindingsOp):
+        from .physical import apply_set_bindings
+
+        apply_set_bindings(manifest, op)
+    elif isinstance(op, SetDbProfileOp):
+        from .physical import apply_set_db_profile
+
+        apply_set_db_profile(manifest, op)
     elif isinstance(op, SetVertexSemanticsOp):
         from .semantics import apply_set_vertex_semantics
 

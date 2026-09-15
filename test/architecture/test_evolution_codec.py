@@ -61,6 +61,8 @@ OP_PAYLOADS: dict[str, dict] = {
         "edges": [{"source": "party", "target": "order"}],
         "directed": False,
     },
+    "set_bindings": {"bindings": None},
+    "set_db_profile": {"profile": {"db_flavor": "neo4j"}},
     "set_vertex_semantics": {
         "semantics": {"party": {"iri": "https://schema.org/Organization"}},
     },
@@ -192,6 +194,8 @@ SCHEMA_ONLY_PAYLOADS: dict[str, dict] = {
     "remove_vertex_indexes": {"indexes": {"party": [["amount"]]}},
     "replace_edge_identities": {"edges": [{**_PURCHASES, "identities": [["ref"]]}]},
     "set_edge_directed": {"edges": [_PURCHASES], "directed": False},
+    "set_bindings": {"bindings": None},
+    "set_db_profile": {"profile": {"db_flavor": "neo4j"}},
     "set_edge_semantics": {
         "edges": [_PURCHASES],
         "semantics": {"iri": "https://schema.org/seller"},
@@ -396,6 +400,8 @@ class TestUnionCoverage:
             "set_edge_semantics",
             "set_field_semantics",
             "set_vertex_semantics",
+            "set_bindings",
+            "set_db_profile",
         }
         unclassified = sorted(
             declared - ops_module.INGESTION_REWRITING_OPS - schema_only
@@ -441,8 +447,8 @@ class TestUnionCoverage:
             if name.endswith("Op")
             and hasattr(getattr(ops_module, name), "model_fields")
         }
-        assert len(exported) == 38
-        assert len(_union_members()) == 37  # 38 minus the binary compose op
+        assert len(exported) == 40
+        assert len(_union_members()) == 39  # 40 minus the binary compose op
 
 
 class TestRoundTrip:

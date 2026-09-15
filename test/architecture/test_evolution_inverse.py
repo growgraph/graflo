@@ -173,6 +173,37 @@ class TestReversibleRoundTrip:
             manifest=manifest,
         )
 
+    def test_set_bindings_round_trips_when_it_adds_the_block(self) -> None:
+        """The inverse must be able to say "there was no block", not just "a block"."""
+        _assert_round_trips(
+            {
+                "op": "set_bindings",
+                "bindings": {
+                    "connectors": [{"regex": "^a\\.csv$", "resource_name": "src"}]
+                },
+            }
+        )
+
+    def test_set_bindings_round_trips_when_it_removes_the_block(self) -> None:
+        manifest = GraphManifest.model_validate(
+            {
+                **_manifest().to_dict(skip_defaults=True),
+                "bindings": {
+                    "connectors": [{"regex": "^a\\.csv$", "resource_name": "src"}]
+                },
+            }
+        )
+        _assert_round_trips({"op": "set_bindings", "bindings": None}, manifest=manifest)
+
+    def test_set_db_profile_round_trips(self) -> None:
+        """Storage names are content-hashed, so the restore must be exact."""
+        _assert_round_trips(
+            {
+                "op": "set_db_profile",
+                "profile": {"vertex_storage_names": {"party": "p"}},
+            }
+        )
+
     def test_remove_secondary_identities_round_trips(self) -> None:
         manifest = apply_evolution(
             _manifest(),

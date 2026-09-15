@@ -99,6 +99,8 @@ _COMPOSE_EXPORTS = frozenset(
     {"ComposeIdentityError", "ComposeNameConflictError", "compose_manifests"}
 )
 
+_COMPOSE_COMMIT_EXPORTS = frozenset({"build_compose_commit", "find_commit_by_tree"})
+
 _INGESTION_APPLY_EXPORTS = frozenset(
     {
         "apply_add_resource_transforms",
@@ -244,6 +246,8 @@ _COMMIT_EXPORTS = frozenset(
         "CommitError",
         "MergeRecipeRef",
         "build_commit",
+        "build_root_commit",
+        "compute_root_commit_id",
         "build_merge_commit",
         "build_revert_commit",
         "compute_commit_id",
@@ -266,6 +270,7 @@ _MERGE3_EXPORTS = frozenset(
         "MergeError",
         "MergeRecipe",
         "MergeResult",
+        "build_compose_recipe",
         "build_recipe",
         "describe_slot",
         "find_merge_base",
@@ -419,9 +424,12 @@ __all__ = [
     "apply_set_field_semantics",
     "apply_set_vertex_semantics",
     "build_commit",
+    "build_compose_commit",
+    "build_compose_recipe",
     "build_merge_commit",
     "build_recipe",
     "build_revert_commit",
+    "build_root_commit",
     "canonical_map_to_ops",
     "canonical_near_collisions",
     "canonical_payload",
@@ -430,10 +438,12 @@ __all__ = [
     "clusters_to_side_maps",
     "compose_manifests",
     "compute_commit_id",
+    "compute_root_commit_id",
     "dangling_entries",
     "describe_slot",
     "diff_manifests",
     "diff_manifests_verified",
+    "find_commit_by_tree",
     "find_merge_base",
     "fold_declared_maps",
     "full_hash",
@@ -478,6 +488,10 @@ def __getattr__(name: str) -> Any:
         from . import compose as compose_mod
 
         return getattr(compose_mod, name)
+    if name in _COMPOSE_COMMIT_EXPORTS:
+        from . import compose_commit as compose_commit_mod
+
+        return getattr(compose_commit_mod, name)
     if name in _INGESTION_APPLY_EXPORTS:
         from . import ingestion as ingestion_mod
 

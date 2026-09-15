@@ -34,6 +34,8 @@ GraFlo provides **contract-level** operations that transform a validated `GraphM
 | **Change field types** | Sets `Field.type` / `item_type` on vertex or edge properties. Validated against the profile's `db_flavor` via `graflo.db.field_type_support`, so an unsupported LIST target fails at op time rather than at define time. Refuses to make an identity field a LIST. |
 | **Add / remove vertex & edge indexes** | Authors `db_profile.vertex_indexes` and `edge_specs[].indexes` directly. Indexes derived from `secondary_identities` cannot be removed this way — they would be re-registered by the next `finish_init`, so the op points at **remove secondary identities** instead. |
 | **Set edge directed** | Sets `Edge.directed` on selected triples. Load-bearing for replay: `directed` decides what **add inverse edges** may duplicate. |
+| **Set db profile** | Replaces the whole `db_profile`. The four index ops reach `vertex_indexes` and `edge_specs[].indexes`; nothing reached `db_flavor`, `target_namespace`, `vertex_storage_names`, `default_property_values` or the rest of a spec — and those are content-hashed, so a change set that moved one could not replay. Carries the indexes too and is emitted *instead of* the index ops, never alongside them. |
+| **Set bindings** | Replaces the whole `bindings` block; `null` removes it. The block previously had no op at all, so any diff touching it was inexpressible and a compose that unioned two registries could not be recorded. Wholesale by design: in a three-way merge the block is one slot, so two independent bindings edits conflict — granular connector ops would refine that without changing this op's meaning. |
 | **Sanitize** | Target-`DBType` policy: reserved-word-safe names on `DatabaseProfile`, reserved vertex field renames, and (for TigerGraph) consistent identity tuples per edge relation. This is the same work **`graflo.hq.sanitizer.Sanitizer`** applies by building a single **`SanitizeOp`**. |
 | **Ensure extracted fields** | Widens a producing step's projection so named fields survive extraction (`keep_fields` gains them; under `extraction_scope: mapped_only` so does `vertex_from_map[<class>]`, seeded from the router-level `from`). Only `vertex_router` steps need it — a plain `vertex` step reads the transform buffer directly, bypassing both knobs. A no-op on an unrestricted step. Requires `ingestion_model`. |
 | **Add resource transforms** | Appends transform steps to a named level of named resources' pipelines (`at`, as `descend` step indices; root by default — actor type-priority ordering runs them before vertex extraction at that level) and optionally registers named transforms (loud on same-name/different-body, mirroring compose). The only op whose primary effect is ingestion; requires `ingestion_model` and raises otherwise. Steps may reference the registry via `call.use` or carry a fully inline `call` (collision-free). Irreversible. |
@@ -174,8 +176,18 @@ When both sides *are* present the profile fold elects neither. `db_flavor` and `
 ```bash
 graflo compose LEFT.yaml RIGHT.yaml --op OP.yaml -o OUT.yaml \
   [--canonical-map SIDE=PATH]... [--name-conflict error|prefix_right|union_right] \
-  [--bump-version minor|none] [--strict-references] [--dry-run] [--check-profile NAME]
+  [--bump-version minor|none] [--strict-references] [--dry-run] [--check-profile NAME] \
+  [--store DIR] [-m LABEL]
 ```
+
+`-m LABEL` also **records the compose** as a two-parent commit in `--store`
+(default `.graflo/commits`). Both inputs are resolved to commits by content
+address — a manifest is its hash and a commit records the tree it produced — so
+a side that is in no history is refused by name rather than half-recorded. The
+composed manifest is stamped with its parents, its recipe pointer and the commit
+that produced it before it is written, so the file carries its own lineage.
+Without `-m` the verb writes only the manifest, as before. See
+[Version control](versioning.md#compose-is-recorded-too).
 
 The verb applies the op and its canonical maps together: `--canonical-map SIDE=PATH` (`SIDE` one of `left`, `right`, `both`) is folded into the op's `canonical_maps`, so the same document may carry the maps itself. Omitting `--op` composes a disjoint union. `--name-conflict` overrides the op's policy: `error` refuses a name both sides carry, `union_right` unions by name, `prefix_right` keeps them apart under `r_` names. Exit `0` composed, `1` compose refused, `2` the command could not run.
 

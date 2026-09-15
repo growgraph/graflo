@@ -48,6 +48,7 @@ from graflo.architecture.evolution.preview import (
     preview_compose,
 )
 from graflo.architecture.profile import check_manifest
+from graflo.cli._store import append_entry, store_option
 from graflo.cli.io import dump_manifest, load_manifest, load_mapping
 
 #: Compose refused the inputs -- a name collision, a cluster conflict, a
@@ -201,6 +202,18 @@ def _fold_canonical_maps(
         "and print the report. Findings do not change the exit code."
     ),
 )
+@store_option
+@click.option(
+    "-m",
+    "--label",
+    "record_label",
+    default=None,
+    help=(
+        "Record the compose in the store as a two-parent commit under this "
+        "label. Both inputs must already be in the history; without this the "
+        "verb writes only the manifest, as before."
+    ),
+)
 def compose(
     left: Path,
     right: Path,
@@ -215,6 +228,8 @@ def compose(
     preview_json_path: Path | None,
     max_rows: int,
     profile_name: str | None,
+    store: Path,
+    record_label: str | None,
 ) -> None:
     """Compose LEFT and RIGHT into one manifest."""
     canonical_map_paths = _parse_canonical_map_option(canonical_map_options)
@@ -314,8 +329,92 @@ def compose(
     if dry_run:
         click.echo("dry run: nothing written")
         return
+
+    entry = None
+    if record_label is not None:
+        # Before `dump_manifest`, so the file on disk carries its own lineage --
+        # the whole point of provenance travelling with the artifact.
+        entry = _record(
+            left_manifest, right_manifest, composed, op, store, record_label
+        )
+
     if output is not None:
         dump_manifest(composed, output)
+
+    if entry is not None:
+        click.echo(f"commit: {entry.id}")
+        click.echo(f"stored: {append_entry(store, entry)}")
+
+
+def _record(
+    left_manifest: GraphManifest,
+    right_manifest: GraphManifest,
+    composed: GraphManifest,
+    op: ComposeManifestsOp,
+    store: Path,
+    label: str,
+):
+    """Build the compose commit, stamping the result with its own lineage.
+
+    Both inputs are resolved to commits by content address rather than by a flag:
+    a manifest *is* its hash, and a commit records the tree it produced. A side
+    that is in no history cannot be named as a parent, and saying so is more
+    use than recording half a lineage.
+    """
+    from datetime import UTC, datetime
+
+    from graflo.architecture.contract.provenance import stamp_provenance
+    from graflo.architecture.evolution.canonicalize import CANON_VERSION
+    from graflo.architecture.evolution.commit import CommitError
+    from graflo.architecture.evolution.compose_commit import (
+        build_compose_commit,
+        find_commit_by_tree,
+    )
+    from graflo.architecture.evolution.hashing import manifest_hash
+    from graflo.architecture.evolution.history import FileCommitStore
+    from graflo.architecture.evolution.merge3 import build_compose_recipe
+
+    history = FileCommitStore(store).load()
+    resolved = {}
+    for side, manifest in (("left", left_manifest), ("right", right_manifest)):
+        found = find_commit_by_tree(history, manifest)
+        if found is None:
+            raise _ComposeSetupError(
+                f"the {side} manifest is not in {store}, so it cannot be named as "
+                "a parent. Record that lineage first, or drop -m to write the "
+                "composed manifest without recording it."
+            )
+        resolved[side] = found
+
+    recipe = build_compose_recipe(left_manifest, right_manifest, op)
+    parents = [resolved["left"].id, resolved["right"].id]
+    try:
+        entry = build_compose_commit(
+            left_manifest,
+            composed,
+            parents=parents,
+            recipe=recipe,
+            label=label,
+            created_at=datetime.now(UTC).isoformat(),
+        )
+    except CommitError as exc:
+        # The composed result differs from the left somewhere no op reaches, so
+        # the commit could not be materialized as a first-parent diff.
+        raise _ComposeSetupError(str(exc)) from exc
+
+    # Stamped *after* the commit is built, so the artifact can name the commit
+    # that produced it -- the id is derived from the ops and the parents, so it
+    # does not exist until then. Provenance is outside the content hash, so
+    # writing it cannot move the tree the commit just recorded.
+    stamp_provenance(
+        composed,
+        content_hash=manifest_hash(composed),
+        canon=CANON_VERSION,
+        commit=entry.id,
+        parents=parents,
+        merge_recipe=recipe.content_hash(),
+    )
+    return entry
 
 
 def _check_plot_suffix(path: Path) -> None:

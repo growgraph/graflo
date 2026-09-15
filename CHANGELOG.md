@@ -6,10 +6,58 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [Unreleased]
+## [1.13.2]
+
+### Added
+
+- **`set_bindings` and `set_db_profile` ops.** The bindings block had no op at
+  all and the profile had ops only for its indexes, so `diff_manifests` reported
+  both as inexpressible — which meant a change set touching either could not
+  replay, a three-way merge could not carry it, and a compose that unioned two
+  bindings registries could not be recorded at all. Both ops replace their block
+  wholesale, which is what a diff needs to say; `set_db_profile` carries the
+  indexes too and is emitted *instead of* the index ops, never alongside them.
+  The cost is coarseness in a merge — one slot per block, so two independent
+  bindings edits conflict where granular connector ops would not.
+- **Root commits that name a tree.** `build_root_commit` records an artifact
+  that was not derived from anything the history holds — pushed to a registry,
+  seeded from a pack, or simply present. It carries no ops and no `tree_before`:
+  it asserts a tree rather than deriving one. Deliberately not "a diff from an
+  empty manifest", which is not constructible and which no op vocabulary can
+  produce for every block. `checkout` verifies the assertion, so a base that is
+  not that artifact fails loudly instead of silently starting every later commit
+  from the wrong state. Root ids are derived from the tree plus an optional
+  `scope`, so two lineages whose first version has identical content do not
+  collide.
+- **`graflo commit --root`** starts a new lineage instead of extending the head.
+  A store can hold several unrelated lineages, which is what compose joins.
+- **Compose records lineage.** `graflo compose -m LABEL --store DIR` resolves
+  both inputs to commits **by content address** — a manifest is its hash and a
+  commit records the tree it produced, so no extra flag is needed — and records
+  the result as a two-parent `compose` commit. The written manifest is stamped
+  with its parents, the recipe pointer and the commit that produced it, *before*
+  it is written, so provenance travels with the artifact. Off by default: without
+  `-m` the verb still writes only the manifest.
+- **`build_compose_recipe`** records how a compose was *declared* — the whole op,
+  including canonical maps and identity alignments, because a re-compose with
+  only the equivalences would rebuild a different manifest. It fills the
+  `kind="compose"` / `equivalences` / `name_conflict` fields `MergeRecipe` has
+  carried unused since it was written, and sets no `base`: there is no common
+  ancestor, which is the whole difference from a three-way merge.
+- **`find_commit_by_tree` / `build_compose_commit`** in a new
+  `architecture.evolution.compose_commit`, kept out of `compose.py` so the
+  compose algorithm stays pure — recording is a commit point's job, and a
+  compose that recorded its own lineage could not be run twice without inventing
+  two histories.
+- **`graflo canonical-check MAP --left manifest.yaml`** — report dangling canonical map entries against a manifest without composing; near-miss hint per entry. `--right`, `--json`, `--trim OUT.yaml`. Exit 1 on dangling entries, 2 on failure.
+- **`dangling_entries` / `trim_canonical_map` / `DanglingEntry`** on `graflo.architecture.evolution` — same check and trim from Python.
+- **`allow_dangling_entries`** on `CanonicalMap` and `ComposeManifestsOp` — accept entries scoped to a side that match nothing there, dropping each with a log. Off by default.
 
 ### Changed
 
+- **`Commit.ops` may be empty and `Commit.tree_before` may be `None`**, but only
+  together and only without parents. A commit with a parent that records no
+  operations claims a transition it cannot replay, and is still refused.
 - **`Commit.is_merge` and `Provenance.is_merge` are now `is_multi_parent`.** Both were
   `len(parents) > 1`, which is true of a `compose` commit as well as a `merge` one, so the
   name asserted something the value did not test. Read `kind` to tell the two apart. This
@@ -24,6 +72,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lists; the colliding names were already resolved before it runs, so it never unioned by
   name. `_union_schema`, `_concat_ingestion` and `_union_bindings` now carry docstrings
   saying which level of the operation each one is.
+- **Dangling canonical map entries refused once per side** with every entry and a near-miss candidate, instead of stopping at the first. Dangling entries outrank `ComposeIncompleteError` on the same side.
+- **Class rename propagates the old name into each router `type_map`** on that side (`{old: new}`) via canonical maps and compose relabel — so pass-through discriminator values keep routing after a rename.
 
 ### Fixed
 
@@ -42,23 +92,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   literature `Merge` takes two models plus correspondences and `Compose` composes two
   mappings, the reverse of GraFlo's spelling; the docs now carry the translation instead of
   implying the vocabulary was adopted unchanged.
-
-
-## [1.13.2]
-
-### Added
-
-- **`graflo canonical-check MAP --left manifest.yaml`** — report dangling canonical map entries against a manifest without composing; near-miss hint per entry. `--right`, `--json`, `--trim OUT.yaml`. Exit 1 on dangling entries, 2 on failure.
-- **`dangling_entries` / `trim_canonical_map` / `DanglingEntry`** on `graflo.architecture.evolution` — same check and trim from Python.
-- **`allow_dangling_entries`** on `CanonicalMap` and `ComposeManifestsOp` — accept entries scoped to a side that match nothing there, dropping each with a log. Off by default.
-
-### Changed
-
-- **Dangling canonical map entries refused once per side** with every entry and a near-miss candidate, instead of stopping at the first. Dangling entries outrank `ComposeIncompleteError` on the same side.
-- **Class rename propagates the old name into each router `type_map`** on that side (`{old: new}`) via canonical maps and compose relabel — so pass-through discriminator values keep routing after a rename.
-
-### Fixed
-
 - **Identity alignment over a `vertex_router` guards every derivation.** The single and list forms behind a router lowered unguarded, so the step ran on every document the router saw and the validator refused any sibling class declaring a canonical attribute name — which, for an all-classes router where every class carries `name`, refused the alignment outright. Unkeyed steps (scratch, coalesce and local-key steps included) now carry `when` on the discriminator values that route onto the class; the sibling refusal remains only where no guard can be derived (a plain `vertex` step for the class beside the router, or routers with different discriminators at one level).
 - **`remove_vertices` / `project_manifest` over a `vertex_router` trim the router instead of dropping its resource.** The pruner dropped any resource whose router table named a removed class, and judged a pass-through router (no `type_map`) by its runtime child actors — built lazily, so empty before ingestion — dropping that resource too and aborting with "would leave ingestion_model.resources empty". Ingestion is now trimmed step-wise: `vertex` / `edge` steps naming the class go, a router loses only its `type_map` / `vertex_from_map` entries for it, a `descend` stays while anything survives under it, and a resource is dropped only when nothing in it produces or references a surviving class. A resource with several `vertex` steps therefore loses only the step for the removed class. No router-level exclude list was added: removing the class from the schema already is the filter, since a router skips a discriminator value naming an undeclared class.
 - **Observation-fusion guard is slot-aware.** `merge_vertices`, `canonicalize` and `compose_manifests` judge fusion per accumulator slot — the same pipeline level *and* the same `role`, or both bare — which is what the runtime fuses on. Same-level steps with distinct `role`s (client/server, buyer/seller) and a router beside a bare step no longer trip it, and a class a level already produced twice before the merge is not attributed to it. The refusal names the slot and the members that would fuse, and points at `role` / `source_role` / `target_role` as the remedy.
@@ -2238,7 +2271,6 @@ Package renamed from `graphcast` to `graflo`.
   - `type`: `dict` becomes `type`: `vertex`
   
     
-
 ### Added
 
 - `cli/plot_schema.py` became a standalone script available with the package installation
@@ -2255,7 +2287,6 @@ Package renamed from `graphcast` to `graflo`.
 ### Fixed
 
 - ***
-
 
 
 ## [0.12.0] - 2023-10
@@ -2331,9 +2362,4 @@ Package renamed from `graphcast` to `graflo`.
 
 [//]: # ()
 [//]: # (### Fixed)
-
-
-
-
-
 

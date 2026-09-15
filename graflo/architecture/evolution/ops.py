@@ -18,9 +18,11 @@ from pydantic import AliasChoices, field_validator, model_validator
 from pydantic import Field as PydanticField
 
 from graflo.architecture.base import ConfigBaseModel
+from graflo.architecture.contract.bindings.core import Bindings
 from graflo.architecture.contract.ingestion.resource import ResourceConfig
 from graflo.architecture.contract.ingestion.transform import ProtoTransform
 from graflo.architecture.graph_types import Index
+from graflo.architecture.schema.database_features import DatabaseProfile
 from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.identity_funnel import IdentityFunnel
 from graflo.architecture.schema.semantics import FieldSemantics, Semantics
@@ -1395,6 +1397,55 @@ class SetEdgeDirectedOp(ConfigBaseModel):
         return self
 
 
+class SetBindingsOp(ConfigBaseModel):
+    """Replace the whole ``bindings`` block.
+
+    The bindings block had **no op at all**, so ``diff_manifests`` could only
+    report it as inexpressible and a change set that touched it was not
+    replayable -- which is why a compose that unions two bindings registries
+    could not be recorded as a commit.
+
+    Wholesale rather than granular (add/remove/rename a connector) because that
+    is what the diff needs to say: the block became this. The cost is
+    coarseness in a three-way merge -- the whole block is one slot, so two
+    independent bindings edits conflict where granular ops would merge. Granular
+    connector ops can be added later without changing this one's meaning.
+    """
+
+    op: Literal["set_bindings"] = "set_bindings"
+    bindings: Bindings | None = PydanticField(
+        default=None,
+        description=(
+            "The bindings block after the op. ``None`` removes it, which is how "
+            "the op stays total: every before/after pair is expressible."
+        ),
+    )
+
+
+class SetDbProfileOp(ConfigBaseModel):
+    """Replace the whole ``db_profile`` of the schema block.
+
+    ``vertex_indexes`` and each edge spec's ``indexes`` already have four
+    authoring ops; nothing else on the profile had any, so ``db_flavor``,
+    ``target_namespace``, ``vertex_storage_names``, ``default_property_values``
+    and the non-index parts of ``edge_specs`` were inexpressible -- and they are
+    part of the content hash, so a change set that moved one of them could not
+    replay.
+
+    This op carries the **whole** profile, indexes included, and therefore
+    subsumes the index ops when it is emitted; the differ emits it *instead of*
+    them rather than alongside, so the two can never fight over ordering. When
+    only indexes differ, the index ops are still what gets emitted -- they say
+    more about intent and merge at a finer slot.
+    """
+
+    op: Literal["set_db_profile"] = "set_db_profile"
+    profile: DatabaseProfile = PydanticField(
+        ...,
+        description="The database profile after the op, replacing the current one.",
+    )
+
+
 class SetVertexSemanticsOp(ConfigBaseModel):
     """Ground vertex types in an external vocabulary.
 
@@ -2425,6 +2476,8 @@ ManifestOp = Annotated[
     | AddEdgeIndexesOp
     | RemoveEdgeIndexesOp
     | SetEdgeDirectedOp
+    | SetBindingsOp
+    | SetDbProfileOp
     | SetVertexSemanticsOp
     | SetEdgeSemanticsOp
     | SetFieldSemanticsOp

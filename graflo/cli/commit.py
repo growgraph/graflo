@@ -19,7 +19,6 @@ from pathlib import Path
 from typing import Any
 
 import click
-from pydantic import ValidationError
 from suthing import FileHandle
 
 from graflo.architecture.contract.manifest import GraphManifest
@@ -57,15 +56,9 @@ from graflo.cli.io import dump_manifest, load_manifest
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_STORE = Path(".graflo/commits")
+from graflo.cli._store import append_entry, store_option
 
-_store_option = click.option(
-    "--store",
-    type=click.Path(path_type=Path),
-    default=DEFAULT_STORE,
-    show_default=True,
-    help="Directory holding the commit history.",
-)
+_store_option = store_option
 
 
 def _load(path: str | Path) -> GraphManifest:
@@ -78,23 +71,7 @@ def _hints(path: Path | None) -> RenameHints:
     return RenameHints.model_validate(FileHandle.load(path))
 
 
-def _append(store: Path, entry) -> Path:
-    """Store *entry*, turning a DAG-validation failure into a usable message.
-
-    ``History`` validates on construction, so a commit that does not line up
-    surfaces as a raw pydantic ``ValidationError``. That is the correct refusal
-    reaching the user in the wrong shape -- it names a pydantic model and a
-    tree hash, and says nothing about what to do next.
-    """
-    try:
-        return FileCommitStore(store).append(entry)
-    except ValidationError as exc:
-        first = exc.errors()[0]["msg"].removeprefix("Value error, ")
-        raise click.ClickException(
-            f"{first}\n\nThe change was derived from a manifest that is not this "
-            "commit's parent state. Check out the parent first, or record the "
-            "commit onto the branch it actually extends with --onto."
-        ) from exc
+_append = append_entry
 
 
 def _write(manifest: GraphManifest, path: Path | None) -> None:
@@ -133,6 +110,16 @@ def _write(manifest: GraphManifest, path: Path | None) -> None:
     help="YAML RenameHints; a drop plus an add is otherwise not a rename.",
 )
 @_store_option
+@click.option(
+    "--root",
+    "as_root",
+    is_flag=True,
+    default=False,
+    help=(
+        "Start a new lineage instead of extending the head. A store can hold "
+        "several unrelated lineages, which is what compose later joins."
+    ),
+)
 @click.option("--dry", is_flag=True, default=False, help="Print without storing.")
 def commit_cmd(
     from_path: Path,
@@ -141,6 +128,7 @@ def commit_cmd(
     onto: str | None,
     hints_path: Path | None,
     store: Path,
+    as_root: bool,
     dry: bool,
 ) -> None:
     """Record the change between two manifests as a commit."""
@@ -154,7 +142,7 @@ def commit_cmd(
         return
 
     history = FileCommitStore(store).load()
-    parents = _resolve_parents(history, onto)
+    parents = _resolve_parents(history, onto, as_root=as_root)
 
     try:
         entry = build_commit(
@@ -171,7 +159,7 @@ def commit_cmd(
     click.echo(f"parents   : {', '.join(entry.parents) or '-'}")
     click.echo(f"label     : {entry.label or '-'}")
     click.echo(f"reversible: {entry.reversible}")
-    click.echo(f"tree      : {entry.tree_before[:12]} -> {entry.tree[:12]}")
+    click.echo(f"tree      : {(entry.tree_before or '-')[:12]} -> {entry.tree[:12]}")
     click.echo("\noperations:")
     click.echo(ops_to_yaml_str(list(entry.ops)))
 
@@ -189,8 +177,14 @@ def commit_cmd(
     click.echo(f"stored: {_append(store, entry)}")
 
 
-def _resolve_parents(history: History, onto: str | None) -> list[str]:
+def _resolve_parents(
+    history: History, onto: str | None, *, as_root: bool = False
+) -> list[str]:
     """The parents a new commit should carry."""
+    if as_root:
+        if onto is not None:
+            raise click.ClickException("--root and --onto contradict each other")
+        return []
     if onto is not None:
         return [history.require(onto).id]
     heads = history.heads()
@@ -541,7 +535,7 @@ def revert_cmd(
         raise click.ClickException(str(exc)) from exc
 
     click.echo(f"commit: {entry.id}")
-    click.echo(f"tree  : {entry.tree_before[:12]} -> {entry.tree[:12]}")
+    click.echo(f"tree  : {(entry.tree_before or '-')[:12]} -> {entry.tree[:12]}")
     click.echo("\noperations:")
     click.echo(ops_to_yaml_str(list(entry.ops)))
 

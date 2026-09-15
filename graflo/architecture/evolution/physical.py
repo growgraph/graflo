@@ -20,6 +20,8 @@ from .ops import (
     FieldTypeSpec,
     RemoveEdgeIndexesOp,
     RemoveVertexIndexesOp,
+    SetBindingsOp,
+    SetDbProfileOp,
     SetEdgeDirectedOp,
 )
 
@@ -302,4 +304,21 @@ def apply_set_edge_directed(manifest: GraphManifest, op: SetEdgeDirectedOp) -> N
     for selector in op.edges:
         by_edge_id[selector.edge_id()].directed = op.directed
 
+    schema.finish_init()
+
+
+def apply_set_bindings(manifest: GraphManifest, op: SetBindingsOp) -> None:
+    """Replace the manifest's bindings block."""
+    manifest.bindings = (
+        op.bindings.model_copy(deep=True) if op.bindings is not None else None
+    )
+
+
+def apply_set_db_profile(manifest: GraphManifest, op: SetDbProfileOp) -> None:
+    """Replace the schema's database profile."""
+    schema = manifest.graph_schema
+    if schema is None:
+        raise ValueError("set_db_profile requires graph_schema")
+
+    schema.db_profile = op.profile.model_copy(deep=True)
     schema.finish_init()

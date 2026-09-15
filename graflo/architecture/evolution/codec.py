@@ -54,6 +54,8 @@ from .ops import (
     ReplaceIdentityOp,
     RetargetEdgesOp,
     SanitizeOp,
+    SetBindingsOp,
+    SetDbProfileOp,
     SetEdgeDirectedOp,
     SetEdgeSemanticsOp,
     SetFieldSemanticsOp,
@@ -79,6 +81,8 @@ RevisionOp = Annotated[
     | RemoveVertexIndexesOp
     | AddEdgeIndexesOp
     | RemoveEdgeIndexesOp
+    | SetBindingsOp
+    | SetDbProfileOp
     | SetEdgeDirectedOp
     | SetVertexSemanticsOp
     | SetEdgeSemanticsOp

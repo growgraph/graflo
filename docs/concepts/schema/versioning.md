@@ -240,6 +240,21 @@ Six slots *are* order-dependent, and all six are reached through the same call: 
 
 So compose is commutative in the world model and not in those six. Where a value is a *claim* rather than an ordering, compose refuses instead of electing a side: two declared `db_flavor`s raise, a disputed `iri` clears to `None`, conflicting `force_types`, storage names, field types and units all raise.
 
+### Compose is recorded too
+
+A compose joins two lineages that share no ancestor, so both must already be in
+the store — `graflo commit --root` starts the second one rather than extending
+the first. The commit is materialized exactly as a merge commit is, as the
+verified diff from its **first** parent, so `checkout` and hash verification
+need no special case; what distinguishes it is the recipe, which records the
+whole declaration (equivalences, canonical maps, identity alignments) and no
+merge base, because there is none.
+
+This is why the bindings and profile blocks needed ops. A compose commit is a
+diff, and a diff that cannot express what changed is refused rather than
+recorded — so before `set_bindings` existed, composing an overlay that carried
+bindings could not be recorded at all.
+
 ## Tracked merges
 
 A `MergeRecipe` records how a merge was resolved, content-addressed with its
@@ -270,6 +285,7 @@ graflo checkout <commit> --base base.yaml --output-path out.yaml
 graflo merge <left> <right> --base base.yaml --take left
 graflo revert <commit> --base base.yaml
 graflo stamp manifest.yaml --commit <commit>
+graflo compose A.yaml B.yaml -o AB.yaml -m "join"   # a two-parent compose commit
 ```
 
 Commits live under `.graflo/commits` by default, one YAML per commit. The store
