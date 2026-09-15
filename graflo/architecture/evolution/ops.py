@@ -1736,6 +1736,10 @@ class AlignmentAttribute(ConfigBaseModel):
       side or, through ``compose_manifests``, by its canonical name;
     * a :class:`SharedDerivation` — the same dict, spelled once: one call
       shared by the listed members, with only the parameters that differ.
+
+    Behind a ``vertex_router`` the first two shapes are guarded as well: the
+    lowering reads which discriminator values route onto the class and puts
+    them in ``when``, so the steps run for no other class's documents.
     """
 
     name: str = PydanticField(

@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import pytest
 
+from graflo.architecture.contract.ingestion.steps.normalize import (
+    normalize_actor_step,
+)
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.evolution import (
+    EdgeSelector,
     MergeVerticesOp,
+    ProjectManifestOp,
     RemoveVerticesOp,
     apply_evolution,
 )
@@ -186,3 +191,141 @@ def test_merge_vertices_rejects_into_in_sources() -> None:
             [MergeVerticesOp(op="merge_vertices", sources=["a", "into"], into="into")],
             bump_version=False,
         )
+
+
+# --------------------------------------------------------------------------- #
+# Removal over a vertex_router: trim the router, keep the resource.
+# --------------------------------------------------------------------------- #
+
+_BARE_ROUTER = {"vertex_router": {"type_field": "kind"}}
+
+
+def _three_class_manifest(
+    pipeline: list[dict], *, extra: list[dict] | None = None
+) -> GraphManifest:
+    """Classes a, b, c with an edge a->b, fed by ``r_all`` through *pipeline*."""
+    manifest = GraphManifest.from_config(
+        {
+            "schema": {
+                "metadata": {"name": "g", "version": "1.0.0"},
+                "graph": {
+                    "vertex_config": {
+                        "vertices": [
+                            {"name": name, "properties": ["id"], "identity": ["id"]}
+                            for name in ("a", "b", "c")
+                        ]
+                    },
+                    "edge_config": {"edges": [{"source": "a", "target": "b"}]},
+                },
+            },
+            "ingestion_model": {
+                "resources": [{"name": "r_all", "pipeline": pipeline}]
+                + list(extra or []),
+                "transforms": [],
+            },
+        }
+    )
+    manifest.finish_init()
+    return manifest
+
+
+def _resource_names(manifest: GraphManifest) -> list[str]:
+    assert manifest.ingestion_model is not None
+    return [r.name for r in manifest.ingestion_model.resources]
+
+
+def _steps(manifest: GraphManifest, resource: str) -> list[dict]:
+    assert manifest.ingestion_model is not None
+    pipeline = next(
+        r.pipeline for r in manifest.ingestion_model.resources if r.name == resource
+    )
+    return [normalize_actor_step(dict(s)) for s in pipeline]
+
+
+def _vertex_set(manifest: GraphManifest) -> set[str]:
+    assert manifest.graph_schema is not None
+    return set(manifest.graph_schema.core_schema.vertex_config.vertex_set)
+
+
+def _remove(manifest: GraphManifest, *names: str) -> GraphManifest:
+    return apply_evolution(
+        manifest, [RemoveVerticesOp(names=list(names))], bump_version=False
+    )
+
+
+def test_remove_vertex_keeps_a_pass_through_router_resource() -> None:
+    out = _remove(_three_class_manifest([_BARE_ROUTER]), "b")
+
+    assert _resource_names(out) == ["r_all"]
+    (router,) = _steps(out, "r_all")
+    assert router["type"] == "vertex_router"
+    assert not router.get("type_map")
+    assert _vertex_set(out) == {"a", "c"}
+    assert out.graph_schema is not None
+    assert out.graph_schema.core_schema.edge_config.edges == []
+
+
+def test_remove_vertex_trims_the_router_table_and_projection() -> None:
+    router = {
+        "vertex_router": {
+            "type_field": "kind",
+            "type_map": {"A": "a", "B": "b", "C": "c"},
+            "vertex_from_map": {"b": {"bid": "id"}, "c": {"cid": "id"}},
+        }
+    }
+
+    out = _remove(_three_class_manifest([router]), "b")
+
+    (router_step,) = _steps(out, "r_all")
+    assert router_step["type_map"] == {"A": "a", "C": "c"}
+    assert router_step["vertex_from_map"] == {"c": {"cid": "id"}}
+
+
+def test_remove_vertex_keeps_a_router_nested_under_a_descend() -> None:
+    pipeline = [{"descend": {"key": "records", "apply": [_BARE_ROUTER]}}]
+
+    out = _remove(_three_class_manifest(pipeline), "b")
+
+    (descend,) = _steps(out, "r_all")
+    assert descend["type"] == "descend"
+    (router,) = [normalize_actor_step(dict(s)) for s in descend["pipeline"]]
+    assert router["type"] == "vertex_router"
+
+
+def test_remove_vertex_trims_steps_instead_of_dropping_the_resource() -> None:
+    pipeline = [
+        {"vertex": "a"},
+        {"vertex": "b"},
+        {"edge": {"source": "a", "target": "b"}},
+    ]
+
+    out = _remove(_three_class_manifest(pipeline), "b")
+
+    assert _resource_names(out) == ["r_all"]
+    assert [s["type"] for s in _steps(out, "r_all")] == ["vertex"]
+
+
+def test_remove_vertex_drops_a_resource_left_with_nothing() -> None:
+    manifest = _three_class_manifest(
+        [{"vertex": "b"}], extra=[{"name": "r_a", "pipeline": [{"vertex": "a"}]}]
+    )
+
+    out = _remove(manifest, "b")
+
+    assert _resource_names(out) == ["r_a"]
+
+
+def test_project_manifest_keeps_the_router_resource() -> None:
+    out = apply_evolution(
+        _three_class_manifest([_BARE_ROUTER]),
+        [
+            ProjectManifestOp(
+                keep_vertices=["a", "b"],
+                keep_edges=[EdgeSelector(source="a", target="b")],
+            )
+        ],
+        bump_version=False,
+    )
+
+    assert _vertex_set(out) == {"a", "b"}
+    assert _resource_names(out) == ["r_all"]

@@ -10,7 +10,6 @@ from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.contract.ingestion.steps.normalize import normalize_actor_step
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.graph_types import EdgeId
-from graflo.architecture.pipeline.runtime.actor import ActorWrapper
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.core import CoreSchema
 from graflo.architecture.schema.database_features import DatabaseProfile
@@ -102,6 +101,7 @@ from .rewrite import (
     rewrite_remove_edge_ids_in_pipeline,
     rewrite_remove_relations_in_pipeline,
     rewrite_remove_vertex_properties_in_pipeline,
+    rewrite_remove_vertices_in_pipeline,
     rewrite_vertex_field_names_in_pipeline,
     rewrite_vertex_names_in_pipeline,
     rewrite_vertex_names_in_value,
@@ -121,38 +121,45 @@ def _revalidate_db_profile(profile: DatabaseProfile) -> DatabaseProfile:
     return DatabaseProfile.model_validate(profile.to_dict(skip_defaults=False))
 
 
-def _actor_wrapper_mentions_removed(wrapper: Any, removed: set[str]) -> bool:
-    return bool(wrapper.actor.references_vertices() & removed)
-
-
 def _prune_ingestion_for_removed_vertices(
-    im: IngestionModel, removed: set[str]
+    im: IngestionModel, removed: set[str], *, surviving: set[str]
 ) -> None:
-    """Drop or trim resources that reference removed vertex names."""
-    to_drop: list[Any] = []
-    for resource in list(im.resources):
-        if pipeline_mentions_any_vertex(resource.pipeline, removed):
-            to_drop.append(resource)
-            continue
-        root = ActorWrapper(*resource.pipeline)
-        if _actor_wrapper_mentions_removed(root, removed):
-            to_drop.append(resource)
-            continue
-        root.remove_descendants_if(
-            lambda w: _actor_wrapper_mentions_removed(w, removed)
-        )
-        if not any(a.references_vertices() for a in root.collect_actors()):
-            to_drop.append(resource)
+    """Trim each resource step-wise; drop one only when nothing in it is left.
 
-    for r in to_drop:
-        im.resources.remove(r)
+    A resource survives while its pipeline still produces or references a
+    surviving class — and a ``vertex_router`` produces every class the schema
+    still declares, table or no table, so it keeps routing the rest. Runtime
+    actors are no oracle here: a router builds its children lazily, so before
+    ingestion it references nothing.
+    """
+    from graflo.architecture.contract.ingestion.resource import (
+        Resource,
+        pipeline_has_vertex_router,
+    )
 
-    for i, r in enumerate(list(im.resources)):
-        new_mc = [c for c in r.merge_collections if c not in removed]
-        if new_mc != list(r.merge_collections):
-            im.resources[i] = r.model_copy(
-                update={"merge_collections": new_mc}, deep=True
-            )
+    def _names_removed(spec: Any) -> bool:
+        edge_id = _edge_id_from_resource_spec(spec)
+        return edge_id is not None and bool({edge_id[0], edge_id[1]} & removed)
+
+    resources: list[Resource] = []
+    for resource in im.resources:
+        pipeline = rewrite_remove_vertices_in_pipeline(resource.pipeline, removed)
+        if not (
+            pipeline_mentions_any_vertex(pipeline, surviving)
+            or pipeline_has_vertex_router(pipeline)
+        ):
+            continue
+        payload = resource.to_dict(skip_defaults=False)
+        payload["pipeline"] = pipeline
+        payload["merge_collections"] = [
+            c for c in resource.merge_collections if c not in removed
+        ]
+        for key in ("infer_edge_only", "infer_edge_except", "extra_weights"):
+            specs = payload.get(key)
+            if isinstance(specs, list):
+                payload[key] = [spec for spec in specs if not _names_removed(spec)]
+        resources.append(Resource.model_validate(payload))
+    im.resources = resources
 
     if not im.resources:
         raise ValueError(
@@ -264,7 +271,11 @@ def apply_remove_vertices(manifest: GraphManifest, op: RemoveVerticesOp) -> None
     schema.db_profile = _revalidate_db_profile(schema.db_profile)
 
     if manifest.ingestion_model is not None:
-        _prune_ingestion_for_removed_vertices(manifest.ingestion_model, removed)
+        _prune_ingestion_for_removed_vertices(
+            manifest.ingestion_model,
+            removed,
+            surviving=set(core.vertex_config.vertex_set),
+        )
         manifest.ingestion_model = IngestionModel.model_validate(
             manifest.ingestion_model.to_dict(skip_defaults=False)
         )

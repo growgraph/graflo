@@ -589,12 +589,51 @@ class TestRouterDelivery:
 
         assert self._ensure(ops) is None
 
-    def test_a_sibling_class_claiming_a_canonical_name_is_rejected(self) -> None:
+    def test_a_sibling_class_claiming_a_canonical_name_is_guarded_out(self) -> None:
+        ops = alignment_to_ops(
+            _routed_alignment(),
+            manifest=_routed_manifest(sibling_props=["match_key"]),
+        )
+
+        routed = _transforms_op(ops).additions["r_view"]
+        # match_key and local_key: two scratch steps and a coalesce each.
+        assert len(routed) == 6
+        assert all(
+            s["transform"]["when"] == {"field": "kind", "in": ["firm", "shop"]}
+            for s in routed
+        )
+        plain = _transforms_op(ops).additions["r_b"]
+        assert plain and all("when" not in s["transform"] for s in plain)
+
+    def test_the_refusal_remains_where_no_guard_can_be_derived(self) -> None:
+        # Two routers reading different discriminators at one level: one guard
+        # cannot admit both, so the derivation lowers unguarded.
+        manifest = _dynamic_union(
+            [_nested(_BARE, {"vertex_router": {"type_field": "cls"}})],
+            sibling_props=["match_key"],
+        )
+
         with pytest.raises(AlignmentConflictError, match="claimed by a sibling class"):
-            alignment_to_ops(
-                _routed_alignment(),
-                manifest=_routed_manifest(sibling_props=["match_key"]),
-            )
+            alignment_to_ops(_routed_alignment(), manifest=manifest)
+
+    def test_guarded_steps_apply_as_valid_pipeline_steps(self) -> None:
+        manifest = _routed_manifest(sibling_props=["match_key"])
+
+        out = apply_evolution(
+            manifest,
+            alignment_to_ops(_routed_alignment(), manifest=manifest),
+            bump_version=False,
+        )
+
+        pipeline = out.require_ingestion_model().resources[0].pipeline
+        level = resolve_pipeline_level(list(pipeline), [0])
+        transforms = [
+            normalize_actor_step(dict(s))
+            for s in level
+            if normalize_actor_step(dict(s)).get("type") == "transform"
+        ]
+        assert len(transforms) == 6
+        assert all(s.get("when") for s in transforms)
 
 
 class TestEnsureExtractedFieldsApplies:
@@ -1222,11 +1261,16 @@ class TestDynamicRouterUnion:
 
         assert _transforms_op(ops).at == {"r_view": [0]}
 
-    def test_every_declared_class_is_a_sibling(self) -> None:
+    def test_every_declared_class_is_guarded_out(self) -> None:
         manifest = _dynamic_union([_nested(_BARE)], sibling_props=["match_key"])
 
-        with pytest.raises(AlignmentConflictError, match="claimed by a sibling class"):
-            alignment_to_ops(_routed_alignment(), manifest=manifest)
+        ops = alignment_to_ops(_routed_alignment(), manifest=manifest)
+
+        routed = _transforms_op(ops).additions["r_view"]
+        assert routed and all(
+            s["transform"]["when"] == {"field": "kind", "in": ["Company"]}
+            for s in routed
+        )
 
     def test_keep_fields_are_widened(self) -> None:
         router = {

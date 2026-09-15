@@ -150,7 +150,10 @@ the other column being empty already selects, and `sources["r_view"]` can be a
 plain **list** of specs — no member names, no guards. That form lowers to one
 scratch field per spec and a `coalesce_fields` step as the single writer,
 because two unguarded steps writing `match_key` *would* clobber behind a
-router. Reach for it when columns select; key by member when the member must.
+router. Behind the router every one of those steps, the coalesce included,
+carries one `when` on `kind` admitting the values that route onto `Company`,
+so a `person` row is never handed a `match_key`. Reach for it when columns
+select; key by member when the member must.
 
 ## Delivering through the router
 

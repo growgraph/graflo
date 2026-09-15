@@ -31,6 +31,15 @@ learn how the resource produces each member, and guards the step with
 ``when`` on the router's discriminator. A guarded step that does not fire
 writes nothing, so each member's derivation is the single writer of the
 attribute for its own documents.
+
+A derivation that is *not* keyed by member is guarded the same way whenever a
+router produces the class: ``when`` admits the discriminator values that route
+onto it — the ``type_map`` keys mapping to it, or its own name for
+pass-through — so the step runs for no other class's documents. Only a level
+where a plain ``vertex`` step also produces the class, or whose routers read
+different discriminators, lowers unguarded; there a sibling class declaring a
+canonical attribute name is refused, since the router would hand it the
+derived value.
 """
 
 from __future__ import annotations
@@ -284,16 +293,8 @@ def _resolve_member_production(
             f"discriminated by {type_fields}",
             "One guard reads one field; route the member through one router.",
         )
-    values: set[str] = set()
-    for step in routers:
-        type_map = step.get("type_map") or {}
-        values.update(key for key, target in type_map.items() if target == member)
-    # A router without a ``type_map`` entry for the member routes the raw
-    # discriminator value that *is* the member's name.
-    if not values:
-        values.add(member)
     return _MemberProduction(
-        level=path, type_field=type_fields[0], values=tuple(sorted(values))
+        level=path, type_field=type_fields[0], values=_routed_values(routers, member)
     )
 
 
@@ -544,6 +545,59 @@ def _producing_steps(
     return [step for step in steps if step.get("type") == "vertex_router"]
 
 
+def _routed_values(routers: list[dict], vertex: str) -> tuple[str, ...]:
+    """Discriminator values *routers* send onto *vertex*.
+
+    The ``type_map`` keys mapping to it. A router without such an entry routes
+    the raw value that *is* the class name, so that is the value which reaches
+    it.
+    """
+    values: set[str] = set()
+    for step in routers:
+        type_map = step.get("type_map") or {}
+        values.update(key for key, target in type_map.items() if target == vertex)
+    if not values:
+        values.add(vertex)
+    return tuple(sorted(values))
+
+
+def _class_guard(steps: list[dict], vertex: str) -> dict[str, Any] | None:
+    """Guard admitting only the documents *steps* route onto *vertex*.
+
+    ``None`` when no single guard can say so: a plain ``vertex`` step among
+    the producers reads the buffer for every document at its level, and a
+    guard on a discriminator those documents may not carry would suppress the
+    derivation; routers reading different discriminators need one guard each.
+    Unguarded is what the sibling-class check then covers.
+    """
+    if any(step.get("type") == "vertex" for step in steps):
+        return None
+    routers = [step for step in steps if step.get("type") == "vertex_router"]
+    if not routers:
+        return None
+    type_fields = sorted({str(step.get("type_field")) for step in routers})
+    if len(type_fields) != 1:
+        return None
+    return {"field": type_fields[0], "in": list(_routed_values(routers, vertex))}
+
+
+def _unkeyed_names(alignment: IdentityAlignment, resource: str) -> list[str]:
+    """Canonical attributes *resource* derives without a member key."""
+    names = [
+        attribute.name
+        for attribute in alignment.attributes
+        if resource in attribute.sources and attribute.members_for(resource) is None
+    ]
+    local_key = alignment.local_key
+    if (
+        local_key is not None
+        and resource in local_key.sources
+        and local_key.members_for(resource) is None
+    ):
+        names.append(local_key.name)
+    return names
+
+
 # --------------------------------------------------------------------------- #
 # Validation
 # --------------------------------------------------------------------------- #
@@ -705,8 +759,15 @@ def validate_alignment(
         )
 
     for resource, path in sorted(levels.items()):
-        for step in _producing_steps(manifest, resource, path, alignment.vertex):
-            _check_sibling_classes(alignment, manifest, step, resource, into_names)
+        steps = _producing_steps(manifest, resource, path, alignment.vertex)
+        unguarded = (
+            _unkeyed_names(alignment, resource)
+            if _class_guard(steps, alignment.vertex) is None
+            else []
+        )
+        for step in steps:
+            if unguarded:
+                _check_sibling_classes(alignment, manifest, step, resource, unguarded)
             _warn_on_one_derivation_for_several_members(alignment, step, resource)
     if sides is not None and cluster_members is not None:
         for resource in productions:
@@ -731,10 +792,13 @@ def _check_sibling_classes(
 ) -> None:
     """Refuse a canonical attribute name another routed class also declares.
 
-    A router hands the whole merged observation to whichever class it selects,
-    and extraction keeps a class's declared properties. So a sibling class
-    declaring one of the canonical attribute names would silently absorb the
-    value derived for the aligned class.
+    Only for a derivation that lowers unguarded — the level also produces the
+    class through a plain ``vertex`` step, or its routers read different
+    discriminators. A router hands the whole merged observation to whichever
+    class it selects, and extraction keeps a class's declared properties, so a
+    sibling class declaring one of the names would silently absorb the value
+    derived for the aligned class. A guarded derivation never runs for the
+    sibling's documents and needs none of this.
     """
     if step.get("type") != "vertex_router":
         return
@@ -887,6 +951,14 @@ def alignment_to_ops(
             for resource, per_member in productions.items()
         }
 
+    # Behind a router, an unkeyed derivation is guarded by the class as a
+    # whole; without the manifest there is no router to read, so nothing is.
+    class_guards: dict[str, dict[str, Any] | None] = {}
+    if manifest is not None:
+        for resource, path in levels.items():
+            steps = _producing_steps(manifest, resource, path, alignment.vertex)
+            class_guards[resource] = _class_guard(steps, alignment.vertex)
+
     additions: dict[str, list[dict[str, Any]]] = {}
     for attribute in alignment.attributes:
         for resource in attribute.sources:
@@ -897,6 +969,7 @@ def alignment_to_ops(
                     guards=_guards(
                         productions, resource, attribute.members_for(resource)
                     ),
+                    when=class_guards.get(resource),
                 )
             )
     if alignment.local_key is not None:
@@ -909,6 +982,7 @@ def alignment_to_ops(
                     guards=_guards(
                         productions, resource, local_key.members_for(resource)
                     ),
+                    when=class_guards.get(resource),
                 )
             )
     ops.append(
@@ -997,12 +1071,16 @@ def _call_step(
     return {"transform": transform}
 
 
-def _coalesce_step(into: str, count: int) -> dict[str, Any]:
+def _coalesce_step(
+    into: str, count: int, *, when: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """The single writer of *into*, picking whichever column-presence branch fired.
 
     ``strategy: all`` hands the function the whole merged observation and
     empties the missing-input guard, so a branch whose own columns are absent
-    from a document skips without taking the coalesce down with it.
+    from a document skips without taking the coalesce down with it. Behind a
+    router it carries the class guard like the branches: unguarded, it would
+    write ``None`` into every other class's documents.
     """
     return _call_step(
         module="graflo.util.transform",
@@ -1010,6 +1088,7 @@ def _coalesce_step(into: str, count: int) -> dict[str, Any]:
         params={"fields": [_scratch_name(into, i) for i in range(count)]},
         output=into,
         strategy="all",
+        when=when,
     )
 
 
@@ -1018,6 +1097,7 @@ def _derivation_steps(
     specs: list[DerivationSpec],
     *,
     guards: list[dict[str, Any] | None] | None = None,
+    when: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Steps deriving *into* from *specs*, in order.
 
@@ -1029,7 +1109,9 @@ def _derivation_steps(
     column-presence form) write scratch fields that a coalesce reduces: two
     steps writing ``into`` would clobber behind a ``vertex_router``, which
     merges the transform buffer into one observation dict where a later
-    ``None`` overwrites an earlier real value.
+    ``None`` overwrites an earlier real value. *when* is the class guard a
+    router-produced level supplies; every unkeyed step carries it, so the
+    derivation runs for no other class's documents.
     """
     if guards is not None:
         return [
@@ -1052,6 +1134,7 @@ def _derivation_steps(
                 params=dict(spec.params),
                 output=into,
                 input_fields=list(spec.input),
+                when=when,
             )
         ]
     steps = [
@@ -1061,10 +1144,11 @@ def _derivation_steps(
             params=dict(spec.params),
             output=_scratch_name(into, index),
             input_fields=list(spec.input),
+            when=when,
         )
         for index, spec in enumerate(specs)
     ]
-    steps.append(_coalesce_step(into, len(specs)))
+    steps.append(_coalesce_step(into, len(specs), when=when))
     return steps
 
 
@@ -1084,8 +1168,13 @@ def _local_key_steps(
     sources: list[LocalKeySource],
     *,
     guards: list[dict[str, Any] | None] | None = None,
+    when: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """Steps filling the local-key fallback for one resource, in order."""
+    """Steps filling the local-key fallback for one resource, in order.
+
+    *when* is the class guard of a router-produced level, carried by every
+    unkeyed step; a source's own ``gate`` stays the function's admission test.
+    """
     if guards is not None:
         steps = []
         for src, guard in zip(sources, guards, strict=True):
@@ -1110,6 +1199,7 @@ def _local_key_steps(
                 params=params,
                 output=local_key.name,
                 input_fields=input_fields,
+                when=when,
             )
         ]
     steps = []
@@ -1122,9 +1212,10 @@ def _local_key_steps(
                 params=params,
                 output=_scratch_name(local_key.name, index),
                 input_fields=input_fields,
+                when=when,
             )
         )
-    steps.append(_coalesce_step(local_key.name, len(sources)))
+    steps.append(_coalesce_step(local_key.name, len(sources), when=when))
     return steps
 
 

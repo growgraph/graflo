@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+
 ## [1.13.2]
 
 ### Added
@@ -20,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Identity alignment over a `vertex_router` guards every derivation.** The single and list forms behind a router lowered unguarded, so the step ran on every document the router saw and the validator refused any sibling class declaring a canonical attribute name — which, for an all-classes router where every class carries `name`, refused the alignment outright. Unkeyed steps (scratch, coalesce and local-key steps included) now carry `when` on the discriminator values that route onto the class; the sibling refusal remains only where no guard can be derived (a plain `vertex` step for the class beside the router, or routers with different discriminators at one level).
+- **`remove_vertices` / `project_manifest` over a `vertex_router` trim the router instead of dropping its resource.** The pruner dropped any resource whose router table named a removed class, and judged a pass-through router (no `type_map`) by its runtime child actors — built lazily, so empty before ingestion — dropping that resource too and aborting with "would leave ingestion_model.resources empty". Ingestion is now trimmed step-wise: `vertex` / `edge` steps naming the class go, a router loses only its `type_map` / `vertex_from_map` entries for it, a `descend` stays while anything survives under it, and a resource is dropped only when nothing in it produces or references a surviving class. A resource with several `vertex` steps therefore loses only the step for the removed class. No router-level exclude list was added: removing the class from the schema already is the filter, since a router skips a discriminator value naming an undeclared class.
 - **Observation-fusion guard is slot-aware.** `merge_vertices`, `canonicalize` and `compose_manifests` judge fusion per accumulator slot — the same pipeline level *and* the same `role`, or both bare — which is what the runtime fuses on. Same-level steps with distinct `role`s (client/server, buyer/seller) and a router beside a bare step no longer trip it, and a class a level already produced twice before the merge is not attributed to it. The refusal names the slot and the members that would fuse, and points at `role` / `source_role` / `target_role` as the remedy.
 - **Identity alignment over a `vertex_router` with no `type_map`** resolves the producing level and gates each member by its own name. Routers now produce every class the schema declares; explicit steps outrank pass-through. `ensure_extracted_fields` widens all routers at the level.
 - **Runtime resource scope includes every class a router can emit**, not only names mentioned in steps — fixes skipped records after a partial `type_map` or rename.
