@@ -1,4 +1,4 @@
-"""Tests for :func:`~graflo.architecture.evolution.compose_manifests`."""
+"""Tests for :func:`~graflo.architecture.evolution.merge_manifests`."""
 
 from __future__ import annotations
 
@@ -8,16 +8,16 @@ from graflo.architecture.contract.bindings import FileConnector
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.evolution import (
     ClusterConflictError,
-    ComposeIdentityError,
-    ComposeIncompleteError,
-    ComposeManifestsOp,
-    ComposeNameConflictError,
+    MergeIdentityError,
+    MergeIncompleteError,
+    MergeManifestsOp,
+    MergeNameConflictError,
     PropertyEquivalence,
     RelationEquivalence,
     SideIdentity,
     VertexEquivalence,
     apply_evolution,
-    compose_manifests,
+    merge_manifests,
     resolve_clusters,
 )
 from graflo.architecture.graph_types import Index
@@ -158,7 +158,7 @@ def test_disjoint_union_keeps_resources_and_bindings() -> None:
         },
     )
     h_left = manifest_hash(left)
-    out = compose_manifests(left, right, ComposeManifestsOp(), bump_version=False)
+    out = merge_manifests(left, right, MergeManifestsOp(), bump_version=False)
     assert out.graph_schema is not None
     assert out.graph_schema.core_schema.vertex_config.vertex_set == {"A", "B"}
     assert out.ingestion_model is not None
@@ -172,7 +172,7 @@ def test_disjoint_union_keeps_resources_and_bindings() -> None:
 def test_boundary_client_customer_with_explicit_identity() -> None:
     left = _left_client_manifest()
     right = _right_customer_manifest()
-    op = ComposeManifestsOp(
+    op = MergeManifestsOp(
         vertex_equivalences=[
             VertexEquivalence(
                 left="Client",
@@ -191,7 +191,7 @@ def test_boundary_client_customer_with_explicit_identity() -> None:
             RelationEquivalence(left="places", right="billed", into="activity"),
         ],
     )
-    out = compose_manifests(left, right, op, bump_version=False)
+    out = merge_manifests(left, right, op, bump_version=False)
     assert out.graph_schema is not None
     vc = out.graph_schema.core_schema.vertex_config
     assert vc.vertex_set == {"Person", "Order", "Invoice"}
@@ -215,7 +215,7 @@ def test_boundary_client_customer_with_explicit_identity() -> None:
 def test_property_identity_flags_derive_identity() -> None:
     left = _left_client_manifest()
     right = _right_customer_manifest()
-    op = ComposeManifestsOp(
+    op = MergeManifestsOp(
         vertex_equivalences=[
             VertexEquivalence(
                 left="Client",
@@ -235,7 +235,7 @@ def test_property_identity_flags_derive_identity() -> None:
             )
         ],
     )
-    out = compose_manifests(left, right, op, bump_version=False)
+    out = merge_manifests(left, right, op, bump_version=False)
     person = next(
         v
         for v in out.graph_schema.core_schema.vertex_config.vertices  # type: ignore[union-attr]
@@ -271,7 +271,7 @@ def test_incompatible_property_types_raise() -> None:
         edges=[],
         resources=[{"name": "r_r", "apply": [{"vertex": "B"}]}],
     )
-    op = ComposeManifestsOp(
+    op = MergeManifestsOp(
         vertex_equivalences=[
             VertexEquivalence(
                 left="A",
@@ -283,12 +283,12 @@ def test_incompatible_property_types_raise() -> None:
             )
         ]
     )
-    # The message names the *composed* vertex and property, not the source
+    # The message names the *merged* vertex and property, not the source
     # spellings: by the time the merge runs, both sides have been renamed onto
     # the cluster's `into`, and pointing at 'A.x' would name something the
-    # composed manifest does not contain.
+    # merged manifest does not contain.
     with pytest.raises(ValueError, match="Conflicting field types") as excinfo:
-        compose_manifests(left, right, op, bump_version=False)
+        merge_manifests(left, right, op, bump_version=False)
     message = str(excinfo.value)
     assert "vertex 'C'" in message
     assert "property 'z'" in message
@@ -314,12 +314,12 @@ def test_resource_name_collision_error_and_rename() -> None:
         resources=[{"name": "shared", "apply": [{"vertex": "B"}]}],
     )
     with pytest.raises(ValueError, match="resource name collision"):
-        compose_manifests(left, right, ComposeManifestsOp(), bump_version=False)
+        merge_manifests(left, right, MergeManifestsOp(), bump_version=False)
 
-    out = compose_manifests(
+    out = merge_manifests(
         left,
         right,
-        ComposeManifestsOp(resource_renames={"shared": "shared_right"}),
+        MergeManifestsOp(resource_renames={"shared": "shared_right"}),
         bump_version=False,
     )
     assert {r.name for r in out.ingestion_model.resources} == {  # type: ignore[union-attr]
@@ -327,10 +327,10 @@ def test_resource_name_collision_error_and_rename() -> None:
         "shared_right",
     }
 
-    out_prefix = compose_manifests(
+    out_prefix = merge_manifests(
         left,
         right,
-        ComposeManifestsOp(name_conflict="prefix_right"),
+        MergeManifestsOp(name_conflict="prefix_right"),
         bump_version=False,
     )
     assert {r.name for r in out_prefix.ingestion_model.resources} == {  # type: ignore[union-attr]
@@ -364,7 +364,7 @@ def test_relation_equivalence_and_self_loop_after_boundary() -> None:
             {"name": "r_y", "apply": [{"vertex": "Y"}]},
         ],
     )
-    op = ComposeManifestsOp(
+    op = MergeManifestsOp(
         vertex_equivalences=[
             VertexEquivalence(left=["A", "B"], right=["X", "Y"], into="AB")
         ],
@@ -374,7 +374,7 @@ def test_relation_equivalence_and_self_loop_after_boundary() -> None:
         allow_merges=True,
         allow_self_relations=True,
     )
-    out = compose_manifests(left, right, op, bump_version=False)
+    out = merge_manifests(left, right, op, bump_version=False)
     assert out.graph_schema is not None
     assert out.graph_schema.core_schema.vertex_config.vertex_set == {"AB"}
     edges = out.graph_schema.core_schema.edge_config.edges
@@ -393,14 +393,14 @@ def test_apply_evolution_rejects_compose_op() -> None:
         edges=[],
         resources=[{"name": "r", "apply": [{"vertex": "A"}]}],
     )
-    with pytest.raises(ValueError, match="compose_manifests is binary"):
-        apply_evolution(m, [ComposeManifestsOp()], bump_version=False)
+    with pytest.raises(ValueError, match="merge_manifests is binary"):
+        apply_evolution(m, [MergeManifestsOp()], bump_version=False)
 
 
 # ── canonical near-collisions (CORE-MERGE-001) ──────────────────────────────
 #
-# Compose matched vertices and edges by raw name, so an overlay authored as
-# `order_line` beside a core `OrderLine` composed into two unrelated types with
+# Merge matched vertices and edges by raw name, so an overlay authored as
+# `order_line` beside a core `OrderLine` merged into two unrelated types with
 # the source data split between them and nothing raising. Names now collide
 # both exactly and when they key alike under `canonical_key`.
 
@@ -440,23 +440,19 @@ def _vertex_names(manifest: GraphManifest) -> set[str]:
 
 def test_a_canonical_near_collision_raises_by_default() -> None:
     """The defect itself: two spellings, no equivalence, previously silent."""
-    with pytest.raises(ComposeNameConflictError, match="same concept"):
-        compose_manifests(
-            _named("OrderLine"), _named("order_line"), ComposeManifestsOp()
-        )
+    with pytest.raises(MergeNameConflictError, match="same concept"):
+        merge_manifests(_named("OrderLine"), _named("order_line"), MergeManifestsOp())
 
 
 def test_a_trailing_plural_is_a_collision_too() -> None:
     """`canonical_key` folds the plural, and so must the check."""
-    with pytest.raises(ComposeNameConflictError):
-        compose_manifests(_named("Customer"), _named("Customers"), ComposeManifestsOp())
+    with pytest.raises(MergeNameConflictError):
+        merge_manifests(_named("Customer"), _named("Customers"), MergeManifestsOp())
 
 
 def test_the_message_names_both_spellings_and_the_ways_out() -> None:
-    with pytest.raises(ComposeNameConflictError) as excinfo:
-        compose_manifests(
-            _named("OrderLine"), _named("order_line"), ComposeManifestsOp()
-        )
+    with pytest.raises(MergeNameConflictError) as excinfo:
+        merge_manifests(_named("OrderLine"), _named("order_line"), MergeManifestsOp())
     message = str(excinfo.value)
     assert "'OrderLine' / 'order_line'" in message
     assert "VertexEquivalence" in message
@@ -467,12 +463,12 @@ def test_a_declared_equivalence_exempts_a_near_collision() -> None:
     """Raising is a prompt, not a wall.
 
     This is the whole point: the author is told to say what they mean, and
-    saying it composes cleanly under the unchanged default policy.
+    saying it merges cleanly under the unchanged default policy.
     """
-    composed = compose_manifests(
+    merged = merge_manifests(
         _named("OrderLine"),
         _named("order_line"),
-        ComposeManifestsOp(
+        MergeManifestsOp(
             vertex_equivalences=[
                 VertexEquivalence(
                     left="OrderLine", right="order_line", into="OrderLine"
@@ -480,25 +476,25 @@ def test_a_declared_equivalence_exempts_a_near_collision() -> None:
             ]
         ),
     )
-    assert _vertex_names(composed) == {"OrderLine"}
+    assert _vertex_names(merged) == {"OrderLine"}
 
 
 def test_prefix_right_keeps_a_near_collision_apart() -> None:
-    composed = compose_manifests(
+    merged = merge_manifests(
         _named("OrderLine"),
         _named("order_line"),
-        ComposeManifestsOp(name_conflict="prefix_right"),
+        MergeManifestsOp(name_conflict="prefix_right"),
     )
-    assert _vertex_names(composed) == {"OrderLine", "r_order_line"}
+    assert _vertex_names(merged) == {"OrderLine", "r_order_line"}
 
 
 def test_union_right_adopts_the_left_spelling() -> None:
-    composed = compose_manifests(
+    merged = merge_manifests(
         _named("OrderLine"),
         _named("order_line"),
-        ComposeManifestsOp(name_conflict="union_right"),
+        MergeManifestsOp(name_conflict="union_right"),
     )
-    assert _vertex_names(composed) == {"OrderLine"}
+    assert _vertex_names(merged) == {"OrderLine"}
 
 
 def test_union_right_rewrites_ingestion_too() -> None:
@@ -508,15 +504,15 @@ def test_union_right_rewrites_ingestion_too() -> None:
     at a vertex that no longer exists -- the same shape of silent breakage the
     check exists to prevent.
     """
-    composed = compose_manifests(
+    merged = merge_manifests(
         _named("OrderLine"),
         _named("order_line"),
-        ComposeManifestsOp(name_conflict="union_right"),
+        MergeManifestsOp(name_conflict="union_right"),
     )
-    assert composed.ingestion_model is not None
+    assert merged.ingestion_model is not None
     targets = {
         step.get("vertex")
-        for resource in composed.ingestion_model.resources
+        for resource in merged.ingestion_model.resources
         for step in resource.pipeline
         if isinstance(step, dict)
     }
@@ -524,11 +520,11 @@ def test_union_right_rewrites_ingestion_too() -> None:
 
 
 def test_relations_that_key_alike_collide() -> None:
-    with pytest.raises(ComposeNameConflictError, match="relation"):
-        compose_manifests(
+    with pytest.raises(MergeNameConflictError, match="relation"):
+        merge_manifests(
             _named("A", relation="placedBy"),
             _named("B", relation="placed_by"),
-            ComposeManifestsOp(),
+            MergeManifestsOp(),
         )
 
 
@@ -537,12 +533,12 @@ def test_an_exact_collision_still_reports_the_old_way() -> None:
     with pytest.raises(ValueError, match="vertex name collision") as excinfo:
         # Distinct resource names, so the vertex check is what fires: resources
         # are checked first and would otherwise mask it.
-        compose_manifests(
+        merge_manifests(
             _named("Order", resource="r_left"),
             _named("Order", resource="r_right"),
-            ComposeManifestsOp(),
+            MergeManifestsOp(),
         )
-    assert not isinstance(excinfo.value, ComposeNameConflictError)
+    assert not isinstance(excinfo.value, MergeNameConflictError)
 
 
 def test_resources_that_key_alike_still_compose() -> None:
@@ -563,9 +559,9 @@ def test_resources_that_key_alike_still_compose() -> None:
         edges=[],
         resources=[{"name": "order", "apply": [{"vertex": "B"}]}],
     )
-    composed = compose_manifests(left, right, ComposeManifestsOp())
-    assert composed.ingestion_model is not None
-    assert {r.name for r in composed.ingestion_model.resources} == {"orders", "order"}
+    merged = merge_manifests(left, right, MergeManifestsOp())
+    assert merged.ingestion_model is not None
+    assert {r.name for r in merged.ingestion_model.resources} == {"orders", "order"}
 
 
 def test_properties_that_key_alike_are_not_fused() -> None:
@@ -598,16 +594,16 @@ def test_properties_that_key_alike_are_not_fused() -> None:
         edges=[],
         resources=[{"name": "r_r", "apply": [{"vertex": "Party"}]}],
     )
-    composed = compose_manifests(
+    merged = merge_manifests(
         left,
         right,
-        ComposeManifestsOp(
+        MergeManifestsOp(
             vertex_equivalences=[
                 VertexEquivalence(left="Party", right="Party", into="Party")
             ]
         ),
     )
-    schema = composed.graph_schema
+    schema = merged.graph_schema
     assert schema is not None
     names = {f.name for f in schema.core_schema.vertex_config.vertices[0].properties}
     assert {"customer_email", "customerEmail"} <= names
@@ -645,15 +641,15 @@ def test_exact_name_properties_fuse_without_equivalence() -> None:
         edges=[],
         resources=[{"name": "r_r", "apply": [{"vertex": "B"}]}],
     )
-    composed = compose_manifests(
+    merged = merge_manifests(
         left,
         right,
-        ComposeManifestsOp(
+        MergeManifestsOp(
             vertex_equivalences=[VertexEquivalence(left="A", right="B", into="Person")]
         ),
         bump_version=False,
     )
-    schema = composed.graph_schema
+    schema = merged.graph_schema
     assert schema is not None
     person = next(
         v for v in schema.core_schema.vertex_config.vertices if v.name == "Person"
@@ -692,10 +688,10 @@ def test_disagreeing_into_on_shared_node_raises() -> None:
     from graflo.architecture.evolution import ClusterConflictError
 
     with pytest.raises(ClusterConflictError, match="claimed"):
-        compose_manifests(
+        merge_manifests(
             left,
             right,
-            ComposeManifestsOp(
+            MergeManifestsOp(
                 vertex_equivalences=[
                     VertexEquivalence(left="CA1", right="CB1", into="X"),
                     VertexEquivalence(left="CA1", right="CB2", into="X"),
@@ -766,10 +762,10 @@ def test_identity_alignments_apply_inside_compose() -> None:
             "by_org_id": ["org_id"],
         },
     )
-    composed = compose_manifests(
+    merged = merge_manifests(
         left,
         right,
-        ComposeManifestsOp(
+        MergeManifestsOp(
             vertex_equivalences=[
                 VertexEquivalence(left="Company", right="Org", into="Company")
             ],
@@ -777,8 +773,8 @@ def test_identity_alignments_apply_inside_compose() -> None:
         ),
         bump_version=False,
     )
-    assert composed.graph_schema is not None
-    vc = composed.graph_schema.core_schema.vertex_config
+    assert merged.graph_schema is not None
+    vc = merged.graph_schema.core_schema.vertex_config
     assert {"match_key", "local_key"} <= set(vc.property_names("Company"))
     assert vc.identity_fields("Company") == ["id"]
     assert {s.name for s in vc.secondary_identities("Company")} == {
@@ -790,10 +786,10 @@ def test_identity_alignments_apply_inside_compose() -> None:
 def test_an_equivalence_in_the_wrong_convention_says_what_to_use() -> None:
     """The likeliest authoring mistake gets a way out, not a dead end."""
     with pytest.raises(ValueError, match="denotes the same concept"):
-        compose_manifests(
+        merge_manifests(
             _named("OrderLine"),
             _named("order_line"),
-            ComposeManifestsOp(
+            MergeManifestsOp(
                 vertex_equivalences=[
                     VertexEquivalence(
                         left="order_line", right="order_line", into="order_line"
@@ -845,7 +841,7 @@ def test_nary_cluster_composes_schema_and_ingestion() -> None:
             {"name": "r_branch", "apply": [{"vertex": "Branch"}]},
         ],
     )
-    op = ComposeManifestsOp(
+    op = MergeManifestsOp(
         vertex_equivalences=[
             VertexEquivalence(
                 left=["Company", "Shop"],
@@ -856,7 +852,7 @@ def test_nary_cluster_composes_schema_and_ingestion() -> None:
         ],
         allow_merges=True,
     )
-    out = compose_manifests(left, right, op, bump_version=False)
+    out = merge_manifests(left, right, op, bump_version=False)
     schema = out.graph_schema
     assert schema is not None
     assert schema.core_schema.vertex_config.vertex_set == {"Company"}
@@ -914,7 +910,7 @@ def test_per_member_property_equivalence_maps() -> None:
         edges=[],
         resources=[{"name": "r_org", "apply": [{"vertex": "Org"}]}],
     )
-    op = ComposeManifestsOp(
+    op = MergeManifestsOp(
         vertex_equivalences=[
             VertexEquivalence(
                 left=["Company", "Shop"],
@@ -932,7 +928,7 @@ def test_per_member_property_equivalence_maps() -> None:
         ],
         allow_merges=True,
     )
-    out = compose_manifests(left, right, op, bump_version=False)
+    out = merge_manifests(left, right, op, bump_version=False)
     company = next(
         v
         for v in out.graph_schema.core_schema.vertex_config.vertices  # type: ignore[union-attr]
@@ -972,7 +968,7 @@ def test_relation_nary_collapse() -> None:
             {"name": "r_y", "apply": [{"vertex": "Y"}]},
         ],
     )
-    op = ComposeManifestsOp(
+    op = MergeManifestsOp(
         vertex_equivalences=[
             VertexEquivalence(left="P", right="X", into="P"),
             VertexEquivalence(left="Q", right="Y", into="Q"),
@@ -982,7 +978,7 @@ def test_relation_nary_collapse() -> None:
         ],
         allow_merges=True,
     )
-    out = compose_manifests(left, right, op, bump_version=False)
+    out = merge_manifests(left, right, op, bump_version=False)
     relations = {
         e.relation
         for e in out.graph_schema.core_schema.edge_config.edges  # type: ignore[union-attr]
@@ -1016,14 +1012,14 @@ def test_union_right_adopts_left_spelling_for_relations() -> None:
             {"name": "r_br", "apply": [{"vertex": "BR"}]},
         ],
     )
-    op = ComposeManifestsOp(
+    op = MergeManifestsOp(
         vertex_equivalences=[
             VertexEquivalence(left="A", right="AR", into="A"),
             VertexEquivalence(left="B", right="BR", into="B"),
         ],
         name_conflict="union_right",
     )
-    out = compose_manifests(left, right, op, bump_version=False)
+    out = merge_manifests(left, right, op, bump_version=False)
     relations = {
         e.relation
         for e in out.graph_schema.core_schema.edge_config.edges  # type: ignore[union-attr]
@@ -1053,13 +1049,13 @@ def test_undeclared_identity_disagreement_raises() -> None:
         edges=[],
         resources=[{"name": "r_r", "apply": [{"vertex": "Org"}]}],
     )
-    op = ComposeManifestsOp(
+    op = MergeManifestsOp(
         vertex_equivalences=[
             VertexEquivalence(left="Company", right="Org", into="Company")
         ]
     )
-    with pytest.raises(ComposeIdentityError, match="disagree"):
-        compose_manifests(left, right, op, bump_version=False)
+    with pytest.raises(MergeIdentityError, match="disagree"):
+        merge_manifests(left, right, op, bump_version=False)
 
 
 def test_side_identity_shorthand_lowers_to_one_funnel() -> None:
@@ -1087,7 +1083,7 @@ def test_side_identity_shorthand_lowers_to_one_funnel() -> None:
         edges=[],
         resources=[{"name": "r_r", "apply": [{"vertex": "Org"}]}],
     )
-    op = ComposeManifestsOp(
+    op = MergeManifestsOp(
         vertex_equivalences=[
             VertexEquivalence(
                 left="Company",
@@ -1100,7 +1096,7 @@ def test_side_identity_shorthand_lowers_to_one_funnel() -> None:
             )
         ]
     )
-    out = compose_manifests(left, right, op, bump_version=False)
+    out = merge_manifests(left, right, op, bump_version=False)
     company = next(
         v
         for v in out.graph_schema.core_schema.vertex_config.vertices  # type: ignore[union-attr]
@@ -1144,7 +1140,7 @@ def test_side_identity_order_inversion_raises() -> None:
         edges=[],
         resources=[{"name": "r_r", "apply": [{"vertex": "Org"}]}],
     )
-    op = ComposeManifestsOp(
+    op = MergeManifestsOp(
         vertex_equivalences=[
             VertexEquivalence(
                 left="Company",
@@ -1154,8 +1150,8 @@ def test_side_identity_order_inversion_raises() -> None:
             )
         ]
     )
-    with pytest.raises(ComposeIdentityError, match="inconsistent"):
-        compose_manifests(left, right, op, bump_version=False)
+    with pytest.raises(MergeIdentityError, match="inconsistent"):
+        merge_manifests(left, right, op, bump_version=False)
 
 
 def test_occupied_into_raises_through_compose() -> None:
@@ -1178,11 +1174,11 @@ def test_occupied_into_raises_through_compose() -> None:
         edges=[],
         resources=[{"name": "r_b", "apply": [{"vertex": "B"}]}],
     )
-    op = ComposeManifestsOp(
+    op = MergeManifestsOp(
         vertex_equivalences=[VertexEquivalence(left="A", right="B", into="Person")]
     )
     with pytest.raises(ClusterConflictError, match="not a member"):
-        compose_manifests(left, right, op, bump_version=False)
+        merge_manifests(left, right, op, bump_version=False)
 
 
 def test_a_demoted_key_keeps_its_declared_field_order() -> None:
@@ -1211,14 +1207,14 @@ def test_a_demoted_key_keeps_its_declared_field_order() -> None:
         edges=[],
         resources=[{"name": "r_org", "apply": [{"vertex": "Org"}]}],
     )
-    op = ComposeManifestsOp(
+    op = MergeManifestsOp(
         vertex_equivalences=[
             VertexEquivalence(
                 left="Company", right="Org", into="Company", identity=["company_id"]
             )
         ]
     )
-    out = compose_manifests(left, right, op, bump_version=False)
+    out = merge_manifests(left, right, op, bump_version=False)
     assert out.graph_schema is not None
     company = out.graph_schema.core_schema.vertex_config["Company"]
     assert {(s.name, tuple(s.fields)) for s in company.secondary_identities} == {
@@ -1249,12 +1245,12 @@ def test_compose_deduplicates_a_vertex_index_declared_on_both_sides() -> None:
         )
         return manifest
 
-    op = ComposeManifestsOp(
+    op = MergeManifestsOp(
         vertex_equivalences=[
             VertexEquivalence(left="Company", right="Org", into="Company")
         ]
     )
-    out = compose_manifests(
+    out = merge_manifests(
         _side("l", "Company"), _side("r", "Org"), op, bump_version=False
     )
     assert out.graph_schema is not None
@@ -1290,7 +1286,7 @@ def test_a_merge_chain_through_an_occupied_into_composes() -> None:
         edges=[],
         resources=[{"name": "r_right", "apply": [{"vertex": "Y"}, {"vertex": "W"}]}],
     )
-    op = ComposeManifestsOp(
+    op = MergeManifestsOp(
         vertex_equivalences=[
             VertexEquivalence(left=["X", "X2"], right="Y", into="Z", identity=["x_id"]),
             VertexEquivalence(left="Z", right="W", into="Q", identity=["z_id"]),
@@ -1298,12 +1294,62 @@ def test_a_merge_chain_through_an_occupied_into_composes() -> None:
         allow_merges=True,
         allow_observation_fusion=True,
     )
-    out = compose_manifests(left, right, op, bump_version=False)
+    out = merge_manifests(left, right, op, bump_version=False)
     assert out.graph_schema is not None
     vc = out.graph_schema.core_schema.vertex_config
     assert vc.vertex_set == {"Z", "Q"}
     assert set(vc.property_names("Q")) == {"z_id", "w_id"}
     assert set(vc.property_names("Z")) == {"x_id", "x2_id", "y_id"}
+
+
+def test_role_separated_members_compose_without_the_fusion_flag() -> None:
+    """{X, X2}~{Y} -> Z with X and X2 at one level under distinct roles.
+
+    The two steps store in distinct accumulator slots, so nothing fuses and the
+    merge needs only ``allow_merges``.
+    """
+
+    def _v(name: str, key: str) -> Vertex:
+        return Vertex(
+            name=name,
+            properties=[Field(name=key, type=FieldType.STRING)],
+            identity=[key],
+        )
+
+    left = _manifest(
+        name="left",
+        vertices=[_v("X", "x_id"), _v("X2", "x2_id")],
+        edges=[],
+        resources=[
+            {
+                "name": "r_left",
+                "apply": [
+                    {"vertex": "X", "role": "x"},
+                    {"vertex": "X2", "role": "x2"},
+                ],
+            }
+        ],
+    )
+    right = _manifest(
+        name="right",
+        vertices=[_v("Y", "y_id")],
+        edges=[],
+        resources=[{"name": "r_right", "apply": [{"vertex": "Y"}]}],
+    )
+    op = MergeManifestsOp(
+        vertex_equivalences=[
+            VertexEquivalence(left=["X", "X2"], right="Y", into="Z", identity=["x_id"])
+        ],
+        allow_merges=True,
+    )
+    out = merge_manifests(left, right, op, bump_version=False)
+    assert out.graph_schema is not None
+    assert out.graph_schema.core_schema.vertex_config.vertex_set == {"Z"}
+    steps = out.require_ingestion_model().resources[0].pipeline
+    assert [(s.get("vertex"), s.get("role")) for s in steps] == [
+        ("Z", "x"),
+        ("Z", "x2"),
+    ]
 
 
 def test_a_rename_chain_through_an_occupied_into_composes() -> None:
@@ -1328,7 +1374,7 @@ def test_a_rename_chain_through_an_occupied_into_composes() -> None:
         edges=[Edge(source="Y", target="W", relation="likes")],
         resources=[{"name": "r_right", "apply": [{"vertex": "Y"}, {"vertex": "W"}]}],
     )
-    op = ComposeManifestsOp(
+    op = MergeManifestsOp(
         vertex_equivalences=[
             VertexEquivalence(left="X", right="Y", into="Z"),
             VertexEquivalence(left="Z", right="W", into="Q"),
@@ -1337,7 +1383,7 @@ def test_a_rename_chain_through_an_occupied_into_composes() -> None:
             RelationEquivalence(left="knows", right="likes", into="knows")
         ],
     )
-    out = compose_manifests(left, right, op, bump_version=False)
+    out = merge_manifests(left, right, op, bump_version=False)
     assert out.graph_schema is not None
     assert out.graph_schema.core_schema.vertex_config.vertex_set == {"Z", "Q"}
     assert {e.edge_id for e in out.graph_schema.core_schema.edge_config.edges} == {
@@ -1348,7 +1394,7 @@ def test_a_rename_chain_through_an_occupied_into_composes() -> None:
 def test_prefix_right_terminates_when_the_right_name_is_already_prefixed() -> None:
     """``_prefixed`` is idempotent, so re-prefixing cannot break a tie.
 
-    Composing a manifest with itself is the ordinary way to hit this: every
+    Merging a manifest with itself is the ordinary way to hit this: every
     right-hand name collides, and any name already starting with ``r_``
     prefixes to itself. The pre-fix loop spun forever on it.
     """
@@ -1358,10 +1404,10 @@ def test_prefix_right_terminates_when_the_right_name_is_already_prefixed() -> No
         edges=[],
         resources=[{"name": "r_a", "apply": [{"vertex": "r_A"}]}],
     )
-    out = compose_manifests(
+    out = merge_manifests(
         left,
         left,
-        ComposeManifestsOp(name_conflict="prefix_right"),
+        MergeManifestsOp(name_conflict="prefix_right"),
         bump_version=False,
     )
     assert out.graph_schema is not None
@@ -1400,10 +1446,10 @@ def test_prefix_right_terminates_on_a_connector_already_prefixed() -> None:
     The connector path re-prefixed until free, and ``_prefixed`` is idempotent,
     so a right-hand connector already named ``r_…`` never became free.
     """
-    out = compose_manifests(
+    out = merge_manifests(
         _with_connector("r_c", side="left"),
         _with_connector("r_c", side="right"),
-        ComposeManifestsOp(name_conflict="prefix_right"),
+        MergeManifestsOp(name_conflict="prefix_right"),
         bump_version=False,
     )
     assert out.bindings is not None
@@ -1417,10 +1463,10 @@ def test_prefix_right_terminates_on_a_connector_already_prefixed() -> None:
 def test_union_right_rejects_a_connector_collision() -> None:
     """A connector is an address, so ``union_right`` behaves as ``error`` for it."""
     with pytest.raises(ValueError, match="connector name collision"):
-        compose_manifests(
+        merge_manifests(
             _with_connector("c", side="left"),
             _with_connector("c", side="right"),
-            ComposeManifestsOp(name_conflict="union_right"),
+            MergeManifestsOp(name_conflict="union_right"),
             bump_version=False,
         )
 
@@ -1446,14 +1492,14 @@ class TestComposedPropertyAttributes:
         )
 
     @staticmethod
-    def _op() -> ComposeManifestsOp:
-        return ComposeManifestsOp(
+    def _op() -> MergeManifestsOp:
+        return MergeManifestsOp(
             vertex_equivalences=[VertexEquivalence(left="A", right="B", into="C")]
         )
 
     def test_a_list_property_declared_on_both_sides_composes(self) -> None:
         tags = Field(name="tags", type=FieldType.LIST, item_type=FieldType.STRING)
-        composed = compose_manifests(
+        merged = merge_manifests(
             self._side("l", "A", tags),
             self._side("r", "B", tags.model_copy(deep=True)),
             self._op(),
@@ -1461,7 +1507,7 @@ class TestComposedPropertyAttributes:
         )
         vertex = next(
             v
-            for v in composed.graph_schema.core_schema.vertex_config.vertices
+            for v in merged.graph_schema.core_schema.vertex_config.vertices
             if v.name == "C"
         )
         merged = next(f for f in vertex.properties if f.name == "tags")
@@ -1478,7 +1524,7 @@ class TestComposedPropertyAttributes:
         left_field, right_field = (
             (grounded, plain) if grounded_side == "left" else (plain, grounded)
         )
-        composed = compose_manifests(
+        merged = merge_manifests(
             self._side("l", "A", left_field),
             self._side("r", "B", right_field),
             self._op(),
@@ -1486,7 +1532,7 @@ class TestComposedPropertyAttributes:
         )
         vertex = next(
             v
-            for v in composed.graph_schema.core_schema.vertex_config.vertices
+            for v in merged.graph_schema.core_schema.vertex_config.vertices
             if v.name == "C"
         )
         email = next(f for f in vertex.properties if f.name == "email")
@@ -1511,7 +1557,7 @@ class TestComposedPropertyAttributes:
                 resources=[{"name": f"r_{name}", "apply": [{"vertex": vertex}]}],
             )
 
-        composed = compose_manifests(
+        merged = merge_manifests(
             _side("l", "A", "person"),
             _side("r", "B", "human"),
             self._op(),
@@ -1519,7 +1565,7 @@ class TestComposedPropertyAttributes:
         )
         vertex = next(
             v
-            for v in composed.graph_schema.core_schema.vertex_config.vertices
+            for v in merged.graph_schema.core_schema.vertex_config.vertices
             if v.name == "C"
         )
         assert vertex.semantics is not None
@@ -1562,25 +1608,25 @@ class TestComposedProfileFold:
         return m
 
     @staticmethod
-    def _op() -> ComposeManifestsOp:
-        return ComposeManifestsOp(
+    def _op() -> MergeManifestsOp:
+        return MergeManifestsOp(
             vertex_equivalences=[VertexEquivalence(left="A", right="B", into="C")]
         )
 
     def test_a_declared_flavor_on_the_right_survives_an_undeclared_left(self) -> None:
         # An undeclared side defaults to Arango, and inheriting that default
         # would retarget every DDL emission at the backend nobody named.
-        composed = compose_manifests(
+        merged = merge_manifests(
             self._side("l", "A", DatabaseProfile()),
             self._side("r", "B", DatabaseProfile(db_flavor="neo4j")),
             self._op(),
             bump_version=False,
         )
-        assert str(composed.graph_schema.db_profile.db_flavor) == "neo4j"
+        assert str(merged.graph_schema.db_profile.db_flavor) == "neo4j"
 
     def test_two_declared_flavors_refuse_to_compose(self) -> None:
         with pytest.raises(ValueError, match="conflicting db_flavor"):
-            compose_manifests(
+            merge_manifests(
                 self._side("l", "A", DatabaseProfile(db_flavor="neo4j")),
                 self._side("r", "B", DatabaseProfile(db_flavor="tigergraph")),
                 self._op(),
@@ -1589,7 +1635,7 @@ class TestComposedProfileFold:
 
     def test_conflicting_target_namespaces_refuse_to_compose(self) -> None:
         with pytest.raises(ValueError, match="conflicting target_namespace"):
-            compose_manifests(
+            merge_manifests(
                 self._side("l", "A", DatabaseProfile(target_namespace="one")),
                 self._side("r", "B", DatabaseProfile(target_namespace="two")),
                 self._op(),
@@ -1597,7 +1643,7 @@ class TestComposedProfileFold:
             )
 
     def test_right_side_default_property_values_survive(self) -> None:
-        composed = compose_manifests(
+        merged = merge_manifests(
             self._side("l", "A", DatabaseProfile()),
             self._side(
                 "r",
@@ -1611,13 +1657,13 @@ class TestComposedProfileFold:
             self._op(),
             bump_version=False,
         )
-        defaults = composed.graph_schema.db_profile.default_property_values
+        defaults = merged.graph_schema.db_profile.default_property_values
         assert defaults is not None
         assert defaults.vertices.get("C", {}).get("email") == "unknown"
 
     def test_two_defaults_for_one_property_refuse_to_compose(self) -> None:
         with pytest.raises(ValueError, match="default_property_values"):
-            compose_manifests(
+            merge_manifests(
                 self._side(
                     "l",
                     "A",
@@ -1644,7 +1690,7 @@ class TestComposedProfileFold:
         # Keeping both is not an option: `add_vertex_index` collapses them on
         # the next resolution, so which survived would depend on ordering.
         with pytest.raises(ValueError, match="[Cc]onflicting index"):
-            compose_manifests(
+            merge_manifests(
                 self._side(
                     "l",
                     "A",
@@ -1688,18 +1734,18 @@ def test_union_right_unions_the_right_model_rather_than_dropping_it() -> None:
         edges=[],
         resources=[{"name": "r_right", "apply": [{"vertex": "order_line"}]}],
     )
-    composed = compose_manifests(
-        _named("OrderLine"), right, ComposeManifestsOp(name_conflict="union_right")
+    merged = merge_manifests(
+        _named("OrderLine"), right, MergeManifestsOp(name_conflict="union_right")
     )
-    assert composed.graph_schema is not None
-    vc = composed.graph_schema.core_schema.vertex_config
+    assert merged.graph_schema is not None
+    vc = merged.graph_schema.core_schema.vertex_config
     assert vc.vertex_set == {"OrderLine"}
     assert "qty" in vc.property_names("OrderLine")
 
 
 def test_union_right_synthesizes_a_cluster_for_a_near_collision() -> None:
     resolution = resolve_clusters(
-        ComposeManifestsOp(name_conflict="union_right"),
+        MergeManifestsOp(name_conflict="union_right"),
         left=_named("OrderLine"),
         right=_named("order_line"),
     )
@@ -1713,13 +1759,11 @@ def test_union_right_synthesizes_a_cluster_for_a_near_collision() -> None:
 
 
 def test_an_exact_collision_under_error_carries_its_completion() -> None:
-    with pytest.raises(
-        ComposeIncompleteError, match="vertex name collision"
-    ) as excinfo:
-        compose_manifests(
+    with pytest.raises(MergeIncompleteError, match="vertex name collision") as excinfo:
+        merge_manifests(
             _named("OrderLine"),
             _named("OrderLine", resource="r_other"),
-            ComposeManifestsOp(),
+            MergeManifestsOp(),
         )
     assert excinfo.value.completion.kind == "declare_equivalences"
     assert excinfo.value.completion.vertex_equivalences == (

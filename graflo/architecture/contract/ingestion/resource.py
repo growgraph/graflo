@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable, Collection
 from typing import Any
 
 from pydantic import AliasChoices, model_validator
@@ -60,30 +61,61 @@ def collect_vertex_names_from_pipeline(steps: list[Any]) -> set[str]:
     return names
 
 
-def step_produces_vertices(step: dict[str, Any]) -> set[str]:
+def step_produces_vertices(
+    step: dict[str, Any], *, known_vertices: Collection[str] | None = None
+) -> set[str]:
     """Vertex names a single (non-recursive) actor step *produces*.
 
     Production, not reference: an ``edge`` step names endpoints it looks up, so
     it is not counted. A ``vertex_router`` produces every type its ``type_map``
-    can select and every type its ``vertex_from_map`` projects.
+    can select and every type its ``vertex_from_map`` projects — its *explicit*
+    targets. A router also routes an unmapped discriminator value as-is, as the
+    class name, so with *known_vertices* (the schema's declared classes) it
+    produces every one of them by pass-through as well: that is how a router
+    without a ``type_map`` works at all, and the static picture must not say
+    it produces nothing.
     """
     normalized = normalize_actor_step(dict(step))
     step_type = normalized.get("type")
     if step_type == "vertex" and isinstance(normalized.get("vertex"), str):
         return {normalized["vertex"]}
     if step_type == "vertex_router":
-        names: set[str] = set()
-        type_map = normalized.get("type_map")
-        if isinstance(type_map, dict):
-            names |= {v for v in type_map.values() if isinstance(v, str)}
-        vertex_from_map = normalized.get("vertex_from_map")
-        if isinstance(vertex_from_map, dict):
-            names |= {k for k in vertex_from_map if isinstance(k, str)}
+        names = _router_explicit_targets(normalized)
+        if known_vertices is not None:
+            names |= set(known_vertices)
         return names
     return set()
 
 
-def find_vertex_producing_levels(steps: list[Any], vertex: str) -> list[list[int]]:
+def _router_explicit_targets(normalized: dict[str, Any]) -> set[str]:
+    names: set[str] = set()
+    type_map = normalized.get("type_map")
+    if isinstance(type_map, dict):
+        names |= {v for v in type_map.values() if isinstance(v, str)}
+    vertex_from_map = normalized.get("vertex_from_map")
+    if isinstance(vertex_from_map, dict):
+        names |= {k for k in vertex_from_map if isinstance(k, str)}
+    return names
+
+
+def _level_produces(level: list[Any], vertex: str) -> bool:
+    return any(
+        isinstance(step, dict) and vertex in step_produces_vertices(step)
+        for step in level
+    )
+
+
+def _level_has_router(level: list[Any]) -> bool:
+    return any(
+        isinstance(step, dict)
+        and normalize_actor_step(dict(step)).get("type") == "vertex_router"
+        for step in level
+    )
+
+
+def find_vertex_producing_levels(
+    steps: list[Any], vertex: str, *, known_vertices: Collection[str] | None = None
+) -> list[list[int]]:
     """Index paths of every pipeline level with a step producing *vertex*.
 
     A path indexes one level's steps per element, descending through ``descend``
@@ -94,14 +126,40 @@ def find_vertex_producing_levels(steps: list[Any], vertex: str) -> list[list[int
     because an actor reads its transform buffer at its own ``LocationIndex``
     with no ancestor fallback, so a derivation appended at the root is invisible
     to a vertex produced under a ``descend``.
+
+    Two tiers. Levels with an *explicit* producer — a ``vertex`` step or a
+    router whose table names the class — decide when any exist. Only when none
+    does, and *known_vertices* declares the class, every level holding a
+    ``vertex_router`` counts: the router routes the raw discriminator value
+    as the class name, which is the whole mechanism of a router without a
+    ``type_map``. An explicit table outranks pass-through so that adding one
+    dynamic router elsewhere never turns a resolved level ambiguous.
     """
+    explicit = _walk_levels(steps, lambda level: _level_produces(level, vertex))
+    if explicit or known_vertices is None or vertex not in known_vertices:
+        return explicit
+    return _walk_levels(steps, _level_has_router)
+
+
+def pipeline_has_vertex_router(steps: list[Any]) -> bool:
+    """Whether any level of *steps* holds a ``vertex_router``.
+
+    A router routes an unmapped discriminator value as the class name, so a
+    pipeline holding one can produce any class the schema declares — not only
+    the names its steps state. Anything scoping a schema to a resource by the
+    names its pipeline mentions must widen to every class when this is true,
+    or the router silently drops each record whose class it did not name.
+    """
+    return bool(_walk_levels(steps, _level_has_router))
+
+
+def _walk_levels(
+    steps: list[Any], matches: Callable[[list[Any]], bool]
+) -> list[list[int]]:
     found: list[list[int]] = []
 
     def walk(level: list[Any], path: list[int]) -> None:
-        if any(
-            isinstance(step, dict) and vertex in step_produces_vertices(step)
-            for step in level
-        ):
+        if matches(level):
             found.append(list(path))
         for index, step in enumerate(level):
             if not isinstance(step, dict):
@@ -239,7 +297,12 @@ class ResourceConfig(ConfigBaseModel):
     )
     merge_collections: list[str] = PydanticField(
         default_factory=list,
-        description="List of collection names to merge when writing to the graph.",
+        description=(
+            "Collection names whose documents fuse when written to the graph -- "
+            "several observations becoming one node, not two type declarations "
+            "becoming one. Named `merge_` because it is an authored contract key; "
+            "the vocabulary calls this sense `fuse`."
+        ),
     )
     extra_weights: list[ResourceExtraWeightEntry] = PydanticField(
         default_factory=list,

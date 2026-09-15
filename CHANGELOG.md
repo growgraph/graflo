@@ -5,6 +5,185 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+
+## [Unreleased]
+
+## [1.13.2]
+
+### Added
+
+- **`depth` and `direction` on `ProjectManifestOp`.** `keep_vertices` was a
+  literal list, so slicing out "`person` and whatever it touches" meant reading
+  the schema first and transcribing the answer into the op. `depth` turns
+  `keep_vertices` into *seeds* for an n-hop walk over the schema graph. One rule
+  covers every combination: let `E` be `keep_edges` when given and every declared
+  edge otherwise; survivors are the vertex types within `depth` hops of a seed
+  along `E` under `direction`, then `E` restricted to surviving endpoints. So the
+  result is the **induced** subgraph on the hop ball — an edge between two
+  neighbours survives although no walk needed it — and `keep_edges` *bounds* the
+  walk rather than being overridden by it. `depth: 0` (the default) is the
+  previous behaviour exactly, `induced_prune` still drops a seed left with no
+  surviving edge, and `depth > 0` without `keep_vertices` is rejected rather than
+  silently ignored. The cascade is unchanged: `apply_project_manifest` works off
+  removal sets, so a wider survivor set simply removes less.
+- **`SchemaGraph.schema_neighbors(edge_ids=...)` and `neighborhood_distances`.**
+  The walk is an edge-id allowlist away from what manifest projection needs
+  (`edge_relations` alone cannot separate two dyads sharing a relation name), and
+  the multi-seed union that `score_vertices` had open-coded is now a function
+  both callers share — so rank-then-budget schema context and `project_manifest`
+  cannot drift apart on direction handling, undirected edges or `hops=0`.
+
+- **`set_bindings` and `set_db_profile` ops.** The bindings block had no op at
+  all and the profile had ops only for its indexes, so `diff_manifests` reported
+  both as inexpressible — which meant a change set touching either could not
+  replay, a three-way merge could not carry it, and a merge that unioned two
+  bindings registries could not be recorded at all. Both ops replace their block
+  wholesale, which is what a diff needs to say; `set_db_profile` carries the
+  indexes too and is emitted *instead of* the index ops, never alongside them.
+  The cost is coarseness in a merge — one slot per block, so two independent
+  bindings edits conflict where granular connector ops would not.
+- **Root commits that name a tree.** `build_root_commit` records an artifact
+  that was not derived from anything the history holds — pushed to a registry,
+  seeded from a pack, or simply present. It carries no ops and no `tree_before`:
+  it asserts a tree rather than deriving one. Deliberately not "a diff from an
+  empty manifest", which is not constructible and which no op vocabulary can
+  produce for every block. `checkout` verifies the assertion, so a base that is
+  not that artifact fails loudly instead of silently starting every later commit
+  from the wrong state. Root ids are derived from the tree plus an optional
+  `scope`, so two lineages whose first version has identical content do not
+  collide.
+- **`graflo commit --root`** starts a new lineage instead of extending the head.
+  A store can hold several unrelated lineages, which is what merge joins.
+- **Merge records lineage.** `graflo merge -m LABEL --store DIR` resolves both
+  inputs to commits **by content address** — a manifest is its hash and a commit
+  records the tree it produced, so no extra flag is needed — and records the
+  result as a two-parent `merge` commit. The written manifest is stamped with
+  its parents, the recipe pointer and the commit that produced it, *before* it
+  is written, so provenance travels with the artifact. Off by default: without
+  `-m` the verb still writes only the manifest.
+- **`build_merge_recipe`** records how a merge was *declared* — the whole op,
+  including canonical maps and identity alignments, because a re-merge with only
+  the equivalences would rebuild a different manifest. It fills the
+  `kind="merge"` / `equivalences` / `name_conflict` fields `MergeRecipe` has
+  carried unused since it was written, and sets no `base`: there is no common
+  ancestor, which is the whole difference from a three-way merge.
+- **`find_commit_by_tree` / `build_merge_commit`** in a new
+  `architecture.evolution.merge_commit`, kept out of `merge.py` so the merge
+  algorithm stays pure — recording is a commit point's job, and a merge that
+  recorded its own lineage could not be run twice without inventing two
+  histories.
+- **`graflo canonical-check MAP --left manifest.yaml`** — report dangling canonical map entries against a manifest without merging; near-miss hint per entry. `--right`, `--json`, `--trim OUT.yaml`. Exit 1 on dangling entries, 2 on failure.
+- **`dangling_entries` / `trim_canonical_map` / `DanglingEntry`** on `graflo.architecture.evolution` — same check and trim from Python.
+- **`allow_dangling_entries`** on `CanonicalMap` and `MergeManifestsOp` — accept entries scoped to a side that match nothing there, dropping each with a log. Off by default.
+
+### Changed
+
+- **BREAKING — the binary manifest operation is `merge`; the three-way merge is
+  `merge3`.** The operation GraFlo called *compose* is what the
+  model-management literature its design cites (Rondo; Pottinger–Bernstein)
+  calls **Merge**, and what GraFlo called `merge_canonical_maps` is that
+  literature's **Compose**. The two were exactly inverted. They are swapped:
+    - `ComposeManifestsOp` → `MergeManifestsOp`, and the serialized
+      discriminator `op: compose_manifests` → `op: merge_manifests`.
+    - `compose_manifests` → `merge_manifests`; `evolution/compose.py` →
+      `evolution/merge.py`; `preview_compose` → `preview_merge`;
+      `Compose{Identity,NameConflict,Incomplete,CanonicalConflict}Error` →
+      `Merge*Error`; `ComposePreview` / `ComposeFinding` / `ComposeOutcome` →
+      `MergePreview` / `MergeFinding` / `MergeOutcome`.
+    - `merge_canonical_maps` → `compose_canonical_maps`, and
+      `_merge_name_maps` → `_compose_name_maps` — the other half of the
+      inversion. Renaming only one of the two would have left *two* things
+      called merge and the word `compose` unused.
+    - CLI: `graflo compose` → `graflo merge`, and the three-way `graflo merge`
+      → `graflo merge3`.
+    - Commit kinds: `compose` → `merge`, and the three-way `merge` → `merge3`.
+      `COMMIT_KINDS` is now `{root, edit, merge, merge3, revert}`.
+      `MergeRecipe.kind` `"compose"` → `"merge"`; the `"merge3"` recipe flavour
+      already spelled itself that way and is unchanged.
+    - Commit ids do **not** change: `compute_commit_id` hashes only the ops and
+      the parents. Only a merge recipe's `content_hash()` moves, because its
+      payload embeds the op document and therefore the discriminator.
+- **No alias for the old discriminator.** A discriminated union resolves its tag
+  before any validator runs, so `op: compose_manifests` cannot be intercepted
+  and re-tagged — it fails with *"Input tag … does not match any of the expected
+  tags"*. Op documents must have the `op:` line rewritten. This is a departure
+  from how `fuse_right` and `allow_row_fusion` were handled, and it is forced by
+  the discriminator rather than chosen.
+- **The three-way keeps its own names except where they collided** with the
+  model operation. `merge_three_way`, `find_merge_base`, `MergeResult`,
+  `MergeConflict`, `MergeError`, `re_merge` and `merge3.py` are unchanged.
+  Renamed: `MergePreview` → `Merge3Preview`, `build_merge_preview` →
+  `build_merge3_preview`, `plot/merge.py` → `plot/merge3.py` (with
+  `plot_merge_preview` → `plot_merge3_preview` and `build_merge_graph` →
+  `build_merge3_graph`), and the generic `build_merge_commit` →
+  `build_multi_parent_commit`. `docs/concepts/schema/manifest_evolution.md`
+  states the rule for reading a bare `merge`.
+- **Serialized preview values.** `MergeOutcome.status` `"composed"` →
+  `"merged"`; `MergeFinding.source` `"compose"` → `"merge"`; the `NodeKind`
+  member `"composed"` → `"merged"`, so preview node ids read `merged:Company`
+  rather than `composed:Company`.
+- **Internal vocabulary, where the word was wrong rather than inverted:**
+  `merge_field_lists` → `union_field_lists`, `_merged_registry` →
+  `_union_transforms`, `merge_default_property_values` →
+  `union_default_property_values`, `_merge_secondary_identities` →
+  `_union_secondary_identities`, `Edge.merge_duplicate_properties` →
+  `fold_duplicate_properties`, and `SchemaDiffer.validate_union_safety` →
+  `SchemaDiffer.conflicts`. Each of these unions or folds; none of them merges.
+- **`RelationType.COMPOSES` and `POST /registry/manifests/compose` are
+  unchanged.** They are artifact containment, not the model operation — and
+  after the swap they are the only remaining `compose` in the codebase besides
+  `compose_canonical_maps`.
+- **`Commit.ops` may be empty and `Commit.tree_before` may be `None`**, but only
+  together and only without parents. A commit with a parent that records no
+  operations claims a transition it cannot replay, and is still refused.
+- **`Commit.is_merge` and `Provenance.is_merge` are now `is_multi_parent`.** Both were
+  `len(parents) > 1`, which is true of a `merge` commit as well as a `merge3` one, so the
+  name asserted something the value did not test. Read `kind` to tell the two apart. This
+  renames a public property on both models.
+- **The document-fusion helpers say `fuse`.** `merge_doc_basis` → `fuse_doc_basis`,
+  `merge_doc` → `fuse_doc`, `_merge_vertices_for_edge` → `_fuse_vertices_for_edge`. These
+  fold several observations of one entity into one document — the `fuse` sense — and
+  nothing about them folds two declarations of a type, which is what `merge` names
+  everywhere else. `ResourceConfig.merge_collections` keeps its name: it is an authored
+  contract key, and its description now says which sense it carries.
+- **`_union_ingestion` → `_concat_ingestion`** (private). It concatenates two resource
+  lists; the colliding names were already resolved before it runs, so it never unioned by
+  name. `_union_schema`, `_concat_ingestion` and `_union_bindings` now carry docstrings
+  saying which level of the operation each one is.
+- **Dangling canonical map entries refused once per side** with every entry and a near-miss candidate, instead of stopping at the first. Dangling entries outrank `MergeIncompleteError` on the same side.
+- **Class rename propagates the old name into each router `type_map`** on that side (`{old: new}`) via canonical maps and merge relabel — so pass-through discriminator values keep routing after a rename.
+
+### Fixed
+
+- **The combining vocabulary is defined in one place.** "Words for combining things" is now
+  the single normative glossary for `merge` / `union` / `compose` / `fuse` / `collapse`;
+  its own opening line contradicted its table, and the ops table two screens above it
+  described `MergeManifestsOp` as a "binary union" — the usage the glossary forbids. The
+  `MergeManifestsOp`, `merge_vertex_models`, `merge_semantics` and `merge_field_semantics`
+  docstrings opened with the wrong verb and now open with the right one.
+- **Merge's dependence on side order is stated.** The union is commutative — every
+  container it assembles is sorted in the canonical form, so merging either way round
+  yields one content hash — and six preserved slots are not, all of them reached through
+  the merge of two declarations of one name. The disclaimer that said so was attached to
+  three-way merge, which is not the operator the cited work is about.
+- **The generic-model-management references say which operator is which.** GraFlo's
+  vocabulary now matches the literature: `merge` takes two models plus correspondences;
+  `compose_canonical_maps` composes two mappings.
+- **`is_revision_op` compared a class name as a string.** It is an `isinstance`
+  check now. The string form was one word away from `MergeVerticesOp` and
+  `MergeEdgesOp`, which *are* revision ops, so a missed edit would have reported
+  the wrong answer rather than failing.
+- **`_KINDS_BY_TYPE` was keyed on exception-class *name strings*,** and both
+  readers fall back rather than raising, so a stale key would have silently
+  misclassified every refusal it covers. It is keyed on the classes themselves;
+  the name index that the serialized `error_type` is looked up in is derived
+  from it, so the two cannot drift.
+- **Identity alignment over a `vertex_router` guards every derivation.** The single and list forms behind a router lowered unguarded, so the step ran on every document the router saw and the validator refused any sibling class declaring a canonical attribute name — which, for an all-classes router where every class carries `name`, refused the alignment outright. Unkeyed steps (scratch, coalesce and local-key steps included) now carry `when` on the discriminator values that route onto the class; the sibling refusal remains only where no guard can be derived (a plain `vertex` step for the class beside the router, or routers with different discriminators at one level).
+- **`remove_vertices` / `project_manifest` over a `vertex_router` trim the router instead of dropping its resource.** The pruner dropped any resource whose router table named a removed class, and judged a pass-through router (no `type_map`) by its runtime child actors — built lazily, so empty before ingestion — dropping that resource too and aborting with "would leave ingestion_model.resources empty". Ingestion is now trimmed step-wise: `vertex` / `edge` steps naming the class go, a router loses only its `type_map` / `vertex_from_map` entries for it, a `descend` stays while anything survives under it, and a resource is dropped only when nothing in it produces or references a surviving class. A resource with several `vertex` steps therefore loses only the step for the removed class. No router-level exclude list was added: removing the class from the schema already is the filter, since a router skips a discriminator value naming an undeclared class.
+- **Observation-fusion guard is slot-aware.** `merge_vertices`, `canonicalize` and `merge_manifests` judge fusion per accumulator slot — the same pipeline level *and* the same `role`, or both bare — which is what the runtime fuses on. Same-level steps with distinct `role`s (client/server, buyer/seller) and a router beside a bare step no longer trip it, and a class a level already produced twice before the merge is not attributed to it. The refusal names the slot and the members that would fuse, and points at `role` / `source_role` / `target_role` as the remedy.
+- **Identity alignment over a `vertex_router` with no `type_map`** resolves the producing level and gates each member by its own name. Routers now produce every class the schema declares; explicit steps outrank pass-through. `ensure_extracted_fields` widens all routers at the level.
+- **Runtime resource scope includes every class a router can emit**, not only names mentioned in steps — fixes skipped records after a partial `type_map` or rename.
+
 ## [1.13.1]
 
 ### Added
@@ -2178,7 +2357,6 @@ Package renamed from `graphcast` to `graflo`.
   - `type`: `dict` becomes `type`: `vertex`
   
     
-
 ### Added
 
 - `cli/plot_schema.py` became a standalone script available with the package installation
@@ -2195,7 +2373,6 @@ Package renamed from `graphcast` to `graflo`.
 ### Fixed
 
 - ***
-
 
 
 ## [0.12.0] - 2023-10
@@ -2271,9 +2448,4 @@ Package renamed from `graphcast` to `graflo`.
 
 [//]: # ()
 [//]: # (### Fixed)
-
-
-
-
-
 

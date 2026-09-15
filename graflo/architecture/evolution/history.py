@@ -77,10 +77,10 @@ class History(ConfigBaseModel):
             parent_id = commit.first_parent
             if parent_id is not None:
                 parent = by_id[parent_id]
-                if commit.tree_before != parent.tree:
+                if commit.tree_before is not None and commit.tree_before != parent.tree:
                     raise ValueError(
                         f"commit '{commit.id}' expects to start from tree "
-                        f"{commit.tree_before[:12]} but its first parent "
+                        f"{(commit.tree_before or '')[:12]} but its first parent "
                         f"'{parent_id}' produces {parent.tree[:12]}"
                     )
         return self
@@ -285,12 +285,27 @@ def checkout(
 
     current = base
     for commit in history.first_parent_path(commit_id):
+        if not commit.ops:
+            # A naming root asserts a tree rather than deriving one, so there is
+            # nothing to replay -- but the assertion is still checked, or a
+            # mismatched base would sail through and every later commit would
+            # verify against the wrong starting point.
+            if verify:
+                actual = manifest_hash(current)
+                if actual != commit.tree:
+                    raise CommitError(
+                        f"root commit '{commit.id}' names tree "
+                        f"{commit.tree[:12]} but the manifest hashes "
+                        f"{actual[:12]}; this base is not that artifact"
+                    )
+            continue
         if verify:
             actual = manifest_hash(current)
             if actual != commit.tree_before:
+                before = (commit.tree_before or "")[:12] or "nothing"
                 raise CommitError(
                     f"commit '{commit.id}' expects to start from tree "
-                    f"{commit.tree_before[:12]} but the manifest hashes "
+                    f"{before} but the manifest hashes "
                     f"{actual[:12]}; the base or an earlier commit has drifted"
                 )
         current = apply_evolution(
@@ -306,15 +321,44 @@ def checkout(
     return current
 
 
+def _first_parent_root(history: History, commit_id: str) -> str | None:
+    """The root the first-parent walk from *commit_id* starts at."""
+    path = history.first_parent_path(commit_id)
+    return path[0].id if path else None
+
+
 def verify_history(base: GraphManifest, history: History) -> list[str]:
     """Replay every head and report what fails, instead of raising on the first.
 
     Returns a list of human-readable problems -- empty when the whole DAG
     replays cleanly. Useful as a health check over a history that may have
     several heads, where ``checkout`` would refuse to pick one.
+
+    A merge joins two lineages, so a history can hold more than one root and
+    one ``base`` cannot replay both. A head descending from a different root is
+    reported as **not verifiable from this base** rather than as a failure --
+    and reported rather than skipped, because a head nobody checked is exactly
+    what a health check must not pass over in silence.
     """
     problems: list[str] = []
+    roots = {commit.id for commit in history.roots()}
+    base_root: str | None = None
+    if len(roots) > 1:
+        base_hash = manifest_hash(base)
+        reachable = [
+            commit.id
+            for commit in history.roots()
+            if commit.tree == base_hash or commit.tree_before == base_hash
+        ]
+        base_root = reachable[0] if len(reachable) == 1 else None
+
     for head in history.heads():
+        if base_root is not None and _first_parent_root(history, head.id) != base_root:
+            problems.append(
+                f"head {head.short()}: not verifiable from this base; it descends "
+                "from another root, so its own base is needed"
+            )
+            continue
         try:
             checkout(base, history, head.id)
         except CommitError as exc:

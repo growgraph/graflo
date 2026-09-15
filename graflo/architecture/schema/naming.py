@@ -31,7 +31,7 @@ PascalCase combined with one written in snake_case yields a graph carrying both
 them and nothing raising.
 
 Both combining paths now compare on :func:`canonical_key`:
-``compose_manifests`` treats two spellings of one concept as a name collision
+``merge_manifests`` treats two spellings of one concept as a name collision
 and applies its ``name_conflict`` policy to them, and three-way merge keys every
 slot on the canonical form so the two sides conflict rather than diverging.
 
@@ -277,7 +277,7 @@ def canonical_key(name: str) -> tuple[str, ...]:
     ``("customer",)``; ``OrderLine``, ``order_line`` and ``orderLine`` all key
     to ``("order", "line")``.
 
-    **This is what merges must compare on.** Schema composition — GraFlo's
+    **This is what merges must compare on.** Schema merge — GraFlo's
     evolution ops, and any agent extending a stored manifest — matches vertices
     and edges *by name*. Two manifests authored under different conventions
     therefore merge into a graph holding both ``Customer`` and ``customer`` as

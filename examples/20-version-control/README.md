@@ -26,13 +26,13 @@ deployment of it.
 ```
 
 The shared commit matters: without a common ancestor there is nothing to merge
-*against*, and combining two unrelated lineages is compose, not merge.
+*against*, and combining two unrelated lineages is merge, not merge.
 
 ## Why each branch changes two things
 
 Each branch re-keys the vertex **and** adds a property the other does not
 contest. That is not padding. If the identity were the only difference, taking
-one side would reproduce that side exactly, and `build_merge_commit` would
+one side would reproduce that side exactly, and `build_multi_parent_commit` would
 rightly refuse — a commit that moves nothing is a lie about history. With both,
 the merge is a real merge: one side's decision wins the contested slot, and
 *both* sides' uncontested work survives.
@@ -132,7 +132,7 @@ from the shell.
 
 ## Related
 
-- Example 19 — composing two *unrelated* manifests by declared equivalence,
+- Example 19 — merging two *unrelated* manifests by declared equivalence,
   which is the operation to reach for when there is no common ancestor.
 - Example 17 — identity funnels, for when the right answer is "whichever key
   this record actually carries" rather than one side winning.

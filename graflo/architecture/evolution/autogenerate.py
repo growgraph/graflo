@@ -71,6 +71,8 @@ from .ops import (
     RenameVertexPropertiesOp,
     RenameVerticesOp,
     ReplaceIdentityOp,
+    SetBindingsOp,
+    SetDbProfileOp,
     SetEdgeDirectedOp,
     SetEdgeSemanticsOp,
     SetFieldSemanticsOp,
@@ -128,7 +130,7 @@ class RenameHints(ConfigBaseModel):
         validate_rename_map_is_injective(
             self.resources,
             kind="rename hint: resources",
-            merge_hint="ComposeManifestsOp with explicit resource_renames",
+            merge_hint="MergeManifestsOp with explicit resource_renames",
         )
         for vertex_name, field_renames in self.vertex_properties.items():
             validate_rename_map_is_injective(
@@ -168,9 +170,14 @@ def diff_manifests(
     ops += _edge_property_ops(base, target, hints, warnings)
     ops += _identity_ops(base, target, hints, warnings)
     ops += _semantics_ops(base, target, hints)
-    ops += _index_ops(base, target, hints)
+    profile_replaced = _profile_needs_replacing(base, target)
+    if not profile_replaced:
+        # A profile replacement carries the indexes too, so emitting both would
+        # be redundant and order-sensitive.
+        ops += _index_ops(base, target, hints)
     ops += _resource_ops(base, target, hints, warnings)
     ops += _removal_ops(base, target, hints)
+    ops += _block_ops(base, target, profile_replaced=profile_replaced)
 
     _warn_unexpressed(base, target, warnings, hints)
     return ops, warnings
@@ -722,6 +729,58 @@ def _removal_ops(
     return ops
 
 
+def _profile_needs_replacing(base: GraphManifest, target: GraphManifest) -> bool:
+    """Whether the profile differs anywhere the index ops cannot reach."""
+    base_profile, target_profile = _profile(base), _profile(target)
+    if base_profile is None or target_profile is None:
+        return False
+    return bool(
+        _profile_differences_outside_the_index_ops(base_profile, target_profile)
+    )
+
+
+def _block_ops(
+    base: GraphManifest, target: GraphManifest, *, profile_replaced: bool
+) -> list[ManifestOp]:
+    """Set the whole ``db_profile`` / ``bindings`` block to the target's.
+
+    Emitted **last**, after the removal cascades. Those cascades prune profile
+    and bindings entries that referenced a removed vertex, so a block set
+    earlier would be partly undone by them; set afterwards it lands on exactly
+    the target's block whatever the cascade did.
+    """
+    ops: list[ManifestOp] = []
+
+    if profile_replaced:
+        target_profile = _profile(target)
+        if target_profile is not None:
+            ops.append(SetDbProfileOp(profile=target_profile.model_copy(deep=True)))
+
+    if _bindings_differ(base, target):
+        ops.append(
+            SetBindingsOp(
+                bindings=(
+                    target.bindings.model_copy(deep=True)
+                    if target.bindings is not None
+                    else None
+                )
+            )
+        )
+
+    return ops
+
+
+def _bindings_differ(base: GraphManifest, target: GraphManifest) -> bool:
+    if (base.bindings is None) != (target.bindings is None):
+        return True
+    return (
+        base.bindings is not None
+        and target.bindings is not None
+        and base.bindings.to_minimal_canonical_dict()
+        != target.bindings.to_minimal_canonical_dict()
+    )
+
+
 def _warn_unexpressed(
     base: GraphManifest,
     target: GraphManifest,
@@ -733,27 +792,6 @@ def _warn_unexpressed(
         target.ingestion_model is None
     ):
         warnings.append("the ingestion block was removed; no op expresses that")
-
-    base_profile, target_profile = _profile(base), _profile(target)
-    if base_profile is not None and target_profile is not None:
-        differing = _profile_differences_outside_the_index_ops(
-            base_profile, target_profile
-        )
-        if differing:
-            warnings.append(
-                f"db_profile differs in {differing}; no op expresses that, and "
-                "it is part of the content hash"
-            )
-
-    if (base.bindings is None) != (target.bindings is None):
-        warnings.append("the bindings block was added or removed; no op expresses that")
-    elif (
-        base.bindings is not None
-        and target.bindings is not None
-        and base.bindings.to_minimal_canonical_dict()
-        != target.bindings.to_minimal_canonical_dict()
-    ):
-        warnings.append("the bindings block differs; no op expresses bindings edits")
 
 
 def _profile_differences_outside_the_index_ops(

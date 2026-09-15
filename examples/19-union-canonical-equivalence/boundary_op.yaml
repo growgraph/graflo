@@ -5,7 +5,7 @@
 # or declared here under `canonical_maps`) names the composed class Company.
 # The identity alignment build_union.py declares in Python is replaced by a
 # declared natural key, which is enough for the shell recipe.
-op: compose_manifests
+op: merge_manifests
 allow_merges: true
 vertex_equivalences:
 -   left: [Firm, Shop]

@@ -10,7 +10,6 @@ from graflo.architecture.contract.ingestion import IngestionModel
 from graflo.architecture.contract.ingestion.steps.normalize import normalize_actor_step
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.graph_types import EdgeId
-from graflo.architecture.pipeline.runtime.actor import ActorWrapper
 from graflo.architecture.schema import Schema
 from graflo.architecture.schema.core import CoreSchema
 from graflo.architecture.schema.database_features import DatabaseProfile
@@ -65,10 +64,10 @@ from .ops import (
     AddVerticesOp,
     CanonicalizeOp,
     ChangeFieldTypesOp,
-    ComposeManifestsOp,
     EnsureExtractedFieldsOp,
     ManifestOp,
     MergeEdgesOp,
+    MergeManifestsOp,
     MergeVerticesOp,
     ProjectManifestOp,
     RemoveEdgeIndexesOp,
@@ -88,6 +87,8 @@ from .ops import (
     ReplaceIdentityOp,
     RetargetEdgesOp,
     SanitizeOp,
+    SetBindingsOp,
+    SetDbProfileOp,
     SetEdgeDirectedOp,
     SetEdgeSemanticsOp,
     SetFieldSemanticsOp,
@@ -102,6 +103,7 @@ from .rewrite import (
     rewrite_remove_edge_ids_in_pipeline,
     rewrite_remove_relations_in_pipeline,
     rewrite_remove_vertex_properties_in_pipeline,
+    rewrite_remove_vertices_in_pipeline,
     rewrite_vertex_field_names_in_pipeline,
     rewrite_vertex_names_in_pipeline,
     rewrite_vertex_names_in_value,
@@ -121,38 +123,45 @@ def _revalidate_db_profile(profile: DatabaseProfile) -> DatabaseProfile:
     return DatabaseProfile.model_validate(profile.to_dict(skip_defaults=False))
 
 
-def _actor_wrapper_mentions_removed(wrapper: Any, removed: set[str]) -> bool:
-    return bool(wrapper.actor.references_vertices() & removed)
-
-
 def _prune_ingestion_for_removed_vertices(
-    im: IngestionModel, removed: set[str]
+    im: IngestionModel, removed: set[str], *, surviving: set[str]
 ) -> None:
-    """Drop or trim resources that reference removed vertex names."""
-    to_drop: list[Any] = []
-    for resource in list(im.resources):
-        if pipeline_mentions_any_vertex(resource.pipeline, removed):
-            to_drop.append(resource)
-            continue
-        root = ActorWrapper(*resource.pipeline)
-        if _actor_wrapper_mentions_removed(root, removed):
-            to_drop.append(resource)
-            continue
-        root.remove_descendants_if(
-            lambda w: _actor_wrapper_mentions_removed(w, removed)
-        )
-        if not any(a.references_vertices() for a in root.collect_actors()):
-            to_drop.append(resource)
+    """Trim each resource step-wise; drop one only when nothing in it is left.
 
-    for r in to_drop:
-        im.resources.remove(r)
+    A resource survives while its pipeline still produces or references a
+    surviving class — and a ``vertex_router`` produces every class the schema
+    still declares, table or no table, so it keeps routing the rest. Runtime
+    actors are no oracle here: a router builds its children lazily, so before
+    ingestion it references nothing.
+    """
+    from graflo.architecture.contract.ingestion.resource import (
+        Resource,
+        pipeline_has_vertex_router,
+    )
 
-    for i, r in enumerate(list(im.resources)):
-        new_mc = [c for c in r.merge_collections if c not in removed]
-        if new_mc != list(r.merge_collections):
-            im.resources[i] = r.model_copy(
-                update={"merge_collections": new_mc}, deep=True
-            )
+    def _names_removed(spec: Any) -> bool:
+        edge_id = _edge_id_from_resource_spec(spec)
+        return edge_id is not None and bool({edge_id[0], edge_id[1]} & removed)
+
+    resources: list[Resource] = []
+    for resource in im.resources:
+        pipeline = rewrite_remove_vertices_in_pipeline(resource.pipeline, removed)
+        if not (
+            pipeline_mentions_any_vertex(pipeline, surviving)
+            or pipeline_has_vertex_router(pipeline)
+        ):
+            continue
+        payload = resource.to_dict(skip_defaults=False)
+        payload["pipeline"] = pipeline
+        payload["merge_collections"] = [
+            c for c in resource.merge_collections if c not in removed
+        ]
+        for key in ("infer_edge_only", "infer_edge_except", "extra_weights"):
+            specs = payload.get(key)
+            if isinstance(specs, list):
+                payload[key] = [spec for spec in specs if not _names_removed(spec)]
+        resources.append(Resource.model_validate(payload))
+    im.resources = resources
 
     if not im.resources:
         raise ValueError(
@@ -264,7 +273,11 @@ def apply_remove_vertices(manifest: GraphManifest, op: RemoveVerticesOp) -> None
     schema.db_profile = _revalidate_db_profile(schema.db_profile)
 
     if manifest.ingestion_model is not None:
-        _prune_ingestion_for_removed_vertices(manifest.ingestion_model, removed)
+        _prune_ingestion_for_removed_vertices(
+            manifest.ingestion_model,
+            removed,
+            surviving=set(core.vertex_config.vertex_set),
+        )
         manifest.ingestion_model = IngestionModel.model_validate(
             manifest.ingestion_model.to_dict(skip_defaults=False)
         )
@@ -346,42 +359,69 @@ def _rewrite_ingestion_for_merge(im: IngestionModel, mapping: dict[str, str]) ->
     im.resources = new_resources
 
 
-def _merged_name_step_counts(
-    steps: list[Any], merged: str, *, path: str = "pipeline"
+def _fused_slots(
+    steps: list[Any], *, merged: str, mapping: dict[str, str], path: str = "pipeline"
 ) -> list[str]:
-    """Paths of pipeline levels where *merged* is produced by more than one step.
+    """Accumulator slots of a *pre-merge* pipeline where *merged* would fuse.
 
-    A level producing the merged name twice means one source document yielded both
-    of the pre-merge types. After the merge they share an accumulator slot, so
-    ``assemble`` merges them into a single node — two real-world entities become
-    one. That is almost never what a type merge was meant to do.
+    The runtime never fuses by level: a vertex step stores its observation at
+    ``lindex.extend((role, 0))`` when it carries a ``role`` and at the bare
+    ``lindex`` otherwise, a router always at ``(role or type_field, 0)``, and
+    assembly merges one ``(vertex, lindex)`` bucket at a time. So two steps at
+    one level share a slot only when their roles agree (or both are bare).
+
+    A slot is reported when it holds more than one producing step *and* those
+    steps came from more than one pre-merge name: one source document then
+    yields both members, and after the merge they share the bucket, so
+    ``assemble`` folds them into a single node — two real-world entities
+    become one. A slot that already repeated a single name is pre-existing
+    behaviour, not the merge's doing, and a lone router emits at most one
+    vertex per document, so neither is a fusion.
     """
     hits: list[str] = []
-    produced = 0
+    slots: dict[str | None, list[set[str]]] = {}
     for index, step in enumerate(steps):
         if not isinstance(step, dict):
             continue
         normalized = normalize_actor_step(dict(step))
         step_type = normalized.get("type")
         if step_type == "vertex":
-            if normalized.get("vertex") == merged:
-                produced += 1
+            name = normalized.get("vertex")
+            if isinstance(name, str) and mapping.get(name, name) == merged:
+                slots.setdefault(normalized.get("role"), []).append({name})
         elif step_type == "vertex_router":
             type_map = normalized.get("type_map")
-            if isinstance(type_map, dict) and any(
-                value == merged for value in type_map.values()
-            ):
-                produced += 1
+            if isinstance(type_map, dict):
+                members = {
+                    value
+                    for value in type_map.values()
+                    if isinstance(value, str) and mapping.get(value, value) == merged
+                }
+            else:
+                # No type_map: the router can emit every declared class.
+                members = {merged}
+            if members:
+                slot = normalized.get("role") or normalized.get("type_field")
+                slots.setdefault(slot, []).append(members)
         elif step_type == "descend":
             sub = normalized.get("pipeline")
             if isinstance(sub, list):
                 hits.extend(
-                    _merged_name_step_counts(
-                        sub, merged, path=f"{path}[{index}].pipeline"
+                    _fused_slots(
+                        sub,
+                        merged=merged,
+                        mapping=mapping,
+                        path=f"{path}[{index}].pipeline",
                     )
                 )
-    if produced > 1:
-        hits.append(f"{path} ({produced} steps produce {merged!r})")
+    for slot, producers in slots.items():
+        members = sorted(set().union(*producers))
+        if len(producers) > 1 and len(members) > 1:
+            label = "<bare>" if slot is None else repr(slot)
+            hits.append(
+                f"{path} (slot {label}: {len(producers)} steps produce "
+                f"{merged!r} from {members})"
+            )
     return hits
 
 
@@ -389,14 +429,18 @@ def _describe_merge_impact(
     manifest: GraphManifest,
     *,
     before_edges: list[Edge],
+    before_resources: list[Any],
     merged: str,
     mapping: dict[str, str],
 ) -> tuple[list[str], list[str], list[str]]:
-    """Return ``(self_relations, fused_levels, advisories)`` for a completed merge.
+    """Return ``(self_relations, fused_slots, advisories)`` for a completed merge.
 
     Everything here is invisible in the manifest diff but changes what ingestion
     emits, which is why the merge reports it rather than leaving it to be
-    discovered against a populated database.
+    discovered against a populated database. ``before_edges`` and
+    ``before_resources`` are the pre-merge schema edges and resources: fusion
+    is judged on which *members* land in one slot, and after the relabel the
+    pipeline no longer says which member a step produced.
     """
     self_relations = sorted(
         f"({edge.source}, {edge.target}, {edge.relation}) -> "
@@ -409,12 +453,11 @@ def _describe_merge_impact(
     )
 
     fused_levels: list[str] = []
-    if manifest.ingestion_model is not None:
-        for resource in manifest.ingestion_model.resources:
-            fused_levels.extend(
-                f"{resource.name}: {hit}"
-                for hit in _merged_name_step_counts(resource.pipeline, merged)
-            )
+    for resource in before_resources:
+        fused_levels.extend(
+            f"{resource.name}: {hit}"
+            for hit in _fused_slots(resource.pipeline, merged=merged, mapping=mapping)
+        )
 
     advisories: list[str] = []
     schema = manifest.graph_schema
@@ -472,14 +515,22 @@ def apply_merge_vertices(
     apply_vertex_merge_to_db_profile(schema.db_profile, sset, into)
     schema.db_profile = _revalidate_db_profile(schema.db_profile)
 
+    before_resources: list[Any] = []
     if manifest.ingestion_model is not None:
+        # The rewrite rebuilds the resource list from dicts and never mutates
+        # the old Resource objects, so holding them keeps the pre-merge view.
+        before_resources = list(manifest.ingestion_model.resources)
         _rewrite_ingestion_for_merge(manifest.ingestion_model, m)
         manifest.ingestion_model = IngestionModel.model_validate(
             manifest.ingestion_model.to_dict(skip_defaults=False)
         )
 
     self_relations, fused_levels, advisories = _describe_merge_impact(
-        manifest, before_edges=before_edges, merged=into, mapping=m
+        manifest,
+        before_edges=before_edges,
+        before_resources=before_resources,
+        merged=into,
+        mapping=m,
     )
     if self_relations and not op.allow_self_relations:
         raise ValueError(
@@ -493,10 +544,12 @@ def apply_merge_vertices(
     if fused_levels and not op.allow_observation_fusion:
         raise ValueError(
             f"merge_vertices: merging {sorted(sset)} into {into!r} leaves pipeline "
-            f"levels producing {into!r} more than once: {fused_levels}. One source "
-            "document yielded both types, so the merged observations fuse into a "
-            "single node. Split the resource, or set allow_observation_fusion=true "
-            "if fusing them is the intent."
+            f"slots producing {into!r} more than once: {fused_levels}. Steps at "
+            "one level share an accumulator slot unless they carry distinct "
+            "`role`s, so one document that yields both fuses them into a single "
+            "node. Give each step its own `role` (and address it from the edge "
+            "with `source_role` / `target_role`), split the resource, or set "
+            "allow_observation_fusion=true if fusing them is the intent."
         )
     for advisory in advisories:
         logger.warning("merge_vertices: %s", advisory)
@@ -740,9 +793,20 @@ def apply_canonicalize(manifest: GraphManifest, op: CanonicalizeOp) -> None:
             )
 
         advisories: list[str] = []
+        # `manifest` is untouched until the swap below, so its resources are
+        # the pre-relabel view the fusion check needs.
+        before_resources: list[Any] = (
+            list(manifest.ingestion_model.resources)
+            if manifest.ingestion_model is not None
+            else []
+        )
         for target in merged_targets:
             self_relations, fused_levels, target_advisories = _describe_merge_impact(
-                work, before_edges=before_edges, merged=target, mapping=vertex_map
+                work,
+                before_edges=before_edges,
+                before_resources=before_resources,
+                merged=target,
+                mapping=vertex_map,
             )
             sources = sorted(m for m in vertex_groups[target] if m != target)
             if self_relations and not op.allow_self_relations:
@@ -757,11 +821,13 @@ def apply_canonicalize(manifest: GraphManifest, op: CanonicalizeOp) -> None:
             if fused_levels and not op.allow_observation_fusion:
                 raise ValueError(
                     f"canonicalize: merging {sources} into {target!r} leaves "
-                    f"pipeline levels producing {target!r} more than once: "
-                    f"{fused_levels}. One source document yielded both types, so "
-                    "the merged observations fuse into a single node. Split the "
-                    "resource, or set allow_observation_fusion=true if fusing "
-                    "them is the intent."
+                    f"pipeline slots producing {target!r} more than once: "
+                    f"{fused_levels}. Steps at one level share an accumulator "
+                    "slot unless they carry distinct `role`s, so one document "
+                    "that yields both fuses them into a single node. Give each "
+                    "step its own `role` (and address it from the edge with "
+                    "`source_role` / `target_role`), split the resource, or set "
+                    "allow_observation_fusion=true if fusing them is the intent."
                 )
             advisories.extend(a for a in target_advisories if a not in advisories)
         for advisory in advisories:
@@ -796,7 +862,7 @@ def relabel_vertex_fields(vertex: Vertex, renames: Mapping[str, str]) -> Vertex:
     That is not a shortcut -- ``_check_property_renames`` has already refused a
     genuine rename collision by then, naming it as one. Appending instead would
     hand :meth:`Vertex.set_identity` two fields of one name, and the
-    ``merge_field_lists`` it runs would report a *type conflict* for what is
+    ``union_field_lists`` it runs would report a *type conflict* for what is
     really a collision, misclassified and wrapped by pydantic besides.
 
     Pure: the argument is untouched, and the result is built in one
@@ -1305,7 +1371,7 @@ def _rename_relations_inplace(
     """
     # `_apply_rename_entities` already rewrites the db_profile relation keys, and it
     # replaces `manifest.graph_schema` wholesale — so the profile must not be renamed
-    # a second time here (a chained map like {r1: r2, r2: r3} would compose with
+    # a second time here (a chained map like {r1: r2, r2: r3} would merge with
     # itself and take the profile to r3 while the schema stopped at r2), and the
     # schema has to be re-read afterwards rather than captured before.
     _apply_rename_entities(manifest, edge_map=relation_map)
@@ -1779,7 +1845,7 @@ def apply_add_inverse_edges(manifest: GraphManifest, op: AddInverseEdgesOp) -> N
 def apply_sanitize(manifest: GraphManifest, op: SanitizeOp) -> None:
     """Apply DB-flavor-specific sanitization to *manifest* in place.
 
-    Composes:
+    Merges:
 
     1. Storage-name sanitization on :class:`DatabaseProfile`.
     2. Reserved-word vertex field renames (via ``apply_rename_vertex_properties``).
@@ -1833,10 +1899,10 @@ def apply_sanitize(manifest: GraphManifest, op: SanitizeOp) -> None:
 
 def _dispatch_op(manifest: GraphManifest, op: Any) -> None:
     """Dispatch a single evolution op to its in-place apply function."""
-    if isinstance(op, ComposeManifestsOp):
+    if isinstance(op, MergeManifestsOp):
         raise ValueError(
-            "compose_manifests is binary; use "
-            "graflo.architecture.evolution.compose_manifests(left, right, op)"
+            "merge_manifests is binary; use "
+            "graflo.architecture.evolution.merge_manifests(left, right, op)"
         )
     if isinstance(op, RemoveVerticesOp):
         apply_remove_vertices(manifest, op)
@@ -1922,6 +1988,14 @@ def _dispatch_op(manifest: GraphManifest, op: Any) -> None:
         from .physical import apply_set_edge_directed
 
         apply_set_edge_directed(manifest, op)
+    elif isinstance(op, SetBindingsOp):
+        from .physical import apply_set_bindings
+
+        apply_set_bindings(manifest, op)
+    elif isinstance(op, SetDbProfileOp):
+        from .physical import apply_set_db_profile
+
+        apply_set_db_profile(manifest, op)
     elif isinstance(op, SetVertexSemanticsOp):
         from .semantics import apply_set_vertex_semantics
 
@@ -1965,8 +2039,8 @@ def apply_manifest_ops_inplace(
     Does not copy the manifest, bump schema version, or call :meth:`GraphManifest.finish_init`.
     Callers that need re-validation after mutation should invoke ``finish_init`` themselves.
 
-    ``ComposeManifestsOp`` is rejected at dispatch — use
-    :func:`~graflo.architecture.evolution.compose.compose_manifests` instead.
+    ``MergeManifestsOp`` is rejected at dispatch — use
+    :func:`~graflo.architecture.evolution.merge.merge_manifests` instead.
     """
     for op in ops:
         _dispatch_op(manifest, op)
@@ -1986,8 +2060,8 @@ def apply_evolution(
     Compare before/after contract identity with :func:`graflo.migrate.io.manifest_hash`
     (stable hash over schema, ingestion_model, and bindings blocks).
 
-    ``ComposeManifestsOp`` is rejected at dispatch — use
-    :func:`~graflo.architecture.evolution.compose.compose_manifests` instead.
+    ``MergeManifestsOp`` is rejected at dispatch — use
+    :func:`~graflo.architecture.evolution.merge.merge_manifests` instead.
     """
     out = manifest.model_copy(deep=True)
 

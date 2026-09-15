@@ -33,7 +33,7 @@ from graflo.architecture.evolution import (
     History,
     MergeRecipeRef,
     apply_evolution,
-    build_merge_commit,
+    build_multi_parent_commit,
     build_recipe,
     checkout,
     describe_slot,
@@ -109,7 +109,7 @@ def main(plot_dir: Path | None, take: str, advance_left: bool, store: Path) -> N
     if base_id is None:
         raise click.ClickException(
             "the two heads share no ancestor; unrelated lineages are joined by "
-            "compose, not by merge"
+            "merge, not by merge"
         )
     click.echo(f"base  : {base_id[:8]}\n")
 
@@ -179,7 +179,7 @@ def main(plot_dir: Path | None, take: str, advance_left: bool, store: Path) -> N
     click.echo(f"  hash      : {manifest_hash(merged)[:12]}")
 
     # ── the record ──────────────────────────────────────────────────────────
-    commit = build_merge_commit(
+    commit = build_multi_parent_commit(
         left_state,
         merged,
         parents=[left_commit.id, right_commit.id],
@@ -222,11 +222,11 @@ def _plot(
     merge_base: str,
 ) -> None:
     """Draw where the branches met, and the lineage they met on."""
-    from graflo.architecture.evolution.preview import build_merge_preview
-    from graflo.plot.merge import plot_history, plot_merge_preview
+    from graflo.architecture.evolution.preview import build_merge3_preview
+    from graflo.plot.merge3 import plot_history, plot_merge3_preview
 
-    preview = build_merge_preview(result)
-    slots = plot_merge_preview(preview, plot_dir / "merge-slots.svg")
+    preview = build_merge3_preview(result)
+    slots = plot_merge3_preview(preview, plot_dir / "merge-slots.svg")
     lineage = plot_history(
         history, plot_dir / "merge-history.svg", heads=heads, merge_base=merge_base
     )

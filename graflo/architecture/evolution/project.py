@@ -3,12 +3,20 @@
 Selector validation and manifest unwrapping live here; the induced-connectivity
 kernel itself lives at layer 2 in
 :mod:`graflo.architecture.schema.projection` so manifest projection and schema
-context projection cannot drift apart.
+context projection cannot drift apart. The ``depth`` walk borrows the same way,
+from :mod:`graflo.architecture.schema.context.graph` — the hop machinery is shared
+with rank-then-budget schema context rather than reimplemented here.
 """
 
 from __future__ import annotations
 
 from graflo.architecture.contract.manifest import GraphManifest
+from graflo.architecture.graph_types import EdgeId
+from graflo.architecture.schema.context.graph import (
+    SchemaGraph,
+    neighborhood_distances,
+)
+from graflo.architecture.schema.document import Schema
 from graflo.architecture.schema.projection import SubschemaSelection, select_induced
 
 from .ops import EdgeSelector, ProjectManifestOp
@@ -42,6 +50,37 @@ def _validate_strict(manifest: GraphManifest, op: ProjectManifestOp) -> None:
             )
 
 
+def _expand_seeds(
+    schema: Schema,
+    op: ProjectManifestOp,
+    keep_edge_ids: set[EdgeId] | None,
+) -> list[str]:
+    """Vertex types within ``op.depth`` hops of ``op.keep_vertices``.
+
+    ``keep_edge_ids`` bounds the walk as well as the result: an explicit edge
+    whitelist and a neighbourhood expansion would otherwise give contradictory
+    answers about which edges belong in the slice.
+
+    Only the *vertex* set is returned. Handing the traversed edges to
+    ``select_induced`` instead would produce a breadth-first tree rather than the
+    induced subgraph on the hop ball — ``schema_neighbors`` never records an edge
+    between two types both sitting at exactly ``depth``, because neither is
+    expanded from.
+    """
+    graph = SchemaGraph.from_schema(schema)
+    # Under `strict=False` an undeclared name is silently ignored (the kernel
+    # intersects it away), so filter before walking — `schema_neighbors` raises.
+    seeds = [name for name in op.keep_vertices or [] if name in graph.vertex_types]
+    distances = neighborhood_distances(
+        graph,
+        seeds,
+        hops=op.depth,
+        direction=op.direction,
+        edge_ids=keep_edge_ids,
+    )
+    return sorted(distances)
+
+
 def compute_projection(
     manifest: GraphManifest, op: ProjectManifestOp
 ) -> SubschemaSelection:
@@ -53,11 +92,16 @@ def compute_projection(
     if op.strict:
         _validate_strict(manifest, op)
 
+    keep_edge_ids = (
+        _selector_edge_ids(op.keep_edges) if op.keep_edges is not None else None
+    )
+    keep_vertices = op.keep_vertices
+    if op.depth > 0:
+        keep_vertices = _expand_seeds(schema, op, keep_edge_ids)
+
     return select_induced(
         schema.core_schema,
-        keep_vertices=op.keep_vertices,
-        keep_edge_ids=(
-            _selector_edge_ids(op.keep_edges) if op.keep_edges is not None else None
-        ),
+        keep_vertices=keep_vertices,
+        keep_edge_ids=keep_edge_ids,
         connectivity=op.connectivity,
     )

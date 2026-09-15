@@ -1,6 +1,6 @@
 """Pure merge helpers: what a vertex or edge merge keeps, drops, and refuses.
 
-The compose and merge ops both lower onto these helpers, and a silent drop
+The ``merge_manifests`` and ``merge_vertices`` ops both lower onto these helpers, and a silent drop
 here surfaces as a manifest that looks merged while an edge step, a filter, or
 a physical edge definition quietly lost its meaning.
 """
@@ -209,7 +209,7 @@ class TestPropertyMerge:
 class TestGroundingIsCarried:
     """Class-level grounding, which every merge used to drop outright.
 
-    ``semantics`` was absent from both merge constructors, so a composed vertex
+    ``semantics`` was absent from both merge constructors, so a merged vertex
     or edge lost its anchors whether or not the sides agreed on them -- while
     the schema's own metadata block was folded carefully one layer up.
     """

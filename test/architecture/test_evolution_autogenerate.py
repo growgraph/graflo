@@ -307,11 +307,22 @@ class TestTypedAndGroundedFieldsReplay:
         assert {op.semantics.iri for op in ops} == {"x:a", "x:b"}
 
 
-def test_a_profile_difference_no_op_expresses_is_reported() -> None:
+def test_a_profile_difference_outside_the_index_ops_is_expressed() -> None:
+    """``set_db_profile`` carries what the four index ops cannot reach.
+
+    Storage names are part of the content hash, so while nothing expressed them
+    a change set that moved one could not replay -- and a three-way merge or a
+    merge commit carrying one could not be recorded at all.
+    """
     base = _manifest([PARTY], db_profile={"vertex_storage_names": {"party": "p"}})
     target = _manifest([PARTY], db_profile={"vertex_storage_names": {"party": "q"}})
-    _, warnings = diff_manifests(base, target)
-    assert any("db_profile differs in ['vertex_storage_names']" in w for w in warnings)
+
+    ops, warnings = diff_manifests_verified(base, target)
+
+    assert warnings == []
+    assert [op.op for op in ops] == ["set_db_profile"]
+    replayed = apply_evolution(base, ops, bump_version=False, finish_init=False)
+    assert manifest_hash(replayed) == manifest_hash(target)
 
 
 class TestOrdering:
@@ -391,7 +402,12 @@ class TestVerification:
         assert ops == []
         assert warnings == []
 
-    def test_an_unexpressible_bindings_change_is_reported_not_hidden(self) -> None:
+    def test_a_bindings_change_is_expressed_rather_than_reported(self) -> None:
+        """The block had no op at all; ``set_bindings`` replaces it wholesale.
+
+        ``None`` is a value the op carries, not an absence it cannot state --
+        which is what makes removing the block replayable rather than a warning.
+        """
         base = _manifest([PARTY])
         target = _manifest([PARTY])
         target.bindings = None
@@ -404,9 +420,15 @@ class TestVerification:
             }
         )
 
-        _, warnings = diff_manifests_verified(base_with_bindings, target)
+        ops, warnings = diff_manifests_verified(base_with_bindings, target)
 
-        assert any("bindings" in w for w in warnings)
+        assert warnings == []
+        assert [op.op for op in ops] == ["set_bindings"]
+        replayed = apply_evolution(
+            base_with_bindings, ops, bump_version=False, finish_init=False
+        )
+        assert replayed.bindings is None
+        assert manifest_hash(replayed) == manifest_hash(target)
 
     def test_a_resource_change_is_reported(self) -> None:
         base = _manifest(
@@ -455,7 +477,7 @@ class TestVerification:
 
 class TestSerializableOutput:
     def test_a_derived_change_set_round_trips_through_yaml(self) -> None:
-        """Autogenerate and the codec have to compose, or revisions cannot be stored."""
+        """Autogenerate and the codec have to merge, or revisions cannot be stored."""
         base = _manifest([PARTY])
         target = _manifest(
             [

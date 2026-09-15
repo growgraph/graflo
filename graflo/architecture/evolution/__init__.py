@@ -23,7 +23,6 @@ from .ops import (
     BlankIdentityTarget,
     CanonicalizeOp,
     ChangeFieldTypesOp,
-    ComposeManifestsOp,
     EdgeFieldSemanticsTarget,
     EdgeIdentitiesEntry,
     EdgeIndexEntry,
@@ -39,6 +38,7 @@ from .ops import (
     IdentityTarget,
     ManifestOp,
     MergeEdgesOp,
+    MergeManifestsOp,
     MergeVerticesOp,
     NaturalIdentityTarget,
     ProjectManifestOp,
@@ -95,9 +95,11 @@ _APPLY_EXPORTS = frozenset(
     }
 )
 
-_COMPOSE_EXPORTS = frozenset(
-    {"ComposeIdentityError", "ComposeNameConflictError", "compose_manifests"}
+_MERGE_EXPORTS = frozenset(
+    {"MergeIdentityError", "MergeNameConflictError", "merge_manifests"}
 )
+
+_MERGE_COMMIT_EXPORTS = frozenset({"build_merge_commit", "find_commit_by_tree"})
 
 _INGESTION_APPLY_EXPORTS = frozenset(
     {
@@ -129,8 +131,9 @@ _CANONICAL_EXPORTS = frozenset(
         "ClusterResolution",
         "ClusterSpec",
         "Completion",
-        "ComposeCanonicalConflictError",
-        "ComposeIncompleteError",
+        "MergeCanonicalConflictError",
+        "MergeIncompleteError",
+        "DanglingEntry",
         "DeclaredMaps",
         "SideMaps",
         "canonical_map_to_ops",
@@ -138,10 +141,12 @@ _CANONICAL_EXPORTS = frozenset(
         "canonicalize_ops",
         "check_member_existence",
         "clusters_to_side_maps",
+        "dangling_entries",
         "fold_declared_maps",
-        "merge_canonical_maps",
+        "compose_canonical_maps",
         "resolve_clusters",
         "same_name_groups",
+        "trim_canonical_map",
         "validate_and_complete_canonical_map",
     }
 )
@@ -241,7 +246,9 @@ _COMMIT_EXPORTS = frozenset(
         "CommitError",
         "MergeRecipeRef",
         "build_commit",
-        "build_merge_commit",
+        "build_root_commit",
+        "compute_root_commit_id",
+        "build_multi_parent_commit",
         "build_revert_commit",
         "compute_commit_id",
     }
@@ -263,6 +270,7 @@ _MERGE3_EXPORTS = frozenset(
         "MergeError",
         "MergeRecipe",
         "MergeResult",
+        "build_merge_recipe",
         "build_recipe",
         "describe_slot",
         "find_merge_base",
@@ -305,12 +313,8 @@ __all__ = [
     "Commit",
     "CommitError",
     "Completion",
-    "ComposeCanonicalConflictError",
-    "ComposeIdentityError",
-    "ComposeIncompleteError",
-    "ComposeManifestsOp",
-    "ComposeNameConflictError",
     "ConflictResolution",
+    "DanglingEntry",
     "DeclaredMaps",
     "DerivationSpec",
     "EdgeFieldSemanticsTarget",
@@ -334,9 +338,14 @@ __all__ = [
     "LocalKeySource",
     "LocalKeySpec",
     "ManifestOp",
+    "MergeCanonicalConflictError",
     "MergeConflict",
     "MergeEdgesOp",
     "MergeError",
+    "MergeIdentityError",
+    "MergeIncompleteError",
+    "MergeManifestsOp",
+    "MergeNameConflictError",
     "MergeRecipe",
     "MergeRecipeRef",
     "MergeResult",
@@ -416,19 +425,25 @@ __all__ = [
     "apply_set_vertex_semantics",
     "build_commit",
     "build_merge_commit",
+    "build_merge_recipe",
+    "build_multi_parent_commit",
     "build_recipe",
     "build_revert_commit",
+    "build_root_commit",
     "canonical_map_to_ops",
     "canonical_near_collisions",
     "canonical_payload",
     "canonicalize_ops",
     "checkout",
     "clusters_to_side_maps",
-    "compose_manifests",
+    "compose_canonical_maps",
     "compute_commit_id",
+    "compute_root_commit_id",
+    "dangling_entries",
     "describe_slot",
     "diff_manifests",
     "diff_manifests_verified",
+    "find_commit_by_tree",
     "find_merge_base",
     "fold_declared_maps",
     "full_hash",
@@ -440,7 +455,7 @@ __all__ = [
     "irreversible_reason",
     "is_reversible",
     "manifest_hash",
-    "merge_canonical_maps",
+    "merge_manifests",
     "merge_three_way",
     "op_from_dict",
     "op_slots",
@@ -457,6 +472,7 @@ __all__ = [
     "subject",
     "take_left",
     "take_right",
+    "trim_canonical_map",
     "validate_alignment",
     "validate_and_complete_canonical_map",
     "verify_history",
@@ -468,10 +484,14 @@ def __getattr__(name: str) -> Any:
         from . import apply as apply_mod
 
         return getattr(apply_mod, name)
-    if name in _COMPOSE_EXPORTS:
-        from . import compose as compose_mod
+    if name in _MERGE_EXPORTS:
+        from . import merge as merge_mod
 
-        return getattr(compose_mod, name)
+        return getattr(merge_mod, name)
+    if name in _MERGE_COMMIT_EXPORTS:
+        from . import merge_commit as merge_commit_mod
+
+        return getattr(merge_commit_mod, name)
     if name in _INGESTION_APPLY_EXPORTS:
         from . import ingestion as ingestion_mod
 

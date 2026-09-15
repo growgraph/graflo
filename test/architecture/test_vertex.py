@@ -561,8 +561,8 @@ def test_resource_runtime_vertex_config_excludes_unreferenced_blank_vertices():
 class TestDuplicatePropertyMerge:
     """One property declared twice on one vertex: what fuses and what refuses.
 
-    ``merge_field_lists`` is the single policy behind both this validator and
-    the merge kernel, so these cases pin the behavior every compose inherits.
+    ``union_field_lists`` is the single policy behind both this validator and
+    the merge kernel, so these cases pin the behavior every merge inherits.
     """
 
     def test_identical_list_properties_fuse_and_keep_item_type(self) -> None:

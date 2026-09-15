@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import logging
 
 import pytest
@@ -31,7 +32,7 @@ from graflo.architecture.evolution import (
 
 
 def _union_manifest() -> GraphManifest:
-    """A composed-union-shaped manifest: one class, two resources feeding it."""
+    """A merged-union-shaped manifest: one class, two resources feeding it."""
     manifest = GraphManifest.from_config(
         {
             "schema": {
@@ -588,12 +589,51 @@ class TestRouterDelivery:
 
         assert self._ensure(ops) is None
 
-    def test_a_sibling_class_claiming_a_canonical_name_is_rejected(self) -> None:
+    def test_a_sibling_class_claiming_a_canonical_name_is_guarded_out(self) -> None:
+        ops = alignment_to_ops(
+            _routed_alignment(),
+            manifest=_routed_manifest(sibling_props=["match_key"]),
+        )
+
+        routed = _transforms_op(ops).additions["r_view"]
+        # match_key and local_key: two scratch steps and a coalesce each.
+        assert len(routed) == 6
+        assert all(
+            s["transform"]["when"] == {"field": "kind", "in": ["firm", "shop"]}
+            for s in routed
+        )
+        plain = _transforms_op(ops).additions["r_b"]
+        assert plain and all("when" not in s["transform"] for s in plain)
+
+    def test_the_refusal_remains_where_no_guard_can_be_derived(self) -> None:
+        # Two routers reading different discriminators at one level: one guard
+        # cannot admit both, so the derivation lowers unguarded.
+        manifest = _dynamic_union(
+            [_nested(_BARE, {"vertex_router": {"type_field": "cls"}})],
+            sibling_props=["match_key"],
+        )
+
         with pytest.raises(AlignmentConflictError, match="claimed by a sibling class"):
-            alignment_to_ops(
-                _routed_alignment(),
-                manifest=_routed_manifest(sibling_props=["match_key"]),
-            )
+            alignment_to_ops(_routed_alignment(), manifest=manifest)
+
+    def test_guarded_steps_apply_as_valid_pipeline_steps(self) -> None:
+        manifest = _routed_manifest(sibling_props=["match_key"])
+
+        out = apply_evolution(
+            manifest,
+            alignment_to_ops(_routed_alignment(), manifest=manifest),
+            bump_version=False,
+        )
+
+        pipeline = out.require_ingestion_model().resources[0].pipeline
+        level = resolve_pipeline_level(list(pipeline), [0])
+        transforms = [
+            normalize_actor_step(dict(s))
+            for s in level
+            if normalize_actor_step(dict(s)).get("type") == "transform"
+        ]
+        assert len(transforms) == 6
+        assert all(s.get("when") for s in transforms)
 
 
 class TestEnsureExtractedFieldsApplies:
@@ -1077,3 +1117,179 @@ class TestMemberKeyedValidation:
             AlignmentConflictError, match="canonical name as derivation input"
         ):
             _member_ops(canonical_maps=[cm])
+
+
+# --------------------------------------------------------------------------- #
+# Dynamic routers: no ``type_map`` — the discriminator value is the class name.
+# --------------------------------------------------------------------------- #
+
+
+_BARE = {"vertex_router": {"type_field": "kind"}}
+
+
+def _nested(*steps: dict) -> dict:
+    return {"descend": {"key": "records", "apply": list(steps)}}
+
+
+def _side_with(pipeline: list[dict]) -> GraphManifest:
+    """A left side declaring three classes, fed by ``r_view`` through *pipeline*."""
+    manifest = GraphManifest.from_config(
+        {
+            "schema": {
+                "metadata": {"name": "left", "version": "1.0.0"},
+                "graph": {
+                    "vertex_config": {
+                        "vertices": [
+                            {
+                                "name": name,
+                                "properties": [f"{name.lower()}_id", "secondary_key"],
+                                "identity": [f"{name.lower()}_id"],
+                            }
+                            for name in ("Company", "Shop", "Person")
+                        ]
+                    },
+                    "edge_config": {"edges": []},
+                },
+            },
+            "ingestion_model": {
+                "resources": [{"name": "r_view", "pipeline": pipeline}],
+                "transforms": [],
+            },
+        }
+    )
+    manifest.finish_init()
+    return manifest
+
+
+def _dynamic_union(pipeline: list[dict], **kwargs) -> GraphManifest:
+    """The routed union with ``r_view`` fed through *pipeline* instead."""
+    kwargs.setdefault("company_props", ["secondary_key"])
+    manifest = _routed_manifest(**kwargs)
+    manifest.require_ingestion_model().resources[0].pipeline = copy.deepcopy(pipeline)
+    manifest.finish_init()
+    return manifest
+
+
+def _dynamic_ops(pipeline: list[dict], alignment: IdentityAlignment | None = None):
+    """Member-keyed lowering where the side and the union share *pipeline*."""
+    return alignment_to_ops(
+        alignment or _member_alignment(),
+        manifest=_dynamic_union(pipeline),
+        sides={"left": _side_with(pipeline), "right": _right_side()},
+        cluster_members=_CLUSTER,
+    )
+
+
+class TestDynamicRouterMembers:
+    """A router without a table produces whatever class ``kind`` names."""
+
+    def _match_guards(self, ops) -> list[dict]:
+        return [
+            step["transform"]["when"]
+            for step in _transforms_op(ops).additions["r_view"]
+            if step["transform"]["call"]["output"] == ["match_key"]
+        ]
+
+    def test_a_member_resolves_to_the_router_and_guards_on_its_own_name(self) -> None:
+        ops = _dynamic_ops([_nested(_BARE)])
+
+        assert _transforms_op(ops).at == {"r_view": [0]}
+        assert self._match_guards(ops) == [
+            {"field": "kind", "in": ["Company"]},
+            {"field": "kind", "in": ["Shop"]},
+        ]
+
+    def test_an_explicit_table_outranks_a_bare_router_at_another_level(self) -> None:
+        mapped = {
+            "vertex_router": {
+                "type_field": "kind",
+                "type_map": {"firm": "Company", "shop": "Shop"},
+            }
+        }
+
+        ops = _dynamic_ops([_BARE, _nested(mapped)])
+
+        assert _transforms_op(ops).at == {"r_view": [1]}
+        assert self._match_guards(ops) == [
+            {"field": "kind", "in": ["firm"]},
+            {"field": "kind", "in": ["shop"]},
+        ]
+
+    def test_bare_routers_at_two_levels_are_ambiguous_until_at_picks_one(self) -> None:
+        pipeline = [_BARE, _nested(_BARE)]
+
+        with pytest.raises(AlignmentConflictError, match="ambiguous level"):
+            _dynamic_ops(pipeline)
+
+        ops = _dynamic_ops(pipeline, _member_alignment(at={"r_view": [1]}))
+        assert _transforms_op(ops).at == {"r_view": [1]}
+        assert self._match_guards(ops) == [
+            {"field": "kind", "in": ["Company"]},
+            {"field": "kind", "in": ["Shop"]},
+        ]
+
+    def test_a_class_the_side_does_not_declare_is_not_produced(self) -> None:
+        alignment = _member_alignment(
+            local_key=LocalKeySpec(
+                sources={
+                    "r_view": {"Ghost": LocalKeySource(field="x", tag="g")},
+                    "r_b": LocalKeySource(field="org_id", tag="b"),
+                }
+            )
+        )
+
+        with pytest.raises(
+            AlignmentConflictError, match="does not produce the member"
+        ) as excinfo:
+            _dynamic_ops([_nested(_BARE)], alignment)
+
+        assert "routes any class" in str(excinfo.value)
+
+
+class TestDynamicRouterUnion:
+    """Validation against the union alone: the list form over a bare router."""
+
+    def _router(self, manifest: GraphManifest) -> dict:
+        pipeline = manifest.require_ingestion_model().resources[0].pipeline
+        descend = normalize_actor_step(dict(pipeline[0]))
+        return normalize_actor_step(dict(descend["pipeline"][0]))
+
+    def test_the_list_form_lowers_at_the_router_level(self) -> None:
+        manifest = _dynamic_union([_nested(_BARE)])
+
+        ops = alignment_to_ops(_routed_alignment(), manifest=manifest)
+
+        assert _transforms_op(ops).at == {"r_view": [0]}
+
+    def test_every_declared_class_is_guarded_out(self) -> None:
+        manifest = _dynamic_union([_nested(_BARE)], sibling_props=["match_key"])
+
+        ops = alignment_to_ops(_routed_alignment(), manifest=manifest)
+
+        routed = _transforms_op(ops).additions["r_view"]
+        assert routed and all(
+            s["transform"]["when"] == {"field": "kind", "in": ["Company"]}
+            for s in routed
+        )
+
+    def test_keep_fields_are_widened(self) -> None:
+        router = {
+            "vertex_router": {
+                "type_field": "kind",
+                "keep_fields": ["firm_id", "shop_id"],
+            }
+        }
+        manifest = _dynamic_union([_nested(router)])
+
+        out = apply_evolution(
+            manifest,
+            alignment_to_ops(_routed_alignment(), manifest=manifest),
+            bump_version=False,
+        )
+
+        assert self._router(out)["keep_fields"] == [
+            "firm_id",
+            "shop_id",
+            "match_key",
+            "local_key",
+        ]

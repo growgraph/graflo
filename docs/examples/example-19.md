@@ -6,10 +6,10 @@ translates `Firm` into the target model (`Company`, `company_id`). Source B's
 `Org` and `Branch`, and A's `Shop`, are declared as one **n-ary equivalence
 cluster** with `Firm` — one `VertexEquivalence` naming every member on each
 side, in each manifest's own vocabulary. The cluster has no `into`: the map
-names the composed class.
+names the merged class.
 
 Two declarations, one recipe. The map says *what things are called*; the
-cluster says *which classes are one*. `compose_manifests` resolves both into a
+cluster says *which classes are one*. `merge_manifests` resolves both into a
 single composite map per side, applies it in one step, unions by name, and
 refuses when the two disagree.
 
@@ -17,7 +17,7 @@ The guiding principle: **a primary identity is a property of the class.** The
 merged `Company` gets ONE identity definition referencing only canonical
 attributes (`match_key`, `local_key`). *How* each source populates them —
 gating, normalization, namespacing — is resource knowledge, carried as
-`identity_alignments` on the compose op. The source manifests stay pure.
+`identity_alignments` on the merge op. The source manifests stay pure.
 
 ## Prerequisites
 
@@ -30,38 +30,38 @@ gating, normalization, namespacing — is resource knowledge, carried as
 from graflo.architecture.evolution import (
     AlignmentAttribute,
     CanonicalMap,
-    ComposeManifestsOp,
+    MergeManifestsOp,
     DerivationSpec,
     IdentityAlignment,
     LocalKeySource,
     LocalKeySpec,
     VertexEquivalence,
-    compose_manifests,
+    merge_manifests,
 )
 ```
 
 ```python
-op = ComposeManifestsOp(
+op = MergeManifestsOp(
     vertex_equivalences=[
         # {Firm, Shop} ~ {Org, Branch}; named Company by the map
         VertexEquivalence(left=["Firm", "Shop"], right=["Org", "Branch"]),
     ],
     allow_merges=True,  # a stated intent: >1 member on a side
     canonical_maps={"left": canonical_map},  # Firm → Company, firm_id → company_id
-    identity_alignments=[ALIGNMENT],  # applied inside compose
+    identity_alignments=[ALIGNMENT],  # applied inside merge
 )
-union = compose_manifests(A, B, op)
+union = merge_manifests(A, B, op)
 ```
 
-Renames compose, so this is the same function as canonicalizing A on its own
-first and then declaring the cluster in canonical names — `compose_manifests`
+Renames merge, so this is the same function as canonicalizing A on its own
+first and then declaring the cluster in canonical names — `merge_manifests`
 accepts either, and a map entry the caller already applied is a no-op:
 
 ```python
 canonical_a = apply_evolution(
     A, canonical_map_to_ops(canonical_map)
 )  # one CanonicalizeOp
-op = ComposeManifestsOp(
+op = MergeManifestsOp(
     vertex_equivalences=[
         VertexEquivalence(
             left=["Company", "Shop"], right=["Org", "Branch"], into="Company"
@@ -70,10 +70,10 @@ op = ComposeManifestsOp(
     allow_merges=True,
     canonical_maps={"left": canonical_map},
 )
-union = compose_manifests(canonical_a, B, op)  # identical result
+union = merge_manifests(canonical_a, B, op)  # identical result
 ```
 
-`identity_alignments` on the compose op still emit only fundamentals:
+`identity_alignments` on the merge op still emit only fundamentals:
 
 1. `AddVertexPropertiesOp` — declare `match_key` + `local_key` on `Company`;
 2. `AddResourceTransformsOp` — per-resource derivation steps appended to the
@@ -82,55 +82,55 @@ union = compose_manifests(canonical_a, B, op)  # identical result
    `[match_key, local_key]`, no side-specific branches;
 4. `AddSecondaryIdentitiesOp` — retired side keys stay addressable for lookups.
 
-## How the composed name is found
+## How the merged name is found
 
 For every cluster, in order: `into` when given (translated through the map
 when the map maps it); else the canonical name the map gives a member; else
-the one spelling every member shares; else compose refuses (*unnamed
+the one spelling every member shares; else merge refuses (*unnamed
 cluster*). A member may be spelled by its own name (`Firm`) or by its
 canonical name (`Company`).
 
 ## Consistency
 
 One rule: **the map and the cluster must agree on where every name goes, and
-a canonical target is a fixed point neither may re-map.** Compose refuses,
+a canonical target is a fixed point neither may re-map.** Merge refuses,
 naming both declarations, on:
 
 - a **disagreement** — the map says `Firm → Company` but the cluster names the
-  composed class `Party` (`--disagreeing-map-demo`), or a cluster renames a
+  merged class `Party` (`--disagreeing-map-demo`), or a cluster renames a
   class the map already established as canonical;
 - a **dangling** map entry that matches nothing on any side it could apply to;
 - the same rule for attributes: a canonical attribute is a fixed point, and a
   property equivalence names fields as spelled on the member.
 
 Two declarations can also be **consistent but incomplete** — nothing to
-retract, something to add. Compose refuses those as well, and the refusal
+retract, something to add. Merge refuses those as well, and the refusal
 carries the declaration that settles it:
 
-- a map entry sending a **non-member onto a composed class**
+- a map entry sending a **non-member onto a merged class**
   (`--forgotten-member-demo`): the class would arrive at `Company` without the
   cluster's identity and property maps governing it. The completion is that
   same cluster with the member added;
-- a name **both sides arrive at** that no cluster composes
+- a name **both sides arrive at** that no cluster merges
   (`--shared-name-demo`): two sides meeting at `Outlet` is not a disjoint
   union and is never silently treated as one. The completion names the members
   in each side's own spelling. `--union-right` declares that equivalence
-  itself — a *synthesized* cluster — and composes instead of refusing.
+  itself — a *synthesized* cluster — and merges instead of refusing.
 
 A synthesized cluster is a real cluster, so its members must agree on an
 identity exactly as a declared one's must; the demo's maps align the keys
 (`shop_id` / `branch_id` → `outlet_id`) and dropping that alignment raises
-`ComposeIdentityError` rather than keying on a field no record carries.
+`MergeIdentityError` rather than keying on a field no record carries.
 
 Clusters must also not contradict each other — `ClusterConflictError`,
-wrapped as `ComposeCanonicalConflictError` when it surfaces through
+wrapped as `MergeCanonicalConflictError` when it surfaces through
 `validate_and_complete_canonical_map`:
 
 - a class claimed by **two** declarations — e.g. `right:Org` named in both
   `{Firm}~{Org, Branch}` and `{Shop}~{Org}→Party` (`--conflicting-cluster-demo`);
-- two declarations sharing one composed name — that collapses them into one
-  composed class, which must be spelled as one n-ary declaration instead;
-- a composed name that already names an existing, non-member class on a side —
+- two declarations sharing one merged name — that collapses them into one
+  merged class, which must be spelled as one n-ary declaration instead;
+- a merged name that already names an existing, non-member class on a side —
   that would silently merge into an unrelated type.
 
 ## How the condition works
@@ -191,18 +191,18 @@ uv run python build_union.py --shared-name-demo --union-right   # …or union it
 ```
 
 The two incompleteness demos print their completion as YAML, ready to paste
-into the op — the same thing `graflo compose` prints when it refuses.
+into the op — the same thing `graflo merge` prints when it refuses.
 
 `inspect_fusion.py` prints one row per emitted vertex doc across the four
 resources feeding `Company`: five records collapse to three vertices, one
 fused pair per aligned key.
 
 `build_union.py` stays because it shows the recipe as Python. The same
-recipe is a verb — `graflo compose` applies the op and its canonical maps
+recipe is a verb — `graflo merge` applies the op and its canonical maps
 together:
 
 ```bash
-graflo compose manifest_a.yaml manifest_b.yaml \
+graflo merge manifest_a.yaml manifest_b.yaml \
   --op boundary_op.yaml --canonical-map left=canonical_map.yaml \
   -o artifacts/manifest_union.yaml
 ```
@@ -215,15 +215,15 @@ one.
 
 ## Previewing the conflicts
 
-Each refusal above is one problem, because compose stops at the first.
-`preview_compose` walks the same declarations without refusing and reports all
+Each refusal above is one problem, because merge stops at the first.
+`preview_merge` walks the same declarations without refusing and reports all
 of them; `build_union.py --plot-dir figs` draws one figure per mode.
 
 ```bash
 uv run python build_union.py --plot-dir figs
 ```
 
-The conflicting-cluster mode is the one worth looking at. Compose reports the
+The conflicting-cluster mode is the one worth looking at. Merge reports the
 overlap — `Org` is claimed by two declarations — and stops. The picture shows
 that, and the two identity disagreements waiting behind it:
 
@@ -233,12 +233,12 @@ Classes are drawn with a row per attribute, so an attribute-level declaration
 lands on the row it is about: the dashed blue edge is `firm_id → company_id`,
 the canonical map's attribute rename. Identity attributes are underlined,
 flagged elements carry a numbered badge into the legend, and a red outline is
-what compose actually raised against an amber one the preview found itself.
+what merge actually raised against an amber one the preview found itself.
 
 The same view from the shell, written even on a refusal:
 
 ```bash
-graflo compose manifest_a.yaml manifest_b.yaml --op boundary_op.yaml \
+graflo merge manifest_a.yaml manifest_b.yaml --op boundary_op.yaml \
     --plot conflicts.svg --preview-json conflicts.json
 ```
 
@@ -246,14 +246,14 @@ graflo compose manifest_a.yaml manifest_b.yaml --op boundary_op.yaml \
 
 - **Equivalence is declared, never inferred.** The canonical map, the
   `VertexEquivalence` cluster, and the `IdentityAlignment` are author-supplied;
-  compose only cross-checks the declarations against each other and completes
-  the composed name from them.
+  merge only cross-checks the declarations against each other and completes
+  the merged name from them.
 - **A merge is a stated intent.** A canonical map that collapses two classes
-  requires `allow_merges: true`, and so does a compose op whose cluster names
-  more than one member on a side — `ComposeManifestsOp(allow_merges=True)`.
+  requires `allow_merges: true`, and so does a merge op whose cluster names
+  more than one member on a side — `MergeManifestsOp(allow_merges=True)`.
   A merge that would turn an edge into a self-relation, or make one pipeline
-  level produce the composed class twice, needs `allow_self_relations` /
-  `allow_observation_fusion` on the same op: compose forwards both to the
+  level produce the merged class twice, needs `allow_self_relations` /
+  `allow_observation_fusion` on the same op: merge forwards both to the
   per-side `CanonicalizeOp` instead of bypassing the unary guards.
 - **Changing the funnel rekeys the graph** — branch order, ids, and field sets
   all feed the digest (see example 17).

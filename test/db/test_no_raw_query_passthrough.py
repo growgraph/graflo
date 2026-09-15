@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-#: Modules that compose backend primitives rather than issuing queries.
+#: Modules that merge backend primitives rather than issuing queries.
 GENERIC_TRAVERSAL_MODULES = [
     "graflo/db/traversal.py",
 ]
@@ -39,7 +39,7 @@ def test_generic_traversal_never_calls_execute(relative: str) -> None:
     path = Path(__file__).resolve().parents[2] / relative
     assert path.exists(), f"{relative} moved; update this guard rather than deleting it"
     assert "execute" not in _calls(path.read_text()), (
-        f"{relative} calls .execute(): traversal must compose fetch_edges and "
+        f"{relative} calls .execute(): traversal must merge fetch_edges and "
         "fetch_docs, so that no raw backend query is reachable from an "
         "agent-facing path"
     )

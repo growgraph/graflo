@@ -1,4 +1,4 @@
-"""Binary compose of two :class:`~graflo.architecture.contract.manifest.GraphManifest`s."""
+"""Binary merge of two :class:`~graflo.architecture.contract.manifest.GraphManifest`s."""
 
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ from .canonical import (
     canonicalize_ops,
     resolve_clusters,
 )
-from .db_profile import merge_default_property_values
+from .db_profile import union_default_property_values
 from .equivalence import Cluster, ClusterIndex, Side, subject
 from .merge_core import (
     edge_config_from_edges,
@@ -51,9 +51,9 @@ from .merge_core import (
 from .ops import (
     AddSecondaryIdentitiesOp,
     CanonicalizeOp,
-    ComposeManifestsOp,
     IdentityBranchSpec,
     ManifestOp,
+    MergeManifestsOp,
     RenameRelationsOp,
     RenameResourcesOp,
     RenameVerticesOp,
@@ -77,7 +77,7 @@ def _free_prefixed_name(name: str, taken: set[str]) -> str:
     The ordinal is not decoration. ``_prefixed`` is idempotent -- it refuses to
     build ``r_r_x`` -- so re-prefixing a taken name returns the same string,
     and a loop that re-prefixed until free would never terminate on a right
-    side whose own names already start with ``r_``. Composing a manifest with
+    side whose own names already start with ``r_``. Merging a manifest with
     itself is exactly that case.
     """
     candidate = _prefixed(name)
@@ -113,7 +113,7 @@ def _resolve_name_collisions(
             continue
         if name_conflict in ("error", "union_right"):
             raise ValueError(
-                f"compose_manifests: {kind} name collision on {name!r}; "
+                f"merge_manifests: {kind} name collision on {name!r}; "
                 f"{hint}, or set name_conflict='prefix_right'"
             )
         new_name = _free_prefixed_name(name, taken)
@@ -125,7 +125,7 @@ def _resolve_name_collisions(
 def _require_schema(manifest: GraphManifest, side: str) -> Schema:
     if manifest.graph_schema is None:
         raise ValueError(
-            f"compose_manifests requires graph_schema on the {side} manifest"
+            f"merge_manifests requires graph_schema on the {side} manifest"
         )
     return manifest.graph_schema
 
@@ -136,7 +136,7 @@ def _schema_of(manifest: GraphManifest) -> Schema | None:
     The counterpart to :func:`_require_schema`, which stays for the paths that
     genuinely cannot proceed without one. A manifest with only an
     ``ingestion_model`` and/or ``bindings`` -- a new source wired onto an
-    existing type vocabulary -- is a legitimate compose input, so the union
+    existing type vocabulary -- is a legitimate merge input, so the union
     treats a missing side as contributing nothing rather than as an error.
     """
     return manifest.graph_schema
@@ -160,7 +160,7 @@ def _vertex_names(schema: Schema | None) -> set[str]:
 
 def _apply_right_resource_policy(
     right: GraphManifest,
-    op: ComposeManifestsOp,
+    op: MergeManifestsOp,
     left_resource_names: set[str],
 ) -> None:
     if op.resource_renames:
@@ -182,12 +182,12 @@ def _apply_right_resource_policy(
         apply_rename_resources(right, RenameResourcesOp(renames=collisions))
 
 
-class ComposeNameConflictError(Refusal):
+class MergeNameConflictError(Refusal):
     """Two names denote one concept under different naming conventions.
 
-    Distinct from ``ComposeCanonicalConflictError`` in ``canonical.py``, which
+    Distinct from ``MergeCanonicalConflictError`` in ``canonical.py``, which
     reports a *declared* CanonicalMap contradicting the op. This one fires on
-    the residue neither side declared -- the undeclared path, where compose
+    the residue neither side declared -- the undeclared path, where merge
     would otherwise produce two unrelated types with the data split between
     them and nothing raising.
 
@@ -197,18 +197,18 @@ class ComposeNameConflictError(Refusal):
     """
 
 
-class ComposeIdentityError(Refusal):
-    """A composed vertex's identity is ambiguous and nothing resolves it.
+class MergeIdentityError(Refusal):
+    """A merged vertex's identity is ambiguous and nothing resolves it.
 
     Two or more cluster members disagree on their (canonical-name) identity
     field-set and none of the three ways to resolve it were declared: an
     explicit ``identity`` on the ``VertexEquivalence``, a
     ``PropertyEquivalence(identity=True)`` flag, or an ``identity_alignments``
-    entry for the composed class. The alternative -- silently taking the
+    entry for the merged class. The alternative -- silently taking the
     union of both field-sets as the new identity -- produces a natural key no
     record fully carries.
 
-    ``subjects`` names the composed class and its disagreeing members, as
+    ``subjects`` names the merged class and its disagreeing members, as
     :func:`~graflo.architecture.evolution.equivalence.subject` ids; it does not
     appear in the message.
     """
@@ -235,7 +235,7 @@ def _resolve_schema_collisions(
     """The rename map to apply to the right side, or raise under ``error``.
 
     The residue after cluster resolution. An **exact** collision (``Customer``
-    on both sides) is a name no cluster composes: under ``error`` it has
+    on both sides) is a name no cluster merges: under ``error`` it has
     already been refused as incomplete by
     :func:`~graflo.architecture.evolution.canonical.resolve_clusters`, and
     under ``union_right`` it has already become a synthesized cluster -- so
@@ -245,7 +245,7 @@ def _resolve_schema_collisions(
     refuses it naming both spellings, ``union_right`` has synthesized it under
     the left spelling upstream, and ``prefix_right`` keeps both apart here.
 
-    Left alone the right names compose into two unrelated types with the
+    Left alone the right names merge into two unrelated types with the
     source data split between them and nothing raising, which is the whole of
     ``CORE-MERGE-001``.
     """
@@ -255,15 +255,15 @@ def _resolve_schema_collisions(
     if name_conflict == "error":
         if exact:
             raise ValueError(
-                f"compose_manifests: {kind} name collision on "
+                f"merge_manifests: {kind} name collision on "
                 f"{sorted(exact)!r}; provide a {equivalence_hint} or set "
                 "name_conflict='prefix_right'"
             )
         if near:
             pairs = ", ".join(f"{left!r} / {right!r}" for left, right in near)
-            raise ComposeNameConflictError(
-                f"compose_manifests: {pairs} denote the same concept under "
-                f"different naming conventions, so they would compose into two "
+            raise MergeNameConflictError(
+                f"merge_manifests: {pairs} denote the same concept under "
+                f"different naming conventions, so they would merge into two "
                 f"unrelated {kind} types with the source data split between "
                 f"them. Declare a {equivalence_hint} (or a CanonicalMap) "
                 "to combine them, set name_conflict='union_right' to adopt the "
@@ -281,7 +281,7 @@ def _resolve_schema_collisions(
     if name_conflict == "union_right":
         if exact or near:
             raise ValueError(
-                f"compose_manifests: unreachable -- {kind} names "
+                f"merge_manifests: unreachable -- {kind} names "
                 f"{sorted(exact) + [right for _left, right in near]!r} survived "
                 "cluster resolution under union_right; every same-name pair "
                 "should have been synthesized into a cluster"
@@ -301,7 +301,7 @@ def _resolve_schema_collisions(
 
 
 def _assert_no_canonical_split(schema: Schema) -> None:
-    """No two composed vertex types or relations may denote one concept.
+    """No two merged vertex types or relations may denote one concept.
 
     The invariant ``CORE-MERGE-001`` is actually about, asserted on the result
     rather than only at the sites that could violate it -- so a future path
@@ -323,14 +323,14 @@ def _assert_no_canonical_split(schema: Schema) -> None:
             by_key.setdefault(canonical_slug(name), set()).add(name)
         split = {key: sorted(group) for key, group in by_key.items() if len(group) > 1}
         if split:
-            raise ComposeNameConflictError(
-                f"compose_manifests produced {kind} types that denote the same "
+            raise MergeNameConflictError(
+                f"merge_manifests produced {kind} types that denote the same "
                 f"concept under different spellings: {split}. This is an "
-                "unhandled compose path, not an authoring error -- the result "
+                "unhandled merge path, not an authoring error -- the result "
                 "would split data between them silently.",
                 check=f"{kind} canonical split",
                 subjects=tuple(
-                    subject("composed", name)
+                    subject("merged", name)
                     for group in split.values()
                     for name in group
                 ),
@@ -340,10 +340,10 @@ def _assert_no_canonical_split(schema: Schema) -> None:
 def _apply_right_schema_collision_policy(
     left: GraphManifest,
     right: GraphManifest,
-    op: ComposeManifestsOp,
+    op: MergeManifestsOp,
     index: ClusterIndex,
 ) -> None:
-    """Prefix, fuse or error on non-equivalent right vertex/relation names.
+    """Prefix, union or error on non-equivalent right vertex/relation names.
 
     Names are compared both exactly and by :func:`canonical_slug`, so two
     spellings of one concept are a collision rather than two types.
@@ -473,7 +473,7 @@ def side_identity_to_funnel(
     breaking ties by first appearance across members (in declaration order:
     every left member, then every right member). Two members that disagree on
     the relative order of two branches have no consistent global order and
-    raise :class:`ComposeIdentityError`.
+    raise :class:`MergeIdentityError`.
     """
     side_identity = cluster.declaration.identity
     assert isinstance(side_identity, SideIdentity)
@@ -488,8 +488,8 @@ def side_identity_to_funnel(
         for member in cluster.members(side):
             raw = overrides.get(member, default)
             if raw is None:
-                raise ComposeIdentityError(
-                    f"compose_manifests: cluster into {cluster.into!r} has no "
+                raise MergeIdentityError(
+                    f"merge_manifests: cluster into {cluster.into!r} has no "
                     f"SideIdentity branch chain for {side}:{member} (no "
                     f"per-member override and no {side} default)"
                 )
@@ -529,8 +529,8 @@ def side_identity_to_funnel(
         available.sort(key=first_seen.__getitem__)
 
     if len(order) != len(first_seen):
-        raise ComposeIdentityError(
-            f"compose_manifests: cluster into {cluster.into!r} has an "
+        raise MergeIdentityError(
+            f"merge_manifests: cluster into {cluster.into!r} has an "
             "inconsistent SideIdentity branch order — two members disagree "
             "on the relative order of two branches, so no single global "
             "funnel order satisfies both"
@@ -541,8 +541,8 @@ def side_identity_to_funnel(
         for branch in chain:
             missing = sorted(set(branch) - declared)
             if missing:
-                raise ComposeIdentityError(
-                    f"compose_manifests: cluster into {cluster.into!r} "
+                raise MergeIdentityError(
+                    f"merge_manifests: cluster into {cluster.into!r} "
                     f"SideIdentity branch {branch} on {side}:{member} "
                     f"references undeclared propert"
                     f"{'y' if len(missing) == 1 else 'ies'} {missing}"
@@ -563,7 +563,7 @@ def _composed_identity(
     *,
     has_alignment: bool,
 ) -> tuple[list[str] | IdentityFunnel, bool]:
-    """The composed vertex's identity, and whether it was explicitly declared.
+    """The merged vertex's identity, and whether it was explicitly declared.
 
     Undeclared and every plain-natural-key member agrees (or fewer than two
     are plain): carries the merged composite through, same as an ordinary
@@ -571,7 +571,7 @@ def _composed_identity(
     merge. Undeclared, members disagree, and nothing resolves it (no
     ``identity``, no ``PropertyEquivalence.identity`` flag, no
     ``identity_alignments`` entry for this class): raises
-    :class:`ComposeIdentityError` rather than silently keying on the union of
+    :class:`MergeIdentityError` rather than silently keying on the union of
     both field-sets.
     """
     declared = cluster.declaration.identity
@@ -605,14 +605,14 @@ def _composed_identity(
         detail = "; ".join(
             f"{side}:{member}={list(fields)}" for side, member, fields in plain_members
         )
-        raise ComposeIdentityError(
-            f"compose_manifests: composed vertex {cluster.into!r} has members "
+        raise MergeIdentityError(
+            f"merge_manifests: merged vertex {cluster.into!r} has members "
             f"that disagree on identity ({detail}) and nothing resolves it. "
             "Declare `identity` on the VertexEquivalence, flag a "
             "PropertyEquivalence(identity=True), or add an "
             "identity_alignments entry for this class.",
             subjects=(
-                subject("composed", cluster.into),
+                subject("merged", cluster.into),
                 *(subject(side, member) for side, member, _f in plain_members),
             ),
         )
@@ -656,7 +656,7 @@ def _cluster_retire_ops(
 
     Only meaningful when the cluster declared an ``identity`` (nothing to
     retire otherwise) and ``retire == "demote"`` (the default). A member key
-    that happens to equal the new composed identity's field-set is skipped --
+    that happens to equal the new merged identity's field-set is skipped --
     demoting it would restate the primary as a secondary, which
     ``Vertex.set_identity`` rejects outright.
     """
@@ -703,7 +703,7 @@ def _merge_naming(
     :meth:`NamingConvention.rename_map` is computed from it — so asserting the
     left side's style over a union that also contains the right side's names
     would be a false claim about identifiers that are demonstrably not in it.
-    Two conventions compose to no declared convention.
+    Two conventions merge to no declared convention.
     """
     if left is None or right is None:
         source = left if right is None else right
@@ -712,18 +712,18 @@ def _merge_naming(
 
 
 def _merge_graph_metadata(left: GraphMetadata, right: GraphMetadata) -> GraphMetadata:
-    """Fold both sides' schema metadata into the composed schema's.
+    """Fold both sides' schema metadata into the merged schema's.
 
     Every descriptive field is folded rather than inherited from the left: the
-    composed schema contains both sides' types, so describing it with only one
+    merged schema contains both sides' types, so describing it with only one
     side's prose, anchors and convention is wrong in the same way carrying only
     one side's vertices would be.
 
     Two fields are deliberately not folded. ``version`` stays the left side's
     because it is the base :func:`_bump_schema_version` bumps from, and
-    ``provenance`` is dropped because the composed schema is a new artifact
+    ``provenance`` is dropped because the merged schema is a new artifact
     with a new content address — stamping it is a commit point's job, not
-    compose's.
+    merge's.
     """
     return GraphMetadata(
         name=_fold_name(left.name, right.name) or left.name,
@@ -738,7 +738,7 @@ def _merge_graph_metadata(left: GraphMetadata, right: GraphMetadata) -> GraphMet
 def _merge_manifest_metadata(
     left: ManifestMetadata | None, right: ManifestMetadata | None
 ) -> ManifestMetadata | None:
-    """Fold both manifests' own name and description into the composed one.
+    """Fold both manifests' own name and description into the merged one.
 
     Manifest-level identity is separate from the schema's: a manifest carrying
     only bindings has no schema to borrow a name from. Provenance is dropped
@@ -778,7 +778,7 @@ def _merge_declared_scalar(
         return left_declared[field]
     if left_declared[field] != right_declared[field]:
         raise ValueError(
-            f"compose_manifests: conflicting {field}: "
+            f"merge_manifests: conflicting {field}: "
             f"{left_declared[field]!r} vs {right_declared[field]!r}"
         )
     return left_declared[field]
@@ -792,7 +792,7 @@ def _merge_db_profiles(
     Every key is folded on its own terms. The single-valued ones
     (``db_flavor``, ``target_namespace``) refuse a declared disagreement rather
     than inheriting the left's, because both decide what DDL is emitted against
-    which backend -- the composed manifest cannot target two.
+    which backend -- the merged manifest cannot target two.
     """
     data = left.to_dict(skip_defaults=False)
     right_data = right.to_dict(skip_defaults=False)
@@ -804,7 +804,7 @@ def _merge_db_profiles(
     for k, v in (right_data.get("vertex_storage_names") or {}).items():
         if k in vs and vs[k] != v:
             raise ValueError(
-                f"compose_manifests: conflicting vertex_storage_names for {k!r}: "
+                f"merge_manifests: conflicting vertex_storage_names for {k!r}: "
                 f"{vs[k]!r} vs {v!r}"
             )
         vs[k] = v
@@ -823,7 +823,7 @@ def _merge_db_profiles(
     edge_specs.extend(list(right_data.get("edge_specs") or []))
     data["edge_specs"] = edge_specs
 
-    defaults = merge_default_property_values(
+    defaults = union_default_property_values(
         left.default_property_values, right.default_property_values
     )
     data["default_property_values"] = (
@@ -841,6 +841,16 @@ def _union_schema(
     member_property_names: dict[tuple[Side, str], set[str]],
     alignment_labels: set[str],
 ) -> tuple[Schema, list[ManifestOp]]:
+    """Assemble both schemas by name, merging at every name they share.
+
+    Both levels of the operation in one pass: the walk over names is the
+    *union*, and ``merge_vertex_models`` / ``merge_edge_pair`` at a shared name
+    is the *merge*. Cluster members have already arrived at their merged name
+    by the time this runs, so a cluster reads here as an ordinary shared name.
+
+    Returns the merged schema and the ``AddSecondaryIdentitiesOp``s that
+    retire each merged member's pre-merge key.
+    """
     left_vc = left.core_schema.vertex_config
     right_vc = right.core_schema.vertex_config
     left_by_name = {v.name: v for v in left_vc.vertices}
@@ -855,7 +865,7 @@ def _union_schema(
         if name not in left_by_name or name not in right_by_name:
             missing_side = "left" if name not in left_by_name else "right"
             raise ValueError(
-                f"compose_manifests: composed vertex {name!r} missing on "
+                f"merge_manifests: merged vertex {name!r} missing on "
                 f"{missing_side} after alignment (left={list(cluster.left)!r}, "
                 f"right={list(cluster.right)!r})"
             )
@@ -887,13 +897,13 @@ def _union_schema(
     for v in right_vc.vertices:
         if v.name in seen:
             if v.name in index.labels:
-                continue  # a cluster member, merged above under its composed name
+                continue  # a cluster member, merged above under its merged name
             # Anything else sharing a name with the union is a collision the
             # policy should have refused or prefixed. Skipping it would drop
             # its model silently, which is the data loss CORE-MERGE-001 is about.
             raise ValueError(
-                f"compose_manifests: unreachable -- right vertex {v.name!r} "
-                "shares a name with the union but no cluster composes it"
+                f"merge_manifests: unreachable -- right vertex {v.name!r} "
+                "shares a name with the union but no cluster merges it"
             )
         out_vertices.append(v)
         seen.add(v.name)
@@ -902,7 +912,7 @@ def _union_schema(
     for k, v in (right_vc.force_types or {}).items():
         if k in force_types and force_types[k] != v:
             raise ValueError(
-                f"compose_manifests: conflicting force_types for vertex {k!r}"
+                f"merge_manifests: conflicting force_types for vertex {k!r}"
             )
         force_types[k] = v
 
@@ -947,7 +957,7 @@ def _union_transforms(
             existing = by_name[name]
             if existing.to_dict(skip_defaults=False) != t.to_dict(skip_defaults=False):
                 raise ValueError(
-                    f"compose_manifests: incompatible transform definitions for {name!r}"
+                    f"merge_manifests: incompatible transform definitions for {name!r}"
                 )
             continue
         by_name[name] = t
@@ -955,9 +965,16 @@ def _union_transforms(
     return out
 
 
-def _union_ingestion(
+def _concat_ingestion(
     left: IngestionModel | None, right: IngestionModel | None
 ) -> IngestionModel | None:
+    """Concatenate both resource lists; union the transform registries by name.
+
+    Not a union by name on the resources: colliding resource names were already
+    resolved by ``_apply_right_resource_policy`` before the relabel, so nothing
+    is left to fold and the lists simply join. ``transforms`` is a real by-name
+    union -- see ``_union_transforms``.
+    """
     if left is None and right is None:
         return None
     if left is None:
@@ -967,7 +984,7 @@ def _union_ingestion(
 
     resources = list(left.resources) + list(right.resources)
     transforms = _union_transforms(left, right)
-    # Model-level write policies follow the left manifest, as composition treats
+    # Model-level write policies follow the left manifest, as merge treats
     # it as the base being extended.
     edges_on_duplicate = left.edges_on_duplicate
     endpoints_on_ambiguous = left.endpoints_on_ambiguous
@@ -995,6 +1012,12 @@ def _union_bindings(
     *,
     name_conflict: Literal["error", "prefix_right", "union_right"],
 ) -> Bindings | None:
+    """Assemble both bindings registries by name, renaming right-side collisions.
+
+    Connectors are *addresses*, not concepts, so they collide only on an exact
+    name and ``union_right`` is meaningless for them -- it behaves as ``error``.
+    A renamed right connector is propagated into the references that name it.
+    """
     if left is None and right is None:
         return None
     if left is None:
@@ -1016,7 +1039,7 @@ def _union_bindings(
         right_names,
         name_conflict=name_conflict,
         kind="connector",
-        hint="rename before compose",
+        hint="rename before merge",
     )
 
     if rename_connectors:
@@ -1088,16 +1111,16 @@ def _coerce_side_maps(
             coerced.append(entry)
             continue
         raise TypeError(
-            "compose_manifests: canonical_maps entries must be (side, "
+            "merge_manifests: canonical_maps entries must be (side, "
             f"CanonicalMap) pairs with side in ('left', 'right'); got {entry!r}"
         )
     return coerced
 
 
-def compose_manifests(
+def merge_manifests(
     left: GraphManifest,
     right: GraphManifest,
-    op: ComposeManifestsOp,
+    op: MergeManifestsOp,
     *,
     bump_version: bool | Literal["minor"] = "minor",
     finish_init: bool = True,
@@ -1105,7 +1128,7 @@ def compose_manifests(
     dynamic_edge_feedback: bool = False,
     canonical_maps: Sequence[tuple[Side, CanonicalMap]] = (),
 ) -> GraphManifest:
-    """Return a new manifest that is the deterministic compose of *left* and *right*.
+    """Return a new manifest that is the deterministic merge of *left* and *right*.
 
     The declared clusters (each a :class:`~graflo.architecture.evolution.ops.VertexEquivalence`
     or :class:`~graflo.architecture.evolution.ops.RelationEquivalence`, possibly
@@ -1114,12 +1137,12 @@ def compose_manifests(
     (see :func:`~graflo.architecture.evolution.canonical.resolve_clusters`),
     applied to that side in one step, before the two sides are unioned by
     name. Does not invent semantic matches: a name both sides carry and no
-    cluster composes is refused under ``name_conflict="error"`` (naming the
+    cluster merges is refused under ``name_conflict="error"`` (naming the
     equivalences to declare), synthesized into a 1-1 cluster under
     ``union_right`` so it reconciles exactly as a declared one, and kept apart
     under ``prefix_right``.
 
-    When ``op.identity_alignments`` is non-empty, the composed union is further
+    When ``op.identity_alignments`` is non-empty, the merged union is further
     rewritten by the fundamental ops emitted from each alignment (see
     :func:`~graflo.architecture.evolution.alignment.alignment_to_ops`);
     member-keyed sources are resolved against the sides as handed in.
@@ -1127,10 +1150,8 @@ def compose_manifests(
     ``op.canonical_maps``; putting the maps on the op itself keeps the whole
     recipe in one document.
     """
-    if not isinstance(op, ComposeManifestsOp):
-        raise TypeError(
-            f"compose_manifests expects ComposeManifestsOp, got {type(op)!r}"
-        )
+    if not isinstance(op, MergeManifestsOp):
+        raise TypeError(f"merge_manifests expects MergeManifestsOp, got {type(op)!r}")
     maps = _coerce_side_maps(canonical_maps)
 
     out_left = left.model_copy(deep=True)
@@ -1141,12 +1162,12 @@ def compose_manifests(
     for side, schema in (("left", left_schema), ("right", right_schema)):
         if schema is None:
             logger.info(
-                "compose_manifests: %s manifest carries no schema block; "
-                "the composed schema comes from the other side alone",
+                "merge_manifests: %s manifest carries no schema block; "
+                "the merged schema comes from the other side alone",
                 side,
             )
 
-    # Raw ClusterConflictError here (not wrapped): a compose op whose own
+    # Raw ClusterConflictError here (not wrapped): a merge op whose own
     # declarations conflict is broken regardless of any canonical map.
     resolution = resolve_clusters(
         op, left=out_left, right=out_right, canonical_maps=maps
@@ -1181,7 +1202,7 @@ def compose_manifests(
     # Three-way, deliberately: a fabricated empty Schema would not be neutral.
     # `_merge_db_profiles` takes every scalar from the left and
     # `_merge_graph_metadata` takes the left's version, so an empty left would
-    # silently retarget the composed manifest to the `DatabaseProfile` default
+    # silently retarget the merged manifest to the `DatabaseProfile` default
     # flavor and drop the right's namespace and schema version.
     post_left = _schema_of(out_left)
     post_right = _schema_of(out_right)
@@ -1204,7 +1225,7 @@ def compose_manifests(
         composed_schema = None
     if composed_schema is not None:
         _assert_no_canonical_split(composed_schema)
-    composed_ingestion = _union_ingestion(
+    composed_ingestion = _concat_ingestion(
         out_left.ingestion_model, out_right.ingestion_model
     )
     composed_bindings = _union_bindings(
@@ -1248,7 +1269,7 @@ def compose_manifests(
 
 def _apply_identity_alignments(
     manifest: GraphManifest,
-    op: ComposeManifestsOp,
+    op: MergeManifestsOp,
     *,
     index: ClusterIndex,
     sides: Mapping[str, GraphManifest],
@@ -1263,7 +1284,7 @@ def _apply_identity_alignments(
     *sides* are the manifests as handed in, after the resource rename policy
     and before the per-side relabel: member-keyed sources resolve against
     them, since the relabel rewrites router ``type_map`` values to the
-    composed name. Member keys are first re-keyed through the aligned cluster,
+    merged name. Member keys are first re-keyed through the aligned cluster,
     so a member may be keyed by its own name or its canonical one.
     """
     from .alignment import alignment_to_ops, rekey_members
@@ -1277,8 +1298,8 @@ def _apply_identity_alignments(
         if cluster_labels:
             if alignment.vertex not in cluster_labels:
                 raise ValueError(
-                    f"compose_manifests: identity alignment vertex "
-                    f"{alignment.vertex!r} is not a declared cluster's composed "
+                    f"merge_manifests: identity alignment vertex "
+                    f"{alignment.vertex!r} is not a declared cluster's merged "
                     f"name {sorted(cluster_labels)}"
                 )
         else:
@@ -1289,8 +1310,8 @@ def _apply_identity_alignments(
             )
             if alignment.vertex not in union_vertices:
                 raise ValueError(
-                    f"compose_manifests: identity alignment vertex "
-                    f"{alignment.vertex!r} is not in the composed union"
+                    f"merge_manifests: identity alignment vertex "
+                    f"{alignment.vertex!r} is not in the merged union"
                 )
         cluster = index.cluster_for_label(alignment.vertex)
         if cluster is not None:

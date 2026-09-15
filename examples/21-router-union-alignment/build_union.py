@@ -44,14 +44,14 @@ from graflo.architecture.evolution import (
     AlignmentAttribute,
     AlignmentConflictError,
     CanonicalMap,
-    ComposeManifestsOp,
     DerivationSpec,
     IdentityAlignment,
     LocalKeySource,
     LocalKeySpec,
+    MergeManifestsOp,
     SharedDerivation,
     VertexEquivalence,
-    compose_manifests,
+    merge_manifests,
 )
 
 EXAMPLE_DIR = Path(__file__).resolve().parent
@@ -126,9 +126,9 @@ def build_union(*, root_demo: bool = False) -> GraphManifest:
         alignment = ALIGNMENT.model_copy(update={"at": {"r_view": []}})
 
     # One recipe: the cluster in each side's own names, the canonical map
-    # naming it `Company`, and the alignment. Compose relabels each side in one
+    # naming it `Company`, and the alignment. Merge relabels each side in one
     # step, unions, then aligns identity against the sides as handed in.
-    op = ComposeManifestsOp(
+    op = MergeManifestsOp(
         vertex_equivalences=[
             VertexEquivalence(left=["Firm", "Shop"], right=["Org", "Branch"]),
         ],
@@ -136,7 +136,7 @@ def build_union(*, root_demo: bool = False) -> GraphManifest:
         canonical_maps={"left": canonical_map},
         identity_alignments=[alignment],
     )
-    return compose_manifests(left, right, op)
+    return merge_manifests(left, right, op)
 
 
 @click.command()

@@ -3,7 +3,7 @@
 Identity is materialized at **assemble time**, before edges are assembled and
 before documents are deduplicated on their identity fields. That ordering is not
 incidental: a hash-mode vertex resolves to ``identity: ["id"]``, so a document
-whose ``id`` is still empty has no dedup basis (``merge_doc_basis`` folds the
+whose ``id`` is still empty has no dedup basis (``fuse_doc_basis`` folds the
 whole batch into one document) and no endpoint key for its edges.
 
 This module sits in ``architecture.schema`` (L2) rather than ``db`` (L5) because

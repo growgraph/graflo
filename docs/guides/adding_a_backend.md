@@ -49,11 +49,11 @@ Declare what you actually implement. These are `ClassVar`s on the class, and
 ```python
 class MyConnection(Connection):
     flavor = DBType.MYBACKEND
-    supports_graph_export = True          # fetch_all_docs / fetch_all_edges
-    supports_graph_read = True            # fetch_edges, therefore traversal
+    supports_graph_export = True  # fetch_all_docs / fetch_all_edges
+    supports_graph_read = True  # fetch_edges, therefore traversal
     supports_schema_introspection = True  # a real introspect_graph_schema
     schema_introspection_is_sampled = False  # False only with a real catalogue
-    supports_schema_ddl = False           # a migration emitter exists
+    supports_schema_ddl = False  # a migration emitter exists
 ```
 
 A sampling introspector must leave `property_types` empty and `directed` at its

@@ -19,7 +19,10 @@ from graflo.architecture.evolution import (
     apply_evolution,
 )
 from graflo.architecture.evolution.autogenerate import RenameHints
-from graflo.architecture.evolution.rewrite import rewrite_vertex_names_in_step
+from graflo.architecture.evolution.rewrite import (
+    rewrite_entity_names_in_pipeline,
+    rewrite_vertex_names_in_step,
+)
 from graflo.architecture.schema.core import CoreSchema
 from graflo.architecture.schema.document import Schema
 from graflo.architecture.schema.edge import Edge, EdgeConfig
@@ -125,7 +128,7 @@ class TestRenameTargetsMustExist:
             )
 
     def test_a_simultaneous_relabel_keeps_schema_and_profile_in_step(self) -> None:
-        """{r1: r2, r2: r3} applied once, not composed with itself.
+        """{r1: r2, r2: r3} applied once, not merged with itself.
 
         The db_profile used to be renamed twice — once inside the shared payload
         rewrite and once again afterwards — so the profile reached r3 while the
@@ -252,3 +255,55 @@ class TestReferencesThatUsedToBeLeftBehind:
         }
         with pytest.raises(ValueError, match="cannot merge vertex_from_map"):
             rewrite_vertex_names_in_step(step, {"a": "ab", "b": "ab"})
+
+
+class TestARenameKeepsRoutersRouting:
+    """A router routes an unmapped discriminator value as the class name.
+
+    Before a rename a raw ``Org`` reached ``Org`` with no table entry; after
+    it only an entry can send it to the new name, so the rename writes one.
+    """
+
+    def test_a_bare_router_gains_an_entry_for_the_old_name(self) -> None:
+        out = rewrite_vertex_names_in_step(
+            {"vertex_router": {"type_field": "kind"}}, {"Org": "Company"}
+        )
+        assert out["type_map"] == {"Org": "Company"}
+
+    def test_a_mapped_router_gains_the_entry_it_lacked(self) -> None:
+        step = {"type_field": "kind", "type_map": {"o": "Org"}}
+        out = rewrite_vertex_names_in_step(step, {"Org": "Company"})
+        assert out["type_map"] == {"o": "Company", "Org": "Company"}
+
+    def test_a_key_the_table_already_has_is_rewritten_not_duplicated(self) -> None:
+        step = {"type_field": "kind", "type_map": {"Org": "Org"}}
+        out = rewrite_vertex_names_in_step(step, {"Org": "Company"})
+        assert out["type_map"] == {"Org": "Company"}
+
+    def test_an_identity_entry_adds_nothing(self) -> None:
+        out = rewrite_vertex_names_in_step(
+            {"vertex_router": {"type_field": "kind"}}, {"Org": "Org"}
+        )
+        assert out.get("type_map") is None
+
+    def test_the_in_place_rewriter_handles_both_router_spellings(self) -> None:
+        pipeline = [
+            {"vertex_router": {"type_field": "kind", "type_map": {"o": "Org"}}},
+            {"type_field": "kind"},
+            {
+                "descend": {
+                    "key": "rows",
+                    "apply": [{"vertex_router": {"type_field": "kind"}}],
+                }
+            },
+        ]
+
+        rewrite_entity_names_in_pipeline(pipeline, vertices={"Org": "Company"})
+
+        assert pipeline[0]["vertex_router"]["type_map"] == {
+            "o": "Company",
+            "Org": "Company",
+        }
+        assert pipeline[1]["type_map"] == {"Org": "Company"}
+        nested = pipeline[2]["descend"]["apply"][0]["vertex_router"]
+        assert nested["type_map"] == {"Org": "Company"}

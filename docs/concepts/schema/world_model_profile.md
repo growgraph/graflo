@@ -146,8 +146,8 @@ content address.
 from graflo.architecture.profile import check_manifest_config
 
 report = check_manifest_config(config, profile="world-model")
-report.ok                # no error-severity finding survived waivers
-report.errors()          # the findings that make it non-conformant
+report.ok  # no error-severity finding survived waivers
+report.errors()  # the findings that make it non-conformant
 "\n".join(report.to_lines())
 ```
 

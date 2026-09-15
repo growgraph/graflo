@@ -1,13 +1,13 @@
-"""What a compose would do, and every way it could refuse — without refusing.
+"""What a merge would do, and every way it could refuse — without refusing.
 
-:func:`~graflo.architecture.evolution.compose.compose_manifests` raises at the
+:func:`~graflo.architecture.evolution.merge.merge_manifests` raises at the
 first refusal. That is right for a function that returns a manifest — a
-half-composed model is worse than none — but it makes authoring a compose a
+half-merged model is worse than none — but it makes authoring a merge a
 game of whack-a-mole: fix the contradiction the message names, run again, learn
 about the next one. Three declarations that each refuse take three runs to
 discover.
 
-This module is the other view. :func:`preview_compose` walks the same
+This module is the other view. :func:`preview_merge` walks the same
 declarations and reports **every** problem it finds, as data:
 
 * the **declaration graph** — classes and their attributes on each side, the
@@ -15,27 +15,27 @@ declarations and reports **every** problem it finds, as data:
   edges between them. This is the ``class_A - attr_a - attr_b - class_B``
   picture the authoring model is actually about;
 * **findings**, each naming the nodes it is about, at one of three severities —
-  ``possible`` (found structurally, by this module), ``refusal`` (what compose
+  ``possible`` (found structurally, by this module), ``refusal`` (what merge
   actually raised, if it was asked to try) and ``note`` (an acknowledged
   heuristic, such as an entry taken as already applied);
-* an **outcome**, from a real compose attempt.
+* an **outcome**, from a real merge attempt.
 
 Nothing here is a second implementation of the resolution rules. Every check
 calls the function in :mod:`~graflo.architecture.evolution.canonical` that
-compose itself calls, in units small enough — one declaration, one map entry,
+merge itself calls, in units small enough — one declaration, one map entry,
 one member — that a refusal on one unit does not hide the others. A refusal
 carries its ``check`` and its ``subjects``, so the finding it becomes is
 pinned to the same nodes the message names, and there is no parallel copy of
 the rules to fall out of date.
 
-The consistency invariant, asserted in the tests: **whatever compose refuses,
-the structural pass has a finding of a matching kind for**, and a compose that
+The consistency invariant, asserted in the tests: **whatever merge refuses,
+the structural pass has a finding of a matching kind for**, and a merge that
 succeeds leaves no ``refusal`` finding behind.
 
 Merging two branches of one lineage needs none of this.
 :func:`~graflo.architecture.evolution.merge3.merge_three_way` already *returns*
 its conflicts rather than raising them, one record per contested slot, so
-:func:`build_merge_preview` only has to put them in the shape they already
+:func:`build_merge3_preview` only has to put them in the shape they already
 have: slots form a tree — ``vertex/person`` contains ``vertex/person/field/age``
 — and the tree is what shows *where in the model* two branches collided.
 """
@@ -52,15 +52,15 @@ from pydantic import Field as PydanticField
 from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.schema.edge import Edge
-from graflo.architecture.schema.vertex import Vertex
+from graflo.architecture.schema.vertex import FieldMergeError, Vertex
 
 from .apply import relabel_vertex_fields
 from .canonical import (
     ClusterResolution as _ClusterResolution,
 )
 from .canonical import (
-    ComposeCanonicalConflictError,
-    ComposeIncompleteError,
+    MergeCanonicalConflictError,
+    MergeIncompleteError,
     SideNames,
     _carry_declared_entries,
     _check_attribute_fixed_points,
@@ -78,7 +78,6 @@ from .canonical import (
 from .canonical import (
     SideMaps as _SideMaps,
 )
-from .compose import _resolve_schema_collisions
 from .equivalence import (
     Cluster,
     ClusterConflictError,
@@ -90,14 +89,21 @@ from .equivalence import (
     did_you_mean,
     subject,
 )
+from .merge import (
+    MergeIdentityError,
+    MergeNameConflictError,
+    _resolve_schema_collisions,
+)
 from .merge_core import (
+    EdgeMergeError,
+    VertexMergeError,
     merge_edge_pair,
     merge_vertex_models,
 )
 from .ops import (
     CanonicalizeOp,
     CanonicalMap,
-    ComposeManifestsOp,
+    MergeManifestsOp,
     RelationEquivalence,
     VertexEquivalence,
 )
@@ -109,13 +115,13 @@ _SIDES: tuple[Side, ...] = ("left", "right")
 #: What a preview node stands for. ``ghost`` is a name a declaration mentions
 #: that the manifest on that side does not declare -- drawn, because the
 #: absence is the point.
-NodeKind = Literal["class", "relation", "attribute", "composed", "canonical", "ghost"]
+NodeKind = Literal["class", "relation", "attribute", "merged", "canonical", "ghost"]
 
 #: What one declaration says about a pair of names. ``suggested`` comes from a
 #: refusal's completion: the declaration that would settle it.
 EdgeKind = Literal["member", "map", "property_map", "property_equivalence", "suggested"]
 
-#: ``refusal`` is what compose raised; ``possible`` what this module found on
+#: ``refusal`` is what merge raised; ``possible`` what this module found on
 #: its own; ``note`` an acknowledged heuristic that changes nothing.
 Severity = Literal["refusal", "possible", "note"]
 
@@ -156,7 +162,7 @@ _KIND_BY_CHECK: dict[str, FindingKind] = {
     "occupied into": "occupied_into",
     "unknown vertex member": "unknown_member",
     "unknown relation member": "unknown_member",
-    "joining a composed class": "incomplete",
+    "joining a merged class": "incomplete",
     "name collision": "name_collision",
     "near collision": "near_collision",
     "canonical split": "name_collision",
@@ -186,26 +192,26 @@ _KIND_BY_CHECK: dict[str, FindingKind] = {
 
 #: Refusals that carry no ``check`` are classified by type alone. A value of
 #: ``None`` means "no expectation" -- the preview is not asked to have seen it.
-_KINDS_BY_TYPE: dict[str, frozenset[FindingKind]] = {
-    "ClusterConflictError": frozenset(
+_KINDS_BY_TYPE: dict[type[BaseException], frozenset[FindingKind]] = {
+    ClusterConflictError: frozenset(
         {"cluster_overlap", "shared_into", "occupied_into"}
     ),
-    "UnknownMemberError": frozenset({"unknown_member"}),
-    "ComposeIncompleteError": frozenset({"incomplete", "name_collision"}),
-    "ComposeIdentityError": frozenset({"identity_disagreement"}),
-    "ComposeNameConflictError": frozenset({"near_collision", "name_collision"}),
+    UnknownMemberError: frozenset({"unknown_member"}),
+    MergeIncompleteError: frozenset({"incomplete", "name_collision"}),
+    MergeIdentityError: frozenset({"identity_disagreement"}),
+    MergeNameConflictError: frozenset({"near_collision", "name_collision"}),
     # Inert while the union's refusals set ``check`` -- which they all do. Kept
     # so a raise site added later without one still classifies rather than
     # silently becoming exempt.
-    "FieldMergeError": frozenset({"type_conflict", "unit_conflict"}),
-    "VertexMergeError": frozenset(
+    FieldMergeError: frozenset({"type_conflict", "unit_conflict"}),
+    VertexMergeError: frozenset(
         {
             "identity_mode_conflict",
             "identity_funnel_conflict",
             "secondary_identity_conflict",
         }
     ),
-    "EdgeMergeError": frozenset({"edge_conflict"}),
+    EdgeMergeError: frozenset({"edge_conflict"}),
 }
 
 
@@ -222,7 +228,7 @@ class PreviewNode(ConfigBaseModel):
     name: str = PydanticField(..., description="The name as its side spells it.")
     side: Side | None = PydanticField(
         default=None,
-        description="Which manifest it comes from; composed names have none.",
+        description="Which manifest it comes from; merged names have none.",
     )
     owner: str | None = PydanticField(
         default=None, description="For an attribute, the node id of its class."
@@ -253,7 +259,7 @@ class PreviewEdge(ConfigBaseModel):
     label: str = PydanticField(default="", description="Short caption, when useful.")
     declared_by: str = PydanticField(
         default="",
-        description="Where it was declared: a map scope, or a cluster's composed name.",
+        description="Where it was declared: a map scope, or a cluster's merged name.",
     )
 
 
@@ -265,7 +271,7 @@ class PreviewCluster(ConfigBaseModel):
         ..., description="Whether it collapses classes or relations."
     )
     into: str | None = PydanticField(
-        default=None, description="Composed name; None when it could not be resolved."
+        default=None, description="Merged name; None when it could not be resolved."
     )
     declared_into: str | None = PydanticField(
         default=None, description="`into` as the author spelled it, before translation."
@@ -273,7 +279,7 @@ class PreviewCluster(ConfigBaseModel):
     left: list[str] = PydanticField(default_factory=list, description="Left members.")
     right: list[str] = PydanticField(default_factory=list, description="Right members.")
     synthesized: bool = PydanticField(
-        default=False, description="Declared by compose itself under `union_right`."
+        default=False, description="Declared by merge itself under `union_right`."
     )
     declared_identity: bool = PydanticField(
         default=False, description="Whether the declaration states an `identity`."
@@ -283,7 +289,7 @@ class PreviewCluster(ConfigBaseModel):
     )
 
 
-class ComposeFinding(ConfigBaseModel):
+class MergeFinding(ConfigBaseModel):
     """One thing wrong with the declarations, or one acknowledged heuristic."""
 
     kind: FindingKind = PydanticField(
@@ -291,8 +297,8 @@ class ComposeFinding(ConfigBaseModel):
     )
     severity: Severity = PydanticField(..., description="How much it matters.")
     message: str = PydanticField(..., description="What to tell the author.")
-    source: Literal["compose", "structure"] = PydanticField(
-        ..., description="Whether compose raised it, or this module found it."
+    source: Literal["merge", "structure"] = PydanticField(
+        ..., description="Whether merge raised it, or this module found it."
     )
     nodes: list[str] = PydanticField(
         default_factory=list, description="Node ids this finding is about."
@@ -308,15 +314,15 @@ class ComposeFinding(ConfigBaseModel):
         default=None, description="The refusal's own name for the rule."
     )
     error_type: str | None = PydanticField(
-        default=None, description="Exception type, for a finding compose raised."
+        default=None, description="Exception type, for a finding merge raised."
     )
 
 
-class ComposeOutcome(ConfigBaseModel):
-    """What a real compose attempt produced, or refused with."""
+class MergeOutcome(ConfigBaseModel):
+    """What a real merge attempt produced, or refused with."""
 
-    status: Literal["composed", "refused", "not_attempted"] = PydanticField(
-        ..., description="Whether compose ran, and how it ended."
+    status: Literal["merged", "refused", "not_attempted"] = PydanticField(
+        ..., description="Whether merge ran, and how it ended."
     )
     error_type: str | None = PydanticField(default=None, description="Exception type.")
     message: str | None = PydanticField(
@@ -330,18 +336,18 @@ class ComposeOutcome(ConfigBaseModel):
         description="The extension that would settle an incomplete refusal.",
     )
     vertices: int | None = PydanticField(
-        default=None, description="Vertex count of the composed schema."
+        default=None, description="Vertex count of the merged schema."
     )
     edges: int | None = PydanticField(
-        default=None, description="Edge count of the composed schema."
+        default=None, description="Edge count of the merged schema."
     )
     version: str | None = PydanticField(
-        default=None, description="Version of the composed schema."
+        default=None, description="Version of the merged schema."
     )
 
 
-class ComposePreview(ConfigBaseModel):
-    """The declaration graph, everything wrong with it, and what compose did."""
+class MergePreview(ConfigBaseModel):
+    """The declaration graph, everything wrong with it, and what merge did."""
 
     left_name: str = PydanticField(
         default="left", description="Name of the left manifest."
@@ -355,19 +361,19 @@ class ComposePreview(ConfigBaseModel):
     nodes: list[PreviewNode] = PydanticField(default_factory=list)
     edges: list[PreviewEdge] = PydanticField(default_factory=list)
     clusters: list[PreviewCluster] = PydanticField(default_factory=list)
-    findings: list[ComposeFinding] = PydanticField(default_factory=list)
-    outcome: ComposeOutcome = PydanticField(
-        default_factory=lambda: ComposeOutcome(status="not_attempted")
+    findings: list[MergeFinding] = PydanticField(default_factory=list)
+    outcome: MergeOutcome = PydanticField(
+        default_factory=lambda: MergeOutcome(status="not_attempted")
     )
 
     @property
     def refused(self) -> bool:
-        """Whether the compose attempt refused."""
+        """Whether the merge attempt refused."""
         return self.outcome.status == "refused"
 
     @property
-    def blocking(self) -> list[ComposeFinding]:
-        """Findings that would stop a compose: the refusal and every possible one."""
+    def blocking(self) -> list[MergeFinding]:
+        """Findings that would stop a merge: the refusal and every possible one."""
         return [f for f in self.findings if f.severity != "note"]
 
     def node(self, node_id: str) -> PreviewNode | None:
@@ -379,8 +385,8 @@ class ComposePreview(ConfigBaseModel):
         return [n for n in self.nodes if n.owner == node_id]
 
     def with_outcome(
-        self, outcome: ComposeOutcome, *, subjects: Sequence[str] = ()
-    ) -> ComposePreview:
+        self, outcome: MergeOutcome, *, subjects: Sequence[str] = ()
+    ) -> MergePreview:
         """A copy carrying *outcome*, and the finding a refusal becomes.
 
         The structural pass usually found the refusal too — it calls the same
@@ -392,17 +398,17 @@ class ComposePreview(ConfigBaseModel):
             return self.model_copy(update={"outcome": outcome})
 
         known = {n.id for n in self.nodes}
-        refusal = ComposeFinding(
+        refusal = MergeFinding(
             kind=kind_for_check(outcome.check, outcome.error_type),
             severity="refusal",
-            message=outcome.message or "compose refused",
-            source="compose",
+            message=outcome.message or "merge refused",
+            source="merge",
             nodes=[s for s in subjects if s in known],
             completion=outcome.completion,
             check=outcome.check,
             error_type=outcome.error_type,
         )
-        findings: list[ComposeFinding] = []
+        findings: list[MergeFinding] = []
         folded = False
         for finding in self.findings:
             if not folded and _is_same_problem(finding, refusal):
@@ -424,7 +430,7 @@ class ComposePreview(ConfigBaseModel):
         return self.model_copy(update={"outcome": outcome, "findings": findings})
 
 
-def _is_same_problem(structural: ComposeFinding, refusal: ComposeFinding) -> bool:
+def _is_same_problem(structural: MergeFinding, refusal: MergeFinding) -> bool:
     """Whether a structural finding and the refusal describe one problem.
 
     Same kind, and either the same message — the usual case, since both come
@@ -436,13 +442,19 @@ def _is_same_problem(structural: ComposeFinding, refusal: ComposeFinding) -> boo
         return True
     if not structural.nodes or not refusal.nodes:
         return False
-    # The refusal usually names more -- it knows the composed names the
+    # The refusal usually names more -- it knows the merged names the
     # structural pass only reached one of -- so a subset is the same problem
     # seen with less context.
     return set(structural.nodes) <= set(refusal.nodes)
 
 
 # ── classifying a refusal ───────────────────────────────────────────────────
+
+#: The same table keyed by exception name, for the serialized
+#: ``MergeOutcome.error_type``. Derived, never written by hand.
+_KINDS_BY_TYPE_NAME: dict[str, frozenset[FindingKind]] = {
+    exc.__name__: kinds for exc, kinds in _KINDS_BY_TYPE.items()
+}
 
 
 def kind_for_check(check: str | None, error_type: str | None = None) -> FindingKind:
@@ -457,16 +469,16 @@ def kind_for_check(check: str | None, error_type: str | None = None) -> FindingK
             if phrase in check:
                 return _KIND_BY_CHECK[phrase]
     if error_type:
-        kinds = _KINDS_BY_TYPE.get(error_type)
+        kinds = _KINDS_BY_TYPE_NAME.get(error_type)
         if kinds:
             return min(kinds)
     return "disagreement"
 
 
-def expected_kinds(outcome: ComposeOutcome) -> frozenset[FindingKind]:
+def expected_kinds(outcome: MergeOutcome) -> frozenset[FindingKind]:
     """Structural finding kinds that should accompany *outcome*.
 
-    The invariant this module is tested against: whatever compose refused, the
+    The invariant this module is tested against: whatever merge refused, the
     structural pass saw something of a matching kind. An empty set means the
     refusal is one the preview is not asked to anticipate -- a structural merge
     error from deep inside the union, say -- and asserts nothing.
@@ -475,17 +487,17 @@ def expected_kinds(outcome: ComposeOutcome) -> frozenset[FindingKind]:
         return frozenset()
     if outcome.check:
         return frozenset({kind_for_check(outcome.check, outcome.error_type)})
-    by_type = _KINDS_BY_TYPE.get(outcome.error_type or "")
+    by_type = _KINDS_BY_TYPE_NAME.get(outcome.error_type or "")
     return by_type if by_type is not None else frozenset()
 
 
 def outcome_from_exception(
     exc: BaseException,
-) -> tuple[ComposeOutcome, tuple[str, ...]]:
+) -> tuple[MergeOutcome, tuple[str, ...]]:
     """The outcome a refusal is, and the node ids it names."""
     completion = getattr(exc, "completion", None)
     return (
-        ComposeOutcome(
+        MergeOutcome(
             status="refused",
             error_type=type(exc).__name__,
             message=str(exc),
@@ -496,14 +508,14 @@ def outcome_from_exception(
     )
 
 
-def outcome_from_manifest(manifest: GraphManifest) -> ComposeOutcome:
-    """The outcome a composed manifest is."""
+def outcome_from_manifest(manifest: GraphManifest) -> MergeOutcome:
+    """The outcome a merged manifest is."""
     schema = manifest.graph_schema
     if schema is None:
-        return ComposeOutcome(status="composed")
+        return MergeOutcome(status="merged")
     core = schema.core_schema
-    return ComposeOutcome(
-        status="composed",
+    return MergeOutcome(
+        status="merged",
         vertices=len(core.vertex_config.vertices),
         edges=len(core.edge_config.edges),
         version=str(schema.metadata.version) if schema.metadata.version else None,
@@ -523,23 +535,23 @@ class _Builder:
     a finding on.
     """
 
-    op: ComposeManifestsOp
+    op: MergeManifestsOp
     manifests: dict[Side, GraphManifest]
     names: dict[Side, SideNames]
     declared: Any  # DeclaredMaps
     nodes: dict[str, PreviewNode] = field(default_factory=dict)
     edges: dict[str, PreviewEdge] = field(default_factory=dict)
     clusters: list[PreviewCluster] = field(default_factory=list)
-    findings: list[ComposeFinding] = field(default_factory=list)
+    findings: list[MergeFinding] = field(default_factory=list)
     index: ClusterIndex = field(
         default_factory=lambda: ClusterIndex(vertices=(), relations=())
     )
     composite: dict[Side, CanonicalizeOp] = field(default_factory=dict)
     #: Declarations at or past this position per kind were synthesized by
-    #: compose rather than written by the author.
+    #: merge rather than written by the author.
     synthesized_from: tuple[int, int] = (1 << 30, 1 << 30)
-    #: ``{kind: [(composed name, left members, right members)]}`` for the names
-    #: both sides arrive at and no cluster composes.
+    #: ``{kind: [(merged name, left members, right members)]}`` for the names
+    #: both sides arrive at and no cluster merges.
     groups: dict[str, list[tuple[str, list[str], list[str]]]] = field(
         default_factory=dict
     )
@@ -568,14 +580,14 @@ class _Builder:
 
     def attribute(
         self,
-        scope: Literal["composed", "canonical"],
+        scope: Literal["merged", "canonical"],
         owner: str,
         name: str,
         *,
         identity: bool = False,
         field_type: str | None = None,
     ) -> str:
-        """An attribute row on a composed or canonical class, minting both."""
+        """An attribute row on a merged or canonical class, minting both."""
         owner_id = self.add_node(
             PreviewNode(id=subject(scope, owner), kind=scope, name=owner)
         )
@@ -631,7 +643,7 @@ class _Builder:
         check: str | None = None,
     ) -> None:
         self.findings.append(
-            ComposeFinding(
+            MergeFinding(
                 kind=kind,
                 severity=severity,
                 message=message,
@@ -737,12 +749,12 @@ class _Builder:
                 names=self.names,
                 synthesized=synthesized,
             )
-        except ComposeCanonicalConflictError as exc:
+        except MergeCanonicalConflictError as exc:
             self.from_refusal(exc, fallback="disagreement")
         except ValueError as exc:  # a malformed declaration, reported as written
             self.finding("disagreement", str(exc))
         # A best-effort shape, so the cluster still draws: members as spelled,
-        # and the composed name only if the author gave one.
+        # and the merged name only if the author gave one.
         return ClusterSpec(
             left=tuple(declaration.members("left")),
             right=tuple(declaration.members("right")),
@@ -752,12 +764,12 @@ class _Builder:
         )
 
     def _shape_checks(self, specs: Sequence[ClusterSpec], *, kind: Kind) -> None:
-        """Overlap, shared composed name, occupied composed name -- all of them.
+        """Overlap, shared merged name, occupied merged name -- all of them.
 
         The three rules of
         :func:`~graflo.architecture.evolution.equivalence.index_clusters`,
         reported together rather than one per run. Occupancy is computed
-        against the declared map, not the raw side names: a composed name whose
+        against the declared map, not the raw side names: a merged name whose
         occupant another declaration renames away is not occupied.
         """
         claimed: dict[tuple[Side, str], int] = {}
@@ -789,8 +801,8 @@ class _Builder:
                     "shared_into",
                     f"{kind} equivalence: two declarations both target into "
                     f"{spec.into!r}; sharing one `into` collapses them into one "
-                    "composed class — spell it as one declaration",
-                    nodes=[subject("composed", spec.into)],
+                    "merged class — spell it as one declaration",
+                    nodes=[subject("merged", spec.into)],
                 )
             into_owner[spec.into] = position
             for side in _SIDES:
@@ -807,7 +819,7 @@ class _Builder:
                     f"{kind} equivalence: into {spec.into!r} already exists on the "
                     f"{side} side but is not a member of its cluster "
                     f"({side}={list(members)})",
-                    nodes=[subject(side, spec.into), subject("composed", spec.into)],
+                    nodes=[subject(side, spec.into), subject("merged", spec.into)],
                 )
 
     def _member_existence(self, specs: Mapping[Kind, Sequence[ClusterSpec]]) -> None:
@@ -821,7 +833,7 @@ class _Builder:
                             continue
                         self.finding(
                             "unknown_member",
-                            f"compose: {side} {kind} {member!r} is not in the "
+                            f"merge: {side} {kind} {member!r} is not in the "
                             f"{side} manifest{did_you_mean(member, known)}",
                             nodes=[self.ghost(side, member, kind)],  # type: ignore[arg-type]
                         )
@@ -838,8 +850,8 @@ class _Builder:
                 composed_id = (
                     self.add_node(
                         PreviewNode(
-                            id=subject("composed", into),
-                            kind="composed",
+                            id=subject("merged", into),
+                            kind="merged",
                             name=into,
                         )
                     )
@@ -887,7 +899,7 @@ class _Builder:
                 for old, new in attr_map.items():
                     self.add_edge(
                         subject(side, member, old),
-                        self.attribute("composed", cluster.into, new),
+                        self.attribute("merged", cluster.into, new),
                         "property_equivalence",
                         label=new,
                         declared_by=cluster.into,
@@ -941,7 +953,7 @@ class _Builder:
         ``_carry_declared_entries`` is a loop over a mapping, so handing it a
         one-entry mapping classifies exactly that entry -- member, satisfied,
         translated, inapplicable, dangling or incomplete -- in the same order
-        and by the same rules compose uses.
+        and by the same rules merge uses.
         """
         before = dict(out)
         shared = (
@@ -960,10 +972,10 @@ class _Builder:
                 side=side,
                 kind=kind,
             )
-        except ComposeIncompleteError as exc:
+        except MergeIncompleteError as exc:
             self.from_refusal(exc, fallback="incomplete")
             return
-        except ComposeCanonicalConflictError as exc:
+        except MergeCanonicalConflictError as exc:
             self.from_refusal(exc, fallback="dangling")
             return
         if (
@@ -999,7 +1011,7 @@ class _Builder:
                 ):
                     continue
                 where = (
-                    "a composed name"
+                    "a merged name"
                     if cls in self.index.labels or cls in self.index.declared_intos
                     else "no class on that side"
                 )
@@ -1026,7 +1038,7 @@ class _Builder:
                     (c for c in self.index.vertices if cls in c.members(side)), None
                 )
                 target = (
-                    self.attribute("composed", owning.into, new)
+                    self.attribute("merged", owning.into, new)
                     if owning is not None
                     else self.attribute("canonical", cm.canonical_class(cls), new)
                 )
@@ -1049,7 +1061,7 @@ class _Builder:
         for source, target in mapping.items():
             if source == target or source in members:
                 continue
-            scope = "composed" if target in labels else "canonical"
+            scope = "merged" if target in labels else "canonical"
             source_id = (
                 subject(side, source)
                 if source in self.names[side].of_kind(kind)
@@ -1069,13 +1081,13 @@ class _Builder:
                     _check_property_fields_exist(
                         manifest, cluster, side=side, declared=self.declared[side]
                     )
-                except ComposeCanonicalConflictError as exc:
+                except MergeCanonicalConflictError as exc:
                     self.from_refusal(exc, fallback="unknown_property")
                 try:
                     _check_attribute_fixed_points(
                         cluster, side=side, declared=self.declared[side]
                     )
-                except ComposeCanonicalConflictError as exc:
+                except MergeCanonicalConflictError as exc:
                     self.from_refusal(exc, fallback="property_retarget")
         for side in _SIDES:
             relabel = self.composite.get(side)
@@ -1087,11 +1099,11 @@ class _Builder:
                     _check_property_maps_against_manifest(
                         self.manifests[side], one, side=side
                     )
-                except ComposeCanonicalConflictError as exc:
+                except MergeCanonicalConflictError as exc:
                     self.from_refusal(exc, fallback="property_collision")
 
     def same_names(self) -> None:
-        """Names both sides arrive at that no cluster composes."""
+        """Names both sides arrive at that no cluster merges."""
         policy = self.op.name_conflict
         resolution = _ClusterResolution(
             index=self.index,
@@ -1116,8 +1128,8 @@ class _Builder:
                 self.finding(
                     "name_collision",
                     f"{shared} exist on both sides after the declared maps and no "
-                    "equivalence composes them",
-                    nodes=[subject("composed", name) for name in shared],
+                    "equivalence merges them",
+                    nodes=[subject("merged", name) for name in shared],
                     completion={
                         "kind": "declare_equivalences",
                         f"{kind}_equivalences": [
@@ -1131,14 +1143,14 @@ class _Builder:
                     f"{shared} exist on both sides; prefix_right keeps them apart "
                     "under r_ names",
                     severity="note",
-                    nodes=[subject("composed", name) for name in shared],
+                    nodes=[subject("merged", name) for name in shared],
                 )
             self._suggest(groups, kind=kind)  # type: ignore[arg-type]
         if policy == "error":
             self._near_collisions()
 
     def _near_collisions(self) -> None:
-        """Two spellings of one name, which compose refuses under ``error``."""
+        """Two spellings of one name, which merge refuses under ``error``."""
         for kind in ("vertex", "relation"):
             post = {
                 side: sorted(
@@ -1161,9 +1173,9 @@ class _Builder:
                 self.finding(
                     "near_collision",
                     f"{left!r} and {right!r} denote the same concept under different "
-                    "naming conventions, so they would compose into two unrelated "
+                    "naming conventions, so they would merge into two unrelated "
                     f"{kind} types with the source data split between them",
-                    nodes=[subject("composed", left), subject("composed", right)],
+                    nodes=[subject("merged", left), subject("merged", right)],
                 )
 
     def _suggest(
@@ -1175,7 +1187,7 @@ class _Builder:
         """Draw the equivalence a shared name is asking for."""
         for into, left, right in groups:
             target = self.add_node(
-                PreviewNode(id=subject("composed", into), kind="composed", name=into)
+                PreviewNode(id=subject("merged", into), kind="merged", name=into)
             )
             for side, members in (("left", left), ("right", right)):
                 for member in members:
@@ -1188,10 +1200,10 @@ class _Builder:
                     )
 
     def composed_attributes(self) -> None:
-        """Fill in every composed class's attribute rows.
+        """Fill in every merged class's attribute rows.
 
         The union of its members' properties under that side's composite
-        rename -- which is what the composed vertex actually carries. Marked as
+        rename -- which is what the merged vertex actually carries. Marked as
         identity when the declaration says so, or when a member keys on it.
         """
         for cluster in self.index.vertices:
@@ -1226,7 +1238,7 @@ class _Builder:
                     for prop in vertex.properties:
                         composed_name = rename.get(prop.name, prop.name)
                         self.attribute(
-                            "composed",
+                            "merged",
                             cluster.into,
                             composed_name,
                             identity=(
@@ -1241,7 +1253,7 @@ class _Builder:
         """Members of one cluster whose natural keys disagree, unresolved.
 
         The rule of
-        :func:`~graflo.architecture.evolution.compose._composed_identity`: only
+        :func:`~graflo.architecture.evolution.merge._composed_identity`: only
         plain natural keys take part -- blank, assigned, hash and funnel
         identities are reconciled (or refused) by the vertex merge itself.
         """
@@ -1282,10 +1294,10 @@ class _Builder:
                 detail = "; ".join(f"{s}:{m}={list(k)}" for s, m, k in keys)
                 self.finding(
                     "identity_disagreement",
-                    f"composed vertex {cluster.into!r} has members that disagree on "
+                    f"merged vertex {cluster.into!r} has members that disagree on "
                     f"identity ({detail}) and nothing resolves it",
                     nodes=[
-                        subject("composed", cluster.into),
+                        subject("merged", cluster.into),
                         *(subject(s, m) for s, m, _k in keys),
                     ],
                 )
@@ -1300,14 +1312,14 @@ class _Builder:
         secondary identity claimed twice are all found by the code that decides
         them. One call per cluster, so a refusal on one does not hide the next.
 
-        The kernel takes the composed name as an argument and never reads
+        The kernel takes the merged name as an argument and never reads
         ``Vertex.name``, so only the *attribute* renames have to be applied
         first -- the class relabel is irrelevant here. Applying them through
         the whole-side ``apply_canonicalize`` would be wrong twice over: it is
         all-or-nothing per side, and it runs this very kernel internally, so
         one bad cluster would abort every other cluster's finding.
 
-        Compose reaches the kernel once more after the union, through
+        Merge reaches the kernel once more after the union, through
         ``_apply_identity_alignments``; no case is known that refuses only
         there, and this pass would not see it if one appeared.
         """
@@ -1347,7 +1359,7 @@ class _Builder:
                 )
             except ValueError as exc:
                 # Deliberately wider than the two typed errors: this module
-                # describes a compose, it never raises one. An untyped refusal
+                # describes a merge, it never raises one. An untyped refusal
                 # from deeper in the kernel still earns a finding -- a general
                 # one, since nothing says which rule it is -- rather than
                 # taking the whole preview down with it.
@@ -1360,12 +1372,12 @@ class _Builder:
     def _effective_map(self, side: Side, kind: Kind) -> dict[str, str]:
         """Where a name on *side* ends up, as the union sees it.
 
-        Compose applies the composite relabel first and the right side's
-        name-conflict policy second (``compose_manifests``, in that order), so
-        the map the union sees is the policy composed onto the relabel. The
-        policy is obtained from the very function compose calls, over the
+        Merge applies the composite relabel first and the right side's
+        name-conflict policy second (``merge_manifests``, in that order), so
+        the map the union sees is the policy merged onto the relabel. The
+        policy is obtained from the very function merge calls, over the
         *post-relabel* names, so ``prefix_right`` cannot drift out of sync
-        here and start reporting conflicts on composes that succeed.
+        here and start reporting conflicts on merges that succeed.
 
         Under ``error`` and ``union_right`` the policy is empty by
         construction, and when it refuses, ``same_names`` has already said so.
@@ -1453,7 +1465,7 @@ class _Builder:
                         exc,
                         fallback="edge_conflict",
                         nodes=[
-                            subject("composed", str(name))
+                            subject("merged", str(name))
                             for name in edge_id
                             if name is not None
                         ],
@@ -1468,22 +1480,22 @@ class _Builder:
     ) -> list[str]:
         """The nodes a union refusal is about, most specific first.
 
-        A field conflict names the composed attribute and every member that
+        A field conflict names the merged attribute and every member that
         declares it -- *including* members that left it untyped, which is the
         side an author most needs to see. Anything else names the classes.
         """
-        nodes: list[str] = [subject("composed", cluster.into)]
+        nodes: list[str] = [subject("merged", cluster.into)]
         fields: tuple[str, ...] = getattr(exc, "fields", ())
         if not fields:
             return [*nodes, *(subject(s, m) for s, m, _v in members)]
         for name in fields:
-            nodes.append(subject("composed", cluster.into, name))
+            nodes.append(subject("merged", cluster.into, name))
             for side, member, vertex in members:
                 if any(prop.name == name for prop in vertex.properties):
                     nodes.append(subject(side, member, name))
         return nodes
 
-    def build(self) -> ComposePreview:
+    def build(self) -> MergePreview:
         self.schema_nodes()
         self.resolve_clusters()
         self.composite_maps()
@@ -1493,7 +1505,7 @@ class _Builder:
         self.identity_checks()
         self.merge_checks()
         self.edge_merge_checks()
-        return ComposePreview(
+        return MergePreview(
             left_name=_manifest_name(self.manifests["left"], "left"),
             right_name=_manifest_name(self.manifests["right"], "right"),
             name_conflict=self.op.name_conflict,
@@ -1539,7 +1551,7 @@ def _index_of(
     """A :class:`ClusterIndex` over resolved specs, skipping the unnamed ones.
 
     Built directly rather than through ``index_clusters``: the shape checks
-    have already run tolerantly, and a cluster whose composed name could not be
+    have already run tolerantly, and a cluster whose merged name could not be
     resolved has nothing to index under.
     """
     built: dict[Kind, list[Cluster]] = {"vertex": [], "relation": []}
@@ -1603,7 +1615,7 @@ class SlotNode(ConfigBaseModel):
     )
 
 
-class MergePreview(ConfigBaseModel):
+class Merge3Preview(ConfigBaseModel):
     """A three-way merge as a slot tree: what moved, and where the branches met."""
 
     nodes: list[SlotNode] = PydanticField(default_factory=list)
@@ -1627,9 +1639,9 @@ class MergePreview(ConfigBaseModel):
         return [node for node in self.nodes if node.parent == node_id]
 
 
-def build_merge_preview(
+def build_merge3_preview(
     result: Any, *, base: GraphManifest | None = None
-) -> MergePreview:
+) -> Merge3Preview:
     """Project a :class:`~graflo.architecture.evolution.merge3.MergeResult` onto its slot tree.
 
     Slots are paths and contain one another, so the set of slots a merge
@@ -1645,7 +1657,7 @@ def build_merge_preview(
             it without knowing whether the excerpt came from the result.
 
     Returns:
-        A :class:`MergePreview`. Never raises: a merge that could not complete
+        A :class:`Merge3Preview`. Never raises: a merge that could not complete
         is exactly the case worth drawing.
     """
     from .merge3 import describe_slot, op_slots
@@ -1697,7 +1709,7 @@ def build_merge_preview(
         )
 
     ordered = sorted(nodes.values(), key=lambda n: (n.depth, n.id))
-    return MergePreview(
+    return Merge3Preview(
         nodes=ordered,
         conflicts=len(result.conflicts),
         clean=result.clean,
@@ -1709,7 +1721,7 @@ def build_merge_preview(
 # ── the entry point ─────────────────────────────────────────────────────────
 
 
-def _extended(op: ComposeManifestsOp, builder: _Builder) -> ComposeManifestsOp | None:
+def _extended(op: MergeManifestsOp, builder: _Builder) -> MergeManifestsOp | None:
     """*op* with an equivalence per name both sides arrive at, or ``None``.
 
     What ``resolve_clusters`` does under ``union_right``: every shared or
@@ -1746,39 +1758,39 @@ def _extended(op: ComposeManifestsOp, builder: _Builder) -> ComposeManifestsOp |
     )
 
 
-def preview_compose(
+def preview_merge(
     left: GraphManifest,
     right: GraphManifest,
-    op: ComposeManifestsOp,
+    op: MergeManifestsOp,
     *,
     canonical_maps: Sequence[tuple[Side, CanonicalMap]] = (),
     attempt: bool = True,
-) -> ComposePreview:
-    """The declaration graph of a compose, and everything wrong with it.
+) -> MergePreview:
+    """The declaration graph of a merge, and everything wrong with it.
 
     Walks *op*'s equivalences and canonical maps against *left* and *right*
     without refusing: each declaration, each map entry and each member is put
     through the same check
-    :func:`~graflo.architecture.evolution.compose.compose_manifests` uses, one
+    :func:`~graflo.architecture.evolution.merge.merge_manifests` uses, one
     at a time, so a problem with one does not hide the rest. Every refusal
     becomes a ``possible`` finding naming the nodes it is about.
 
-    With *attempt*, compose is then run for real and its result -- the composed
+    With *attempt*, merge is then run for real and its result -- the merged
     schema's shape, or the one refusal it raised, with the completion that
     would settle it -- is recorded as the outcome and as a single ``refusal``
-    finding. Set it to ``False`` to describe the declarations without composing.
+    finding. Set it to ``False`` to describe the declarations without merging.
 
     Args:
         left: The left manifest, in whatever vocabulary it is in.
         right: The right manifest.
-        op: The compose op: equivalences, canonical maps, identity alignments.
+        op: The merge op: equivalences, canonical maps, identity alignments.
         canonical_maps: Extra ``(side, map)`` pairs, folded into ``op``'s.
-        attempt: Whether to run a real compose for the authoritative outcome.
+        attempt: Whether to run a real merge for the authoritative outcome.
 
     Returns:
-        A :class:`ComposePreview`. It never raises for a problem with the
+        A :class:`MergePreview`. It never raises for a problem with the
         declarations -- that is the point -- so an empty
-        :attr:`~ComposePreview.blocking` is what "this would compose" looks
+        :attr:`~MergePreview.blocking` is what "this would merge" looks
         like.
     """
     declared = fold_declared_maps(op, canonical_maps)
@@ -1793,7 +1805,7 @@ def preview_compose(
 
     if op.name_conflict == "union_right":
         # The names both sides arrive at are only known once the first pass has
-        # applied the declared maps, so the clusters compose would synthesize
+        # applied the declared maps, so the clusters merge would synthesize
         # for them are resolved on a second pass over the extended op.
         extended = _extended(op, builder)
         if extended is not None:
@@ -1816,40 +1828,40 @@ def preview_compose(
 def _attempt(
     left: GraphManifest,
     right: GraphManifest,
-    op: ComposeManifestsOp,
+    op: MergeManifestsOp,
     canonical_maps: Sequence[tuple[Side, CanonicalMap]],
-) -> tuple[ComposeOutcome, tuple[str, ...]]:
-    """Compose for real, and turn whichever way it went into an outcome."""
+) -> tuple[MergeOutcome, tuple[str, ...]]:
+    """Merge for real, and turn whichever way it went into an outcome."""
     from .alignment import AlignmentConflictError
-    from .compose import (
-        ComposeIdentityError,
-        ComposeNameConflictError,
-        compose_manifests,
+    from .merge import (
+        MergeIdentityError,
+        MergeNameConflictError,
+        merge_manifests,
     )
 
     try:
-        composed = compose_manifests(
+        merged = merge_manifests(
             left, right, op, canonical_maps=canonical_maps, finish_init=False
         )
     except (
         ClusterConflictError,
-        ComposeCanonicalConflictError,
-        ComposeIdentityError,
-        ComposeNameConflictError,
+        MergeCanonicalConflictError,
+        MergeIdentityError,
+        MergeNameConflictError,
         AlignmentConflictError,
         UnknownMemberError,
         ValueError,
     ) as exc:
         return outcome_from_exception(exc)
-    return outcome_from_manifest(composed), ()
+    return outcome_from_manifest(merged), ()
 
 
 __all__ = [
-    "ComposeFinding",
-    "ComposeOutcome",
-    "ComposePreview",
     "EdgeKind",
     "FindingKind",
+    "Merge3Preview",
+    "MergeFinding",
+    "MergeOutcome",
     "MergePreview",
     "NodeKind",
     "PreviewCluster",
@@ -1857,10 +1869,10 @@ __all__ = [
     "PreviewNode",
     "Severity",
     "SlotNode",
-    "build_merge_preview",
+    "build_merge3_preview",
     "expected_kinds",
     "kind_for_check",
     "outcome_from_exception",
     "outcome_from_manifest",
-    "preview_compose",
+    "preview_merge",
 ]

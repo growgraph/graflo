@@ -64,7 +64,7 @@ def union_anchors(values: Iterable[str]) -> list[str]:
 def merge_semantics(
     left: Semantics | None, right: Semantics | None
 ) -> Semantics | None:
-    """Union two semantic anchor blocks.
+    """Merge two semantic anchor blocks, unioning their anchors.
 
     ``exact_match`` and ``synonyms`` are sets of claims and simply union.
     ``iri`` is single-valued and cannot: a type composed from one denoting
@@ -89,7 +89,7 @@ def merge_field_semantics(
     owner: str,
     field: str,
 ) -> FieldSemantics | None:
-    """Union two property grounding blocks, refusing a unit clash.
+    """Merge two property grounding blocks, refusing a unit clash.
 
     The anchors fold exactly as :func:`merge_semantics` folds them. ``unit`` does
     not: unlike a disputed ``iri``, which costs the reader a claim about meaning,

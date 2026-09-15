@@ -59,6 +59,8 @@ from .ops import (
     ReplaceEdgeIdentitiesOp,
     ReplaceIdentityOp,
     RetargetEdgesOp,
+    SetBindingsOp,
+    SetDbProfileOp,
     SetEdgeDirectedOp,
     SetEdgeSemanticsOp,
     SetFieldSemanticsOp,
@@ -78,7 +80,7 @@ IRREVERSIBLE: dict[str, str] = {
     ),
     "sanitize": "renames are flavor-driven and not recorded per element",
     "project_manifest": "projection drops elements outright",
-    "compose_manifests": "composition is binary; there is no single prior manifest",
+    "merge_manifests": "merge is binary; there is no single prior manifest",
     "add_resource_transforms": (
         "appended pipeline steps are not tracked per-op; there is no "
         "remove_resource_transforms op"
@@ -414,6 +416,33 @@ def _invert_set_edge_directed(
     return SetEdgeDirectedOp(edges=selectors, directed=directed)
 
 
+def _invert_set_bindings(
+    op: SetBindingsOp, manifest: GraphManifest
+) -> ManifestOp | None:
+    """Restore the bindings block the op replaced.
+
+    Total: the op sets the block to a value or to ``None``, and the inverse
+    sets it back to whatever is there now -- including ``None``, which is why
+    the field is optional rather than required.
+    """
+    del op
+    current = manifest.bindings
+    return SetBindingsOp(
+        bindings=current.model_copy(deep=True) if current is not None else None
+    )
+
+
+def _invert_set_db_profile(
+    op: SetDbProfileOp, manifest: GraphManifest
+) -> ManifestOp | None:
+    """Restore the database profile the op replaced."""
+    del op
+    schema = manifest.graph_schema
+    if schema is None:
+        return None
+    return SetDbProfileOp(profile=schema.db_profile.model_copy(deep=True))
+
+
 def _invert_add_secondary_identities(
     op: AddSecondaryIdentitiesOp, _manifest: GraphManifest
 ) -> ManifestOp | None:
@@ -691,6 +720,8 @@ _HANDLERS: dict[str, Any] = {
     "add_edge_indexes": _invert_add_edge_indexes,
     "remove_edge_indexes": _invert_remove_edge_indexes,
     "set_edge_directed": _invert_set_edge_directed,
+    "set_bindings": _invert_set_bindings,
+    "set_db_profile": _invert_set_db_profile,
     "set_vertex_semantics": _invert_set_vertex_semantics,
     "set_edge_semantics": _invert_set_edge_semantics,
     "set_field_semantics": _invert_set_field_semantics,

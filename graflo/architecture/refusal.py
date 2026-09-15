@@ -1,4 +1,4 @@
-"""The base class every compose-time refusal shares.
+"""The base class every merge-time refusal shares.
 
 A refusal carries two structured fields beside its prose. ``check`` names the
 rule that refused -- the parenthesised phrase the message already spells out --
@@ -14,7 +14,7 @@ prose: :mod:`graflo.architecture.evolution.preview` keys its finding kinds on
 anticipate.
 
 This module sits at the bottom of the import order deliberately. The schema
-layer raises refusals of its own, so the base cannot live beside the compose
+layer raises refusals of its own, so the base cannot live beside the merge
 machinery that consumes them.
 """
 

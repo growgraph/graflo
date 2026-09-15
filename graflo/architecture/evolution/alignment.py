@@ -1,4 +1,4 @@
-"""Identity alignment: compose an equivalence identity from fundamental ops.
+"""Identity alignment: merge an equivalence identity from fundamental ops.
 
 An :class:`IdentityAlignment` states, for one canonical class, which canonical
 attributes carry cross-source entity equivalence and how each resource derives
@@ -31,6 +31,15 @@ learn how the resource produces each member, and guards the step with
 ``when`` on the router's discriminator. A guarded step that does not fire
 writes nothing, so each member's derivation is the single writer of the
 attribute for its own documents.
+
+A derivation that is *not* keyed by member is guarded the same way whenever a
+router produces the class: ``when`` admits the discriminator values that route
+onto it — the ``type_map`` keys mapping to it, or its own name for
+pass-through — so the step runs for no other class's documents. Only a level
+where a plain ``vertex`` step also produces the class, or whose routers read
+different discriminators, lowers unguarded; there a sibling class declaring a
+canonical attribute name is refused, since the router would hand it the
+derived value.
 """
 
 from __future__ import annotations
@@ -74,7 +83,7 @@ from .ops import (
 )
 
 #: Anything whose ``properties`` say which attribute names exist only
-#: post-rename: a declared vocabulary or the composite relabel compose applies.
+#: post-rename: a declared vocabulary or the composite relabel merge applies.
 VocabularyMap = CanonicalMap | CanonicalizeOp
 
 __all__ = [
@@ -98,7 +107,7 @@ logger = logging.getLogger(__name__)
 AlignmentRow = AlignmentAttribute
 
 #: Pre-merge side manifests keyed by side (``"left"`` / ``"right"``), as
-#: ``compose_manifests`` holds them: after its resource rename policy, before
+#: ``merge_manifests`` holds them: after its resource rename policy, before
 #: it relabels and merges the clusters.
 SideManifests = Mapping[str, GraphManifest]
 
@@ -135,6 +144,14 @@ def _resource_pipelines(manifest: GraphManifest) -> dict[str, list]:
     if im is None:
         return {}
     return {resource.name: list(resource.pipeline) for resource in im.resources}
+
+
+def _vertex_set(manifest: GraphManifest) -> set[str]:
+    """Classes *manifest* declares — what a router can route to by pass-through."""
+    schema = manifest.graph_schema
+    if schema is None:
+        return set()
+    return set(schema.core_schema.vertex_config.vertex_set)
 
 
 # --------------------------------------------------------------------------- #
@@ -186,7 +203,7 @@ def _member_keyed_resources(alignment: IdentityAlignment) -> dict[str, set[str]]
 def _side_of(resource: str, sides: SideManifests) -> tuple[str, GraphManifest]:
     """The side whose ingestion model names *resource*.
 
-    Unique once compose has applied its resource rename policy; a resource
+    Unique once merge has applied its resource rename policy; a resource
     still present on both sides is one it has not disambiguated.
     """
     hits = [
@@ -205,23 +222,25 @@ def _side_of(resource: str, sides: SideManifests) -> tuple[str, GraphManifest]:
         raise _conflict(
             "resource on both sides",
             f"resource {resource!r} is defined on {[s for s, _ in hits]}",
-            "Resolve the collision with the compose op's resource policy first.",
+            "Resolve the collision with the merge op's resource policy first.",
         )
     return hits[0]
 
 
-def _produced_vertices(steps: list[Any]) -> set[str]:
+def _produced_vertices(
+    steps: list[Any], *, known_vertices: Collection[str] | None = None
+) -> set[str]:
     """Every class any step of *steps* (recursively) produces."""
     out: set[str] = set()
     for step in steps:
         if not isinstance(step, dict):
             continue
-        out |= step_produces_vertices(step)
+        out |= step_produces_vertices(step, known_vertices=known_vertices)
         normalized = normalize_actor_step(dict(step))
         if normalized.get("type") == "descend":
             sub = normalized.get("pipeline")
             if isinstance(sub, list):
-                out |= _produced_vertices(sub)
+                out |= _produced_vertices(sub, known_vertices=known_vertices)
     return out
 
 
@@ -233,14 +252,16 @@ def _resolve_member_production(
 ) -> _MemberProduction:
     side, manifest = _side_of(resource, sides)
     pipeline = _resource_pipelines(manifest)[resource]
-    candidates = find_vertex_producing_levels(pipeline, member)
+    known = _vertex_set(manifest)
+    candidates = find_vertex_producing_levels(pipeline, member, known_vertices=known)
     if not candidates:
         raise _conflict(
             "resource does not produce the member",
             f"resource {resource!r} ({side}) has no pipeline step producing {member!r}",
             "A member key names a class the resource produces on its side — "
-            "through compose, by its own name or its canonical one: "
-            f"{sorted(_produced_vertices(pipeline))}.",
+            "through merge, by its own name or its canonical one: "
+            f"{sorted(_produced_vertices(pipeline, known_vertices=known))}. "
+            "A vertex_router routes any class the side's schema declares.",
         )
     if resource in alignment.at:
         path = list(alignment.at[resource])
@@ -272,16 +293,8 @@ def _resolve_member_production(
             f"discriminated by {type_fields}",
             "One guard reads one field; route the member through one router.",
         )
-    values: set[str] = set()
-    for step in routers:
-        type_map = step.get("type_map") or {}
-        values.update(key for key, target in type_map.items() if target == member)
-    # A router without a ``type_map`` entry for the member routes the raw
-    # discriminator value that *is* the member's name.
-    if not values:
-        values.add(member)
     return _MemberProduction(
-        level=path, type_field=type_fields[0], values=tuple(sorted(values))
+        level=path, type_field=type_fields[0], values=_routed_values(routers, member)
     )
 
 
@@ -326,7 +339,7 @@ def rekey_members(
 ) -> IdentityAlignment:
     """Name every member key as its side names the member.
 
-    *resolve* maps ``(side, key)`` to the member it names — ``compose_manifests``
+    *resolve* maps ``(side, key)`` to the member it names — ``merge_manifests``
     passes the aligned cluster's resolution, so a member may be keyed by its
     own name or its canonical one. Unresolved keys pass through for the
     validator to report. Two keys naming one member under one resource are
@@ -401,7 +414,7 @@ def _require_sides(
             "member-keyed sources without sides",
             "sources keyed by member class need the pre-merge side manifests "
             "to resolve how each resource produces the member",
-            "compose_manifests supplies them; when calling directly, pass "
+            "merge_manifests supplies them; when calling directly, pass "
             "sides={'left': ..., 'right': ...}.",
         )
     return sides
@@ -433,6 +446,7 @@ def resolve_derivation_levels(
     pick would be a guess about where the source fields live.
     """
     pipelines = _resource_pipelines(manifest)
+    known = _vertex_set(manifest)
     levels: dict[str, list[int]] = {}
     for resource in sorted(_referenced_resources(alignment)):
         pipeline = pipelines.get(resource, [])
@@ -451,10 +465,13 @@ def resolve_derivation_levels(
             # run, find no inputs, and skip without a word.
             if not any(
                 isinstance(step, dict)
-                and alignment.vertex in step_produces_vertices(step)
+                and alignment.vertex
+                in step_produces_vertices(step, known_vertices=known)
                 for step in level
             ):
-                candidates = find_vertex_producing_levels(pipeline, alignment.vertex)
+                candidates = find_vertex_producing_levels(
+                    pipeline, alignment.vertex, known_vertices=known
+                )
                 raise _conflict(
                     "level produces nothing",
                     f"`at` sends resource {resource!r} derivations to level "
@@ -475,7 +492,9 @@ def resolve_derivation_levels(
             levels[resource] = list(next(iter(productions[resource].values())).level)
             continue
 
-        candidates = find_vertex_producing_levels(pipeline, alignment.vertex)
+        candidates = find_vertex_producing_levels(
+            pipeline, alignment.vertex, known_vertices=known
+        )
         if not candidates:
             raise _conflict(
                 "resource does not produce the class",
@@ -509,14 +528,74 @@ def _referenced_resources(alignment: IdentityAlignment) -> set[str]:
 def _producing_steps(
     manifest: GraphManifest, resource: str, path: list[int], vertex: str
 ) -> list[dict]:
-    """Normalized steps at *path* in *resource* that produce *vertex*."""
+    """Normalized steps at *path* in *resource* that produce *vertex*.
+
+    The two tiers of :func:`find_vertex_producing_levels`, within one level:
+    the steps naming the class explicitly when any does, else every router
+    there — each routes the raw discriminator value as the class name.
+    """
     pipeline = list(_resource_pipelines(manifest).get(resource, []))
     level = resolve_pipeline_level(pipeline, list(path))
-    return [
-        normalize_actor_step(dict(step))
-        for step in level
-        if isinstance(step, dict) and vertex in step_produces_vertices(step)
+    steps = [
+        normalize_actor_step(dict(step)) for step in level if isinstance(step, dict)
     ]
+    explicit = [step for step in steps if vertex in step_produces_vertices(step)]
+    if explicit or vertex not in _vertex_set(manifest):
+        return explicit
+    return [step for step in steps if step.get("type") == "vertex_router"]
+
+
+def _routed_values(routers: list[dict], vertex: str) -> tuple[str, ...]:
+    """Discriminator values *routers* send onto *vertex*.
+
+    The ``type_map`` keys mapping to it. A router without such an entry routes
+    the raw value that *is* the class name, so that is the value which reaches
+    it.
+    """
+    values: set[str] = set()
+    for step in routers:
+        type_map = step.get("type_map") or {}
+        values.update(key for key, target in type_map.items() if target == vertex)
+    if not values:
+        values.add(vertex)
+    return tuple(sorted(values))
+
+
+def _class_guard(steps: list[dict], vertex: str) -> dict[str, Any] | None:
+    """Guard admitting only the documents *steps* route onto *vertex*.
+
+    ``None`` when no single guard can say so: a plain ``vertex`` step among
+    the producers reads the buffer for every document at its level, and a
+    guard on a discriminator those documents may not carry would suppress the
+    derivation; routers reading different discriminators need one guard each.
+    Unguarded is what the sibling-class check then covers.
+    """
+    if any(step.get("type") == "vertex" for step in steps):
+        return None
+    routers = [step for step in steps if step.get("type") == "vertex_router"]
+    if not routers:
+        return None
+    type_fields = sorted({str(step.get("type_field")) for step in routers})
+    if len(type_fields) != 1:
+        return None
+    return {"field": type_fields[0], "in": list(_routed_values(routers, vertex))}
+
+
+def _unkeyed_names(alignment: IdentityAlignment, resource: str) -> list[str]:
+    """Canonical attributes *resource* derives without a member key."""
+    names = [
+        attribute.name
+        for attribute in alignment.attributes
+        if resource in attribute.sources and attribute.members_for(resource) is None
+    ]
+    local_key = alignment.local_key
+    if (
+        local_key is not None
+        and resource in local_key.sources
+        and local_key.members_for(resource) is None
+    ):
+        names.append(local_key.name)
+    return names
 
 
 # --------------------------------------------------------------------------- #
@@ -534,10 +613,10 @@ def validate_alignment(
 ) -> None:
     """Fail loudly when *alignment* contradicts *manifest* or the canonical maps.
 
-    *manifest* is the composed union the alignment ops will be applied to.
+    *manifest* is the merged union the alignment ops will be applied to.
     Pass the maps used to canonicalize the sides — declared
     :class:`CanonicalMap`\\ s or the composite
-    :class:`~graflo.architecture.evolution.ops.CanonicalizeOp` compose applied — to catch
+    :class:`~graflo.architecture.evolution.ops.CanonicalizeOp` merge applied — to catch
     derivation inputs written in canonical vocabulary: renamed documents still
     carry their raw field names, so a rename *target* used as a derivation
     input reads an absent field and silently derives nothing.
@@ -680,8 +759,15 @@ def validate_alignment(
         )
 
     for resource, path in sorted(levels.items()):
-        for step in _producing_steps(manifest, resource, path, alignment.vertex):
-            _check_sibling_classes(alignment, manifest, step, resource, into_names)
+        steps = _producing_steps(manifest, resource, path, alignment.vertex)
+        unguarded = (
+            _unkeyed_names(alignment, resource)
+            if _class_guard(steps, alignment.vertex) is None
+            else []
+        )
+        for step in steps:
+            if unguarded:
+                _check_sibling_classes(alignment, manifest, step, resource, unguarded)
             _warn_on_one_derivation_for_several_members(alignment, step, resource)
     if sides is not None and cluster_members is not None:
         for resource in productions:
@@ -706,17 +792,22 @@ def _check_sibling_classes(
 ) -> None:
     """Refuse a canonical attribute name another routed class also declares.
 
-    A router hands the whole merged observation to whichever class it selects,
-    and extraction keeps a class's declared properties. So a sibling class
-    declaring one of the canonical attribute names would silently absorb the
-    value derived for the aligned class.
+    Only for a derivation that lowers unguarded — the level also produces the
+    class through a plain ``vertex`` step, or its routers read different
+    discriminators. A router hands the whole merged observation to whichever
+    class it selects, and extraction keeps a class's declared properties, so a
+    sibling class declaring one of the names would silently absorb the value
+    derived for the aligned class. A guarded derivation never runs for the
+    sibling's documents and needs none of this.
     """
     if step.get("type") != "vertex_router":
         return
     schema = manifest.graph_schema
     assert schema is not None
     vertex_config = schema.core_schema.vertex_config
-    siblings = step_produces_vertices(step) - {alignment.vertex}
+    siblings = step_produces_vertices(step, known_vertices=vertex_config.vertex_set) - {
+        alignment.vertex
+    }
     for sibling in sorted(siblings):
         if sibling not in vertex_config.vertex_set:
             continue
@@ -824,13 +915,13 @@ def alignment_to_ops(
     sides: SideManifests | None = None,
     cluster_members: ClusterMembers | None = None,
 ) -> list[ManifestOp]:
-    """Compose the alignment into an ordered list of fundamental ops.
+    """Merge the alignment into an ordered list of fundamental ops.
 
-    Apply the result to the composed union with
+    Apply the result to the merged union with
     :func:`~graflo.architecture.evolution.apply.apply_evolution`. When
     *manifest* is given, :func:`validate_alignment` runs first. Member-keyed
     sources need *sides* (the pre-merge manifests) to resolve how each
-    resource produces each member; ``compose_manifests`` passes them.
+    resource produces each member; ``merge_manifests`` passes them.
     """
     if manifest is not None:
         validate_alignment(
@@ -860,6 +951,14 @@ def alignment_to_ops(
             for resource, per_member in productions.items()
         }
 
+    # Behind a router, an unkeyed derivation is guarded by the class as a
+    # whole; without the manifest there is no router to read, so nothing is.
+    class_guards: dict[str, dict[str, Any] | None] = {}
+    if manifest is not None:
+        for resource, path in levels.items():
+            steps = _producing_steps(manifest, resource, path, alignment.vertex)
+            class_guards[resource] = _class_guard(steps, alignment.vertex)
+
     additions: dict[str, list[dict[str, Any]]] = {}
     for attribute in alignment.attributes:
         for resource in attribute.sources:
@@ -870,6 +969,7 @@ def alignment_to_ops(
                     guards=_guards(
                         productions, resource, attribute.members_for(resource)
                     ),
+                    when=class_guards.get(resource),
                 )
             )
     if alignment.local_key is not None:
@@ -882,6 +982,7 @@ def alignment_to_ops(
                     guards=_guards(
                         productions, resource, local_key.members_for(resource)
                     ),
+                    when=class_guards.get(resource),
                 )
             )
     ops.append(
@@ -908,7 +1009,7 @@ def alignment_to_ops(
             replacements={
                 alignment.vertex: IdentityReplacement(
                     to=FunnelIdentityTarget(funnel=IdentityFunnel(branches=branches)),
-                    # The pre-alignment identity on a composed class is the
+                    # The pre-alignment identity on a merged class is the
                     # merged union of the side keys — a field-set no record
                     # carries. Demoting it would index nothing; the per-side
                     # keys are demoted explicitly below instead.
@@ -970,12 +1071,16 @@ def _call_step(
     return {"transform": transform}
 
 
-def _coalesce_step(into: str, count: int) -> dict[str, Any]:
+def _coalesce_step(
+    into: str, count: int, *, when: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """The single writer of *into*, picking whichever column-presence branch fired.
 
     ``strategy: all`` hands the function the whole merged observation and
     empties the missing-input guard, so a branch whose own columns are absent
-    from a document skips without taking the coalesce down with it.
+    from a document skips without taking the coalesce down with it. Behind a
+    router it carries the class guard like the branches: unguarded, it would
+    write ``None`` into every other class's documents.
     """
     return _call_step(
         module="graflo.util.transform",
@@ -983,6 +1088,7 @@ def _coalesce_step(into: str, count: int) -> dict[str, Any]:
         params={"fields": [_scratch_name(into, i) for i in range(count)]},
         output=into,
         strategy="all",
+        when=when,
     )
 
 
@@ -991,6 +1097,7 @@ def _derivation_steps(
     specs: list[DerivationSpec],
     *,
     guards: list[dict[str, Any] | None] | None = None,
+    when: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Steps deriving *into* from *specs*, in order.
 
@@ -1002,7 +1109,9 @@ def _derivation_steps(
     column-presence form) write scratch fields that a coalesce reduces: two
     steps writing ``into`` would clobber behind a ``vertex_router``, which
     merges the transform buffer into one observation dict where a later
-    ``None`` overwrites an earlier real value.
+    ``None`` overwrites an earlier real value. *when* is the class guard a
+    router-produced level supplies; every unkeyed step carries it, so the
+    derivation runs for no other class's documents.
     """
     if guards is not None:
         return [
@@ -1025,6 +1134,7 @@ def _derivation_steps(
                 params=dict(spec.params),
                 output=into,
                 input_fields=list(spec.input),
+                when=when,
             )
         ]
     steps = [
@@ -1034,10 +1144,11 @@ def _derivation_steps(
             params=dict(spec.params),
             output=_scratch_name(into, index),
             input_fields=list(spec.input),
+            when=when,
         )
         for index, spec in enumerate(specs)
     ]
-    steps.append(_coalesce_step(into, len(specs)))
+    steps.append(_coalesce_step(into, len(specs), when=when))
     return steps
 
 
@@ -1057,8 +1168,13 @@ def _local_key_steps(
     sources: list[LocalKeySource],
     *,
     guards: list[dict[str, Any] | None] | None = None,
+    when: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """Steps filling the local-key fallback for one resource, in order."""
+    """Steps filling the local-key fallback for one resource, in order.
+
+    *when* is the class guard of a router-produced level, carried by every
+    unkeyed step; a source's own ``gate`` stays the function's admission test.
+    """
     if guards is not None:
         steps = []
         for src, guard in zip(sources, guards, strict=True):
@@ -1083,6 +1199,7 @@ def _local_key_steps(
                 params=params,
                 output=local_key.name,
                 input_fields=input_fields,
+                when=when,
             )
         ]
     steps = []
@@ -1095,9 +1212,10 @@ def _local_key_steps(
                 params=params,
                 output=_scratch_name(local_key.name, index),
                 input_fields=input_fields,
+                when=when,
             )
         )
-    steps.append(_coalesce_step(local_key.name, len(sources)))
+    steps.append(_coalesce_step(local_key.name, len(sources), when=when))
     return steps
 
 

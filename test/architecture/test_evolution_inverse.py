@@ -21,7 +21,7 @@ from graflo.architecture.evolution.inverse import (
     irreversible_reason,
     is_reversible,
 )
-from graflo.architecture.evolution.ops import ComposeManifestsOp
+from graflo.architecture.evolution.ops import MergeManifestsOp
 from test.architecture.test_evolution_codec import OP_PAYLOADS, _union_members
 
 PARTY = {"name": "party", "properties": ["id", "name", "email"], "identity": ["id"]}
@@ -171,6 +171,37 @@ class TestReversibleRoundTrip:
         _assert_round_trips(
             {"op": "remove_vertex_indexes", "indexes": {"party": [["email"]]}},
             manifest=manifest,
+        )
+
+    def test_set_bindings_round_trips_when_it_adds_the_block(self) -> None:
+        """The inverse must be able to say "there was no block", not just "a block"."""
+        _assert_round_trips(
+            {
+                "op": "set_bindings",
+                "bindings": {
+                    "connectors": [{"regex": "^a\\.csv$", "resource_name": "src"}]
+                },
+            }
+        )
+
+    def test_set_bindings_round_trips_when_it_removes_the_block(self) -> None:
+        manifest = GraphManifest.model_validate(
+            {
+                **_manifest().to_dict(skip_defaults=True),
+                "bindings": {
+                    "connectors": [{"regex": "^a\\.csv$", "resource_name": "src"}]
+                },
+            }
+        )
+        _assert_round_trips({"op": "set_bindings", "bindings": None}, manifest=manifest)
+
+    def test_set_db_profile_round_trips(self) -> None:
+        """Storage names are content-hashed, so the restore must be exact."""
+        _assert_round_trips(
+            {
+                "op": "set_db_profile",
+                "profile": {"vertex_storage_names": {"party": "p"}},
+            }
         )
 
     def test_remove_secondary_identities_round_trips(self) -> None:
@@ -348,8 +379,8 @@ class TestIrreversible:
     @pytest.mark.parametrize("op_name", sorted(IRREVERSIBLE))
     def test_lossy_ops_report_a_reason_instead_of_guessing(self, op_name: str) -> None:
         assert IRREVERSIBLE[op_name]
-        if op_name == "compose_manifests":
-            op = ComposeManifestsOp()
+        if op_name == "merge_manifests":
+            op = MergeManifestsOp()
         else:
             op = op_from_dict({"op": op_name, **OP_PAYLOADS[op_name]})
         assert is_reversible(op) is False

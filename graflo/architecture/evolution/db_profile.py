@@ -685,7 +685,7 @@ def apply_inverse_edges_to_db_profile(
     object.__setattr__(dpv, "edges", new_defaults)
 
 
-def merge_default_property_values(
+def union_default_property_values(
     left: DefaultPropertyValues | None, right: DefaultPropertyValues | None
 ) -> DefaultPropertyValues | None:
     """Union two default-value blocks, refusing two defaults for one property.

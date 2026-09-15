@@ -17,7 +17,8 @@ from graflo.architecture.evolution.commit import (
     Commit,
     CommitError,
     build_commit,
-    build_merge_commit,
+    build_multi_parent_commit,
+    build_root_commit,
     compute_commit_id,
 )
 from graflo.architecture.evolution.hashing import manifest_hash
@@ -228,10 +229,10 @@ def test_a_merge_commit_is_materialized_against_its_first_parent(linear) -> None
     )
     merged = _manifest(["id", "y", "from_the_other_side"])
 
-    commit = build_merge_commit(
-        first_parent_state, merged, parents=[first.id, "otherbranch1"], kind="merge"
+    commit = build_multi_parent_commit(
+        first_parent_state, merged, parents=[first.id, "otherbranch1"], kind="merge3"
     )
-    assert commit.is_merge
+    assert commit.is_multi_parent
     assert commit.first_parent == first.id
     assert commit.tree_before == manifest_hash(first_parent_state)
     assert commit.tree == manifest_hash(merged)
@@ -245,13 +246,13 @@ def test_a_merge_commit_is_materialized_against_its_first_parent(linear) -> None
 def test_a_merge_commit_needs_at_least_two_parents(linear) -> None:
     base, _history, _first, _second = linear
     with pytest.raises(CommitError, match="at least two parents"):
-        build_merge_commit(base, _manifest(["id", "q"]), parents=["only-one"])
+        build_multi_parent_commit(base, _manifest(["id", "q"]), parents=["only-one"])
 
 
 def test_a_merge_identical_to_its_first_parent_is_refused(linear) -> None:
     base, _history, _first, _second = linear
     with pytest.raises(CommitError, match="nothing to record"):
-        build_merge_commit(base, _manifest(["id"]), parents=["a", "b"])
+        build_multi_parent_commit(base, _manifest(["id"]), parents=["a", "b"])
 
 
 # ── the store ───────────────────────────────────────────────────────────────
@@ -295,3 +296,76 @@ def test_appending_validates_the_dag(linear, tmp_path: pathlib.Path) -> None:
 
 def test_an_empty_store_loads_an_empty_history(tmp_path: pathlib.Path) -> None:
     assert not FileCommitStore(tmp_path / "nothing-here").load().commits
+
+
+class TestNamingRoot:
+    """A root that names a tree instead of deriving one.
+
+    An artifact that was pushed to a registry or seeded from a pack was not
+    derived from anything the history holds, so there is no base to diff
+    against and no ops to record. Without this shape such an artifact has no
+    commit at all, which is why nothing downstream could name it as a parent.
+    """
+
+    def test_a_root_carries_a_tree_and_nothing_else(self) -> None:
+        base = _manifest(["id"])
+        root = build_root_commit(base, scope="artifact-1", label="import")
+
+        assert root.kind == "root"
+        assert root.parents == []
+        assert root.ops == []
+        assert root.tree_before is None
+        assert root.tree == manifest_hash(base)
+
+    def test_a_root_is_content_addressed_by_its_tree(self) -> None:
+        base = _manifest(["id"])
+        assert (
+            build_root_commit(base, scope="a").id
+            == build_root_commit(base, scope="a").id
+        )
+
+    def test_scope_separates_two_lineages_naming_the_same_tree(self) -> None:
+        """Without it the store dedupes one artifact's root onto another's."""
+        base = _manifest(["id"])
+        assert (
+            build_root_commit(base, scope="a").id
+            != build_root_commit(base, scope="b").id
+        )
+
+    def test_a_commit_chains_onto_a_root(self) -> None:
+        base = _manifest(["id"])
+        root = build_root_commit(base, scope="a")
+        edit = build_commit(base, [_add("age")], parents=[root.id])
+
+        history = History(commits=[root, edit])
+
+        assert manifest_hash(checkout(base, history, edit.id)) == edit.tree
+
+    def test_checking_out_a_root_against_the_wrong_base_is_refused(self) -> None:
+        """The root asserts a tree; a base that is not it must not sail through."""
+        root = build_root_commit(_manifest(["id"]), scope="a")
+        history = History(commits=[root])
+
+        with pytest.raises(CommitError, match="is not that artifact"):
+            checkout(_manifest(["id", "other"]), history, root.id)
+
+    def test_a_commit_with_parents_still_needs_operations(self) -> None:
+        """Relaxing ops for roots must not let an empty edit through."""
+        with pytest.raises(ValueError, match="has parents but no operations"):
+            Commit(
+                id="deadbeefcafe",
+                parents=["aaaaaaaaaaaa"],
+                ops=[],
+                tree_before="a" * 64,
+                tree="b" * 64,
+            )
+
+    def test_a_commit_that_derives_nothing_has_no_tree_before(self) -> None:
+        with pytest.raises(ValueError, match="derives nothing"):
+            Commit(
+                id="deadbeefcafe",
+                parents=[],
+                ops=[],
+                tree_before="a" * 64,
+                tree="b" * 64,
+            )

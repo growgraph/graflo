@@ -1,6 +1,6 @@
-"""Metadata folding across :func:`compose_manifests`.
+"""Metadata folding across :func:`merge_manifests`.
 
-A composed manifest contains both sides' types, so describing it with only the
+A merged manifest contains both sides' types, so describing it with only the
 left side's prose, anchors and naming convention is wrong in the same way
 carrying only the left side's vertices would be. These tests pin the fold, and
 pin the two fields that deliberately do *not* fold.
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.contract.provenance import ManifestMetadata
-from graflo.architecture.evolution import ComposeManifestsOp, compose_manifests
+from graflo.architecture.evolution import MergeManifestsOp, merge_manifests
 from graflo.architecture.schema.core import CoreSchema
 from graflo.architecture.schema.document import Schema
 from graflo.architecture.schema.edge import EdgeConfig
@@ -49,8 +49,8 @@ def _manifest(
 
 
 def _compose(left: GraphManifest, right: GraphManifest) -> GraphManifest:
-    return compose_manifests(
-        left, right, ComposeManifestsOp(), bump_version=False, finish_init=False
+    return merge_manifests(
+        left, right, MergeManifestsOp(), bump_version=False, finish_init=False
     )
 
 
@@ -92,10 +92,10 @@ def test_compose_folds_manifest_name_and_description() -> None:
         schema_metadata=GraphMetadata(name="r"),
         manifest_metadata=ManifestMetadata(name="discovery", description="the scanner"),
     )
-    composed = _compose(left, right)
-    assert composed.metadata is not None
-    assert composed.metadata.name == "cmdb+discovery"
-    assert composed.metadata.description == "the CMDB\n\nthe scanner"
+    merged = _compose(left, right)
+    assert merged.metadata is not None
+    assert merged.metadata.name == "cmdb+discovery"
+    assert merged.metadata.description == "the CMDB\n\nthe scanner"
 
 
 def test_compose_keeps_a_one_sided_manifest_name() -> None:
@@ -105,9 +105,9 @@ def test_compose_keeps_a_one_sided_manifest_name() -> None:
         schema_metadata=GraphMetadata(name="r"),
         manifest_metadata=ManifestMetadata(name="discovery"),
     )
-    composed = _compose(left, right)
-    assert composed.metadata is not None
-    assert composed.metadata.name == "discovery"
+    merged = _compose(left, right)
+    assert merged.metadata is not None
+    assert merged.metadata.name == "discovery"
 
 
 def test_compose_yields_no_manifest_metadata_when_neither_side_has_any() -> None:
@@ -209,7 +209,7 @@ def test_an_agreed_naming_convention_survives_and_a_disagreement_does_not() -> N
 
 
 def test_compose_does_not_inherit_the_left_provenance() -> None:
-    """The composed artifact has a new content address; it may not claim the left's."""
+    """The merged artifact has a new content address; it may not claim the left's."""
     left = _manifest(
         vertex="A",
         schema_metadata=GraphMetadata(
@@ -221,7 +221,7 @@ def test_compose_does_not_inherit_the_left_provenance() -> None:
         ),
     )
     right = _manifest(vertex="B", schema_metadata=GraphMetadata(name="r"))
-    composed = _compose(left, right)
-    assert composed.require_schema().metadata.provenance is None
-    assert composed.metadata is not None
-    assert composed.metadata.provenance is None
+    merged = _compose(left, right)
+    assert merged.require_schema().metadata.provenance is None
+    assert merged.metadata is not None
+    assert merged.metadata.provenance is None

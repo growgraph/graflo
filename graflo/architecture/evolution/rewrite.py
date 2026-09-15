@@ -159,7 +159,28 @@ def rewrite_entity_names_in_pipeline(
     if isinstance(step.get("vertex"), str):
         step["vertex"] = vertex_name(step["vertex"])
 
-    if isinstance(step.get("type_map"), dict):
+    # A router's table lives at the top level in the flat spelling and under
+    # ``vertex_router`` in the shorthand; the authored payload is what is here.
+    router_payload = step.get("vertex_router")
+    if not isinstance(router_payload, dict):
+        router_payload = (
+            step
+            if step.get("type") == "vertex_router" or "type_field" in step
+            else None
+        )
+    if router_payload is not None:
+        if isinstance(router_payload.get("type_map"), dict):
+            router_payload["type_map"] = {
+                raw: vertex_name(mapped) if isinstance(mapped, str) else mapped
+                for raw, mapped in router_payload["type_map"].items()
+            }
+        if vertices:
+            materialized = materialize_router_renames(
+                router_payload.get("type_map"), vertices
+            )
+            if materialized is not None:
+                router_payload["type_map"] = materialized
+    elif isinstance(step.get("type_map"), dict):
         step["type_map"] = {
             raw: vertex_name(mapped) if isinstance(mapped, str) else mapped
             for raw, mapped in step["type_map"].items()
@@ -484,6 +505,27 @@ def _map_name(name: str | None, mapping: dict[str, str]) -> str | None:
     return mapping.get(name, name)
 
 
+def materialize_router_renames(
+    type_map: dict[str, Any] | None, mapping: dict[str, str]
+) -> dict[str, Any] | None:
+    """*type_map* with an entry for every class *mapping* renames away.
+
+    A router routes an unmapped discriminator value as the class name, so
+    before the rename a raw ``old`` reached ``old`` with no table entry; after
+    it only an entry can send it to ``new``, or the value names a class that
+    no longer exists and the record is skipped at runtime without a word.
+    Keys the table already has were rewritten in place. ``None`` when there is
+    no table and nothing to add.
+    """
+    present = type_map or {}
+    added = {
+        old: new for old, new in mapping.items() if old != new and old not in present
+    }
+    if not added:
+        return type_map
+    return {**present, **added}
+
+
 def rewrite_vertex_names_in_step(
     step: dict[str, Any], mapping: dict[str, str]
 ) -> dict[str, Any]:
@@ -505,6 +547,9 @@ def rewrite_vertex_names_in_step(
             out["type_map"] = {
                 k: _map_name(str(v), mapping) or v for k, v in tm.items()
             }
+        materialized = materialize_router_renames(out.get("type_map"), mapping)
+        if materialized is not None:
+            out["type_map"] = materialized
         vfm = out.get("vertex_from_map")
         if isinstance(vfm, dict):
             out["vertex_from_map"] = _merge_vertex_from_map(vfm, mapping)
@@ -1122,6 +1167,82 @@ def rewrite_edge_properties_in_pipeline(
         return out
 
     return [_rewrite_step(step) for step in pipeline if isinstance(step, dict)]
+
+
+def rewrite_remove_vertices_in_pipeline(
+    pipeline: list[dict[str, Any]], removed: set[str]
+) -> list[dict[str, Any]]:
+    """Trim *pipeline* to what survives removing the classes in *removed*.
+
+    Step-wise, never resource-wise. A ``vertex`` or ``edge`` step naming a
+    removed class goes. A ``vertex_router`` loses only the ``type_map`` and
+    ``vertex_from_map`` entries for it and keeps routing the rest: a raw
+    discriminator value naming a class the schema no longer declares is
+    skipped at ingestion, which *is* the removal, so a pass-through router
+    needs no edit at all. A ``descend`` stays while anything survives under
+    it; transforms are left as authored. Untouched steps keep their authored
+    spelling; a trimmed router is edited in place, and a ``descend`` that lost
+    a step comes back normalized.
+    """
+    if not removed:
+        return deepcopy(pipeline)
+
+    def _router_payload(step: dict[str, Any]) -> dict[str, Any]:
+        # The table lives under ``vertex_router`` in the shorthand and at the
+        # top level in the flat spelling.
+        payload = step.get("vertex_router")
+        return payload if isinstance(payload, dict) else step
+
+    def _rewrite_step(step: dict[str, Any]) -> dict[str, Any] | None:
+        normalized = normalize_actor_step(dict(step))
+        step_type = normalized.get("type")
+        if step_type == "vertex":
+            return None if normalized.get("vertex") in removed else deepcopy(step)
+        if step_type == "edge":
+            endpoints = (normalized.get(k) for k in ("source", "from", "target", "to"))
+            return None if any(e in removed for e in endpoints) else deepcopy(step)
+        if step_type == "vertex_router":
+            out = deepcopy(step)
+            payload = _router_payload(out)
+            type_map = payload.get("type_map")
+            if isinstance(type_map, dict):
+                kept = {k: v for k, v in type_map.items() if v not in removed}
+                if kept != type_map:
+                    payload["type_map"] = kept or None
+            vertex_from_map = payload.get("vertex_from_map")
+            if isinstance(vertex_from_map, dict):
+                kept_from = {
+                    k: v for k, v in vertex_from_map.items() if k not in removed
+                }
+                if kept_from != vertex_from_map:
+                    payload["vertex_from_map"] = kept_from or None
+            return out
+        if step_type == "descend":
+            nested = normalized.get("pipeline")
+            if not isinstance(nested, list):
+                return deepcopy(step)
+            items = [item for item in nested if isinstance(item, dict)]
+            survivors = [
+                rewritten
+                for rewritten in (_rewrite_step(item) for item in items)
+                if rewritten is not None
+            ]
+            if not survivors:
+                return None
+            if survivors == items:
+                return deepcopy(step)
+            out = deepcopy(normalized)
+            out["pipeline"] = survivors
+            return out
+        return deepcopy(step)
+
+    return [
+        rewritten
+        for rewritten in (
+            _rewrite_step(step) for step in pipeline if isinstance(step, dict)
+        )
+        if rewritten is not None
+    ]
 
 
 def pipeline_mentions_any_vertex(steps: list[dict[str, Any]], names: set[str]) -> bool:

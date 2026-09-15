@@ -1,23 +1,23 @@
 from graflo.architecture.graph_types import VertexRep
 from graflo.architecture.graph_types.merge import (
-    merge_doc_basis,
+    fuse_doc_basis,
 )
 
 
 def test_merge_simple(docs_simple):
-    r = merge_doc_basis(docs_simple, ("id",))
+    r = fuse_doc_basis(docs_simple, ("id",))
     assert len(r) == 1
     assert r[0]["a"] == 2
     assert r[0]["b"] == 1
 
 
 def test_merge_simple_two_doc(docs_simple_two_doc):
-    r = merge_doc_basis(docs_simple_two_doc, ("id",))
+    r = fuse_doc_basis(docs_simple_two_doc, ("id",))
     assert len(r) == 2
 
 
 def test_merge_nodiscriminant(merge_input_no_disc, merge_output_no_disc):
-    r = merge_doc_basis(
+    r = fuse_doc_basis(
         merge_input_no_disc,
         index_keys=("_key",),
     )
@@ -74,7 +74,7 @@ def test_merge():
         ),
     ]
 
-    output = merge_doc_basis(input, index_keys=("_key",))
+    output = fuse_doc_basis(input, index_keys=("_key",))
     # Compare vertex payload equality.
     for o, r in zip(output, output_ref):
         assert o.vertex == r.vertex
@@ -87,7 +87,7 @@ def test_merge_no_index_keys_dict():
         {"c": 3, "d": 4},
         {"e": 5},
     ]
-    output = merge_doc_basis(input_docs, index_keys=("_key",))
+    output = fuse_doc_basis(input_docs, index_keys=("_key",))
     assert len(output) == 1
     assert output[0] == {"a": 1, "b": 2, "c": 3, "d": 4, "e": 5}
 
@@ -99,6 +99,6 @@ def test_merge_no_index_keys_vertexrep():
         VertexRep(vertex={"c": 3, "d": 4}),
         VertexRep(vertex={"e": 5}),
     ]
-    output = merge_doc_basis(input_docs, index_keys=("_key",))
+    output = fuse_doc_basis(input_docs, index_keys=("_key",))
     assert len(output) == 1
     assert output[0].vertex == {"a": 1, "b": 2, "c": 3, "d": 4, "e": 5}

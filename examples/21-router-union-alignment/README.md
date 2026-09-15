@@ -19,7 +19,7 @@ VertexEquivalence(left=["Firm", "Shop"], right=["Org", "Branch"])
 ```
 
 No `into`: `canonical_map.yaml`, carried on the same op as `canonical_maps`,
-renames `Firm` to `Company`, and that names the composed class. Members are
+renames `Firm` to `Company`, and that names the merged class. Members are
 named as the manifest names them — or by their canonical name, so `Company`
 would name `Firm` just as well, here and in the member keys below.
 
@@ -43,7 +43,7 @@ side.
 
 Notice what the rewrite loses: after it, nothing in the union says that `shop`
 once meant `Shop`. That is why the alignment resolves against the sides as
-handed to compose, below.
+handed to merge, below.
 
 ## Deriving per member
 
@@ -150,7 +150,10 @@ the other column being empty already selects, and `sources["r_view"]` can be a
 plain **list** of specs — no member names, no guards. That form lowers to one
 scratch field per spec and a `coalesce_fields` step as the single writer,
 because two unguarded steps writing `match_key` *would* clobber behind a
-router. Reach for it when columns select; key by member when the member must.
+router. Behind the router every one of those steps, the coalesce included,
+carries one `when` on `kind` admitting the values that route onto `Company`,
+so a `person` row is never handed a `match_key`. Reach for it when columns
+select; key by member when the member must.
 
 ## Delivering through the router
 

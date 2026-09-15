@@ -187,7 +187,7 @@ the other leaves the field alone. A missing `field` fails the guard.
 
 This is the primitive a discriminated stream needs when different kinds of
 document derive the same field differently — for instance one derivation per
-class a router collapses onto a composed class, which is how identity
+class a router collapses onto a merged class, which is how identity
 alignment lowers member-keyed sources (see manifest evolution). Reach for it
 when *which document this is* decides the derivation; when the deciding fact
 lives in the value itself, a function that declines with `None` is enough.

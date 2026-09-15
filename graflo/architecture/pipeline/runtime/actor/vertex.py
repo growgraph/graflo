@@ -12,7 +12,7 @@ from graflo.architecture.graph_types import (
     VertexRep,
     merge_observation_with_transform_buffer,
 )
-from graflo.architecture.graph_types.merge import merge_doc_basis
+from graflo.architecture.graph_types.merge import fuse_doc_basis
 from graflo.architecture.schema.vertex import VertexConfig, VertexName
 from graflo.onto import ExpressionFlavor
 
@@ -218,7 +218,7 @@ class VertexActor(VertexProducingActor):
             if passthrough_doc:
                 agg.append(passthrough_doc)
 
-        merged = merge_doc_basis(
+        merged = fuse_doc_basis(
             agg, index_keys=tuple(self.vertex_config.identity_fields(self.name))
         )
 

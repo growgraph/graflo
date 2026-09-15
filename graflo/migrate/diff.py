@@ -104,7 +104,7 @@ class SchemaDiff:
             risk_map[f"{op.op_type}:{op.target}"] = op.risk.value
         return risk_map
 
-    def validate_union_safety(self) -> list[SchemaConflict]:
+    def conflicts(self) -> list[SchemaConflict]:
         """Return conflicts from latest compare call."""
         if self._result is None:
             self.compare()

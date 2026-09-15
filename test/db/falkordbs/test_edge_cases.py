@@ -198,7 +198,7 @@ class TestUnicodeTorture:
         with ConnectionManager(connection_config=conn_conf) as db:
             # Different Unicode representations of "same" characters
             variants = [
-                ("café", "cafe\u0301"),  # Composed vs decomposed
+                ("café", "cafe\u0301"),  # Merged vs decomposed
                 ("ﬁ", "fi"),  # Ligature vs separate
                 ("Ω", "Ω"),  # Greek vs Ohm sign (U+03A9 vs U+2126)
                 ("㈱", "(株)"),  # Enclosed vs parenthesized

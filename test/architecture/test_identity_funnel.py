@@ -2,7 +2,7 @@
 
 The cast-path tests are regression cover for a defect fixed here: digest
 identities used to be computed only in ``DBWriter``, so at assemble time a
-hash-mode doc still had an empty ``id``. ``merge_doc_basis`` then folded the
+hash-mode doc still had an empty ``id``. ``fuse_doc_basis`` then folded the
 whole batch into one document and ``drop_empty_identity_docs`` deleted what was
 left, edges included.
 """

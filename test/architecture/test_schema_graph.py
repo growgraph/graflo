@@ -3,7 +3,7 @@
 import pytest
 
 from graflo.architecture.graph_types import EdgeDirection
-from graflo.architecture.schema.context import SchemaGraph
+from graflo.architecture.schema.context import SchemaGraph, neighborhood_distances
 
 
 @pytest.fixture()
@@ -149,3 +149,60 @@ def test_graph_does_not_mutate_schema(context_schema):
     graph.schema_neighbors("person", hops=3)
     graph.relations_between("doc", "city", max_len=3)
     assert context_schema.to_dict() == before
+
+
+def test_schema_neighbors_edge_ids_restricts_the_walk(graph):
+    """An edge-id allowlist separates two dyads that share a relation name."""
+    reached = graph.schema_neighbors(
+        "person", hops=1, edge_ids={("person", "company", "works_at")}
+    )
+    assert set(reached.distances) == {"person", "company"}
+    assert reached.edges == [("person", "company", "works_at")]
+
+
+def test_schema_neighbors_edge_ids_and_relations_both_apply(graph):
+    """Both filters intersect; neither overrides the other."""
+    reached = graph.schema_neighbors(
+        "person",
+        hops=1,
+        edge_ids={("person", "company", "works_at"), ("person", "city", "lives_in")},
+        edge_relations={"works_at"},
+    )
+    assert set(reached.distances) == {"person", "company"}
+
+
+def test_schema_neighbors_unknown_edge_id_reaches_nothing(graph):
+    reached = graph.schema_neighbors("person", hops=3, edge_ids=set())
+    assert set(reached.distances) == {"person"}
+
+
+def test_neighborhood_distances_takes_the_nearest_seed(graph):
+    """A type reachable from two seeds is recorded at the shorter distance."""
+    distances = neighborhood_distances(graph, ["person", "city"], hops=1)
+    assert distances["city"] == 0  # a seed, not one hop from person
+    assert distances["company"] == 1
+    assert "orphan" not in distances
+
+
+def test_neighborhood_distances_hops_zero_is_the_seeds(graph):
+    assert neighborhood_distances(graph, ["person", "doc"], hops=0) == {
+        "person": 0,
+        "doc": 0,
+    }
+
+
+def test_neighborhood_distances_without_seeds_is_empty(graph):
+    assert neighborhood_distances(graph, [], hops=3) == {}
+
+
+def test_neighborhood_distances_rejects_unknown_seed(graph):
+    with pytest.raises(KeyError):
+        neighborhood_distances(graph, ["person", "nope"], hops=1)
+
+
+def test_neighborhood_distances_follows_undirected_edges_against_direction(graph):
+    """`company--city:hq_in` is undirected, so city reaches company even under OUT."""
+    distances = neighborhood_distances(
+        graph, ["city"], hops=1, direction=EdgeDirection.OUT
+    )
+    assert distances["company"] == 1

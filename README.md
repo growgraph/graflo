@@ -44,7 +44,7 @@ never becomes the place where the model is really defined.
 
 - **A change algebra, not hand-edited YAML** — 37 typed operations (`merge_vertices`,
   `rename_relations`, `change_field_types`, `add_secondary_identities`, `project_manifest`,
-  `compose_manifests`, …) applied through `apply_evolution`. `diff_manifests` derives them from two
+  `merge_manifests`, …) applied through `apply_evolution`. `diff_manifests` derives them from two
   manifests, so a change set can be generated, reviewed, and replayed.
 - **Content-addressed commits** — `graflo commit`, `log`, `checkout`, `verify`, `revert`, `stamp`.
   Every commit records a tree hash; `verify` replays each head and checks it, so a stored history
@@ -57,7 +57,7 @@ never becomes the place where the model is really defined.
   their common ancestor. Conflicts are reported per *slot* (a vertex's identity, one field's type,
   one edge's directionality) with the ancestor state attached, and a conflicted merge produces no
   manifest at all rather than a silently chosen side.
-- **Compose two models under declared equivalences** — `graflo compose` unions two manifests given
+- **Merge two models under declared equivalences** — `graflo merge` unions two manifests given
   explicit vertex/relation equivalence clusters and property alignments. It infers nothing: where
   two sides disagree on a property type, a unit, an identity, a storage name or a backend flavor, it
   names the disagreement and refuses. Nothing is silently elected from one side.
@@ -121,10 +121,10 @@ graflo revert <commit-id> --base v1.yaml
 > when you want a known-good earlier state.
 
 
-Composition and conformance run on manifests directly, with no history involved:
+Merge and conformance run on manifests directly, with no history involved:
 
 ```bash
-graflo compose left.yaml right.yaml --op equivalences.yaml -o composed.yaml
+graflo merge left.yaml right.yaml --op equivalences.yaml -o merged.yaml
 graflo check manifest.yaml --profile world-model --json
 ```
 
@@ -188,7 +188,7 @@ Optional extras (see `pyproject.toml` → `[project.optional-dependencies]`):
 - `dev` — pytest, ty, pre-commit
 - `docs` — MkDocs stack for building the documentation site
 - `plot` — `pygraphviz` for the `plot_manifest` CLI and the conflict figures
-  (`graflo compose --plot`, `graflo merge --plot`); install system Graphviz first
+  (`graflo merge --plot`, `graflo merge3 --plot`); install system Graphviz first
 
 ```bash
 pip install "graflo[dev]"

@@ -1,6 +1,6 @@
 """Loading and writing manifests, shared by the verbs that do both.
 
-Extracted from ``graflo.cli.commit`` once ``check`` and ``compose`` needed the
+Extracted from ``graflo.cli.commit`` once ``check`` and ``merge`` needed the
 same two lines. The load is not merely ``FileHandle.load`` -- it runs
 ``finish_init()``, which is where GraFlo validates cross-block references, so a
 verb that skips it operates on a manifest that has not been checked.

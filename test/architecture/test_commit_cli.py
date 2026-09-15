@@ -104,7 +104,7 @@ def test_the_umbrella_group_exposes_the_version_control_verbs() -> None:
         "log",
         "verify",
         "checkout",
-        "merge",
+        "merge3",
         "revert",
         "stamp",
         "rehash",
@@ -335,7 +335,7 @@ def test_merging_two_branches_reconciles_them(workspace) -> None:
     FileCommitStore(workspace["store"]).save(History(commits=[root, left, right]))
 
     result = _run(
-        "merge",
+        "merge3",
         left.id,
         right.id,
         "--base",
@@ -352,11 +352,11 @@ def test_merging_two_branches_reconciles_them(workspace) -> None:
     # The merge is stamped with its lineage, and a merge commit was recorded.
     merged = yaml.safe_load(workspace["out"].read_text())
     assert merged["metadata"]["provenance"]["parents"] == [left.id, right.id]
-    assert FileCommitStore(workspace["store"]).load().heads()[0].is_merge
+    assert FileCommitStore(workspace["store"]).load().heads()[0].is_multi_parent
 
 
 def test_merging_unrelated_lineages_points_at_compose(workspace) -> None:
-    """The signal that the operation wanted is compose, not merge."""
+    """The signal that the operation wanted is merge, not merge."""
     from graflo.architecture.contract.manifest import GraphManifest
     from graflo.architecture.evolution.commit import build_commit
     from graflo.architecture.evolution.history import FileCommitStore, History
@@ -372,7 +372,7 @@ def test_merging_unrelated_lineages_points_at_compose(workspace) -> None:
     FileCommitStore(workspace["store"]).save(History(commits=[one, two]))
 
     result = _run(
-        "merge",
+        "merge3",
         one.id,
         two.id,
         "--base",
@@ -382,7 +382,7 @@ def test_merging_unrelated_lineages_points_at_compose(workspace) -> None:
     )
     assert result.exit_code != 0
     assert "share no ancestor" in result.output
-    assert "compose" in result.output
+    assert "`graflo merge`" in result.output
 
 
 def _forked_history(workspace):
@@ -416,14 +416,14 @@ def _forked_history(workspace):
     return left, right
 
 
-def test_merge_draws_the_slot_tree_and_the_lineage(workspace, tmp_path) -> None:
+def test_merge3_draws_the_slot_tree_and_the_lineage(workspace, tmp_path) -> None:
     """``dot`` output, so the figures assert without Graphviz installed."""
     left, right = _forked_history(workspace)
     slots = tmp_path / "figs" / "slots.dot"
     history = tmp_path / "figs" / "history.dot"
 
     result = _run(
-        "merge",
+        "merge3",
         left.id,
         right.id,
         "--base",
@@ -445,10 +445,10 @@ def test_merge_draws_the_slot_tree_and_the_lineage(workspace, tmp_path) -> None:
     assert "digraph" in history.read_text()
 
 
-def test_a_refused_merge_still_draws_its_slot_tree(workspace, tmp_path) -> None:
+def test_a_refused_merge3_still_draws_its_slot_tree(workspace, tmp_path) -> None:
     """An unresolved conflict is exactly the case the picture is for.
 
-    Drawn before the refusal, not instead of it -- the same rule the compose
+    Drawn before the refusal, not instead of it -- the same rule the merge
     preview follows, and the run that would otherwise leave nothing behind.
     """
     from graflo.architecture.contract.manifest import GraphManifest
@@ -489,7 +489,7 @@ def test_a_refused_merge_still_draws_its_slot_tree(workspace, tmp_path) -> None:
 
     slots = tmp_path / "conflict.dot"
     result = _run(
-        "merge",
+        "merge3",
         left.id,
         right.id,
         "--base",
