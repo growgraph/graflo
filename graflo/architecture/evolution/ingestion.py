@@ -70,13 +70,13 @@ def apply_remove_resources(manifest: GraphManifest, op: RemoveResourcesOp) -> No
     _filter_bindings_for_resources(manifest, existing - removed)
 
 
-def _merged_registry(
+def _union_transforms(
     existing: list[ProtoTransform], added: list[ProtoTransform]
 ) -> list[ProtoTransform]:
     """Union registries by name: identical bodies dedupe, divergent ones raise.
 
-    Mirrors ``compose_manifests`` transform-union semantics so an op collides
-    exactly as loudly as a compose would.
+    Mirrors ``merge_manifests`` transform-union semantics so an op collides
+    exactly as loudly as a merge would.
     """
     by_name: dict[str, ProtoTransform] = {}
     out: list[ProtoTransform] = []
@@ -134,7 +134,7 @@ def apply_add_resource_transforms(
             f"manifest defines {sorted(known)}"
         )
 
-    registry = _merged_registry(list(im.transforms), list(op.transforms))
+    registry = _union_transforms(list(im.transforms), list(op.transforms))
     registry_names = {t.name for t in registry if t.name}
     for resource_name, steps in op.additions.items():
         for step in steps:

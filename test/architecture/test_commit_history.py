@@ -17,7 +17,7 @@ from graflo.architecture.evolution.commit import (
     Commit,
     CommitError,
     build_commit,
-    build_merge_commit,
+    build_multi_parent_commit,
     build_root_commit,
     compute_commit_id,
 )
@@ -229,8 +229,8 @@ def test_a_merge_commit_is_materialized_against_its_first_parent(linear) -> None
     )
     merged = _manifest(["id", "y", "from_the_other_side"])
 
-    commit = build_merge_commit(
-        first_parent_state, merged, parents=[first.id, "otherbranch1"], kind="merge"
+    commit = build_multi_parent_commit(
+        first_parent_state, merged, parents=[first.id, "otherbranch1"], kind="merge3"
     )
     assert commit.is_multi_parent
     assert commit.first_parent == first.id
@@ -246,13 +246,13 @@ def test_a_merge_commit_is_materialized_against_its_first_parent(linear) -> None
 def test_a_merge_commit_needs_at_least_two_parents(linear) -> None:
     base, _history, _first, _second = linear
     with pytest.raises(CommitError, match="at least two parents"):
-        build_merge_commit(base, _manifest(["id", "q"]), parents=["only-one"])
+        build_multi_parent_commit(base, _manifest(["id", "q"]), parents=["only-one"])
 
 
 def test_a_merge_identical_to_its_first_parent_is_refused(linear) -> None:
     base, _history, _first, _second = linear
     with pytest.raises(CommitError, match="nothing to record"):
-        build_merge_commit(base, _manifest(["id"]), parents=["a", "b"])
+        build_multi_parent_commit(base, _manifest(["id"]), parents=["a", "b"])
 
 
 # ── the store ───────────────────────────────────────────────────────────────

@@ -14,7 +14,7 @@ from graflo.architecture.schema.semantics import merge_semantics
 from graflo.architecture.schema.vertex import (
     SecondaryIdentity,
     Vertex,
-    merge_field_lists,
+    union_field_lists,
 )
 from graflo.filter.onto import FilterExpression
 
@@ -28,11 +28,11 @@ class VertexMergeError(Refusal):
     them has a weaker-wins ordering the union could apply on the author's
     behalf.
 
-    ``into_name`` is the composed vertex the union was heading for, and
+    ``into_name`` is the merged vertex the union was heading for, and
     ``properties`` the offending names where the rule has them (the hash
     properties, a secondary identity's field-set). ``subjects`` is empty: this
-    layer has no notion of left, right or composed -- it is reached from
-    compose, from ``merge_vertices`` and from a per-side canonicalize alike --
+    layer has no notion of left, right or merged -- it is reached from
+    merge, from ``merge_vertices`` and from a per-side canonicalize alike --
     so the caller that knows the scope builds the ids.
     """
 
@@ -96,7 +96,7 @@ def _is_positional_name(name: str | None) -> bool:
     return name is not None and _POSITIONAL_SECONDARY_NAME.fullmatch(name) is not None
 
 
-def _merge_secondary_identities(
+def _union_secondary_identities(
     vertices: list[Vertex], into_name: str, primary: list[str]
 ) -> list[SecondaryIdentity]:
     """Union secondary identities across *vertices*, subsumed entries dropped.
@@ -168,7 +168,7 @@ def merge_vertex_models(vertices: list[Vertex], into_name: str) -> Vertex:
     if not vertices:
         raise ValueError("merge_vertex_models requires at least one vertex")
 
-    props = merge_field_lists(
+    props = union_field_lists(
         (f for v in vertices for f in v.properties), owner=f"vertex {into_name!r}"
     )
 
@@ -180,7 +180,7 @@ def merge_vertex_models(vertices: list[Vertex], into_name: str) -> Vertex:
                 identity_out.append(x)
                 seen_id.add(x)
 
-    # Deduplicated like every other list field; compose runs this merge twice
+    # Deduplicated like every other list field; merge runs this merge twice
     # (per side, then at union), so a repeated filter would otherwise compound.
     filters_out: list[FilterExpression] = []
     seen_filters: set[str] = set()
@@ -260,7 +260,7 @@ def merge_vertex_models(vertices: list[Vertex], into_name: str) -> Vertex:
                 into_name=into_name,
             )
 
-    secondary_out = _merge_secondary_identities(vertices, into_name, identity_out)
+    secondary_out = _union_secondary_identities(vertices, into_name, identity_out)
     if blank_out and secondary_out:
         raise VertexMergeError(
             f"Cannot merge into vertex '{into_name}': a blank source cannot be merged "
@@ -304,7 +304,7 @@ def merge_edge_pair(a: Edge, b: Edge) -> Edge:
             check="edge type disagreement",
             edge_id=a.edge_id,
         )
-    props = merge_field_lists(a.properties + b.properties, owner=f"edge {a.edge_id!r}")
+    props = union_field_lists(a.properties + b.properties, owner=f"edge {a.edge_id!r}")
 
     identities_out: list[list[str]] = []
     seen_identities: set[tuple[str, ...]] = set()

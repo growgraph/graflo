@@ -13,11 +13,11 @@ import pytest
 
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.evolution import (
-    ComposeManifestsOp,
+    MergeManifestsOp,
     MergeVerticesOp,
     VertexEquivalence,
     apply_evolution,
-    compose_manifests,
+    merge_manifests,
 )
 from graflo.architecture.schema.core import CoreSchema
 from graflo.architecture.schema.document import Schema
@@ -242,7 +242,7 @@ class TestFusionIsJudgedPerSlot:
 
     @staticmethod
     def _composed(pipeline: list[dict], *, allow_fusion: bool) -> GraphManifest:
-        """A and B collapsed onto A under identity ``a_id`` by a compose.
+        """A and B collapsed onto A under identity ``a_id`` by a merge.
 
         Under that identity the observation the former B step emits carries no
         key, which is the shape that fuses: ``fuse_doc_basis`` folds a keyless
@@ -274,7 +274,7 @@ class TestFusionIsJudgedPerSlot:
             }
         )
         right.finish_init()
-        op = ComposeManifestsOp(
+        op = MergeManifestsOp(
             vertex_equivalences=[
                 VertexEquivalence(
                     left=["A", "B"], right="D", into="A", identity=["a_id"]
@@ -283,7 +283,7 @@ class TestFusionIsJudgedPerSlot:
             allow_merges=True,
             allow_observation_fusion=allow_fusion,
         )
-        return compose_manifests(left, right, op, bump_version=False)
+        return merge_manifests(left, right, op, bump_version=False)
 
     @staticmethod
     def _a_rows(manifest: GraphManifest) -> list[dict]:

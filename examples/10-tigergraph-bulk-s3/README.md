@@ -38,7 +38,7 @@ Expected output:
 
 ## Emulate S3 with MinIO
 
-1. Start MinIO from the repo compose stack (recommended; the image pin lives in the `docker/minio` environment file):
+1. Start MinIO from the repo merge stack (recommended; the image pin lives in the `docker/minio` environment file):
 
    ```bash
    cd ../../docker/minio
@@ -60,7 +60,7 @@ Expected output:
 
 ## Troubleshooting
 
-- **`Connection refused` to `127.0.0.1:9000` (or your `MINIO_API_PORT`)**: The script talks to the MinIO **S3 API**, not the web console. A URL like `http://127.0.0.1:9001/endpoints` is the **console** (different port and service); boto3 must use `MINIO_API_PORT` / `MINIO_ENDPOINT` from the `docker/minio` environment file. Verify `docker ps` shows `graflo.minio` as **Up**. If the container is stuck in **Created** or never starts, check compose logs: `Bind for ... :9001 failed: port is already allocated` means another process already uses that host port. Set `MINIO_CONSOLE_PORT` (and `MINIO_API_PORT` if needed) to free ports, run `docker rm -f graflo.minio`, then bring the stack up again. See **MinIO** in [`docker/README.md`](../../docker/README.md).
+- **`Connection refused` to `127.0.0.1:9000` (or your `MINIO_API_PORT`)**: The script talks to the MinIO **S3 API**, not the web console. A URL like `http://127.0.0.1:9001/endpoints` is the **console** (different port and service); boto3 must use `MINIO_API_PORT` / `MINIO_ENDPOINT` from the `docker/minio` environment file. Verify `docker ps` shows `graflo.minio` as **Up**. If the container is stuck in **Created** or never starts, check merge logs: `Bind for ... :9001 failed: port is already allocated` means another process already uses that host port. Set `MINIO_CONSOLE_PORT` (and `MINIO_API_PORT` if needed) to free ports, run `docker rm -f graflo.minio`, then bring the stack up again. See **MinIO** in [`docker/README.md`](../../docker/README.md).
 
 - **`inspect_bulk.py` reports an empty graph (S3 / `BULK_USE_S3=1`)**: TigerGraph loads from `s3://` using a **GSQL DATA_SOURCE** (credentials + MinIO endpoint). That endpoint must be reachable **from the TigerGraph process** (often inside Docker). If GraFlo and MinIO run on the host but TigerGraph is in a container, a `127.0.0.1` endpoint is wrong for the loader — this is the case `ingest.py` warns about at startup. Set **`MINIO_LOADER_ENDPOINT`** (or `MINIO_TIGERGRAPH_ENDPOINT`) to a URL the TigerGraph container can use (e.g. `http://172.17.0.1:9003` on Linux, or `http://host.docker.internal:9003` where supported). Python/boto3 still uses `MINIO_HOSTNAME` + `MINIO_API_PORT` for uploads. Alternatively use **`BULK_USE_S3=0`** so the LOADING JOB uses local file paths (TigerGraph must see those paths).
 

@@ -359,7 +359,7 @@ class FieldMergeConflict(Refusal):
     """One property that two declarations describe incompatibly.
 
     The per-property clause and the remedy are kept apart from the rendered
-    message so :func:`merge_field_lists` can report every conflicting property
+    message so :func:`union_field_lists` can report every conflicting property
     under one owner heading instead of one error per run.
 
     ``field`` and ``conflict`` are the same two facts in structured form: which
@@ -382,8 +382,8 @@ class FieldMergeConflict(Refusal):
 class FieldMergeError(Refusal):
     """Every property two declarations describe incompatibly, in one refusal.
 
-    :func:`merge_field_lists` collects rather than raising on the first clash,
-    so an author fixing a large compose sees all of them at once. The
+    :func:`union_field_lists` collects rather than raising on the first clash,
+    so an author fixing a large merge sees all of them at once. The
     individual :class:`FieldMergeConflict` objects stay on ``conflicts`` and
     their property names on ``fields``, so a caller can point at what is
     wrong without parsing the rendered message.
@@ -502,10 +502,10 @@ def merge_fields(a: Field, b: Field, *, owner: str) -> Field:
     )
 
 
-def merge_field_lists(fields: Iterable[Field], *, owner: str) -> list[Field]:
+def union_field_lists(fields: Iterable[Field], *, owner: str) -> list[Field]:
     """Fold same-named fields into one, preserving first-declaration order.
 
-    Every conflicting property is reported together: composing two large schemas
+    Every conflicting property is reported together: merging two large schemas
     one error per run makes the author re-run the merge to discover the next
     disagreement, when the merge already knows all of them.
     """
@@ -757,7 +757,7 @@ class Vertex(ConfigBaseModel):
                     f"Vertex '{self.name}': assigned and identity_funnel are "
                     "mutually exclusive"
                 )
-        merged_properties = merge_field_lists(
+        merged_properties = union_field_lists(
             self.properties, owner=f"vertex {self.name!r}"
         )
         identity_names = _dedupe_ordered(list(self.identity))

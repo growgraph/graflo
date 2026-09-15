@@ -419,7 +419,7 @@ class TestAmbiguousAlignment:
         """Projecting both onto one name would silently lose a column.
 
         ``_project`` builds a dict keyed by the canonical name, so the second
-        column overwrites the first. Compose refuses the same shape outright on
+        column overwrites the first. Merge refuses the same shape outright on
         the declared side; this module proposes rather than raises, so it drops
         the group and records why.
         """

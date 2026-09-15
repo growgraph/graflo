@@ -61,7 +61,7 @@ def ingestion_hash(ingestion_model: Any) -> str:
 
 
 def full_hash(schema: Any, ingestion_model: Any, bindings: Any) -> str:
-    """Stable hash over a composed deployment object."""
+    """Stable hash over a merged deployment object."""
     payload = {
         "schema": _schema_payload(schema),
         "ingestion": canonical_payload(ingestion_model),

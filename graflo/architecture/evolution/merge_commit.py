@@ -1,25 +1,25 @@
-"""Recording a compose as a commit.
+"""Recording a merge as a commit.
 
-Deliberately not in ``compose.py``. That module is the pure algorithm: two
+Deliberately not in ``merge.py``. That module is the pure algorithm: two
 manifests in, one out, no notion of a store or of history. Stamping and
 recording are what a **commit point** does to the result afterwards -- the same
 separation ``contract/provenance.py`` draws to keep provenance out of
-``apply_evolution``, and for the same reason. A compose that recorded its own
+``apply_evolution``, and for the same reason. A merge that recorded its own
 lineage could not be run twice without inventing two different histories.
 
-A compose commit is materialized exactly as a merge commit is: its ops are the
+A merge commit is materialized exactly as a merge commit is: its ops are the
 verified diff from its **first parent**, so first-parent replay and hash
-verification need no special case anywhere downstream. What makes it a compose
+verification need no special case anywhere downstream. What makes it a merge
 rather than a merge is the declaration that rides alongside it -- a
-:class:`~graflo.architecture.evolution.merge3.MergeRecipe` of kind ``compose``,
-which is what a re-compose reads.
+:class:`~graflo.architecture.evolution.merge3.MergeRecipe` of kind ``merge``,
+which is what a re-merge reads.
 """
 
 from __future__ import annotations
 
 from graflo.architecture.contract.manifest import GraphManifest
 
-from .commit import Commit, MergeRecipeRef, build_merge_commit
+from .commit import Commit, MergeRecipeRef, build_multi_parent_commit
 from .hashing import manifest_hash
 from .history import History
 from .merge3 import MergeRecipe
@@ -48,9 +48,9 @@ def find_commit_by_tree(history: History, manifest: GraphManifest) -> Commit | N
     return min(preferred, key=lambda commit: commit.id)
 
 
-def build_compose_commit(
+def build_merge_commit(
     left: GraphManifest,
-    composed: GraphManifest,
+    merged: GraphManifest,
     *,
     parents: list[str],
     recipe: MergeRecipe,
@@ -58,27 +58,27 @@ def build_compose_commit(
     created_at: str | None = None,
     notes: str | None = None,
 ) -> Commit:
-    """Record *composed* as a ``compose`` commit over *parents*.
+    """Record *merged* as a ``merge`` commit over *parents*.
 
     Args:
         left: The first parent's manifest -- the side the ops are diffed from.
-        composed: The compose result.
+        merged: The merge result.
         parents: Parent commit ids, first parent first (at least two).
-        recipe: The recorded declaration, so a re-compose can replay it.
+        recipe: The recorded declaration, so a re-merge can replay it.
         label: Short human-readable name.
         created_at: ISO-8601 timestamp.
         notes: Free-form annotation.
 
     Raises:
         CommitError: Fewer than two parents, or the derived diff does not
-            reproduce *composed* -- which happens when the two sides differ
+            reproduce *merged* -- which happens when the two sides differ
             somewhere no op reaches.
     """
-    return build_merge_commit(
+    return build_multi_parent_commit(
         left,
-        composed,
+        merged,
         parents=list(parents),
-        kind="compose",
+        kind="merge",
         label=label,
         created_at=created_at,
         notes=notes,
@@ -88,4 +88,4 @@ def build_compose_commit(
     )
 
 
-__all__ = ["build_compose_commit", "find_commit_by_tree"]
+__all__ = ["build_merge_commit", "find_commit_by_tree"]

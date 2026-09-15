@@ -108,7 +108,7 @@ def test_a_vertex_slot_is_convention_independent() -> None:
     Without this, one side's `order_line` and the other's `OrderLine` occupy
     different slots, merge cleanly, and produce a schema holding both as
     unrelated types with the data split between them -- the exact defect, now
-    reachable through a tracked re-merge rather than only through compose.
+    reachable through a tracked re-merge rather than only through merge.
     """
     snake = AddVertexPropertiesOp(additions={"order_line": ["qty"]})
     pascal = AddVertexPropertiesOp(additions={"OrderLine": ["qty"]})
@@ -460,7 +460,7 @@ def test_the_merge_base_of_two_branches_is_their_fork_point() -> None:
 
 
 def test_unrelated_lineages_have_no_merge_base() -> None:
-    """Which is the signal that the operation you want is compose, not merge."""
+    """Which is the signal that the operation you want is merge, not merge."""
     history, (_root, left, _right) = _linear_history()
     stranger = build_commit(
         _person(["id"]), [AddVertexPropertiesOp(additions={"person": ["x"]})]

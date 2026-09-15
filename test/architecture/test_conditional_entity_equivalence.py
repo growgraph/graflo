@@ -1,7 +1,7 @@
 """End-to-end: union of two manifests with conditional entity equivalence.
 
-The full recipe composed from fundamental ops — canonicalize the left
-manifest, validate the compose op against the canonical map, compose, then
+The full recipe merged from fundamental ops — canonicalize the left
+manifest, validate the merge op against the canonical map, merge, then
 apply an identity alignment: canonical attribute declarations, per-resource
 derivation transforms, a priority funnel over canonical attributes only, and
 per-side secondary identities. The class definition stays side-agnostic;
@@ -20,16 +20,16 @@ from graflo.architecture.evolution import (
     AlignmentAttribute,
     AlignmentConflictError,
     CanonicalMap,
-    ComposeManifestsOp,
     DerivationSpec,
     IdentityAlignment,
     LocalKeySource,
     LocalKeySpec,
+    MergeManifestsOp,
     VertexEquivalence,
     alignment_to_ops,
     apply_evolution,
     canonical_map_to_ops,
-    compose_manifests,
+    merge_manifests,
 )
 from graflo.hq.document_caster import DocumentCaster
 from graflo.hq.ingestion_parameters import IngestionParams
@@ -133,25 +133,25 @@ _ALIGNMENT = IdentityAlignment(
 
 
 def _compose_union() -> GraphManifest:
-    """A composed union *without* the identity alignment applied yet.
+    """A merged union *without* the identity alignment applied yet.
 
     Declares a throwaway ``identity=["company_id"]`` on the cluster: `Company`
     and `Org` disagree on their raw identity field, and nothing here promises
     to resolve it (callers that want the resolved identity use
     :func:`_build_union` instead, which folds the alignment into the same
-    compose op), so an explicit placeholder is what this unaligned union
-    needs in order to compose at all.
+    merge op), so an explicit placeholder is what this unaligned union
+    needs in order to merge at all.
     """
     canonical_a = apply_evolution(_manifest_a(), canonical_map_to_ops(_CANONICAL))
     right = _manifest_b()
-    op = ComposeManifestsOp(
+    op = MergeManifestsOp(
         vertex_equivalences=[
             VertexEquivalence(
                 left="Company", right="Org", into="Company", identity=["company_id"]
             )
         ]
     )
-    return compose_manifests(
+    return merge_manifests(
         canonical_a, right, op, canonical_maps=[("left", _CANONICAL)]
     )
 
@@ -159,13 +159,13 @@ def _compose_union() -> GraphManifest:
 def _build_union(alignment: IdentityAlignment = _ALIGNMENT) -> GraphManifest:
     canonical_a = apply_evolution(_manifest_a(), canonical_map_to_ops(_CANONICAL))
     right = _manifest_b()
-    op = ComposeManifestsOp(
+    op = MergeManifestsOp(
         vertex_equivalences=[
             VertexEquivalence(left="Company", right="Org", into="Company")
         ],
         identity_alignments=[alignment],
     )
-    return compose_manifests(
+    return merge_manifests(
         canonical_a, right, op, canonical_maps=[("left", _CANONICAL)]
     )
 
@@ -528,14 +528,14 @@ def _build_routed_union() -> GraphManifest:
     left = apply_evolution(
         _routed_manifest_a(), canonical_map_to_ops(_ROUTED_CANONICAL)
     )
-    op = ComposeManifestsOp(
+    op = MergeManifestsOp(
         vertex_equivalences=[
             VertexEquivalence(left=["Company", "Shop"], right="Org", into="Company")
         ],
         allow_merges=True,
         identity_alignments=[_ROUTED_ALIGNMENT],
     )
-    return compose_manifests(
+    return merge_manifests(
         left, _manifest_b(), op, canonical_maps=[("left", _ROUTED_CANONICAL)]
     )
 
@@ -638,7 +638,7 @@ _MEMBER_ALIGNMENT = IdentityAlignment(
             sources={
                 # One column for every kind; the member decides which marker
                 # admits a value. The left member is `Company` because the
-                # canonical map renamed `Firm` before the compose.
+                # canonical map renamed `Firm` before the merge.
                 "r_view": {"Company": _marker("abc_"), "Shop": _marker("def_")},
                 "r_b": DerivationSpec(
                     input=["shared_raw"], foo="affix_gated_key", params={"prefix": ""}
@@ -663,14 +663,14 @@ def _build_member_union() -> GraphManifest:
     left = apply_evolution(
         _routed_manifest_a(), canonical_map_to_ops(_ROUTED_CANONICAL)
     )
-    op = ComposeManifestsOp(
+    op = MergeManifestsOp(
         vertex_equivalences=[
             VertexEquivalence(left=["Company", "Shop"], right="Org", into="Company")
         ],
         allow_merges=True,
         identity_alignments=[_MEMBER_ALIGNMENT],
     )
-    return compose_manifests(
+    return merge_manifests(
         left, _manifest_b(), op, canonical_maps=[("left", _ROUTED_CANONICAL)]
     )
 
@@ -781,14 +781,14 @@ class TestMemberKeyedRoutedFusion:
         left = apply_evolution(
             _routed_manifest_a(), canonical_map_to_ops(_ROUTED_CANONICAL)
         )
-        op = ComposeManifestsOp(
+        op = MergeManifestsOp(
             vertex_equivalences=[
                 VertexEquivalence(left=["Company", "Shop"], right="Org", into="Company")
             ],
             allow_merges=True,
             identity_alignments=[alignment],
         )
-        union = compose_manifests(
+        union = merge_manifests(
             left, _manifest_b(), op, canonical_maps=[("left", _ROUTED_CANONICAL)]
         )
 
@@ -808,7 +808,7 @@ class TestMemberKeyedRoutedFusion:
             attribute.sources["r_orgs"] = attribute.sources.pop("r_b")
         assert alignment.local_key is not None
         alignment.local_key.sources["r_orgs"] = alignment.local_key.sources.pop("r_b")
-        op = ComposeManifestsOp(
+        op = MergeManifestsOp(
             vertex_equivalences=[
                 VertexEquivalence(left=["Company", "Shop"], right="Org", into="Company")
             ],
@@ -817,7 +817,7 @@ class TestMemberKeyedRoutedFusion:
             identity_alignments=[alignment],
         )
 
-        union = compose_manifests(
+        union = merge_manifests(
             left, right, op, canonical_maps=[("left", _ROUTED_CANONICAL)]
         )
 
@@ -849,13 +849,13 @@ def _rekeyed(alignment: IdentityAlignment, key: str) -> IdentityAlignment:
 
 def _raw_member_union(alignment: IdentityAlignment) -> GraphManifest:
     """The member union authored against the raw left side: `Firm`, no `into`."""
-    op = ComposeManifestsOp(
+    op = MergeManifestsOp(
         vertex_equivalences=[VertexEquivalence(left=["Firm", "Shop"], right="Org")],
         allow_merges=True,
         canonical_maps={"left": _ROUTED_CANONICAL},
         identity_alignments=[alignment],
     )
-    return compose_manifests(_routed_manifest_a(), _manifest_b(), op)
+    return merge_manifests(_routed_manifest_a(), _manifest_b(), op)
 
 
 class TestMemberKeysResolveThroughTheMap:
@@ -910,14 +910,14 @@ def _build_dynamic_member_union() -> GraphManifest:
     left = apply_evolution(
         _dynamic_manifest_a(), canonical_map_to_ops(_ROUTED_CANONICAL)
     )
-    op = ComposeManifestsOp(
+    op = MergeManifestsOp(
         vertex_equivalences=[
             VertexEquivalence(left=["Company", "Shop"], right="Org", into="Company")
         ],
         allow_merges=True,
         identity_alignments=[_MEMBER_ALIGNMENT],
     )
-    return compose_manifests(
+    return merge_manifests(
         left, _manifest_b(), op, canonical_maps=[("left", _ROUTED_CANONICAL)]
     )
 
@@ -938,7 +938,7 @@ _DYNAMIC_VIEW = [
 class TestDynamicRouterFusion:
     """The router has no table; the source's own class names are its raw values.
 
-    The canonical map and the compose each rename a class the router passed
+    The canonical map and the merge each rename a class the router passed
     through, and each writes the entry that keeps the raw value routing.
     """
 

@@ -230,7 +230,7 @@ class TestUnicodeEdgeCases:
             # Different Unicode representations of "same" characters
             variants = [
                 ("1a", "café"),
-                ("1b", "cafe\u0301"),  # Composed vs decomposed
+                ("1b", "cafe\u0301"),  # Merged vs decomposed
                 ("2a", "ﬁ"),  # Ligature
                 ("2b", "fi"),  # Separate chars
                 ("3a", "Ω"),  # Greek Omega U+03A9

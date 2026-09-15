@@ -1,4 +1,4 @@
-"""``graflo compose`` end to end through Click.
+"""``graflo merge`` end to end through Click.
 
 The verb is ``examples/19-union-canonical-equivalence/build_union.py``
 generalised, so the example's own fixtures are the fixtures here: if the CLI
@@ -6,7 +6,7 @@ does not reproduce that script's recipe -- the op and its canonical maps
 applied together, in one step -- it is not the same operation and the
 example's README points somewhere wrong.
 
-Exit codes carry the load: 1 means compose looked at the manifests and
+Exit codes carry the load: 1 means merge looked at the manifests and
 refused, 2 means the command could not be run. A CI job that cannot tell those
 apart cannot gate on either.
 """
@@ -29,7 +29,7 @@ CANONICAL_MAP = EX19 / "canonical_map.yaml"
 
 #: The n-ary boundary cluster from ``build_union.py``, in canonical names.
 BOUNDARY_OP: dict = {
-    "op": "compose_manifests",
+    "op": "merge_manifests",
     "allow_merges": True,
     "vertices": [
         {"left": ["Company", "Shop"], "right": ["Org", "Branch"], "into": "Company"}
@@ -37,9 +37,9 @@ BOUNDARY_OP: dict = {
 }
 
 
-#: The same cluster with its identity settled, so it composes. Without it the
+#: The same cluster with its identity settled, so it merges. Without it the
 #: four members disagree on their natural key -- which the preview reports and
-#: compose refuses.
+#: merge refuses.
 KEYED_OP: dict = {
     **BOUNDARY_OP,
     "vertices": [{**BOUNDARY_OP["vertices"][0], "identity": ["company_id"]}],
@@ -56,11 +56,11 @@ def test_no_op_composes_a_disjoint_union(tmp_path: pathlib.Path) -> None:
     out = tmp_path / "union.yaml"
     result = CliRunner().invoke(
         graflo,
-        ["compose", str(MANIFEST_A), str(MANIFEST_B), "-o", str(out)],
+        ["merge", str(MANIFEST_A), str(MANIFEST_B), "-o", str(out)],
     )
     assert result.exit_code == 0, result.output
-    composed = yaml.safe_load(out.read_text(encoding="utf-8"))
-    vertices = composed["schema"]["core_schema"]["vertex_config"]["vertices"]
+    merged = yaml.safe_load(out.read_text(encoding="utf-8"))
+    vertices = merged["schema"]["core_schema"]["vertex_config"]["vertices"]
     assert {v["name"] for v in vertices} == {"Firm", "Shop", "Org", "Branch"}
 
 
@@ -70,7 +70,7 @@ def test_a_canonical_map_lets_the_op_name_canonical_classes(
     """The op names ``Company``; ``manifest_a`` declares ``Firm``.
 
     The map establishes ``Company`` as ``Firm``'s canonical name, so the
-    equivalence binds to ``Firm`` and the composed class is ``Company``.
+    equivalence binds to ``Firm`` and the merged class is ``Company``.
     Without the map the same op has no left member to bind to.
     """
     op = dict(BOUNDARY_OP)
@@ -82,7 +82,7 @@ def test_a_canonical_map_lets_the_op_name_canonical_classes(
     result = CliRunner().invoke(
         graflo,
         [
-            "compose",
+            "merge",
             str(MANIFEST_A),
             str(MANIFEST_B),
             "--op",
@@ -94,10 +94,9 @@ def test_a_canonical_map_lets_the_op_name_canonical_classes(
         ],
     )
     assert result.exit_code == 0, result.output
-    composed = yaml.safe_load(out.read_text(encoding="utf-8"))
+    merged = yaml.safe_load(out.read_text(encoding="utf-8"))
     names = {
-        v["name"]
-        for v in composed["schema"]["core_schema"]["vertex_config"]["vertices"]
+        v["name"] for v in merged["schema"]["core_schema"]["vertex_config"]["vertices"]
     }
     assert names == {"Company"}
 
@@ -106,12 +105,12 @@ def test_the_example_op_document_composes_from_the_shell(
     tmp_path: pathlib.Path,
 ) -> None:
     """``boundary_op.yaml`` names members in ``manifest_a``'s own vocabulary and
-    no ``into``; the map names the composed class."""
+    no ``into``; the map names the merged class."""
     out = tmp_path / "union.yaml"
     result = CliRunner().invoke(
         graflo,
         [
-            "compose",
+            "merge",
             str(MANIFEST_A),
             str(MANIFEST_B),
             "--op",
@@ -123,10 +122,9 @@ def test_the_example_op_document_composes_from_the_shell(
         ],
     )
     assert result.exit_code == 0, result.output
-    composed = yaml.safe_load(out.read_text(encoding="utf-8"))
+    merged = yaml.safe_load(out.read_text(encoding="utf-8"))
     names = {
-        v["name"]
-        for v in composed["schema"]["core_schema"]["vertex_config"]["vertices"]
+        v["name"] for v in merged["schema"]["core_schema"]["vertex_config"]["vertices"]
     }
     assert names == {"Company"}
 
@@ -135,7 +133,7 @@ def test_without_a_map_an_unnamed_cluster_is_refused(tmp_path: pathlib.Path) -> 
     result = CliRunner().invoke(
         graflo,
         [
-            "compose",
+            "merge",
             str(MANIFEST_A),
             str(MANIFEST_B),
             "--op",
@@ -154,7 +152,7 @@ def test_without_the_canonical_map_the_same_op_is_refused_on_membership(
     result = CliRunner().invoke(
         graflo,
         [
-            "compose",
+            "merge",
             str(MANIFEST_A),
             str(MANIFEST_B),
             "--op",
@@ -171,7 +169,7 @@ def test_dry_run_writes_nothing(tmp_path: pathlib.Path) -> None:
     result = CliRunner().invoke(
         graflo,
         [
-            "compose",
+            "merge",
             str(MANIFEST_A),
             str(MANIFEST_B),
             "-o",
@@ -191,7 +189,7 @@ def test_bump_version_none_leaves_the_left_schema_version(
     result = CliRunner().invoke(
         graflo,
         [
-            "compose",
+            "merge",
             str(MANIFEST_A),
             str(MANIFEST_B),
             "-o",
@@ -202,18 +200,17 @@ def test_bump_version_none_leaves_the_left_schema_version(
     )
     assert result.exit_code == 0, result.output
     left = yaml.safe_load(MANIFEST_A.read_text(encoding="utf-8"))
-    composed = yaml.safe_load(out.read_text(encoding="utf-8"))
+    merged = yaml.safe_load(out.read_text(encoding="utf-8"))
     assert (
-        composed["schema"]["metadata"]["version"]
-        == left["schema"]["metadata"]["version"]
+        merged["schema"]["metadata"]["version"] == left["schema"]["metadata"]["version"]
     )
 
 
 def test_name_collision_under_error_policy_exits_one(tmp_path: pathlib.Path) -> None:
-    """Compose refused the manifests -- exit 1, and say what to declare."""
+    """Merge refused the manifests -- exit 1, and say what to declare."""
     result = CliRunner().invoke(
         graflo,
-        ["compose", str(MANIFEST_A), str(MANIFEST_A), "--dry-run"],
+        ["merge", str(MANIFEST_A), str(MANIFEST_A), "--dry-run"],
     )
     assert result.exit_code == 1
     assert "name_conflict='prefix_right'" in result.output
@@ -224,7 +221,7 @@ def test_prefix_right_resolves_that_collision(tmp_path: pathlib.Path) -> None:
     result = CliRunner().invoke(
         graflo,
         [
-            "compose",
+            "merge",
             str(MANIFEST_A),
             str(MANIFEST_A),
             "-o",
@@ -234,10 +231,9 @@ def test_prefix_right_resolves_that_collision(tmp_path: pathlib.Path) -> None:
         ],
     )
     assert result.exit_code == 0, result.output
-    composed = yaml.safe_load(out.read_text(encoding="utf-8"))
+    merged = yaml.safe_load(out.read_text(encoding="utf-8"))
     names = {
-        v["name"]
-        for v in composed["schema"]["core_schema"]["vertex_config"]["vertices"]
+        v["name"] for v in merged["schema"]["core_schema"]["vertex_config"]["vertices"]
     }
     assert names == {"Firm", "Shop", "r_Firm", "r_Shop"}
 
@@ -248,7 +244,7 @@ def test_a_malformed_canonical_map_option_is_a_usage_error(
     result = CliRunner().invoke(
         graflo,
         [
-            "compose",
+            "merge",
             str(MANIFEST_A),
             str(MANIFEST_B),
             "--canonical-map",
@@ -263,7 +259,7 @@ def test_an_unknown_side_token_is_a_usage_error(tmp_path: pathlib.Path) -> None:
     result = CliRunner().invoke(
         graflo,
         [
-            "compose",
+            "merge",
             str(MANIFEST_A),
             str(MANIFEST_B),
             "--canonical-map",
@@ -277,7 +273,7 @@ def test_an_unreadable_manifest_exits_two(tmp_path: pathlib.Path) -> None:
     broken = tmp_path / "broken.yaml"
     broken.write_text("schema: {metadata: {}}\n", encoding="utf-8")
     result = CliRunner().invoke(
-        graflo, ["compose", str(broken), str(MANIFEST_B), "--dry-run"]
+        graflo, ["merge", str(broken), str(MANIFEST_B), "--dry-run"]
     )
     assert result.exit_code == 2
 
@@ -286,7 +282,7 @@ def test_check_profile_prints_a_report(tmp_path: pathlib.Path) -> None:
     result = CliRunner().invoke(
         graflo,
         [
-            "compose",
+            "merge",
             str(MANIFEST_A),
             str(MANIFEST_B),
             "--dry-run",
@@ -313,12 +309,12 @@ def test_a_schemaless_overlay_composes(tmp_path: pathlib.Path) -> None:
     out = tmp_path / "union.yaml"
     result = CliRunner().invoke(
         graflo,
-        ["compose", str(MANIFEST_A), str(overlay), "-o", str(out)],
+        ["merge", str(MANIFEST_A), str(overlay), "-o", str(out)],
     )
     assert result.exit_code == 0, result.output
-    composed = yaml.safe_load(out.read_text(encoding="utf-8"))
-    assert composed["schema"]["core_schema"]["vertex_config"]["vertices"]
-    assert {r["name"] for r in composed["ingestion_model"]["resources"]} >= {"r_feed"}
+    merged = yaml.safe_load(out.read_text(encoding="utf-8"))
+    assert merged["schema"]["core_schema"]["vertex_config"]["vertices"]
+    assert {r["name"] for r in merged["ingestion_model"]["resources"]} >= {"r_feed"}
 
 
 # ── the preview artifacts ───────────────────────────────────────────────────
@@ -338,7 +334,7 @@ def test_a_refused_run_still_writes_its_plot_and_its_preview(tmp_path):
     result = CliRunner().invoke(
         graflo,
         [
-            "compose",
+            "merge",
             str(MANIFEST_A),
             str(MANIFEST_B),
             "--op",
@@ -351,7 +347,7 @@ def test_a_refused_run_still_writes_its_plot_and_its_preview(tmp_path):
     )
 
     assert result.exit_code == 1, "a refusal is still a refusal"
-    assert plot.is_file(), "written even though compose refused"
+    assert plot.is_file(), "written even though merge refused"
     assert payload.is_file()
 
     document = json.loads(payload.read_text())
@@ -367,7 +363,7 @@ def test_a_composing_run_writes_a_preview_with_no_findings(tmp_path):
     result = CliRunner().invoke(
         graflo,
         [
-            "compose",
+            "merge",
             str(MANIFEST_A),
             str(MANIFEST_B),
             "--op",
@@ -382,7 +378,7 @@ def test_a_composing_run_writes_a_preview_with_no_findings(tmp_path):
 
     assert result.exit_code == 0
     document = json.loads(payload.read_text())
-    assert document["outcome"]["status"] == "composed"
+    assert document["outcome"]["status"] == "merged"
     assert not [f for f in document["findings"] if f["severity"] != "note"]
 
 
@@ -393,29 +389,29 @@ def test_the_findings_table_leads_with_the_refusal_and_names_its_nodes():
     the only way to pin their *order*; the test below covers the same table
     coming out of the CLI for real.
     """
-    from graflo.architecture.evolution.preview import ComposeFinding, ComposePreview
-    from graflo.cli.compose import _findings_table
+    from graflo.architecture.evolution.preview import MergeFinding, MergePreview
+    from graflo.cli.merge import _findings_table
 
-    preview = ComposePreview(
+    preview = MergePreview(
         findings=[
-            ComposeFinding(
+            MergeFinding(
                 kind="satisfied",
                 severity="note",
                 message="already applied",
                 source="structure",
             ),
-            ComposeFinding(
+            MergeFinding(
                 kind="identity_disagreement",
                 severity="possible",
                 message="members disagree",
                 source="structure",
-                nodes=["composed:Company"],
+                nodes=["merged:Company"],
             ),
-            ComposeFinding(
+            MergeFinding(
                 kind="cluster_overlap",
                 severity="refusal",
                 message="claimed twice",
-                source="compose",
+                source="merge",
                 nodes=["right:Org"],
             ),
         ]
@@ -444,7 +440,7 @@ def test_a_dry_run_prints_the_findings_table_on_stderr(tmp_path):
     result = CliRunner().invoke(
         graflo,
         [
-            "compose",
+            "merge",
             str(MANIFEST_A),
             str(MANIFEST_B),
             "--op",
@@ -458,14 +454,14 @@ def test_a_dry_run_prints_the_findings_table_on_stderr(tmp_path):
     lines = result.stderr.splitlines()
     assert lines[0].startswith("findings: "), result.stderr
     assert "refusal" in lines[1], "the refusal leads"
-    assert "compose refused" in result.stderr
+    assert "merge refused" in result.stderr
 
 
 def test_no_findings_says_so():
-    from graflo.architecture.evolution.preview import ComposePreview
-    from graflo.cli.compose import _findings_table
+    from graflo.architecture.evolution.preview import MergePreview
+    from graflo.cli.merge import _findings_table
 
-    assert _findings_table(ComposePreview()) == ["findings: none"]
+    assert _findings_table(MergePreview()) == ["findings: none"]
 
 
 def test_a_plot_format_this_cannot_write_is_a_bad_invocation(tmp_path):
@@ -475,7 +471,7 @@ def test_a_plot_format_this_cannot_write_is_a_bad_invocation(tmp_path):
     result = CliRunner().invoke(
         graflo,
         [
-            "compose",
+            "merge",
             str(MANIFEST_A),
             str(MANIFEST_B),
             "--op",
@@ -490,9 +486,9 @@ def test_a_plot_format_this_cannot_write_is_a_bad_invocation(tmp_path):
 
 
 class TestRecordingTheCompose:
-    """``-m`` records the compose in the store as a two-parent commit.
+    """``-m`` records the merge in the store as a two-parent commit.
 
-    Without it a composed manifest is a lineage dead-end: nothing says which
+    Without it a merged manifest is a lineage dead-end: nothing says which
     two manifests produced it, or under which equivalences. The commit itself
     is exercised in ``test_compose_commit.py``; these two pin the verb's
     contract around it.
@@ -505,7 +501,7 @@ class TestRecordingTheCompose:
         result = CliRunner().invoke(
             graflo,
             [
-                "compose",
+                "merge",
                 str(MANIFEST_A),
                 str(MANIFEST_B),
                 "--op",
@@ -530,7 +526,7 @@ class TestRecordingTheCompose:
         result = CliRunner().invoke(
             graflo,
             [
-                "compose",
+                "merge",
                 str(MANIFEST_A),
                 str(MANIFEST_B),
                 "--op",
@@ -546,6 +542,6 @@ class TestRecordingTheCompose:
             ],
         )
 
-        # Exit 2, not 1: the manifests compose fine, the store cannot name a
+        # Exit 2, not 1: the manifests merge fine, the store cannot name a
         # parent for them. The message is checked where it is emitted.
         assert result.exit_code == 2

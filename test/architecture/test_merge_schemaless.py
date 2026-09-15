@@ -1,15 +1,15 @@
-"""Composing a manifest that carries no ``schema`` block.
+"""Merging a manifest that carries no ``schema`` block.
 
 A manifest with only an ``ingestion_model`` and/or ``bindings`` is a new source
 wired onto an existing type vocabulary. It has always been a valid
 :class:`~graflo.architecture.contract.manifest.GraphManifest` -- one block is
-enough -- but ``compose_manifests`` used to refuse it outright.
+enough -- but ``merge_manifests`` used to refuse it outright.
 
 The union is three-way rather than "fill the missing side with an empty
 ``Schema``", and these tests pin why. An empty ``Schema`` is not neutral:
 ``DatabaseProfile.db_flavor`` defaults to Arango, ``_merge_db_profiles`` takes
 every scalar from the left, and ``_merge_graph_metadata`` takes the left's
-version -- so an empty *left* would silently retarget the composed manifest and
+version -- so an empty *left* would silently retarget the merged manifest and
 drop the right's namespace and schema version.
 """
 
@@ -20,9 +20,9 @@ import pytest
 from graflo.architecture.contract.bindings import FileConnector
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.evolution import (
-    ComposeManifestsOp,
+    MergeManifestsOp,
     VertexEquivalence,
-    compose_manifests,
+    merge_manifests,
 )
 from graflo.connections.onto import DBType
 
@@ -92,7 +92,7 @@ def test_schemaless_right_overlay_composes_and_keeps_the_left_schema() -> None:
     left = _typed_manifest(name="core", vertex="Asset")
     right = _overlay_manifest()
 
-    out = compose_manifests(left, right, ComposeManifestsOp(), bump_version=False)
+    out = merge_manifests(left, right, MergeManifestsOp(), bump_version=False)
 
     assert out.graph_schema is not None
     assert out.graph_schema.core_schema.vertex_config.vertex_set == {"Asset"}
@@ -118,7 +118,7 @@ def test_schemaless_left_keeps_the_right_physical_profile_verbatim() -> None:
         version="2.3.0",
     )
 
-    out = compose_manifests(left, right, ComposeManifestsOp(), bump_version=False)
+    out = merge_manifests(left, right, MergeManifestsOp(), bump_version=False)
 
     assert out.graph_schema is not None
     profile = out.graph_schema.db_profile
@@ -133,10 +133,10 @@ def test_schemaless_left_keeps_the_right_physical_profile_verbatim() -> None:
 def test_both_sides_schemaless_compose_to_no_schema() -> None:
     left = _overlay_manifest(resource="r_left", stem="left")
     right = _overlay_manifest(resource="r_right", stem="right")
-    out = compose_manifests(
+    out = merge_manifests(
         left,
         right,
-        ComposeManifestsOp(name_conflict="prefix_right"),
+        MergeManifestsOp(name_conflict="prefix_right"),
         bump_version=False,
     )
 
@@ -146,10 +146,10 @@ def test_both_sides_schemaless_compose_to_no_schema() -> None:
 
 
 def test_bump_version_is_a_no_op_without_a_schema() -> None:
-    out = compose_manifests(
+    out = merge_manifests(
         _overlay_manifest(resource="r_a", stem="a"),
         _overlay_manifest(resource="r_b", stem="b"),
-        ComposeManifestsOp(name_conflict="prefix_right"),
+        MergeManifestsOp(name_conflict="prefix_right"),
         bump_version="minor",
     )
     assert out.graph_schema is None
@@ -161,10 +161,10 @@ def test_equivalence_naming_a_vertex_on_the_schemaless_side_still_raises() -> No
     right = _overlay_manifest()
 
     with pytest.raises(ValueError, match="right manifest"):
-        compose_manifests(
+        merge_manifests(
             left,
             right,
-            ComposeManifestsOp(
+            MergeManifestsOp(
                 vertex_equivalences=[
                     VertexEquivalence(left="Asset", right="Device", into="Asset")
                 ]

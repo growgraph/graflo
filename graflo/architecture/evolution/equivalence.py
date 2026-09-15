@@ -1,27 +1,27 @@
-"""Equivalence clusters over compose-time vertex/relation mappings.
+"""Equivalence clusters over merge-time vertex/relation mappings.
 
 A :class:`~graflo.architecture.evolution.ops.VertexEquivalence` (or
 :class:`~graflo.architecture.evolution.ops.RelationEquivalence`) declares one
 n-ary cluster directly: ``left`` / ``right`` name one or more members on each
-side, collapsing onto one composed name. :func:`index_clusters` is the
+side, collapsing onto one merged name. :func:`index_clusters` is the
 consistency check over the *declared* clusters of one
-:class:`~graflo.architecture.evolution.ops.ComposeManifestsOp` — there is no
+:class:`~graflo.architecture.evolution.ops.MergeManifestsOp` — there is no
 connected-component search left to do (one declaration *is* one cluster); it
 validates that the declarations do not overlap or collapse into each other by
 accident:
 
 * no ``(side, name)`` may be claimed by two declarations — that is the
   author's job to state as one cluster, not two;
-* two declarations must not share one composed name — sharing one collapses
-  them into one composed class, which must be spelled as one n-ary cluster so
+* two declarations must not share one merged name — sharing one collapses
+  them into one merged class, which must be spelled as one n-ary cluster so
   it is visible to review, not left implicit;
-* a composed name that already exists as a *different*, non-member class on a
+* a merged name that already exists as a *different*, non-member class on a
   side must not be silently merged into — add it to the cluster explicitly.
   The one exception is a name that *another* declaration renames away: the
   lowered map applies in one step, so the side lands on a vacated name whether
   it is one member or a merge.
 
-Members and composed names are resolved before indexing — ``into`` may be
+Members and merged names are resolved before indexing — ``into`` may be
 omitted and a member may be spelled by its canonical name — by
 :func:`~graflo.architecture.evolution.canonical.resolve_clusters`, which hands
 the resolved shapes in as :class:`ClusterSpec`\\ s. Nodes are ``(side, name)``
@@ -38,7 +38,7 @@ from typing import Generic, Literal, TypeVar
 from graflo.architecture.refusal import Refusal
 from graflo.architecture.schema.naming import canonical_slug
 
-from .ops import ComposeManifestsOp, RelationEquivalence, VertexEquivalence
+from .ops import MergeManifestsOp, RelationEquivalence, VertexEquivalence
 
 Side = Literal["left", "right"]
 
@@ -46,10 +46,10 @@ Side = Literal["left", "right"]
 Kind = Literal["vertex", "relation"]
 
 #: Where a name lives. The two sides' own vocabularies, plus the two the
-#: compose declarations establish: a **composed** name is what a cluster
+#: merge declarations establish: a **merged** name is what a cluster
 #: collapses onto, a **canonical** one what a declared map renames into
 #: without any cluster naming it.
-SubjectScope = Literal["left", "right", "composed", "canonical"]
+SubjectScope = Literal["left", "right", "merged", "canonical"]
 
 DeclarationT = TypeVar("DeclarationT", VertexEquivalence, RelationEquivalence)
 
@@ -105,15 +105,15 @@ class UnknownMemberError(Refusal):
 
 @dataclass(frozen=True)
 class ClusterSpec:
-    """One declaration's resolved shape: members in the manifests' own names, and its composed name.
+    """One declaration's resolved shape: members in the manifests' own names, and its merged name.
 
     ``aliases`` records, per side, every other name a member answers to —
     the canonical name it was declared by, or the one the canonical map gives
     it — so the per-member maps (property equivalences,
     ``SideIdentity.members``, identity-alignment member keys) may be keyed by
     either the member's own name or its canonical one. ``declared_into`` is
-    the composed name as the author spelled it, before any canonical map
-    translated it; ``synthesized`` marks a cluster compose created itself for
+    the merged name as the author spelled it, before any canonical map
+    translated it; ``synthesized`` marks a cluster merge created itself for
     a same-name pair under ``name_conflict="union_right"``.
     """
 
@@ -160,24 +160,24 @@ RelationCluster = Cluster[RelationEquivalence]
 
 @dataclass(frozen=True)
 class ClusterIndex:
-    """Every declared cluster of one compose op, validated for consistency."""
+    """Every declared cluster of one merge op, validated for consistency."""
 
     vertices: tuple[Cluster[VertexEquivalence], ...]
     relations: tuple[Cluster[RelationEquivalence], ...]
 
     @property
     def labels(self) -> frozenset[str]:
-        """The composed names of every vertex cluster."""
+        """The merged names of every vertex cluster."""
         return frozenset(c.into for c in self.vertices)
 
     @property
     def relation_labels(self) -> frozenset[str]:
-        """The composed names of every relation cluster."""
+        """The merged names of every relation cluster."""
         return frozenset(c.into for c in self.relations)
 
     @property
     def declared_intos(self) -> frozenset[str]:
-        """Every composed name as the author spelled it, before translation."""
+        """Every merged name as the author spelled it, before translation."""
         return frozenset(
             c.declared_into
             for c in (*self.vertices, *self.relations)
@@ -230,8 +230,8 @@ def _check_declarations(
                         check="cluster overlap",
                         subjects=(
                             subject(side, name),
-                            subject("composed", specs[prior].into),
-                            subject("composed", into),
+                            subject("merged", specs[prior].into),
+                            subject("merged", into),
                         ),
                     )
                 claimed[key] = index
@@ -240,10 +240,10 @@ def _check_declarations(
             raise ClusterConflictError(
                 f"{kind}: two equivalence declarations both target into "
                 f"{into!r}; two declarations sharing one `into` collapse into "
-                "one composed class — spell it as one declaration naming "
+                "one merged class — spell it as one declaration naming "
                 "every member",
                 check="shared into",
-                subjects=(subject("composed", into),),
+                subjects=(subject("merged", into),),
             )
         into_owner[into] = index
         for side, members, names in (
@@ -264,7 +264,7 @@ def _check_declarations(
                 "to merge into it, declare it in another cluster so it is "
                 "renamed away, or pick a different `into`",
                 check="occupied into",
-                subjects=(subject(side, into), subject("composed", into)),
+                subjects=(subject(side, into), subject("merged", into)),
             )
 
 
@@ -273,8 +273,8 @@ def declared_spec(declaration: VertexEquivalence | RelationEquivalence) -> Clust
     if declaration.into is None:
         raise ValueError(
             f"equivalence {declaration.left_members} ~ "
-            f"{declaration.right_members} has no `into`; a composed name comes "
-            "from `into`, from a canonical map on the compose op, or from one "
+            f"{declaration.right_members} has no `into`; a merged name comes "
+            "from `into`, from a canonical map on the merge op, or from one "
             "spelling every member shares — resolve it through "
             "validate_and_complete_canonical_map, or name it"
         )
@@ -287,7 +287,7 @@ def declared_spec(declaration: VertexEquivalence | RelationEquivalence) -> Clust
 
 
 def index_clusters(
-    op: ComposeManifestsOp,
+    op: MergeManifestsOp,
     *,
     left_vertices: Collection[str] = (),
     right_vertices: Collection[str] = (),
@@ -300,11 +300,11 @@ def index_clusters(
 
     *vertex_specs* / *relation_specs* are the resolved shapes, aligned with the
     op's declaration lists; omitted, each declaration is taken as written
-    (which requires ``into``). The name collections are what a composed name
+    (which requires ``into``). The name collections are what a merged name
     may collide with on each side.
 
     Raises :class:`ClusterConflictError` on an overlapping declaration, two
-    declarations sharing one composed name, or a composed name that would
+    declarations sharing one merged name, or a merged name that would
     silently occupy an existing non-member class on a side.
     """
     if vertex_specs is None:
@@ -387,7 +387,7 @@ def check_member_existence(
         for member in cluster.left:
             if member not in left_vertex_names:
                 raise UnknownMemberError(
-                    f"compose_manifests: left vertex {member!r} not in left "
+                    f"merge_manifests: left vertex {member!r} not in left "
                     f"manifest{did_you_mean(member, left_vertex_names)}",
                     side="left",
                     kind="vertex",
@@ -396,7 +396,7 @@ def check_member_existence(
         for member in cluster.right:
             if member not in right_vertex_names:
                 raise UnknownMemberError(
-                    f"compose_manifests: right vertex {member!r} not in right "
+                    f"merge_manifests: right vertex {member!r} not in right "
                     f"manifest{did_you_mean(member, right_vertex_names)}",
                     side="right",
                     kind="vertex",
@@ -406,7 +406,7 @@ def check_member_existence(
         for member in cluster.left:
             if member not in left_relation_names:
                 raise UnknownMemberError(
-                    f"compose_manifests: left relation {member!r} not in left manifest",
+                    f"merge_manifests: left relation {member!r} not in left manifest",
                     side="left",
                     kind="relation",
                     member=member,
@@ -414,8 +414,7 @@ def check_member_existence(
         for member in cluster.right:
             if member not in right_relation_names:
                 raise UnknownMemberError(
-                    f"compose_manifests: right relation {member!r} not in "
-                    "right manifest",
+                    f"merge_manifests: right relation {member!r} not in right manifest",
                     side="right",
                     kind="relation",
                     member=member,

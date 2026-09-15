@@ -24,7 +24,7 @@ Two manifests that describe the same world model must hash equal.
 ```python
 from graflo.architecture.evolution import manifest_hash
 
-manifest_hash(a) == manifest_hash(b)   # same model, however each was reached
+manifest_hash(a) == manifest_hash(b)  # same model, however each was reached
 ```
 
 `to_minimal_canonical_dict()` already normalizes defaults, `None`, aliases and
@@ -98,12 +98,12 @@ first = build_commit(base, ops, label="add email")
 second = build_commit(after_first, more_ops, parents=[first.id], label="rekey")
 history = History(commits=[first, second])
 
-restored = checkout(base, history)            # replays, verifying every tree
+restored = checkout(base, history)  # replays, verifying every tree
 as_of_first = checkout(base, history, first.id)
 ```
 
 A `Commit` carries its ops, its **parents** (empty for a root, one for an edit,
-two or more for a merge or compose) and the content hash before and after it.
+two or more for a merge or merge3) and the content hash before and after it.
 `build_commit` applies the ops rather than trusting them, so both trees describe
 a transition that actually happened, and it refuses a change set that leaves the
 manifest unchanged — a commit that moves nothing is a lie about history.
@@ -122,8 +122,8 @@ Two people evolving the same version is a thing that happens. A history that
 refuses to represent it is not a record of what happened.
 
 ```python
-history.heads()        # more than one means it has forked
-history.linearize()    # raises when there is no single path
+history.heads()  # more than one means it has forked
+history.linearize()  # raises when there is no single path
 history.topological()  # always available, deterministic on ties
 ```
 
@@ -150,7 +150,7 @@ out the parent commit is always exact and is the better tool.
 | add ↔ remove: vertices, edges, vertex/edge properties, indexes | `merge_vertices`, `merge_edges` |
 | rename: vertices, relations, resources, properties; `canonicalize` that only renames | `change_field_types`, `canonicalize` that merges |
 | `set_edge_directed`, `add_inverse_edges`, `retarget_edges` | `sanitize`, `project_manifest` |
-| `replace_identity` (with `retire: keep`), secondary identities | `compose_manifests` (binary) |
+| `replace_identity` (with `retire: keep`), secondary identities | `merge_manifests` (binary) |
 
 ## Merging two branches
 
@@ -168,7 +168,7 @@ if not result.clean:
 Merging is not diffing. Both sides descend from a common ancestor, so the
 question is never "what is different" but "what did each side *change*, and do
 those changes collide". `find_merge_base` returning `None` means the two share
-no ancestor — which is the signal that the operation wanted is **compose**, not
+no ancestor — which is the signal that the operation wanted is **merge**, not
 merge.
 
 ### Slots
@@ -203,7 +203,7 @@ name (`remove_edges`, `rename_relations`, `merge_edges`) and by triple
 containment is what lets the two families see each other, so removing a
 relation on one side conflicts with flipping one of its edges on the other. A
 relation-wide property edit (`relation/knows/field`) and a per-edge edit stay
-disjoint, which is right: they compose. An edge with no relation keeps its own
+disjoint, which is right: they merge. An edge with no relation keeps its own
 root (`edge/person/company`), since no relation-addressed op can reach it.
 
 ### Determinism
@@ -214,20 +214,20 @@ replace rather than being appended, because op order is a precondition:
 `diff_manifests` emits an identity change before the secondary-identity add that
 depends on it.
 
-### Merge is not compose
+### Merge is not merge3
 
-| | Merge | Compose |
+| | merge3 (three-way) | merge (the model operation) |
 |---|---|---|
 | Inputs | two descendants of a common ancestor | unrelated lineages |
 | Names | expected to agree; disagreement is a **conflict** | expected to disagree; a **declared equivalence** reconciles them |
-| Reached by | `merge_three_way` | `compose_manifests` |
+| Reached by | `merge_three_way` | `merge_manifests` |
 | Side order | significant by construction — the commit's ops are the diff from its **first** parent | significant in six slots only; see below |
 
-Both produce multi-parent commits. They are not the same operation — and "merge" names a third thing again inside a schema (combining the definitions one name has on both sides). See [Words for combining things](manifest_evolution.md#words-for-combining-things).
+Both produce multi-parent commits, and both are called a merge in prose — which is why the stored `kind`, the CLI verb and the preview class spell the three-way `merge3`. "merge" names a third thing again inside a schema (combining the definitions one name has on both sides). See [Words for combining things](manifest_evolution.md#words-for-combining-things) for the rule on reading a bare `merge`.
 
-#### What compose does and does not depend on side order
+#### What merge does and does not depend on side order
 
-Composing `B` onto `A` and `A` onto `B` produce the **same content hash** for everything the outer union assembles. Every container the union concatenates — vertices, edges, resources, transforms, connectors, semantic anchors, indexes — is classified `SORTED` in the canonical form, so the order the two sides were walked in is normalized away before anything is hashed. Metadata is excluded from the hash entirely, so the folded name (`a+b`), the joined description and the left side's `version` do not move the content address either.
+Merging `B` onto `A` and `A` onto `B` produce the **same content hash** for everything the outer union assembles. Every container the union concatenates — vertices, edges, resources, transforms, connectors, semantic anchors, indexes — is classified `SORTED` in the canonical form, so the order the two sides were walked in is normalized away before anything is hashed. Metadata is excluded from the hash entirely, so the folded name (`a+b`), the joined description and the left side's `version` do not move the content address either.
 
 Six slots *are* order-dependent, and all six are reached through the same call: the merge of two declarations of one name (`merge_vertex_models([left, right], name)`). They are the fields the canonical form marks `PRESERVED`, because their order carries meaning that sorting would destroy:
 
@@ -238,11 +238,11 @@ Six slots *are* order-dependent, and all six are reached through the same call: 
 - auto-assigned `SecondaryIdentity` names (`secondary_0`, `secondary_1`) — positional
 - `Vertex` / `Edge` / `Field.description` — joined in side order
 
-So compose is commutative in the world model and not in those six. Where a value is a *claim* rather than an ordering, compose refuses instead of electing a side: two declared `db_flavor`s raise, a disputed `iri` clears to `None`, conflicting `force_types`, storage names, field types and units all raise.
+So merge is commutative in the world model and not in those six. Where a value is a *claim* rather than an ordering, merge refuses instead of electing a side: two declared `db_flavor`s raise, a disputed `iri` clears to `None`, conflicting `force_types`, storage names, field types and units all raise.
 
-### Compose is recorded too
+### Merge is recorded too
 
-A compose joins two lineages that share no ancestor, so both must already be in
+A merge joins two lineages that share no ancestor, so both must already be in
 the store — `graflo commit --root` starts the second one rather than extending
 the first. The commit is materialized exactly as a merge commit is, as the
 verified diff from its **first** parent, so `checkout` and hash verification
@@ -250,9 +250,9 @@ need no special case; what distinguishes it is the recipe, which records the
 whole declaration (equivalences, canonical maps, identity alignments) and no
 merge base, because there is none.
 
-This is why the bindings and profile blocks needed ops. A compose commit is a
+This is why the bindings and profile blocks needed ops. A merge commit is a
 diff, and a diff that cannot express what changed is refused rather than
-recorded — so before `set_bindings` existed, composing an overlay that carried
+recorded — so before `set_bindings` existed, merging an overlay that carried
 bindings could not be recorded at all.
 
 ## Tracked merges
@@ -285,7 +285,7 @@ graflo checkout <commit> --base base.yaml --output-path out.yaml
 graflo merge <left> <right> --base base.yaml --take left
 graflo revert <commit> --base base.yaml
 graflo stamp manifest.yaml --commit <commit>
-graflo compose A.yaml B.yaml -o AB.yaml -m "join"   # a two-parent compose commit
+graflo merge A.yaml B.yaml -o AB.yaml -m "join"   # a two-parent merge commit
 ```
 
 Commits live under `.graflo/commits` by default, one YAML per commit. The store
@@ -304,7 +304,7 @@ Commits describe the contract.
 
 - [Manifest evolution](manifest_evolution.md) — the op vocabulary a commit records
 - [Example 20](../../examples/example-20.md) — fork, conflict, resolve, merge, end to end
-- [Example 19](../../examples/example-19.md) — composing unrelated manifests instead
+- [Example 19](../../examples/example-19.md) — merging unrelated manifests instead
 
 ## Further reading
 
@@ -319,15 +319,15 @@ what to compare against.
   JOT 2011 / MODELS 2011. The delta-lens view in which an inverse needs the delta, not just the
   end state — the shape of `invert_ops`.
 - Bernstein, Melnik — *Model Management 2.0*, SIGMOD 2007; Melnik, Rahm, Bernstein — *Rondo*,
-  SIGMOD 2003. Match, Merge, Diff and Compose as generic operators over models. GraFlo borrows
-  the operators, not the spelling: there **Merge** takes two models plus correspondences and
-  **Compose** composes two mappings, which is the reverse of how this page uses the two words.
-  The translation table is in
-  [Words for combining things](manifest_evolution.md#these-names-are-graflos-not-the-literatures).
+  SIGMOD 2003. Match, Compose, Diff and Merge as generic operators over models. GraFlo
+  borrows both the operators and their spelling: there **Merge** takes two models plus
+  correspondences and **Compose** composes two mappings, which is how this page uses the two
+  words. GraFlo spelled them the other way round until they were swapped; the mapping is in
+  [Words for combining things](manifest_evolution.md#these-names-match-the-literature).
 - Pottinger, Bernstein — *Merging Models Based on Given Correspondences*, VLDB 2003, and
   *Associativity and Commutativity in Generic Merge*, LNCS 5600, 2009. Their **Merge** — two
-  models plus correspondences — is the operator this page calls **compose**, and those papers
-  are where its commutativity is studied. GraFlo's compose is commutative in the union and not
+  models plus correspondences — is the operator this page calls **merge**, and those papers
+  are where its commutativity is studied. GraFlo's merge is commutative in the union and not
   in six preserved slots (above); three-way merge claims neither property, only determinism.
 - Edwards, Petricek — *Baseline: Operation-Based Evolution and Versioning of Data*, 2025;
   Deshpande — *Living Databases*, 2026. Contemporary operation-based versioning of data, where the

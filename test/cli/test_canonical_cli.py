@@ -99,7 +99,7 @@ def test_json_lists_the_entries_as_data(runner, dangling_map):
 
 
 def test_both_manifests_go_through_the_preview(runner, dangling_map):
-    """Two sides is the compose report, one finding per declaration."""
+    """Two sides is the merge report, one finding per declaration."""
     result = runner.invoke(
         graflo,
         [

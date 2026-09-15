@@ -25,11 +25,11 @@ Three things make the slot the right unit:
 * An op touching several slots is **atomic**: if any one of its slots is
   contested, the whole op is held back. Applying half an op is not a merge.
 
-Merge is not compose
+Merge is not merge
 --------------------
 
 Merge reconciles two descendants of a **common ancestor**: names are expected to
-agree because both sides inherited them, so disagreement is a conflict. Compose
+agree because both sides inherited them, so disagreement is a conflict. Merge
 joins **unrelated lineages** by declared equivalence: names are expected to
 disagree, and the declaration is what reconciles them. Both produce multi-parent
 commits; they are not the same operation and must not be conflated.
@@ -280,9 +280,7 @@ def op_slots(op: ManifestOp) -> set[Slot]:
         slots |= {_resource_slot(name) for name in op.names}
 
     # ── whole-manifest ops ──────────────────────────────────────────────────
-    elif isinstance(
-        op, (ops.ProjectManifestOp, ops.SanitizeOp, ops.ComposeManifestsOp)
-    ):
+    elif isinstance(op, (ops.ProjectManifestOp, ops.SanitizeOp, ops.MergeManifestsOp)):
         # These rewrite everything, so they conflict with any other change.
         # That is the honest answer: there is no way to merge "keep only these
         # vertices" with an unrelated edit and be sure of the result.
@@ -319,7 +317,7 @@ def find_merge_base(history: Any, left: str, right: str) -> str | None:
     Returns:
         The merge-base commit id, or ``None`` when the two share no ancestor --
         which means they are unrelated lineages, and the operation you want is
-        compose, not merge.
+        merge, not merge.
     """
     left_ancestors = history.ancestors(left, include_self=True)
     right_ancestors = history.ancestors(right, include_self=True)
@@ -671,7 +669,7 @@ class MergeRecipe(ConfigBaseModel):
     """
 
     kind: str = PydanticField(
-        default="merge3", description="merge3 (common ancestor) or compose (unrelated)."
+        default="merge3", description="merge3 (common ancestor) or merge (unrelated)."
     )
     left: str = PydanticField(..., description="Content hash of the left state.")
     right: str = PydanticField(..., description="Content hash of the right state.")
@@ -683,10 +681,10 @@ class MergeRecipe(ConfigBaseModel):
     )
     equivalences: dict[str, Any] = PydanticField(
         default_factory=dict,
-        description="Declared alignment for a compose; empty for merge3.",
+        description="Declared alignment for a merge; empty for merge3.",
     )
     name_conflict: str | None = PydanticField(
-        default=None, description="Compose's name-conflict policy, when applicable."
+        default=None, description="Merge's name-conflict policy, when applicable."
     )
 
     def content_hash(self) -> str:
@@ -717,27 +715,27 @@ class MergeRecipe(ConfigBaseModel):
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def build_compose_recipe(
+def build_merge_recipe(
     left: GraphManifest,
     right: GraphManifest,
-    op: ops.ComposeManifestsOp,
+    op: ops.MergeManifestsOp,
 ) -> MergeRecipe:
-    """Record how a compose was *declared*, addressed by content.
+    """Record how a merge was *declared*, addressed by content.
 
-    The compose counterpart to :func:`build_recipe`. Two things differ, and both
-    follow from compose joining unrelated lineages rather than reconciling
+    The merge counterpart to :func:`build_recipe`. Two things differ, and both
+    follow from merge joining unrelated lineages rather than reconciling
     related ones: there is no merge base, so ``base`` is ``None``; and there are
-    no conflicts to resolve, because compose refuses rather than resolving, so
+    no conflicts to resolve, because merge refuses rather than resolving, so
     ``resolutions`` stays empty.
 
     What takes their place is the declaration itself. The whole op is recorded
     -- equivalences, canonical maps, identity alignments, resource renames and
     the name-conflict policy -- because all of it is "how these two were
-    joined", and a re-compose that had only the equivalences would reconstruct a
+    joined", and a re-merge that had only the equivalences would reconstruct a
     different manifest.
     """
     return MergeRecipe(
-        kind="compose",
+        kind="merge",
         left=manifest_hash(left),
         right=manifest_hash(right),
         base=None,
@@ -859,7 +857,7 @@ __all__ = [
     "MergeRecipe",
     "MergeResult",
     "Slot",
-    "build_compose_recipe",
+    "build_merge_recipe",
     "build_recipe",
     "describe_slot",
     "find_merge_base",

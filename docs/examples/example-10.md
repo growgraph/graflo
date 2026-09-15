@@ -40,7 +40,7 @@ minio_conf = MinioConfig.from_docker_env()
 conn_conf.bulk_load = TigergraphBulkLoadConfig(
     enabled=True,
     staging_dir=str(staging_dir),
-    s3_staging_name="bulk_s3",      # -> bindings.staging_proxy row
+    s3_staging_name="bulk_s3",  # -> bindings.staging_proxy row
     s3_bucket=minio_conf.bucket,
     s3_key_prefix="demo",
 )
@@ -50,7 +50,7 @@ provider.register_generalized_config(
     conn_proxy="minio_bulk",
     config=minio_conf.to_s3_generalized_conn_config(),
 )
-ensure_staging_bucket_for_config(minio_conf)   # preflight: fails fast if unreachable
+ensure_staging_bucket_for_config(minio_conf)  # preflight: fails fast if unreachable
 
 engine.define_and_ingest(
     manifest=manifest,
@@ -72,7 +72,7 @@ The usual cause of an empty graph is an endpoint that is valid for boto3 but not
 
 ## Emulating S3 locally
 
-The [TigerGraph bulk load guide](../guides/tigergraph_bulk_load.md#emulating-s3-in-development) compares **MinIO**, **LocalStack**, and **moto**. For MinIO, use the repo's compose stack under `docker/minio` — it carries the image pin and the port and credential defaults that `MinioConfig.from_docker_env()` reads:
+The [TigerGraph bulk load guide](../guides/tigergraph_bulk_load.md#emulating-s3-in-development) compares **MinIO**, **LocalStack**, and **moto**. For MinIO, use the repo's merge stack under `docker/minio` — it carries the image pin and the port and credential defaults that `MinioConfig.from_docker_env()` reads:
 
 ```bash
 cd docker/minio

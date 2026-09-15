@@ -2,7 +2,7 @@
 
 Not a manifest. These are the *pieces* the planner instantiates against
 whatever types the input already has, which is the difference between a
-reference model you compose onto and a transformation you apply.
+reference model you merge onto and a transformation you apply.
 
 Two conventions the whole package rests on, both stated here so a reader does
 not have to infer them from the IRIs:

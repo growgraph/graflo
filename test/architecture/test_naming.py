@@ -144,7 +144,7 @@ def test_convert_between_conventions() -> None:
 def test_same_concept_across_conventions(left, right) -> None:
     """What a merge must compare on.
 
-    Composition matches by name, so without this a manifest in PascalCase
+    Merge matches by name, so without this a manifest in PascalCase
     merged with one in snake_case yields two unrelated vertex types holding
     half the data each, and nothing raises.
     """

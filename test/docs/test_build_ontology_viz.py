@@ -261,7 +261,7 @@ def _band_depths(payload: dict, group_id: str) -> dict[str, int]:
     """Column index per class, by the rule ``graph-view.js`` documents.
 
     Shortest distance from the band's roots over ``subClassOf`` (child to
-    superclass) plus composition (an object property's range to its domain),
+    superclass) plus merge (an object property's range to its domain),
     then relaxed so a subclass is strictly right of its superclass.
     """
     members = {item["id"] for item in payload["nodes"] if item["group"] == group_id}
@@ -341,7 +341,7 @@ def test_specialisation_runs_left_to_right_in_every_band(payload) -> None:
 
 def test_composition_ranks_the_schema_block(payload) -> None:
     """The regression this rule exists for: the Schema block has no internal
-    ``subClassOf`` at all, so before composition ranked it these 17 classes were
+    ``subClassOf`` at all, so before merge ranked it these 17 classes were
     packed into an arbitrary grid with no general-to-specific reading."""
     depths = _band_depths(payload, "schema")
     by_local = {_local(uri): value for uri, value in depths.items()}

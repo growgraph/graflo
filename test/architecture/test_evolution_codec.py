@@ -23,7 +23,7 @@ from graflo.architecture.evolution.codec import (
     ops_to_dicts,
     ops_to_yaml_str,
 )
-from graflo.architecture.evolution.ops import ComposeManifestsOp, ManifestOp
+from graflo.architecture.evolution.ops import ManifestOp, MergeManifestsOp
 
 #: One canonical payload per op, keyed by discriminator.
 OP_PAYLOADS: dict[str, dict] = {
@@ -252,7 +252,7 @@ class TestLegacyFieldNames:
         assert old not in ops_to_dicts([legacy])[0]
 
     def test_compose_equivalence_lists_accept_their_old_names(self) -> None:
-        legacy = ComposeManifestsOp.model_validate(
+        legacy = MergeManifestsOp.model_validate(
             {
                 "vertices": [{"left": "A", "right": "B", "into": "A"}],
                 "relations": [{"left": "r", "right": "s", "into": "r"}],
@@ -347,8 +347,8 @@ class TestUnionCoverage:
         manifest_members = set(typing.get_args(typing.get_args(ManifestOp)[0]))
         revision_members = set(_union_members())
 
-        assert manifest_members - revision_members == {ComposeManifestsOp}, (
-            "compose_manifests is binary and must stay out of the revision union; "
+        assert manifest_members - revision_members == {MergeManifestsOp}, (
+            "merge_manifests is binary and must stay out of the revision union; "
             "every other op must be in it"
         )
 
@@ -370,7 +370,7 @@ class TestUnionCoverage:
         resources that reference it.
         """
         declared = {cls.model_fields["op"].default for cls in _union_members()}
-        declared.add("compose_manifests")
+        declared.add("merge_manifests")
 
         stale = sorted(ops_module.INGESTION_REWRITING_OPS - declared)
         assert not stale, f"unknown ops classified as ingestion-rewriting: {stale}"
@@ -379,7 +379,7 @@ class TestUnionCoverage:
         # op forces a decision rather than defaulting to "schema-only".
         # ``test_schema_only_ops_leave_the_ingestion_block_untouched`` checks the
         # claim behaviourally for every entry that unary apply accepts.
-        # ``compose_manifests`` unions resources and bindings, but it is binary
+        # ``merge_manifests`` unions resources and bindings, but it is binary
         # and rejected by ``apply_evolution``, so it can never reach a
         # schema-only artifact through the guard this set feeds.
         schema_only = {
@@ -391,7 +391,7 @@ class TestUnionCoverage:
             "add_vertex_properties",
             "add_vertices",
             "change_field_types",
-            "compose_manifests",
+            "merge_manifests",
             "remove_edge_indexes",
             "remove_secondary_identities",
             "remove_vertex_indexes",
@@ -448,7 +448,7 @@ class TestUnionCoverage:
             and hasattr(getattr(ops_module, name), "model_fields")
         }
         assert len(exported) == 40
-        assert len(_union_members()) == 39  # 40 minus the binary compose op
+        assert len(_union_members()) == 39  # 40 minus the binary merge op
 
 
 class TestRoundTrip:
@@ -555,14 +555,14 @@ class TestValidation:
             ops_from_yaml("just a string\n")
 
 
-class TestComposeExclusion:
-    def test_compose_manifests_is_not_loadable_as_a_revision_op(self) -> None:
+class TestMergeExclusion:
+    def test_merge_manifests_is_not_loadable_as_a_revision_op(self) -> None:
         with pytest.raises(ValueError):
-            ops_from_dicts([{"op": "compose_manifests", "onto": "other"}])
+            ops_from_dicts([{"op": "merge_manifests", "onto": "other"}])
 
     def test_is_revision_op_screens_the_binary_op(self) -> None:
         assert is_revision_op(_all_ops()[0]) is True
-        assert is_revision_op(ComposeManifestsOp()) is False
+        assert is_revision_op(MergeManifestsOp()) is False
 
 
 class TestLegacyFieldAliases:
@@ -590,13 +590,13 @@ class TestLegacyFieldAliases:
         assert payload["allow_observation_fusion"] is True
         assert "allow_row_fusion" not in payload
 
-    def test_compose_manifests_accepts_allow_row_fusion(self) -> None:
-        op = ComposeManifestsOp.model_validate(
-            {"op": "compose_manifests", "allow_row_fusion": True}
+    def test_merge_manifests_accepts_allow_row_fusion(self) -> None:
+        op = MergeManifestsOp.model_validate(
+            {"op": "merge_manifests", "allow_row_fusion": True}
         )
         assert op.allow_observation_fusion is True
         assert "allow_row_fusion" not in op.to_dict()
 
     def test_the_new_spelling_is_the_one_that_serializes(self) -> None:
-        op = ComposeManifestsOp(allow_observation_fusion=True)
+        op = MergeManifestsOp(allow_observation_fusion=True)
         assert op.to_dict()["allow_observation_fusion"] is True

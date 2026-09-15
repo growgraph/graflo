@@ -4,7 +4,7 @@ GraFlo provides **contract-level** operations that transform a validated `GraphM
 
 ## Identity and validation
 
-- **Stable hash**: use `manifest_hash` from `graflo.migrate.io` (see [`graflo.migrate.io`](../../reference/migrate/io.md)) to compare the composed `schema`, `ingestion_model`, and `bindings` blocks before and after an evolution.
+- **Stable hash**: use `manifest_hash` from `graflo.migrate.io` (see [`graflo.migrate.io`](../../reference/migrate/io.md)) to compare the merged `schema`, `ingestion_model`, and `bindings` blocks before and after an evolution.
 - **Validation**: `apply_evolution` in `graflo.architecture.evolution` returns a deep copy and runs `GraphManifest.finish_init()` by default so the same cross-block checks apply as when loading YAML. API reference: [`graflo.architecture.contract.manifest`](../../reference/architecture/contract/manifest.md).
 
 ## Operations
@@ -29,38 +29,38 @@ GraFlo provides **contract-level** operations that transform a validated `GraphM
 | **Replace identity** | `replacements: {vertex: {to, retire, ...}}`. Per-vertex identity policy swap covering both field-set and **mode** changes (`natural` / `hash` / `assigned` / `blank`). `retire` decides what becomes of the old field-set — `demote` (default) turns it into a secondary identity, `keep` leaves it as plain properties, `drop` removes it. `endpoints` decides whether edge steps follow the new identity (`follow_new`, default) or stay pinned to the demoted one (`pin_to_retired`). Drops `db_profile` indexes that encoded the retired identity. See [Replacing a vertex identity](#replacing-a-vertex-identity). |
 | **Add / remove secondary identities** | Declares or withdraws alternate lookup keys on existing vertices. Each field-set's non-unique index is *derived* by `Schema.finish_init`, so adding one needs no index authoring; removing one drops the derived index explicitly. Removal is rejected while an edge step still selects the field-set. |
 | **Replace edge identities** | Replaces `Edge.identities` (uniqueness keys) per `(source, target, relation)`. No retire policy — edge identities have no lookup plane. Non-endpoint tokens are merged into edge `properties` by `Edge.finish_init`. |
-| **Add vertices / add edges** | Introduces new logical vertex types and edge relations unarily — the counterpart to what `ComposeManifestsOp` could previously only do binarily. Rejects existing names/triples and unknown endpoints. |
+| **Add vertices / add edges** | Introduces new logical vertex types and edge relations unarily — the counterpart to what `MergeManifestsOp` could previously only do binarily. Rejects existing names/triples and unknown endpoints. |
 | **Retarget edges** | Changes which vertex types an edge connects, preserving its properties, `identities`, `directed` flag, and `db_profile` physical spec — all of which a remove-plus-add would lose. Rewrites the `EdgeId` in `edge_config`, `edge_specs`, and pipeline edge steps, keyed on the full triple so a different relation between the same types is untouched. |
 | **Change field types** | Sets `Field.type` / `item_type` on vertex or edge properties. Validated against the profile's `db_flavor` via `graflo.db.field_type_support`, so an unsupported LIST target fails at op time rather than at define time. Refuses to make an identity field a LIST. |
 | **Add / remove vertex & edge indexes** | Authors `db_profile.vertex_indexes` and `edge_specs[].indexes` directly. Indexes derived from `secondary_identities` cannot be removed this way — they would be re-registered by the next `finish_init`, so the op points at **remove secondary identities** instead. |
 | **Set edge directed** | Sets `Edge.directed` on selected triples. Load-bearing for replay: `directed` decides what **add inverse edges** may duplicate. |
 | **Set db profile** | Replaces the whole `db_profile`. The four index ops reach `vertex_indexes` and `edge_specs[].indexes`; nothing reached `db_flavor`, `target_namespace`, `vertex_storage_names`, `default_property_values` or the rest of a spec — and those are content-hashed, so a change set that moved one could not replay. Carries the indexes too and is emitted *instead of* the index ops, never alongside them. |
-| **Set bindings** | Replaces the whole `bindings` block; `null` removes it. The block previously had no op at all, so any diff touching it was inexpressible and a compose that unioned two registries could not be recorded. Wholesale by design: in a three-way merge the block is one slot, so two independent bindings edits conflict — granular connector ops would refine that without changing this op's meaning. |
+| **Set bindings** | Replaces the whole `bindings` block; `null` removes it. The block previously had no op at all, so any diff touching it was inexpressible and a merge that unioned two registries could not be recorded. Wholesale by design: in a three-way merge the block is one slot, so two independent bindings edits conflict — granular connector ops would refine that without changing this op's meaning. |
 | **Sanitize** | Target-`DBType` policy: reserved-word-safe names on `DatabaseProfile`, reserved vertex field renames, and (for TigerGraph) consistent identity tuples per edge relation. This is the same work **`graflo.hq.sanitizer.Sanitizer`** applies by building a single **`SanitizeOp`**. |
 | **Ensure extracted fields** | Widens a producing step's projection so named fields survive extraction (`keep_fields` gains them; under `extraction_scope: mapped_only` so does `vertex_from_map[<class>]`, seeded from the router-level `from`). Only `vertex_router` steps need it — a plain `vertex` step reads the transform buffer directly, bypassing both knobs. A no-op on an unrestricted step. Requires `ingestion_model`. |
-| **Add resource transforms** | Appends transform steps to a named level of named resources' pipelines (`at`, as `descend` step indices; root by default — actor type-priority ordering runs them before vertex extraction at that level) and optionally registers named transforms (loud on same-name/different-body, mirroring compose). The only op whose primary effect is ingestion; requires `ingestion_model` and raises otherwise. Steps may reference the registry via `call.use` or carry a fully inline `call` (collision-free). Irreversible. |
+| **Add resource transforms** | Appends transform steps to a named level of named resources' pipelines (`at`, as `descend` step indices; root by default — actor type-priority ordering runs them before vertex extraction at that level) and optionally registers named transforms (loud on same-name/different-body, mirroring merge). The only op whose primary effect is ingestion; requires `ingestion_model` and raises otherwise. Steps may reference the registry via `call.use` or carry a fully inline `call` (collision-free). Irreversible. |
 | **Add / remove resources** | `add_resources` takes full `ResourceConfig` definitions (creating `ingestion_model` if absent; an existing name is rejected); `remove_resources` takes names and prunes the `resource_connector` entries that wired them. Inverses of each other — a removal that pruned a binding has none. The differ emits both. |
 | **Set vertex / edge / field semantics** | Ground an existing element in an external vocabulary: `set_vertex_semantics` (`{vertex: Semantics \| null}`), `set_edge_semantics` (edge triples + one `Semantics`), `set_field_semantics` (per-target `FieldSemantics`, the only model carrying `unit`; a target is a vertex property `{vertex, field}` or an edge property `{source, target, relation, field}`). `null` clears, which is what makes each invertible. Never consulted at execution time. The differ emits all three. |
-| **Canonicalize** | Applies a whole **vocabulary map** — classes, per-class attributes (keyed by the *source* class), and relations — in one step over the original schema. Attribute renames run first, then classes and relations simultaneously, so a chain (`{X: Z, Z: Q}`) and a swap resolve without an intermediate state and no op order can leak into the result. The fibers of the map are exactly the groups that merge, so a group of more than one name needs `allow_merges`; a target that already exists and does not move must be declared a member of its own group with a self entry (`Company: Company`), or the op refuses rather than merging into it silently. Reversible when it only renames. This is what a `CanonicalMap` lowers to, and the per-side step of compose. See [Canonical maps](#canonical-maps). |
-| **Compose manifests** | Binary compose of two full `GraphManifest`s (schema **and** resources/bindings) via `ComposeManifestsOp` + `compose_manifests(left, right, op)`. Consumes **explicit** equivalence maps only (no semantic inference): n-ary vertex clusters (`vertex_equivalences`: `left` / `right` each name one or more classes collapsing onto one `into`), property alignment, optional composed `identity`, optional `identity_alignments`, relation equivalences (`relation_equivalences`), resource renames, and `canonical_maps` (scoped `left` / `right` / `both`), which name the composed classes so `into` may be omitted. A name both sides carry that no equivalence covers is what `name_conflict` decides — refused with the declarations to add (`error`), unioned by name through a synthesized equivalence (`union_right`), or kept apart (`prefix_right`). Distinct from unary `MergeVerticesOp`. Rejected by unary `apply_evolution`. |
+| **Canonicalize** | Applies a whole **vocabulary map** — classes, per-class attributes (keyed by the *source* class), and relations — in one step over the original schema. Attribute renames run first, then classes and relations simultaneously, so a chain (`{X: Z, Z: Q}`) and a swap resolve without an intermediate state and no op order can leak into the result. The fibers of the map are exactly the groups that merge, so a group of more than one name needs `allow_merges`; a target that already exists and does not move must be declared a member of its own group with a self entry (`Company: Company`), or the op refuses rather than merging into it silently. Reversible when it only renames. This is what a `CanonicalMap` lowers to, and the per-side step of merge. See [Canonical maps](#canonical-maps). |
+| **Merge manifests** | Binary merge of two full `GraphManifest`s (schema **and** resources/bindings) via `MergeManifestsOp` + `merge_manifests(left, right, op)`. Consumes **explicit** equivalence maps only (no semantic inference): n-ary vertex clusters (`vertex_equivalences`: `left` / `right` each name one or more classes collapsing onto one `into`), property alignment, optional merged `identity`, optional `identity_alignments`, relation equivalences (`relation_equivalences`), resource renames, and `canonical_maps` (scoped `left` / `right` / `both`), which name the merged classes so `into` may be omitted. A name both sides carry that no equivalence covers is what `name_conflict` decides — refused with the declarations to add (`error`), unioned by name through a synthesized equivalence (`union_right`), or kept apart (`prefix_right`). Distinct from unary `MergeVerticesOp`. Rejected by unary `apply_evolution`. |
 
-## Compose two manifests
+## Merge two manifests
 
 GraFlo stays deterministic: an external tool (or a human) may *propose* equivalences; core only *applies* them.
 
 ```python
 from graflo.architecture.evolution import (
-    ComposeManifestsOp,
+    MergeManifestsOp,
     PropertyEquivalence,
     RelationEquivalence,
     VertexEquivalence,
-    compose_manifests,
+    merge_manifests,
 )
 
-composed = compose_manifests(
+merged = merge_manifests(
     left,
     right,
-    ComposeManifestsOp(
+    MergeManifestsOp(
         vertex_equivalences=[
             VertexEquivalence(
                 left="Client",
@@ -80,7 +80,7 @@ composed = compose_manifests(
         relation_equivalences=[
             RelationEquivalence(left="places", right="billed", into="activity")
         ],
-        resource_renames={},  # right resource name -> composed name
+        resource_renames={},  # right resource name -> merged name
         name_conflict="error",  # or "prefix_right" / "union_right"
     ),
 )
@@ -90,40 +90,40 @@ composed = compose_manifests(
 spelled — one declaration naming every member that collapses onto `into`:
 
 ```python
-ComposeManifestsOp(
+MergeManifestsOp(
     vertex_equivalences=[
         VertexEquivalence(
             left=["Company", "Shop"], right=["Org", "Branch"], into="Company"
         )
     ],
-    allow_merges=True,          # >1 member on a side is a stated intent
+    allow_merges=True,  # >1 member on a side is a stated intent
     allow_self_relations=False,  # forwarded to the per-side CanonicalizeOp
     allow_observation_fusion=False,
 )
 ```
 
-Name-disjoint sides need no equivalence at all: with `vertex_equivalences` / `relation_equivalences` empty they compose into a **disjoint union**, both resource sets and bindings retained. A name *both* sides carry is not a disjoint union and is never silently treated as one — it is what `name_conflict` decides (see the [case table](#where-a-map-and-the-equivalences-can-stand)).
+Name-disjoint sides need no equivalence at all: with `vertex_equivalences` / `relation_equivalences` empty they merge into a **disjoint union**, both resource sets and bindings retained. A name *both* sides carry is not a disjoint union and is never silently treated as one — it is what `name_conflict` decides (see the [case table](#where-a-map-and-the-equivalences-can-stand)).
 
-A `VertexEquivalence` declaration *is* one cluster. `into` is optional — see [Canonical maps](#canonical-maps) for how a composed name is found. `ClusterConflictError` (raised before any rename) covers the three ways declarations can contradict each other: a class **claimed by two** declarations, two declarations **sharing one composed name** (that collapse is one n-ary cluster and must be spelled as one), and a composed name that already names an **existing non-member class** on a side (which would silently merge into an unrelated type). Properties with the **same spelling** on both sides after alignment fuse for free; list a `PropertyEquivalence` only to rename, to map per member (`left={"Company": "company_key", "Shop": "shop_key"}`), or to flag identity.
+A `VertexEquivalence` declaration *is* one cluster. `into` is optional — see [Canonical maps](#canonical-maps) for how a merged name is found. `ClusterConflictError` (raised before any rename) covers the three ways declarations can contradict each other: a class **claimed by two** declarations, two declarations **sharing one merged name** (that collapse is one n-ary cluster and must be spelled as one), and a merged name that already names an **existing non-member class** on a side (which would silently merge into an unrelated type). Properties with the **same spelling** on both sides after alignment fuse for free; list a `PropertyEquivalence` only to rename, to map per member (`left={"Company": "company_key", "Shop": "shop_key"}`), or to flag identity.
 
-That fusion is a **union**, and it compares more than a name. `type` and `item_type` travel together, so `LIST<STRING>` and `LIST<INT>` are a conflict rather than a shared `LIST`; descriptions from both sides are kept; grounding blocks union their `exact_match` and `synonyms`, and a disputed `iri` clears rather than electing one side's concept. Two disagreements refuse the compose instead of resolving it: two declared **types** for one property, and two declared **units** — a property that is `m/s` on one side and `km/h` on the other would hold numerically incomparable values once fused. Edge properties fold by exactly the same rule, since it is one kernel. Neither is widened automatically, because the composed type would be one neither author wrote; retype one side with `change_field_types` first. Every conflicting property is named in one error rather than one per run.
+That fusion is a **union**, and it compares more than a name. `type` and `item_type` travel together, so `LIST<STRING>` and `LIST<INT>` are a conflict rather than a shared `LIST`; descriptions from both sides are kept; grounding blocks union their `exact_match` and `synonyms`, and a disputed `iri` clears rather than electing one side's concept. Two disagreements refuse the merge instead of resolving it: two declared **types** for one property, and two declared **units** — a property that is `m/s` on one side and `km/h` on the other would hold numerically incomparable values once fused. Edge properties fold by exactly the same rule, since it is one kernel. Neither is widened automatically, because the merged type would be one neither author wrote; retype one side with `change_field_types` first. Every conflicting property is named in one error rather than one per run.
 
-Compose refuses to guess the composed **identity** too: when members disagree on their identity field-set after alignment and nothing resolves it, `ComposeIdentityError` names each member's key. Resolve it with `identity` on the cluster (a natural key, an `IdentityFunnel`, or a `SideIdentity` shorthand lowered to one funnel), a `PropertyEquivalence(identity=True)` flag, or an `identity_alignments` entry. A declared `identity` demotes each member's retired key to a lookup-only secondary identity unless the cluster sets `retire="keep"`.
+Merge refuses to guess the merged **identity** too: when members disagree on their identity field-set after alignment and nothing resolves it, `MergeIdentityError` names each member's key. Resolve it with `identity` on the cluster (a natural key, an `IdentityFunnel`, or a `SideIdentity` shorthand lowered to one funnel), a `PropertyEquivalence(identity=True)` flag, or an `identity_alignments` entry. A declared `identity` demotes each member's retired key to a lookup-only secondary identity unless the cluster sets `retire="keep"`.
 
-### What compose does, in order
+### What merge does, in order
 
-`compose_manifests` is one pass with a fixed order. Two steps are where they are for a reason, noted below.
+`merge_manifests` is one pass with a fixed order. Two steps are where they are for a reason, noted below.
 
-1. **Fold the declared maps** per side — `both` under `left`, `both` under `right` (`merge_canonical_maps`), refusing two maps that disagree on a source or move each other's targets.
-2. **Resolve the clusters** against those maps: members in each manifest's own spelling, one composed name each, and one composite relabel per side.
+1. **Fold the declared maps** per side — `both` under `left`, `both` under `right` (`compose_canonical_maps`), refusing two maps that disagree on a source or move each other's targets.
+2. **Resolve the clusters** against those maps: members in each manifest's own spelling, one merged name each, and one composite relabel per side.
 3. **Synthesize** a cluster for every name both sides still carry, as `name_conflict` directs, then re-resolve so the synthesized ones are ordinary clusters from here on.
-4. **Capture each member's identity key and property names** — *before* the relabel, because once the members are collapsed onto one name the schema no longer records which key came from which member, and the composed identity is decided by comparing exactly those.
+4. **Capture each member's identity key and property names** — *before* the relabel, because once the members are collapsed onto one name the schema no longer records which key came from which member, and the merged identity is decided by comparing exactly those.
 5. **Rename the right side's resources** per `resource_renames`, then per the collision policy.
-6. **Snapshot both sides as they now stand** — also *before* the relabel: the relabel rewrites a `vertex_router`'s `type_map` values to the composed name, after which nothing says which router key produced which member. Identity alignment needs that, so it reads these snapshots.
+6. **Snapshot both sides as they now stand** — also *before* the relabel: the relabel rewrites a `vertex_router`'s `type_map` values to the merged name, after which nothing says which router key produced which member. Identity alignment needs that, so it reads these snapshots.
 7. **Apply the composite relabel** to each side, one `CanonicalizeOp` per side.
 8. **Prefix the right side's remaining vertex and relation collisions** (`prefix_right` only — `error` and `union_right` settled theirs in step 3).
-9. **Union schema, ingestion and bindings by name**, merging each name both sides carry, deciding the composed identity, and demoting retired keys to secondary identities.
-10. **Assert no canonical split** on the result: no two composed types may denote one concept under different spellings.
+9. **Union schema, ingestion and bindings by name**, merging each name both sides carry, deciding the merged identity, and demoting retired keys to secondary identities.
+10. **Assert no canonical split** on the result: no two merged types may denote one concept under different spellings.
 11. **Bump the version, apply `identity_alignments`, `finish_init`.**
 
 ### Words for combining things
@@ -132,13 +132,13 @@ Five verbs recur across seven senses, and they are not synonyms.
 
 | verb | sense | where |
 |---|---|---|
-| **compose** | join two manifests of *unrelated lineage* by declared equivalence | `compose_manifests`, `ComposeManifestsOp` |
+| **merge** | join two manifests of *unrelated lineage* by declared equivalence | `merge_manifests`, `MergeManifestsOp` |
 | **union** | assemble two collections **by name** — the outer step | `_union_transforms`, `_union_schema`, `_union_bindings` |
 | **merge** | combine the definitions **one name** has on both sides, refusing conflicts — the inner step | `merge_vertex_models`, `merge_edge_pair`, `merge_semantics` |
 | **merge** (collapse) | send *several distinct* classes or relations to one name | `MergeVerticesOp`, `MergeEdgesOp`, `allow_merges` |
-| **merge** (three-way) | reconcile two descendants of a **common ancestor** — a different operation entirely | `merge_three_way`, `MergeConflict` |
+| **merge3** | reconcile two descendants of a **common ancestor** — a different operation entirely | `merge_three_way`, `MergeResult`, `MergeConflict` |
 | **fuse** | two *records* becoming one node at ingestion | `allow_observation_fusion`, identity alignment |
-| **collapse** | cluster members arriving at their composed name | `VertexEquivalence`, `CanonicalizeOp` |
+| **collapse** | cluster members arriving at their merged name | `VertexEquivalence`, `CanonicalizeOp` |
 
 Union and merge are not competing words: they are the two levels of one operation. The union walks the names; the merge is what it does at a name both sides carry.
 
@@ -148,50 +148,76 @@ Collapse and merge-at-a-name share one implementation — `merge_vertex_models` 
 
 `fuse` is about records, not types. The one exception is the `name_conflict="union_right"` policy, which was spelled `fuse_right` before this distinction was drawn and still parses under that name.
 
-Three-way merge is the outlier: it reconciles change sets, not schemas, and expects names to *agree*. See [Merge is not compose](versioning.md#merge-is-not-compose).
+`merge3` is the outlier: it reconciles change sets, not schemas, and expects names to *agree*. See [Merge is not merge3](versioning.md#merge-is-not-merge3).
 
-**`join`** is not an eighth sense. It is used in prose as the superordinate for compose — "joins two lineages" — and never names an operation; nothing is called `join_*` except SQL and URL joins, which are unrelated.
+#### Reading a bare `merge`
 
-#### These names are GraFlo's, not the literature's
+`merge3` is a qualifier, not a separate word. The three-way operation is still
+called a merge in prose, and the names it carried before this distinction was
+drawn — `merge_three_way`, `find_merge_base`, `MergeResult`, `MergeConflict`,
+`re_merge`, `merged_hash` — keep a bare `merge`. The rule for reading one:
 
-The generic-model-management operators GraFlo's design draws on (see [the references](versioning.md#further-reading)) use two of these words for different things, and a reader arriving from that literature should know which way round they are:
+> Inside `evolution/merge3.py`, `plot/merge3.py` and the version-level lineage
+> routes (`POST /{scope}/{uuid}/merge` and `/re-merge`), a bare **merge** is the
+> three-way. Everywhere else it is the model operation.
+
+The qualifier is spelled out wherever the two would otherwise be
+indistinguishable: the commit kind (`merge` against `merge3`), the CLI verb
+(`graflo merge` against `graflo merge3`), `MergePreview` against
+`Merge3Preview`, and `record_merge` against `record_merge3`.
+
+**`join`** is not an eighth sense. It is used in prose as the superordinate for merge — "joins two lineages" — and never names an operation; nothing is called `join_*` except SQL and URL joins, which are unrelated.
+
+#### These names match the literature
+
+The generic-model-management operators GraFlo's design draws on (see [the
+references](versioning.md#further-reading)) use two of these words, and GraFlo
+spells both the same way they do:
 
 | GraFlo | that literature | signature |
 |---|---|---|
-| `compose_manifests(left, right, op)` | **Merge** | two models plus correspondences → a model |
-| `merge_canonical_maps(base, extension)` | **Compose** | two mappings → a mapping |
+| `merge_manifests(left, right, op)` | **Merge** | two models plus correspondences → a model |
+| `compose_canonical_maps(base, extension)` | **Compose** | two mappings → a mapping |
 
-So GraFlo's *compose* is the operator that literature calls Merge, and the operator it calls Compose — composing two mappings — is what `merge_canonical_maps` does. The names here are not being changed to match: `ComposeManifestsOp` is a published contract that appears in authored documents. This table is the translation.
+GraFlo's *merge* is that literature's Merge, and composing two canonical maps is
+its Compose. The two were spelled the other way round until they were swapped:
+what is now `merge_manifests` was `compose_manifests`, and what is now
+`compose_canonical_maps` was `merge_canonical_maps`.
+
+After the swap, `compose` names exactly two things in the codebase, and both are
+that literature's Compose or a sibling of it: `compose_canonical_maps`, and the
+`COMPOSES` relation the registry writes for artifact containment
+(`POST /registry/manifests/compose`).
 
 ### Either side may carry no schema
 
-A manifest needs only one block, so an overlay carrying just an `ingestion_model` and/or `bindings` — a new source wired onto an existing type vocabulary — is a valid compose input. The composed schema is the other side's, copied verbatim: physical profile, target namespace, secondary indexes and schema version all survive. With neither side carrying one, the composed manifest has no schema block and the version bump is a no-op.
+A manifest needs only one block, so an overlay carrying just an `ingestion_model` and/or `bindings` — a new source wired onto an existing type vocabulary — is a valid merge input. The merged schema is the other side's, copied verbatim: physical profile, target namespace, secondary indexes and schema version all survive. With neither side carrying one, the merged manifest has no schema block and the version bump is a no-op.
 
-Verbatim rather than "merged with an empty schema" on purpose: filling a missing side with an empty `Schema` would compose against a profile nobody wrote, and drop that side's namespace and version — a wrong answer with nothing raising.
+Verbatim rather than "merged with an empty schema" on purpose: filling a missing side with an empty `Schema` would merge against a profile nobody wrote, and drop that side's namespace and version — a wrong answer with nothing raising.
 
 When both sides *are* present the profile fold elects neither. `db_flavor` and `target_namespace` are single-valued and decide what DDL is emitted against which backend, so two **declared** values raise; a side that never declared one yields to the side that did. Declaration is read from what a side actually wrote, not from the value — `db_flavor` defaults to Arango, so a value-based fold could not tell a side that chose Arango from one that never spoke, and an undeclared left would silently retarget a right that named its backend. `default_property_values` union, refusing two defaults for one property. Vertex indexes union on their full definition: two entries over one field-set that disagree on `unique`, `type` or `sparse` raise rather than keeping the left's, since the next schema resolution collapses them on field-set alone and the survivor would depend on ordering.
 
 ### From the shell
 
 ```bash
-graflo compose LEFT.yaml RIGHT.yaml --op OP.yaml -o OUT.yaml \
+graflo merge LEFT.yaml RIGHT.yaml --op OP.yaml -o OUT.yaml \
   [--canonical-map SIDE=PATH]... [--name-conflict error|prefix_right|union_right] \
   [--bump-version minor|none] [--strict-references] [--dry-run] [--check-profile NAME] \
   [--store DIR] [-m LABEL]
 ```
 
-`-m LABEL` also **records the compose** as a two-parent commit in `--store`
+`-m LABEL` also **records the merge** as a two-parent commit in `--store`
 (default `.graflo/commits`). Both inputs are resolved to commits by content
 address — a manifest is its hash and a commit records the tree it produced — so
 a side that is in no history is refused by name rather than half-recorded. The
-composed manifest is stamped with its parents, its recipe pointer and the commit
+merged manifest is stamped with its parents, its recipe pointer and the commit
 that produced it before it is written, so the file carries its own lineage.
 Without `-m` the verb writes only the manifest, as before. See
-[Version control](versioning.md#compose-is-recorded-too).
+[Version control](versioning.md#merge-is-recorded-too).
 
-The verb applies the op and its canonical maps together: `--canonical-map SIDE=PATH` (`SIDE` one of `left`, `right`, `both`) is folded into the op's `canonical_maps`, so the same document may carry the maps itself. Omitting `--op` composes a disjoint union. `--name-conflict` overrides the op's policy: `error` refuses a name both sides carry, `union_right` unions by name, `prefix_right` keeps them apart under `r_` names. Exit `0` composed, `1` compose refused, `2` the command could not run.
+The verb applies the op and its canonical maps together: `--canonical-map SIDE=PATH` (`SIDE` one of `left`, `right`, `both`) is folded into the op's `canonical_maps`, so the same document may carry the maps itself. Omitting `--op` merges a disjoint union. `--name-conflict` overrides the op's policy: `error` refuses a name both sides carry, `union_right` unions by name, `prefix_right` keeps them apart under `r_` names. Exit `0` merged, `1` merge refused, `2` the command could not run.
 
-A refusal names what to declare, and an *incomplete* one prints the declarations themselves — `ComposeIncompleteError` carries a completion, which the verb renders as YAML on stderr below the message, ready to paste into the op:
+A refusal names what to declare, and an *incomplete* one prints the declarations themselves — `MergeIncompleteError` carries a completion, which the verb renders as YAML on stderr below the message, ready to paste into the op:
 
 ```yaml
 completion:
@@ -208,17 +234,17 @@ A `CanonicalMap` is a translation of a source vocabulary into canonical names �
 
 **On its own**, `canonical_map_to_ops(cm)` lowers it to a single `CanonicalizeOp`, which applies the whole map in one step over the original schema: attribute renames first (keyed by the source class), then classes and relations simultaneously. The op is more general than the map — a chain and a swap resolve without an intermediate state, the fibers of the map are exactly the groups that merge, and a target that already exists and does not move must be declared a member of its own group with a self entry (`Company: Company`), or the op refuses rather than merging into it silently. No op order can leak into the result.
 
-**On a compose op**, `ComposeManifestsOp.canonical_maps` names the composed classes. An equivalence cluster says *which* classes are one; the map says *what they are called*, so `into` is optional. The composed name of a cluster is `into` (translated through the map when the map maps it), else the canonical name the map gives a member, else the one spelling every member shares. A member may be spelled by its own name or by its canonical name. Maps are scoped: `left` / `right` apply to that manifest's own names; `both` to either side's names and to composed names — an entry that matches one side only applies there and is simply inapplicable on the other.
+**On a merge op**, `MergeManifestsOp.canonical_maps` names the merged classes. An equivalence cluster says *which* classes are one; the map says *what they are called*, so `into` is optional. The merged name of a cluster is `into` (translated through the map when the map maps it), else the canonical name the map gives a member, else the one spelling every member shares. A member may be spelled by its own name or by its canonical name. Maps are scoped: `left` / `right` apply to that manifest's own names; `both` to either side's names and to merged names — an entry that matches one side only applies there and is simply inapplicable on the other.
 
 ```python
 from graflo.architecture.evolution import (
     CanonicalMap,
-    ComposeManifestsOp,
+    MergeManifestsOp,
     VertexEquivalence,
-    compose_manifests,
+    merge_manifests,
 )
 
-op = ComposeManifestsOp(
+op = MergeManifestsOp(
     # {Firm} ~ {Org}: no `into` — the map names it Company
     vertex_equivalences=[VertexEquivalence(left="Firm", right="Org")],
     canonical_maps={
@@ -228,55 +254,55 @@ op = ComposeManifestsOp(
         )
     },
 )
-composed = compose_manifests(left, right, op)
+merged = merge_manifests(left, right, op)
 ```
 
 ### Previewing
 
-`compose_manifests` raises at the first refusal — right for a function that
+`merge_manifests` raises at the first refusal — right for a function that
 returns a manifest, but it means three bad declarations take three runs to
-find. `preview_compose(left, right, op)` walks the same declarations and
+find. `preview_merge(left, right, op)` walks the same declarations and
 reports **every** problem at once, as data:
 
 ```python
-from graflo.architecture.evolution.preview import preview_compose
+from graflo.architecture.evolution.preview import preview_merge
 
-preview = preview_compose(left, right, op)
+preview = preview_merge(left, right, op)
 for finding in preview.blocking:
     print(finding.severity, finding.kind, finding.nodes, finding.message)
 ```
 
-A `ComposePreview` carries the declaration graph — each side's classes and
+A `MergePreview` carries the declaration graph — each side's classes and
 attributes, the clusters over them, the canonical names the maps establish —
-plus `findings` at three severities: `refusal` is the one compose raised,
+plus `findings` at three severities: `refusal` is the one merge raised,
 `possible` is everything the preview found on its own, `note` an acknowledged
 heuristic such as a satisfied entry. Every finding names the nodes it is
 about, and an incomplete one carries the same `Completion` the exception
-does. Pass `attempt=False` to describe the declarations without composing.
+does. Pass `attempt=False` to describe the declarations without merging.
 
 It is not a second implementation of the rules: each check calls the function
-compose itself calls, one declaration or one map entry at a time, so a refusal
+merge itself calls, one declaration or one map entry at a time, so a refusal
 on one unit does not hide the next. That extends to the schema union — the
 preview runs `merge_vertex_models` and `merge_edge_pair` per cluster, so a type
 clash, a unit clash, two identity modes that exclude each other, a divergent
 funnel, a secondary identity claimed twice and an edge whose two declarations
 disagree on `type`/`by` are all found by the code that decides them.
 
-The invariant the tests hold it to is that whatever compose refuses, the
+The invariant the tests hold it to is that whatever merge refuses, the
 preview has a finding of a matching kind for. It **fails closed**: a refusal
 the preview cannot classify fails the suite rather than skipping the case, so a
 new rule cannot be added without a finding kind to report it under. What makes
 a refusal classifiable is a `check` phrase on the exception — every refusal in
-the compose and union path carries one.
+the merge and union path carries one.
 
-From the shell, `graflo compose --plot conflicts.svg --preview-json
-conflicts.json` writes both — **including when compose refuses**, which is the
+From the shell, `graflo merge --plot conflicts.svg --preview-json
+conflicts.json` writes both — **including when merge refuses**, which is the
 case they are for. `--dry-run` prints the findings table on its own.
 
-### Checking a map before composing
+### Checking a map before merging
 
 A canonical map is authored against one schema long before it meets another, and
-a map of hundreds of entries is not debugged through a compose. `graflo
+a map of hundreds of entries is not debugged through a merge. `graflo
 canonical-check MAP --left manifest.yaml` classifies every entry against that
 one manifest — no op, no other side — and names each one that matches nothing,
 with a near-miss candidate where another spelling denotes the same concept. It
@@ -285,29 +311,29 @@ exits 1 when entries dangle and 2 when it could not run, so it gates in CI.
 Give it both `--left` and `--right` and it runs the full preview instead. Give
 it `--trim OUT.yaml` and it writes the map narrowed to what the manifest
 declares, so pruning a map is a change with a diff rather than something
-discovered at compose time. In Python the same two are
+discovered at merge time. In Python the same two are
 `dangling_entries(cm, manifest)` and `trim_canonical_map(cm, manifest)`.
 
 ### Vocabulary
 
 | term | type | meaning |
 |---|---|---|
-| **declared map** | `CanonicalMap`, folded into `DeclaredMaps` | a map the author wrote — `op.canonical_maps[scope]` or a `canonical_maps=` pair handed to compose |
-| **cluster** | `Cluster` (resolved from `ClusterSpec`) | one equivalence declaration, resolved: its members per side in the manifests' own spelling, and its **composed name** |
-| **cluster map** | — | per side, every member onto its composed name (the composed name itself included, so the op merges into it rather than refusing an occupied target) |
-| **composite map** | `SideMaps`, one `CanonicalizeOp` per side | the cluster map plus every declared entry that applies to a non-member: what compose applies to that side before the union by name. A relabel, not a vocabulary — two clusters may chain when one composed name is renamed away by another declaration |
+| **declared map** | `CanonicalMap`, folded into `DeclaredMaps` | a map the author wrote — `op.canonical_maps[scope]` or a `canonical_maps=` pair handed to merge |
+| **cluster** | `Cluster` (resolved from `ClusterSpec`) | one equivalence declaration, resolved: its members per side in the manifests' own spelling, and its **merged name** |
+| **cluster map** | — | per side, every member onto its merged name (the merged name itself included, so the op merges into it rather than refusing an occupied target) |
+| **composite map** | `SideMaps`, one `CanonicalizeOp` per side | the cluster map plus every declared entry that applies to a non-member: what merge applies to that side before the union by name. A relabel, not a vocabulary — two clusters may chain when one merged name is renamed away by another declaration |
 | **fixed point** | — | a canonical target; no map and no cluster may move it |
 | **opinion** | — | what the declared maps say a member's canonical name is: the target it maps to, or itself when it is a fixed point |
 | **satisfied entry** | — | a declared entry whose source is absent and target present on a side: taken as already applied by the caller (a heuristic — it is logged) |
 | **dangling entry** | — | a declared entry matching nothing on any side it could apply to: a typo, refused. Every one on a side is named by a single refusal, with a near-miss candidate where one exists; `allow_dangling_entries` drops them instead |
-| **synthesized cluster** | `Cluster.synthesized` | a cluster compose declares itself under `name_conflict="union_right"` for a name both sides carry, or two spellings of one name |
-| **completion** | `Completion`, on `ComposeIncompleteError` | the extension that would make an incomplete declaration consistent, as `VertexEquivalence` / `RelationEquivalence` documents |
+| **synthesized cluster** | `Cluster.synthesized` | a cluster merge declares itself under `name_conflict="union_right"` for a name both sides carry, or two spellings of one name |
+| **completion** | `Completion`, on `MergeIncompleteError` | the extension that would make an incomplete declaration consistent, as `VertexEquivalence` / `RelationEquivalence` documents |
 
-Identity is **nominal**: a class is the same class across two manifests only by name or by declared equivalence. Nothing structural fingerprints it — content hashes address a manifest, not a class — and compose never infers a match.
+Identity is **nominal**: a class is the same class across two manifests only by name or by declared equivalence. Nothing structural fingerprints it — content hashes address a manifest, not a class — and merge never infers a match.
 
 ### Where a map and the equivalences can stand
 
-Renames compose, so canonicalizing a side on its own first and then declaring the cluster in canonical names is the same function as declaring it in raw names on an op that carries the map: `compose_manifests` accepts either. Canonicalizing the *union* afterwards is a different function in general (it can collapse two composed names) and is just a unary `CanonicalizeOp` on the result. `resolve_clusters` — what compose runs; `validate_and_complete_canonical_map` returns just its per-side relabels — folds the clusters and the maps into **one composite `CanonicalizeOp` per side**, applied before the schema/resource union.
+Renames merge, so canonicalizing a side on its own first and then declaring the cluster in canonical names is the same function as declaring it in raw names on an op that carries the map: `merge_manifests` accepts either. Canonicalizing the *union* afterwards is a different function in general (it can collapse two merged names) and is just a unary `CanonicalizeOp` on the result. `resolve_clusters` — what merge runs; `validate_and_complete_canonical_map` returns just its per-side relabels — folds the clusters and the maps into **one composite `CanonicalizeOp` per side**, applied before the schema/resource union.
 
 One rule underlies every refusal: **the map and the equivalences must agree on where a name goes, and a canonical target is a fixed point neither may re-map.** Every case below is an instance of it.
 
@@ -318,19 +344,19 @@ One rule underlies every refusal: **the map and the equivalences must agree on w
 | neither | unchanged |
 | `C` only, target free or self-declared | carried into the composite |
 | `C` only, target an unmoving non-member without a self entry | refused by the op (occupied target) |
-| `E` only | onto the composed name |
-| `E` and `C` agree; `E` without `into` and `C` names a member; `into` itself in `dom(C)` | onto the composed name, which `C` supplies or translates |
+| `E` only | onto the merged name |
+| `E` and `C` agree; `E` without `into` and `C` names a member; `into` itself in `dom(C)` | onto the merged name, which `C` supplies or translates |
 | `E` names a member the side does not declare | `ValueError` naming the member — and, when another spelling on that side denotes the same concept, naming that too ("author the equivalence in the manifest's own spelling") |
 | `E` with no `into`, no mapped member and no spelling its members share | refused as an **unnamed cluster**: give it `into`, or map a member |
-| **contradiction** — `E` and `C` disagree; `E` moves a fixed point; a property equivalence renames a canonical attribute | `ComposeCanonicalConflictError`, naming both declarations |
-| **ambiguity** — a canonical name denotes two members; maps disagree on translating `into` | `ComposeCanonicalConflictError` |
-| **incomplete** — `C` sends a non-member onto a composed name | `ComposeIncompleteError`; the completion is the cluster extended with that member, whose identity and property maps then govern it |
+| **contradiction** — `E` and `C` disagree; `E` moves a fixed point; a property equivalence renames a canonical attribute | `MergeCanonicalConflictError`, naming both declarations |
+| **ambiguity** — a canonical name denotes two members; maps disagree on translating `into` | `MergeCanonicalConflictError` |
+| **incomplete** — `C` sends a non-member onto a merged name | `MergeIncompleteError`; the completion is the cluster extended with that member, whose identity and property maps then govern it |
 | one-sided `both` entry | applied where it matches |
-| `both` entry over a composed name | translation of `into`, not a dangling entry |
+| `both` entry over a merged name | translation of `into`, not a dangling entry |
 | dangling | refused — one refusal lists every dangling entry on that side, each with a near-miss candidate where another spelling denotes the same concept. It outranks an `incomplete` on the same side: a name that is not there at all is the more basic mistake |
 | dangling, with `allow_dangling_entries` on the map or the op | dropped and logged, for a shared vocabulary deliberately broader than this manifest. Off by default — a misspelt class has the same shape, and dropping it silently renames less than the author asked |
 | satisfied | no-op, logged |
-| `properties` keyed by a composed or canonical class | refused — the attribute map is keyed by the source class |
+| `properties` keyed by a merged or canonical class | refused — the attribute map is keyed by the source class |
 | `properties` renaming a field the member does not declare, or onto a field it keeps | refused — a property rename cannot merge two fields; align them with `PropertyEquivalence` on both sides |
 | chain or swap inside one map | refused at `CanonicalMap` construction |
 
@@ -338,51 +364,65 @@ One rule underlies every refusal: **the map and the equivalences must agree on w
 
 | case | outcome |
 |---|---|
-| a name both sides carry, no cluster | `error`: `ComposeIncompleteError`, whose completion declares the equivalence — naming the members in each side's **own** spelling, composed onto the shared name; `union_right`: a synthesized cluster; `prefix_right`: kept apart as `r_n` |
-| two spellings of one name (`OrderLine` / `order_line`) | `error`: `ComposeNameConflictError`; `union_right`: a synthesized cluster under the left spelling; `prefix_right`: kept apart |
+| a name both sides carry, no cluster | `error`: `MergeIncompleteError`, whose completion declares the equivalence — naming the members in each side's **own** spelling, merged onto the shared name; `union_right`: a synthesized cluster; `prefix_right`: kept apart as `r_n` |
+| two spellings of one name (`OrderLine` / `order_line`) | `error`: `MergeNameConflictError`; `union_right`: a synthesized cluster under the left spelling; `prefix_right`: kept apart |
 | a **resource** or **connector** name both sides carry | matched **exactly only** — these are addresses, not concepts, so two that key alike split nothing and `union_right` behaves as `error`. Resolve with `resource_renames` or `prefix_right` |
 | two **property** names that key alike (`customer_email` / `customerEmail`) | never fused: a property name binds to a key in the source document, so the two are fed by different columns. Only exact spellings fuse |
-| two declared maps chaining (`{Z: Q}` and `{X: Z}`) | refused by `merge_canonical_maps`, in either order |
+| two declared maps chaining (`{Z: Q}` and `{X: Z}`) | refused by `compose_canonical_maps`, in either order |
 
-A synthesized cluster is a real cluster: the union it produces goes through the same identity reconciliation as a declared one, so two same-named classes whose keys disagree raise `ComposeIdentityError` instead of composing to a key no record carries, and the right side's properties are unioned rather than dropped.
+A synthesized cluster is a real cluster: the union it produces goes through the same identity reconciliation as a declared one, so two same-named classes whose keys disagree raise `MergeIdentityError` instead of merging to a key no record carries, and the right side's properties are unioned rather than dropped.
 
-The cluster-shape checks (`ClusterConflictError`, wrapped by `validate_and_complete_canonical_map`) stay: a class claimed by two declarations, two declarations sharing one composed name, a composed name occupying an existing non-member class. `merge_canonical_maps(base, extension)` is the union two declared maps for one scope reconcile through — every source maps to one target, and a target of either map is a fixed point the other may not move. Compose deliberately re-checks nothing it already raises on (incompatible types, divergent funnels).
+The cluster-shape checks (`ClusterConflictError`, wrapped by `validate_and_complete_canonical_map`) stay: a class claimed by two declarations, two declarations sharing one merged name, a merged name occupying an existing non-member class. `compose_canonical_maps(base, extension)` is the union two declared maps for one scope reconcile through — every source maps to one target, and a target of either map is a fixed point the other may not move. Merge deliberately re-checks nothing it already raises on (incompatible types, divergent funnels).
 
-Self-relations and observation fusion are not merely warned about: compose forwards `allow_self_relations` / `allow_observation_fusion` from the op to the per-side `CanonicalizeOp`, so the merge guards fire unless the author acknowledges them. The fusion guard is judged per **accumulator slot**, which is what the runtime fuses on: a vertex step stores at its `role` sub-slot when it has one and at the bare level otherwise, and a router at its `role` (or `type_field`). Two members produced at one level by steps with distinct `role`s — the client/server or buyer/seller pattern, addressed from the edge by `source_role` / `target_role` — never share a slot, are not fusion, and need no flag. The flag is for two members produced by *bare* steps (or steps of one `role`) at one level, where a single document yields both and the merged observations fold into one node.
+Self-relations and observation fusion are not merely warned about: merge forwards `allow_self_relations` / `allow_observation_fusion` from the op to the per-side `CanonicalizeOp`, so the merge guards fire unless the author acknowledges them. The fusion guard is judged per **accumulator slot**, which is what the runtime fuses on: a vertex step stores at its `role` sub-slot when it has one and at the bare level otherwise, and a router at its `role` (or `type_field`). Two members produced at one level by steps with distinct `role`s — the client/server or buyer/seller pattern, addressed from the edge by `source_role` / `target_role` — never share a slot, are not fusion, and need no flag. The flag is for two members produced by *bare* steps (or steps of one `role`) at one level, where a single document yields both and the merged observations fold into one node.
 
 ### Identity alignment
 
-When the composed class should deduplicate entities across its sources, the identity question splits along a principle: **a primary identity is a property of the class**, so the class declares one identity over canonical attributes only — while *how* each source populates those attributes is resource knowledge, expressed as pipeline steps. `IdentityAlignment` states both halves declaratively; put it on `ComposeManifestsOp.identity_alignments` so `compose_manifests` applies it after the schema/resource union (each entry's `vertex` must be a declared cluster's composed name). Under the hood `alignment_to_ops` still emits only fundamentals:
+When the merged class should deduplicate entities across its sources, the identity question splits along a principle: **a primary identity is a property of the class**, so the class declares one identity over canonical attributes only — while *how* each source populates those attributes is resource knowledge, expressed as pipeline steps. `IdentityAlignment` states both halves declaratively; put it on `MergeManifestsOp.identity_alignments` so `merge_manifests` applies it after the schema/resource union (each entry's `vertex` must be a declared cluster's merged name). Under the hood `alignment_to_ops` still emits only fundamentals:
 
 ```python
 from graflo.architecture.evolution import (
-    AlignmentAttribute, ComposeManifestsOp, DerivationSpec, IdentityAlignment,
-    LocalKeySource, LocalKeySpec, VertexEquivalence,
-    compose_manifests,
+    AlignmentAttribute,
+    MergeManifestsOp,
+    DerivationSpec,
+    IdentityAlignment,
+    LocalKeySource,
+    LocalKeySpec,
+    VertexEquivalence,
+    merge_manifests,
 )
 
 alignment = IdentityAlignment(
     vertex="Company",
-    attributes=[AlignmentAttribute(name="match_key", sources={  # priority order
-        "r_a": DerivationSpec(input=["secondary_key", "shared_raw"],
-                              params={"prefix": "abc_", "strip_prefix": "ABC-"}),
-        "r_b": DerivationSpec(input=["org_id", "shared_raw"],
-                              params={"prefix": ""}),
-    })],
-    local_key=LocalKeySpec(sources={                   # fallback, namespaced
-        "r_a": LocalKeySource(field="firm_id", tag="a"),
-        "r_b": LocalKeySource(field="org_id", tag="b"),
-    }),
-    secondary_identities={"by_company_id": ["company_id"],
-                          "by_org_id": ["org_id"]},
+    attributes=[
+        AlignmentAttribute(
+            name="match_key",
+            sources={  # priority order
+                "r_a": DerivationSpec(
+                    input=["secondary_key", "shared_raw"],
+                    params={"prefix": "abc_", "strip_prefix": "ABC-"},
+                ),
+                "r_b": DerivationSpec(
+                    input=["org_id", "shared_raw"], params={"prefix": ""}
+                ),
+            },
+        )
+    ],
+    local_key=LocalKeySpec(
+        sources={  # fallback, namespaced
+            "r_a": LocalKeySource(field="firm_id", tag="a"),
+            "r_b": LocalKeySource(field="org_id", tag="b"),
+        }
+    ),
+    secondary_identities={"by_company_id": ["company_id"], "by_org_id": ["org_id"]},
 )
-op = ComposeManifestsOp(
+op = MergeManifestsOp(
     vertex_equivalences=[
         VertexEquivalence(left="Company", right="Org", into="Company"),
     ],
     identity_alignments=[alignment],
 )
-union = compose_manifests(canonical_left, right, op, canonical_maps=[("left", cm)])
+union = merge_manifests(canonical_left, right, op, canonical_maps=[("left", cm)])
 ```
 
 The emitted op sequence: `AddVertexPropertiesOp` (declare the canonical attributes), `AddResourceTransformsOp` (per-resource derivation steps, inline calls), `ReplaceIdentityOp` (a priority funnel — one branch per attribute in order, then the `local_key` fallback; `retire: keep`), and `AddSecondaryIdentitiesOp` (the retired side keys as lookup-only secondaries). Attribute order is funnel priority: a record keys by the highest-priority attribute it carries, so two records fuse when their strongest present attribute coincides — a match on a lower-priority attribute does not fuse records when one side also carries a stronger one. The `local_key` values are namespaced per resource (`a:f2` vs `b:o1`), so non-aligned records stay ingested without cross-source collisions. The tag is required so that opting out is a statement: `tag=None` keeps the raw value as the local key, no separator — the author's claim that the values are already unique across every source of the class (UUIDs, IRIs, ids the source itself prefixes), where a namespace would only be noise. It is stored as the empty tag `""`, the neutral element, which is what survives serialization.
@@ -405,24 +445,32 @@ A cluster names its **members** — the classes it collapses, per side: `VertexE
 A member is keyed by its own name on its side or by its canonical name — `Firm` or `Company` when a map renames one to the other — as in the equivalence itself. The list form needs no member names because column presence selects; the dict form is the general one, and `SharedDerivation` spells it once for the common case — one call, the members sharing it, and per member only what varies:
 
 ```python
-AlignmentAttribute(name="match_key", sources={
-    "r_view": SharedDerivation(                                  # the member decides
-        spec=DerivationSpec(input=["secondary_key"], foo="affix_gated_key"),
-        members={"Company": {"prefix": "abc_"}, "Shop": {"prefix": "def_"}},
-    ),
-    "r_b": DerivationSpec(input=["shared_raw"], foo="affix_gated_key",
-                          params={"prefix": "abc_"}),                # one member: no key
-})
+AlignmentAttribute(
+    name="match_key",
+    sources={
+        "r_view": SharedDerivation(  # the member decides
+            spec=DerivationSpec(input=["secondary_key"], foo="affix_gated_key"),
+            members={"Company": {"prefix": "abc_"}, "Shop": {"prefix": "def_"}},
+        ),
+        "r_b": DerivationSpec(
+            input=["shared_raw"], foo="affix_gated_key", params={"prefix": "abc_"}
+        ),  # one member: no key
+    },
+)
 # twenty members, nothing varying:  SharedDerivation(spec=..., members=[...20 names...])
 # a different column or function per member: write the {member: spec} dict
-local_key = LocalKeySpec(sources={
-    "r_view": {"Company": LocalKeySource(field="firm_id", tag="firm"),
-               "Shop":    LocalKeySource(field="shop_id", tag="shop")},
-    "r_b":    LocalKeySource(field="org_id", tag="b"),
-})
+local_key = LocalKeySpec(
+    sources={
+        "r_view": {
+            "Company": LocalKeySource(field="firm_id", tag="firm"),
+            "Shop": LocalKeySource(field="shop_id", tag="shop"),
+        },
+        "r_b": LocalKeySource(field="org_id", tag="b"),
+    }
+)
 ```
 
-**The gate is derived, never written.** The merge has already rewritten the router's `type_map` values to the canonical name, so the union cannot say which key produced which member — but the pre-merge *sides* can, and `compose_manifests` hands them to the alignment. For each `(resource, member)` the lowering reads how the side produces it: a plain `vertex` step needs no gate (the level *is* the member); a router yields a `when` guard on its discriminator, exact match, listing the keys that mapped to the member:
+**The gate is derived, never written.** The merge has already rewritten the router's `type_map` values to the canonical name, so the union cannot say which key produced which member — but the pre-merge *sides* can, and `merge_manifests` hands them to the alignment. For each `(resource, member)` the lowering reads how the side produces it: a plain `vertex` step needs no gate (the level *is* the member); a router yields a `when` guard on its discriminator, exact match, listing the keys that mapped to the member:
 
 ```yaml
 - transform:
@@ -430,11 +478,11 @@ local_key = LocalKeySpec(sources={
     call: {foo: affix_gated_key, input: [secondary_key], output: [match_key], params: {prefix: def_}}
 ```
 
-A router with no entry for the member — no `type_map` at all, or a table that does not name it — routes the raw discriminator value as the class name, so the guard is the member's **own name**: that is the value which reaches it. When a level must be chosen, a step naming the class explicitly outranks such pass-through; a resource whose routers pass through at several levels picks one with `at`. Renames keep a pass-through router routing: a canonical map or a compose that renames a class writes `{old: new}` into every router's `type_map` on that side, so a raw value that used to name the class still lands on it.
+A router with no entry for the member — no `type_map` at all, or a table that does not name it — routes the raw discriminator value as the class name, so the guard is the member's **own name**: that is the value which reaches it. When a level must be chosen, a step naming the class explicitly outranks such pass-through; a resource whose routers pass through at several levels picks one with `at`. Renames keep a pass-through router routing: a canonical map or a merge that renames a class writes `{old: new}` into every router's `type_map` on that side, so a raw value that used to name the class still lands on it.
 
 A guarded step that does not fire **writes nothing**, so each member's step is the single writer of the attribute for its own documents and nothing clobbers — no scratch fields, no coalesce. Documents of other members never run it: a `person` row through the same router is not "derived and dropped", it is never derived. This is also why the gate cannot be a function returning `None`: behind a router a later `None` overwrites an earlier real value.
 
-Rules the validator adds for member keys: the resource must produce the member on its side (the error lists what it does produce); the member must belong to the aligned cluster on that side; all members a resource keys must resolve to one pipeline level; and member-keyed sources cannot be lowered without the sides (call through `compose_manifests`, or pass `sides=` to `alignment_to_ops`). A resource that routes several members onto the class but derives with a single un-keyed spec is warned about — right when the members share a column and a marker, wrong otherwise — and so is a member dict that covers only some of the members the resource produces. `LocalKeySource.gate` / `gate_prefix` remain for an alignment applied outside a compose, where no side exists to derive the gate from; a member-keyed source may not set them.
+Rules the validator adds for member keys: the resource must produce the member on its side (the error lists what it does produce); the member must belong to the aligned cluster on that side; all members a resource keys must resolve to one pipeline level; and member-keyed sources cannot be lowered without the sides (call through `merge_manifests`, or pass `sides=` to `alignment_to_ops`). A resource that routes several members onto the class but derives with a single un-keyed spec is warned about — right when the members share a column and a marker, wrong otherwise — and so is a member dict that covers only some of the members the resource produces. `LocalKeySource.gate` / `gate_prefix` remain for an alignment applied outside a merge, where no side exists to derive the gate from; a member-keyed source may not set them.
 
 ### Routed sources
 
@@ -451,7 +499,7 @@ Worked end-to-end in [Example 19](../../examples/example-19.md), and for a route
 ```python
 from graflo.architecture.evolution import (
     AddInverseEdgesOp,
-    ComposeManifestsOp,
+    MergeManifestsOp,
     EdgeSelector,
     MergeEdgesOp,
     MergeVerticesOp,
@@ -461,7 +509,7 @@ from graflo.architecture.evolution import (
     SanitizeOp,
     apply_evolution,
     apply_sanitize,
-    compose_manifests,
+    merge_manifests,
 )
 from graflo.migrate.io import manifest_hash
 from graflo.onto import DBType
@@ -490,7 +538,7 @@ apply_sanitize(manifest, SanitizeOp(db_flavor=DBType.TIGERGRAPH))
 `CanonicalizeOp` applies a whole vocabulary map — classes, per-class attributes, relations — in one step; see [Canonical maps](#canonical-maps).
 
 - **`bump_version`**: when `True` or `"minor"` (default), increments the numeric `MAJOR.MINOR.PATCH` prefix of `schema.metadata.version` if present (prerelease suffix preserved). Pass `bump_version=False` to leave the version string unchanged.
-- **Imports**: `graflo.architecture.evolution` re-exports the ops and apply helpers; lower-level functions such as `apply_remove_vertices`, `apply_merge_vertices`, `apply_rename_relations`, `apply_add_inverse_edges`, `apply_rename_vertex_properties`, and `apply_sanitize` mutate a manifest in place (used mainly internally and by `Sanitizer`). Cross-manifest compose uses `compose_manifests` (not unary `apply_evolution`).
+- **Imports**: `graflo.architecture.evolution` re-exports the ops and apply helpers; lower-level functions such as `apply_remove_vertices`, `apply_merge_vertices`, `apply_rename_relations`, `apply_add_inverse_edges`, `apply_rename_vertex_properties`, and `apply_sanitize` mutate a manifest in place (used mainly internally and by `Sanitizer`). Cross-manifest merge uses `merge_manifests` (not unary `apply_evolution`).
 
 ## Tutorial: relation and property evolution
 
@@ -787,5 +835,5 @@ resolving conflicts, and replaying a recorded resolution are all covered in
 - Bonifati — *Versatile Property Graph Transformations*, PVLDB 18(12), 2025. Declarative
   graph-to-graph transformations; the comparator for projection rather than for evolution.
 - Bernstein — *Applying Model Management to Classical Meta Data Problems*, CIDR 2003. The
-  operator vocabulary — Match, Merge, Diff, Compose, ModelGen — that `diff_manifests`,
-  `merge_three_way`, `compose_manifests` and `resolve_db_aware()` instantiate for manifests.
+  operator vocabulary — Match, Merge, Diff, Merge, ModelGen — that `diff_manifests`,
+  `merge_three_way`, `merge_manifests` and `resolve_db_aware()` instantiate for manifests.

@@ -116,7 +116,7 @@ def test_edges_are_ingested(ingested) -> None:
 
     Anchored by an identity *mapping* rather than a raw VID on purpose: author
     identity is composite (``id`` + ``full_name``), and Nebula addresses such a
-    vertex by a VID composed of both. Resolving the anchor by its first field
+    vertex by a VID merged of both. Resolving the anchor by its first field
     alone yields a VID that exists nowhere, and the traversal then returns
     empty rather than raising.
     """

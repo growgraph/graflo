@@ -6,9 +6,9 @@ union was only ever used as a type annotation: there was no way to load a
 transported or replayed. This module closes that gap.
 
 ``RevisionOp`` is ``ManifestOp`` minus
-:class:`~graflo.architecture.evolution.ops.ComposeManifestsOp`, which is binary
+:class:`~graflo.architecture.evolution.ops.MergeManifestsOp`, which is binary
 (two manifests in, one out) and is rejected by the unary dispatcher anyway. A
-revision applies to exactly one manifest, so composition is not a revision op.
+revision applies to exactly one manifest, so merge is not a revision op.
 """
 
 from __future__ import annotations
@@ -35,6 +35,7 @@ from .ops import (
     EnsureExtractedFieldsOp,
     ManifestOp,
     MergeEdgesOp,
+    MergeManifestsOp,
     MergeVerticesOp,
     ProjectManifestOp,
     RemoveEdgeIndexesOp,
@@ -63,7 +64,7 @@ from .ops import (
 )
 
 #: Every op that can appear in a revision: the full vocabulary except the
-#: binary ``compose_manifests``.
+#: binary ``merge_manifests``.
 RevisionOp = Annotated[
     RemoveVerticesOp
     | AddResourceTransformsOp
@@ -179,7 +180,7 @@ def ops_to_yaml_str(ops: list[Any]) -> str:
 
 def is_revision_op(op: ManifestOp) -> bool:
     """Whether *op* may appear in a revision (i.e. is not binary)."""
-    return type(op).__name__ != "ComposeManifestsOp"
+    return not isinstance(op, MergeManifestsOp)
 
 
 __all__ = [

@@ -4,7 +4,7 @@ This replaces the linear ``Revision`` chain. The old model was already "a git
 log, not an Alembic script" -- but it still spoke Alembic (``down_revision``,
 ``upgrade``/``downgrade``) and it could only be a *line*. A world model that can
 be merged needs a **DAG**: a commit has a list of parents, empty for a root, one
-for an ordinary edit, two or more for a merge or a compose.
+for an ordinary edit, two or more for a merge or a merge.
 
 What carries over unchanged is the property that made the chain worth having:
 each commit records the content hash before and after it, so replay is
@@ -50,11 +50,11 @@ COMMIT_ID_LENGTH = 12
 
 #: What produced a commit. ``root`` names a tree that nothing derived it from;
 #: ``edit`` is an ordinary change set; ``merge`` reconciles two descendants of a
-#: common ancestor; ``compose`` joins unrelated lineages by declared
+#: common ancestor; ``merge`` joins unrelated lineages by declared
 #: equivalence; ``revert`` undoes an earlier commit.
 CommitKind = str
 
-COMMIT_KINDS: frozenset[str] = frozenset({"root", "edit", "merge", "compose", "revert"})
+COMMIT_KINDS: frozenset[str] = frozenset({"root", "edit", "merge", "merge3", "revert"})
 
 _SLUG_STRIP = re.compile(r"[^a-z0-9]+")
 
@@ -90,7 +90,7 @@ class Commit(ConfigBaseModel):
         default_factory=list,
         description=(
             "Parent commit ids in position order: empty for a root, one for an "
-            "edit, two or more for a merge or compose. The first parent is the "
+            "edit, two or more for a merge or merge3. The first parent is the "
             "one this commit's ops are materialized against."
         ),
     )
@@ -113,7 +113,7 @@ class Commit(ConfigBaseModel):
         ..., description="Content hash of the manifest this commit produces."
     )
     kind: str = PydanticField(
-        default="edit", description="One of edit / merge / compose / revert."
+        default="edit", description="One of edit / merge / merge / revert."
     )
     label: str | None = PydanticField(
         default=None, description="Short human-readable name."
@@ -126,7 +126,7 @@ class Commit(ConfigBaseModel):
     )
     merge_recipe: MergeRecipeRef | None = PydanticField(
         default=None,
-        description="How a merge was resolved; present on merge/compose commits.",
+        description="How a merge was resolved; present on merge/merge commits.",
     )
     notes: str | None = None
 
@@ -165,7 +165,7 @@ class Commit(ConfigBaseModel):
     def is_multi_parent(self) -> bool:
         """Whether this commit joins two or more lineages.
 
-        True for both `merge` and `compose` kinds: joining unrelated lineages
+        True for both `merge` and `merge` kinds: joining unrelated lineages
         is as multi-parent as reconciling related ones. Not a test for
         `kind == "merge"` -- read `kind` for that.
         """
@@ -198,7 +198,7 @@ class MergeRecipeRef(ConfigBaseModel):
 
     hash: str = PydanticField(..., description="Content hash of the recipe.")
     kind: str = PydanticField(
-        default="merge3", description="Recipe flavour: merge3 or compose."
+        default="merge3", description="Recipe flavour: merge3 or merge."
     )
     payload: dict[str, Any] = PydanticField(
         default_factory=dict,
@@ -294,11 +294,11 @@ def build_commit(
         base: The first parent's manifest state.
         ops: The change set to apply.
         parents: Parent commit ids, first parent first.
-        kind: One of ``edit``, ``merge``, ``compose``, ``revert``.
+        kind: One of ``edit``, ``merge``, ``merge``, ``revert``.
         label: Short human-readable name.
         created_at: ISO-8601 timestamp.
         notes: Free-form annotation.
-        merge_recipe: Recorded resolution, on merge and compose commits.
+        merge_recipe: Recorded resolution, on merge and merge3 commits.
 
     Raises:
         CommitError: The change set is empty, is a no-op, or *kind* is unknown.
@@ -327,7 +327,7 @@ def build_commit(
         parents=parent_ids,
         # Round-tripped through the codec on the way in, so a commit can only
         # ever hold ops that survive serialization -- the property replay
-        # depends on. Also rejects the binary compose op, which no single
+        # depends on. Also rejects the binary merge op, which no single
         # manifest transition can express.
         ops=ops_from_dicts(ops_to_dicts(list(ops))),
         tree_before=before,
@@ -341,12 +341,12 @@ def build_commit(
     )
 
 
-def build_merge_commit(
+def build_multi_parent_commit(
     first_parent: GraphManifest,
     merged: GraphManifest,
     *,
     parents: list[str],
-    kind: str = "merge",
+    kind: str = "merge3",
     label: str | None = None,
     created_at: str | None = None,
     notes: str | None = None,
@@ -366,7 +366,7 @@ def build_merge_commit(
         first_parent: Manifest state of the parent the ops are diffed from.
         merged: The merge result.
         parents: All parent commit ids, first parent first (at least two).
-        kind: ``merge`` or ``compose``.
+        kind: ``merge`` or ``merge``.
         label: Short human-readable name.
         created_at: ISO-8601 timestamp.
         notes: Free-form annotation.
@@ -487,7 +487,7 @@ __all__ = [
     "CommitKind",
     "MergeRecipeRef",
     "build_commit",
-    "build_merge_commit",
+    "build_multi_parent_commit",
     "build_revert_commit",
     "compute_commit_id",
 ]

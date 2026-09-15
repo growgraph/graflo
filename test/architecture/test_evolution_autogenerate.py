@@ -312,7 +312,7 @@ def test_a_profile_difference_outside_the_index_ops_is_expressed() -> None:
 
     Storage names are part of the content hash, so while nothing expressed them
     a change set that moved one could not replay -- and a three-way merge or a
-    compose commit carrying one could not be recorded at all.
+    merge commit carrying one could not be recorded at all.
     """
     base = _manifest([PARTY], db_profile={"vertex_storage_names": {"party": "p"}})
     target = _manifest([PARTY], db_profile={"vertex_storage_names": {"party": "q"}})
@@ -477,7 +477,7 @@ class TestVerification:
 
 class TestSerializableOutput:
     def test_a_derived_change_set_round_trips_through_yaml(self) -> None:
-        """Autogenerate and the codec have to compose, or revisions cannot be stored."""
+        """Autogenerate and the codec have to merge, or revisions cannot be stored."""
         base = _manifest([PARTY])
         target = _manifest(
             [

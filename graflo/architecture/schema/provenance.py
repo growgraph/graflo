@@ -48,7 +48,7 @@ class Provenance(ConfigBaseModel):
         default_factory=list,
         description=(
             "Parent commit ids in position order: empty for a root, one for an "
-            "ordinary edit, two or more for a merge or compose. Position is "
+            "ordinary edit, two or more for a merge or merge3. Position is "
             "significant -- a merge's ops are materialized against the first "
             "parent, which is what keeps verified replay working unchanged."
         ),
@@ -70,7 +70,7 @@ class Provenance(ConfigBaseModel):
     def is_multi_parent(self) -> bool:
         """Whether this state was produced by combining two or more lineages.
 
-        True after a merge and after a compose alike -- both record two or more
+        True after a merge and after a merge3 alike -- both record two or more
         parents. The commit's `kind` is what distinguishes them.
         """
         return len(self.parents) > 1

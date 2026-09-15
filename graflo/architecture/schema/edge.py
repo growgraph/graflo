@@ -64,7 +64,7 @@ from graflo.architecture.schema.vertex import (
     Field,
     VertexConfig,
     VertexName,
-    merge_field_lists,
+    union_field_lists,
 )
 
 # Default relation name for TigerGraph edges when relation is not specified
@@ -203,7 +203,7 @@ class Edge(ConfigBaseModel):
         raise ValueError("edge identities must be list[list[str]]")
 
     @model_validator(mode="after")
-    def merge_duplicate_properties(self) -> Edge:
+    def fold_duplicate_properties(self) -> Edge:
         """Fold properties declared twice, refusing an incompatible redeclaration.
 
         ``_normalize_direct_item`` maps each authored entry independently, so
@@ -216,7 +216,7 @@ class Edge(ConfigBaseModel):
         object.__setattr__(
             self,
             "properties",
-            merge_field_lists(
+            union_field_lists(
                 self.properties,
                 owner=f"edge ({self.source!r}, {self.target!r}, {self.relation!r})",
             ),

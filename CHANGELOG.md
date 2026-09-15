@@ -6,6 +6,78 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+
+### Changed
+
+- **BREAKING — the binary manifest operation is `merge`; the three-way merge is
+  `merge3`.** The operation GraFlo called *compose* is what the
+  model-management literature its design cites (Rondo; Pottinger–Bernstein)
+  calls **Merge**, and what GraFlo called `merge_canonical_maps` is that
+  literature's **Compose**. The two were exactly inverted. They are swapped:
+    - `ComposeManifestsOp` → `MergeManifestsOp`, and the serialized
+      discriminator `op: compose_manifests` → `op: merge_manifests`.
+    - `compose_manifests` → `merge_manifests`; `evolution/compose.py` →
+      `evolution/merge.py`; `preview_compose` → `preview_merge`;
+      `Compose{Identity,NameConflict,Incomplete,CanonicalConflict}Error` →
+      `Merge*Error`; `ComposePreview` / `ComposeFinding` / `ComposeOutcome` →
+      `MergePreview` / `MergeFinding` / `MergeOutcome`.
+    - `merge_canonical_maps` → `compose_canonical_maps`, and
+      `_merge_name_maps` → `_compose_name_maps` — the other half of the
+      inversion. Renaming only one of the two would have left *two* things
+      called merge and the word `compose` unused.
+    - CLI: `graflo compose` → `graflo merge`, and the three-way `graflo merge`
+      → `graflo merge3`.
+    - Commit kinds: `compose` → `merge`, and the three-way `merge` → `merge3`.
+      `COMMIT_KINDS` is now `{root, edit, merge, merge3, revert}`.
+      `MergeRecipe.kind` `"compose"` → `"merge"`; the `"merge3"` recipe flavour
+      already spelled itself that way and is unchanged.
+    - Commit ids do **not** change: `compute_commit_id` hashes only the ops and
+      the parents. Only a merge recipe's `content_hash()` moves, because its
+      payload embeds the op document and therefore the discriminator.
+- **No alias for the old discriminator.** A discriminated union resolves its tag
+  before any validator runs, so `op: compose_manifests` cannot be intercepted
+  and re-tagged — it fails with *"Input tag … does not match any of the expected
+  tags"*. Op documents must have the `op:` line rewritten. This is a departure
+  from how `fuse_right` and `allow_row_fusion` were handled, and it is forced by
+  the discriminator rather than chosen.
+- **The three-way keeps its own names except where they collided** with the
+  model operation. `merge_three_way`, `find_merge_base`, `MergeResult`,
+  `MergeConflict`, `MergeError`, `re_merge` and `merge3.py` are unchanged.
+  Renamed: `MergePreview` → `Merge3Preview`, `build_merge_preview` →
+  `build_merge3_preview`, `plot/merge.py` → `plot/merge3.py` (with
+  `plot_merge_preview` → `plot_merge3_preview` and `build_merge_graph` →
+  `build_merge3_graph`), and the generic `build_merge_commit` →
+  `build_multi_parent_commit`. `docs/concepts/schema/manifest_evolution.md`
+  states the rule for reading a bare `merge`.
+- **Serialized preview values.** `MergeOutcome.status` `"composed"` →
+  `"merged"`; `MergeFinding.source` `"compose"` → `"merge"`; the `NodeKind`
+  member `"composed"` → `"merged"`, so preview node ids read `merged:Company`
+  rather than `composed:Company`.
+- **Internal vocabulary, where the word was wrong rather than inverted:**
+  `merge_field_lists` → `union_field_lists`, `_merged_registry` →
+  `_union_transforms`, `merge_default_property_values` →
+  `union_default_property_values`, `_merge_secondary_identities` →
+  `_union_secondary_identities`, `Edge.merge_duplicate_properties` →
+  `fold_duplicate_properties`, and `SchemaDiffer.validate_union_safety` →
+  `SchemaDiffer.conflicts`. Each of these unions or folds; none of them merges.
+- **`RelationType.COMPOSES` and `POST /registry/manifests/compose` are
+  unchanged.** They are artifact containment, not the model operation — and
+  after the swap they are the only remaining `compose` in the codebase besides
+  `compose_canonical_maps`.
+
+### Fixed
+
+- **`is_revision_op` compared a class name as a string.** It is an `isinstance`
+  check now. The string form was one word away from `MergeVerticesOp` and
+  `MergeEdgesOp`, which *are* revision ops, so a missed edit would have reported
+  the wrong answer rather than failing.
+- **`_KINDS_BY_TYPE` was keyed on exception-class *name strings*,** and both
+  readers fall back rather than raising, so a stale key would have silently
+  misclassified every refusal it covers. It is keyed on the classes themselves;
+  the name index that the serialized `error_type` is looked up in is derived
+  from it, so the two cannot drift.
+
 ## [1.13.2]
 
 ### Added

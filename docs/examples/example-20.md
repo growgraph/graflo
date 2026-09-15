@@ -32,13 +32,13 @@ deployment of it.
 ```
 
 The shared commit matters: without a common ancestor there is nothing to merge
-*against*, and combining two unrelated lineages is compose, not merge.
+*against*, and combining two unrelated lineages is merge, not merge.
 
 ## Why each branch changes two things
 
 Each branch re-keys the vertex **and** adds a property the other does not
 contest. That is not padding. If the identity were the only difference, taking
-one side would reproduce that side exactly, and `build_merge_commit` would
+one side would reproduce that side exactly, and `build_multi_parent_commit` would
 rightly refuse — a commit that moves nothing is a lie about history. With both,
 the merge is a real merge: one side's decision wins the contested slot, and
 *both* sides' uncontested work survives.
@@ -150,5 +150,5 @@ instead of it.
 - [Version control](../concepts/schema/versioning.md) — content addressing, the commit DAG, slots, tracked merges
 - [Manifest evolution](../concepts/schema/manifest_evolution.md) — the op vocabulary a commit records
 - [Vertex identity](../concepts/schema/vertex_identity.md) — what re-keying a vertex actually changes
-- [Example 19](example-19.md) — composing two *unrelated* manifests by declared equivalence, which is the operation to reach for when there is no common ancestor
+- [Example 19](example-19.md) — merging two *unrelated* manifests by declared equivalence, which is the operation to reach for when there is no common ancestor
 - [Example 17](example-17.md) — identity funnels, for when the right answer is "whichever key this record actually carries" rather than one side winning

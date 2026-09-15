@@ -33,7 +33,7 @@ from graflo.architecture.evolution.commit import (
     Commit,
     CommitError,
     build_commit,
-    build_merge_commit,
+    build_multi_parent_commit,
     build_revert_commit,
     compute_commit_id,
 )
@@ -117,7 +117,7 @@ def _write(manifest: GraphManifest, path: Path | None) -> None:
     default=False,
     help=(
         "Start a new lineage instead of extending the head. A store can hold "
-        "several unrelated lineages, which is what compose later joins."
+        "several unrelated lineages, which is what merge later joins."
     ),
 )
 @click.option("--dry", is_flag=True, default=False, help="Print without storing.")
@@ -308,7 +308,7 @@ def checkout_cmd(
 # ── merge ───────────────────────────────────────────────────────────────────
 
 
-@click.command("merge")
+@click.command("merge3")
 @click.argument("left")
 @click.argument("right")
 @click.option(
@@ -345,7 +345,7 @@ def checkout_cmd(
     default=None,
     help="Draw the commit DAG here, with the merge base marked.",
 )
-def merge_cmd(
+def merge3_cmd(
     left: str,
     right: str,
     base_path: Path,
@@ -368,8 +368,8 @@ def merge_cmd(
     if merge_base_id is None:
         raise click.ClickException(
             f"{left_commit.short()} and {right_commit.short()} share no ancestor. "
-            "Unrelated lineages are joined by compose (declared equivalence), "
-            "not by merge."
+            "Unrelated lineages are joined by `graflo merge` (declared "
+            "equivalence), not by a three-way merge3."
         )
 
     ancestor = checkout(base_manifest, history, merge_base_id)
@@ -435,7 +435,7 @@ def merge_cmd(
     from graflo.architecture.evolution.commit import MergeRecipeRef
 
     try:
-        entry = build_merge_commit(
+        entry = build_multi_parent_commit(
             left_state,
             merged,
             parents=[left_commit.id, right_commit.id],
@@ -457,14 +457,14 @@ def merge_cmd(
 
 def _plot_slots(result: Any, path: Path) -> None:
     """Draw the slot tree of a merge result, or say why it could not."""
-    from graflo.architecture.evolution.preview import build_merge_preview
+    from graflo.architecture.evolution.preview import build_merge3_preview
 
     try:
-        from graflo.plot.merge import plot_merge_preview
+        from graflo.plot.merge3 import plot_merge3_preview
     except ImportError as exc:  # pragma: no cover - depends on the environment
         raise click.ClickException(f"--plot: {exc}") from exc
     try:
-        written = plot_merge_preview(build_merge_preview(result), path)
+        written = plot_merge3_preview(build_merge3_preview(result), path)
     except (RuntimeError, ValueError) as exc:
         raise click.ClickException(f"--plot: {exc}") from exc
     click.echo(f"plot: {written}")
@@ -475,7 +475,7 @@ def _plot_history(
 ) -> None:
     """Draw the commit DAG, or say why it could not."""
     try:
-        from graflo.plot.merge import plot_history as draw_history
+        from graflo.plot.merge3 import plot_history as draw_history
     except ImportError as exc:  # pragma: no cover - depends on the environment
         raise click.ClickException(f"--plot-history: {exc}") from exc
     try:
@@ -638,7 +638,7 @@ def commit_group() -> dict[str, click.Command]:
         "log": log_cmd,
         "verify": verify_cmd,
         "checkout": checkout_cmd,
-        "merge": merge_cmd,
+        "merge3": merge3_cmd,
         "revert": revert_cmd,
         "stamp": stamp_cmd,
         "rehash": rehash_cmd,

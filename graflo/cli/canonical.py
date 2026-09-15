@@ -1,15 +1,15 @@
 """``graflo canonical-check`` -- a canonical map against the manifest it maps.
 
-A canonical map is authored against one schema long before it is composed
+A canonical map is authored against one schema long before it is merged
 against another, and until now the only thing that would check it was a full
-``graflo compose``: two manifests, an op, and a refusal naming one entry at a
+``graflo merge``: two manifests, an op, and a refusal naming one entry at a
 time. A map of hundreds of entries is not authored that way.
 
 This verb is that check on its own. With one manifest it classifies every entry
-directly; with both it runs the compose *preview*, which puts each declaration
-through the rules compose uses without composing, so one bad entry does not
+directly; with both it runs the merge *preview*, which puts each declaration
+through the rules merge uses without merging, so one bad entry does not
 hide the rest. ``--trim`` writes the map narrowed to what the manifest actually
-declares -- an authoring step with a diff, rather than something compose does
+declares -- an authoring step with a diff, rather than something merge does
 silently at the far end of a pipeline.
 """
 
@@ -29,8 +29,8 @@ from graflo.architecture.evolution.canonical import (
     dangling_entries,
     trim_canonical_map,
 )
-from graflo.architecture.evolution.ops import ComposeManifestsOp
-from graflo.architecture.evolution.preview import preview_compose
+from graflo.architecture.evolution.ops import MergeManifestsOp
+from graflo.architecture.evolution.preview import preview_merge
 from graflo.cli.io import load_manifest, load_mapping
 
 #: The map does not fit the manifest. Distinct from 2 (bad invocation, file
@@ -80,11 +80,11 @@ def _report_entries(entries: tuple[DanglingEntry, ...], *, as_json: bool) -> Non
 
 
 def _report_preview(left: GraphManifest, right: GraphManifest, cm, scope, as_json):
-    """Both manifests given: the full declaration report, not composed."""
-    preview = preview_compose(
+    """Both manifests given: the full declaration report, not merged."""
+    preview = preview_merge(
         left,
         right,
-        ComposeManifestsOp(canonical_maps={scope: cm}),
+        MergeManifestsOp(canonical_maps={scope: cm}),
         attempt=False,
     )
     if as_json:
@@ -120,7 +120,7 @@ def _report_preview(left: GraphManifest, right: GraphManifest, cm, scope, as_jso
     type=click.Choice(_SCOPES),
     default="left",
     show_default=True,
-    help="Which side the map is scoped to, as on a compose op.",
+    help="Which side the map is scoped to, as on a merge op.",
 )
 @click.option(
     "--trim",

@@ -1,4 +1,4 @@
-"""Identity alignment: compose an equivalence identity from fundamental ops.
+"""Identity alignment: merge an equivalence identity from fundamental ops.
 
 An :class:`IdentityAlignment` states, for one canonical class, which canonical
 attributes carry cross-source entity equivalence and how each resource derives
@@ -83,7 +83,7 @@ from .ops import (
 )
 
 #: Anything whose ``properties`` say which attribute names exist only
-#: post-rename: a declared vocabulary or the composite relabel compose applies.
+#: post-rename: a declared vocabulary or the composite relabel merge applies.
 VocabularyMap = CanonicalMap | CanonicalizeOp
 
 __all__ = [
@@ -107,7 +107,7 @@ logger = logging.getLogger(__name__)
 AlignmentRow = AlignmentAttribute
 
 #: Pre-merge side manifests keyed by side (``"left"`` / ``"right"``), as
-#: ``compose_manifests`` holds them: after its resource rename policy, before
+#: ``merge_manifests`` holds them: after its resource rename policy, before
 #: it relabels and merges the clusters.
 SideManifests = Mapping[str, GraphManifest]
 
@@ -203,7 +203,7 @@ def _member_keyed_resources(alignment: IdentityAlignment) -> dict[str, set[str]]
 def _side_of(resource: str, sides: SideManifests) -> tuple[str, GraphManifest]:
     """The side whose ingestion model names *resource*.
 
-    Unique once compose has applied its resource rename policy; a resource
+    Unique once merge has applied its resource rename policy; a resource
     still present on both sides is one it has not disambiguated.
     """
     hits = [
@@ -222,7 +222,7 @@ def _side_of(resource: str, sides: SideManifests) -> tuple[str, GraphManifest]:
         raise _conflict(
             "resource on both sides",
             f"resource {resource!r} is defined on {[s for s, _ in hits]}",
-            "Resolve the collision with the compose op's resource policy first.",
+            "Resolve the collision with the merge op's resource policy first.",
         )
     return hits[0]
 
@@ -259,7 +259,7 @@ def _resolve_member_production(
             "resource does not produce the member",
             f"resource {resource!r} ({side}) has no pipeline step producing {member!r}",
             "A member key names a class the resource produces on its side — "
-            "through compose, by its own name or its canonical one: "
+            "through merge, by its own name or its canonical one: "
             f"{sorted(_produced_vertices(pipeline, known_vertices=known))}. "
             "A vertex_router routes any class the side's schema declares.",
         )
@@ -339,7 +339,7 @@ def rekey_members(
 ) -> IdentityAlignment:
     """Name every member key as its side names the member.
 
-    *resolve* maps ``(side, key)`` to the member it names — ``compose_manifests``
+    *resolve* maps ``(side, key)`` to the member it names — ``merge_manifests``
     passes the aligned cluster's resolution, so a member may be keyed by its
     own name or its canonical one. Unresolved keys pass through for the
     validator to report. Two keys naming one member under one resource are
@@ -414,7 +414,7 @@ def _require_sides(
             "member-keyed sources without sides",
             "sources keyed by member class need the pre-merge side manifests "
             "to resolve how each resource produces the member",
-            "compose_manifests supplies them; when calling directly, pass "
+            "merge_manifests supplies them; when calling directly, pass "
             "sides={'left': ..., 'right': ...}.",
         )
     return sides
@@ -613,10 +613,10 @@ def validate_alignment(
 ) -> None:
     """Fail loudly when *alignment* contradicts *manifest* or the canonical maps.
 
-    *manifest* is the composed union the alignment ops will be applied to.
+    *manifest* is the merged union the alignment ops will be applied to.
     Pass the maps used to canonicalize the sides — declared
     :class:`CanonicalMap`\\ s or the composite
-    :class:`~graflo.architecture.evolution.ops.CanonicalizeOp` compose applied — to catch
+    :class:`~graflo.architecture.evolution.ops.CanonicalizeOp` merge applied — to catch
     derivation inputs written in canonical vocabulary: renamed documents still
     carry their raw field names, so a rename *target* used as a derivation
     input reads an absent field and silently derives nothing.
@@ -915,13 +915,13 @@ def alignment_to_ops(
     sides: SideManifests | None = None,
     cluster_members: ClusterMembers | None = None,
 ) -> list[ManifestOp]:
-    """Compose the alignment into an ordered list of fundamental ops.
+    """Merge the alignment into an ordered list of fundamental ops.
 
-    Apply the result to the composed union with
+    Apply the result to the merged union with
     :func:`~graflo.architecture.evolution.apply.apply_evolution`. When
     *manifest* is given, :func:`validate_alignment` runs first. Member-keyed
     sources need *sides* (the pre-merge manifests) to resolve how each
-    resource produces each member; ``compose_manifests`` passes them.
+    resource produces each member; ``merge_manifests`` passes them.
     """
     if manifest is not None:
         validate_alignment(
@@ -1009,7 +1009,7 @@ def alignment_to_ops(
             replacements={
                 alignment.vertex: IdentityReplacement(
                     to=FunnelIdentityTarget(funnel=IdentityFunnel(branches=branches)),
-                    # The pre-alignment identity on a composed class is the
+                    # The pre-alignment identity on a merged class is the
                     # merged union of the side keys — a field-set no record
                     # carries. Demoting it would index nothing; the per-side
                     # keys are demoted explicitly below instead.

@@ -17,8 +17,8 @@ import click
 from graflo.cli.canonical import canonical_check as canonical_check_cmd
 from graflo.cli.check import check as check_cmd
 from graflo.cli.commit import commit_group
-from graflo.cli.compose import compose as compose_cmd
 from graflo.cli.lift import lift as lift_cmd
+from graflo.cli.merge import merge as merge_cmd
 
 
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
@@ -37,12 +37,12 @@ for _name, _command in commit_group().items():
 # profile is an option, so a new profile grows no new command.
 graflo.add_command(check_cmd, name="check")
 
-# Binary compose of two manifests. Mounted here rather than in
+# Binary merge of two manifests. Mounted here rather than in
 # `_mount_existing`, whose defensive try/except exists for verbs behind
 # optional extras -- this one has no extra to be missing.
-graflo.add_command(compose_cmd, name="compose")
+graflo.add_command(merge_cmd, name="merge")
 
-# A canonical map against the manifest it maps, without composing. Compose is
+# A canonical map against the manifest it maps, without merging. Merge is
 # the only thing that checked a map until now, which makes authoring one a loop
 # through a refusal that reports a single entry.
 graflo.add_command(canonical_check_cmd, name="canonical-check")

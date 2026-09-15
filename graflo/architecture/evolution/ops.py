@@ -225,8 +225,8 @@ class CanonicalMap(ConfigBaseModel):
     asking in which order they were written.
 
     Used on its own through :func:`~graflo.architecture.evolution.canonical.canonical_map_to_ops`,
-    and on :attr:`ComposeManifestsOp.canonical_maps` where it names the
-    composed classes and is checked against the declared equivalences.
+    and on :attr:`MergeManifestsOp.canonical_maps` where it names the
+    merged classes and is checked against the declared equivalences.
     """
 
     vertices: dict[str, str] = PydanticField(
@@ -270,7 +270,7 @@ class CanonicalMap(ConfigBaseModel):
         if not self.allow_merges:
             # Identity entries (source == target) are excluded: a lowered
             # cluster map deliberately carries one for every member, including
-            # the composed name itself, to declare it a member of its own group
+            # the merged name itself, to declare it a member of its own group
             # -- that self entry must not read as a collision here. The op the
             # map lowers to counts it, which is where the merge is acknowledged.
             validate_rename_map_is_injective(
@@ -338,7 +338,7 @@ class CanonicalizeOp(ConfigBaseModel):
     This is the single lowering of a
     :class:`~graflo.architecture.evolution.canonical.CanonicalMap`, and the
     per-side step of
-    :func:`~graflo.architecture.evolution.compose.compose_manifests`.
+    :func:`~graflo.architecture.evolution.merge.merge_manifests`.
     """
 
     op: Literal["canonicalize"] = "canonicalize"
@@ -762,7 +762,7 @@ class RenameResourcesOp(ConfigBaseModel):
         validate_rename_map_is_injective(
             self.renames,
             kind="rename_resources",
-            merge_hint="ComposeManifestsOp with explicit resource_renames",
+            merge_hint="MergeManifestsOp with explicit resource_renames",
         )
         return self
 
@@ -1093,7 +1093,7 @@ class EnsureExtractedFieldsOp(ConfigBaseModel):
 class AddVerticesOp(ConfigBaseModel):
     """Introduce new logical vertex types.
 
-    The unary counterpart to what :class:`ComposeManifestsOp` can only do binarily.
+    The unary counterpart to what :class:`MergeManifestsOp` can only do binarily.
     A replayable change set that cannot introduce a type could only ever describe a
     shrinking graph, which is why this exists alongside ``remove_vertices``.
     """
@@ -1402,7 +1402,7 @@ class SetBindingsOp(ConfigBaseModel):
 
     The bindings block had **no op at all**, so ``diff_manifests`` could only
     report it as inexpressible and a change set that touched it was not
-    replayable -- which is why a compose that unions two bindings registries
+    replayable -- which is why a merge that unions two bindings registries
     could not be recorded as a commit.
 
     Wholesale rather than granular (add/remove/rename a connector) because that
@@ -1662,7 +1662,7 @@ class ProjectManifestOp(ConfigBaseModel):
 class SanitizeOp(ConfigBaseModel):
     """Apply DB-flavor-specific name/field sanitization to a manifest.
 
-    Composes (in order):
+    Merges (in order):
 
     1. Storage-name sanitization on ``DatabaseProfile`` (vertex storage names + edge
        relation names) against the flavor's reserved-words set.
@@ -1784,7 +1784,7 @@ class AlignmentAttribute(ConfigBaseModel):
       side manifest how the resource produces each member and guards the step
       accordingly (``when`` on the router's discriminator, or nothing for a
       plain ``vertex`` step). A member is keyed by its own name on its
-      side or, through ``compose_manifests``, by its canonical name;
+      side or, through ``merge_manifests``, by its canonical name;
     * a :class:`SharedDerivation` — the same dict, spelled once: one call
       shared by the listed members, with only the parameters that differ.
 
@@ -2060,7 +2060,7 @@ class PropertyEquivalence(ConfigBaseModel):
     )
     into: str = PydanticField(
         ...,
-        description="Canonical property name on the composed vertex.",
+        description="Canonical property name on the merged vertex.",
     )
     identity: bool = PydanticField(
         default=False,
@@ -2088,14 +2088,14 @@ IdentityBranchSpec = str | list[str]
 
 
 class SideIdentity(ConfigBaseModel):
-    """Per-side/per-member shorthand for a cluster's composed identity funnel.
+    """Per-side/per-member shorthand for a cluster's merged identity funnel.
 
     Each entry is one funnel branch: a single canonical attribute, or an
     ordered composite (``list[str]``). ``left`` / ``right`` supply the default
     branch chain for every member declared on that side; ``members`` overrides
     it for specific member classes, keyed by the member's own or canonical
     name. Every chain is merged into one global branch order — see
-    :func:`~graflo.architecture.evolution.compose.side_identity_to_funnel` —
+    :func:`~graflo.architecture.evolution.merge.side_identity_to_funnel` —
     so declaring the same relative order on every member is required; two
     members disagreeing on the order of two branches raises.
     """
@@ -2129,7 +2129,7 @@ class VertexEquivalence(ConfigBaseModel):
     matches. ``left`` / ``right`` accept a bare class name (a 1-1 equivalence)
     or a list (an n-ary cluster): ``{Company, Shop} ~ {Org, Branch} ->
     Company``. Declaring more than one member on a side is a merge and
-    requires ``ComposeManifestsOp.allow_merges=True``.
+    requires ``MergeManifestsOp.allow_merges=True``.
 
     Properties with the same spelling on every member after alignment fuse by
     exact name without an entry in ``properties`` — list only renames and
@@ -2145,7 +2145,7 @@ class VertexEquivalence(ConfigBaseModel):
     into: str | None = PydanticField(
         default=None,
         description=(
-            "Composed vertex type name (may equal a member's name, or be a "
+            "Merged vertex type name (may equal a member's name, or be a "
             "new name). Omitted, the name comes from the canonical map that "
             "maps a member, or from the one spelling every member shares."
         ),
@@ -2157,12 +2157,12 @@ class VertexEquivalence(ConfigBaseModel):
     identity: list[str] | IdentityFunnel | SideIdentity | None = PydanticField(
         default=None,
         description=(
-            "Optional explicit composed identity, in canonical attribute names "
+            "Optional explicit merged identity, in canonical attribute names "
             "(after alignment): a natural key, an explicit funnel, or a "
             "`SideIdentity` shorthand lowered to one funnel. When unset, "
             "identity is carried through only if every member agrees after "
             "alignment (plus any `PropertyEquivalence.identity` flags); "
-            "disagreement with nothing declared raises `ComposeIdentityError`."
+            "disagreement with nothing declared raises `MergeIdentityError`."
         ),
     )
     retire: Literal["demote", "keep"] = PydanticField(
@@ -2242,7 +2242,7 @@ class VertexEquivalence(ConfigBaseModel):
                 raise ValueError(
                     "VertexEquivalence: `identity` is declared on the cluster; "
                     f"PropertyEquivalence.identity=True on {flagged} is "
-                    "redundant and conflicting — declare the composed key one "
+                    "redundant and conflicting — declare the merged key one "
                     "way, not both"
                 )
         return self
@@ -2253,7 +2253,7 @@ class RelationEquivalence(ConfigBaseModel):
 
     Shares the ``left`` / ``right`` n-ary shape of :class:`VertexEquivalence`:
     a bare name is a 1-1 equivalence, a list is a merge and requires
-    ``ComposeManifestsOp.allow_merges=True``.
+    ``MergeManifestsOp.allow_merges=True``.
     """
 
     left: str | list[str] = PydanticField(
@@ -2265,7 +2265,7 @@ class RelationEquivalence(ConfigBaseModel):
     into: str | None = PydanticField(
         default=None,
         description=(
-            "Composed relation name. Omitted, the name comes from the canonical "
+            "Merged relation name. Omitted, the name comes from the canonical "
             "map that maps a member, or from the one spelling every member shares."
         ),
     )
@@ -2304,27 +2304,27 @@ def _describe_cluster(declaration: VertexEquivalence | RelationEquivalence) -> s
     return f"{declaration.left_members} ~ {declaration.right_members}"
 
 
-class ComposeManifestsOp(ConfigBaseModel):
-    """Compose two full ``GraphManifest``s using explicit equivalence maps.
+class MergeManifestsOp(ConfigBaseModel):
+    """Merge two full ``GraphManifest``s using explicit equivalence maps.
 
-    Binary only — apply via :func:`~graflo.architecture.evolution.compose.compose_manifests`.
+    Binary only — apply via :func:`~graflo.architecture.evolution.merge.merge_manifests`.
     Unary :func:`~graflo.architecture.evolution.apply.apply_evolution` rejects this op.
 
     Empty ``vertex_equivalences`` / ``relation_equivalences`` yields a disjoint
     union (schema + resources + bindings), subject to ``name_conflict`` /
     ``resource_renames``.
 
-    ``identity_alignments`` are applied to the composed union before return
+    ``identity_alignments`` are applied to the merged union before return
     (canonical attributes → resource derivations → priority funnel → secondaries).
-    Each entry's ``vertex`` must be a declared cluster's composed name.
+    Each entry's ``vertex`` must be a declared cluster's merged name.
 
     Equivalences name members in the manifests' own vocabulary (a member may
     also be spelled by its canonical name when ``canonical_maps`` establishes
-    it); a cluster's composed name is ``into``, else the canonical name its
+    it); a cluster's merged name is ``into``, else the canonical name its
     members map to, else the one spelling they share.
     """
 
-    op: Literal["compose_manifests"] = "compose_manifests"
+    op: Literal["merge_manifests"] = "merge_manifests"
     vertex_equivalences: list[VertexEquivalence] = PydanticField(
         default_factory=list,
         validation_alias=AliasChoices("vertex_equivalences", "vertices"),
@@ -2352,7 +2352,7 @@ class ComposeManifestsOp(ConfigBaseModel):
             "right side (vertices, relations, resources, connectors). Vertex "
             "and relation names collide both exactly and when they key alike "
             "under ``canonical_key`` -- ``OrderLine`` and ``order_line`` are "
-            "one concept spelled two ways, and composing them into two "
+            "one concept spelled two ways, and merging them into two "
             "unrelated types splits the data silently. ``error`` refuses and "
             "names the equivalences to declare; ``prefix_right`` keeps them "
             "apart under ``r_`` names; ``union_right`` unions by name -- every "
@@ -2375,7 +2375,7 @@ class ComposeManifestsOp(ConfigBaseModel):
         The policy unions two type *names*; ``fuse`` everywhere else in the
         contract means two *records* becoming one node
         (``allow_observation_fusion``, identity alignment), so the value was
-        renamed. Compose is excluded from the revision vocabulary, so no
+        renamed. Merge is excluded from the revision vocabulary, so no
         stored change set carries the old spelling -- only authored documents,
         which keep working.
         """
@@ -2395,7 +2395,7 @@ class ComposeManifestsOp(ConfigBaseModel):
         description=(
             "Accept a merge whose sources are connected by an edge that "
             "becomes a self-relation once both endpoints land on the same "
-            "composed vertex. Forwarded to the per-side ``MergeVerticesOp``."
+            "merged vertex. Forwarded to the per-side ``MergeVerticesOp``."
         ),
     )
     allow_observation_fusion: bool = PydanticField(
@@ -2414,14 +2414,14 @@ class ComposeManifestsOp(ConfigBaseModel):
             "Accept canonical map entries that name nothing on the side they "
             "are scoped to, dropping and logging each one instead of refusing "
             "with the list. Set it on a map itself to say the map is broader "
-            "than this compose; set it here to say so for both maps at once."
+            "than this merge; set it here to say so for both maps at once."
         ),
     )
     identity_alignments: list[IdentityAlignment] = PydanticField(
         default_factory=list,
         description=(
             "Optional identity alignments applied after the schema/resource "
-            "union, one per composed class."
+            "union, one per merged class."
         ),
     )
     canonical_maps: dict[Literal["left", "right", "both"], CanonicalMap] = (
@@ -2430,7 +2430,7 @@ class ComposeManifestsOp(ConfigBaseModel):
             description=(
                 "Canonical vocabulary per side. ``left`` / ``right`` apply to "
                 "that manifest's own names; ``both`` applies to either side and "
-                "to composed names. Compose applies each side's map together "
+                "to merged names. Merge applies each side's map together "
                 "with its equivalences in one step, and refuses when the two "
                 "disagree on where a name goes."
             ),
@@ -2438,7 +2438,7 @@ class ComposeManifestsOp(ConfigBaseModel):
     )
 
     @model_validator(mode="after")
-    def _require_allow_merges_for_nary(self) -> ComposeManifestsOp:
+    def _require_allow_merges_for_nary(self) -> MergeManifestsOp:
         if self.allow_merges:
             return self
         offending: set[str] = set()
@@ -2450,7 +2450,7 @@ class ComposeManifestsOp(ConfigBaseModel):
                 offending.add(f"relation equivalence {_describe_cluster(req)}")
         if offending:
             raise ValueError(
-                "compose_manifests: "
+                "merge_manifests: "
                 + "; ".join(sorted(offending))
                 + " collapses more than one class/relation on a side; a merge "
                 "is a stated intent — set allow_merges=True"
@@ -2498,7 +2498,7 @@ ManifestOp = Annotated[
     | ProjectManifestOp
     | ReplaceIdentityOp
     | SanitizeOp
-    | ComposeManifestsOp,
+    | MergeManifestsOp,
     PydanticField(discriminator="op"),
 ]
 

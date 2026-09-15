@@ -334,7 +334,7 @@ def verify_history(base: GraphManifest, history: History) -> list[str]:
     replays cleanly. Useful as a health check over a history that may have
     several heads, where ``checkout`` would refuse to pick one.
 
-    A compose joins two lineages, so a history can hold more than one root and
+    A merge joins two lineages, so a history can hold more than one root and
     one ``base`` cannot replay both. A head descending from a different root is
     reported as **not verifiable from this base** rather than as a failure --
     and reported rather than skipped, because a head nobody checked is exactly

@@ -2,7 +2,7 @@
 
 The contract vocabulary could remove, merge, rename and project, but not *create*.
 Everything here closes that half of the loop so a change set can describe a growing
-graph without falling back to a binary compose.
+graph without falling back to a binary merge.
 """
 
 from __future__ import annotations

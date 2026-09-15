@@ -635,7 +635,7 @@ class TestSelectStructuredItemsAndConcat:
         )
 
     def test_concat_select_parts_equivalent_to_single_spec(self):
-        """Two SelectSpec fragments compose to the same SQL as one inline spec."""
+        """Two SelectSpec fragments merge to the same SQL as one inline spec."""
         one = SelectSpec(
             kind="select",
             joins=[

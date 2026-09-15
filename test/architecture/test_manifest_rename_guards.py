@@ -128,7 +128,7 @@ class TestRenameTargetsMustExist:
             )
 
     def test_a_simultaneous_relabel_keeps_schema_and_profile_in_step(self) -> None:
-        """{r1: r2, r2: r3} applied once, not composed with itself.
+        """{r1: r2, r2: r3} applied once, not merged with itself.
 
         The db_profile used to be renamed twice — once inside the shared payload
         rewrite and once again afterwards — so the profile reached r3 while the

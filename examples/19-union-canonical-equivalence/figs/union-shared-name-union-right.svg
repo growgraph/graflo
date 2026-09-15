@@ -8,16 +8,16 @@
  viewBox="0.00 0.00 558.00 394.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
 <g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(4 389.5)">
 <polygon fill="white" stroke="none" points="-4,4 -4,-389.5 553.62,-389.5 553.62,4 -4,4"/>
-<text xml:space="preserve" text-anchor="middle" x="274.81" y="-368.2" font-family="Helvetica,sans-Serif" font-size="14.00">source&#45;a + source&#45;b — composes</text>
+<text xml:space="preserve" text-anchor="middle" x="274.81" y="-368.2" font-family="Helvetica,sans-Serif" font-size="14.00">source&#45;a + source&#45;b — merges</text>
 <g id="clust1" class="cluster">
 <title>cluster_left</title>
 <path fill="none" stroke="#b0b0b0" d="M20,-8C20,-8 128.5,-8 128.5,-8 134.5,-8 140.5,-14 140.5,-20 140.5,-20 140.5,-292 140.5,-292 140.5,-298 134.5,-304 128.5,-304 128.5,-304 20,-304 20,-304 14,-304 8,-298 8,-292 8,-292 8,-20 8,-20 8,-14 14,-8 20,-8"/>
 <text xml:space="preserve" text-anchor="middle" x="74.25" y="-290.5" font-family="Helvetica,sans-Serif" font-size="10.00">left</text>
 </g>
 <g id="clust2" class="cluster">
-<title>cluster_composed</title>
+<title>cluster_merged</title>
 <path fill="none" stroke="#b0b0b0" d="M236.38,-21C236.38,-21 344.88,-21 344.88,-21 350.88,-21 356.88,-27 356.88,-33 356.88,-33 356.88,-270 356.88,-270 356.88,-276 350.88,-282 344.88,-282 344.88,-282 236.38,-282 236.38,-282 230.38,-282 224.38,-276 224.38,-270 224.38,-270 224.38,-33 224.38,-33 224.38,-27 230.38,-21 236.38,-21"/>
-<text xml:space="preserve" text-anchor="middle" x="290.62" y="-268.5" font-family="Helvetica,sans-Serif" font-size="10.00">composed</text>
+<text xml:space="preserve" text-anchor="middle" x="290.62" y="-268.5" font-family="Helvetica,sans-Serif" font-size="10.00">merged</text>
 </g>
 <g id="clust3" class="cluster">
 <title>cluster_right</title>
@@ -40,9 +40,9 @@
 <text xml:space="preserve" text-anchor="start" x="21" y="-163.38" font-family="Helvetica,sans-Serif" font-size="14.00">shared_raw</text>
 <polygon fill="none" stroke="#2c3e50" points="16,-154.62 16,-275.38 132.5,-275.38 132.5,-154.62 16,-154.62"/>
 </g>
-<!-- composed_Company -->
+<!-- merged_Company -->
 <g id="node5" class="node">
-<title>composed_Company</title>
+<title>merged_Company</title>
 <polygon fill="#ffe5b4" stroke="none" points="233.38,-227.25 233.38,-252.5 347.88,-252.5 347.88,-227.25 233.38,-227.25"/>
 <polygon fill="none" stroke="#2c3e50" points="233.38,-227.25 233.38,-252.5 347.88,-252.5 347.88,-227.25 233.38,-227.25"/>
 <text xml:space="preserve" text-anchor="start" x="253.12" y="-236.2" font-family="Helvetica,sans-Serif" font-weight="bold" font-size="14.00">Company</text>
@@ -54,15 +54,15 @@
 <text xml:space="preserve" text-anchor="start" x="237.38" y="-159.25" font-family="Helvetica,sans-Serif" font-size="14.00">shared_raw</text>
 <polygon fill="none" stroke="#2c3e50" points="232.38,-150.5 232.38,-253.5 348.88,-253.5 348.88,-150.5 232.38,-150.5"/>
 </g>
-<!-- left_Firm&#45;&gt;composed_Company -->
+<!-- left_Firm&#45;&gt;merged_Company -->
 <g id="edge1" class="edge">
-<title>left_Firm&#45;&gt;composed_Company</title>
+<title>left_Firm&#45;&gt;merged_Company</title>
 <path fill="none" stroke="#2c3e50" stroke-width="1.4" d="M132.32,-205.83C141.43,-204.67 150.77,-203.66 159.62,-203 179.38,-201.53 200.88,-200.94 220.59,-200.82"/>
 <polygon fill="#2c3e50" stroke="#2c3e50" stroke-width="1.4" points="220.49,-204.32 230.49,-200.8 220.48,-197.32 220.49,-204.32"/>
 </g>
-<!-- left_Firm&#45;&gt;composed_Company -->
+<!-- left_Firm&#45;&gt;merged_Company -->
 <g id="edge2" class="edge">
-<title>left_Firm:p_firm_id&#45;&gt;composed_Company:p_company_id</title>
+<title>left_Firm:p_firm_id&#45;&gt;merged_Company:p_company_id</title>
 <path fill="none" stroke="#1f5fbf" stroke-width="0.7" stroke-dasharray="5,2" d="M132.5,-218.75C173.11,-218.75 185.81,-215.3 221.62,-214.71"/>
 <polygon fill="#1f5fbf" stroke="#1f5fbf" stroke-width="0.7" points="221.34,-218.21 231.32,-214.63 221.29,-211.21 221.34,-218.21"/>
 <text xml:space="preserve" text-anchor="middle" x="187" y="-220.85" font-family="Helvetica,sans-Serif" font-size="9.00">company_id</text>
@@ -83,9 +83,9 @@
 <text xml:space="preserve" text-anchor="start" x="21" y="-24.38" font-family="Helvetica,sans-Serif" font-size="14.00">shared_raw</text>
 <polygon fill="none" stroke="#2c3e50" points="16,-15.62 16,-136.38 132.5,-136.38 132.5,-15.62 16,-15.62"/>
 </g>
-<!-- composed_Outlet -->
+<!-- merged_Outlet -->
 <g id="node6" class="node">
-<title>composed_Outlet</title>
+<title>merged_Outlet</title>
 <polygon fill="#ffe5b4" stroke="none" points="233.38,-106.25 233.38,-131.5 347.88,-131.5 347.88,-106.25 233.38,-106.25"/>
 <polygon fill="none" stroke="#2c3e50" points="233.38,-106.25 233.38,-131.5 347.88,-131.5 347.88,-106.25 233.38,-106.25"/>
 <text xml:space="preserve" text-anchor="start" x="265.12" y="-115.2" font-family="Helvetica,sans-Serif" font-weight="bold" font-size="14.00">Outlet</text>
@@ -97,15 +97,15 @@
 <text xml:space="preserve" text-anchor="start" x="237.38" y="-38.25" font-family="Helvetica,sans-Serif" font-size="14.00">shared_raw</text>
 <polygon fill="none" stroke="#2c3e50" points="232.38,-29.5 232.38,-132.5 348.88,-132.5 348.88,-29.5 232.38,-29.5"/>
 </g>
-<!-- left_Shop&#45;&gt;composed_Outlet -->
+<!-- left_Shop&#45;&gt;merged_Outlet -->
 <g id="edge3" class="edge">
-<title>left_Shop&#45;&gt;composed_Outlet</title>
+<title>left_Shop&#45;&gt;merged_Outlet</title>
 <path fill="none" stroke="#2c3e50" stroke-width="1.4" d="M132.42,-77.33C159.55,-77.97 192.19,-78.73 220.69,-79.39"/>
 <polygon fill="#2c3e50" stroke="#2c3e50" stroke-width="1.4" points="220.42,-82.89 230.5,-79.62 220.58,-75.89 220.42,-82.89"/>
 </g>
-<!-- left_Shop&#45;&gt;composed_Outlet -->
+<!-- left_Shop&#45;&gt;merged_Outlet -->
 <g id="edge4" class="edge">
-<title>left_Shop:p_shop_id&#45;&gt;composed_Outlet:p_outlet_id</title>
+<title>left_Shop:p_shop_id&#45;&gt;merged_Outlet:p_outlet_id</title>
 <path fill="none" stroke="#1f5fbf" stroke-width="0.7" stroke-dasharray="5,2" d="M132.5,-79.75C173.46,-79.75 185.54,-91.34 221.54,-93.34"/>
 <polygon fill="#1f5fbf" stroke="#1f5fbf" stroke-width="0.7" points="221.23,-96.83 231.32,-93.6 221.41,-89.83 221.23,-96.83"/>
 <text xml:space="preserve" text-anchor="middle" x="187" y="-95.37" font-family="Helvetica,sans-Serif" font-size="9.00">outlet_id</text>
@@ -138,28 +138,28 @@
 <text xml:space="preserve" text-anchor="start" x="444.62" y="-68" font-family="Helvetica,sans-Serif" font-size="14.00">shared_raw</text>
 <polygon fill="none" stroke="#2c3e50" points="439.62,-59.25 439.62,-154.75 533.62,-154.75 533.62,-59.25 439.62,-59.25"/>
 </g>
-<!-- composed_Company&#45;&gt;right_Org -->
+<!-- merged_Company&#45;&gt;right_Org -->
 <g id="edge5" class="edge">
-<title>composed_Company&#45;&gt;right_Org</title>
+<title>merged_Company&#45;&gt;right_Org</title>
 <path fill="none" stroke="#2c3e50" stroke-width="1.4" d="M360.88,-197.4C380.6,-197.19 402.04,-198.01 421.62,-201 427.61,-201.91 433.8,-203.28 439.87,-204.88"/>
 <polygon fill="#2c3e50" stroke="#2c3e50" stroke-width="1.4" points="360.9,-193.9 350.98,-197.61 361.05,-200.9 360.9,-193.9"/>
 </g>
-<!-- composed_Company&#45;&gt;right_Org -->
+<!-- merged_Company&#45;&gt;right_Org -->
 <g id="edge6" class="edge">
-<title>composed_Company:p_company_id&#45;&gt;right_Org:p_org_id</title>
+<title>merged_Company:p_company_id&#45;&gt;right_Org:p_org_id</title>
 <path fill="none" stroke="#1f5fbf" stroke-width="0.7" stroke-dasharray="5,2" d="M359.89,-214.56C391.48,-214.16 403.22,-212.12 439.62,-212.12"/>
 <polygon fill="#1f5fbf" stroke="#1f5fbf" stroke-width="0.7" points="359.91,-211.06 349.93,-214.62 359.96,-218.06 359.91,-211.06"/>
 <text xml:space="preserve" text-anchor="middle" x="394.25" y="-217.11" font-family="Helvetica,sans-Serif" font-size="9.00">company_id</text>
 </g>
-<!-- composed_Outlet&#45;&gt;right_Branch -->
+<!-- merged_Outlet&#45;&gt;right_Branch -->
 <g id="edge7" class="edge">
-<title>composed_Outlet&#45;&gt;right_Branch</title>
+<title>merged_Outlet&#45;&gt;right_Branch</title>
 <path fill="none" stroke="#2c3e50" stroke-width="1.4" d="M360.67,-80.89C380.47,-81.75 402,-83.54 421.62,-87 427.59,-88.05 433.77,-89.5 439.83,-91.14"/>
 <polygon fill="#2c3e50" stroke="#2c3e50" stroke-width="1.4" points="360.84,-77.4 350.72,-80.55 360.59,-84.39 360.84,-77.4"/>
 </g>
-<!-- composed_Outlet&#45;&gt;right_Branch -->
+<!-- merged_Outlet&#45;&gt;right_Branch -->
 <g id="edge8" class="edge">
-<title>composed_Outlet:p_outlet_id&#45;&gt;right_Branch:p_branch_id</title>
+<title>merged_Outlet:p_outlet_id&#45;&gt;right_Branch:p_branch_id</title>
 <path fill="none" stroke="#1f5fbf" stroke-width="0.7" stroke-dasharray="5,2" d="M359.89,-93.75C391.5,-94.46 403.19,-98.12 439.62,-98.12"/>
 <polygon fill="#1f5fbf" stroke="#1f5fbf" stroke-width="0.7" points="359.97,-90.25 349.93,-93.64 359.9,-97.25 359.97,-90.25"/>
 <text xml:space="preserve" text-anchor="middle" x="394.25" y="-100.44" font-family="Helvetica,sans-Serif" font-size="9.00">outlet_id</text>

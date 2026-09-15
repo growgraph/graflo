@@ -73,7 +73,7 @@ def build_history() -> tuple[GraphManifest, History]:
 
     # A shared edit both branches inherit. Without it the two branches would
     # have no common ancestor and there would be nothing to merge *against* --
-    # which is a compose, not a merge.
+    # which is a merge, not a merge.
     shared = build_commit(
         base,
         [AddVertexPropertiesOp(additions={"person": ["created_at"]})],
@@ -90,7 +90,7 @@ def build_history() -> tuple[GraphManifest, History]:
     # Each branch also makes a change the other does not contest. That is not
     # decoration: it is what makes the merge a merge. Were the identity the
     # only difference, taking one side would reproduce that side exactly, and
-    # `build_merge_commit` would rightly refuse to record a commit that moves
+    # `build_multi_parent_commit` would rightly refuse to record a commit that moves
     # nothing.
     by_ssn = build_commit(
         after_shared,

@@ -115,5 +115,5 @@ scope here.
 
 - `graflo check --profile world-model` — the six assertions, and the acceptance
   test for any lift.
-- Example 19 — composing two manifests, the binary counterpart to this unary
+- Example 19 — merging two manifests, the binary counterpart to this unary
   transformation.

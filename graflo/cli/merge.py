@@ -1,18 +1,18 @@
-"""``graflo compose`` -- the binary compose of two manifests, from the shell.
+"""``graflo merge`` -- the binary merge of two manifests, from the shell.
 
 This verb is ``examples/19-union-canonical-equivalence/build_union.py``
-generalised: the compose op and its canonical maps are one recipe, and compose
+generalised: the merge op and its canonical maps are one recipe, and merge
 applies them together -- an equivalence may name a class in the manifest's
 own vocabulary or in the canonical one, and the two declarations are checked
 for disagreement before anything is renamed.
 
 Either side may carry no ``schema`` block: a manifest with only an
 ``ingestion_model`` and/or ``bindings`` is a new source wired onto an existing
-type vocabulary, and composing it is the point of the overlay shape.
+type vocabulary, and merging it is the point of the overlay shape.
 
 ``--plot`` and ``--preview-json`` write the *preview*: the declaration graph
-and every conflict in it, rather than only the one compose raised. Both are
-written even when compose refuses -- which is the case they are for.
+and every conflict in it, rather than only the one merge raised. Both are
+written even when merge refuses -- which is the case they are for.
 """
 
 from __future__ import annotations
@@ -28,30 +28,30 @@ from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.evolution.alignment import AlignmentConflictError
 from graflo.architecture.evolution.canonical import (
     CanonicalMap,
-    ComposeCanonicalConflictError,
-    ComposeIncompleteError,
+    MergeCanonicalConflictError,
+    MergeIncompleteError,
     Scope,
-    merge_canonical_maps,
-)
-from graflo.architecture.evolution.compose import (
-    ComposeIdentityError,
-    ComposeNameConflictError,
-    compose_manifests,
+    compose_canonical_maps,
 )
 from graflo.architecture.evolution.equivalence import ClusterConflictError
-from graflo.architecture.evolution.ops import ComposeManifestsOp
+from graflo.architecture.evolution.merge import (
+    MergeIdentityError,
+    MergeNameConflictError,
+    merge_manifests,
+)
+from graflo.architecture.evolution.ops import MergeManifestsOp
 from graflo.architecture.evolution.preview import (
-    ComposeOutcome,
-    ComposePreview,
+    MergeOutcome,
+    MergePreview,
     outcome_from_exception,
     outcome_from_manifest,
-    preview_compose,
+    preview_merge,
 )
 from graflo.architecture.profile import check_manifest
 from graflo.cli._store import append_entry, store_option
 from graflo.cli.io import dump_manifest, load_manifest, load_mapping
 
-#: Compose refused the inputs -- a name collision, a cluster conflict, a
+#: Merge refused the inputs -- a name collision, a cluster conflict, a
 #: canonical map disagreeing with an equivalence. Distinct from 2 (bad
 #: invocation, unreadable file): the former is a statement about the
 #: manifests, the latter about the command.
@@ -60,8 +60,8 @@ EXIT_REFUSED = 1
 _SCOPES: tuple[Scope, ...] = ("left", "right", "both")
 
 
-class _ComposeSetupError(click.ClickException):
-    """The compose could not be attempted at all. Exits 2, never 1."""
+class _MergeSetupError(click.ClickException):
+    """The merge could not be attempted at all. Exits 2, never 1."""
 
     exit_code = 2
 
@@ -96,14 +96,14 @@ def _fold_canonical_maps(
     for scope, path in canonical_map_paths:
         loaded = CanonicalMap.model_validate(load_mapping(path))
         folded[scope] = (
-            merge_canonical_maps(folded[scope], loaded) if scope in folded else loaded
+            compose_canonical_maps(folded[scope], loaded) if scope in folded else loaded
         )
     payload["canonical_maps"] = {
         scope: cm.to_dict(skip_defaults=True) for scope, cm in folded.items()
     }
 
 
-@click.command("compose")
+@click.command("merge")
 @click.argument("left", type=click.Path(exists=True, dir_okay=False, path_type=Path))
 @click.argument("right", type=click.Path(exists=True, dir_okay=False, path_type=Path))
 @click.option(
@@ -112,8 +112,8 @@ def _fold_canonical_maps(
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
     default=None,
     help=(
-        "ComposeManifestsOp document: vertex/property/relation equivalences, "
-        "canonical maps and identity alignments. Omitted composes a disjoint "
+        "MergeManifestsOp document: vertex/property/relation equivalences, "
+        "canonical maps and identity alignments. Omitted merges a disjoint "
         "union."
     ),
 )
@@ -122,7 +122,7 @@ def _fold_canonical_maps(
     "--output",
     type=click.Path(dir_okay=False, path_type=Path),
     default=None,
-    help="Where to write the composed manifest. Omitted prints a summary only.",
+    help="Where to write the merged manifest. Omitted prints a summary only.",
 )
 @click.option(
     "--canonical-map",
@@ -131,7 +131,7 @@ def _fold_canonical_maps(
     metavar="SIDE=PATH",
     help=(
         "Canonical map for one side (or `both`), repeatable. Names the "
-        "composed classes and is checked for disagreement with the op; an "
+        "merged classes and is checked for disagreement with the op; an "
         "equivalence may then name a class by its own or its canonical name."
     ),
 )
@@ -154,17 +154,17 @@ def _fold_canonical_maps(
     type=click.Choice(["minor", "none"]),
     default="minor",
     show_default=True,
-    help="Bump the composed schema version. 'none' leaves the left's.",
+    help="Bump the merged schema version. 'none' leaves the left's.",
 )
 @click.option(
     "--strict-references",
     is_flag=True,
-    help="Fail on ingestion/bindings references the composed schema lacks.",
+    help="Fail on ingestion/bindings references the merged schema lacks.",
 )
 @click.option(
     "--dry-run",
     is_flag=True,
-    help="Compose and report, but write nothing.",
+    help="Merge and report, but write nothing.",
 )
 @click.option(
     "--plot",
@@ -173,7 +173,7 @@ def _fold_canonical_maps(
     default=None,
     help=(
         "Draw the declaration graph and its conflicts here; the suffix picks "
-        "the format (svg, pdf, png, dot). Written even when compose refuses."
+        "the format (svg, pdf, png, dot). Written even when merge refuses."
     ),
 )
 @click.option(
@@ -183,7 +183,7 @@ def _fold_canonical_maps(
     default=None,
     help=(
         "Write the same preview as JSON: nodes, edges, clusters, findings and "
-        "the outcome. Written even when compose refuses."
+        "the outcome. Written even when merge refuses."
     ),
 )
 @click.option(
@@ -198,7 +198,7 @@ def _fold_canonical_maps(
     "profile_name",
     default=None,
     help=(
-        "Also check the composed manifest against this conformance profile "
+        "Also check the merged manifest against this conformance profile "
         "and print the report. Findings do not change the exit code."
     ),
 )
@@ -209,12 +209,12 @@ def _fold_canonical_maps(
     "record_label",
     default=None,
     help=(
-        "Record the compose in the store as a two-parent commit under this "
+        "Record the merge in the store as a two-parent commit under this "
         "label. Both inputs must already be in the history; without this the "
         "verb writes only the manifest, as before."
     ),
 )
-def compose(
+def merge(
     left: Path,
     right: Path,
     op_path: Path | None,
@@ -231,14 +231,14 @@ def compose(
     store: Path,
     record_label: str | None,
 ) -> None:
-    """Compose LEFT and RIGHT into one manifest."""
+    """Merge LEFT and RIGHT into one manifest."""
     canonical_map_paths = _parse_canonical_map_option(canonical_map_options)
 
     try:
         left_manifest = load_manifest(left)
         right_manifest = load_manifest(right)
     except (ValueError, TypeError) as exc:
-        raise _ComposeSetupError(
+        raise _MergeSetupError(
             f"not a valid manifest -- {type(exc).__name__}: {exc}"
         ) from exc
 
@@ -248,24 +248,24 @@ def compose(
     try:
         _fold_canonical_maps(payload, canonical_map_paths)
         # `op` is a Literal with a default, so a document carrying
-        # `op: compose_manifests` validates as written -- no key to strip.
-        op = ComposeManifestsOp.model_validate(payload)
+        # `op: merge_manifests` validates as written -- no key to strip.
+        op = MergeManifestsOp.model_validate(payload)
     except ValueError as exc:
-        raise _ComposeSetupError(f"{op_path}: invalid compose op -- {exc}") from exc
+        raise _MergeSetupError(f"{op_path}: invalid merge op -- {exc}") from exc
 
     wants_preview = plot_path is not None or preview_json_path is not None or dry_run
     if plot_path is not None:
         _check_plot_suffix(plot_path)
-    # Built before composing and without composing again: `attempt=False`
-    # keeps this to one compose per invocation, and the outcome is folded in
+    # Built before merging and without merging again: `attempt=False`
+    # keeps this to one merge per invocation, and the outcome is folded in
     # below whichever way that one goes.
     preview = (
-        preview_compose(left_manifest, right_manifest, op, attempt=False)
+        preview_merge(left_manifest, right_manifest, op, attempt=False)
         if wants_preview
         else None
     )
 
-    def emit(outcome: ComposeOutcome, subjects: tuple[str, ...] = ()) -> None:
+    def emit(outcome: MergeOutcome, subjects: tuple[str, ...] = ()) -> None:
         if preview is None:
             return
         _write_preview(
@@ -276,18 +276,18 @@ def compose(
         )
 
     try:
-        composed = compose_manifests(
+        merged = merge_manifests(
             left_manifest,
             right_manifest,
             op,
             bump_version="minor" if bump_version == "minor" else False,
             strict_references=strict_references,
         )
-    except ComposeIncompleteError as exc:
+    except MergeIncompleteError as exc:
         # Consistent but not covering every name: the completion is the
         # declaration to paste into the op, so print it as one.
         emit(*outcome_from_exception(exc))
-        click.echo(f"compose refused: {type(exc).__name__}: {exc}", err=True)
+        click.echo(f"merge refused: {type(exc).__name__}: {exc}", err=True)
         click.echo("completion:", err=True)
         click.echo(
             yaml.safe_dump(exc.completion.to_dict(), sort_keys=False).rstrip(),
@@ -297,31 +297,31 @@ def compose(
     except (
         AlignmentConflictError,
         ClusterConflictError,
-        ComposeCanonicalConflictError,
-        ComposeIdentityError,
-        ComposeNameConflictError,
+        MergeCanonicalConflictError,
+        MergeIdentityError,
+        MergeNameConflictError,
         ValueError,
     ) as exc:
         # Every one of these carries what to declare next; a traceback would
         # bury it.
         emit(*outcome_from_exception(exc))
-        click.echo(f"compose refused: {type(exc).__name__}: {exc}", err=True)
+        click.echo(f"merge refused: {type(exc).__name__}: {exc}", err=True)
         raise SystemExit(EXIT_REFUSED)
 
-    emit(outcome_from_manifest(composed))
-    for line in _summary(composed):
+    emit(outcome_from_manifest(merged))
+    for line in _summary(merged):
         click.echo(line)
 
     if profile_name is not None:
-        # The model, not a re-serialization of it. A composed manifest has no
+        # The model, not a re-serialization of it. A merged manifest has no
         # authored document -- and neither serialization is a substitute:
         # `skip_defaults=True` drops a `directed: true` the author *did* write
         # (it equals the default), while `skip_defaults=False` writes one they
         # did not. Both would answer the two declaration assertions with
         # confident nonsense. `check_manifest` degrades them to a warning that
-        # says exactly this, which is the honest report for a composed result.
+        # says exactly this, which is the honest report for a merged result.
         report = check_manifest(
-            composed, profile=profile_name, subject=f"{left} + {right}"
+            merged, profile=profile_name, subject=f"{left} + {right}"
         )
         for line in report.to_lines():
             click.echo(line)
@@ -334,12 +334,10 @@ def compose(
     if record_label is not None:
         # Before `dump_manifest`, so the file on disk carries its own lineage --
         # the whole point of provenance travelling with the artifact.
-        entry = _record(
-            left_manifest, right_manifest, composed, op, store, record_label
-        )
+        entry = _record(left_manifest, right_manifest, merged, op, store, record_label)
 
     if output is not None:
-        dump_manifest(composed, output)
+        dump_manifest(merged, output)
 
     if entry is not None:
         click.echo(f"commit: {entry.id}")
@@ -349,12 +347,12 @@ def compose(
 def _record(
     left_manifest: GraphManifest,
     right_manifest: GraphManifest,
-    composed: GraphManifest,
-    op: ComposeManifestsOp,
+    merged: GraphManifest,
+    op: MergeManifestsOp,
     store: Path,
     label: str,
 ):
-    """Build the compose commit, stamping the result with its own lineage.
+    """Build the merge commit, stamping the result with its own lineage.
 
     Both inputs are resolved to commits by content address rather than by a flag:
     a manifest *is* its hash, and a commit records the tree it produced. A side
@@ -366,49 +364,49 @@ def _record(
     from graflo.architecture.contract.provenance import stamp_provenance
     from graflo.architecture.evolution.canonicalize import CANON_VERSION
     from graflo.architecture.evolution.commit import CommitError
-    from graflo.architecture.evolution.compose_commit import (
-        build_compose_commit,
-        find_commit_by_tree,
-    )
     from graflo.architecture.evolution.hashing import manifest_hash
     from graflo.architecture.evolution.history import FileCommitStore
-    from graflo.architecture.evolution.merge3 import build_compose_recipe
+    from graflo.architecture.evolution.merge3 import build_merge_recipe
+    from graflo.architecture.evolution.merge_commit import (
+        build_merge_commit,
+        find_commit_by_tree,
+    )
 
     history = FileCommitStore(store).load()
     resolved = {}
     for side, manifest in (("left", left_manifest), ("right", right_manifest)):
         found = find_commit_by_tree(history, manifest)
         if found is None:
-            raise _ComposeSetupError(
+            raise _MergeSetupError(
                 f"the {side} manifest is not in {store}, so it cannot be named as "
                 "a parent. Record that lineage first, or drop -m to write the "
-                "composed manifest without recording it."
+                "merged manifest without recording it."
             )
         resolved[side] = found
 
-    recipe = build_compose_recipe(left_manifest, right_manifest, op)
+    recipe = build_merge_recipe(left_manifest, right_manifest, op)
     parents = [resolved["left"].id, resolved["right"].id]
     try:
-        entry = build_compose_commit(
+        entry = build_merge_commit(
             left_manifest,
-            composed,
+            merged,
             parents=parents,
             recipe=recipe,
             label=label,
             created_at=datetime.now(UTC).isoformat(),
         )
     except CommitError as exc:
-        # The composed result differs from the left somewhere no op reaches, so
+        # The merged result differs from the left somewhere no op reaches, so
         # the commit could not be materialized as a first-parent diff.
-        raise _ComposeSetupError(str(exc)) from exc
+        raise _MergeSetupError(str(exc)) from exc
 
     # Stamped *after* the commit is built, so the artifact can name the commit
     # that produced it -- the id is derived from the ops and the parents, so it
     # does not exist until then. Provenance is outside the content hash, so
     # writing it cannot move the tree the commit just recorded.
     stamp_provenance(
-        composed,
-        content_hash=manifest_hash(composed),
+        merged,
+        content_hash=manifest_hash(merged),
         canon=CANON_VERSION,
         commit=entry.id,
         parents=parents,
@@ -429,7 +427,7 @@ def _check_plot_suffix(path: Path) -> None:
 
 
 def _write_preview(
-    preview: ComposePreview,
+    preview: MergePreview,
     *,
     plot_path: Path | None,
     json_path: Path | None,
@@ -437,7 +435,7 @@ def _write_preview(
 ) -> None:
     """Report the findings, and write whichever artifacts were asked for.
 
-    Reached on both paths -- composed and refused -- because a refusal is
+    Reached on both paths -- merged and refused -- because a refusal is
     exactly when a reader wants the picture, and the refused run is the one
     that would otherwise leave nothing behind.
     """
@@ -449,18 +447,18 @@ def _write_preview(
         click.echo(f"preview: {json_path}", err=preview.refused)
     if plot_path is None:
         return
-    from graflo.plot.compose import plot_compose_preview
+    from graflo.plot.merge import plot_merge_preview
 
     try:
-        written = plot_compose_preview(preview, plot_path, max_rows=max_rows)
+        written = plot_merge_preview(preview, plot_path, max_rows=max_rows)
     except RuntimeError as exc:
         # A missing extra is a statement about the invocation, not about the
         # manifests, so it exits 2 rather than joining the refusal at 1.
-        raise _ComposeSetupError(str(exc)) from exc
+        raise _MergeSetupError(str(exc)) from exc
     click.echo(f"plot: {written}", err=preview.refused)
 
 
-def _findings_table(preview: ComposePreview) -> list[str]:
+def _findings_table(preview: MergePreview) -> list[str]:
     """The findings, most serious first, one per line."""
     findings = sorted(
         preview.findings,
@@ -497,4 +495,4 @@ def _summary(manifest: GraphManifest) -> list[str]:
     return lines
 
 
-__all__ = ["compose"]
+__all__ = ["merge"]

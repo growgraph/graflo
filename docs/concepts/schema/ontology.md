@@ -36,7 +36,7 @@ The Turtle source lives in the package at `graflo/rdf/ontology/graflo.ttl`. Cons
 
 ## Interactive visualization
 
-The explorer below is a **class graph** from `graflo.ttl`. Classes are grouped into the blocks the manifest composes — the bands are derived from what `gf:GraphManifest` points at, not hand-assigned. Within a band, columns run **left to right from general to specific**: a class sits one column right of whatever contains it (`gf:Schema` → `gf:CoreSchema` → `gf:VertexConfig` → `gf:Vertex` → `gf:Field`) or generalises it (`gf:Actor` → `gf:VertexProducingActor` → `gf:VertexActor`), and specialization always wins, so a subclass is never level with its superclass. Classes at the same distance stay in the same column — `gf:Vertex` and `gf:Edge` are peers. The layout is deterministic: the same ontology always draws the same picture.
+The explorer below is a **class graph** from `graflo.ttl`. Classes are grouped into the blocks the manifest merges — the bands are derived from what `gf:GraphManifest` points at, not hand-assigned. Within a band, columns run **left to right from general to specific**: a class sits one column right of whatever contains it (`gf:Schema` → `gf:CoreSchema` → `gf:VertexConfig` → `gf:Vertex` → `gf:Field`) or generalises it (`gf:Actor` → `gf:VertexProducingActor` → `gf:VertexActor`), and specialization always wins, so a subclass is never level with its superclass. Classes at the same distance stay in the same column — `gf:Vertex` and `gf:Edge` are peers. The layout is deterministic: the same ontology always draws the same picture.
 
 Only the taxonomy is drawn by default; **select a class** to reveal its properties, or switch the filter to *Display all*. `gf:GrafloArtifact` is the superclass of nearly every class, so its 28 links are hidden by default — tick **Show GrafloArtifact** to bring them back. Drag, scroll to zoom, click to focus. Regenerate with `uv run python docs/_build/scripts/build_ontology_viz.py` after ontology edits.
 
@@ -113,7 +113,7 @@ vertices:
 
 This maps to `gf:semanticIri`, `skos:exactMatch`, `skos:altLabel`, and — fields only — `gf:unit`. The block is purely descriptive: identity, storage naming and ingestion behave identically whether or not it is present. `unit` is rejected outside a field, where it would be meaningless.
 
-Grounding survives a fold. When two definitions of one type or property are combined — by `merge_vertices`, or by a `compose_manifests` equivalence — `exact_match` and `synonyms` union, since they are sets of claims. A single-valued `iri` cannot: two sides denoting different concepts denote neither exactly, so a disagreement clears it rather than electing one. `unit` is the exception that refuses outright — unlike an `iri`, two units mean the combined property would hold numerically incomparable values, which is a defect in the data rather than in its description.
+Grounding survives a fold. When two definitions of one type or property are combined — by `merge_vertices`, or by a `merge_manifests` equivalence — `exact_match` and `synonyms` union, since they are sets of claims. A single-valued `iri` cannot: two sides denoting different concepts denote neither exactly, so a disagreement clears it rather than electing one. `unit` is the exception that refuses outright — unlike an `iri`, two units mean the combined property would hold numerically incomparable values, which is a defect in the data rather than in its description.
 
 **List field types** (added in 1.6.0)
 

@@ -1,4 +1,4 @@
-"""Commit-store plumbing shared by the ``commit`` and ``compose`` verbs.
+"""Commit-store plumbing shared by the ``commit`` and ``merge`` verbs.
 
 Both verbs write to the same history, so the store path option and the append
 refusal live here rather than in either command module -- a command importing

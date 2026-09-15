@@ -473,7 +473,7 @@ class CrossResourceIdentityInferencer:
         Returns the per-resource maps and a description of every group dropped
         as ambiguous. A group holding **two fields of one resource** would
         project both onto one name, and ``_project`` builds a dict -- so one of
-        the two columns would vanish with nothing said. Compose refuses the same
+        the two columns would vanish with nothing said. Merge refuses the same
         shape outright on the declared side (``property rename collision``);
         this module only ever proposes, so it drops the group and says why
         rather than raising.

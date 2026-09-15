@@ -6,14 +6,14 @@ import pytest
 
 from graflo.architecture.evolution import (
     ClusterConflictError,
-    ComposeManifestsOp,
+    MergeManifestsOp,
     RelationEquivalence,
     VertexEquivalence,
     index_clusters,
 )
 
 
-def _index(op: ComposeManifestsOp, **names):
+def _index(op: MergeManifestsOp, **names):
     return index_clusters(
         op,
         left_vertices=names.get("left_vertices", ()),
@@ -24,7 +24,7 @@ def _index(op: ComposeManifestsOp, **names):
 
 
 def test_bare_str_is_a_singleton_cluster() -> None:
-    op = ComposeManifestsOp(
+    op = MergeManifestsOp(
         vertex_equivalences=[
             VertexEquivalence(left="Company", right="Org", into="Company")
         ]
@@ -38,7 +38,7 @@ def test_bare_str_is_a_singleton_cluster() -> None:
 
 
 def test_nary_cluster_indexes_all_members() -> None:
-    op = ComposeManifestsOp(
+    op = MergeManifestsOp(
         vertex_equivalences=[
             VertexEquivalence(
                 left=["Company", "Shop"], right=["Org", "Branch"], into="Company"
@@ -69,7 +69,7 @@ def test_overlapping_declarations_raise() -> None:
     left:Company -- this is the overlap the author must merge into one
     declaration, not two.
     """
-    op = ComposeManifestsOp(
+    op = MergeManifestsOp(
         vertex_equivalences=[
             VertexEquivalence(left="Company", right="Org", into="X"),
             VertexEquivalence(left=["Company", "Deal"], right="Branch", into="Y"),
@@ -86,8 +86,8 @@ def test_overlapping_declarations_raise() -> None:
 
 def test_shared_into_raises() -> None:
     """Two disjoint declarations must not share one `into` -- that collapses
-    them into one composed class and must be spelled as one n-ary cluster."""
-    op = ComposeManifestsOp(
+    them into one merged class and must be spelled as one n-ary cluster."""
+    op = MergeManifestsOp(
         vertex_equivalences=[
             VertexEquivalence(left="A", right="X", into="Z"),
             VertexEquivalence(left="B", right="Y", into="Z"),
@@ -104,7 +104,7 @@ def test_shared_into_raises() -> None:
 
 def test_occupied_into_raises() -> None:
     """`into` naming an existing non-member class on a side must not silently merge."""
-    op = ComposeManifestsOp(
+    op = MergeManifestsOp(
         vertex_equivalences=[VertexEquivalence(left="A", right="B", into="Person")]
     )
     with pytest.raises(ClusterConflictError, match="not a member"):
@@ -123,7 +123,7 @@ def test_into_renamed_away_by_another_declaration_is_allowed() -> None:
     pre-fix check refused this and suggested adding Z to A, which the overlap
     check then refuses in turn.
     """
-    op = ComposeManifestsOp(
+    op = MergeManifestsOp(
         vertex_equivalences=[
             VertexEquivalence(left="X", right="Y", into="Z"),
             VertexEquivalence(left="Z", right="W", into="Q"),
@@ -135,7 +135,7 @@ def test_into_renamed_away_by_another_declaration_is_allowed() -> None:
 
 def test_a_merge_into_a_name_another_declaration_renames_away_is_allowed() -> None:
     """The lowered map applies in one step, so a merge lands on the vacated name too."""
-    op = ComposeManifestsOp(
+    op = MergeManifestsOp(
         vertex_equivalences=[
             VertexEquivalence(left=["X", "X2"], right="Y", into="Z"),
             VertexEquivalence(left="Z", right="W", into="Q"),
@@ -147,7 +147,7 @@ def test_a_merge_into_a_name_another_declaration_renames_away_is_allowed() -> No
 
 
 def test_relation_overlapping_declarations_raise() -> None:
-    op = ComposeManifestsOp(
+    op = MergeManifestsOp(
         relation_equivalences=[
             RelationEquivalence(left="a", right="x", into="p"),
             RelationEquivalence(left=["a", "b"], right="y", into="q"),
@@ -160,7 +160,7 @@ def test_relation_overlapping_declarations_raise() -> None:
 
 def test_relation_occupied_into_raises() -> None:
     """The only check reading the side-name collections, on the relation branch."""
-    op = ComposeManifestsOp(
+    op = MergeManifestsOp(
         relation_equivalences=[RelationEquivalence(left="a", right="x", into="owns")]
     )
     with pytest.raises(ClusterConflictError, match="not a member"):
@@ -168,7 +168,7 @@ def test_relation_occupied_into_raises() -> None:
 
 
 def test_relation_into_renamed_away_by_another_declaration_is_allowed() -> None:
-    op = ComposeManifestsOp(
+    op = MergeManifestsOp(
         relation_equivalences=[
             RelationEquivalence(left="a", right="x", into="owns"),
             RelationEquivalence(left="owns", right="y", into="holds"),
@@ -180,7 +180,7 @@ def test_relation_into_renamed_away_by_another_declaration_is_allowed() -> None:
 
 def test_into_as_a_member_does_not_raise() -> None:
     """`into` naming an existing class that *is* a declared member is fine (a merge)."""
-    op = ComposeManifestsOp(
+    op = MergeManifestsOp(
         vertex_equivalences=[
             VertexEquivalence(left=["Company", "Shop"], right="Org", into="Company")
         ],
@@ -195,7 +195,7 @@ def test_into_as_a_member_does_not_raise() -> None:
 
 
 def test_relations_share_the_same_checks() -> None:
-    op = ComposeManifestsOp(
+    op = MergeManifestsOp(
         relation_equivalences=[
             RelationEquivalence(left=["signs", "owns"], right="has", into="signs")
         ],
@@ -212,7 +212,7 @@ def test_relations_share_the_same_checks() -> None:
 
 
 def test_relation_shared_into_raises() -> None:
-    op = ComposeManifestsOp(
+    op = MergeManifestsOp(
         relation_equivalences=[
             RelationEquivalence(left="a", right="x", into="z"),
             RelationEquivalence(left="b", right="y", into="z"),
@@ -224,7 +224,7 @@ def test_relation_shared_into_raises() -> None:
 
 
 def test_two_disjoint_clusters_are_independent() -> None:
-    op = ComposeManifestsOp(
+    op = MergeManifestsOp(
         vertex_equivalences=[
             VertexEquivalence(left="A", right="X", into="A"),
             VertexEquivalence(left="B", right="Y", into="B"),

@@ -64,10 +64,10 @@ from .ops import (
     AddVerticesOp,
     CanonicalizeOp,
     ChangeFieldTypesOp,
-    ComposeManifestsOp,
     EnsureExtractedFieldsOp,
     ManifestOp,
     MergeEdgesOp,
+    MergeManifestsOp,
     MergeVerticesOp,
     ProjectManifestOp,
     RemoveEdgeIndexesOp,
@@ -862,7 +862,7 @@ def relabel_vertex_fields(vertex: Vertex, renames: Mapping[str, str]) -> Vertex:
     That is not a shortcut -- ``_check_property_renames`` has already refused a
     genuine rename collision by then, naming it as one. Appending instead would
     hand :meth:`Vertex.set_identity` two fields of one name, and the
-    ``merge_field_lists`` it runs would report a *type conflict* for what is
+    ``union_field_lists`` it runs would report a *type conflict* for what is
     really a collision, misclassified and wrapped by pydantic besides.
 
     Pure: the argument is untouched, and the result is built in one
@@ -1371,7 +1371,7 @@ def _rename_relations_inplace(
     """
     # `_apply_rename_entities` already rewrites the db_profile relation keys, and it
     # replaces `manifest.graph_schema` wholesale — so the profile must not be renamed
-    # a second time here (a chained map like {r1: r2, r2: r3} would compose with
+    # a second time here (a chained map like {r1: r2, r2: r3} would merge with
     # itself and take the profile to r3 while the schema stopped at r2), and the
     # schema has to be re-read afterwards rather than captured before.
     _apply_rename_entities(manifest, edge_map=relation_map)
@@ -1845,7 +1845,7 @@ def apply_add_inverse_edges(manifest: GraphManifest, op: AddInverseEdgesOp) -> N
 def apply_sanitize(manifest: GraphManifest, op: SanitizeOp) -> None:
     """Apply DB-flavor-specific sanitization to *manifest* in place.
 
-    Composes:
+    Merges:
 
     1. Storage-name sanitization on :class:`DatabaseProfile`.
     2. Reserved-word vertex field renames (via ``apply_rename_vertex_properties``).
@@ -1899,10 +1899,10 @@ def apply_sanitize(manifest: GraphManifest, op: SanitizeOp) -> None:
 
 def _dispatch_op(manifest: GraphManifest, op: Any) -> None:
     """Dispatch a single evolution op to its in-place apply function."""
-    if isinstance(op, ComposeManifestsOp):
+    if isinstance(op, MergeManifestsOp):
         raise ValueError(
-            "compose_manifests is binary; use "
-            "graflo.architecture.evolution.compose_manifests(left, right, op)"
+            "merge_manifests is binary; use "
+            "graflo.architecture.evolution.merge_manifests(left, right, op)"
         )
     if isinstance(op, RemoveVerticesOp):
         apply_remove_vertices(manifest, op)
@@ -2039,8 +2039,8 @@ def apply_manifest_ops_inplace(
     Does not copy the manifest, bump schema version, or call :meth:`GraphManifest.finish_init`.
     Callers that need re-validation after mutation should invoke ``finish_init`` themselves.
 
-    ``ComposeManifestsOp`` is rejected at dispatch — use
-    :func:`~graflo.architecture.evolution.compose.compose_manifests` instead.
+    ``MergeManifestsOp`` is rejected at dispatch — use
+    :func:`~graflo.architecture.evolution.merge.merge_manifests` instead.
     """
     for op in ops:
         _dispatch_op(manifest, op)
@@ -2060,8 +2060,8 @@ def apply_evolution(
     Compare before/after contract identity with :func:`graflo.migrate.io.manifest_hash`
     (stable hash over schema, ingestion_model, and bindings blocks).
 
-    ``ComposeManifestsOp`` is rejected at dispatch — use
-    :func:`~graflo.architecture.evolution.compose.compose_manifests` instead.
+    ``MergeManifestsOp`` is rejected at dispatch — use
+    :func:`~graflo.architecture.evolution.merge.merge_manifests` instead.
     """
     out = manifest.model_copy(deep=True)
 

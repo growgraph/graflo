@@ -32,7 +32,7 @@ from graflo.architecture.evolution import (
 
 
 def _union_manifest() -> GraphManifest:
-    """A composed-union-shaped manifest: one class, two resources feeding it."""
+    """A merged-union-shaped manifest: one class, two resources feeding it."""
     manifest = GraphManifest.from_config(
         {
             "schema": {
