@@ -2461,6 +2461,23 @@ class MergeManifestsOp(ConfigBaseModel):
         default_factory=dict,
         description="Rename map applied to *right* resource names before union.",
     )
+    name: str | None = PydanticField(
+        default=None,
+        description=(
+            "Label for the merged manifest and its schema. Unset, the two "
+            "sides' names are folded into ``left+right``."
+        ),
+    )
+    target_namespace: str | None = PydanticField(
+        default=None,
+        description=(
+            "Database / graph / space the merged schema deploys into. "
+            "Supersedes both sides' ``db_profile.target_namespace`` (so it "
+            "also resolves a disagreement between them) and is validated "
+            "against the merged ``db_flavor``. Unset, the namespace is "
+            "derived from the schema name when deployed."
+        ),
+    )
     name_conflict: Literal["error", "prefix_right", "union_right"] = PydanticField(
         default="error",
         description=(

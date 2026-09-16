@@ -14,6 +14,7 @@ from graflo.architecture.base import ConfigBaseModel
 from graflo.architecture.schema.core import CoreSchema
 from graflo.architecture.schema.database_features import DatabaseProfile
 from graflo.architecture.schema.metadata import GraphMetadata
+from graflo.architecture.schema.namespace import resolve_namespace
 from graflo.onto import DBType
 
 if TYPE_CHECKING:
@@ -60,6 +61,17 @@ class Schema(ConfigBaseModel):
         self.db_profile.validate_native_inverses(
             self.core_schema.edge_config, self.core_schema.vertex_config.vertex_set
         )
+
+    def effective_namespace(
+        self, db_flavor: DBType | None = None, override: str | None = None
+    ) -> str:
+        """The database / graph / space this schema deploys into on *db_flavor*.
+
+        ``metadata.name`` is a label; this is the identifier. See
+        :func:`~graflo.architecture.schema.namespace.resolve_namespace` for the
+        precedence (override, ``db_profile.target_namespace``, sanitized name).
+        """
+        return resolve_namespace(self, db_flavor, override)
 
     def remove_disconnected_vertices(self) -> set[str]:
         return self.core_schema.remove_disconnected_vertices()

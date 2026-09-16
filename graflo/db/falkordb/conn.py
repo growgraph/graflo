@@ -479,7 +479,7 @@ class FalkordbConnection(Connection):
     def _resolve_graph_name(self, schema: Schema) -> str:
         graph_name = self.config.database
         if not graph_name:
-            graph_name = schema.metadata.name
+            graph_name = schema.effective_namespace(DBType.FALKORDB)
             self.config.database = graph_name
         return graph_name
 

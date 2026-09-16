@@ -5,10 +5,13 @@ import pytest
 from graflo.architecture.contract.bindings import APIConnector, Bindings, TableConnector
 from graflo.connections.onto import PostgresConfig
 from graflo.connections.provider import (
+    ApiAuth,
     ApiGeneralizedConnConfig,
     InMemoryConnectionProvider,
     PostgresGeneralizedConnConfig,
     RestApiConnConfig,
+    proxy_env_prefix,
+    resolve_secrets_from_env,
 )
 
 
@@ -461,3 +464,82 @@ def test_register_all_api_configs_from_env_skips_non_api_connectors(
     assert api_cfg.config.base_url == "https://api.example.com"
     assert table_cfg is None
     assert provider.get_generalized_config_by_proxy("postgres_source") is None
+
+
+def test_proxy_env_prefix_uppercases_and_normalises_dashes() -> None:
+    assert proxy_env_prefix("helix-discovery") == "HELIX_DISCOVERY_"
+
+
+def test_resolve_secrets_from_env_fills_api_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HELIX_DISCOVERY_TOKEN", "t0ken")
+    stored = ApiGeneralizedConnConfig(
+        config=RestApiConnConfig(
+            base_url="http://localhost:8811", auth=ApiAuth(auth_type="bearer")
+        )
+    )
+
+    resolved = resolve_secrets_from_env(stored, "helix_discovery")
+
+    assert isinstance(resolved, ApiGeneralizedConnConfig)
+    assert resolved.config.auth is not None
+    assert resolved.config.auth.token == "t0ken"
+    assert resolved.config.auth.auth_type == "bearer"
+    assert stored.config.auth is not None and stored.config.auth.token is None
+
+
+def test_resolve_secrets_from_env_creates_auth_when_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("API_SOURCE_TOKEN", "t0ken")
+    stored = ApiGeneralizedConnConfig(config=RestApiConnConfig(base_url="http://x"))
+
+    resolved = resolve_secrets_from_env(stored, "api_source")
+
+    assert isinstance(resolved, ApiGeneralizedConnConfig)
+    assert resolved.config.auth is not None
+    assert resolved.config.auth.token == "t0ken"
+
+
+def test_resolve_secrets_from_env_fills_postgres_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("POSTGRES_USERNAME", raising=False)
+    monkeypatch.delenv("POSTGRES_PASSWORD", raising=False)
+    monkeypatch.setenv("SERVICENOW_CMDB_USERNAME", "cmdb")
+    monkeypatch.setenv("SERVICENOW_CMDB_PASSWORD", "secret")
+    stored = PostgresGeneralizedConnConfig(
+        config=PostgresConfig(uri="postgresql://localhost:55432", database="sn")
+    )
+
+    resolved = resolve_secrets_from_env(stored, "servicenow_cmdb")
+
+    assert isinstance(resolved, PostgresGeneralizedConnConfig)
+    assert resolved.config.username == "cmdb"
+    assert resolved.config.password == "secret"
+    assert resolved.config.database == "sn"
+
+
+def test_resolve_secrets_from_env_keeps_stored_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("API_SOURCE_TOKEN", "from-env")
+    stored = ApiGeneralizedConnConfig(
+        config=RestApiConnConfig(base_url="http://x", auth=ApiAuth(token="stored"))
+    )
+
+    assert resolve_secrets_from_env(stored, "api_source") is stored
+
+
+def test_resolve_secrets_from_env_honours_explicit_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OTHER_TOKEN", "t0ken")
+    stored = ApiGeneralizedConnConfig(config=RestApiConnConfig(base_url="http://x"))
+
+    resolved = resolve_secrets_from_env(stored, "api_source", env_prefix="OTHER_")
+
+    assert isinstance(resolved, ApiGeneralizedConnConfig)
+    assert resolved.config.auth is not None
+    assert resolved.config.auth.token == "t0ken"

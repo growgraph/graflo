@@ -57,14 +57,12 @@ def _assign_graph_target_namespace(target_db_config: DBConfig, namespace: str) -
 
 
 def _resolve_graph_target_namespace(
-    schema: Schema, graph_target_namespace: str | None
+    schema: Schema,
+    graph_target_namespace: str | None,
+    db_flavor: DBType | None = None,
 ) -> str:
-    """Prefer explicit call arg, then profile target_namespace, then metadata name."""
-    if graph_target_namespace is not None:
-        return graph_target_namespace
-    if schema.db_profile.target_namespace is not None:
-        return schema.db_profile.target_namespace
-    return schema.metadata.name
+    """Prefer explicit call arg, then profile target_namespace, then sanitized metadata name."""
+    return schema.effective_namespace(db_flavor, graph_target_namespace)
 
 
 def _ensure_graph_target_namespace(
@@ -76,7 +74,9 @@ def _ensure_graph_target_namespace(
         return
     if not _graph_target_namespace_unset(target_db_config):
         return
-    resolved = _resolve_graph_target_namespace(schema, graph_target_namespace)
+    resolved = _resolve_graph_target_namespace(
+        schema, graph_target_namespace, target_db_config.connection_type
+    )
     _assign_graph_target_namespace(target_db_config, resolved)
 
 

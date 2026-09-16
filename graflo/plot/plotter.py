@@ -36,6 +36,7 @@ from graflo.architecture.pipeline.runtime.actor import (
     VertexRouterActor,
 )
 from graflo.architecture.schema.context.graph import SchemaGraph
+from graflo.architecture.schema.document import Schema
 from graflo.architecture.schema.edge import Edge
 from graflo.onto import BaseEnum
 from graflo.plot.render import draw
@@ -323,7 +324,8 @@ class ManifestPlotter:
         self.schema = manifest.require_schema()
         self.ingestion_model = manifest.require_ingestion_model()
 
-        self.name = self.schema.metadata.name
+        # A label, not a filename: merged names carry "+" and may carry spaces.
+        self.name = Schema._slug_filename_token(self.schema.metadata.name)
         self.prefix = self.name
         # The one index over the schema's declared adjacency. Built here so
         # every plot reads the same traversal rather than each deriving its
@@ -710,9 +712,7 @@ class ManifestPlotter:
             kwargs["resource"] = resource_config.name
             assemble_tree(
                 ActorWrapper(*resource_config.pipeline),
-                self._figure_path(
-                    f"{self.schema.metadata.name}.resource-{resource_config.name}"
-                ),
+                self._figure_path(f"{self.name}.resource-{resource_config.name}"),
                 output_format=self.output_format,
                 output_dpi=self.output_dpi,
             )
@@ -792,9 +792,7 @@ class ManifestPlotter:
             ag.graph_attr["rankdir"] = "LR"
             self._draw(
                 ag,
-                self._versioned_stem(
-                    f"{self.schema.metadata.name}.resource2vc-{resource.name}"
-                ),
+                self._versioned_stem(f"{self.name}.resource2vc-{resource.name}"),
             )
 
     def plot_vc2vc(

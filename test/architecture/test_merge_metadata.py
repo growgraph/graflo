@@ -225,3 +225,55 @@ def test_compose_does_not_inherit_the_left_provenance() -> None:
     assert merged.require_schema().metadata.provenance is None
     assert merged.metadata is not None
     assert merged.metadata.provenance is None
+
+
+def test_a_folded_name_does_not_grow_when_a_source_is_merged_again() -> None:
+    """Re-merging a side into its union keeps the union's label, not ``a+b+a``."""
+    a = _manifest(vertex="A", schema_metadata=GraphMetadata(name="a"))
+    b = _manifest(vertex="B", schema_metadata=GraphMetadata(name="b"))
+    c = _manifest(vertex="C", schema_metadata=GraphMetadata(name="c"))
+    union = _compose(a, b)
+    assert union.require_schema().metadata.name == "a+b"
+    again = _compose(
+        union, _manifest(vertex="A2", schema_metadata=GraphMetadata(name="a"))
+    )
+    assert again.require_schema().metadata.name == "a+b"
+    assert _compose(union, c).require_schema().metadata.name == "a+b+c"
+
+
+def test_the_merged_version_bumps_from_the_higher_side() -> None:
+    """A merge with a further-along right side may not be versioned below it."""
+    left = _manifest(
+        vertex="A", schema_metadata=GraphMetadata(name="l", version="1.0.0")
+    )
+    right = _manifest(
+        vertex="B", schema_metadata=GraphMetadata(name="r", version="3.0.0")
+    )
+    assert _compose(left, right).require_schema().metadata.version == "3.0.0"
+    bumped = merge_manifests(left, right, MergeManifestsOp())
+    assert bumped.require_schema().metadata.version == "3.1.0"
+    tie = _manifest(
+        vertex="B", schema_metadata=GraphMetadata(name="r", version="1.0.0")
+    )
+    assert _compose(left, tie).require_schema().metadata.version == "1.0.0"
+
+
+def test_the_op_name_replaces_the_fold_without_moving_the_hash() -> None:
+    left = _manifest(
+        vertex="A",
+        schema_metadata=GraphMetadata(name="l"),
+        manifest_metadata=ManifestMetadata(name="cmdb"),
+    )
+    right = _manifest(vertex="B", schema_metadata=GraphMetadata(name="r"))
+    folded = _compose(left, right)
+    named = merge_manifests(
+        left,
+        right,
+        MergeManifestsOp(name="estate"),
+        bump_version=False,
+        finish_init=False,
+    )
+    assert named.require_schema().metadata.name == "estate"
+    assert named.metadata is not None
+    assert named.metadata.name == "estate"
+    assert manifest_hash(named) == manifest_hash(folded)

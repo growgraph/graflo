@@ -10,6 +10,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Namespace resolution: `Schema.effective_namespace(db_flavor)`** and
+  `graflo.architecture.schema.namespace` (`resolve_namespace`,
+  `sanitize_namespace`, `validate_namespace`). `metadata.name` is a label, not
+  an identifier; the database / graph / space a schema deploys into is now
+  resolved in one place: an explicit override, then
+  `db_profile.target_namespace` (validated against the flavor and refused with
+  a suggested spelling, never rewritten), then `metadata.name` projected onto
+  the flavor's identifier rules. Only what the flavor rejects is rewritten
+  (`cmdb+discovery` → `cmdb_discovery`, `cmdb-discovery` on Neo4j), the
+  projection is idempotent, and over-long names keep a stable hash suffix. The
+  derived name is not stored on the profile, so renaming a schema still does
+  not move its content hash.
+- **`MergeManifestsOp.name` and `MergeManifestsOp.target_namespace`.** Name the
+  merged manifest instead of accepting the `left+right` fold, and choose its
+  namespace; an op namespace supersedes both sides' declarations (resolving a
+  conflict between them) and is validated against the merged flavor at merge
+  time.
+
+- **`resolve_secrets_from_env` and `proxy_env_prefix`** in
+  `graflo.connections.provider`. A registry stores source connections without
+  secrets, and until now only the in-process `register_api_config_from_env`
+  path could supply them. The new helper fills a stored config's missing
+  credentials from `{PREFIX}USERNAME` / `{PREFIX}PASSWORD` (database and SPARQL
+  sources) and `{PREFIX}TOKEN` (REST API sources), where the prefix is derived
+  from the `conn_proxy` label (`helix_discovery` → `HELIX_DISCOVERY_`). A stored
+  value always wins over the environment.
+
 - **Declared edge inverses: `edge_config.inverses`.** A list of
   `{relation, inverse}` pairs recording that two relation names read one fact
   from its two endpoints. It is logical only and creates nothing, and it is
@@ -64,6 +91,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Every backend honours `db_profile.target_namespace`.** The Arango, Neo4j,
+  FalkorDB, Nebula, TigerGraph and Memgraph connections fell back to
+  `schema.metadata.name` directly, so the profile's namespace applied only when
+  going through `GraphEngine`, and a merged name such as `a+b` reached
+  `CREATE DATABASE` / `CREATE GRAPH` verbatim. They now resolve through
+  `Schema.effective_namespace`, and Neo4j quotes the name in `CREATE DATABASE`.
+  **Behaviour change:** a schema whose name the backend rejects (e.g.
+  `academic_kg` on Neo4j, `kg-v1` on TigerGraph) deploys into the sanitized
+  namespace; pin `db_profile.target_namespace` to keep a specific one.
+- **Merged names no longer grow on every re-merge.** The `left+right` fold is
+  flat and deduplicated, so merging a source back into its union keeps `a+b`
+  instead of producing `a+b+a`.
+- **A merged schema is no longer versioned below its inputs.** The version bump
+  starts from the higher of the two sides' `MAJOR.MINOR.PATCH` rather than
+  always from the left.
+- **Plot filenames** use a filename-safe slug of the schema name.
+- **An API connector's declared `page_size` is no longer overridden by the
+  default batch size.** Registering an `APIConnector` with `pagination` passed
+  `IngestionParams.batch_size` as the page size unconditionally, so an authored
+  `page_size: 100` became the default `10000`; an endpoint that caps its limit
+  rejected every request and the resource yielded nothing but a logged failure.
+  The declared page size now stands unless `batch_size` is set explicitly.
 - **`add_inverse_edges` wrote edges the schema did not declare.** When the
   forward edge had a TigerGraph reverse edge, or was undirected, the schema
   inverse was skipped but a reversed ingestion step was still appended, and

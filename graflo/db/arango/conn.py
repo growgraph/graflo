@@ -320,7 +320,7 @@ class ArangoConnection(Connection):
     def _resolve_db_name(self, schema: Schema) -> str:
         db_name = self.config.database
         if not db_name:
-            db_name = schema.metadata.name
+            db_name = schema.effective_namespace(DBType.ARANGO)
             self.config.database = db_name
         return db_name
 

@@ -7,6 +7,16 @@ import re
 _SEMVER_PREFIX = re.compile(r"^(\d+)\.(\d+)\.(\d+)")
 
 
+def semver_core(version: str | None) -> tuple[int, int, int] | None:
+    """``(MAJOR, MINOR, PATCH)`` of *version*, or ``None`` when it has no such prefix."""
+    if version is None:
+        return None
+    m = _SEMVER_PREFIX.match(str(version).strip())
+    if not m:
+        return None
+    return int(m.group(1)), int(m.group(2)), int(m.group(3))
+
+
 def bump_semver_minor(version: str | None) -> str:
     """Return *version* with MINOR incremented (MAJOR.PATCH unchanged), preserving suffix.
 

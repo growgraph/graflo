@@ -537,8 +537,13 @@ class RegistryBuilder:
             return
 
         runtime = generalized.config
+        # The connector's declared page size is what the endpoint accepts; the
+        # global batch size replaces it only when the caller set one explicitly.
         page_size_override = (
-            ingestion_params.batch_size if connector.pagination is not None else None
+            ingestion_params.batch_size
+            if connector.pagination is not None
+            and "batch_size" in ingestion_params.model_fields_set
+            else None
         )
         api_config = connector.build_api_config(
             base_url=runtime.base_url,

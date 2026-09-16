@@ -6,6 +6,32 @@ GraFlo separates three operations when targeting a graph database:
 2. **Define schema** — vertex and edge types, collections, tables, indexes
 3. **Ingest** — write data
 
+## Which namespace
+
+`schema.metadata.name` is a label: merges fold it into `left+right`, and it is
+excluded from the content hash. The namespace a schema deploys into is resolved
+by `Schema.effective_namespace(db_flavor)`, in this order:
+
+1. the call argument (`graph_target_namespace`) or the connection config's own
+   `database` / `schema_name`, when set;
+2. `db_profile.target_namespace` — validated against the flavor, and refused
+   with a suggested spelling rather than rewritten;
+3. `metadata.name`, with whatever the flavor rejects rewritten.
+
+| Flavor | Derived form | `cmdb+discovery` |
+|---|---|---|
+| ArangoDB | letters, digits, `_`, `-`; leading letter; ≤ 64 | `cmdb_discovery` |
+| Neo4j | lowercase letters, digits, `-`; leading letter; 3–63; not `system…` | `cmdb-discovery` |
+| TigerGraph | letters, digits, `_`; reserved words and `gsql_sys_` escaped | `cmdb_discovery` |
+| Nebula | letters, digits, `_` | `cmdb_discovery` |
+| FalkorDB, Memgraph | letters, digits, `_`, `-` | `cmdb_discovery` |
+
+A name the flavor already accepts is left as is. The derived name is not written
+back onto `db_profile`, so renaming a schema does not change its content hash.
+To pin a namespace — or to keep the one an existing deployment already uses —
+set `db_profile.target_namespace`, or `target_namespace` on the
+`MergeManifestsOp` that produces the merged manifest.
+
 ## Default flow (GraFlo bootstrap)
 
 By default, `GraphEngine.define_schema()` runs both op 1 and op 2:

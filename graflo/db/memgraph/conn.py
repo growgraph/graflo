@@ -611,7 +611,9 @@ class MemgraphConnection(Connection):
 
     def ensure_target_namespace(self, schema: Schema, *, create: bool) -> None:
         """Memgraph uses a single database per instance; record schema name only."""
-        self._database_name = schema.metadata.name
+        self._database_name = self.config.database or schema.effective_namespace(
+            DBType.MEMGRAPH
+        )
         logger.info("Using Memgraph with schema '%s'", self._database_name)
 
     def _node_count(self) -> int:

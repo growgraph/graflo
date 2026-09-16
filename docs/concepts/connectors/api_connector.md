@@ -151,7 +151,7 @@ flowchart TD
   more -->|no| done[Done]
 ```
 
-**`IngestionParams.batch_size`** overrides **`pagination.request.page_size`** when the connector defines pagination (same idea as SPARQL endpoint page size). That controls how many rows each *API page* requests, not the internal **`iter_batches`** chunk size (which still splits a page into smaller yield batches if needed).
+**`pagination.request.page_size`** is what each *API page* requests, because it is the value the endpoint is known to accept — many APIs cap their page-size parameter and reject a larger one. **`IngestionParams.batch_size`** replaces it only when set **explicitly**; the default batch size never does. The page size controls how many rows each *API page* requests, not the internal **`iter_batches`** chunk size (which still splits a page into smaller yield batches if needed).
 
 **`iter_batches(..., limit=N)`** caps the **total number of records** read across all pages, not the number of HTTP calls.
 

@@ -150,7 +150,8 @@ class DatabaseProfile(ConfigBaseModel):
         description=(
             "Runtime target LPG namespace when the connection config leaves it unset: "
             "Arango/Neo4j/FalkorDB/Memgraph database, TigerGraph graph name, Nebula space. "
-            "GraphEngine uses this before falling back to schema.metadata.name."
+            "Validated against the flavor, never rewritten. When unset, the namespace "
+            "is schema.metadata.name sanitized per flavor (Schema.effective_namespace)."
         ),
     )
     vertex_storage_names: dict[VertexName, str] = PydanticField(

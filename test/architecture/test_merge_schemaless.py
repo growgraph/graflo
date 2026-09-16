@@ -7,10 +7,9 @@ enough -- but ``merge_manifests`` used to refuse it outright.
 
 The union is three-way rather than "fill the missing side with an empty
 ``Schema``", and these tests pin why. An empty ``Schema`` is not neutral:
-``DatabaseProfile.db_flavor`` defaults to Arango, ``_merge_db_profiles`` takes
-every scalar from the left, and ``_merge_graph_metadata`` takes the left's
-version -- so an empty *left* would silently retarget the merged manifest and
-drop the right's namespace and schema version.
+``DatabaseProfile.db_flavor`` defaults to Arango, and an empty *left* would
+risk retargeting the merged manifest, dropping the right's namespace and schema
+version, and folding a fabricated label into the merged name.
 """
 
 from __future__ import annotations

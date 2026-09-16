@@ -74,6 +74,7 @@ def _build_registry(
     api_mode: str,
     *,
     page_size: int = 2,
+    ingestion_params: IngestionParams | None = None,
 ) -> tuple[APIDataSource, str]:
     _, port = mock_api_server
     resource_name = api_mode.split("_")[0]
@@ -89,7 +90,8 @@ def _build_registry(
     provider = _api_provider(port, connector)
     registry = RegistryBuilder(schema, ingestion_model).build(
         bindings=bindings,
-        ingestion_params=IngestionParams(n_cores=1, batch_size=page_size),
+        ingestion_params=ingestion_params
+        or IngestionParams(n_cores=1, batch_size=page_size),
         connection_provider=provider,
     )
     sources = registry.get_data_sources(resource_name)
@@ -114,6 +116,25 @@ def test_api_data_source_basic(mock_api_server, api_mode, current_path, reset):
         caster.process_data_source(data_source=api_source, resource_name=resource_name)
     )
     assert api_source is not None
+
+
+@pytest.mark.parametrize(
+    ("ingestion_params", "expected_page_size"),
+    [
+        pytest.param(IngestionParams(n_cores=1), 2, id="declared-page-size-kept"),
+        pytest.param(
+            IngestionParams(n_cores=1, batch_size=500), 500, id="explicit-batch-size"
+        ),
+    ],
+)
+def test_registry_builder_page_size_follows_connector_unless_batch_size_set(
+    mock_api_server, api_mode, ingestion_params, expected_page_size
+):
+    api_source, _ = _build_registry(
+        mock_api_server, api_mode, page_size=2, ingestion_params=ingestion_params
+    )
+    assert api_source.config.pagination is not None
+    assert api_source.config.pagination.request.page_size == expected_page_size
 
 
 def test_api_data_source_via_registry_builder(mock_api_server, api_mode):
