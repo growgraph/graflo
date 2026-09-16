@@ -803,9 +803,9 @@ class TigerGraphDataOps:
             unset_keys: Keys to exclude (projection)
             direction: Orientations to follow from the anchor
             native_inverse_type: Name of the database-maintained inverse type
-                (the declared inverse of an edge with
-                ``db_profile.edge_specs[*].native_inverse``), required for IN /
-                ANY on a directed edge
+                (the declared inverse of a relation listed in
+                ``db_profile.native_inverses``), required for IN / ANY on a
+                directed edge
             edge_is_undirected: Whether ``edge_type`` was created as
                 ``UNDIRECTED EDGE``, in which case REST already answers both ways
             **kwargs: Additional parameters

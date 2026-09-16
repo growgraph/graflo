@@ -115,9 +115,9 @@ This maps to `gf:semanticIri`, `skos:exactMatch`, `skos:altLabel`, and — field
 
 Grounding survives a fold. When two definitions of one type or property are combined — by `merge_vertices`, or by a `merge_manifests` equivalence — `exact_match` and `synonyms` union, since they are sets of claims. A single-valued `iri` cannot: two sides denoting different concepts denote neither exactly, so a disagreement clears it rather than electing one. `unit` is the exception that refuses outright — unlike an `iri`, two units mean the combined property would hold numerically incomparable values, which is a defect in the data rather than in its description.
 
-**Declared and native inverses** (added in 1.7.0)
+**Declared, symmetric and native inverses** (added in 1.7.0)
 
-`gf:EdgeConfig` points at its declared inverse pairs through `gf:hasInverse`; each `gf:EdgeInverse` carries `gf:relation` and `gf:inverseRelation`, ordered by `gf:artifactIndex`. An `gf:EdgePhysicalSpec` whose database maintains that inverse carries `gf:specNativeInverse true`. The inverse type's name is not repeated on the spec — it is the declared pair's `gf:inverseRelation`.
+`gf:EdgeConfig` points at its declared inverse pairs through `gf:hasInverse`; each `gf:EdgeInverse` carries `gf:relation` and `gf:inverseRelation` (the pair is unordered), ordered by `gf:artifactIndex`. Relations declared as their own inverse are `gf:symmetricRelation` literals on the `gf:EdgeConfig`. A `gf:DatabaseProfile` names each relation whose inverse the database maintains with `gf:nativeInverseRelation`. The inverse type's name is not repeated on the profile — it is the declared pair's other relation.
 
 **List field types** (added in 1.6.0)
 

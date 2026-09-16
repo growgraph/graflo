@@ -76,19 +76,26 @@ def declared_relation_map(
 ) -> dict[str, str]:
     """``{relation: declared inverse}`` for the relations an op realizes.
 
-    ``None`` selects every declared relation, both sides of each pair.
+    ``None`` selects every paired relation, both sides of each pair. Symmetric
+    relations are never selected: their realization is ``directed: false``.
 
     Raises:
-        ValueError: when nothing is declared, or a named relation has no pair.
+        ValueError: when no pair is declared, or a named relation has no pair.
     """
     declared = inverse_map(edge_config.inverses)
     if relations is None:
         if not declared:
             raise ValueError(
-                "add_inverse_edges: no inverses declared in edge_config.inverses; "
-                "declare pairs first (declare_edge_inverses)"
+                "add_inverse_edges: no inverse pairs declared in "
+                "edge_config.inverses; declare pairs first (declare_edge_inverses)"
             )
         return declared
+    symmetric = sorted(r for r in relations if edge_config.is_symmetric(r))
+    if symmetric:
+        raise ValueError(
+            f"add_inverse_edges: {symmetric} are symmetric; a symmetric relation "
+            "has no inverse edge, its edges are undirected"
+        )
     undeclared = sorted(set(relations) - set(declared))
     if undeclared:
         raise ValueError(
@@ -142,33 +149,33 @@ def plan_inverse_edges(
     """The relation map and the inverse edges ``add_inverse_edges`` would create.
 
     Shared by the op and its inverse, so undoing removes exactly what applying
-    added. Edges whose inverse is native are refused when named and skipped
+    added. Relations whose inverse is native are refused when named and skipped
     when the whole table is realized: they already have their inverse.
 
     Raises:
-        ValueError: for an undeclared relation, or a named natively realized edge.
+        ValueError: for an undeclared relation, or a named natively realized one.
     """
     edge_config = schema.core_schema.edge_config
     relation_map = declared_relation_map(edge_config, relations)
     profile = schema.db_profile
-    native = sorted(
-        str(edge.edge_id)
-        for edge in edge_config.edges
-        if edge.relation in relation_map
-        and profile.edge_has_native_inverse(edge.edge_id)
-    )
+    # Either side of a native pair: the database already maintains both names.
+    natively_paired = {
+        name
+        for relation in profile.native_inverses
+        for name in (relation, edge_config.inverse_of(relation))
+        if name is not None
+    }
+    native = sorted(set(relation_map) & natively_paired)
     if native and relations is not None:
         raise ValueError(
-            "add_inverse_edges: the inverse of these edges is already maintained "
-            f"natively by the database: {native}. An explicit inverse edge would "
-            "store the same fact twice; withdraw it with set_native_inverses "
-            "(enabled=false) first, or keep the native inverse"
+            "add_inverse_edges: the inverse of these relations is already "
+            f"maintained natively by the database: {native}. An explicit inverse "
+            "edge would store the same fact twice; withdraw it with "
+            "set_native_inverses (enabled=false) first, or keep the native inverse"
         )
     existing = {edge.edge_id for edge in edge_config.edges}
     candidates = [
-        edge
-        for edge in edge_config.edges
-        if not profile.edge_has_native_inverse(edge.edge_id)
+        edge for edge in edge_config.edges if edge.relation not in natively_paired
     ]
     created = [
         edge

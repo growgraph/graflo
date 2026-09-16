@@ -144,6 +144,8 @@ class ManifestRdfSerializer:
             add_literal(graph, inverse_uri, ns.artifactIndex, index)
             add_literal(graph, inverse_uri, ns.relation, pair.relation)
             add_literal(graph, inverse_uri, ns.inverseRelation, pair.inverse)
+        for name in schema.core_schema.edge_config.symmetric:
+            add_literal(graph, edge_config_uri, ns.symmetricRelation, name)
 
         profile_uri = URIRef(join_uri(str(schema_uri), "db-profile"))
         graph.add((schema_uri, ns.hasDatabaseProfile, profile_uri))
@@ -414,6 +416,8 @@ class ManifestRdfSerializer:
             ns.ENUM_REGISTRIES["db_type"],
         )
         add_literal(graph, profile_uri, ns.targetNamespace, profile.target_namespace)
+        for relation in profile.native_inverses:
+            add_literal(graph, profile_uri, ns.nativeInverseRelation, relation)
         self._emit_profile_indexes(
             graph, profile_uri, profile, edge_uri_by_id=edge_uri_by_id
         )
@@ -462,8 +466,6 @@ class ManifestRdfSerializer:
             add_literal(graph, spec_uri, ns.specPurpose, edge_spec.purpose)
             add_literal(graph, spec_uri, ns.specRelationName, edge_spec.relation_name)
             add_literal(graph, spec_uri, ns.specIndexesMode, edge_spec.indexes_mode)
-            if edge_spec.native_inverse:
-                add_literal(graph, spec_uri, ns.specNativeInverse, True)
             if edge_uri_by_id is not None:
                 edge_uri = edge_uri_by_id.get(
                     (edge_spec.source, edge_spec.target, edge_spec.relation)

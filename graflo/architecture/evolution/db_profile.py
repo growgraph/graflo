@@ -94,7 +94,6 @@ def apply_vertex_rename_to_db_profile(
                 relation_name=s.relation_name,
                 indexes=list(s.indexes),
                 indexes_mode=s.indexes_mode,
-                native_inverse=s.native_inverse,
             )
         )
     profile.edge_specs = new_specs
@@ -179,7 +178,6 @@ def remap_vertices_in_db_profile(
                 relation_name=s.relation_name,
                 indexes=list(s.indexes),
                 indexes_mode=s.indexes_mode,
-                native_inverse=s.native_inverse,
             )
         )
     profile.edge_specs = new_specs
@@ -393,7 +391,6 @@ def apply_field_rename_to_db_profile(
                 relation_name=spec.relation_name,
                 indexes=_rewrite_index_fields(list(spec.indexes), merged),
                 indexes_mode=spec.indexes_mode,
-                native_inverse=spec.native_inverse,
             )
         )
     profile.edge_specs = new_specs
@@ -432,6 +429,9 @@ def apply_relation_rename_to_db_profile(
             )
         )
     profile.edge_specs = new_specs
+    profile.native_inverses = [
+        relation_renames.get(relation, relation) for relation in profile.native_inverses
+    ]
 
     dpv = profile.default_property_values
     if dpv is None:
@@ -464,6 +464,7 @@ def apply_relation_removal_to_db_profile(
     profile.edge_specs = [
         spec for spec in profile.edge_specs if spec.relation not in removed_relations
     ]
+    retain_native_inverses(profile, set(profile.native_inverses) - removed_relations)
     dpv = profile.default_property_values
     if dpv is None:
         return
@@ -472,6 +473,17 @@ def apply_relation_removal_to_db_profile(
         "edges",
         [edge for edge in dpv.edges if edge.relation not in removed_relations],
     )
+
+
+def retain_native_inverses(profile: DatabaseProfile, relations: set[str]) -> None:
+    """Keep only the native inverses of ``relations``.
+
+    A native inverse is keyed by relation, so removing edges drops it only once
+    the relation has no edge left; callers pass the relations that survive.
+    """
+    kept = [relation for relation in profile.native_inverses if relation in relations]
+    if kept != profile.native_inverses:
+        profile.native_inverses = kept
 
 
 def apply_edge_id_removal_to_db_profile(
@@ -627,8 +639,8 @@ def apply_inverse_edges_to_db_profile(
     Only edges the op created are touched: an inverse edge that already existed
     keeps whatever physical profile its author gave it. ``relation_name`` is not
     copied -- it is the storage type name, and copying it would store the
-    forward and inverse relations as one physical type. ``native_inverse`` is not
-    copied either; the inverse edge is itself the realization of the pair.
+    forward and inverse relations as one physical type. Native inverses are keyed by relation
+    and are refused alongside explicit inverse edges, so there is none to copy.
     """
     if not relation_map or not created:
         return

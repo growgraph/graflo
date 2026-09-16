@@ -219,7 +219,7 @@ An `Edge` describes edges and their logical identities. It allows:
 - Optional uniqueness semantics through **`identities`** (multiple candidate keys are allowed)
 - **`properties`**: relationship payload (names and optional types), same accepted forms as vertex properties (strings, `Field`, or dicts with at least `name`)
 - Optional static **`relation`** label (e.g. Neo4j relationship type) when it is not derived at ingest time
-- **`directed`** (default `true`): when `false`, the edge is logically undirected and has no inverse. On TigerGraph, `directed: false` maps to `UNDIRECTED EDGE` DDL; a directed edge with a declared inverse can instead be paired natively (`db_profile.edge_specs[*].native_inverse`, `WITH REVERSE_EDGE`).
+- **`directed`** (default `true`): when `false`, the edge is logically undirected and has no inverse. On TigerGraph, `directed: false` maps to `UNDIRECTED EDGE` DDL; a directed edge whose relation has a declared inverse pair can instead be paired natively (`db_profile.native_inverses`, `WITH REVERSE_EDGE`). A relation declared in `edge_config.symmetric` requires its edges to be undirected.
 
 Ingestion-only controls (**`relation_field`**, **`relation_from_key`**, **`match_source`**, **`match_target`**, vertex-sourced edge payload) live on **`EdgeActor`** steps and **`EdgeDerivation`**, not on the logical `Edge` model.
 
@@ -244,7 +244,7 @@ Vertex fields that should appear on edges are configured via **edge actor** opti
 
 #### Edge behavior control
 - Edge physical variants should be modeled with `schema.db_profile.edge_specs[*].purpose` (YAML) / `db_profile.edge_specs[*].purpose` (in code).
-- TigerGraph native inverses: `schema.db_profile.edge_specs[*].native_inverse: true` emits `WITH REVERSE_EDGE="<declared inverse>"` in GSQL (see [Directed, undirected, and bidirectional edges](#directed-undirected-and-bidirectional-edges)).
+- TigerGraph native inverses: a relation listed in `schema.db_profile.native_inverses` emits `WITH REVERSE_EDGE="<declared inverse>"` on its edge type in GSQL (see [Directed, undirected, and bidirectional edges](#directed-undirected-and-bidirectional-edges)).
 - `Edge.aux` is no longer a behavior switch.
 
 > DB-only physical edge metadata (including `purpose`) is configured under
@@ -253,13 +253,13 @@ Vertex fields that should appear on edges are configured via **edge actor** opti
 
 #### Directed, undirected, and bidirectional edges
 
-Logical edges are **directed by default** (`directed: true`). Direction matters for ingestion semantics and for evolution ops such as [`AddInverseEdgesOp`](../schema/manifest_evolution.md#5-inverse-edges-and-native-inverses).
+Logical edges are **directed by default** (`directed: true`). Direction matters for ingestion semantics and for evolution ops such as [`AddInverseEdgesOp`](../schema/manifest_evolution.md#5-inverse-and-symmetric-relations).
 
 | Modeling goal | GraFlo config | TigerGraph GSQL (when `db_flavor: tigergraph`) |
 |---------------|---------------|------------------------------------------------|
 | Single direction | `directed: true` (default), one logical edge | `ADD DIRECTED EDGE ...` |
 | Portable forward + inverse labels (**inverse edge**) | Declared inverse + two logical directed edges (hand-authored, or `AddInverseEdgesOp`) | Two `ADD DIRECTED EDGE` statements |
-| Database-maintained pair, one load path (**native inverse**) | Declared inverse + one logical edge + `edge_specs[*].native_inverse` | `ADD DIRECTED EDGE ... WITH REVERSE_EDGE="<declared inverse>"` |
+| Database-maintained pair, one load path (**native inverse**) | Declared pair + one logical relation + `native_inverses: [relation]` | `ADD DIRECTED EDGE ... WITH REVERSE_EDGE="<declared inverse>"` |
 | Symmetric / direction-agnostic | `directed: false` on one logical edge | `ADD UNDIRECTED EDGE ...` |
 
 **Undirected example:**
@@ -287,14 +287,10 @@ edge_config:
       inverse: is_followed_by
 db_profile:
   db_flavor: tigergraph
-  edge_specs:
-    - source: user
-      target: user
-      relation: is_following
-      native_inverse: true
+  native_inverses: [is_following]
 ```
 
-`edge_config.inverses` is the logical declaration and backend-agnostic; `native_inverse` is TigerGraph-only physical metadata on `EdgePhysicalSpec` that names nothing itself — the paired type takes the declared inverse's name. A native inverse needs a declared pair, is refused next to an explicit `(target, source, inverse)` edge, and cannot sit on an undirected edge. See [Inverse edges and native inverses](../schema/manifest_evolution.md#5-inverse-edges-and-native-inverses) for the full rules and the ops that author them.
+`edge_config.inverses` is the logical declaration and backend-agnostic; `native_inverses` is TigerGraph-only physical metadata keyed by relation — TigerGraph sets the reverse type on the edge type, which spans every `(source, target)` pair of the relation — and it names nothing itself: the paired type takes the declared inverse's name. A native inverse needs a declared pair, is refused next to explicit edges carrying the inverse name, and cannot apply to a symmetric relation. A relation that is its own inverse is declared in `edge_config.symmetric`, and its edges must be `directed: false`. See [Inverse and symmetric relations](../schema/manifest_evolution.md#5-inverse-and-symmetric-relations) for the full rules and the ops that author them.
 
 **What the other backends do with `directed: false`**
 

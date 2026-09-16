@@ -175,16 +175,44 @@ class TestReversibleRoundTrip:
         tigergraph = {"db_flavor": "tigergraph"}
         declared = _manifest(db_profile=tigergraph, inverses={"places": "placed_by"})
         _assert_round_trips(
-            {"op": "set_native_inverses", "edges": [PLACES_ID]}, manifest=declared
+            {"op": "set_native_inverses", "relations": ["places"]}, manifest=declared
         )
         native = apply_evolution(
             declared,
-            [op_from_dict({"op": "set_native_inverses", "edges": [PLACES_ID]})],
+            [op_from_dict({"op": "set_native_inverses", "relations": ["places"]})],
             bump_version=False,
         )
         _assert_round_trips(
-            {"op": "set_native_inverses", "edges": [PLACES_ID], "enabled": False},
+            {"op": "set_native_inverses", "relations": ["places"], "enabled": False},
             manifest=native,
+        )
+
+    def test_declaring_a_pair_in_both_orders_round_trips(self) -> None:
+        _assert_round_trips(
+            {
+                "op": "declare_edge_inverses",
+                "inverses": {"places": "placed_by", "placed_by": "places"},
+            }
+        )
+
+    def test_symmetric_declarations_round_trip(self) -> None:
+        linked = {
+            "source": "party",
+            "target": "party",
+            "relation": "knows",
+            "directed": False,
+        }
+        manifest = _manifest(extra_edges=[linked])
+        _assert_round_trips(
+            {"op": "declare_edge_inverses", "symmetric": ["knows"]}, manifest=manifest
+        )
+        declared = apply_evolution(
+            manifest,
+            [op_from_dict({"op": "declare_edge_inverses", "symmetric": ["knows"]})],
+            bump_version=False,
+        )
+        _assert_round_trips(
+            {"op": "retract_edge_inverses", "relations": ["knows"]}, manifest=declared
         )
 
     def test_rename_resources_round_trips(self) -> None:

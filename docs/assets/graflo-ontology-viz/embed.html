@@ -899,6 +899,10 @@
           "range": "string"
         },
         {
+          "label": "nativeInverseRelation",
+          "range": "string"
+        },
+        {
           "label": "profilePayload",
           "range": "string"
         },
@@ -981,7 +985,12 @@
     },
     {
       "comment": "Manifest-facing edge_config block containing edge declarations.",
-      "datatypeProperties": [],
+      "datatypeProperties": [
+        {
+          "label": "symmetricRelation",
+          "range": "string"
+        }
+      ],
       "group": "schema",
       "id": "https://ontology.growgraph.dev/graflo/EdgeConfig",
       "kind": "gf",
@@ -1017,7 +1026,7 @@
       "local": "EdgeInferSpec"
     },
     {
-      "comment": "Declared inverse pair: two relation names reading one fact from its two endpoints. Logical only; realized by an explicit inverse edge or by a native inverse on an edge physical spec.",
+      "comment": "Declared inverse pair: two distinct relation names reading one fact from its two endpoints. Unordered. Logical only; realized by explicit inverse edges or by a native inverse on the database profile.",
       "datatypeProperties": [
         {
           "label": "inverseRelation",
@@ -1036,10 +1045,6 @@
         {
           "label": "specIndexesMode",
           "range": "string"
-        },
-        {
-          "label": "specNativeInverse",
-          "range": "boolean"
         },
         {
           "label": "specPurpose",

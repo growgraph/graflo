@@ -198,7 +198,7 @@ def assert_direction_supported(
         db_type: Backend being queried.
         direction: Requested orientation.
         has_native_inverse: Whether the database maintains the edge's declared
-            inverse as a paired type (``EdgePhysicalSpec.native_inverse``). Only consulted on backends
+            inverse as a paired type (``DatabaseProfile.native_inverses``). Only consulted on backends
             whose reverse reachability is decided at schema time.
         edge_is_undirected: Whether the edge type itself was created undirected.
             On a backend with native undirected edges that already answers both
@@ -225,7 +225,7 @@ def assert_direction_supported(
         f"'{direction.value}': reverse reachability is fixed when the edge type "
         "is created and no query rewrite recovers it. Declare the edge type as "
         "undirected (`directed: false`), or declare its inverse in "
-        "`edge_config.inverses` and set `db_profile.edge_specs[*].native_inverse`."
+        "`edge_config.inverses` and list its relation in `db_profile.native_inverses`."
     )
 
 

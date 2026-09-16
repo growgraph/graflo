@@ -77,9 +77,10 @@ LIST_ORDER: dict[tuple[str, str], ListOrder] = {
     # Declaration sets, matched by name or endpoints everywhere they are read.
     ("VertexConfig", "vertices"): SORTED,
     ("EdgeConfig", "edges"): SORTED,
-    # A declaration set: each relation appears in at most one pair, and pairs
-    # are looked up by name, never by position.
+    # Declaration sets: each relation has at most one inverse, and pairs and
+    # symmetric names are looked up by name, never by position.
     ("EdgeConfig", "inverses"): SORTED,
+    ("EdgeConfig", "symmetric"): SORTED,
     ("Vertex", "properties"): SORTED,
     ("Edge", "properties"): SORTED,
     ("Vertex", "secondary_identities"): SORTED,
@@ -114,6 +115,8 @@ LIST_ORDER: dict[tuple[str, str], ListOrder] = {
     # ...but the set of indexes on a vertex or edge is not ordered.
     ("DatabaseProfile", "vertex_indexes"): SORTED,
     ("DatabaseProfile", "edge_specs"): SORTED,
+    # A set of relation names, looked up by name.
+    ("DatabaseProfile", "native_inverses"): SORTED,
     ("EdgePhysicalSpec", "indexes"): SORTED,
     ("DefaultPropertyValues", "edges"): SORTED,
     # ── Semantics: sets of external terms ───────────────────────────────────

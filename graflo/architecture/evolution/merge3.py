@@ -250,11 +250,12 @@ def op_slots(op: ManifestOp) -> set[Slot]:
                 (*_relation_slot(relation), "inverse"),
                 (*_relation_slot(inverse), "inverse"),
             }
+        slots |= {(*_relation_slot(name), "inverse") for name in op.symmetric}
     elif isinstance(op, ops.RetractEdgeInversesOp):
         slots |= {(*_relation_slot(relation), "inverse") for relation in op.relations}
     elif isinstance(op, ops.SetNativeInversesOp):
         slots |= {
-            (*_edge_slot(*entry.edge_id()), "native_inverse") for entry in op.edges
+            (*_relation_slot(relation), "native_inverse") for relation in op.relations
         }
     elif isinstance(op, ops.MergeEdgesOp):
         slots |= {_relation_slot(relation) for relation in op.sources}

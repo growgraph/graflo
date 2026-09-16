@@ -24,9 +24,9 @@ GraFlo provides **contract-level** operations that transform a validated `GraphM
 | **Rename edge fields** | Per-relation edge property renames across schema edge properties/identities, `db_profile` edge indexes/defaults, and edge actor `properties` payloads. |
 | **Remove edge fields** | Removes per-relation edge properties, prunes edge index/default references, and rewrites edge actor `properties`. |
 | **Add edge fields** | Adds properties to existing relations. An entry is a bare name (untyped) or a full `Field` carrying type and grounding, as for vertices. Rejects an unknown relation. |
-| **Declare / retract edge inverses** | `declare_edge_inverses` (`inverses: {R: R_inv}`) records pairs in `edge_config.inverses`; `retract_edge_inverses` (`relations: [...]`, either side of a pair) withdraws them. Logical only — creates no edge. A relation belongs to at most one pair; a pair contradicting the table is refused; restating a pair in either orientation is a no-op. Retracting is refused while a native inverse still realizes the pair. Inverses of each other; the differ emits both. See [Inverse edges and native inverses](#5-inverse-edges-and-native-inverses). |
-| **Add inverse edges** | Realizes declared inverses as **explicit logical edges**, portable to every backend. `relations: [R, ...]` names declared relations (either side of a pair); omitted, it realizes every declared relation, both sides, skipping edges whose inverse is native. It never declares: an undeclared relation is refused. For each directed `(S, T, R)` adds `(T, S, R_inv)` unless it exists, with a physical spec copied minus `relation_name`, and ingestion steps that write **only** the created edges. A named edge whose inverse is already native is refused. Reversible: the inverse removes exactly the created edges. |
-| **Set native inverses** | Realizes declared inverses **physically**: `edges` (triples) + `enabled` set `db_profile.edge_specs[*].native_inverse`, so TigerGraph maintains the pair (`WITH REVERSE_EDGE`, named after the declared inverse). Refused without a declared pair, where the explicit inverse edge exists, on undirected edges, and on non-TigerGraph profiles. Withdrawing leaves no empty spec behind. |
+| **Declare / retract edge inverses** | `declare_edge_inverses` (`inverses: {R: R_inv}`, `symmetric: [R, ...]`) records pairs in `edge_config.inverses` and self-inverse relations in `edge_config.symmetric`; `retract_edge_inverses` (`relations: [...]`, either side of a pair, or a symmetric name) withdraws them. Logical only — creates no edge. A pair is unordered: `{a: b}`, `{b: a}` and `{a: b, b: a}` declare the same thing, and restating a declaration is a no-op. A declaration giving a relation a second inverse is refused. Retracting is refused while a native inverse still realizes the pair. Inverses of each other; the differ emits both. See [Inverse and symmetric relations](#5-inverse-and-symmetric-relations). |
+| **Add inverse edges** | Realizes declared pairs as **explicit logical edges**, portable to every backend. `relations: [R, ...]` names paired relations (either side of a pair); omitted, it realizes every declared pair, both sides, skipping relations whose inverse is native. It never declares: an undeclared relation is refused, and so is a symmetric one (its edges are undirected). For each directed `(S, T, R)` adds `(T, S, R_inv)` unless it exists, with a physical spec copied minus `relation_name`, and ingestion steps that write **only** the created edges. A named relation whose inverse is already native is refused. Reversible: the inverse removes exactly the created edges. |
+| **Set native inverses** | Realizes declared pairs **physically**: `relations` + `enabled` add to or remove from `db_profile.native_inverses`, so TigerGraph maintains the pair (`WITH REVERSE_EDGE` on the relation's edge type, named after the declared inverse). Refused without a declared pair, for a symmetric relation, where explicit edges carry the inverse name, on both sides of one pair, when `relation_name` overrides split the relation over several edge types, and on non-TigerGraph profiles. |
 | **Project manifest** | Keeps a logical subgraph by vertex names and/or edge triples `(source, target, relation)`. Prunes isolated vertex types from `keep_vertices` when they have no surviving edges (`connectivity: induced_prune`). Cascades to schema, `db_profile`, ingestion (pipeline steps, infer selectors, `extra_weights`), and bindings through the same removal as **Remove vertices**, so a `vertex_router` keeps routing the kept types. Optional `keep_resources` filters ingestion resources. Optional `depth` expands `keep_vertices` into seeds for an n-hop neighbourhood walk (`direction` orients it), yielding the induced subgraph on the hop ball. Inverse edges are not auto-kept. Fails if ingestion would be left empty. |
 | **Replace identity** | `replacements: {vertex: {to, retire, ...}}`. Per-vertex identity policy swap covering both field-set and **mode** changes (`natural` / `hash` / `assigned` / `blank`). `retire` decides what becomes of the old field-set — `demote` (default) turns it into a secondary identity, `keep` leaves it as plain properties, `drop` removes it. `endpoints` decides whether edge steps follow the new identity (`follow_new`, default) or stay pinned to the demoted one (`pin_to_retired`). Drops `db_profile` indexes that encoded the retired identity. See [Replacing a vertex identity](#replacing-a-vertex-identity). |
 | **Add / remove secondary identities** | Declares or withdraws alternate lookup keys on existing vertices. Each field-set's non-unique index is *derived* by `Schema.finish_init`, so adding one needs no index authoring; removing one drops the derived index explicitly. Removal is rejected while an edge step still selects the field-set. |
@@ -35,7 +35,7 @@ GraFlo provides **contract-level** operations that transform a validated `GraphM
 | **Retarget edges** | Changes which vertex types an edge connects, preserving its properties, `identities`, `directed` flag, and `db_profile` physical spec — all of which a remove-plus-add would lose. Rewrites the `EdgeId` in `edge_config`, `edge_specs`, and pipeline edge steps, keyed on the full triple so a different relation between the same types is untouched. |
 | **Change field types** | Sets `Field.type` / `item_type` on vertex or edge properties. Validated against the profile's `db_flavor` via `graflo.db.field_type_support`, so an unsupported LIST target fails at op time rather than at define time. Refuses to make an identity field a LIST. |
 | **Add / remove vertex & edge indexes** | Authors `db_profile.vertex_indexes` and `edge_specs[].indexes` directly. Indexes derived from `secondary_identities` cannot be removed this way — they would be re-registered by the next `finish_init`, so the op points at **remove secondary identities** instead. |
-| **Set edge directed** | Sets `Edge.directed` on selected triples. Load-bearing for replay: `directed` decides what **add inverse edges** may duplicate, and an undirected edge may not carry a declared inverse. |
+| **Set edge directed** | Sets `Edge.directed` on selected triples. Load-bearing for replay: `directed` decides what **add inverse edges** may duplicate, an undirected edge may not carry a declared pair, and an edge naming a symmetric relation must be undirected — so the differ retracts declarations before flipping `directed`, and declares after. |
 | **Set db profile** | Replaces the whole `db_profile`. The four index ops reach `vertex_indexes` and `edge_specs[].indexes`; nothing reached `db_flavor`, `target_namespace`, `vertex_storage_names`, `default_property_values` or the rest of a spec — and those are content-hashed, so a change set that moved one could not replay. Carries the indexes too and is emitted *instead of* the index ops, never alongside them. |
 | **Set bindings** | Replaces the whole `bindings` block; `null` removes it. The block previously had no op at all, so any diff touching it was inexpressible and a merge that unioned two registries could not be recorded. Wholesale by design: in a three-way merge the block is one slot, so two independent bindings edits conflict — granular connector ops would refine that without changing this op's meaning. |
 | **Sanitize** | Target-`DBType` policy: reserved-word-safe names on `DatabaseProfile`, reserved vertex field renames, and (for TigerGraph) consistent identity tuples per edge relation. This is the same work **`graflo.hq.sanitizer.Sanitizer`** applies by building a single **`SanitizeOp`**. |
@@ -616,17 +616,18 @@ enriched = apply_evolution(
 )
 ```
 
-### 5) Inverse edges and native inverses
+### 5) Inverse and symmetric relations
 
-Two relation names often read one fact from its two endpoints: `person --employed_by--> institution` and `institution --employs--> person`. GraFlo keeps three things apart:
+Two relation names often read one fact from its two endpoints: `person --employed_by--> institution` and `institution --employs--> person`. Some relations read the same both ways: `person --knows--> person`. Declarations are made over **relation names**, and edges are derived from them:
 
 | Term | Where | What it is |
 |------|-------|------------|
-| **Declared inverse** | `schema.graph.edge_config.inverses` | The logical fact that `employs` is the inverse of `employed_by`. Creates nothing. |
+| **Inverse pair** | `schema.graph.edge_config.inverses` | The logical fact that `employs` and `employed_by` are inverses. Unordered; creates nothing. |
+| **Symmetric relation** | `schema.graph.edge_config.symmetric` | The logical fact that `knows` is its own inverse. Creates nothing; its edges must be `directed: false`. |
 | **Inverse edge** | `edge_config.edges` + ingestion | An explicit logical edge `(institution, person, employs)`, stored and loaded like any other. Portable to every backend. |
-| **Native inverse** | `db_profile.edge_specs[*].native_inverse: true` | The database maintains the pair itself — TigerGraph only, as `WITH REVERSE_EDGE="employs"`. One load path; the type name is the declared inverse, never spelled on the spec. |
+| **Native inverse** | `db_profile.native_inverses: [employed_by]` | The database maintains the pair itself — TigerGraph only, as `WITH REVERSE_EDGE="employs"` on the `employed_by` edge type. One load path; the type name is the declared inverse, never spelled on the profile. |
 
-A declared pair is realized **at most one way per edge**. Both at once would store the same fact twice, so the schema refuses it when it loads.
+A symmetric relation has one realization: its edges are undirected (`UNDIRECTED EDGE` on TigerGraph; elsewhere see [Core components — Edge](../architecture/core_components.md#directed-undirected-and-bidirectional-edges)). An inverse pair is realized **at most one way per relation** — explicit inverse edges or a native inverse. Both at once would store the same fact twice, so the schema refuses it when it loads. A native inverse is keyed by relation because TigerGraph sets the reverse type on the edge type, and one edge type spans every `(source, target)` pair of its relation.
 
 ```yaml
 schema:
@@ -634,26 +635,56 @@ schema:
     edge_config:
       edges:
         - {source: person, target: institution, relation: employed_by}
+        - {source: person, target: person, relation: knows, directed: false}
       inverses:
         - {relation: employed_by, inverse: employs}
+      symmetric: [knows]
   db_profile:                     # only for the native realization
     db_flavor: tigergraph
-    edge_specs:
-      - {source: person, target: institution, relation: employed_by, native_inverse: true}
+    native_inverses: [employed_by]
 ```
 
 **What the schema checks when it loads**
 
 | Rule | Refused when |
 |------|--------------|
-| One pair per relation | A relation appears in two pairs (either column) — `(a, b)` with `(b, a)`, or a chain `a → b`, `b → c`. |
-| No self-inverse | `relation == inverse`; a symmetric relationship is `directed: false`. |
-| No dangling pair | Neither relation names any edge (allowed while a relation-less template edge admits relations named at ingest time). |
-| Directed only | A declared relation is on an undirected edge. |
-| Native needs a declaration | `native_inverse` is set but the relation has no declared inverse. |
-| One realization | `native_inverse` is set and the explicit inverse edge `(T, S, inverse)` also exists. |
-| TigerGraph only | `native_inverse` on any other `db_flavor`. |
-| One type namespace | The inverse name equals a vertex type or another edge type (TigerGraph type names are global). Physical `relation_name` overrides are checked again when the DDL is built. |
+| One inverse per relation | Pairs and symmetric names give a relation two inverses — a chain `a-b`, `b-c`, or a relation both paired and symmetric. A pair restated in either order is the same statement and is kept once; pairs are stored with their names sorted, so the order they are written in does not change the content hash. |
+| No self-pair | `relation == inverse` in a pair; declare the relation in `symmetric` instead. |
+| No dangling declaration | A pair or symmetric name names no edge (allowed while a relation-less template edge admits relations named at ingest time). |
+| Pairs are directed | A paired relation is on an undirected edge. |
+| Symmetric is undirected | A symmetric relation is on a directed edge. |
+| Native needs a pair | A relation in `native_inverses` has no declared pair, or is symmetric. |
+| One realization | A relation is native and explicit edges carry its inverse name, or both sides of one pair are native. |
+| One edge type | `relation_name` overrides store a native relation under several physical names. |
+| TigerGraph only | `native_inverses` on any other `db_flavor`. |
+| One type namespace | The inverse name equals a vertex type (TigerGraph type names are global). Physical `relation_name` overrides are checked again when the DDL is built. |
+
+Every declaration and realization is authored by an op — `declare_edge_inverses` / `retract_edge_inverses`, `set_edge_directed`, `add_inverse_edges`, `set_native_inverses` — and `diff_manifests` emits them in an order whose refusals cannot fire.
+
+**Declaring**:
+
+```python
+from graflo.architecture.evolution import (
+    DeclareEdgeInversesOp,
+    SetEdgeDirectedOp,
+    EdgeSelector,
+    apply_evolution,
+)
+
+declared = apply_evolution(
+    manifest,
+    [
+        # both orders of one pair are accepted
+        DeclareEdgeInversesOp(inverses={"employed_by": "employs"}),
+        SetEdgeDirectedOp(
+            edges=[EdgeSelector(source="person", target="person", relation="knows")],
+            directed=False,
+        ),
+        DeclareEdgeInversesOp(symmetric=["knows"]),
+    ],
+    bump_version=False,
+)
+```
 
 **Realizing a declared pair explicitly** — `add_inverse_edges`:
 
@@ -668,13 +699,15 @@ bidirectional = apply_evolution(
     manifest,
     [
         DeclareEdgeInversesOp(inverses={"works_at": "employs"}),
-        AddInverseEdgesOp(relations=["works_at"]),  # omit to realize the whole table
+        AddInverseEdgesOp(relations=["works_at"]),  # omit to realize every pair
     ],
     bump_version=False,
 )
 ```
 
-For each **directed** edge whose relation is selected, the op adds the inverse edge with swapped endpoints, copying properties and identities but not `semantics` or `description` (those describe the forward reading). The physical spec is copied without `relation_name`, so the two relations never share a storage type. An inverse edge that already exists is left alone, **including its ingestion** — the user modeled it explicitly. The pair must already be declared (an undirected edge cannot be, so it never gets an inverse), and a named edge whose inverse is already native is refused.
+For each **directed** edge whose relation is selected, the op adds the inverse edge with swapped endpoints, copying properties and identities but not `semantics` or `description` (those describe the forward reading). The physical spec is copied without `relation_name`, so the two relations never share a storage type. An inverse edge that already exists is left alone, **including its ingestion** — the user modeled it explicitly. The pair must already be declared, a symmetric relation is refused (it has no inverse edge), and a named relation whose inverse is already native is refused.
+
+Explicit inverse edges are ordinary edges afterwards: later ops on the forward edge do not reach them. `EdgeConfig.inverse_advisories()` reports a realization that no longer matches itself — inverse edges whose properties or identity keys differ, a relation realized for some endpoint pairs but not others, a pair read from the same side — and `apply_evolution` logs the findings its ops introduce. They are advisories, not errors: realizing a pair is optional.
 
 **What gets written in ingestion** — only for edges the op created, and only in a form that cannot write anything else:
 
@@ -715,7 +748,6 @@ For each **directed** edge whose relation is selected, the op adds the inverse e
 ```python
 from graflo.architecture.evolution import (
     DeclareEdgeInversesOp,
-    EdgeSelector,
     SetNativeInversesOp,
     apply_evolution,
 )
@@ -724,22 +756,20 @@ native = apply_evolution(
     manifest,
     [
         DeclareEdgeInversesOp(inverses={"employed_by": "employs"}),
-        SetNativeInversesOp(
-            edges=[EdgeSelector(source="person", target="institution", relation="employed_by")]
-        ),
+        SetNativeInversesOp(relations=["employed_by"]),
     ],
 )
 ```
 
-To switch an edge from one realization to the other, withdraw the first (`set_native_inverses` with `enabled: false`, or `remove_edges` on the inverse triple) before adding the second.
+To switch a relation from one realization to the other, withdraw the first (`set_native_inverses` with `enabled: false`, or `remove_edges` on the inverse relation) before adding the second.
 
 **Choosing a bidirectional strategy** (see also [Core components — Edge](../architecture/core_components.md#directed-undirected-and-bidirectional-edges)):
 
 | Goal | Approach |
 |------|----------|
-| Portable across DBs | Declared inverse + `add_inverse_edges` (explicit inverse edges) |
-| TigerGraph-maintained pair, single load path | Declared inverse + `set_native_inverses` |
-| Truly symmetric (friends, co-authors) | One logical edge with `directed: false` → `UNDIRECTED EDGE` on TigerGraph |
+| Portable across DBs | Declared pair + `add_inverse_edges` (explicit inverse edges) |
+| TigerGraph-maintained pair, single load path | Declared pair + `set_native_inverses` |
+| Truly symmetric (friends, co-authors) | Edges with `directed: false` (+ optionally `symmetric: [R]`) → `UNDIRECTED EDGE` on TigerGraph |
 
 ### 6) Project to a subgraph slice
 

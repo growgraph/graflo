@@ -37,37 +37,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from the `conn_proxy` label (`helix_discovery` → `HELIX_DISCOVERY_`). A stored
   value always wins over the environment.
 
-- **Declared edge inverses: `edge_config.inverses`.** A list of
-  `{relation, inverse}` pairs recording that two relation names read one fact
-  from its two endpoints. It is logical only and creates nothing, and it is
-  validated when the schema loads: a relation belongs to at most one pair (no
-  restated or chained pairs), no relation is its own inverse (that is
-  `directed: false`), a pair must name a declared edge (unless a relation-less
-  template edge admits ingest-time relations), and an undirected edge has no
-  inverse. The table survives every op that rebuilds the edge config (renames
-  rename both columns, merges refuse to collapse a pair or give a relation two
-  inverses, removals prune pairs that name nothing), unions across
-  `merge_manifests` (a conflicting pair is refused), round-trips through RDF,
-  and is sorted in the canonical form.
-- **Native inverses: `db_profile.edge_specs[*].native_inverse`.** The
-  TigerGraph realization of a declared inverse: the database maintains the pair
-  (`WITH REVERSE_EDGE`), and the paired type is named by the declaration rather
-  than on the spec. The schema refuses a native inverse without a declared pair,
-  next to the explicit inverse edge `(target, source, inverse)` (one fact stored
-  twice), on an undirected edge, on a non-TigerGraph profile, and when the
-  inverse name shadows a vertex or another edge type. The DDL builder re-checks
-  the name against physical type names (`relation_name` overrides).
+- **Declared edge inverses: `edge_config.inverses` and `edge_config.symmetric`.**
+  `inverses` is a list of unordered `{relation, inverse}` pairs of two distinct
+  relation names reading one fact from its two endpoints; `symmetric` lists
+  relations that are their own inverse. Both are logical only and create
+  nothing. Together they define the inverse of each relation, and the one rule
+  checked when the schema loads is that no relation has two: a pair restated
+  in either order is kept once (stored with its names sorted, so orientation
+  does not move the content hash), while a chain (`a-b` with `b-c`), a relation
+  both paired and symmetric, or a pair of one name (declare it symmetric) is
+  refused. A declaration must name a declared edge (unless a relation-less
+  template edge admits ingest-time relations); a paired relation cannot name an
+  undirected edge, and a symmetric relation must name only undirected ones --
+  undirected is its realization. The declarations survive every op that
+  rebuilds the edge config (renames follow them, merges refuse to collapse a
+  pair onto one name or give a relation two inverses, removals prune what names
+  nothing), union across `merge_manifests` (a conflict is refused), round-trip
+  through RDF, and are sorted in the canonical form.
+- **Native inverses: `db_profile.native_inverses`.** The TigerGraph realization
+  of a declared pair, keyed by relation because TigerGraph sets
+  `WITH REVERSE_EDGE` on the edge type, which spans every `(source, target)`
+  pair of the relation; the reverse type is named by the declaration. The
+  schema refuses a native inverse without a declared pair, for a symmetric
+  relation, next to explicit edges named by the inverse (one fact stored twice,
+  and one type name taken twice), on both sides of one pair, on a non-TigerGraph
+  profile, when the inverse name shadows a vertex type, and when `relation_name`
+  overrides split the relation across several edge types. The DDL builder emits
+  one statement per edge type and re-checks the name against physical type
+  names.
 - **Ops `declare_edge_inverses` / `retract_edge_inverses` / `set_native_inverses`.**
-  Declare and withdraw pairs, and switch the native realization on or off.
-  Retracting a natively realized pair is refused. All three are schema-only,
-  have exact inverses and their own merge slots
-  (`relation/<r>/inverse`, `relation/<r>/edge/<s>/<t>/native_inverse`), and
-  `diff_manifests` emits them instead of a wholesale `set_db_profile`.
+  `declare_edge_inverses` takes `inverses: {R: R_inv}` (either order, both
+  orders accepted) and `symmetric: [R, ...]`; `retract_edge_inverses` withdraws
+  a pair by either side or a symmetric declaration by name;
+  `set_native_inverses` takes `relations: [R, ...]` and `enabled`. Retracting a
+  natively realized pair is refused. All three are schema-only, have exact
+  inverses and their own merge slots (`relation/<r>/inverse`,
+  `relation/<r>/native_inverse`), and `diff_manifests` emits them instead of a
+  wholesale `set_db_profile` -- withdrawals before `set_edge_directed` and edge
+  removals, declarations after the edges they name exist.
+- **`EdgeConfig.inverse_advisories()`.** Non-fatal findings about explicit
+  realizations of declared pairs: an inverse edge whose properties or identity
+  keys drifted from its forward edge, a relation realized for some endpoint
+  pairs but not others, and a pair read from the same side. `apply_evolution`
+  logs the findings its ops introduce.
 - **`EdgeActorConfig.relation_map_only`.** When set, a raw `relation_field`
   value missing from `relation_map` emits no edge. By default it still passes
   through as the relation name.
 - Meta-ontology **1.7.0** (additive): `gf:EdgeInverse`, `gf:hasInverse`,
-  `gf:inverseRelation`, `gf:specNativeInverse`, mirrored in
+  `gf:inverseRelation`, `gf:symmetricRelation`, `gf:nativeInverseRelation`,
+  mirrored in
   `graflo-context.jsonld` and `rdf/namespace.py`; docs viz regenerated.
 
 ### Changed
@@ -75,14 +93,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`add_inverse_edges` realizes declared inverses; it no longer takes a
   map.** `inverses: {R: R_inv}` (and its `relations` alias) is replaced by
   `relations: [R, ...]`, naming declared relations on either side of a pair.
-  Omitted, it realizes every declared relation both ways, skipping edges whose
+  Omitted, it realizes every declared pair both ways, skipping relations whose
   inverse is native. The op never declares: an undeclared relation is refused
-  (declare it with `declare_edge_inverses` first), a named edge whose inverse
-  is native is refused, and the inverse op always removes exactly the edges it
-  created.
-- **`edge_specs[*].reverse_edge` is removed**, replaced by `native_inverse: true`
-  plus a declared pair in `edge_config.inverses`. A manifest that still carries
-  `reverse_edge` fails validation (`extra="forbid"`).
+  (declare it with `declare_edge_inverses` first), as is a symmetric relation
+  (its edges are undirected) and a named relation whose inverse is native, and
+  the inverse op always removes exactly the edges it created.
+- **`edge_specs[*].reverse_edge` is removed**, replaced by listing the relation
+  in `db_profile.native_inverses` plus a declared pair in
+  `edge_config.inverses`. A manifest that still carries `reverse_edge` fails
+  validation (`extra="forbid"`).
 - TigerGraph read path: `fetch_edges(..., reverse_edge_type=...)` is
   `native_inverse_type=...`, and `assert_direction_supported(...,
   has_reverse_edge=...)` is `has_native_inverse=...`. The internal

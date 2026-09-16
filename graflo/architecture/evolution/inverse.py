@@ -539,36 +539,43 @@ def _invert_retarget_edges(op: RetargetEdgesOp, _manifest: GraphManifest) -> Man
     )
 
 
-def _declared_inverses(manifest: GraphManifest) -> dict[str, str]:
-    schema = manifest.graph_schema
-    if schema is None:
-        return {}
-    return inverse_map(schema.core_schema.edge_config.inverses)
-
-
 def _invert_declare_edge_inverses(
     op: DeclareEdgeInversesOp, manifest: GraphManifest
 ) -> ManifestOp | None:
-    """Retract exactly the pairs the op newly declared."""
-    declared = _declared_inverses(manifest)
-    new = [relation for relation in op.inverses if relation not in declared]
-    return RetractEdgeInversesOp(relations=new) if new else None
+    """Retract exactly the declarations the op newly made."""
+    schema = manifest.graph_schema
+    edge_config = None if schema is None else schema.core_schema.edge_config
+    declared = (
+        {}
+        if edge_config is None
+        else inverse_map(edge_config.inverses, edge_config.symmetric)
+    )
+    # Naming both sides of one pair is a valid retraction, so no pair dedup.
+    relations = sorted(
+        {relation for relation in op.inverses if relation not in declared}
+        | {name for name in op.symmetric if name not in declared}
+    )
+    return RetractEdgeInversesOp(relations=relations) if relations else None
 
 
 def _invert_retract_edge_inverses(
     op: RetractEdgeInversesOp, manifest: GraphManifest
 ) -> ManifestOp | None:
-    """Re-declare the retracted pairs in their authored orientation."""
+    """Re-declare the retracted pairs and symmetric relations."""
     schema = manifest.graph_schema
     if schema is None:
         return None
+    edge_config = schema.core_schema.edge_config
     named = set(op.relations)
     pairs = {
         pair.relation: pair.inverse
-        for pair in schema.core_schema.edge_config.inverses
+        for pair in edge_config.inverses
         if pair.relation in named or pair.inverse in named
     }
-    return DeclareEdgeInversesOp(inverses=pairs) if pairs else None
+    symmetric = [name for name in edge_config.symmetric if name in named]
+    if not pairs and not symmetric:
+        return None
+    return DeclareEdgeInversesOp(inverses=pairs, symmetric=symmetric)
 
 
 def _invert_add_inverse_edges(
@@ -596,18 +603,18 @@ def _invert_add_inverse_edges(
 def _invert_set_native_inverses(
     op: SetNativeInversesOp, manifest: GraphManifest
 ) -> ManifestOp | None:
-    """Restore the prior flag on the selected edges that actually change."""
+    """Restore the prior state of the selected relations that actually change."""
     profile = _profile(manifest)
     if profile is None:
         return None
     changed = [
-        selector
-        for selector in op.edges
-        if profile.edge_has_native_inverse(selector.edge_id()) != op.enabled
+        relation
+        for relation in op.relations
+        if profile.has_native_inverse(relation) != op.enabled
     ]
     if not changed:
         return None
-    return SetNativeInversesOp(edges=changed, enabled=not op.enabled)
+    return SetNativeInversesOp(relations=changed, enabled=not op.enabled)
 
 
 def _invert_replace_identity(

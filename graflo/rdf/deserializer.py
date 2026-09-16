@@ -104,6 +104,9 @@ class ManifestRdfDeserializer:
         edge_config: dict[str, Any] = {"edges": edges}
         if inverses:
             edge_config["inverses"] = inverses
+        symmetric = self._literals(graph, edge_config_uri, ns.symmetricRelation)
+        if symmetric:
+            edge_config["symmetric"] = sorted(symmetric)
         return {
             "vertex_config": self._parse_vertex_config(
                 graph, vertex_config_uri, vertices
@@ -399,6 +402,9 @@ class ManifestRdfDeserializer:
         target_namespace = self._literal(graph, profile_uri, ns.targetNamespace)
         if target_namespace is not None:
             profile["target_namespace"] = target_namespace
+        native_inverses = self._literals(graph, profile_uri, ns.nativeInverseRelation)
+        if native_inverses:
+            profile["native_inverses"] = sorted(native_inverses)
         self._parse_profile_indexes(graph, profile_uri, profile)
 
         payload = parse_json_literal(
@@ -442,9 +448,6 @@ class ManifestRdfDeserializer:
             indexes_mode = self._literal(graph, spec_node, ns.specIndexesMode)
             if indexes_mode is not None:
                 spec_payload["indexes_mode"] = indexes_mode
-            native_inverse = self._literal(graph, spec_node, ns.specNativeInverse)
-            if native_inverse is not None:
-                spec_payload["native_inverse"] = native_inverse.lower() == "true"
             indexes = [
                 self._parse_index(graph, index_node)
                 for index_node in self._related_nodes(graph, spec_node, ns.hasIndex)

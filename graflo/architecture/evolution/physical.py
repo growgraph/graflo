@@ -11,7 +11,6 @@ import logging
 
 from graflo.architecture.contract.manifest import GraphManifest
 from graflo.architecture.graph_types import Index
-from graflo.architecture.schema.database_features import EdgePhysicalSpec
 from graflo.architecture.schema.vertex import Field, FieldType
 
 from .ops import (
@@ -310,55 +309,31 @@ def apply_set_edge_directed(manifest: GraphManifest, op: SetEdgeDirectedOp) -> N
 
 
 def apply_set_native_inverses(manifest: GraphManifest, op: SetNativeInversesOp) -> None:
-    """Set or withdraw ``native_inverse`` on the base physical spec of selected edges.
+    """Add relations to, or withdraw them from, ``db_profile.native_inverses``.
 
-    The rules (declared pair, no explicit inverse edge, directed, TigerGraph) are
-    the schema's own and are checked by :meth:`Schema.finish_init`; this op only
-    names itself in the refusal. Withdrawing leaves no empty spec behind, so
-    enabling and then disabling returns the profile it started from.
+    The rules (declared pair, not symmetric, no explicit inverse edges, one
+    physical edge type, TigerGraph) are the schema's own and are checked by
+    :meth:`Schema.finish_init`; this op only names itself in the refusal.
     """
     schema = manifest.graph_schema
     if schema is None:
         raise ValueError("set_native_inverses requires graph_schema")
 
-    known = {edge.edge_id for edge in schema.core_schema.edge_config.edges}
-    unknown = sorted(
-        str(selector.edge_id())
-        for selector in op.edges
-        if selector.edge_id() not in known
-    )
+    known = {
+        edge.relation
+        for edge in schema.core_schema.edge_config.edges
+        if edge.relation is not None
+    }
+    unknown = sorted(set(op.relations) - known)
     if unknown:
-        raise ValueError(f"set_native_inverses: unknown edges: {unknown}")
+        raise ValueError(f"set_native_inverses: unknown relations: {unknown}")
 
     profile = schema.db_profile
-    selected = {(*selector.edge_id(), None) for selector in op.edges}
-    # Assigning `edge_specs` re-normalizes it into fresh spec objects, so every
-    # flag is set before the one assignment rather than on a stale reference.
-    new_specs = []
-    for spec in profile.edge_specs:
-        if spec.physical_key in selected:
-            spec = spec.model_copy(update={"native_inverse": op.enabled})
-        new_specs.append(spec)
-    if op.enabled:
-        present = {spec.physical_key for spec in new_specs}
-        new_specs.extend(
-            EdgePhysicalSpec(
-                source=key[0], target=key[1], relation=key[2], native_inverse=True
-            )
-            for key in sorted(selected - present, key=str)
-        )
-    profile.edge_specs = new_specs
-    if not op.enabled:
-        # A selected spec left carrying nothing but its key means the same as no
-        # spec, and would hash differently from a profile that never had one.
-        profile.edge_specs = [
-            spec
-            for spec in profile.edge_specs
-            if spec.physical_key not in selected
-            or spec.relation_name is not None
-            or spec.indexes
-            or spec.indexes_mode != "inherit"
-        ]
+    current = set(profile.native_inverses)
+    selected = set(op.relations)
+    profile.native_inverses = sorted(
+        current | selected if op.enabled else current - selected
+    )
     try:
         schema.finish_init()
     except ValueError as exc:

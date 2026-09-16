@@ -859,6 +859,9 @@ def _merge_db_profiles(
     edge_specs = list(data.get("edge_specs") or [])
     edge_specs.extend(list(right_data.get("edge_specs") or []))
     data["edge_specs"] = edge_specs
+    data["native_inverses"] = sorted(
+        set(left.native_inverses) | set(right.native_inverses)
+    )
 
     defaults = union_default_property_values(
         left.default_property_values, right.default_property_values
@@ -966,6 +969,9 @@ def _union_schema(
     meta = _merge_graph_metadata(left.metadata, right.metadata)
 
     db_profile = _merge_db_profiles(left.db_profile, right.db_profile)
+    inverses, symmetric = union_inverses(
+        left.core_schema.edge_config, right.core_schema.edge_config
+    )
 
     schema = Schema(
         metadata=meta,
@@ -973,10 +979,8 @@ def _union_schema(
             vertex_config=VertexConfig(vertices=out_vertices, force_types=force_types),
             edge_config=EdgeConfig(
                 edges=list(by_id.values()),
-                inverses=union_inverses(
-                    left.core_schema.edge_config.inverses,
-                    right.core_schema.edge_config.inverses,
-                ),
+                inverses=inverses,
+                symmetric=symmetric,
             ),
         ),
         db_profile=db_profile,

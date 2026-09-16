@@ -115,7 +115,7 @@ def test_an_undeclared_relation_is_refused() -> None:
         apply_evolution(
             manifest, [AddInverseEdgesOp(relations=["employed_by"])], bump_version=False
         )
-    with pytest.raises(ValueError, match="no inverses declared"):
+    with pytest.raises(ValueError, match="no inverse pairs declared"):
         apply_evolution(manifest, [AddInverseEdgesOp()], bump_version=False)
 
 
@@ -143,17 +143,7 @@ def test_the_whole_table_is_realized_both_ways_and_skips_native_edges() -> None:
             {"source": "institution", "target": "institution", "relation": "owns"},
         ],
         [STATIC_STEP],
-        db_profile={
-            "db_flavor": "tigergraph",
-            "edge_specs": [
-                {
-                    "source": "institution",
-                    "target": "institution",
-                    "relation": "owns",
-                    "native_inverse": True,
-                }
-            ],
-        },
+        db_profile={"db_flavor": "tigergraph", "native_inverses": ["owns"]},
         inverses=[
             {"relation": "employed_by", "inverse": "employs"},
             {"relation": "mentors", "inverse": "mentored_by"},
@@ -170,7 +160,7 @@ def test_the_whole_table_is_realized_both_ways_and_skips_native_edges() -> None:
 def test_undirected_edges_are_refused_statically_and_dynamically() -> None:
     undirected = {**FORWARD, "directed": False}
     for pipeline in ([STATIC_STEP], _dynamic_pipeline({"EMPLOYED_BY": "employed_by"})):
-        with pytest.raises(ValueError, match="undirected edge has no inverse"):
+        with pytest.raises(ValueError, match="undirected edge has no inverse pair"):
             _apply(_manifest([undirected], pipeline), employed_by="employs")
 
 
@@ -180,10 +170,7 @@ def test_a_native_inverse_refuses_an_explicit_inverse_edge() -> None:
         manifest = _manifest(
             [FORWARD],
             pipeline,
-            db_profile={
-                "db_flavor": "tigergraph",
-                "edge_specs": [{**FORWARD, "native_inverse": True}],
-            },
+            db_profile={"db_flavor": "tigergraph", "native_inverses": ["employed_by"]},
             inverses=[{"relation": "employed_by", "inverse": "employs"}],
         )
         with pytest.raises(ValueError, match="maintained natively"):
@@ -271,3 +258,16 @@ def test_an_unrelated_template_edge_gets_no_twin() -> None:
     )
     out = _apply(manifest, employed_by="employs")
     assert ("person", "institution", None) not in _edge_ids(out)
+
+
+@pytest.mark.parametrize(
+    "pipeline",
+    [[STATIC_STEP], _dynamic_pipeline({"EMPLOYED_BY": "employed_by"})],
+    ids=["static", "dynamic"],
+)
+def test_realizing_twice_changes_nothing(pipeline: list[dict[str, Any]]) -> None:
+    from graflo.architecture.evolution.hashing import manifest_hash
+
+    once = _apply(_manifest([FORWARD], pipeline), employed_by="employs")
+    twice = apply_evolution(once, [AddInverseEdgesOp()], bump_version=False)
+    assert manifest_hash(twice) == manifest_hash(once)

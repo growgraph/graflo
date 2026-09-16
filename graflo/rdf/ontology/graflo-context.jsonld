@@ -265,11 +265,9 @@
         "specPurpose": "gf:specPurpose",
         "specRelationName": "gf:specRelationName",
         "specIndexesMode": "gf:specIndexesMode",
-        "specNativeInverse": {
-            "@id": "gf:specNativeInverse",
-            "@type": "xsd:boolean"
-        },
         "inverseRelation": "gf:inverseRelation",
+        "symmetricRelation": "gf:symmetricRelation",
+        "nativeInverseRelation": "gf:nativeInverseRelation",
         "blank": {
             "@id": "gf:blank",
             "@type": "xsd:boolean"

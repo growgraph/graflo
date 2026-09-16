@@ -96,9 +96,7 @@ OP_PAYLOADS: dict[str, dict] = {
     "add_inverse_edges": {"relations": ["purchases"]},
     "declare_edge_inverses": {"inverses": {"purchases": "purchased_by"}},
     "retract_edge_inverses": {"relations": ["purchases"]},
-    "set_native_inverses": {
-        "edges": [{"source": "party", "target": "order", "relation": "purchases"}],
-    },
+    "set_native_inverses": {"relations": ["purchases"]},
     "add_resource_transforms": {
         "additions": {
             "crm": [
@@ -204,7 +202,7 @@ SCHEMA_ONLY_PAYLOADS: dict[str, dict] = {
     "replace_edge_identities": {"edges": [{**_PURCHASES, "identities": [["ref"]]}]},
     "set_edge_directed": {"edges": [_PURCHASES], "directed": False},
     # The fixture targets Arango, where only withdrawing is accepted.
-    "set_native_inverses": {"edges": [_PURCHASES], "enabled": False},
+    "set_native_inverses": {"relations": ["purchases"], "enabled": False},
     "set_bindings": {"bindings": None},
     "set_db_profile": {"profile": {"db_flavor": "neo4j"}},
     "set_edge_semantics": {
@@ -312,12 +310,27 @@ class TestParseTimeValidation:
             op_from_dict({"op": "add_inverse_edges", "relations": ["a", "a"]})
 
     def test_declare_edge_inverses_rejects_a_collapsing_or_self_map(self) -> None:
-        with pytest.raises(ValidationError, match="at most one inverse pair"):
+        with pytest.raises(ValidationError, match="at most one inverse"):
             op_from_dict(
                 {"op": "declare_edge_inverses", "inverses": {"a": "x", "b": "x"}}
             )
-        with pytest.raises(ValidationError, match="its own inverse"):
+        with pytest.raises(ValidationError, match="declare them as symmetric"):
             op_from_dict({"op": "declare_edge_inverses", "inverses": {"a": "a"}})
+        with pytest.raises(ValidationError, match="at most one inverse"):
+            op_from_dict(
+                {
+                    "op": "declare_edge_inverses",
+                    "inverses": {"a": "b"},
+                    "symmetric": ["a"],
+                }
+            )
+
+    def test_declare_edge_inverses_accepts_both_orders_of_one_pair(self) -> None:
+        op_from_dict({"op": "declare_edge_inverses", "inverses": {"a": "b", "b": "a"}})
+
+    def test_set_native_inverses_takes_unique_relations(self) -> None:
+        with pytest.raises(ValidationError, match="unique"):
+            op_from_dict({"op": "set_native_inverses", "relations": ["a", "a"]})
 
     def test_index_lists_must_be_non_empty(self) -> None:
         with pytest.raises(ValidationError):

@@ -39,7 +39,7 @@ from graflo.architecture.schema.database_features import (
     DatabaseProfile,
     EdgePhysicalSpec,
 )
-from graflo.architecture.schema.edge import Edge, EdgeInverse
+from graflo.architecture.schema.edge import Edge
 from graflo.architecture.schema.vertex import Field, Vertex
 
 from .ops import (
@@ -166,15 +166,18 @@ def diff_manifests(
     warnings: list[str] = []
     ops: list[ManifestOp] = []
 
+    profile_replaced = _profile_needs_replacing(base, target)
     ops += _rename_ops(hints)
+    ops += _inverse_withdrawal_ops(base, target, hints)
     ops += _vertex_structure_ops(base, target, hints, warnings)
     ops += _edge_structure_ops(base, target, hints, warnings)
     ops += _vertex_property_ops(base, target, hints)
     ops += _edge_property_ops(base, target, hints, warnings)
     ops += _identity_ops(base, target, hints, warnings)
     ops += _semantics_ops(base, target, hints)
-    profile_replaced = _profile_needs_replacing(base, target)
-    ops += _inverse_ops(base, target, hints, profile_replaced=profile_replaced)
+    ops += _inverse_declaration_ops(
+        base, target, hints, profile_replaced=profile_replaced
+    )
     if not profile_replaced:
         # A profile replacement carries the indexes too, so emitting both would
         # be redundant and order-sensitive.
@@ -293,72 +296,81 @@ def _edge_structure_ops(
     return ops
 
 
-def _inverse_ops(
+def _declared_inverses(
+    manifest: GraphManifest, relations: dict[str, str] | None = None
+) -> set[frozenset[str]]:
+    """Declared pairs and symmetric relations as unordered name sets, renamed by *relations*."""
+    schema = manifest.graph_schema
+    if schema is None:
+        return set()
+    edge_config = schema.core_schema.edge_config
+    rename = relations or {}
+    return {
+        frozenset(rename.get(name, name) for name in (pair.relation, pair.inverse))
+        for pair in edge_config.inverses
+    } | {frozenset((rename.get(name, name),)) for name in edge_config.symmetric}
+
+
+def _native_inverses(
+    manifest: GraphManifest, relations: dict[str, str] | None = None
+) -> set[str]:
+    profile = _profile(manifest)
+    if profile is None:
+        return set()
+    rename = relations or {}
+    return {rename.get(name, name) for name in profile.native_inverses}
+
+
+def _inverse_withdrawal_ops(
+    base: GraphManifest, target: GraphManifest, hints: RenameHints
+) -> list[ManifestOp]:
+    """Withdraw native inverses, then retract declarations, before any edge changes.
+
+    A declaration constrains ``directed`` (a pair forbids undirected edges, a
+    symmetric relation requires them) and a native inverse pins its pair, so
+    both go before ``set_edge_directed`` and removals can trip over them.
+    """
+    ops: list[ManifestOp] = []
+    withdrawn = sorted(
+        _native_inverses(base, hints.relations) - _native_inverses(target)
+    )
+    if withdrawn:
+        ops.append(SetNativeInversesOp(relations=withdrawn, enabled=False))
+    retracted = sorted(
+        min(declared)
+        for declared in _declared_inverses(base, hints.relations)
+        - _declared_inverses(target)
+    )
+    if retracted:
+        ops.append(RetractEdgeInversesOp(relations=retracted))
+    return ops
+
+
+def _inverse_declaration_ops(
     base: GraphManifest,
     target: GraphManifest,
     hints: RenameHints,
     *,
     profile_replaced: bool,
 ) -> list[ManifestOp]:
-    """Declared inverses and native inverses, ordered so each op's refusals cannot fire.
+    """Declare, then enable native inverses, once the edges they name are in place.
 
-    A native inverse needs its pair declared and a declared pair cannot be
-    retracted while native, so: withdraw native inverses, retract pairs, declare
-    pairs, then enable native inverses. Enabling is left to ``set_db_profile``
-    when the profile is replaced wholesale anyway.
+    Enabling is left to ``set_db_profile`` when the profile is replaced wholesale
+    anyway.
     """
     ops: list[ManifestOp] = []
-    base_pairs = {
-        frozenset(
-            (
-                hints.relations.get(pair.relation, pair.relation),
-                hints.relations.get(pair.inverse, pair.inverse),
-            )
-        )
-        for pair in _inverses(base)
-    }
-    target_pairs = {frozenset((p.relation, p.inverse)) for p in _inverses(target)}
-    base_native = {
-        (
-            hints.vertices.get(s, s),
-            hints.vertices.get(t, t),
-            hints.relations.get(r, r) if r is not None else r,
-        )
-        for s, t, r in _native_inverse_edges(base)
-    }
-    target_native = _native_inverse_edges(target)
-
-    withdrawn = sorted(base_native - target_native, key=str)
-    if withdrawn:
+    new = _declared_inverses(target) - _declared_inverses(base, hints.relations)
+    pairs = {min(names): max(names) for names in new if len(names) == 2}
+    symmetric = sorted(next(iter(names)) for names in new if len(names) == 1)
+    if pairs or symmetric:
         ops.append(
-            SetNativeInversesOp(
-                edges=[
-                    EdgeSelector(source=s, target=t, relation=r)
-                    for s, t, r in withdrawn
-                ],
-                enabled=False,
+            DeclareEdgeInversesOp(
+                inverses=dict(sorted(pairs.items())), symmetric=symmetric
             )
         )
-    retracted = sorted(min(pair) for pair in base_pairs - target_pairs)
-    if retracted:
-        ops.append(RetractEdgeInversesOp(relations=retracted))
-    declared = {
-        p.relation: p.inverse
-        for p in _inverses(target)
-        if frozenset((p.relation, p.inverse)) not in base_pairs
-    }
-    if declared:
-        ops.append(DeclareEdgeInversesOp(inverses=declared))
-    enabled = sorted(target_native - base_native, key=str)
+    enabled = sorted(_native_inverses(target) - _native_inverses(base, hints.relations))
     if enabled and not profile_replaced:
-        ops.append(
-            SetNativeInversesOp(
-                edges=[
-                    EdgeSelector(source=s, target=t, relation=r) for s, t, r in enabled
-                ],
-                enabled=True,
-            )
-        )
+        ops.append(SetNativeInversesOp(relations=enabled))
     return ops
 
 
@@ -873,10 +885,11 @@ def _profile_differences_outside_the_index_ops(
     """Profile keys that differ once the index-addressable parts are set aside.
 
     ``vertex_indexes`` and the ``indexes`` of each edge spec are what the index
-    ops author; everything else on the profile has no op yet.
+    ops author, and ``native_inverses`` what ``set_native_inverses`` authors;
+    everything else on the profile has no op yet.
     """
 
-    authored_by_ops = {"indexes", "native_inverse"}
+    authored_by_ops = {"indexes"}
     spec_defaults = EdgePhysicalSpec(source="_", target="_").to_dict(
         skip_defaults=False
     )
@@ -884,12 +897,14 @@ def _profile_differences_outside_the_index_ops(
     def _comparable(profile: DatabaseProfile) -> dict[str, Any]:
         data = profile.to_dict(skip_defaults=False)
         data.pop("vertex_indexes", None)
+        # Authored by `set_native_inverses`.
+        data.pop("native_inverses", None)
         specs = []
         for spec in data.get("edge_specs") or []:
             rest = {k: v for k, v in spec.items() if k not in authored_by_ops}
             # A spec carrying nothing beyond what the ops author is, for this
-            # comparison, the same as no spec: `set_native_inverses` creates and
-            # removes exactly such specs.
+            # comparison, the same as no spec: the index ops create and empty
+            # exactly such specs.
             if all(
                 rest.get(k) == spec_defaults.get(k)
                 for k in rest
@@ -923,24 +938,6 @@ def _edges(manifest: GraphManifest) -> dict[tuple[str, str, str | None], Edge]:
     return {
         (e.source, e.target, e.relation): e
         for e in schema.core_schema.edge_config.edges
-    }
-
-
-def _inverses(manifest: GraphManifest) -> list[EdgeInverse]:
-    schema = manifest.graph_schema
-    return [] if schema is None else list(schema.core_schema.edge_config.inverses)
-
-
-def _native_inverse_edges(
-    manifest: GraphManifest,
-) -> set[tuple[str, str, str | None]]:
-    profile = _profile(manifest)
-    if profile is None:
-        return set()
-    return {
-        spec.edge_id
-        for spec in profile.edge_specs
-        if spec.native_inverse and spec.purpose is None
     }
 
 

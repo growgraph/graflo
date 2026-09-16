@@ -199,15 +199,17 @@ split between them.
 Edges nest under their relation: `relation/knows` contains
 `relation/knows/edge/person/company`. Ops address edges two ways — by relation
 name (`remove_edges`, `rename_relations`, `merge_edges`) and by triple
-(`set_edge_directed`, `set_native_inverses`, `retarget_edges`, the index and identity ops) — and
+(`set_edge_directed`, `retarget_edges`, the index and identity ops) — and
 containment is what lets the two families see each other, so removing a
 relation on one side conflicts with flipping one of its edges on the other. A
 relation-wide property edit (`relation/knows/field`) and a per-edge edit stay
 disjoint, which is right: they merge. An edge with no relation keeps its own
 root (`edge/person/company`), since no relation-addressed op can reach it. A declared inverse sits under both of its relations
 (`relation/knows/inverse`), so renaming or removing a relation conflicts with
-declaring or retracting its inverse on the other side; a native inverse is a
-per-edge slot (`relation/knows/edge/person/company/native_inverse`).
+declaring or retracting its inverse on the other side; a symmetric declaration
+sits under its one relation. A native inverse is a relation slot
+(`relation/knows/native_inverse`), matching TigerGraph, where the reverse type
+belongs to the relation's edge type.
 
 ### Determinism
 

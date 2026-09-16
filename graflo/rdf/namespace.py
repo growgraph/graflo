@@ -193,8 +193,9 @@ specRelation = GF.specRelation
 specPurpose = GF.specPurpose
 specRelationName = GF.specRelationName
 specIndexesMode = GF.specIndexesMode
-specNativeInverse = GF.specNativeInverse
 inverseRelation = GF.inverseRelation
+symmetricRelation = GF.symmetricRelation
+nativeInverseRelation = GF.nativeInverseRelation
 
 # Actor step type mapping
 ACTOR_STEP_CLASSES: dict[str, object] = {
@@ -311,6 +312,7 @@ MODEL_PAYLOAD_EXCLUDES: dict[str, set[str]] = {
         "target_namespace",
         "vertex_indexes",
         "edge_specs",
+        "native_inverses",
     },
     "resource": {"name", "pipeline"},
     "connector": {"hash", "name", "resource_name"},

@@ -8,7 +8,7 @@ In manifests, physical index and naming configuration lives under **`schema.db_p
 
 - **Identity index**: Required for vertex matching/upserts. Uses `Vertex.identity` (one or more fields for **natural** mode, or synthetic `id` for **hash** and **blank** modes). Each backend handles this differently. See [Vertex identity modes](vertex_identity.md).
 - **Secondary indexes**: Optional indexes for query performance. Configured in `db_profile.vertex_indexes` and `db_profile.edge_specs[*].indexes`.
-`edge_specs` entries may also set TigerGraph-only **`native_inverse`** (the database maintains the edge's declared inverse as a paired type; see [Directed, undirected, and bidirectional edges](../architecture/core_components.md#directed-undirected-and-bidirectional-edges)) and **`relation_name`** overrides in addition to **`indexes`**.
+`edge_specs` entries may also set **`relation_name`** overrides in addition to **`indexes`**. TigerGraph native inverses are set per relation in `db_profile.native_inverses`, not on a spec (see [Directed, undirected, and bidirectional edges](../architecture/core_components.md#directed-undirected-and-bidirectional-edges)).
 
 
 The `vertex_indexes` on **`db_profile`** are for **secondary** indexes only. Identity is handled by the backend during `define_vertex_indexes` or at collection/vertex-type creation.

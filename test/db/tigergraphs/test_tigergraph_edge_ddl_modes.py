@@ -16,12 +16,16 @@ def _bare_tg_conn() -> TigerGraphConnection:
     return TigerGraphConnection.__new__(TigerGraphConnection)
 
 
-def _schema(*, relation_name: str | None = None, **spec: Any) -> Schema:
+def _schema(
+    *,
+    relation_name: str | None = None,
+    native_inverse: bool = False,
+    extra_edges: list[dict[str, Any]] | None = None,
+) -> Schema:
     edge_spec: dict[str, Any] = {
         "source": "user",
         "target": "post",
         "relation": "wrote",
-        **spec,
     }
     if relation_name is not None:
         edge_spec["relation_name"] = relation_name
@@ -33,16 +37,22 @@ def _schema(*, relation_name: str | None = None, **spec: Any) -> Schema:
                     "vertices": [
                         {"name": "user", "properties": ["id"], "identity": ["id"]},
                         {"name": "post", "properties": ["id"], "identity": ["id"]},
+                        {"name": "comment", "properties": ["id"], "identity": ["id"]},
                     ]
                 },
                 "edge_config": {
                     "edges": [
-                        {"source": "user", "target": "post", "relation": "wrote"}
+                        {"source": "user", "target": "post", "relation": "wrote"},
+                        *(extra_edges or []),
                     ],
                     "inverses": [{"relation": "wrote", "inverse": "written_by"}],
                 },
             },
-            "db_profile": {"db_flavor": "tigergraph", "edge_specs": [edge_spec]},
+            "db_profile": {
+                "db_flavor": "tigergraph",
+                "edge_specs": [edge_spec],
+                "native_inverses": ["wrote"] if native_inverse else [],
+            },
         }
     )
 
@@ -59,7 +69,9 @@ def captured_gsql(monkeypatch: pytest.MonkeyPatch):
         conn._require_configured_graph_name = lambda: "g"
         conn._execute_gsql = sent.append
         conn._ensure_graph_context = lambda _name: nullcontext()
-        conn._get_vertex_types = lambda: ["user", "post"]
+        conn._get_vertex_types = lambda: [
+            vertex.name for vertex in schema.core_schema.vertex_config.vertices
+        ]
         conn._get_edge_types = lambda: ["wrote"]
         SchemaDdlBuilder(conn)._define_schema_local(schema)
         return "\n".join(sent)
@@ -112,6 +124,20 @@ def test_schema_ddl_names_the_native_inverse_after_the_declared_inverse(
 ) -> None:
     gsql = captured_gsql(_schema(native_inverse=True))
     assert 'WITH REVERSE_EDGE="written_by"' in gsql
+
+
+def test_schema_ddl_emits_one_edge_type_per_relation_with_its_native_inverse(
+    captured_gsql,
+) -> None:
+    """The reverse type belongs to the edge type, so it spans every FROM/TO pair."""
+    schema = _schema(
+        native_inverse=True,
+        extra_edges=[{"source": "user", "target": "comment", "relation": "wrote"}],
+    )
+    gsql = captured_gsql(schema)
+    assert gsql.count("EDGE wrote") == 1
+    assert gsql.count('WITH REVERSE_EDGE="written_by"') == 1
+    assert "FROM user, TO post" in gsql and "FROM user, TO comment" in gsql
 
 
 def test_schema_ddl_without_native_inverse_emits_no_pairing(captured_gsql) -> None:

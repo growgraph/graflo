@@ -791,6 +791,12 @@ def test_ontology_declares_item_type() -> None:
 
 def _inverse_manifest(*, native: bool) -> GraphManifest:
     forward = {"source": "person", "target": "institution", "relation": "employed_by"}
+    knows = {
+        "source": "person",
+        "target": "person",
+        "relation": "knows",
+        "directed": False,
+    }
     return GraphManifest.from_dict(
         {
             "schema": {
@@ -811,15 +817,14 @@ def _inverse_manifest(*, native: bool) -> GraphManifest:
                         ]
                     },
                     "edge_config": {
-                        "edges": [forward],
+                        "edges": [forward, knows],
                         "inverses": [{"relation": "employed_by", "inverse": "employs"}],
+                        "symmetric": ["knows"],
                     },
                 },
                 "db_profile": {
                     "db_flavor": "tigergraph",
-                    "edge_specs": [{**forward, "native_inverse": native}]
-                    if native
-                    else [],
+                    "native_inverses": ["employed_by"] if native else [],
                 },
             }
         }
@@ -838,10 +843,17 @@ def test_ontology_and_context_declare_inverse_terms() -> None:
         ns.EdgeInverse,
         ns.hasInverse,
         ns.inverseRelation,
-        ns.specNativeInverse,
+        ns.symmetricRelation,
+        ns.nativeInverseRelation,
     ):
         assert (term, RDF.type, None) in ontology, term
     context_path = pathlib.Path(ontology_path()).parent / "graflo-context.jsonld"
     context = json.loads(context_path.read_text(encoding="utf-8"))["@context"]
-    for key in ("EdgeInverse", "hasInverse", "inverseRelation", "specNativeInverse"):
+    for key in (
+        "EdgeInverse",
+        "hasInverse",
+        "inverseRelation",
+        "symmetricRelation",
+        "nativeInverseRelation",
+    ):
         assert key in context

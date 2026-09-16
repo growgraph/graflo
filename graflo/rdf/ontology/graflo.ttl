@@ -52,7 +52,7 @@ gf:EdgeInverse a owl:Class ;
     rdfs:subClassOf gf:GrafloArtifact ;
     rdfs:label "Edge inverse"@en ;
     skos:prefLabel "EdgeInverse"@en ;
-    rdfs:comment "Declared inverse pair: two relation names reading one fact from its two endpoints. Logical only; realized by an explicit inverse edge or by a native inverse on an edge physical spec."@en .
+    rdfs:comment "Declared inverse pair: two distinct relation names reading one fact from its two endpoints. Unordered. Logical only; realized by explicit inverse edges or by a native inverse on the database profile."@en .
 
 gf:GraphMetadata a owl:Class ;
     rdfs:subClassOf gf:GrafloArtifact ;
@@ -764,15 +764,20 @@ gf:specIndexesMode a owl:DatatypeProperty ;
     rdfs:domain gf:EdgePhysicalSpec ;
     rdfs:range xsd:string .
 
-gf:specNativeInverse a owl:DatatypeProperty ;
-    rdfs:domain gf:EdgePhysicalSpec ;
-    rdfs:range xsd:boolean ;
-    rdfs:comment "Whether the database maintains the declared inverse of the edge's relation as a paired type (TigerGraph WITH REVERSE_EDGE)."@en .
-
 gf:inverseRelation a owl:DatatypeProperty ;
     rdfs:domain gf:EdgeInverse ;
     rdfs:range xsd:string ;
-    rdfs:comment "Relation name of the declared inverse; the pair's other side is gf:relation."@en .
+    rdfs:comment "One relation name of a declared inverse pair; the pair's other side is gf:relation."@en .
+
+gf:symmetricRelation a owl:DatatypeProperty ;
+    rdfs:domain gf:EdgeConfig ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Relation declared as its own inverse; its edges are undirected."@en .
+
+gf:nativeInverseRelation a owl:DatatypeProperty ;
+    rdfs:domain gf:DatabaseProfile ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Relation whose declared inverse the database maintains as a paired type on its edge type (TigerGraph WITH REVERSE_EDGE)."@en .
 
 gf:forceTypes a owl:DatatypeProperty ;
     rdfs:domain gf:VertexConfig ;

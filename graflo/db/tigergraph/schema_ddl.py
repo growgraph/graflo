@@ -284,7 +284,7 @@ class SchemaDdlBuilder:
             edge: Edge object to generate statement for
             native_inverse: Declared inverse relation the database maintains for
                 this edge (``WITH REVERSE_EDGE``), resolved by
-                :meth:`DatabaseProfile.native_inverse_name`
+                :meth:`DatabaseProfile.native_inverse_of`
 
         Returns:
             str: GSQL ADD edge statement (optionally with WITH REVERSE_EDGE)
@@ -617,7 +617,9 @@ class SchemaDdlBuilder:
             validate_tigergraph_schema_name(edge_dbname, "edge")
             self._validate_tigergraph_edge_property_names(edge, db_schema.edge_config)
 
-        # Group edges by DDL kind, relation name, and native inverse pairing
+        # Group edges by DDL kind and relation name. The native inverse is a
+        # property of the relation (``db_profile.native_inverses``), and so of
+        # the whole edge type: it never splits a group.
         vertex_dbnames = {
             db_schema.vertex_config.vertex_dbname(v.name)
             for v in vertex_config.vertices
@@ -628,8 +630,8 @@ class SchemaDdlBuilder:
         )
         for edge in edges_to_create:
             ddl_kind = self._tigergraph_edge_ddl_kind(edge)
-            native_inverse = db_schema.db_profile.native_inverse_name(
-                edge.edge_id, edge_config
+            native_inverse = db_schema.db_profile.native_inverse_of(
+                edge.relation, edge_config
             )
             # The logical check in Schema.finish_init compares logical names; the
             # physical names (relation_name overrides, storage names) are only
@@ -638,7 +640,7 @@ class SchemaDdlBuilder:
                 native_inverse in edge_type_names or native_inverse in vertex_dbnames
             ):
                 raise ValueError(
-                    f"native inverse {native_inverse!r} of edge {edge.edge_id!r} "
+                    f"native inverse {native_inverse!r} of relation {edge.relation!r} "
                     "collides with a TigerGraph vertex or edge type of that name"
                 )
             key = (ddl_kind, relation_names[id(edge)], native_inverse)
